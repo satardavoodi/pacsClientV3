@@ -2216,22 +2216,20 @@ class HomePanelWidget(QWidget):
 
             # Get search criteria from search widget
             search_data = self.patient_search_widget.get_search_data()
-            print(f"[LOCAL_SEARCH] Search criteria: {search_data}")
+            print(f"\n[LOCAL_SEARCH] 📋 Search criteria from UI:\n{search_data}")
             
             # For Local tab: Remove date filters to show ALL downloaded studies regardless of date
             # Users want to see all locally downloaded files, not just today's
             search_data_local = search_data.copy()
             search_data_local['date_from'] = None
             search_data_local['date_to'] = None
-            print(f"[LOCAL_SEARCH] Modified search_data for local (removed date filters): {search_data_local}")
+            print(f"[LOCAL_SEARCH] 📋 Modified search_data for local (date filters removed):\n{search_data_local}")
             
             # مرحله‌ی نسبتاً سنگین: جستجوی بیماران با فیلتر از DB
             # (داخل executor تا UI قفل نشود)
-            print(f"[LOCAL_SEARCH] Querying database...")
-            print(f"[LOCAL_SEARCH] search_data passed to search_patients_local: {search_data_local}")
+            print(f"[LOCAL_SEARCH] 🔍 Querying database with executor...")
             patients = await loop.run_in_executor(self.thread_pool, search_patients_local, search_data_local)
-            print(f"[LOCAL_SEARCH] search_patients_local returned: {patients}")
-            print(f"[LOCAL_SEARCH] Found {len(patients or [])} patients in database")
+            print(f"[LOCAL_SEARCH] ✅ search_patients_local returned {len(patients or [])} patient records")
 
             if self._cancel_search_requested:
                 raise asyncio.CancelledError()
@@ -2258,42 +2256,42 @@ class HomePanelWidget(QWidget):
                     study_uid = patient.get('study_uid')
                     
                     # Log details
-                    print(f"[LOCAL_SEARCH] [{i}/{total}] Patient: {patient.get('patient_name')} - {study_uid}")
+                    print(f"[LOCAL_SEARCH] [{i}/{total}] Processing: {patient.get('patient_name')} - study_uid={study_uid}, study_path={study_path}")
 
                     # Fallback: infer study_path from SOURCE_PATH if missing
                     if not study_path and study_uid:
                         try:
                             fallback_path = SOURCE_PATH / study_uid
-                            print(f"[LOCAL_SEARCH] Checking fallback path: {fallback_path}")
+                            print(f"[LOCAL_SEARCH]   🔍 Checking fallback path: {fallback_path}")
                             if fallback_path.exists() and has_subfolders(fallback_path):
                                 study_path = str(fallback_path)
                                 patient['study_path'] = study_path
-                                print(f"[LOCAL_SEARCH] ✓ Using fallback path")
+                                print(f"[LOCAL_SEARCH]   ✅ Using fallback path")
                                 # Persist missing study_path for future local searches
                                 study_pk = find_study_pk_with_study_uid(study_uid)
                                 if study_pk:
                                     update_study_missing_fields(study_pk, study_path=study_path)
                             else:
-                                print(f"[LOCAL_SEARCH] ✗ Fallback path doesn't exist or has no subfolders")
+                                print(f"[LOCAL_SEARCH]   ⚠️ Fallback path doesn't exist or has no subfolders")
                         except Exception as update_error:
-                            print(f"[LOCAL_SEARCH] Error checking fallback: {update_error}")
+                            print(f"[LOCAL_SEARCH]   ⚠️ Error checking fallback: {update_error}")
 
                     if not study_path:
-                        print(f"[LOCAL_SEARCH] ⚠️ Skipping - no study_path")
+                        print(f"[LOCAL_SEARCH]   ❌ Skipping - no study_path")
                         skipped += 1
                         continue
                     try:
                         if not has_subfolders(study_path):
-                            print(f"[LOCAL_SEARCH] ⚠️ Skipping - no subfolders in {study_path}")
+                            print(f"[LOCAL_SEARCH]   ❌ Skipping - no subfolders in {study_path}")
                             skipped += 1
                             continue
                     except Exception as err:
-                        print(f"[LOCAL_SEARCH] ⚠️ Error checking subfolders: {err}")
+                        print(f"[LOCAL_SEARCH]   ❌ Error checking subfolders: {err}")
                         skipped += 1
                         continue
 
                     # مقادیر لازم
-                    print(f"[LOCAL_SEARCH] ✓ Adding to table: {patient.get('patient_name')}")
+                    print(f"[LOCAL_SEARCH]   ✅ Adding to table: {patient.get('patient_name')}")
                     self.add_data2patient_list_table(
                         patient_id=patient.get('patient_id'),
                         patient_name=patient.get('patient_name'),
@@ -2316,18 +2314,18 @@ class HomePanelWidget(QWidget):
                         await asyncio.sleep(0)
 
             # وضعیت نهایی
-            print(f"[LOCAL_SEARCH] ✅ Completed: {added} studies loaded, {skipped} skipped")
+            print(f"[LOCAL_SEARCH] ✅ COMPLETED: {added} studies loaded, {skipped} skipped\n")
             self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#10b981').pixmap(12, 12))
             self.connection_indicator.setText(f" Local DB - Found {added} studies")
             self.connection_indicator.setStyleSheet("""
                 QLabel { font-size: 14px; color: #10b981; padding: 4px 8px;
                          background: rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.3); border-radius:8px; }
             """)
-            print(f"[LOCAL] Loaded {added} studies from local database")
+            print(f"[LOCAL] ✅ Loaded {added} studies from local database")
 
         except asyncio.CancelledError:
             # کنسل توسط کاربر
-            print("🔸 Local patient search cancelled by user.")
+            print("[LOCAL_SEARCH] ⚠️ Local patient search cancelled by user.\n")
             try:
                 self.search_progress.setVisible(False)
                 self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#f59e0b').pixmap(12, 12))
@@ -2339,7 +2337,7 @@ class HomePanelWidget(QWidget):
             except Exception:
                 pass
         except Exception as e:
-            print(f"[Local Search] Error: {e}")
+            print(f"[LOCAL_SEARCH] ❌ Error: {e}\n")
             QMessageBox.critical(self, "Error", f"Error in local search: {str(e)}")
         finally:
             self.search_progress.setVisible(False)

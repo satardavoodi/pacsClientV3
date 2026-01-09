@@ -1,5 +1,5 @@
 from PySide6.QtCore import QSize, Signal, QPropertyAnimation, QEasingCurve, QTimer, QRect
-from PySide6.QtGui import QPixmap, Qt, QFont, QPainter, QPen, QBrush, QLinearGradient, QColor, QPainterPath
+from PySide6.QtGui import QPixmap, Qt, QFont, QPainter, QPen, QBrush, QLinearGradient, QColor, QPainterPath, QImage
 from PySide6.QtWidgets import QPushButton, QWidget, QLabel, QVBoxLayout, QApplication, QGridLayout, QProgressBar, QHBoxLayout, QFrame, QGraphicsDropShadowEffect
 import weakref 
 from PySide6.QtCore import QObject, Signal, QTimer, QThread
@@ -607,6 +607,7 @@ QWidget:hover {
 class ThumbnailManager(QObject):
     # تعریف سیگنال‌ها
     priority_download_requested = Signal(str, str)  # series_number, study_uid
+    thumbnail_image_ready = Signal(str, QImage)  # series_number, QImage
 
     def __init__(self, method_change_series):
         super().__init__()  # فراخوانی سازنده QObject
@@ -617,6 +618,62 @@ class ThumbnailManager(QObject):
         self.series_widgets = {}
         self.ready_series = set()
         self.current_study_uid = None  # برای ذخیره study_uid فعلی
+        self._placeholder_cache = None
+        self.thumbnail_image_ready.connect(self._apply_thumbnail_image)
+
+    def create_placeholder_pixmap(self, size: QSize = None, text: str = "Loading...") -> QPixmap:
+        """Create and cache a lightweight placeholder pixmap (GUI thread only)."""
+        if size is None:
+            size = QSize(160, 120)
+        if self._placeholder_cache and self._placeholder_cache.size() == size:
+            return self._placeholder_cache
+
+        pixmap = QPixmap(size)
+        pixmap.fill(QColor("#1f2937"))
+        painter = QPainter(pixmap)
+        painter.setPen(QColor("#94a3b8"))
+        painter.setFont(QFont("Segoe UI", 9))
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, text)
+        painter.end()
+
+        self._placeholder_cache = pixmap
+        return pixmap
+
+    def update_thumbnail_image(self, series_number: str, image: QImage):
+        """Thread-safe image update (emit to GUI thread)."""
+        try:
+            if image is None or image.isNull():
+                return
+            self.thumbnail_image_ready.emit(str(series_number), image)
+        except Exception:
+            return
+
+    def _apply_thumbnail_image(self, series_number: str, image: QImage):
+        """Apply image to existing thumbnail widget on GUI thread."""
+        try:
+            series_key = str(series_number)
+            widget = self.series_widgets.get(series_key)
+            if widget is None:
+                return
+            try:
+                _ = widget.isVisible()
+            except RuntimeError:
+                return
+
+            image_button = getattr(widget, "image_button", None)
+            if image_button is None:
+                return
+
+            pixmap = QPixmap.fromImage(image)
+            if pixmap.isNull():
+                return
+
+            scaled = pixmap.scaled(160, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            image_button.setIcon(scaled)
+            image_button.setIconSize(scaled.size())
+            image_button.update()
+        except Exception:
+            return
 
     def set_current_study_uid(self, study_uid):
         """Set the current study UID - fixes the AttributeError"""
@@ -1102,6 +1159,7 @@ class ThumbnailManager(QObject):
             widget.progress_overlay = progress_overlay
             widget.glass_overlay = glass_overlay
             widget.content_widget = content_widget
+            widget.image_button = image_button
             widget.series_number = str(thumbnail_index)
             widget.thumbnail_index = thumbnail_index
             
