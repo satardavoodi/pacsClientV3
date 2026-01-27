@@ -30,49 +30,40 @@ class VoiceWidget(QWidget):
     - فایل را به صورت WAV در فولدر ATTACHMENT_PATH / study_uid ذخیره می‌کند
     """
 
-    def __init__(self, patient_widget: QWidget, method_update_audio_counter, method_check_status_mic_btn):
+    def __init__(self, patient_widget: QWidget, method_update_audio_counter, 
+                 method_check_status_mic_btn, method_sync=None):
         super().__init__(patient_widget)
         self.patient_widget = patient_widget
         self.method_update_audio_counter = method_update_audio_counter
         self.method_check_status_mic_btn = method_check_status_mic_btn
-
-        # پاپ‌آپ تمیز و همیشه روی بقیه (فقط در زمان فعال بودن خود برنامه)
+        self.method_sync = method_sync
+        
+        # 🔹 تنظیمات پنجره برای ماندگاری و عدم پرش
         self.setWindowFlags(
-            Qt.Popup
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.NoDropShadowWindowHint
+            Qt.Dialog |  # Dialog برای ماندگاری بهتر
+            Qt.FramelessWindowHint |
+            Qt.WindowStaysOnTopHint |
+            Qt.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFixedWidth(380)
-
+        
+        # 🔹 مهم: غیرفعال کردن بسته شدن با کلیک خارج
+        self.setAttribute(Qt.WA_ShowWithoutActivating, False)
+        
         # اتصال به پنجره اصلی برای کنترل Alt+Tab و بسته‌شدن برنامه
         self._main_window = self.patient_widget.window()
         if self._main_window is not None:
             self._main_window.installEventFilter(self)
 
         # مانیتور کردن خود patient_widget (برای switch tab)
-        # if self.patient_widget is not None:
-        #     self.patient_widget.installEventFilter(self)
-
-        # # 👇 جدید: مانیتور کردن کل QApplication برای ApplicationDeactivate
-        # self._app = QApplication.instance()
-        # if self._app is not None:
-        #     self._app.installEventFilter(self)
-        ##################################################
-        # مانیتور کردن خود patient_widget (برای switch tab)
         if self.patient_widget is not None:
             self.patient_widget.installEventFilter(self)
 
-        # ✅ جدید: مانیتور کردن وضعیت کل برنامه با سیگنال، نه eventFilter
+        # ✅ جدید: مانیتور کردن وضعیت کل برنامه با سیگنال
         self._app = QApplication.instance()
         if self._app is not None:
             self._app.applicationStateChanged.connect(self._on_app_state_changed)
-
-        ##################################################
-
-
-
 
         # وضعیت‌ها
         self._is_recording = False
@@ -117,7 +108,6 @@ class VoiceWidget(QWidget):
         اگر پاپ‌آپ دیده می‌شود → آن را مخفی کن و وضعیت میکروفون را به‌روزرسانی کن.
         """
         try:
-            # Qt.ApplicationInactive برای وقتی است که کاربر روی برنامه‌ی دیگری کلیک می‌کند
             if state == Qt.ApplicationInactive:
                 if self.isVisible():
                     self.hide()
@@ -126,13 +116,19 @@ class VoiceWidget(QWidget):
                     except Exception:
                         pass
         except Exception:
-            # هر خطایی اینجا نباید باعث کرش کل برنامه شود
             pass
 
-    # ----------------- رفتار پاپ‌آپ و چسبیدن به پنجره اصلی -----------------
+    # 🔹 جلوگیری از بسته شدن با کلیک خارج
     def focusOutEvent(self, event):
-        # طبق خواسته: با کلیک داخل برنامه پاپ‌آپ بسته نشود
+        # کاملاً نادیده گرفتن focusOutEvent تا پنجره نپرد
         event.ignore()
+        self.activateWindow()  # دوباره فعال کردن پنجره
+        self.raise_()
+
+    def mousePressEvent(self, event):
+        # جلوگیری از انتشار کلیک به والدین
+        event.accept()
+        super().mousePressEvent(event)
 
     def eventFilter(self, obj, event):
         """
@@ -153,18 +149,15 @@ class VoiceWidget(QWidget):
                     # برنامه در حال بسته شدن است → همه چیز را تمیز کن و ببند
                     self._on_delete_clicked()
                 else:
-                    # اگر WindowDeactivate به خاطر فعال شدن خود VoiceWidget است، پنهان نکن
-                    if et == QEvent.WindowDeactivate:
-                        aw = QApplication.activeWindow()
-                        if aw is self:
-                            return False
-                    # در غیر این صورت (مثلاً Alt+Tab یا minimize) → پاپ‌آپ را مخفی کن
-                    if self.isVisible():
-                        self.hide()
-                        try:
-                            self.method_check_status_mic_btn(False)
-                        except Exception:
-                            pass
+                    # 🔹 حتی در صورت Deactivate هم پنجره نباید بپرد
+                    # فقط در صورت minimize یا hide کردن اصلی
+                    if et == QEvent.Hide:
+                        if self.isVisible():
+                            self.hide()
+                            try:
+                                self.method_check_status_mic_btn(False)
+                            except Exception:
+                                pass
 
         # 2) رویدادهای خود patient_widget (مثلاً وقتی تب عوض می‌شود)
         elif obj is self.patient_widget:
@@ -190,7 +183,6 @@ class VoiceWidget(QWidget):
         total_txt = self._format_time(total_ms // 1000)
         return f"{cur_txt} / {total_txt}"
 
-
     def show_under(self, button: QWidget):
         """
         پاپ‌آپ را دقیقا زیر دکمه میکروفون نشان می‌دهد.
@@ -203,18 +195,20 @@ class VoiceWidget(QWidget):
         self.show()
         self.activateWindow()
 
-    # ----------------- UI -----------------
+    # ----------------- UI با کادر شیشه‌ای -----------------
     def _build_ui(self):
         main = QVBoxLayout(self)
         main.setContentsMargins(10, 10, 10, 10)
         main.setSpacing(8)
 
-        # پس‌زمینه تیره مثل بقیه UI
+        # 🔹 استایل شیشه‌ای برای کل ویجت
         self.setStyleSheet("""
         QWidget {
-            background-color: #111827;
+            background-color: rgba(17, 24, 39, 0.95);
             border-radius: 10px;
-            border: 1px solid #374151;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
         }
         """)
 
@@ -238,7 +232,7 @@ class VoiceWidget(QWidget):
 
         main.addLayout(top)
 
-        # کنترل‌ها: Play / Pause-Record / Save / Delete / Report
+        # کنترل‌ها: Play / Pause-Record / Save / Delete / Report / Sync
         controls = QHBoxLayout()
         controls.setSpacing(6)
 
@@ -267,11 +261,19 @@ class VoiceWidget(QWidget):
         self.btn_report.setStyleSheet(self._btn_style("#6366f1"))
         self.btn_report.clicked.connect(self._on_report_clicked)
 
+        # 🔹 دکمه Sync جدید
+        self.btn_sync = QPushButton("Sync")
+        self.btn_sync.setCursor(Qt.PointingHandCursor)
+        self.btn_sync.setStyleSheet(self._btn_style("#8b5cf6"))
+        self.btn_sync.clicked.connect(self._on_sync_clicked)
+        self.btn_sync.setToolTip("Save and sync with server")
+
         controls.addWidget(self.btn_play)
         controls.addWidget(self.btn_record_pause)
         controls.addWidget(self.btn_save)
         controls.addWidget(self.btn_delete)
         controls.addWidget(self.btn_report)
+        controls.addWidget(self.btn_sync)  # اضافه کردن دکمه Sync
 
         main.addLayout(controls)
 
@@ -282,7 +284,7 @@ class VoiceWidget(QWidget):
     def _btn_style(color_hex: str) -> str:
         return f"""
         QPushButton {{
-            background: #1f2937;
+            background: rgba(31, 41, 55, 0.9);
             color: #e5e7eb;
             border: 1px solid {color_hex};
             border-radius: 6px;
@@ -304,7 +306,6 @@ class VoiceWidget(QWidget):
         except Exception:
             return False
 
-    # ToolbarManager صدا می‌زند: toggle_recording(selected_widget)
     def toggle_recording(self, selected_widget):
         """
         همان اینترفیس قبلی:
@@ -391,7 +392,6 @@ class VoiceWidget(QWidget):
 
     def _callback_capture(self, indata, frames, time_info, status):
         if status:
-            # می‌تواند لاگ شود
             pass
         if not self._is_recording or self._is_paused:
             return
@@ -428,8 +428,6 @@ class VoiceWidget(QWidget):
     def _set_paused(self, paused: bool):
         """
         منطق مشترک pause / resume:
-        - paused=True → استریم میکروفون stop/close + تایمر stop + صف خالی شود (موج فریز)
-        - paused=False → استریم دوباره start + تایمر دوباره start شود (ادامه ضبط)
         """
         self.method_check_status_mic_btn()
 
@@ -445,9 +443,9 @@ class VoiceWidget(QWidget):
         if self._is_paused:
             # 1) استریم میکروفن را ببند
             self._stop_stream()
-            # 2) تایمر موج/ثانیه‌شمار را متوقف کن (هیچ حرکتی نباشد)
+            # 2) تایمر موج/ثانیه‌شمار را متوقف کن
             self._timer.stop()
-            # 3) صف بافر را خالی کن تا بعد از pause هیچ فریم باقی‌مانده پردازش نشود
+            # 3) صف بافر را خالی کن
             self._audio_q = queue.Queue()
 
         else:
@@ -483,8 +481,6 @@ class VoiceWidget(QWidget):
         has_data = bool(self._audio_frames)
 
         # 🔹 Play:
-        # - اگر در حال ضبط باشیم → فعال باشد (تا بتواند pause+play کند)
-        # - یا اگر داده/فایل داریم → فعال باشد
         self.btn_play.setEnabled(self._is_recording or has_file or has_data)
 
         # Pause/Record فقط وقتی ضبط در جریان است
@@ -496,8 +492,11 @@ class VoiceWidget(QWidget):
         # Delete وقتی فایل یا جلسه ضبط داریم
         self.btn_delete.setEnabled(self._is_recording or has_file or has_data)
 
-        # Report فعلاً همیشه فعال، ولی کاری نمی‌کند
+        # Report فعلاً همیشه فعال
         self.btn_report.setEnabled(True)
+        
+        # 🔹 Sync وقتی فایل یا داده داریم فعال باشد
+        self.btn_sync.setEnabled(self._is_recording or has_file or has_data)
 
     # ---------- Controls ----------
     def _on_stop_internal(self):
@@ -536,17 +535,17 @@ class VoiceWidget(QWidget):
     def _on_delete_clicked(self):
         """
         اگر delete زده شد:
-        - اگر در حال ضبط هستیم → ضبط و تایمر فقط متوقف شوند (بدون ذخیره روی دیسک)
+        - اگر در حال ضبط هستیم → ضبط و تایمر فقط متوقف شوند
         - اگر قبلاً چیزی ذخیره شده بود → فایل حذف شود
         - playback قطع شود
         - UI ریست شود
         - popup بسته شود
         """
 
-        # 1) اگر در حال ضبط یا pause هستیم → فقط استریم و تایمر را متوقف کن، هیچ save انجام نده
+        # 1) اگر در حال ضبط یا pause هستیم → فقط استریم و تایمر را متوقف کن
         if self._is_recording or self._stream:
-            self._stop_stream()       # میکروفون آزاد شود
-            self._timer.stop()        # تایمر موج و ثانیه‌شمار متوقف شود
+            self._stop_stream()
+            self._timer.stop()
             self._is_recording = False
             self._is_paused = False
 
@@ -573,7 +572,7 @@ class VoiceWidget(QWidget):
         self._update_record_pause_label()
         self._refresh_buttons()
 
-        # 5) بعد از Delete پاپ‌آپ پنهان شود (کل عملیات کنسل شد)
+        # 5) بعد از Delete پاپ‌آپ پنهان شود
         self.hide()
         self.method_check_status_mic_btn(False)
 
@@ -590,11 +589,34 @@ class VoiceWidget(QWidget):
         self.hide()
         self.method_check_status_mic_btn(False)
 
+    # 🔹 متد جدید برای دکمه Sync
+    def _on_sync_clicked(self):
+        """
+        Save + Sync: ذخیره فایل و سپس sync با سرور
+        """
+        # 1) ذخیره فایل (اگر در حال ضبط هستیم)
+        if self._is_recording or self._stream:
+            self._on_stop_internal()
+        
+        # 2) بررسی وجود فایل
+        if not self._file_path or not self._file_path.exists():
+            QMessageBox.warning(self, "No File", "No audio file to sync.")
+            return
+        
+        # 3) بستن پاپ‌آپ
+        self.hide()
+        self.method_check_status_mic_btn(False)
+        
+        # 4) فراخوانی متد sync (اگر موجود باشد)
+        if self.method_sync is not None:
+            # استفاده از QTimer برای اطمینان از بسته شدن کامل پاپ‌آپ قبل از sync
+            QTimer.singleShot(100, self.method_sync)
+        else:
+            print("Sync method not available")
+
     def _on_record_pause_clicked(self):
         """
         دکمه Pause/Record:
-        - اگر در حال ضبط و not paused → pause (استریم متوقف، موج و زمان فریز)
-        - اگر در حال ضبط و paused → ادامه ضبط (استریم دوباره start، ادامه ذخیره در همان فایل)
         """
         if not self._is_recording:
             return
@@ -627,7 +649,6 @@ class VoiceWidget(QWidget):
     def _start_playback(self, data: np.ndarray, sr: int, start_offset_ms: int = 0):
         """
         شروع پخش از داده داده‌شده، از offset مشخص (میلی‌ثانیه).
-        UI: تایمر از 00:00 (نسبت به playback) نمایش داده می‌شود.
         """
         if data is None or len(data) == 0:
             return
@@ -664,7 +685,6 @@ class VoiceWidget(QWidget):
         progress = self._player_offset_ms / self._player_duration_ms
         self.vu.set_playback_progress(progress)
 
-        # 🔹 در حالت پخش: current / total
         self.lbl_time.setText(
             self._format_playback_label(self._player_offset_ms, self._player_duration_ms)
         )
@@ -672,11 +692,6 @@ class VoiceWidget(QWidget):
     def _on_play_clicked(self):
         """
         رفتار Play:
-        - اگر در حال پخش هستیم → توقف پخش
-        - اگر در حال ضبط یا pause هستیم و تا الان فریمی ضبط شده:
-            * اگر در حال ضبط فعال هستیم → اول pause می‌کند
-            * سپس همین ویس ضبط‌شده تا این لحظه را از روی حافظه پخش می‌کند
-        - در غیر این صورت، اگر فایل روی دیسک وجود دارد → از روی فایل پخش می‌کند
         """
         # اگر همین الان در حال پخش هستیم → toggle به stop
         if self._playback_mode:
@@ -700,7 +715,7 @@ class VoiceWidget(QWidget):
         if data is None or sr is None:
             return
 
-        # شروع پخش از offset فعلی (اگر قبلاً Seek شده، از همانجا)
+        # شروع پخش از offset فعلی
         self._start_playback(data, sr, self._player_offset_ms)
 
     def _stop_playback(self):
@@ -714,7 +729,6 @@ class VoiceWidget(QWidget):
         self._player_duration_ms = 0
         self._player_sr = None
         self._play_timer.stop()
-        # بعد از اتمام پخش، پوزیشن را می‌توانیم از اول در نظر بگیریم
         self._player_offset_ms = 0
 
     def _on_play_tick(self):
@@ -727,10 +741,8 @@ class VoiceWidget(QWidget):
             total_elapsed = self._player_duration_ms
 
         progress = total_elapsed / self._player_duration_ms
-        # UI: نوار پیشرفت و تایمر پخش
         self.vu.set_mode("playback")
         self.vu.set_playback_progress(progress)
-        # 🔹 در حال play: elapsed / total
         self.lbl_time.setText(self._format_playback_label(total_elapsed, self._player_duration_ms))
 
         if total_elapsed >= self._player_duration_ms:
@@ -739,9 +751,6 @@ class VoiceWidget(QWidget):
     def _on_scrubbed(self, progress: float):
         """
         واکنش به Seek روی waveform با موس.
-        فقط پوزیشن پخش را عوض می‌کند.
-        اگر در حال پخش باشد → از همان نقطه ادامه می‌دهد.
-        اگر پخش متوقف باشد → فقط UI به‌روز می‌شود، پخش نمی‌شود.
         """
         try:
             p = float(progress)
@@ -749,7 +758,7 @@ class VoiceWidget(QWidget):
             return
         p = max(0.0, min(1.0, p))
 
-        # اگر داده پخش نداریم، سعی می‌کنیم بسازیم (از حافظه یا فایل)
+        # اگر داده پخش نداریم، سعی می‌کنیم بسازیم
         data, sr = None, None
         if self._audio_frames:
             data, sr = self._build_play_data_from_memory()
@@ -766,7 +775,6 @@ class VoiceWidget(QWidget):
         new_offset_ms = int(p * self._player_duration_ms)
         self._player_offset_ms = new_offset_ms
 
-        # UI فقط پوزیشن را نشان دهد
         self.vu.set_mode("playback")
         self.vu.set_playback_progress(p)
 
@@ -775,22 +783,14 @@ class VoiceWidget(QWidget):
         )
 
         if self._playback_mode:
-            # اگر در حال پخش بودیم، از نقطه جدید ادامه بده
             self._start_playback(data, sr, self._player_offset_ms)
         else:
-            # در غیر این صورت، فقط پوزیشن را عوض کردیم، پخش نمی‌کنیم
             self._player_start_t = None
 
     def _on_report_clicked(self):
         print('report')
         self._on_save_clicked()  # save audio
         asyncio.create_task(self.patient_widget.open_report_in_echo_mind(self._file_path))
-
-
-        """
-        فعلاً کاری انجام ندهد، بعداً خودت پیاده‌سازی می‌کنی.
-        """
-        pass
 
     # async def open_report_in_echo_mid(self):
     #     echo_mind_window = self.patient_widget.ai_chat_layout_ui()  # open ECHO MIND window
