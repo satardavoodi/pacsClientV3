@@ -1,0 +1,3951 @@
+from PySide6.QtCore import QSize, Qt, QPoint, QTimer
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtWidgets import QPushButton, QToolBar, QToolButton, QMenu, QWidgetAction, QHBoxLayout, QVBoxLayout, \
+    QLabel, QWidget, \
+    QGroupBox, QApplication, QProgressDialog,QScrollArea,QFrame
+import qtawesome as qta
+from PySide6.QtGui import QFont
+import os
+import random
+from PacsClient.pacs.patient_tab.interactor_styles import (
+    RulerInteractorStyle, EraserInteractorStyle, AngleInteractorStyle, TwoLineAngleInteractorStyle, ArrowInteractorStyle,
+    TextInteractorStyle, DefaultInteractionInteractorStyle, RotateInteractorStyle, RoiInteractorStyle, ToolAccess)
+from PacsClient.pacs.patient_tab.interactor_styles.ai_chat_interactorstyle import AIChatInteractorStyle
+
+from PacsClient.pacs.patient_tab.utils import NodeViewer, MatrixSelector
+from PacsClient.utils import ICON_PATH, upload_attachments_for_study
+from PacsClient.utils.config import ATTACHMENT_PATH
+from PacsClient.utils import list_files_in_folder
+from PacsClient.utils import get_attachments_uploaded
+
+from .voice_tool_ui import VoiceWidget
+from .attachments_dropdown import AttachmentsDropdownWidget
+from threading import Thread
+
+
+def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa'):
+    """
+    ساخت دکمه dropdown با UI مدرن و یکپارچه
+    
+    Args:
+        text: متن دکمه
+        icon_name: نام فایل آیکون (اختیاری)
+        icon_color: رنگ آیکون fontawesome (پیش‌فرض: آبی)
+    """
+    btn = QPushButton(f"  {text}")  # فاصله برای آیکون
+    
+    if icon_name is not None:
+        if icon_name.startswith('fa'):  # fontawesome icon
+            btn.setIcon(qta.icon(icon_name, color=icon_color))
+        else:  # file icon
+            icon = QIcon(f"{ICON_PATH}/{icon_name}")
+            btn.setIcon(icon)
+        btn.setIconSize(QSize(18, 18))
+    
+    btn.setCursor(Qt.PointingHandCursor)
+    btn.setStyleSheet("""
+        QPushButton {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #2d3748, stop:1 #1f2937);
+            color: #f3f4f6;
+            border: 1px solid #4b5563;
+            border-radius: 6px;
+            padding: 10px 14px;
+            text-align: left;
+            font-size: 13px;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 500;
+        }
+        QPushButton:hover {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #374151, stop:1 #2d3748);
+            border-color: #60a5fa;
+            color: #ffffff;
+        }
+        QPushButton:pressed {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #1f2937, stop:1 #111827);
+            border-color: #3b82f6;
+        }
+    """)
+    
+    return btn
+
+
+def create_tool_btn(parent, name, icon_name=None, text_icon=None, icon_size: QSize | tuple[int, int] | int = 20):
+    """
+    icon_size:
+      - عدد (مثلاً 28) → 28x28
+      - tuple (w, h)  → wxh
+      - QSize(...)    → همان
+    """
+    # نرمال‌سازی اندازه برای QSS
+    if isinstance(icon_size, int):
+        w = h = icon_size
+    elif isinstance(icon_size, tuple):
+        w, h = icon_size
+    elif isinstance(icon_size, QSize):
+        w, h = icon_size.width(), icon_size.height()
+    else:
+        w = h = 28
+
+    btn = QPushButton(parent)
+    btn.setCheckable(True)
+    btn.setToolTip(name)
+    btn.setCursor(Qt.PointingHandCursor)
+
+    if icon_name is None:
+        btn.setText(text_icon or "")
+    else:
+        icon = QIcon(f"{ICON_PATH}/{icon_name}")
+        btn.setIcon(icon)
+        # اگر نمی‌خواهی به setIconSize دست بزنی، این خط را می‌توانی حذف کنی
+        btn.setIconSize(QSize(20, 20))  # این مقدار با qproperty-iconSize override می‌شود
+
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            qproperty-iconSize: {w}px {h}px;   /* ← اندازه‌ی داینامیک از پارامتر تابع */
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #374151, stop:1 #1f2937);
+            color: #e5e7eb;
+            border: 1px solid #4b5563;
+            border-radius: 6px;
+            padding: 4px 6px;
+            margin: 1px;
+            min-width: 36px;
+            min-height: 36px;
+            font-size: 13px;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 500;
+        }}
+        QPushButton:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #4b5563, stop:1 #374151);
+            border-color: #6b7280;
+        }}
+        QPushButton:pressed {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #1f2937, stop:1 #111827);
+        }}
+        QPushButton:checked {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #059669, stop:1 #047857);
+            border-color: #10b981;
+            color: #ffffff;
+        }}
+        QPushButton:disabled {{
+            background: #1f2937;
+            border-color: #374151;
+            color: #6b7280;
+        }}
+    """)
+
+    return btn
+
+
+class BadgeButton(QPushButton):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # برچسبِ نشان (badge)
+        self._badge = QLabel(self)
+        self._badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # استایل: gradient مدرن با طرح toolbar
+        self._badge.setStyleSheet("""
+            QLabel {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #dc2626, stop:1 #b91c1c);  /* red gradient */
+                color: #ffffff;
+                border: 1px solid rgba(220, 38, 38, 0.4);  /* خط دور ملایم‌تر */
+                border-radius: 8px;          /* همخوانی با border-radius toolbar */
+                padding: 1px 4px;            /* padding بهتر */
+                font-weight: 600;
+                font-family: 'Roboto', sans-serif;
+            }
+        """)
+        f = QFont()
+        f.setPointSize(7)   # کوچک‌تر برای سازگاری بهتر
+        f.setFamily('Roboto')
+        self._badge.setFont(f)
+        self._badge.setFixedHeight(16)  # کمی کوچک‌تر برای ظاهر بهتر
+        # self._badge.hide()
+
+        self._count = 0
+
+    def setCount(self, n: int):
+        """تنظیم عدد badge؛ اگر <=0 باشد مخفی می‌شود."""
+        self._count = max(0, int(n))
+        if self._count <= 0:
+            self._badge.hide()
+        else:
+            # نمایش 99+ برای اعداد بزرگ
+            text = f"{self._count}" if self._count < 100 else "99+"
+            self._badge.setText(text)
+            
+            # محاسبه عرض بر اساس طول متن
+            # برای اعداد تک رقمی: 20px، دو رقمی: 24px، 99+: 28px
+            text_len = len(text)
+            if text_len == 1:
+                min_width = 20
+            elif text_len == 2:
+                min_width = 24
+            else:  # "99+"
+                min_width = 28
+            
+            self._badge.setFixedWidth(min_width)
+            self._badge.show()
+        self._repositionBadge()
+
+    def increment(self, step: int = 1):
+        self.setCount(self._count + step)
+
+    def decrement(self, step: int = 1):
+        self.setCount(self._count - step)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._repositionBadge()
+
+    def _repositionBadge(self):
+        # if not self._badge.isVisible():
+        #     return
+        # موقعیت بهتر: گوشه بالا-راست با فاصله کمتر
+        margin_x = 1  # فاصله از راست
+        margin_y = 0  # فاصله از بالا (به خط حاشیه نزدیک‌تر)
+        x = self.width() - self._badge.width() - margin_x
+        y = margin_y
+        self._badge.move(x, y)
+
+
+class ToolbarManager:
+    def __init__(self, patient_widget):
+        self.patient_widget = patient_widget
+        self.tool_access = ToolAccess()
+        self.tool_selected = None
+        self.tools_button = {}
+
+        # ✅ Initialize soundbox here
+        # Pass the correct parent and methods
+        self.__soundbox = VoiceWidget(
+            patient_widget=patient_widget,
+            method_update_audio_counter=self.update_audio_counter,
+            method_check_status_mic_btn=self.turn_on_off_mic_btn
+        )
+    def _show_curved_mpr_panel(self):
+        """Show Curved MPR control panel"""
+        try:
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget
+            from PySide6.QtCore import Qt
+            
+            selected_widget = self.patient_widget.selected_widget
+            
+            if not self.is_vtk_widget(selected_widget):
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.patient_widget, "Error", "Please select a valid viewer first.")
+                return
+            
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.patient_widget, "Error", "No image loaded in viewer.")
+                return
+            
+            # Create panel
+            self._curved_mpr_panel = QDialog(self.patient_widget)
+            self._curved_mpr_panel.setWindowTitle("Curved MPR")
+            self._curved_mpr_panel.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
+            self._curved_mpr_panel.setMinimumSize(280, 350)
+            self._curved_mpr_panel.setStyleSheet("""
+                QDialog {
+                    background: #1f2937;
+                    border: 2px solid #7c3aed;
+                    border-radius: 10px;
+                }
+                QLabel {
+                    color: #f3f4f6;
+                    font-size: 13px;
+                }
+                QListWidget {
+                    background: #111827;
+                    color: #fbbf24;
+                    border: 1px solid #374151;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    font-family: 'Consolas', monospace;
+                }
+                QPushButton {
+                    background: #374151;
+                    color: #f3f4f6;
+                    border: 1px solid #4b5563;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-size: 13px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    background: #4b5563;
+                    border-color: #6b7280;
+                }
+                QPushButton:checked {
+                    background: #7c3aed;
+                    border-color: #8b5cf6;
+                }
+            """)
+            
+            layout = QVBoxLayout(self._curved_mpr_panel)
+            layout.setContentsMargins(15, 15, 15, 15)
+            layout.setSpacing(10)
+            
+            # Header
+            header = QLabel("Curved MPR Path Builder")
+            header.setStyleSheet("font-size: 16px; font-weight: bold; color: #8b5cf6;")
+            layout.addWidget(header)
+            
+            # Instructions
+            instructions = QLabel("1. Click 'Start Adding Points'\n2. Click on image to add points\n3. Click 'Generate' when done")
+            instructions.setStyleSheet("color: #9ca3af; font-size: 11px;")
+            layout.addWidget(instructions)
+            
+            # Points list
+            points_label = QLabel("Points:")
+            layout.addWidget(points_label)
+            
+            self._points_list = QListWidget()
+            self._points_list.setMaximumHeight(150)
+            layout.addWidget(self._points_list)
+            
+            # Point count label
+            self._point_count_label = QLabel("Points: 0")
+            self._point_count_label.setStyleSheet("color: #fbbf24; font-weight: bold;")
+            layout.addWidget(self._point_count_label)
+            
+            # Buttons
+            btn_layout = QHBoxLayout()
+            
+            # Start/Stop adding points button
+            self._add_points_btn = QPushButton("Start Adding Points")
+            self._add_points_btn.setCheckable(True)
+            self._add_points_btn.setStyleSheet("""
+                QPushButton {
+                    background: #059669;
+                    border-color: #10b981;
+                }
+                QPushButton:checked {
+                    background: #dc2626;
+                    border-color: #ef4444;
+                }
+                QPushButton:hover {
+                    background: #047857;
+                }
+                QPushButton:checked:hover {
+                    background: #b91c1c;
+                }
+            """)
+            self._add_points_btn.clicked.connect(self._toggle_point_adding)
+            btn_layout.addWidget(self._add_points_btn)
+            
+            # Clear button
+            clear_btn = QPushButton("Clear")
+            clear_btn.clicked.connect(self._clear_curved_mpr_points)
+            btn_layout.addWidget(clear_btn)
+            
+            layout.addLayout(btn_layout)
+            
+            # Generate button
+            generate_btn = QPushButton("Generate Curved MPR")
+            generate_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #7c3aed, stop:1 #6d28d9);
+                    border-color: #8b5cf6;
+                    padding: 12px;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #8b5cf6, stop:1 #7c3aed);
+                }
+            """)
+            generate_btn.clicked.connect(self._generate_curved_mpr)
+            layout.addWidget(generate_btn)
+            
+            # Close button
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(self._close_curved_mpr_panel)
+            layout.addWidget(close_btn)
+            
+            # Store reference to viewer
+            self._curved_mpr_viewer = selected_widget.image_viewer
+            
+            # Clear any previous points
+            self._curved_mpr_viewer.curved_mpr_points = []
+            self._curved_mpr_viewer._clear_curved_mpr_visuals()
+            
+            self._curved_mpr_panel.show()
+            
+        except Exception as e:
+            print(f"[CURVED MPR] Error showing panel: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _toggle_point_adding(self):
+        """Toggle point adding mode"""
+        try:
+            checked = self._add_points_btn.isChecked()
+            
+            if checked:
+                self._add_points_btn.setText("Stop Adding (Click Here)")
+                self._curved_mpr_viewer.enable_curved_mpr_mode(True)
+                
+                # Add callback to update points list
+                self._original_add_point = self._curved_mpr_viewer._add_curved_mpr_point
+                def new_add_point(point_3d):
+                    self._original_add_point(point_3d)
+                    self._update_points_list()
+                self._curved_mpr_viewer._add_curved_mpr_point = new_add_point
+                
+            else:
+                self._add_points_btn.setText("Start Adding Points")
+                self._curved_mpr_viewer.enable_curved_mpr_mode(False)
+                
+                # Restore original method
+                if hasattr(self, '_original_add_point'):
+                    self._curved_mpr_viewer._add_curved_mpr_point = self._original_add_point
+                    
+        except Exception as e:
+            print(f"[CURVED MPR] Toggle error: {e}")
+    
+    def _update_points_list(self):
+        """Update points list in panel"""
+        try:
+            self._points_list.clear()
+            for i, pt in enumerate(self._curved_mpr_viewer.curved_mpr_points):
+                self._points_list.addItem(f"Point {i+1}: ({pt[0]:.1f}, {pt[1]:.1f}, {pt[2]:.1f})")
+            self._point_count_label.setText(f"Points: {len(self._curved_mpr_viewer.curved_mpr_points)}")
+        except Exception as e:
+            print(f"[CURVED MPR] Update list error: {e}")
+    
+    def _clear_curved_mpr_points(self):
+        """Clear all curved MPR points"""
+        try:
+            self._curved_mpr_viewer.curved_mpr_points = []
+            self._curved_mpr_viewer._clear_curved_mpr_visuals()
+            self._update_points_list()
+        except Exception as e:
+            print(f"[CURVED MPR] Clear error: {e}")
+    
+    def _generate_curved_mpr(self):
+        """Generate curved MPR from collected points"""
+        try:
+            points = self._curved_mpr_viewer.get_curved_mpr_points()
+            
+            if len(points) < 2:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self._curved_mpr_panel,
+                    "Not Enough Points",
+                    f"Need at least 2 points. You have {len(points)} points."
+                )
+                return
+            
+            # Disable point adding
+            if self._add_points_btn.isChecked():
+                self._add_points_btn.setChecked(False)
+                self._toggle_point_adding()
+            
+            # Generate
+            self._generate_curved_mpr_from_points(points, self._curved_mpr_viewer.vtk_image_data)
+            
+        except Exception as e:
+            print(f"[CURVED MPR] Generate error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _close_curved_mpr_panel(self):
+        """Close curved MPR panel"""
+        try:
+            # Disable point adding mode
+            if hasattr(self, '_curved_mpr_viewer'):
+                self._curved_mpr_viewer.enable_curved_mpr_mode(False)
+            
+            # Close panel
+            if hasattr(self, '_curved_mpr_panel'):
+                self._curved_mpr_panel.close()
+                self._curved_mpr_panel = None
+                
+        except Exception as e:
+            print(f"[CURVED MPR] Close error: {e}")
+    
+    def _generate_curved_mpr_from_points(self, points, image_data):
+        """Generate curved MPR from points and display it"""
+        from PySide6.QtWidgets import QMessageBox, QApplication
+        from PySide6.QtCore import Qt
+        from PacsClient.pacs.patient_tab.viewers.curved_mpr import CurvedMPRGenerator
+        
+        print(f"[CURVED MPR] Starting generation with {len(points)} points...")
+        
+        # Change cursor to wait
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        
+        try:
+            generator = CurvedMPRGenerator(image_data)
+            generator.set_centerline(points)
+            
+            # Use reasonable values for speed
+            slice_size = 150.0
+            num_slices = min(len(points) * 15, 60)
+            
+            print(f"[CURVED MPR] Generating {num_slices} slices...")
+            QApplication.processEvents()
+            
+            curved_image = generator.generate_curved_mpr(
+                slice_width=slice_size,
+                slice_height=slice_size,
+                num_slices=num_slices
+            )
+            
+            QApplication.restoreOverrideCursor()
+            
+            if curved_image:
+                dims = curved_image.GetDimensions()
+                print(f"[CURVED MPR] Generated! Dims: {dims}")
+                # Pass the generator so we can create true panoramic view
+                self._show_curved_mpr_result(curved_image, len(points), generator=generator)
+            else:
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Generation Failed",
+                    "Failed to generate Curved MPR."
+                )
+                
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            print(f"[CURVED MPR] Generation error: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            QMessageBox.critical(
+                self.patient_widget,
+                "Error",
+                f"Failed to generate Curved MPR:\n{str(e)}"
+            )
+    
+    def _show_curved_mpr_result(self, curved_image, num_points, generator=None):
+        """Show curved MPR result in main viewer grid"""
+        try:
+            from PacsClient.pacs.patient_tab.curved_mpr_panoramic_view import CurvedMPRPanoramicView
+            from PySide6.QtWidgets import QApplication
+            
+            dims = curved_image.GetDimensions()
+            scalar_range = curved_image.GetScalarRange()
+            
+            print(f"[CURVED MPR] Showing result: dims={dims}, scalar_range={scalar_range}")
+            
+            # Generate TRUE panoramic view if generator is provided
+            panoramic_image = None
+            if generator is not None:
+                try:
+                    print("[PANORAMIC] Generating true panoramic view...")
+                    QApplication.processEvents()
+                    
+                    panoramic_image = generator.generate_panoramic_view(
+                        slice_thickness_mm=10.0,  # Radial thickness: 10mm
+                        slice_height_mm=80.0,     # Vertical extent: 80mm (reduced for wider panoramic)
+                        num_positions=None,       # Auto-determine based on path length
+                        projection_type='mean'    # Mean intensity projection
+                    )
+                    
+                    if panoramic_image is not None:
+                        pano_dims = panoramic_image.GetDimensions()
+                        pano_range = panoramic_image.GetScalarRange()
+                        print(f"[PANORAMIC] ✓ Generated: {pano_dims}, range: {pano_range}")
+                    
+                except Exception as e:
+                    print(f"[PANORAMIC] ERROR generating panoramic: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    panoramic_image = None
+            
+            # Create the viewer widget
+            viewer_widget = CurvedMPRPanoramicView(
+                curved_image, 
+                num_points, 
+                panoramic_image=panoramic_image,
+                parent=self.patient_widget
+            )
+            
+            # Add to patient widget's viewer grid (replace current layout with 1x1)
+            # First, cleanup existing viewers
+            self.patient_widget.cleanup_all_viewers()
+            self.patient_widget.lst_nodes_viewer.clear()
+            
+            # Add the curved MPR viewer to the grid
+            self.patient_widget.vtk_layout.addWidget(viewer_widget, 0, 0)
+            
+            # Store reference using NodeViewer (correct import)
+            from PacsClient.pacs.patient_tab.utils import NodeViewer
+            
+            # Create a dummy NodeViewer wrapper
+            node_viewer = NodeViewer(
+                main_widget=viewer_widget,
+                vtk_widget=viewer_widget.active_viewport,  # The active viewport acts as vtk_widget
+                slider=None  # No slider for curved MPR
+            )
+            self.patient_widget.lst_nodes_viewer.append(node_viewer)
+            
+            # Set active viewport as selected widget for toolbar
+            self.patient_widget.selected_widget = viewer_widget.active_viewport
+            
+            print("[CURVED MPR] Viewer added to main grid successfully")
+            print(f"[CURVED MPR] Active viewport set to: {type(viewer_widget.active_viewport).__name__}")
+            
+        except Exception as e:
+            print(f"[CURVED MPR] ERROR showing result: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Fallback to old simple view
+            self._show_curved_mpr_result_simple(curved_image, num_points)
+    
+    def _show_curved_mpr_result_simple(self, curved_image, num_points):
+        """Fallback: Show curved MPR result using simple single-panel view"""
+        try:
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider, QFrame
+            from PySide6.QtCore import Qt
+            import vtkmodules.all as vtk
+            from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+            
+            dims = curved_image.GetDimensions()
+            scalar_range = curved_image.GetScalarRange()
+            
+            print(f"[CURVED MPR] Showing result (simple mode): dims={dims}, scalar_range={scalar_range}")
+            
+            # Create dialog
+            dialog = QDialog(self.patient_widget)
+            dialog.setWindowTitle(f"Curved MPR - {num_points} points")
+            dialog.setMinimumSize(600, 550)
+            dialog.setStyleSheet("""
+                QDialog { background: #1a1a1a; }
+                QLabel { color: #f3f4f6; font-size: 13px; }
+                QPushButton { background: #374151; color: #f3f4f6; border: 1px solid #4b5563; border-radius: 6px; padding: 8px 16px; }
+                QPushButton:hover { background: #4b5563; }
+                QSlider::groove:horizontal { background: #374151; height: 8px; border-radius: 4px; }
+                QSlider::handle:horizontal { background: #8b5cf6; width: 18px; margin: -5px 0; border-radius: 9px; }
+            """)
+            
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(10, 10, 10, 10)
+            layout.setSpacing(8)
+            
+            # Header
+            header = QLabel(f"Curved MPR - {dims[0]}x{dims[1]} | {dims[2]} slices")
+            header.setStyleSheet("font-size: 14px; font-weight: bold; color: #8b5cf6;")
+            layout.addWidget(header)
+            
+            # VTK Widget container
+            container = QFrame()
+            container.setFrameStyle(QFrame.Box | QFrame.Plain)
+            container.setLineWidth(2)
+            container.setStyleSheet("QFrame { border: 2px solid #4b5563; background: #000000; }")
+            container_layout = QVBoxLayout(container)
+            container_layout.setContentsMargins(0, 0, 0, 0)
+            
+            # Create VTK widget
+            vtk_widget = QVTKRenderWindowInteractor(container)
+            container_layout.addWidget(vtk_widget)
+            layout.addWidget(container)
+            
+            # Use vtkImageViewer2 - simple and stable
+            viewer = vtk.vtkImageViewer2()
+            viewer.SetInputData(curved_image)
+            viewer.SetRenderWindow(vtk_widget.GetRenderWindow())
+            viewer.SetupInteractor(vtk_widget.GetRenderWindow().GetInteractor())
+            
+            # Set window/level - UNIVERSAL approach for all modalities
+            print(f"[CPR Display] Scalar range: [{scalar_range[0]:.1f}, {scalar_range[1]:.1f}]")
+            
+            # Check if image is empty
+            if scalar_range[0] == 0 and scalar_range[1] == 0:
+                print("[CPR Display] WARNING: Image is completely black (all zeros)!")
+                print("[CPR Display] This usually means points are outside the volume")
+                window, level = 1, 0  # Fallback values
+            else:
+                # UNIVERSAL: Always use full scalar range
+                # Works for: CT, CBCT, MR, PET, all body parts
+                window = max(scalar_range[1] - scalar_range[0], 1)
+                level = (scalar_range[1] + scalar_range[0]) / 2
+                print(f"[CPR Display] Auto window/level: W={window:.0f} L={level:.0f}")
+            
+            viewer.SetColorWindow(window)
+            viewer.SetColorLevel(level)
+            
+            # PANORAMIC VIEW: Show straightened image along the curve
+            # Instead of showing slice-by-slice, show the entire unfolded view
+            
+            # Create a Maximum Intensity Projection (MIP) or straightened view
+            # by extracting a 2D panoramic slice from the 3D volume
+            
+            # For panoramic view, we want to see the YZ plane (slice along X axis)
+            # This shows the "unfolded" or "straightened" path
+            viewer.SetSliceOrientationToYZ()  # Show YZ plane (panoramic)
+            viewer.SetSlice(dims[0] // 2)  # Middle of the straightened volume
+            
+            # Rotate display 90 degrees clockwise for proper orientation
+            renderer = viewer.GetRenderer()
+            camera = renderer.GetActiveCamera()
+            camera.Roll(-90)  # Clockwise rotation
+            renderer.ResetCameraClippingRange()
+            
+            # Setup interactive style for window/level adjustment
+            # User can adjust W/L by dragging with mouse
+            interactor = vtk_widget.GetRenderWindow().GetInteractor()
+            style = vtk.vtkInteractorStyleImage()
+            interactor.SetInteractorStyle(style)
+            
+            # Calculate middle slice
+            mid_slice = dims[2] // 2
+            
+            # Slice info
+            slice_label = QLabel(f"Slice: {mid_slice + 1} / {dims[2]} | W/L: {int(window)}/{int(level)}")
+            slice_label.setStyleSheet("font-weight: bold;")
+            layout.addWidget(slice_label)
+            
+            # Instruction label
+            info_label = QLabel("💡 Tip: Right-click + drag to adjust Window/Level")
+            info_label.setStyleSheet("color: #6b7280; font-size: 11px; font-style: italic;")
+            layout.addWidget(info_label)
+            
+            # Slider for slice navigation
+            slider = QSlider(Qt.Horizontal)
+            slider.setMinimum(0)
+            slider.setMaximum(dims[2] - 1)
+            slider.setValue(mid_slice)
+            
+            def on_slider_change(value):
+                viewer.SetSlice(value)
+                viewer.Render()
+                slice_label.setText(f"Slice: {value + 1} / {dims[2]} | W/L: {int(window)}/{int(level)}")
+            
+            slider.valueChanged.connect(on_slider_change)
+            layout.addWidget(slider)
+            
+            # Buttons
+            btn_layout = QHBoxLayout()
+            
+            prev_btn = QPushButton("< Prev")
+            next_btn = QPushButton("Next >")
+            close_btn = QPushButton("Close")
+            close_btn.setStyleSheet("background: #dc2626; border-color: #ef4444;")
+            
+            def update_slice(delta):
+                new_val = slider.value() + delta
+                if 0 <= new_val < dims[2]:
+                    slider.setValue(new_val)
+            
+            prev_btn.clicked.connect(lambda: update_slice(-1))
+            next_btn.clicked.connect(lambda: update_slice(1))
+            close_btn.clicked.connect(dialog.close)
+            
+            btn_layout.addWidget(prev_btn)
+            btn_layout.addWidget(next_btn)
+            btn_layout.addStretch()
+            btn_layout.addWidget(close_btn)
+            layout.addLayout(btn_layout)
+            
+            # Initialize
+            vtk_widget.Initialize()
+            viewer.Render()
+            vtk_widget.Start()
+            
+            # Store viewer reference
+            dialog._viewer = viewer
+            dialog._vtk_widget = vtk_widget
+            
+            dialog.show()
+            print(f"[CURVED MPR] Viewer opened successfully")
+            
+        except Exception as e:
+            print(f"[CURVED MPR] Error showing result: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def is_vtk_widget(self, widget):
+        """Check if widget is a VTKWidget (not MPR or other custom widgets)"""
+        from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget
+        from PacsClient.pacs.patient_tab.curved_mpr_panoramic_view import CurvedMPRViewport
+        
+        # Accept VTKWidget or CurvedMPRViewport
+        return isinstance(widget, (VTKWidget, CurvedMPRViewport))
+
+    def is_mpr_viewer(self, widget):
+        """Check if widget is an MPR viewer"""
+        try:
+            # Check for MprViewerWrapper (new MPR)
+            from PacsClient.pacs.patient_tab.MprViewer.MprViewerWrapper import MprViewerWrapper
+            if hasattr(widget, '_mpr_widget') and isinstance(widget._mpr_widget, MprViewerWrapper):
+                return True
+        except:
+            pass
+        
+        try:
+            # Check for StandardMPRViewer (old MPR)
+            from PacsClient.pacs.patient_tab.viewers.standard_mpr_viewer import StandardMPRViewer
+            if hasattr(widget, '_mpr_widget') and isinstance(widget._mpr_widget, StandardMPRViewer):
+                return True
+        except:
+            pass
+        
+        return False
+    
+    def get_mpr_widget(self, widget):
+        """Get the MPR widget from a VTKWidget that has MPR active"""
+        if hasattr(widget, '_mpr_widget') and widget._mpr_widget is not None:
+            return widget._mpr_widget
+        return None
+
+    def can_use_tool(self, widget):
+        """Check if tool can be used on this widget"""
+        # Check if it's an MPR viewer
+        if self.is_mpr_viewer(widget):
+            # MPR mode - measurement tools are NOW ALLOWED with VTK widgets!
+            # No need to check Crosshairs status anymore
+            logger = __import__('logging').getLogger(__name__)
+            logger.info("✓ Measurement tools allowed in MPR (using VTK widgets)")
+            return True
+
+        # Normal VTKWidget check
+        if not self.is_vtk_widget(widget):
+            # Not MPR and not VTKWidget - not supported
+            from PySide6.QtWidgets import QMessageBox
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Information)
+            msg.setWindowTitle("Tool Not Available")
+            msg.setText("Measurement tools are not available on this widget")
+            msg.setInformativeText(
+                f"Current widget type: {type(widget).__name__}\n\n"
+                "Measurement tools work on:\n"
+                "  • Standard 2D viewers (VTKWidget)\n"
+                "  • MPR viewers (StandardMPRViewer)"
+            )
+            msg.setStandardButtons(QMessageBox.Ok)
+            msg.exec()
+            print(f"⚠️ Cannot use tool on {type(widget).__name__}")
+            return False
+
+        if not hasattr(widget, 'image_viewer') or widget.image_viewer is None:
+            print(f"⚠️ Cannot use tool - image_viewer not initialized yet")
+            return False
+        return True
+
+    def toggle_reset_all_widget(self):
+        """this method run for once. we don't need to hold active """
+
+        self.check_and_deactivate_tools()
+
+        for node in self.patient_widget.lst_nodes_viewer:
+            node: NodeViewer
+            selected_widget = node.vtk_widget
+
+            last_series_showed_on_viewer = node.vtk_widget.last_series_show
+
+            vtk_image_data = self.patient_widget.lst_thumbnails_data[last_series_showed_on_viewer]['vtk_image_data']
+            metadata = self.patient_widget.lst_thumbnails_data[last_series_showed_on_viewer]['metadata']
+
+            node.vtk_widget.reset_image(vtk_image_data, metadata)
+            ###############################################################
+            # self.toggle_reset_selected_widget(node.vtk_widget)
+            ###############################################################
+
+            # this is the last series showed on selected widget
+            series_index = selected_widget.last_series_show
+
+            vtk_image_data = self.patient_widget.lst_thumbnails_data[series_index]['vtk_image_data']
+            metadata = self.patient_widget.lst_thumbnails_data[series_index]['metadata']
+            selected_widget.reset_image(vtk_image_data, metadata)
+
+            selected_widget.set_new_interactorstyle(EraserInteractorStyle)
+            selected_widget.current_style.delete_all_widgets()
+
+            selected_widget.restore_default_interactorstyle()
+
+        self.tool_selected = None
+        self.handle_buttons_checked()
+
+    def toggle_reset_selected_widget(self, selected_widget):
+        print('reset!!')
+        last_series_show=None
+        """this method run for once. we don't need to hold active """
+        if self.tool_selected == self.tool_access.RESET:  # deactivate tool
+            self.tool_selected = None
+
+            # Restore default interactor style
+            selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
+
+        else:
+            print('reset selected:', selected_widget)
+            self.check_and_deactivate_tools()
+
+            # this is the last series showed on selected widget
+            series_index = selected_widget.last_series_show
+
+            vtk_image_data = self.patient_widget.lst_thumbnails_data[series_index]['vtk_image_data']
+            metadata = self.patient_widget.lst_thumbnails_data[series_index]['metadata']
+
+            vtk_image_data = None
+            metadata = None
+
+            print('len(self.patient_widget.lst_thumbnails_data):', len(self.patient_widget.lst_thumbnails_data))
+
+            for i in range(len(self.patient_widget.lst_thumbnails_data)):
+
+                print('series_index:', series_index)
+                print("self.patient_widget.lst_thumbnails_data[i]['metadata']['series']:", self.patient_widget.lst_thumbnails_data[i]['metadata']['series'])
+
+                if int(self.patient_widget.lst_thumbnails_data[i]['metadata']['series']['series_number']) == int(
+                        series_index):
+                    vtk_image_data = self.patient_widget.lst_thumbnails_data[i]['vtk_image_data']
+                    metadata = self.patient_widget.lst_thumbnails_data[i]['metadata']
+                    break
+
+            print('vtkimagedata:', vtk_image_data)
+            print('\nmetadata:', metadata)
+
+            if (vtk_image_data is None) or (metadata is None):
+                self.check_and_deactivate_tools()
+                return
+
+            selected_widget.reset_image(vtk_image_data, metadata)
+
+            # create an eraser instance for delete widgets from image viewer
+            selected_widget.set_new_interactorstyle(EraserInteractorStyle)
+            selected_widget.current_style.delete_all_widgets()
+
+            self.tool_selected = self.tool_access.RESET
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+
+    def toggle_ruler(self, selected_widget):
+        """Toggle ruler tool on/off for the selected viewer"""
+        # Check if we're in MPR mode
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget:
+                # Check tool state
+                is_ruler_active = self.tool_selected and self.tool_access.RULER in str(self.tool_selected)
+                
+                if is_ruler_active:
+                    # Deactivate ruler
+                    mpr_widget.deactivate_tool()
+                    self.tool_selected = self.tool_access.MPR
+                    print("✓ Ruler tool deactivated in MPR")
+                else:
+                    # Activate ruler
+                    self.check_and_deactivate_tools()
+                    mpr_widget.activate_ruler()
+                    self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.RULER}'
+                    print("✓ Ruler tool activated in MPR on all 2D views")
+                self.handle_buttons_checked()
+            return
+
+        # Normal VTKWidget mode - original code
+        if not self.is_vtk_widget(selected_widget):
+            return
+
+        if self.tool_selected == self.tool_access.RULER:  # deactivate tool
+            # Deactivate ruler
+            selected_widget.current_style.deactivate()
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:  # activate tool
+            self.check_and_deactivate_tools()
+
+            selected_widget.set_new_interactorstyle(RulerInteractorStyle)
+
+            # Activate ruler
+            selected_widget.current_style.activate()
+            self.tool_selected = self.tool_access.RULER
+            self.handle_buttons_checked()
+
+    def toggle_eraser(self, selected_widget):
+        # NO can_use_tool check - let it work
+        if not self.is_vtk_widget(selected_widget):
+            return
+
+        if self.tool_selected == self.tool_access.ERASER:  # deactivate tool
+
+            self.tool_selected = None
+            # Restore default interactor style
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            self.check_and_deactivate_tools()
+
+            # Create new eraser style and set it as the current interactor style
+            selected_widget.set_new_interactorstyle(EraserInteractorStyle)
+            self.tool_selected = self.tool_access.ERASER
+            self.handle_buttons_checked()
+
+    def toggle_angle(self, selected_widget):
+        """Toggle angle tool on/off for the selected viewer"""
+        # Check if we're in MPR mode
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget:
+                # Check tool state
+                is_angle_active = self.tool_selected and self.tool_access.ANGLE in str(self.tool_selected)
+                
+                if is_angle_active:
+                    # Deactivate angle
+                    mpr_widget.deactivate_tool()
+                    self.tool_selected = self.tool_access.MPR
+                    print("✓ Angle tool deactivated in MPR")
+                else:
+                    # Activate angle
+                    self.check_and_deactivate_tools()
+                    mpr_widget.activate_angle()
+                    self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.ANGLE}'
+                    print("✓ Angle tool activated in MPR on all 2D views")
+                self.handle_buttons_checked()
+            return
+
+        # Normal VTKWidget mode - NO can_use_tool check
+        if not self.is_vtk_widget(selected_widget):
+            return
+
+        if self.tool_selected == self.tool_access.ANGLE:  # deactivate tool
+            selected_widget.current_style.deactivate()
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            self.check_and_deactivate_tools()
+
+            # Create new angle style and set it as the current interactor style
+            selected_widget.set_new_interactorstyle(AngleInteractorStyle)
+
+            selected_widget.current_style.activate()
+            self.tool_selected = self.tool_access.ANGLE
+            self.handle_buttons_checked()
+
+    def toggle_two_line_angle(self, selected_widget):
+        """Toggle two-line angle tool on/off for the selected viewer"""
+        print(f"🔧 toggle_two_line_angle called")
+        print(f"  selected_widget: {selected_widget}")
+        print(f"  is_vtk_widget: {self.is_vtk_widget(selected_widget)}")
+        print(f"  current tool_selected: {self.tool_selected}")
+        
+        # Normal VTKWidget mode
+        if not self.is_vtk_widget(selected_widget):
+            print("  ❌ Not VTK widget, returning")
+            return
+
+        if self.tool_selected == self.tool_access.TWO_LINE_ANGLE:  # deactivate tool
+            print("  ⏹️ Deactivating two-line angle")
+            selected_widget.current_style.deactivate()
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            print("  ▶️ Activating two-line angle")
+            self.check_and_deactivate_tools()
+            print("  ✓ Deactivated previous tools")
+
+            # Create new two-line angle style and set it as the current interactor style
+            selected_widget.set_new_interactorstyle(TwoLineAngleInteractorStyle)
+            print("  ✓ Created new interactor style")
+
+            selected_widget.current_style.activate()
+            print("  ✓ Activated interactor style")
+            
+            self.tool_selected = self.tool_access.TWO_LINE_ANGLE
+            print(f"  ✓ Set tool_selected to: {self.tool_selected}")
+            
+            self.handle_buttons_checked()
+            print("  ✓ Two-Line Angle tool activated successfully!")
+
+    def toggle_arrow(self, selected_widget):
+        """Toggle arrow tool on/off for the selected viewer"""
+        # Check if we're in MPR mode
+        if self.is_mpr_viewer(selected_widget):
+            # MPR mode - use MPR measurement tools (caption)
+            # if self.tool_selected == self.tool_access.ARROW:
+            if self.tool_access.ARROW in self.tool_selected:
+                # Deactivate
+                self.tool_selected = self.tool_access.MPR
+                selected_widget._mpr_widget.measurement_tools.deactivate_tool()
+                # self.handle_buttons_checked()
+            else:
+                # Activate on ALL 2D viewports (axial, sagittal, coronal)
+                self.check_and_deactivate_tools()
+                success = selected_widget._mpr_widget.measurement_tools.activate_caption_tool('all')
+                if success:
+                    self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.ARROW}'
+                    # self.handle_buttons_checked()
+                    print(f"✓ Arrow tool activated in MPR on all 2D views")
+            return
+
+        # Normal VTKWidget mode - NO can_use_tool check
+        if not self.is_vtk_widget(selected_widget):
+            return
+
+        if self.tool_selected == self.tool_access.ARROW:  # deactivate tool
+            selected_widget.current_style.deactivate()
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            self.check_and_deactivate_tools()
+
+            # Create new arrow style and set it as the current interactor style
+            selected_widget.set_new_interactorstyle(ArrowInteractorStyle)
+
+            selected_widget.current_style.activate()
+            self.tool_selected = self.tool_access.ARROW
+            self.handle_buttons_checked()
+
+    def toggle_text(self, selected_widget):
+        # Check if tool can be used on this widget
+        if not self.can_use_tool(selected_widget):
+            return
+
+        if self.tool_selected == self.tool_access.TEXT:  # deactivate tool
+            selected_widget.current_style.deactivate()
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            self.check_and_deactivate_tools()
+
+            # Create new arrow style and set it as the current interactor style
+            selected_widget.set_new_interactorstyle(TextInteractorStyle)
+
+            selected_widget.current_style.activate()
+            self.tool_selected = self.tool_access.TEXT
+            self.handle_buttons_checked()
+
+    def toggle_zoom_to_fit(self, selected_widget):
+        """this method run for once. we don't need to hold active """
+        if self.tool_selected == self.tool_access.ZOOM_TO_FIT:
+            self.tool_selected = None
+
+            selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
+
+        else:
+
+            self.check_and_deactivate_tools()
+
+            selected_widget.set_new_interactorstyle(DefaultInteractionInteractorStyle)
+            selected_widget.current_style.zoom_to_fit()
+
+            self.tool_selected = self.tool_access.ZOOM_TO_FIT
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+
+    def toggle_zoom(self, selected_widget):
+        if self.tool_selected == self.tool_access.ZOOM:  # deactivate tool
+            selected_widget.current_style.deactivate(self.tool_selected)
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            self.check_and_deactivate_tools()
+            selected_widget.set_new_interactorstyle(DefaultInteractionInteractorStyle)
+            selected_widget.current_style.activate(self.tool_access.ZOOM)
+
+            self.tool_selected = self.tool_access.ZOOM
+            self.handle_buttons_checked()
+
+    def toggle_window_level(self, selected_widget):
+        if self.tool_selected == self.tool_access.WINDOW_LEVEL:
+            selected_widget.current_style.deactivate(self.tool_selected)
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            self.check_and_deactivate_tools()
+            selected_widget.set_new_interactorstyle(DefaultInteractionInteractorStyle)
+            selected_widget.current_style.activate(self.tool_access.WINDOW_LEVEL)
+
+            self.tool_selected = self.tool_access.WINDOW_LEVEL
+            self.handle_buttons_checked()
+
+    def toggle_pan(self, selected_widget):
+        if self.tool_selected == self.tool_access.PAN:
+            selected_widget.current_style.deactivate(self.tool_selected)
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            self.check_and_deactivate_tools()
+            selected_widget.set_new_interactorstyle(DefaultInteractionInteractorStyle)
+            selected_widget.current_style.activate(self.tool_access.PAN)
+
+            self.tool_selected = self.tool_access.PAN
+            self.handle_buttons_checked()
+
+    def toggle_stacked(self, selected_widget):
+        if self.tool_selected == self.tool_access.STACKED:
+            selected_widget.current_style.deactivate(self.tool_selected)
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            self.check_and_deactivate_tools()
+            selected_widget.set_new_interactorstyle(DefaultInteractionInteractorStyle)
+            selected_widget.current_style.activate(self.tool_access.STACKED)
+
+            self.tool_selected = self.tool_access.STACKED
+            self.handle_buttons_checked()
+
+    def toggle_rotation_left(self, selected_widget):
+        """this method run for once. we don't need to hold active """
+        if self.tool_selected == self.tool_access.ROTATION_LEFT:
+            self.tool_selected = None
+
+            selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
+
+        else:
+            self.check_and_deactivate_tools()
+            selected_widget.set_new_interactorstyle(RotateInteractorStyle)
+            selected_widget.current_style.activate(self.tool_access.ROTATION_LEFT)
+
+            self.tool_selected = self.tool_access.ROTATION_LEFT
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+
+    def toggle_rotation_right(self, selected_widget):
+        """this method run for once. we don't need to hold active """
+        if self.tool_selected == self.tool_access.ROTATION_RIGHT:
+            self.tool_selected = None
+
+            selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
+
+        else:
+            self.check_and_deactivate_tools()
+            selected_widget.set_new_interactorstyle(RotateInteractorStyle)
+            selected_widget.current_style.activate(self.tool_access.ROTATION_RIGHT)
+
+            self.tool_selected = self.tool_access.ROTATION_RIGHT
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+
+    def toggle_flip_horizontal(self, selected_widget):
+        """this method run for once. we don't need to hold active """
+        if self.tool_selected == self.tool_access.FLIP_HORIZONTAL:
+            self.tool_selected = None
+
+            selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
+
+        else:
+            self.check_and_deactivate_tools()
+            selected_widget.set_new_interactorstyle(RotateInteractorStyle)
+            selected_widget.current_style.activate(self.tool_access.FLIP_HORIZONTAL)
+
+            self.tool_selected = self.tool_access.FLIP_HORIZONTAL
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+
+    def toggle_flip_vertical(self, selected_widget):
+        """this method run for once. we don't need to hold active """
+        if self.tool_selected == self.tool_access.FLIP_VERTICAL:
+            self.tool_selected = None
+
+            selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
+
+        else:
+            self.check_and_deactivate_tools()
+            selected_widget.set_new_interactorstyle(RotateInteractorStyle)
+            selected_widget.current_style.activate(self.tool_access.FLIP_VERTICAL)
+
+            self.tool_selected = self.tool_access.FLIP_VERTICAL
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+
+    def toggle_capture(self, selected_widget):
+        """this method run for once. we don't need to hold active """
+        if self.tool_selected == self.tool_access.CAPTURE:
+            self.tool_selected = None
+
+            selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
+
+        else:
+            self.check_and_deactivate_tools()
+            selected_widget.set_new_interactorstyle(DefaultInteractionInteractorStyle)
+            selected_widget.current_style.activate(self.tool_access.CAPTURE)
+
+            # update counter of capture
+            self.update_capture_counter()
+
+            self.tool_selected = self.tool_access.CAPTURE
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+
+    def update_capture_counter(self):
+        study_uid = self.patient_widget.study_uid
+        if not study_uid:
+            study_uid=str(random.randint(10000,100000))  
+            print(f"generated study_uid is :{study_uid}")      
+        attach_path = ATTACHMENT_PATH / study_uid
+        lst_images = list_files_in_folder(folder_path=attach_path, patterns=["*.png", "*.jpg"])
+
+        capture_btn: BadgeButton = self.tools_button[self.tool_access.CAPTURE]
+        capture_btn.setCount(len(lst_images))
+
+    def _on_mic_clicked(self, mic_btn):
+        selected_widget = self.patient_widget.selected_widget
+
+        # 1. ابتدا فریم ویس را پنهان کن (حتی اگر نمایش داده نشده باشد)
+        soundbox = self.get_soundbox()
+        if soundbox.isVisible():
+            soundbox.hide()  # ← این خط حیاتی است: جلوی تکرار/دو فریم را می‌گیرد
+
+        # 2. چک میکروفون
+        if not soundbox.check_microphone_available():
+            self.tools_button[self.tool_access.MICROPHONE].setChecked(False)
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self.patient_widget, "Microphone Not Available",
+                                "No microphone device found. Please connect a microphone and try again.")
+            return
+
+        # 3. محاسبه موقعیت دقیق — با توجه به parent و global position
+        # ⚠️ مهم: mic_btn در یک QScrollArea داخل toolbar است → باید از parent toolbar برای offset استفاده کنیم
+        toolbar = self.patient_widget.findChild(QToolBar)  # یا اگر reference داری، مستقیم استفاده کن
+        if not toolbar:
+            toolbar = self.patient_widget.toolbar  # فرض می‌کنیم یک attr toolbar دارید
+
+        # محاسبه position نسبت به window (نه نسبت به toolbar)
+        btn_global_pos = mic_btn.mapToGlobal(QPoint(0, mic_btn.height()))
+        # اگر toolbar در scroll area است، ممکن است نیاز به offset اضافه داشته باشیم:
+        # ولی بهترین راه: از parent widget toolbar استفاده کنیم و offset را از آن بگیریم
+        toolbar_global_pos = toolbar.mapToGlobal(QPoint(0, 0))
+        # فرض کنیم mic_btn در toolbar قرار دارد و toolbar خودش در main window
+        final_x = btn_global_pos.x()
+        final_y = btn_global_pos.y()
+
+        # 4. تنظیم موقعیت فریم و نمایش
+        soundbox.move(final_x, final_y)
+        soundbox.setFixedWidth(320)  # ثابت — نه auto
+        soundbox.setFixedHeight(180)
+        soundbox.raise_()
+        soundbox.activateWindow()
+        soundbox.show()
+
+        # 5. شروع/توقف ضبط
+        soundbox.toggle_recording(selected_widget)
+
+        # 6. وضعیت دکمه
+        if self.tool_selected == self.tool_access.MICROPHONE:
+            self.tool_selected = None
+            self.update_audio_counter()
+        else:
+            self.tool_selected = self.tool_access.MICROPHONE
+            self.handle_buttons_checked()
+
+
+    def toggle_microphone(self, selected_widget, mic_btn):
+        if self.tool_selected == self.tool_access.MICROPHONE:
+            # Stop recording
+            self.tool_selected = None
+            self.get_soundbox().toggle_recording(selected_widget)
+            self.handle_buttons_checked()
+            self.update_audio_counter()
+        else:
+            # Check microphone availability
+            if not self.get_soundbox().check_microphone_available():
+                self.tools_button[self.tool_access.MICROPHONE].setChecked(False)
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Microphone Not Available",
+                    "No microphone device found. Please connect a microphone and try again."
+                )
+                return False
+
+            # Start recording
+            # First show the popup, then start recording
+            self.get_soundbox().show_under(mic_btn)
+            self.get_soundbox().toggle_recording(selected_widget)
+
+            self.tool_selected = self.tool_access.MICROPHONE
+            self.handle_buttons_checked()
+            return True
+
+    def update_audio_counter(self):
+        study_uid = self.patient_widget.study_uid
+        if not study_uid:
+            study_uid=str(random.randint(10000,100000))  
+            print(f"generated study_uid is : {study_uid}")
+        attach_path = ATTACHMENT_PATH / study_uid
+        lst_images = list_files_in_folder(folder_path=attach_path, patterns=["*.mp3", "*.wav", "*.m4a", "*.ogg", "*.webm"])
+
+        mic_btn: BadgeButton = self.tools_button[self.tool_access.MICROPHONE]
+        mic_btn.setCount(len(lst_images))
+
+    def get_soundbox(self):
+        """Get the VoiceWidget instance"""
+        if not hasattr(self, '__soundbox'):
+            # Initialize if not exists
+            self.__soundbox = VoiceWidget(
+                patient_widget=self.patient_widget,
+                method_update_audio_counter=self.update_audio_counter,
+                method_check_status_mic_btn=self.turn_on_off_mic_btn
+            )
+        return self.__soundbox
+
+    def turn_on_off_mic_btn(self, status=None):
+        # selected_widget = self.patient_widget.selected_widget
+        # self.toggle_microphone(selected_widget=selected_widget, mic_btn=mic_btn)
+        mic_btn: QPushButton = self.tools_button[self.tool_access.MICROPHONE]
+
+        if status is None:  # check auto
+            if mic_btn.isChecked():
+                mic_btn.setChecked(False)
+                self.tool_selected = None
+
+            else:
+                mic_btn.setChecked(True)
+                self.tool_selected = self.tool_access.MICROPHONE
+
+        else:  # set custom status
+            if status:  # turn on
+                mic_btn.setChecked(True)
+                self.tool_selected = self.tool_access.MICROPHONE
+
+            else:
+                mic_btn.setChecked(False)
+                self.tool_selected = None
+
+    def _get_study_uid(self):
+        """Get study UID from selected widget"""
+        if not hasattr(self.patient_widget, 'selected_widget') or not self.patient_widget.selected_widget:
+            return None
+
+        selected_widget = self.patient_widget.selected_widget
+
+        # Try to get study_uid from image_viewer
+        if hasattr(selected_widget, 'image_viewer') and selected_widget.image_viewer:
+            if hasattr(selected_widget.image_viewer, 'metadata_fixed'):
+                return selected_widget.image_viewer.metadata_fixed.get('study_uid')
+
+        return None
+
+    def _show_audio_dropdown(self, button):
+        """Show dropdown menu for saved audio recordings"""
+        print("[DEBUG] _show_audio_dropdown called!")
+        study_uid = self._get_study_uid()
+        print(f"[DEBUG] Study UID: {study_uid}")
+        if not study_uid:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self.patient_widget,
+                "No Study Selected",
+                "Please select a study to view saved recordings."
+            )
+            return
+
+        try:
+            dropdown = AttachmentsDropdownWidget(study_uid, 'audio', self.patient_widget,
+                                                 method_update_counter=self.update_audio_counter,
+                                                 method_open_report=self.patient_widget.open_report_in_echo_mind)
+            print("[DEBUG] Dropdown created successfully")
+
+            # Position dropdown below the button
+            button_pos = button.mapToGlobal(QPoint(0, button.height()))
+            print(f"[DEBUG] Button position: {button_pos}")
+            dropdown.move(button_pos)
+            dropdown.setFixedWidth(350)  # Increased width for audio player
+            dropdown.setFixedHeight(500)
+            dropdown.raise_()
+            dropdown.activateWindow()
+
+            print("[DEBUG] About to show dropdown...")
+            dropdown.show()
+            print("[DEBUG] Dropdown shown!")
+        except Exception as e:
+            print(f"[ERROR] Failed to show dropdown: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _show_capture_dropdown(self, button):
+        """Show dropdown menu for saved captured images"""
+        print("[DEBUG] _show_capture_dropdown called!")
+        study_uid = self._get_study_uid()
+        print(f"[DEBUG] Study UID: {study_uid}")
+        if not study_uid:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self.patient_widget,
+                "No Study Selected",
+                "Please select a study to view saved images."
+            )
+            return
+
+        try:
+            dropdown = AttachmentsDropdownWidget(study_uid, 'image', self.patient_widget,
+                                                 method_update_counter=self.update_capture_counter)
+            print("[DEBUG] Dropdown created successfully")
+
+            # Position dropdown below the button
+            button_pos = button.mapToGlobal(QPoint(0, button.height()))
+            print(f"[DEBUG] Button position: {button_pos}")
+            dropdown.move(button_pos)
+            dropdown.setFixedWidth(350)
+            dropdown.setFixedHeight(500)
+            dropdown.raise_()
+            dropdown.activateWindow()
+
+            print("[DEBUG] About to show dropdown...")
+            dropdown.show()
+            print("[DEBUG] Dropdown shown!")
+        except Exception as e:
+            print(f"[ERROR] Failed to show dropdown: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _show_measurements_dropdown(self, button):
+        try:
+            dropdown = QWidget(self.patient_widget)
+            dropdown.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+            dropdown.setAttribute(Qt.WA_DeleteOnClose)
+            dropdown.setStyleSheet("""
+                QWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #1f2937, stop:1 #111827);
+                    border: 2px solid #374151;
+                    border-radius: 10px;
+                }
+            """)
+
+            layout = QVBoxLayout(dropdown)
+            layout.setContentsMargins(10, 10, 10, 10)
+            layout.setSpacing(8)
+
+            # Header with icon
+            from PySide6.QtWidgets import QLabel
+            header = QLabel("📏 Measurement Tools")
+            header.setStyleSheet("""
+                QLabel {
+                    color: #f7fafc;
+                    font-size: 15px;
+                    font-weight: 700;
+                    font-family: 'Roboto', sans-serif;
+                    padding: 6px 8px;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #3b82f6, stop:1 #2563eb);
+                    border-radius: 6px;
+                    margin-bottom: 4px;
+                }
+            """)
+            layout.addWidget(header)
+
+            # Angle button
+            angle_btn = create_dropdown_tool('Angle', 'angle.png', '#f59e0b')
+            angle_btn.clicked.connect(lambda: [
+                self.toggle_angle(self.patient_widget.selected_widget), dropdown.close()])
+            layout.addWidget(angle_btn)
+            self.tools_button[self.tool_access.ANGLE] = angle_btn
+
+            # Two-Line Angle button
+            two_line_angle_btn = create_dropdown_tool('Two-Line Angle', 'fa5s.drafting-compass', '#06b6d4')
+            two_line_angle_btn.clicked.connect(lambda: [
+                print("🖱️ Two-Line Angle button clicked!"),
+                self.toggle_two_line_angle(self.patient_widget.selected_widget), 
+                dropdown.close()])
+            layout.addWidget(two_line_angle_btn)
+            self.tools_button[self.tool_access.TWO_LINE_ANGLE] = two_line_angle_btn
+            print(f"✓ Two-Line Angle button added to dropdown")
+
+            # Arrow button
+            arrow_btn = create_dropdown_tool('Arrow', 'arrow.png', '#10b981')
+            arrow_btn.clicked.connect(lambda: [
+                self.toggle_arrow(self.patient_widget.selected_widget), dropdown.close()])
+            layout.addWidget(arrow_btn)
+            self.tools_button[self.tool_access.ARROW] = arrow_btn
+
+            # Text button
+            text_btn = create_dropdown_tool('Text', 'text.png', '#8b5cf6')
+            text_btn.clicked.connect(lambda: [
+                self.toggle_text(self.patient_widget.selected_widget), dropdown.close()])
+            layout.addWidget(text_btn)
+            self.tools_button[self.tool_access.TEXT] = text_btn
+
+            # ROI button
+            roi_btn = create_dropdown_tool('ROI', 'Pentagon.svg', '#ec4899')
+            roi_btn.clicked.connect(lambda: [
+                self.toggle_roi(self.patient_widget.selected_widget), dropdown.close()])
+            layout.addWidget(roi_btn)
+            self.tools_button[self.tool_access.ROI] = roi_btn
+
+            # Position dropdown below the button
+            button_pos = button.mapToGlobal(QPoint(0, button.height()))
+            dropdown.move(button_pos)
+            dropdown.setFixedWidth(260)
+            dropdown.raise_()
+            dropdown.activateWindow()
+
+            dropdown.show()
+        except Exception as e:
+            print(f"[ERROR] Failed to show measurements dropdown: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _show_mpr_dropdown(self, button):
+        """Show dropdown menu for MIP/MinIP/Thick Slab options"""
+        try:
+            dropdown = QWidget(self.patient_widget)
+            dropdown.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+            dropdown.setAttribute(Qt.WA_DeleteOnClose)
+            dropdown.setStyleSheet("""
+                QWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #1f2937, stop:1 #111827);
+                    border: 2px solid #374151;
+                    border-radius: 10px;
+                }
+            """)
+
+            layout = QVBoxLayout(dropdown)
+            layout.setContentsMargins(10, 10, 10, 10)
+            layout.setSpacing(8)
+
+            # Header with icon
+            from PySide6.QtWidgets import QLabel
+            header = QLabel("🎨 Visualization Options")
+            header.setStyleSheet("""
+                QLabel {
+                    color: #f7fafc;
+                    font-size: 15px;
+                    font-weight: 700;
+                    font-family: 'Roboto', sans-serif;
+                    padding: 6px 8px;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #7c3aed, stop:1 #6d28d9);
+                    border-radius: 6px;
+                    margin-bottom: 4px;
+                }
+            """)
+            layout.addWidget(header)
+
+            # Curved MPR button
+            curved_mpr_btn = create_dropdown_tool('Curved MPR', 'fa5s.bezier-curve', '#8b5cf6')
+            curved_mpr_btn.clicked.connect(lambda: [
+                self._show_curved_mpr_panel(),
+                dropdown.close()
+            ])
+            layout.addWidget(curved_mpr_btn)
+            
+            # MIP button
+            mip_btn = create_dropdown_tool('MIP - Maximum Intensity', 'fa5s.layer-group', '#60a5fa')
+            mip_btn.clicked.connect(lambda: [
+                self.toggle_mip(self.patient_widget.selected_widget),
+                dropdown.close()
+            ])
+            layout.addWidget(mip_btn)
+
+            # MinIP button
+            minip_btn = create_dropdown_tool('MinIP - Minimum Intensity', 'fa5s.layer-group', '#34d399')
+            minip_btn.clicked.connect(lambda: [
+                self.toggle_minip(self.patient_widget.selected_widget),
+                dropdown.close()
+            ])
+            layout.addWidget(minip_btn)
+
+            # Thick Slab button
+            thick_btn = create_dropdown_tool('Thick Slab MIP', 'fa5s.layer-group', '#f59e0b')
+            thick_btn.clicked.connect(lambda: [
+                self.toggle_thick_slab(self.patient_widget.selected_widget),
+                dropdown.close()
+            ])
+            layout.addWidget(thick_btn)
+
+            # Position dropdown below the button
+            button_pos = button.mapToGlobal(QPoint(0, button.height()))
+            dropdown.move(button_pos)
+            dropdown.setFixedWidth(280)
+            dropdown.raise_()
+            dropdown.activateWindow()
+
+            dropdown.show()
+        except Exception as e:
+            print(f"[ERROR] Failed to show MPR dropdown: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def toggle_roi(self, selected_widget):
+        if self.tool_selected == self.tool_access.ROI:  # deactivate tool
+            selected_widget.current_style.deactivate()
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            self.check_and_deactivate_tools()
+
+            # Create new roi style and set it as the current interactor style
+            selected_widget.set_new_interactorstyle(RoiInteractorStyle)
+
+            selected_widget.current_style.activate()
+            self.tool_selected = self.tool_access.ROI
+            self.handle_buttons_checked()
+
+    def toggle_ai_chat(self, selected_widget):
+        if selected_widget is None:
+            print("No widget selected.") #Debugging statement
+            return  # Exit if no widget is selected
+
+
+        if self.tool_selected == self.tool_access.AI_CHAT:  # deactivate tool
+            self.tool_selected = None
+
+            selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
+
+        else:
+            self.check_and_deactivate_tools()
+            selected_widget.set_new_interactorstyle(AIChatInteractorStyle)
+            selected_widget.current_style.check_status(self.patient_widget)
+
+            self.tool_selected = self.tool_access.AI_CHAT
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+
+    def toggle_mip(self, selected_widget):
+        """Apply Maximum Intensity Projection - Simple Pure NumPy approach"""
+        import logging
+        import vtkmodules.all as vtk
+        from PySide6.QtWidgets import QMessageBox, QInputDialog, QProgressDialog
+        from PySide6.QtCore import Qt, QCoreApplication
+        import numpy as np
+        from vtkmodules.util import numpy_support
+        logger = logging.getLogger(__name__)
+
+        try:
+            logger.info("=" * 60)
+            logger.info("2D MIP - Pure NumPy approach")
+            logger.info("=" * 60)
+
+            # Check if widget has image data
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                logger.warning("No image loaded in selected viewport")
+                QMessageBox.warning(self.patient_widget, "No Image", "Please load an image first")
+                return
+
+            # Get thickness from user
+            thickness, ok = QInputDialog.getInt(
+                self.patient_widget,
+                "MIP Thickness",
+                "Enter slab thickness (number of slices):",
+                10,  # default
+                1,  # min
+                30  # max
+            )
+
+            if not ok:
+                return
+
+            logger.info(f"Creating MIP volume with thickness: {thickness} slices")
+
+            # Get the original 3D volume
+            image_viewer = selected_widget.image_viewer
+
+            # Store original data - IMPORTANT: Update if series changed!
+            # Check if this is a new series or if we need to update the backup
+            current_series = selected_widget.last_series_show
+            need_new_backup = (
+                    not hasattr(selected_widget, '_original_image_data') or
+                    not hasattr(selected_widget, '_mip_series') or
+                    selected_widget._mip_series != current_series
+            )
+
+            if need_new_backup:
+                selected_widget._original_image_data = image_viewer.vtk_image_data
+                selected_widget._original_slice = image_viewer.GetSlice()
+                selected_widget._mip_series = current_series
+                logger.info(f"Original data stored for series {current_series}")
+            else:
+                logger.info(f"Using existing backup for series {current_series}")
+
+            original_data = selected_widget._original_image_data
+            dims = original_data.GetDimensions()
+            spacing = original_data.GetSpacing()
+            origin = original_data.GetOrigin()
+
+            logger.info(f"Original - dims: {dims}, spacing: {spacing}, origin: {origin}")
+
+            # Convert VTK to NumPy
+            vtk_array = original_data.GetPointData().GetScalars()
+            np_data = numpy_support.vtk_to_numpy(vtk_array)
+            np_data = np_data.reshape(dims[2], dims[1], dims[0])  # Z, Y, X order
+
+            logger.info(f"NumPy array shape: {np_data.shape}, dtype: {np_data.dtype}")
+            logger.info(f"Data range: min={np_data.min()}, max={np_data.max()}")
+
+            # Create progress dialog
+            progress = QProgressDialog("Computing MIP...", "Cancel", 0, 100, self.patient_widget)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowTitle("MIP Processing")
+            progress.setValue(0)
+            QCoreApplication.processEvents()
+
+            # Create MIP output array - same size as input
+            mip_data = np.zeros_like(np_data)
+
+            logger.info(f"Processing MIP with thickness {thickness}...")
+
+            # Compute MIP for each slice
+            half_thick = thickness // 2
+            for z in range(dims[2]):
+                if progress.wasCanceled():
+                    logger.info("Cancelled by user")
+                    return
+
+                # Update progress more frequently to avoid UI freeze
+                if z % 5 == 0:  # Changed from 10 to 5 for more frequent updates
+                    progress.setValue(int(100 * z / dims[2]))
+                    QCoreApplication.processEvents()  # Keep UI responsive
+
+                # Calculate slab range
+                z_start = max(0, z - half_thick)
+                z_end = min(dims[2], z + half_thick + 1)
+
+                # Take maximum across the slab - using NumPy for speed
+                mip_data[z] = np.max(np_data[z_start:z_end], axis=0)
+
+            progress.setValue(100)
+
+            logger.info(f"MIP computed! Output shape: {mip_data.shape}")
+            logger.info(f"MIP range: min={mip_data.min()}, max={mip_data.max()}")
+
+            # Check if MIP is different from original
+            if np.array_equal(mip_data, np_data):
+                logger.warning("WARNING: MIP data is identical to original! No MIP effect!")
+            else:
+                diff = np.abs(mip_data - np_data).sum()
+                logger.info(f"MIP is different from original, total difference: {diff}")
+
+            # Convert back to VTK
+            mip_flat = mip_data.flatten()
+            vtk_mip_array = numpy_support.numpy_to_vtk(mip_flat, deep=True, array_type=vtk_array.GetDataType())
+
+            # Create new volume
+            mip_volume = vtk.vtkImageData()
+            mip_volume.SetDimensions(dims[0], dims[1], dims[2])
+            mip_volume.SetSpacing(spacing)
+            mip_volume.SetOrigin(origin)
+            mip_volume.GetPointData().SetScalars(vtk_mip_array)
+
+            logger.info(f"MIP volume created - dims: {mip_volume.GetDimensions()}")
+            logger.info(f"MIP volume scalar range: {mip_volume.GetScalarRange()}")
+
+            # Mark MIP mode
+            selected_widget._mip_mode = 'MIP'
+            selected_widget._mip_thickness = thickness
+
+            # Update viewer
+            logger.info("Updating viewer with MIP volume...")
+            current_slice = selected_widget._original_slice
+
+            # CRITICAL FIX: Update the underlying vtk_image_data reference
+            # This ensures the viewer displays the MIP volume correctly
+            logger.info("Step 1: Updating vtk_image_data reference")
+            image_viewer.vtk_image_data = mip_volume
+
+            # Update the reslice filter with new data
+            logger.info("Step 2: Updating image_reslice filter")
+            image_viewer.image_reslice.SetInputData(mip_volume)
+            image_viewer.image_reslice.Update()
+            logger.info(f"  Reslice output range: {image_viewer.image_reslice.GetOutput().GetScalarRange()}")
+
+            # IMPORTANT: Update color mapper with new reslice output
+            # Without this, the old data will still be displayed!
+            logger.info("Step 3: Updating color_mapper")
+            image_viewer.color_mapper.SetInputConnection(image_viewer.image_reslice.GetOutputPort())
+            image_viewer.color_mapper.Update()
+            logger.info(f"  Color mapper output range: {image_viewer.color_mapper.GetOutput().GetScalarRange()}")
+
+            # Now update the viewer input
+            logger.info("Step 4: Updating viewer input")
+            image_viewer.SetInputData(image_viewer.image_reslice.GetOutput())
+            image_viewer.UpdateDisplayExtent()
+            image_viewer.SetSlice(current_slice)
+            logger.info(f"  Current slice set to: {current_slice}")
+
+            # Adjust window/level for MIP (typically needs wider range)
+            mip_range = mip_volume.GetScalarRange()
+            logger.info(f"Step 5: Adjusting window/level for MIP range: {mip_range}")
+            window = mip_range[1] - mip_range[0]
+            level = (mip_range[0] + mip_range[1]) / 2.0
+            logger.info(f"  Setting ColorWindow={window}, ColorLevel={level}")
+            image_viewer.SetColorWindow(window)
+            image_viewer.SetColorLevel(level)
+
+            # Force a complete render
+            logger.info("Step 6: Rendering...")
+            image_viewer.GetRenderer().ResetCameraClippingRange()
+            image_viewer.Render()
+            logger.info("Step 7: Render complete!")
+
+            logger.info(f"Viewer updated! Current slice: {current_slice}")
+            logger.info("=" * 60)
+
+            QMessageBox.information(
+                self.patient_widget,
+                "MIP Applied",
+                f"MIP applied!\n\n"
+                f"Thickness: {thickness} slices\n"
+                f"Data range: {mip_data.min():.0f} to {mip_data.max():.0f}\n\n"
+                f"Scroll to see MIP slices.\n"
+                f"Use 'Reset Selected' to restore."
+            )
+
+        except Exception as e:
+            logger.error(f"ERROR in MIP: {e}", exc_info=True)
+            QMessageBox.critical(self.patient_widget, "Error", f"Error: {str(e)}")
+
+    def toggle_minip(self, selected_widget):
+        """Apply Minimum Intensity Projection to 2D series - Scrollable"""
+        import logging
+        import vtkmodules.all as vtk
+        from PySide6.QtWidgets import QMessageBox, QInputDialog, QProgressDialog
+        from PySide6.QtCore import Qt, QCoreApplication
+        import numpy as np
+        from vtkmodules.util import numpy_support
+        logger = logging.getLogger(__name__)
+
+        try:
+            logger.info("=" * 60)
+            logger.info("2D SCROLLABLE MinIP BUTTON CLICKED")
+            logger.info("=" * 60)
+
+            # Check if widget has image data
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                logger.warning("No image loaded in selected viewport")
+                QMessageBox.warning(self.patient_widget, "No Image", "Please load an image first")
+                return
+
+            # Get thickness from user
+            thickness, ok = QInputDialog.getInt(
+                self.patient_widget,
+                "MinIP Thickness",
+                "Enter slab thickness (number of slices):",
+                10,  # default
+                1,  # min
+                50  # max
+            )
+
+            if not ok:
+                return
+
+            logger.info(f"Creating scrollable MinIP volume with thickness: {thickness} slices")
+
+            # Get the original 3D volume
+            image_viewer = selected_widget.image_viewer
+
+            # Store original data - IMPORTANT: Update if series changed!
+            current_series = selected_widget.last_series_show
+            need_new_backup = (
+                    not hasattr(selected_widget, '_original_image_data') or
+                    not hasattr(selected_widget, '_mip_series') or
+                    selected_widget._mip_series != current_series
+            )
+
+            if need_new_backup:
+                selected_widget._original_image_data = image_viewer.vtk_image_data
+                selected_widget._original_slice = image_viewer.GetSlice()
+                selected_widget._mip_series = current_series
+                selected_widget._mip_mode = None
+                logger.info(f"Original data stored for series {current_series}")
+            else:
+                logger.info(f"Using existing backup for series {current_series}")
+
+            original_data = selected_widget._original_image_data
+            dims = original_data.GetDimensions()
+
+            logger.info(f"Original dimensions: {dims}")
+            logger.info(f"Creating scrollable MinIP volume with thickness {thickness}")
+
+            # OPTIMIZED: Convert to NumPy for much faster processing
+            vtk_array = original_data.GetPointData().GetScalars()
+            np_data = numpy_support.vtk_to_numpy(vtk_array)
+            np_data = np_data.reshape(dims[2], dims[1], dims[0])  # Z, Y, X order
+
+            logger.info("Processing MinIP with NumPy (fast)...")
+
+            # Create progress dialog
+            progress = QProgressDialog("Computing MinIP...", "Cancel", 0, 100, self.patient_widget)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowTitle("MinIP Processing")
+            progress.setValue(0)
+            QCoreApplication.processEvents()
+
+            # Create MinIP output array
+            minip_data = np.zeros_like(np_data)
+
+            half_thick = thickness // 2
+            for z in range(dims[2]):
+                if progress.wasCanceled():
+                    logger.info("MinIP cancelled by user")
+                    return
+
+                # Update progress frequently
+                if z % 5 == 0:
+                    progress.setValue(int(100 * z / dims[2]))
+                    QCoreApplication.processEvents()
+
+                # Calculate slab range
+                z_start = max(0, z - half_thick)
+                z_end = min(dims[2], z + half_thick + 1)
+
+                # Take minimum across the slab - NumPy is very fast!
+                minip_data[z] = np.min(np_data[z_start:z_end], axis=0)
+
+                if z % 10 == 0:
+                    logger.info(f"  Processed {z}/{dims[2]} slices")
+
+            progress.setValue(100)
+
+            # Convert back to VTK
+            minip_flat = minip_data.flatten()
+            vtk_minip_array = numpy_support.numpy_to_vtk(minip_flat, deep=True,
+                                                         array_type=original_data.GetScalarType())
+
+            minip_volume = vtk.vtkImageData()
+            minip_volume.SetDimensions(dims[0], dims[1], dims[2])
+            minip_volume.SetSpacing(original_data.GetSpacing())
+            minip_volume.SetOrigin(original_data.GetOrigin())
+            minip_volume.GetPointData().SetScalars(vtk_minip_array)
+
+            logger.info(f"MinIP volume created! Dimensions: {minip_volume.GetDimensions()}")
+
+            # Mark that we're in MinIP mode
+            selected_widget._mip_mode = 'MinIP'
+            selected_widget._mip_thickness = thickness
+
+            # Update the viewer with scrollable MinIP volume
+            logger.info("Updating viewer with MinIP volume...")
+            current_slice = selected_widget._original_slice
+
+            # CRITICAL FIX: Update the underlying vtk_image_data and reslice
+            logger.info("Step 1: Updating vtk_image_data reference")
+            image_viewer.vtk_image_data = minip_volume
+
+            logger.info("Step 2: Updating image_reslice filter")
+            image_viewer.image_reslice.SetInputData(minip_volume)
+            image_viewer.image_reslice.Update()
+            logger.info(f"  Reslice output range: {image_viewer.image_reslice.GetOutput().GetScalarRange()}")
+
+            # Update color mapper
+            logger.info("Step 3: Updating color_mapper")
+            image_viewer.color_mapper.SetInputConnection(image_viewer.image_reslice.GetOutputPort())
+            image_viewer.color_mapper.Update()
+            logger.info(f"  Color mapper output range: {image_viewer.color_mapper.GetOutput().GetScalarRange()}")
+
+            logger.info("Step 4: Updating viewer input")
+            image_viewer.SetInputData(image_viewer.image_reslice.GetOutput())
+            image_viewer.UpdateDisplayExtent()
+            image_viewer.SetSlice(current_slice)
+            logger.info(f"  Current slice set to: {current_slice}")
+
+            # Adjust window/level for MinIP
+            minip_range = minip_volume.GetScalarRange()
+            logger.info(f"Step 5: Adjusting window/level for MinIP range: {minip_range}")
+            window = minip_range[1] - minip_range[0]
+            level = (minip_range[0] + minip_range[1]) / 2.0
+            logger.info(f"  Setting ColorWindow={window}, ColorLevel={level}")
+            image_viewer.SetColorWindow(window)
+            image_viewer.SetColorLevel(level)
+
+            logger.info("Step 6: Rendering...")
+            image_viewer.GetRenderer().ResetCameraClippingRange()
+            image_viewer.Render()
+            logger.info("Step 7: Render complete!")
+
+            logger.info("Scrollable MinIP applied successfully!")
+            logger.info("=" * 60)
+
+            QMessageBox.information(
+                self.patient_widget,
+                "MinIP Applied",
+                f"Scrollable Minimum Intensity Projection applied!\n\n"
+                f"Thickness: {thickness} slices\n"
+                f"You can now scroll through MinIP slices with mouse wheel.\n\n"
+                f"Tip: Use Reset tool to restore original view."
+            )
+
+        except Exception as e:
+            logger.error(f"ERROR in MinIP: {e}", exc_info=True)
+            QMessageBox.critical(self.patient_widget, "Error", f"Error applying MinIP:\n{str(e)}")
+
+    def toggle_thick_slab(self, selected_widget):
+        """Apply Thick Slab (Average) to 2D series"""
+        import logging
+        import vtkmodules.all as vtk
+        from PySide6.QtWidgets import QMessageBox, QInputDialog, QProgressDialog
+        from PySide6.QtCore import Qt, QCoreApplication
+        import numpy as np
+        from vtkmodules.util import numpy_support
+        logger = logging.getLogger(__name__)
+
+        try:
+            logger.info("=" * 60)
+            logger.info("2D THICK SLAB BUTTON CLICKED")
+            logger.info("=" * 60)
+
+            # Check if widget has image data
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                logger.warning("No image loaded in selected viewport")
+                QMessageBox.warning(self.patient_widget, "No Image", "Please load an image first")
+                return
+
+            # Get thickness from user
+            thickness, ok = QInputDialog.getInt(
+                self.patient_widget,
+                "Thick Slab Thickness",
+                "Enter slab thickness (number of slices):",
+                10,  # default
+                1,  # min
+                100  # max
+            )
+
+            if not ok:
+                return
+
+            logger.info(f"Applying Thick Slab with thickness: {thickness} slices")
+
+            # Get the original 3D volume
+            image_viewer = selected_widget.image_viewer
+
+            # Store original data - IMPORTANT: Update if series changed!
+            current_series = selected_widget.last_series_show
+            need_new_backup = (
+                    not hasattr(selected_widget, '_original_image_data') or
+                    not hasattr(selected_widget, '_mip_series') or
+                    selected_widget._mip_series != current_series
+            )
+
+            if need_new_backup:
+                selected_widget._original_image_data = image_viewer.vtk_image_data
+                selected_widget._original_slice = image_viewer.GetSlice()
+                selected_widget._mip_series = current_series
+                selected_widget._mip_mode = None
+                logger.info(f"Original data stored for series {current_series}")
+            else:
+                logger.info(f"Using existing backup for series {current_series}")
+
+            original_data = selected_widget._original_image_data
+            dims = original_data.GetDimensions()
+
+            logger.info(f"Original dimensions: {dims}")
+            logger.info(f"Creating Thick Slab volume with thickness {thickness}")
+
+            # OPTIMIZED: Convert to NumPy for much faster processing
+            vtk_array = original_data.GetPointData().GetScalars()
+            np_data = numpy_support.vtk_to_numpy(vtk_array)
+            np_data = np_data.reshape(dims[2], dims[1], dims[0])  # Z, Y, X order
+
+            logger.info("Processing Thick Slab (Average) with NumPy (fast)...")
+
+            # Create progress dialog
+            progress = QProgressDialog("Computing Thick Slab...", "Cancel", 0, 100, self.patient_widget)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowTitle("Thick Slab Processing")
+            progress.setValue(0)
+            QCoreApplication.processEvents()
+
+            # Create Thick Slab output array
+            slab_data = np.zeros_like(np_data, dtype=np.float32)  # Use float for averaging
+
+            half_thick = thickness // 2
+            for z in range(dims[2]):
+                if progress.wasCanceled():
+                    logger.info("Thick Slab cancelled by user")
+                    return
+
+                # Update progress frequently
+                if z % 5 == 0:
+                    progress.setValue(int(100 * z / dims[2]))
+                    QCoreApplication.processEvents()
+
+                # Calculate slab range
+                z_start = max(0, z - half_thick)
+                z_end = min(dims[2], z + half_thick + 1)
+
+                # Take mean (average) across the slab - NumPy is very fast!
+                slab_data[z] = np.mean(np_data[z_start:z_end], axis=0)
+
+                if z % 10 == 0:
+                    logger.info(f"  Processed {z}/{dims[2]} slices")
+
+            progress.setValue(100)
+
+            # Convert back to original data type and VTK
+            slab_data = slab_data.astype(np_data.dtype)
+            slab_flat = slab_data.flatten()
+            vtk_slab_array = numpy_support.numpy_to_vtk(slab_flat, deep=True, array_type=original_data.GetScalarType())
+
+            slab_volume = vtk.vtkImageData()
+            slab_volume.SetDimensions(dims[0], dims[1], dims[2])
+            slab_volume.SetSpacing(original_data.GetSpacing())
+            slab_volume.SetOrigin(original_data.GetOrigin())
+            slab_volume.GetPointData().SetScalars(vtk_slab_array)
+
+            logger.info(f"Thick Slab volume created! Dimensions: {slab_volume.GetDimensions()}")
+
+            # Mark that we're in Thick Slab mode
+            selected_widget._mip_mode = 'ThickSlab'
+            selected_widget._mip_thickness = thickness
+
+            # Update the viewer with scrollable Thick Slab volume
+            logger.info("Updating viewer with Thick Slab volume...")
+            current_slice = selected_widget._original_slice
+
+            # CRITICAL FIX: Update the underlying vtk_image_data and reslice
+            logger.info("Step 1: Updating vtk_image_data reference")
+            image_viewer.vtk_image_data = slab_volume
+
+            logger.info("Step 2: Updating image_reslice filter")
+            image_viewer.image_reslice.SetInputData(slab_volume)
+            image_viewer.image_reslice.Update()
+            logger.info(f"  Reslice output range: {image_viewer.image_reslice.GetOutput().GetScalarRange()}")
+
+            # Update color mapper
+            logger.info("Step 3: Updating color_mapper")
+            image_viewer.color_mapper.SetInputConnection(image_viewer.image_reslice.GetOutputPort())
+            image_viewer.color_mapper.Update()
+            logger.info(f"  Color mapper output range: {image_viewer.color_mapper.GetOutput().GetScalarRange()}")
+
+            logger.info("Step 4: Updating viewer input")
+            image_viewer.SetInputData(image_viewer.image_reslice.GetOutput())
+            image_viewer.UpdateDisplayExtent()
+            image_viewer.SetSlice(current_slice)
+            logger.info(f"  Current slice set to: {current_slice}")
+
+            # Adjust window/level for Thick Slab
+            slab_range = slab_volume.GetScalarRange()
+            logger.info(f"Step 5: Adjusting window/level for Thick Slab range: {slab_range}")
+            window = slab_range[1] - slab_range[0]
+            level = (slab_range[0] + slab_range[1]) / 2.0
+            logger.info(f"  Setting ColorWindow={window}, ColorLevel={level}")
+            image_viewer.SetColorWindow(window)
+            image_viewer.SetColorLevel(level)
+
+            logger.info("Step 6: Rendering...")
+            image_viewer.GetRenderer().ResetCameraClippingRange()
+            image_viewer.Render()
+            logger.info("Step 7: Render complete!")
+
+            logger.info("Scrollable Thick Slab applied successfully!")
+            logger.info("=" * 60)
+
+            QMessageBox.information(
+                self.patient_widget,
+                "Thick Slab Applied",
+                f"Scrollable Thick Slab (Average) applied!\n\n"
+                f"Thickness: {thickness} slices\n"
+                f"You can now scroll through averaged slices with mouse wheel.\n\n"
+                f"Tip: Use Reset tool to restore original view."
+            )
+
+        except Exception as e:
+            logger.error(f"ERROR in Thick Slab: {e}", exc_info=True)
+            QMessageBox.critical(self.patient_widget, "Error", f"Error applying Thick Slab:\n{str(e)}")
+
+    def toggle_mpr(self, selected_widget=None):
+        """Toggle MPR viewer for selected viewport only"""
+        import logging
+        import sys
+        logger = logging.getLogger(__name__)
+        
+        print("=" * 80, file=sys.stderr, flush=True)
+        print("TOGGLE MPR FUNCTION STARTED", file=sys.stderr, flush=True)
+        
+        # Get selected_widget from patient_widget if not provided
+        if selected_widget is None:
+            selected_widget = self.patient_widget.selected_widget
+            print(f"Got selected_widget from patient_widget: {selected_widget}", file=sys.stderr, flush=True)
+        
+        print(f"selected_widget: {selected_widget}", file=sys.stderr, flush=True)
+        print(f"selected_widget type: {type(selected_widget)}", file=sys.stderr, flush=True)
+        print(f"tool_selected: {self.tool_selected}", file=sys.stderr, flush=True)
+        print(f"tool_access.MPR: {self.tool_access.MPR}", file=sys.stderr, flush=True)
+        
+        logger.info("=" * 80)
+        logger.info("TOGGLE MPR CALLED")
+        logger.info(f"selected_widget: {selected_widget}")
+        logger.info(f"selected_widget type: {type(selected_widget)}")
+        logger.info(f"tool_selected: {self.tool_selected}")
+        logger.info(f"tool_access.MPR: {self.tool_access.MPR}")
+
+        # if self.tool_selected == self.tool_access.MPR:  # deactivate tool
+        # if self.tool_selected in [self.tool_access.MPR, self.tool_access.RULER]:  # deactivate tool
+        if self.tool_selected is not None and self.tool_access.MPR in self.tool_selected:
+            logger.info("Deactivating MPR (already active)")
+            self.tool_selected = None
+            # Restore original viewer
+            try:
+                self._restore_selected_viewer(selected_widget)
+            except Exception as e:
+                logger.error(f"Error restoring viewer: {e}", exc_info=True)
+            self.handle_buttons_checked()
+        else:
+            logger.info("Activating MPR")
+            self.check_and_deactivate_tools()
+
+            # Check if selected_widget is None
+            if selected_widget is None:
+                import sys
+                print("ERROR: selected_widget is None!", file=sys.stderr, flush=True)
+                logger.error("selected_widget is None! Cannot open MPR viewer.")
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.patient_widget, "MPR Viewer", "Please select a viewer first.")
+                return
+
+            # Get VTK image data from selected widget ONLY
+            try:
+                # Check if widget has image data
+                logger.info(f"Checking selected_widget attributes...")
+                logger.info(f"hasattr(selected_widget, 'last_series_show'): {hasattr(selected_widget, 'last_series_show')}")
+                
+                if not hasattr(selected_widget, 'last_series_show'):
+                    logger.warning("No series loaded in selected viewport")
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self.patient_widget, "MPR Viewer", "No series loaded in selected viewport.")
+                    return
+
+                series_index = selected_widget.last_series_show
+                logger.info(f"Series index: {series_index}")
+
+                # Find the VTK image data AND series path for this series
+                vtk_image_data = None
+                dicom_directory = None
+                window_width = None
+                window_center = None
+                logger.info(f"🔍 Searching in {len(self.patient_widget.lst_thumbnails_data)} thumbnail data entries...")
+                
+                for i in range(len(self.patient_widget.lst_thumbnails_data)):
+                    try:
+                        thumbnail_data = self.patient_widget.lst_thumbnails_data[i]
+                        metadata = thumbnail_data.get('metadata', {})
+                        series_metadata = metadata.get('series', {})
+                        series_num = int(series_metadata.get('series_number', -1))
+                        
+                        logger.info(f"   [{i}] series_number={series_num}, looking for {series_index}")
+                        
+                        if series_num == int(series_index):
+                            vtk_image_data = thumbnail_data.get('vtk_image_data')
+                            
+                            # Method 1: Try to get series_path directly
+                            dicom_directory = series_metadata.get('series_path')
+                            logger.info(f"   ✅ MATCH! series_path from metadata: {dicom_directory}")
+                            
+                            # Method 2: If series_path is None, get it from first instance path
+                            instances = metadata.get('instances', [])
+                            if instances and len(instances) > 0:
+                                first_instance = instances[0]
+                                if not dicom_directory:
+                                    first_instance_path = first_instance.get('instance_path')
+                                    if first_instance_path:
+                                        dicom_directory = os.path.dirname(first_instance_path)
+                                        logger.info(f"   ✅ Got directory from instance_path: {dicom_directory}")
+                                
+                                # Get window/level from first instance
+                                window_width = first_instance.get('window_width')
+                                window_center = first_instance.get('window_center')
+                                logger.info(f"   ✅ Got W/L from instance: W={window_width}, C={window_center}")
+                            
+                            logger.info(f"   🎯 Final DICOM directory: {dicom_directory}")
+                            break
+                    except (KeyError, ValueError, TypeError) as e:
+                        logger.debug(f"   [ERROR] checking thumbnail data at index {i}: {e}")
+                        continue
+
+                if vtk_image_data is None:
+                    logger.warning(f"No image data available for MPR viewer (series_index: {series_index})")
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self.patient_widget, "MPR Viewer", f"No image data available for series {series_index}.")
+                    return
+
+                logger.info(f"vtk_image_data found: {vtk_image_data}")
+                logger.info(f"vtk_image_data type: {type(vtk_image_data)}")
+                if hasattr(vtk_image_data, 'GetDimensions'):
+                    logger.info(f"vtk_image_data dimensions: {vtk_image_data.GetDimensions()}")
+
+                # Replace ONLY the selected viewport with MPR
+                import sys
+                print("Calling _replace_selected_viewport_with_mpr...", file=sys.stderr, flush=True)
+                logger.info("Calling _replace_selected_viewport_with_mpr...")
+                logger.info(f"Passing dicom_directory: {dicom_directory}")
+                logger.info(f"Passing W/L: W={window_width}, C={window_center}")
+                try:
+                    self._replace_selected_viewport_with_mpr(selected_widget, vtk_image_data, dicom_directory, window_width, window_center)
+                    print("_replace_selected_viewport_with_mpr completed successfully", file=sys.stderr, flush=True)
+                    logger.info("_replace_selected_viewport_with_mpr completed")
+                except Exception as e:
+                    print(f"ERROR in _replace_selected_viewport_with_mpr: {e}", file=sys.stderr, flush=True)
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
+                    raise
+
+            except Exception as e:
+                logger.error(f"Error opening MPR viewer: {e}", exc_info=True)
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.critical(self.patient_widget, "MPR Viewer Error", f"Error opening MPR viewer:\n{str(e)}")
+                return
+
+            self.tool_selected = self.tool_access.MPR
+            self.handle_buttons_checked()
+            logger.info("MPR toggle completed successfully")
+            logger.info("=" * 80)
+
+    def _replace_selected_viewport_with_mpr(self, selected_widget, vtk_image_data, dicom_directory=None, window_width=None, window_center=None):
+        """Replace the selected viewport with MPR viewer
+        
+        Args:
+            selected_widget: The VTK widget to replace with MPR viewer
+            vtk_image_data: VTK image data (used as fallback if dicom_directory is None)
+            dicom_directory: Path to DICOM series directory (preferred method for correct orientation)
+            window_width: Window width for display
+            window_center: Window center for display
+        """
+        import logging
+        import sys
+        import os
+        logger = logging.getLogger(__name__)
+        
+        print("=" * 80, file=sys.stderr, flush=True)
+        print("_replace_selected_viewport_with_mpr CALLED", file=sys.stderr, flush=True)
+        print(f"selected_widget: {selected_widget}", file=sys.stderr, flush=True)
+        print(f"vtk_image_data: {vtk_image_data}", file=sys.stderr, flush=True)
+        print(f"dicom_directory (passed): {dicom_directory}", file=sys.stderr, flush=True)
+        print(f"window_width (passed): {window_width}", file=sys.stderr, flush=True)
+        print(f"window_center (passed): {window_center}", file=sys.stderr, flush=True)
+        
+        # Get series_index from selected_widget
+        series_index = selected_widget.last_series_show
+        print(f"   Series index from widget: {series_index}", file=sys.stderr, flush=True)
+        print(f"🎯 Final dicom_directory: {dicom_directory}", file=sys.stderr, flush=True)
+        logger.info(f"   Using W/L: W={window_width}, C={window_center}")
+        
+        # Import and create MPR viewer
+        print("Importing MprViewerWrapper...", file=sys.stderr, flush=True)
+        from PacsClient.pacs.patient_tab.MprViewer.MprViewerWrapper import MprViewerWrapper
+        print("MprViewerWrapper imported successfully", file=sys.stderr, flush=True)
+        
+        # Get parent widget and layout
+        print("Getting parent widget...", file=sys.stderr, flush=True)
+        parent_widget = selected_widget.parent()
+        print(f"parent_widget: {parent_widget}", file=sys.stderr, flush=True)
+        
+        print("Getting parent layout...", file=sys.stderr, flush=True)
+        parent_layout = parent_widget.layout()
+        print(f"parent_layout: {parent_layout}", file=sys.stderr, flush=True)
+        
+        # Hide the original widget
+        print("Hiding original widget...", file=sys.stderr, flush=True)
+        selected_widget.setVisible(False)
+        
+        # Create MPR widget WITH PARENT to avoid popup window
+        print("Creating MprViewerWrapper...", file=sys.stderr, flush=True)
+        try:
+            # Pass dicom_directory (preferred) AND vtk_image_data (fallback)
+            # Also pass window/level if available
+            mpr_widget = MprViewerWrapper(
+                vtk_image_data=vtk_image_data,
+                dicom_directory=dicom_directory,
+                parent=parent_widget,
+                window_width=window_width,
+                window_center=window_center
+            )
+            print("MprViewerWrapper created successfully", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"ERROR creating MprViewerWrapper: {e}", file=sys.stderr, flush=True)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            raise
+        
+        # Add the MPR widget to the layout where the original widget was
+        print("Adding MPR widget to grid at position (0, 0)...", file=sys.stderr, flush=True)
+        print(f"mpr_widget parent before addWidget: {mpr_widget.parent()}", file=sys.stderr, flush=True)
+        print(f"mpr_widget isVisible before addWidget: {mpr_widget.isVisible()}", file=sys.stderr, flush=True)
+        
+        parent_layout.addWidget(mpr_widget, 0, 0)
+        print("MPR widget added to layout", file=sys.stderr, flush=True)
+        
+        print(f"mpr_widget parent after addWidget: {mpr_widget.parent()}", file=sys.stderr, flush=True)
+        print(f"mpr_widget size: {mpr_widget.size()}", file=sys.stderr, flush=True)
+        print(f"mpr_widget isVisible: {mpr_widget.isVisible()}", file=sys.stderr, flush=True)
+        
+        # Show and update the MPR widget
+        mpr_widget.show()
+        mpr_widget.update()
+        parent_widget.update()
+        print("MPR widget shown and updated", file=sys.stderr, flush=True)
+        
+        # Store reference to MPR widget for later restoration
+        selected_widget._mpr_widget = mpr_widget
+        selected_widget._original_visible = True
+        
+        logger.info(f"MPR viewer replaced viewport at grid position (0, 0)")
+        print(f"MPR viewer replaced viewport at grid position (0, 0)", file=sys.stderr, flush=True)
+        print("_replace_selected_viewport_with_mpr completed successfully", file=sys.stderr, flush=True)
+
+    def toggle_curved_mpr(self, selected_widget):
+        """Toggle Curved MPR mode for vessel/airway visualization"""
+        import logging
+        from PySide6.QtWidgets import QMessageBox
+        logger = logging.getLogger(__name__)
+
+        if self.tool_selected == self.tool_access.CURVED_MPR:  # deactivate tool
+            # Disable curved MPR mode in viewer
+            if hasattr(selected_widget, 'image_viewer') and selected_widget.image_viewer:
+                selected_widget.image_viewer.enable_curved_mpr_mode(False)
+            
+            self.tool_selected = None
+            self.handle_buttons_checked()
+            logger.info("Curved MPR mode deactivated")
+            return
+
+        try:
+            # Check if widget has image data
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                logger.warning("No image loaded in selected viewport")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Image",
+                    "Please load an image first for Curved MPR"
+                )
+                return
+
+            # Show instruction message
+            QMessageBox.information(
+                self.patient_widget,
+                "Curved MPR Mode",
+                "Curved MPR mode activated!\n\n"
+                "Instructions:\n"
+                "1. Click points along vessel/airway/dental arch centerline\n"
+                "2. Press 'G' to generate curved MPR\n"
+                "3. Press 'C' to clear points\n"
+                "4. Press ESC to exit mode\n\n"
+                "Tip: Works for vessel straightening, airway visualization, dental panoramic view"
+            )
+
+            self.check_and_deactivate_tools()
+            
+            # Actually enable curved MPR mode in viewer
+            selected_widget.image_viewer.enable_curved_mpr_mode(True)
+            
+            self.tool_selected = self.tool_access.CURVED_MPR
+            self.handle_buttons_checked()
+
+            logger.info("Curved MPR mode activated")
+
+        except Exception as e:
+            logger.error(f"Error activating Curved MPR: {e}", exc_info=True)
+            QMessageBox.critical(
+                self.patient_widget,
+                "Error",
+                f"Error activating Curved MPR:\n{str(e)}"
+            )
+
+    def toggle_segmentation(self, selected_widget):
+        """Toggle Advanced Segmentation Tools panel"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Toggle the Advanced Tools Panel visibility
+            if hasattr(self.patient_widget, 'advanced_tools_panel'):
+                panel = self.patient_widget.advanced_tools_panel
+
+                # Switch to the Advanced Tools tab in right panel
+                if hasattr(self.patient_widget, 'right_panel'):
+                    # Find index of advanced_tools_panel
+                    for i in range(self.patient_widget.right_panel.count()):
+                        if self.patient_widget.right_panel.widget(i) == panel:
+                            self.patient_widget.right_panel.setCurrentIndex(i)
+                            logger.info("Switched to Advanced Tools Panel")
+                            break
+
+                    # Activate Segmentation tab in the panel
+                    if hasattr(panel, 'tab_widget'):
+                        # Find the segmentation tab
+                        for i in range(panel.tab_widget.count()):
+                            if "Segmentation" in panel.tab_widget.tabText(i):
+                                panel.tab_widget.setCurrentIndex(i)
+                                logger.info("Switched to Segmentation tab")
+                                break
+
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self.patient_widget,
+                    "Segmentation Tools",
+                    "Advanced Segmentation Tools Opened!\n\n"
+                    "Available tools:\n"
+                    "• Lung Segmentation\n"
+                    "• Airway Tree Extraction\n"
+                    "• Vessel Segmentation\n"
+                    "• Bone Segmentation\n\n"
+                    "Find tools in the right panel."
+                )
+            else:
+                logger.warning("Advanced Tools Panel not available")
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Not Available",
+                    "Advanced Segmentation Tools panel is not available.\n"
+                    "Please check your installation."
+                )
+
+            self.handle_buttons_checked()
+
+        except Exception as e:
+            logger.error(f"Error opening Segmentation Tools: {e}", exc_info=True)
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self.patient_widget,
+                "Error",
+                f"Error opening Segmentation Tools:\n{str(e)}"
+            )
+
+    def toggle_upload_attachments(self, selected_widget):
+        study_uid = self.patient_widget.study_uid
+        print('study_uid:', study_uid)
+
+        if self.tool_selected == self.tool_access.UPLOAD:
+            self.tool_selected = None
+
+            self.handle_buttons_checked()
+
+        else:
+            attachments_uploaded = get_attachments_uploaded(study_uid)
+
+            self.check_and_deactivate_tools()
+
+            Thread(target=upload_attachments_for_study, args=(study_uid, attachments_uploaded)).start()
+            # upload_attachments_for_study(study_uid=study_uid, attachments_uploaded=attachments_uploaded)
+
+            self.tool_selected = self.tool_access.UPLOAD
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+
+            self.patient_widget.close_and_remove_patient_tab()  # close patient tab
+
+    def _restore_selected_viewer(self, selected_widget):
+        """Restore the original viewport"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Remove MPR widget if exists
+        print('flag:', hasattr(selected_widget, '_mpr_widget'))
+        if hasattr(selected_widget, '_mpr_widget'):
+            mpr_widget = selected_widget._mpr_widget
+            
+            # CRITICAL: Must cleanup VTK resources BEFORE deleteLater()
+            # This prevents crashes in frozen (exe) builds where VTK OpenGL
+            # resources must be properly released before Qt destroys the widget
+            try:
+                if hasattr(mpr_widget, 'cleanup'):
+                    logger.info("Calling mpr_widget.cleanup() before deleteLater...")
+                    mpr_widget.cleanup()
+                    logger.info("mpr_widget.cleanup() completed")
+            except Exception as e:
+                logger.error(f"Error during MPR cleanup: {e}", exc_info=True)
+            
+            mpr_widget.hide()
+            mpr_widget.deleteLater()
+            delattr(selected_widget, '_mpr_widget')
+
+        # Show original widget
+        selected_widget.show()
+
+        # Clean up backup reference
+        print('flag cleanup:', hasattr(selected_widget, '_mpr_backup_widget'))
+        if hasattr(selected_widget, '_mpr_backup_widget'):
+            delattr(selected_widget, '_mpr_backup_widget')
+
+    def handle_buttons_checked(self):
+        for tool_name, tool_btn in self.tools_button.items():
+            try:
+                tool_btn: QPushButton
+
+                if self.tool_selected == tool_name:
+                    tool_btn.setChecked(True)
+
+                else:
+                    tool_btn.setChecked(False)
+            except:
+                pass
+
+    def check_and_deactivate_tools(self):
+        if self.tool_selected is None:  # it's mean we haven't selected tool before
+            return
+
+        # when we switch between two tools and hasn't deactivated first tool
+        elif self.tool_selected == self.tool_access.RULER:
+            # self.toggle_ruler()  # deactivate ruler
+            self.toggle_ruler(self.patient_widget.selected_widget)  # deactivate ruler
+
+        elif self.tool_selected == self.tool_access.ERASER:
+            # self.toggle_eraser()  # deactivate eraser
+            self.toggle_eraser(self.patient_widget.selected_widget)  # deactivate eraser
+
+        elif self.tool_selected == self.tool_access.RESET:
+            self.toggle_reset_selected_widget(self.patient_widget.selected_widget)  # deactivate reset image
+
+        elif self.tool_selected == self.tool_access.ANGLE:
+            self.toggle_angle(self.patient_widget.selected_widget)  # deactivate angle
+
+        elif self.tool_selected == self.tool_access.TWO_LINE_ANGLE:
+            self.toggle_two_line_angle(self.patient_widget.selected_widget)  # deactivate two-line angle
+
+        elif self.tool_selected == self.tool_access.ARROW:
+            self.toggle_arrow(self.patient_widget.selected_widget)  # deactivate arrow
+
+        elif self.tool_selected == self.tool_access.TEXT:
+            self.toggle_text(self.patient_widget.selected_widget)  # deactivate arrow
+
+        elif self.tool_selected == self.tool_access.ZOOM_TO_FIT:
+            self.toggle_zoom_to_fit(self.patient_widget.selected_widget)  # deactivate zoom to fit
+
+        elif self.tool_selected == self.tool_access.ZOOM:
+            self.toggle_zoom(self.patient_widget.selected_widget)  # deactivate zoom
+
+        elif self.tool_selected == self.tool_access.WINDOW_LEVEL:
+            self.toggle_window_level(self.patient_widget.selected_widget)  # deactivate zoom
+
+        elif self.tool_selected == self.tool_access.PAN:
+            self.toggle_pan(self.patient_widget.selected_widget)  # deactivate zoom
+
+        elif self.tool_selected == self.tool_access.STACKED:
+            self.toggle_stacked(self.patient_widget.selected_widget)  # deactivate stacked
+
+        elif self.tool_selected == self.tool_access.ROTATION_LEFT:
+            self.toggle_rotation_left(self.patient_widget.selected_widget)  # deactivate rotation left
+
+        elif self.tool_selected == self.tool_access.ROTATION_RIGHT:
+            self.toggle_rotation_right(self.patient_widget.selected_widget)  # deactivate rotation right
+
+        elif self.tool_selected == self.tool_access.FLIP_HORIZONTAL:
+            self.toggle_flip_horizontal(self.patient_widget.selected_widget)  # deactivate Flip Horizontal
+
+        elif self.tool_selected == self.tool_access.FLIP_VERTICAL:
+            self.toggle_flip_vertical(self.patient_widget.selected_widget)  # deactivate Flip Vertical
+
+        elif self.tool_selected == self.tool_access.CAPTURE:
+            self.toggle_capture(self.patient_widget.selected_widget)  # deactivate Flip Vertical
+
+        elif self.tool_selected == self.tool_access.MICROPHONE:
+            # (We don't add mic to check_and_deactivate_tools. because we won't turn off mic when viewer changed)
+            pass
+
+        elif self.tool_selected == self.tool_access.ROI:
+            self.toggle_roi(self.patient_widget.selected_widget)  # deactivate Flip Vertical
+
+        elif self.tool_selected == self.tool_access.AI_CHAT:
+            self.toggle_ai_chat(self.patient_widget.selected_widget)  # deactivate AI Chat
+
+        # # MPR should only be toggled by its own button, not by other tools
+        # elif self.tool_selected == self.tool_access.MPR:
+        #     self.toggle_mpr(self.patient_widget.selected_widget)  # deactivate MPR
+
+        elif self.tool_selected == self.tool_access.UPLOAD:
+            self.toggle_upload_attachments(self.patient_widget.selected_widget)
+
+    def get_tool_activated_method(self):
+        if self.tool_selected is None:  # it's mean we haven't selected tool before
+            return None
+
+        # when we switch between two tools and hasn't deactivated first tool
+        elif self.tool_selected == self.tool_access.RULER:
+            return self.toggle_ruler
+
+        elif self.tool_selected == self.tool_access.ERASER:
+            return self.toggle_eraser
+
+        elif self.tool_selected == self.tool_access.RESET:
+            return self.toggle_reset_selected_widget
+
+        elif self.tool_selected == self.tool_access.ANGLE:
+            return self.toggle_angle
+
+        elif self.tool_selected == self.tool_access.ARROW:
+            return self.toggle_arrow
+
+        elif self.tool_selected == self.tool_access.TEXT:
+            return self.toggle_text
+
+        elif self.tool_selected == self.tool_access.ZOOM:
+            return self.toggle_zoom
+
+        elif self.tool_selected == self.tool_access.WINDOW_LEVEL:
+            return self.toggle_window_level
+
+        elif self.tool_selected == self.tool_access.PAN:
+            return self.toggle_pan
+
+        elif self.tool_selected == self.tool_access.STACKED:
+            return self.toggle_stacked
+
+        elif self.tool_selected == self.tool_access.ROTATION_LEFT:
+            return self.toggle_rotation_left
+
+        elif self.tool_selected == self.tool_access.ROTATION_RIGHT:
+            return self.toggle_rotation_right
+
+        elif self.tool_selected == self.tool_access.FLIP_HORIZONTAL:
+            return self.toggle_flip_horizontal
+
+        elif self.tool_selected == self.tool_access.FLIP_VERTICAL:
+            return self.toggle_flip_vertical
+
+        elif self.tool_selected == self.tool_access.CAPTURE:
+            return self.toggle_capture
+
+        elif self.tool_selected == self.tool_access.ROI:
+            return self.toggle_roi
+
+        # elif self.tool_selected == self.tool_access.AI_CHAT:
+        #     return self.toggle_ai_chat
+
+        elif self.tool_selected == self.tool_access.MPR:
+            return self.toggle_mpr
+
+    def _create_separator(self):
+        """Helper method to create a thin vertical separator with spacing"""
+        # Create a container with spacing
+        separator_container = QWidget()
+        separator_container.setFixedWidth(24)  # Total spacing: 10px + 1px + 10px = 21px
+        separator_container.setStyleSheet("background: transparent;")  # Match toolbar background
+
+        # Create thin line in the center
+        separator_layout = QHBoxLayout(separator_container)
+        separator_layout.setContentsMargins(11, 2, 11, 2)  # 11px margin on each side
+        separator_layout.setSpacing(0)
+
+        separator_line = QWidget()
+        separator_line.setFixedWidth(1)  # Thin line
+        separator_line.setStyleSheet("""
+            QWidget {
+                background-color: #4b5563;
+                border: none;
+            }
+        """)
+
+        separator_layout.addWidget(separator_line)
+        return separator_container
+        
+    def add_toolbar_actions(self, toolbar: QToolBar):
+        # تنظیم toolbar اصلی
+        toolbar.setMovable(False)
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+                border: none;
+                padding: 0px;
+                spacing: 0px;
+            }
+        """)
+        
+        # ایجاد یک ویجت اصلی که دو بخش دارد
+        main_widget = QWidget()
+        main_layout = QVBoxLayout(main_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # بخش 1: محتوای toolbar
+        content_widget = QWidget()
+        content_widget.setMinimumHeight(48)
+        content_layout = QHBoxLayout(content_widget)
+        content_layout.setContentsMargins(5, 2, 5, 2)
+        content_layout.setSpacing(4)
+        
+        # بخش 2: اسکرول‌بار (جداگانه)
+        scrollbar_widget = QWidget()
+        scrollbar_widget.setFixedHeight(16)  # ارتفاع ثابت برای اسکرول‌بار
+        scrollbar_widget.setStyleSheet("background: transparent;")
+        
+        # ایجاد QScrollArea برای بخش محتوا
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)  # همیشه نمایش بده
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        
+        # استایل بسیار ساده برای QScrollArea
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background: transparent;
+                padding: 0px;
+            }
+            QScrollArea > QWidget > QWidget {
+                /* داخلی‌ترین ویجت */
+                padding: 0px;
+            }
+        """)
+        
+        # تنظیم scrollbar به صورت دستی (اینجا کنترل کامل داریم)
+        horizontal_scrollbar = scroll_area.horizontalScrollBar()
+        horizontal_scrollbar.setStyleSheet("""
+            QScrollBar:horizontal {
+                border: none;
+                background: #1f2937;
+                height: 12px;
+                border-radius: 6px;
+                margin: 0px;
+            }
+            QScrollBar::handle:horizontal {
+                background: #4b5563;
+                min-width: 40px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background: #6b7280;
+            }
+            QScrollBar::add-line:horizontal,
+            QScrollBar::sub-line:horizontal {
+                width: 0px;
+                height: 0px;
+            }
+            QScrollBar::add-page:horizontal,
+            QScrollBar::sub-page:horizontal {
+                background: none;
+            }
+        """)   
+
+            # تنظیم content_widget به عنوان ویجت scroll_area
+        scroll_area.setWidget(content_widget)
+        
+        # اضافه کردن scroll_area به layout اصلی
+        main_layout.addWidget(scroll_area)
+        
+        # اضافه کردن main_widget به toolbar
+        toolbar.addWidget(main_widget)     
+        # ایجاد یک ویجت container برای تمام محتوای نوار ابزار
+        toolbar_container = QWidget()
+        toolbar_container.setStyleSheet("background: transparent;")
+        toolbar_container.setMinimumHeight(48)  # ارتفاع container
+        
+        # ایجاد یک layout افقی برای کل نوار ابزار
+        toolbar_layout = QHBoxLayout(toolbar_container)
+        toolbar_layout.setContentsMargins(5, 2, 5, 2)
+        toolbar_layout.setSpacing(4)
+        toolbar_layout.setAlignment(Qt.AlignTop)  # دکمه‌ها را در بالا قرار می‌دهد        
+        # ایجاد یک ویجت container برای تمام محتوای نوار ابزار
+        toolbar_container = QWidget()
+        toolbar_container.setStyleSheet("background: transparent;")
+        
+        # ایجاد یک layout افقی برای کل نوار ابزار
+        toolbar_layout = QHBoxLayout(toolbar_container)
+        toolbar_layout.setContentsMargins(5, 2, 5, 2)
+        toolbar_layout.setSpacing(4)
+        
+        # ============================================================
+        # LOGO SECTION
+        # ============================================================
+        logo_widget = QWidget()
+        logo_widget.setFixedWidth(250)
+        logo_widget.setFixedHeight(38)
+        logo_layout = QHBoxLayout(logo_widget)
+        logo_layout.setContentsMargins(8, 1, 8, 1)
+        logo_layout.setSpacing(8)
+        logo_layout.setAlignment(Qt.AlignCenter)
+
+        # AI Logo
+        logo_label = QLabel()
+        logo_pixmap = QPixmap("PacsClient/login/images/aiLogo.png")
+        if not logo_pixmap.isNull():
+            logo_pixmap = logo_pixmap.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_label.setPixmap(logo_pixmap)
+        logo_label.setAlignment(Qt.AlignCenter)
+        logo_label.setStyleSheet("""
+            QLabel {
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+        """)
+
+        # AI PACS Text
+        ai_text_label = QLabel("AI PACS")
+        ai_text_label.setAlignment(Qt.AlignCenter)
+        ai_text_label.setStyleSheet("""
+            QLabel {
+                color: #f7fafc;
+                font-size: 12px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 600;
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+        """)
+
+        # Description text
+        desc_label = QLabel("Intelligent Medical Imaging")
+        desc_label.setAlignment(Qt.AlignCenter)
+        desc_label.setStyleSheet("""
+            QLabel {
+                color: #a0aec0;
+                font-size: 9px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 400;
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+        """)
+
+        logo_widget.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                border: 1px solid #4b5563;
+                border-radius: 6px;
+                margin: 1px;
+            }
+            QWidget:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+        """)
+
+        logo_layout.addWidget(logo_label)
+        logo_layout.addWidget(ai_text_label)
+        logo_layout.addWidget(desc_label)
+        toolbar_layout.addWidget(logo_widget)
+        toolbar_layout.addWidget(self._create_separator())
+
+        # ============================================================
+        # CATEGORY 1: BASIC TOOLS (Reset & Layout)
+        # ============================================================
+        # Reset Selected button
+        reset_selected_btn = create_tool_btn(self.patient_widget, 'Reset Selected', 'reset.png')
+        reset_selected_btn.clicked.connect(
+            lambda: self.toggle_reset_selected_widget(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(reset_selected_btn)
+        self.tools_button[self.tool_access.RESET] = reset_selected_btn
+
+        # Series layout button
+        series_layout_btn = QToolButton()
+        series_layout_btn.setToolTip('Series Layout')
+        icon = QIcon(f"{ICON_PATH}/series-layout.png")
+        series_layout_btn.setIcon(icon)
+        series_layout_btn.setIconSize(QSize(20, 20))
+        series_layout_btn.setPopupMode(QToolButton.InstantPopup)
+
+        menu_matrix = QMenu(toolbar)
+        matrix_selector = MatrixSelector(max_rows=3, max_cols=3, parent=menu_matrix)
+        matrix_selector.set_method_change_viewers(self.patient_widget.apply_multi_viewer)
+
+        widget_action = QWidgetAction(menu_matrix)
+        widget_action.setDefaultWidget(matrix_selector)
+        menu_matrix.addAction(widget_action)
+
+        series_layout_btn.setMenu(menu_matrix)
+        series_layout_btn.setStyleSheet("""
+            QToolButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-radius: 6px;
+                padding: 4px 6px;
+                margin: 1px;
+                min-width: 36px;
+                min-height: 36px;
+                font-size: 11px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QToolButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QToolButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+        """)
+        toolbar_layout.addWidget(series_layout_btn)
+        toolbar_layout.addWidget(self._create_separator())
+
+        # ============================================================
+        # CATEGORY 2: MEASUREMENT TOOLS
+        # ============================================================
+        measurements_container = QWidget()
+        measurements_layout = QHBoxLayout(measurements_container)
+        measurements_layout.setContentsMargins(0, 0, 0, 0)
+        measurements_layout.setSpacing(0)
+        measurements_layout.setAlignment(Qt.AlignVCenter)
+
+        measurements_menu_btn = QPushButton()
+        measurements_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+        measurements_menu_btn.setIconSize(QSize(14, 14))
+        measurements_menu_btn.setToolTip('View Angle/Arrow/Text/ROI')
+        measurements_menu_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                border-right: none;
+                padding: 4px 2px;
+                margin: 0px;
+                min-width: 11px;
+                min-height: 36px;
+                max-width: 11px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+        """)
+        measurements_menu_btn.setCursor(Qt.PointingHandCursor)
+        measurements_menu_btn.clicked.connect(lambda: self._show_measurements_dropdown(measurements_menu_btn))
+
+        # Ruler button
+        ruler_btn = create_tool_btn(self.patient_widget, 'Ruler', 'ruler.png')
+        ruler_btn.clicked.connect(lambda: self.toggle_ruler(self.patient_widget.selected_widget))
+        ruler_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-left: none;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                padding: 4px 6px;
+                margin: 0px;
+                min-width: 36px;
+                min-height: 36px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #059669, stop:1 #047857);
+                border-color: #10b981;
+                color: #ffffff;
+            }
+        """)
+
+        measurements_layout.addWidget(measurements_menu_btn)
+        measurements_layout.addWidget(ruler_btn)
+
+        toolbar_layout.addWidget(measurements_container)
+        self.tools_button[self.tool_access.RULER] = ruler_btn
+        toolbar_layout.addWidget(self._create_separator())
+
+        # ============================================================
+        # CATEGORY 3: ANNOTATION TOOLS
+        # ============================================================
+        # Eraser button
+        eraser_btn = create_tool_btn(self.patient_widget, 'Eraser', 'eraser.png')
+        eraser_btn.clicked.connect(lambda: self.toggle_eraser(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(eraser_btn)
+        self.tools_button[self.tool_access.ERASER] = eraser_btn
+        toolbar_layout.addWidget(self._create_separator())
+
+        # ============================================================
+        # CATEGORY 4: VIEW MANIPULATION TOOLS
+        # ============================================================
+        # Zoom to fit button
+        zoom_to_fit_btn = create_tool_btn(self.patient_widget, 'Zoom to Fit', 'fit.png')
+        zoom_to_fit_btn.clicked.connect(lambda: self.toggle_zoom_to_fit(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(zoom_to_fit_btn)
+        self.tools_button[self.tool_access.ZOOM_TO_FIT] = zoom_to_fit_btn
+
+        # Zoom button
+        zoom_btn = create_tool_btn(self.patient_widget, 'Zoom', 'zoom-in.png')
+        zoom_btn.clicked.connect(lambda: self.toggle_zoom(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(zoom_btn)
+        self.tools_button[self.tool_access.ZOOM] = zoom_btn
+
+        # Window Level button
+        window_level_btn = create_tool_btn(self.patient_widget, 'Window Level', 'contrast.png')
+        window_level_btn.clicked.connect(lambda: self.toggle_window_level(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(window_level_btn)
+        self.tools_button[self.tool_access.WINDOW_LEVEL] = window_level_btn
+
+        # Pan button
+        pan_btn = create_tool_btn(self.patient_widget, 'Pan', 'pan.png')
+        pan_btn.clicked.connect(lambda: self.toggle_pan(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(pan_btn)
+        self.tools_button[self.tool_access.PAN] = pan_btn
+
+        # Stacked button
+        stacked_btn = create_tool_btn(self.patient_widget, 'Stacked', 'layers.png')
+        stacked_btn.clicked.connect(lambda: self.toggle_stacked(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(stacked_btn)
+        self.tools_button[self.tool_access.STACKED] = stacked_btn
+        toolbar_layout.addWidget(self._create_separator())
+
+        # ============================================================
+        # CATEGORY 5: IMAGE TRANSFORM TOOLS
+        # ============================================================
+        # Rotate-left button
+        rotation_left_btn = create_tool_btn(self.patient_widget, 'Rotate Left', 'rotate-ccw.png')
+        rotation_left_btn.clicked.connect(lambda: self.toggle_rotation_left(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(rotation_left_btn)
+        self.tools_button[self.tool_access.ROTATION_LEFT] = rotation_left_btn
+
+        # Rotate-right button
+        rotation_right_btn = create_tool_btn(self.patient_widget, 'Rotate Right', 'rotate-cw.png')
+        rotation_right_btn.clicked.connect(lambda: self.toggle_rotation_right(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(rotation_right_btn)
+        self.tools_button[self.tool_access.ROTATION_RIGHT] = rotation_right_btn
+
+        # Flip-Vertical button
+        flip_vertical_btn = create_tool_btn(self.patient_widget, 'Flip Vertical', 'flip_v.png')
+        flip_vertical_btn.clicked.connect(lambda: self.toggle_flip_vertical(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(flip_vertical_btn)
+        self.tools_button[self.tool_access.FLIP_VERTICAL] = flip_vertical_btn
+        toolbar_layout.addWidget(self._create_separator())
+
+        # ============================================================
+        # CATEGORY 6: CAPTURE & AUDIO TOOLS
+        # ============================================================
+        # Capture button with menu
+        capture_container = QWidget()
+        capture_layout = QHBoxLayout(capture_container)
+        capture_layout.setContentsMargins(0, 0, 0, 0)
+        capture_layout.setSpacing(0)
+        capture_layout.setAlignment(Qt.AlignVCenter)
+
+        capture_menu_btn = QPushButton()
+        capture_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+        capture_menu_btn.setIconSize(QSize(14, 14))
+        capture_menu_btn.setToolTip('View Captured Images')
+        capture_menu_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                border-right: none;
+                padding: 4px 2px;
+                margin: 0px;
+                min-width: 11px;
+                min-height: 36px;
+                max-width: 11px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+        """)
+        capture_menu_btn.setCursor(Qt.PointingHandCursor)
+        capture_menu_btn.clicked.connect(lambda: self._show_capture_dropdown(capture_menu_btn))
+
+        capture_btn = BadgeButton(self.patient_widget)
+        capture_btn.setCheckable(True)
+        capture_btn.setToolTip('Capture Screenshot')
+        icon = QIcon(f"{ICON_PATH}/camera.png")
+        capture_btn.setIcon(icon)
+        capture_btn.setIconSize(QSize(20, 20))
+        capture_btn.setCursor(Qt.PointingHandCursor)
+        capture_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-left: none;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                padding: 4px 6px;
+                margin: 0px;
+                min-width: 36px;
+                min-height: 36px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #059669, stop:1 #047857);
+                border-color: #10b981;
+                color: #ffffff;
+            }
+        """)
+        capture_btn.clicked.connect(lambda: self.toggle_capture(self.patient_widget.selected_widget))
+
+        capture_layout.addWidget(capture_menu_btn)
+        capture_layout.addWidget(capture_btn)
+        toolbar_layout.addWidget(capture_container)
+        self.tools_button[self.tool_access.CAPTURE] = capture_btn
+
+        # update counter of capture
+        self.update_capture_counter()
+
+        # Microphone button with menu
+        mic_widget = QWidget(self.patient_widget)
+        mic_layout = QHBoxLayout(mic_widget)
+        mic_layout.setContentsMargins(0, 0, 0, 0)
+        mic_layout.setSpacing(0)
+        mic_layout.setAlignment(Qt.AlignVCenter)
+
+        mic_menu_btn = QPushButton()
+        mic_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+        mic_menu_btn.setIconSize(QSize(14, 14))
+        mic_menu_btn.setToolTip('View Audio Recordings')
+        mic_menu_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                border-right: none;
+                padding: 4px 2px;
+                margin: 0px;
+                min-width: 11px;
+                min-height: 36px;
+                max-width: 11px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+        """)
+        mic_menu_btn.setCursor(Qt.PointingHandCursor)
+        mic_menu_btn.clicked.connect(lambda: self._show_audio_dropdown(mic_menu_btn))
+
+        mic_btn = BadgeButton(self.patient_widget)
+        mic_btn.setCheckable(True)
+        mic_btn.setToolTip('Record Audio')
+        icon = QIcon(f"{ICON_PATH}/mic.png")
+        mic_btn.setIcon(icon)
+        mic_btn.setIconSize(QSize(20, 20))
+        mic_btn.setCursor(Qt.PointingHandCursor)
+        mic_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-left: none;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                padding: 4px 6px;
+                margin: 0px;
+                min-width: 36px;
+                min-height: 36px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #059669, stop:1 #047857);
+                border-color: #10b981;
+                color: #ffffff;
+            }
+        """)
+
+        mic_btn.clicked.connect(lambda: self._on_mic_clicked(mic_btn))
+
+        mic_layout.addWidget(mic_menu_btn)
+        mic_layout.addWidget(mic_btn)
+        toolbar_layout.addWidget(mic_widget)
+
+        self.tools_button[self.tool_access.MICROPHONE] = mic_btn
+        self.update_audio_counter()
+        toolbar_layout.addWidget(self._create_separator())
+
+        # AI Chat button
+        ai_chat_btn = create_tool_btn(self.patient_widget, 'AI Analyze', 'eagle.png', icon_size=30)
+        ai_chat_btn.clicked.connect(lambda: self.toggle_ai_chat(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(ai_chat_btn)
+        self.tools_button[self.tool_access.AI_CHAT] = ai_chat_btn
+        toolbar_layout.addWidget(self._create_separator())
+
+        # ============================================================
+        # CATEGORY 7: ADVANCED VISUALIZATION TOOLS
+        # ============================================================
+        # MPR button with menu
+        mpr_container = QWidget()
+        mpr_layout = QHBoxLayout(mpr_container)
+        mpr_layout.setContentsMargins(0, 0, 0, 0)
+        mpr_layout.setSpacing(0)
+        mpr_layout.setAlignment(Qt.AlignVCenter)
+
+        mpr_menu_btn = QPushButton()
+        mpr_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+        mpr_menu_btn.setIconSize(QSize(14, 14))
+        mpr_menu_btn.setToolTip('View MIP/MinIP/Thick Slab')
+        mpr_menu_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                border-right: none;
+                padding: 4px 2px;
+                margin: 0px;
+                min-width: 11px;
+                min-height: 36px;
+                max-width: 11px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+        """)
+        mpr_menu_btn.setCursor(Qt.PointingHandCursor)
+        mpr_menu_btn.clicked.connect(lambda: self._show_mpr_dropdown(mpr_menu_btn))
+
+        mpr_btn = create_tool_btn(self.patient_widget, 'MPR Viewer', icon_name=None, text_icon='MPR')
+        mpr_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-left: none;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                padding: 4px 6px;
+                margin: 0px;
+                min-width: 36px;
+                min-height: 36px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #059669, stop:1 #047857);
+                border-color: #10b981;
+                color: #ffffff;
+            }
+        """)
+        
+        mpr_btn.clicked.connect(self.toggle_mpr)
+        
+        mpr_layout.addWidget(mpr_menu_btn)
+        mpr_layout.addWidget(mpr_btn)
+        toolbar_layout.addWidget(mpr_container)
+        self.tools_button[self.tool_access.MPR] = mpr_btn
+        
+        # Curved MPR button
+        curved_mpr_btn = create_tool_btn(self.patient_widget, 'Curved MPR - Vessel/Airway Visualization', icon_name=None, text_icon='CPR')
+        curved_mpr_btn.clicked.connect(lambda: self.toggle_curved_mpr(self.patient_widget.selected_widget))
+        toolbar_layout.addWidget(curved_mpr_btn)
+        self.tools_button[self.tool_access.CURVED_MPR] = curved_mpr_btn
+        toolbar_layout.addWidget(self._create_separator())
+
+        # ============================================================
+        # CATEGORY 8: UPLOAD & SYNC TOOLS
+        # ============================================================
+        # Upload status button with menu
+        upload_container = QWidget()
+        upload_layout = QHBoxLayout(upload_container)
+        upload_layout.setContentsMargins(0, 0, 0, 0)
+        upload_layout.setSpacing(0)
+        upload_layout.setAlignment(Qt.AlignVCenter)
+
+        upload_menu_btn = QPushButton()
+        upload_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+        upload_menu_btn.setIconSize(QSize(14, 14))
+        upload_menu_btn.setToolTip('Select status')
+        upload_menu_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                border-right: none;
+                padding: 4px 2px;
+                margin: 0px;
+                min-width: 11px;
+                min-height: 36px;
+                max-width: 11px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+        """)
+        upload_menu_btn.setCursor(Qt.PointingHandCursor)
+        upload_menu_btn.clicked.connect(lambda: self._show_status_upload_dropdown(upload_menu_btn))
+
+        upload_layout.addWidget(upload_menu_btn)
+        toolbar_layout.addWidget(upload_container)
+
+        # Sync button
+        sync_btn = QPushButton(self.patient_widget)
+        sync_btn.setToolTip('Sync patient data with server\n(Uploads attachments & sets status to "Awaiting Secretary Approval")')
+        sync_btn.setCursor(Qt.PointingHandCursor)
+        
+        try:
+            icon = qta.icon('fa5s.cloud-upload-alt', color='#60a5fa')
+            sync_btn.setIcon(icon)
+            sync_btn.setIconSize(QSize(20, 20))
+        except Exception:
+            sync_btn.setText("🔄")
+        
+        sync_btn.setStyleSheet(f"""
+            QPushButton {{
+                qproperty-iconSize: 20px 20px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-radius: 6px;
+                padding: 4px 6px;
+                margin: 1px;
+                min-width: 36px;
+                min-height: 36px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }}
+            QPushButton:pressed {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }}
+            QPushButton:disabled {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+                color: #6b7280;
+                border-color: #374151;
+            }}
+        """)
+        
+        sync_btn.clicked.connect(self._start_patient_sync)
+        self.sync_button = sync_btn
+        toolbar_layout.addWidget(sync_btn)
+        
+        # ============================================================
+        # انتهای layout - افزودن فضای خالی برای راست‌چین شدن محتوا
+        # ============================================================
+        toolbar_layout.addStretch(1)
+        
+        # تنظیم container به عنوان ویجت اصلی scroll area
+        scroll_area.setWidget(toolbar_container)
+        
+        # افزودن scroll area به نوار ابزار
+        toolbar.addWidget(scroll_area)
+
+    def _show_status_upload_dropdown(self, button):
+        try:
+            dropdown = QWidget(self.patient_widget)
+            dropdown.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+            dropdown.setAttribute(Qt.WA_DeleteOnClose)
+            dropdown.setStyleSheet("""
+                QWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #1f2937, stop:1 #111827);
+                    border: 2px solid #374151;
+                    border-radius: 10px;
+                }
+            """)
+
+            layout = QVBoxLayout(dropdown)
+            layout.setContentsMargins(10, 10, 10, 10)
+            layout.setSpacing(8)
+
+            # Header with icon
+            from PySide6.QtWidgets import QLabel
+            header = QLabel("📊 Upload Status")
+            header.setStyleSheet("""
+                QLabel {
+                    color: #f7fafc;
+                    font-size: 15px;
+                    font-weight: 700;
+                    font-family: 'Roboto', sans-serif;
+                    padding: 6px 8px;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #10b981, stop:1 #059669);
+                    border-radius: 6px;
+                    margin-bottom: 4px;
+                }
+            """)
+            layout.addWidget(header)
+
+            # TODO: replace with real status. report is sample
+            # Report button
+            report_btn = create_dropdown_tool('Report', 'report.png', '#3b82f6')
+            # report_btn.clicked.connect(lambda: [
+            #     self.toggle_angle(self.patient_widget.selected_widget), dropdown.close()])
+            layout.addWidget(report_btn)
+
+            # Position dropdown below the button
+            button_pos = button.mapToGlobal(QPoint(0, button.height()))
+            dropdown.move(button_pos)
+            dropdown.setFixedWidth(260)
+            dropdown.raise_()
+            dropdown.activateWindow()
+
+            dropdown.show()
+        except Exception as e:
+            print(f"[ERROR] Failed to show status dropdown: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def turn_off_all_tools(self):
+        self.check_and_deactivate_tools()
+        self.handle_buttons_checked()
+    
+    def _start_patient_sync(self):
+        """Start patient data synchronization with server"""
+        try:
+            from PySide6.QtWidgets import QProgressDialog, QMessageBox
+            from PySide6.QtCore import QTimer
+            from PacsClient.pacs.patient_tab.utils import get_patient_sync_service
+            
+            # Get study_uid from patient_widget
+            study_uid = getattr(self.patient_widget, 'study_uid', None)
+            if not study_uid:
+                # Try to get from metadata_fixed
+                metadata_fixed = getattr(self.patient_widget, 'metadata_fixed', {})
+                study_uid = metadata_fixed.get('study_uid')
+            
+            if not study_uid:
+                QMessageBox.warning(self.patient_widget, "Error", "Study UID not found.")
+                return
+            
+            # Disable sync button during sync
+            if hasattr(self, 'sync_button'):
+                self.sync_button.setEnabled(False)
+            
+            # Create progress dialog
+            progress_dialog = QProgressDialog(
+                "Synchronizing patient data...",
+                "Cancel",
+                0, 100,
+                self.patient_widget
+            )
+            progress_dialog.setWindowTitle("Patient Data Sync")
+            progress_dialog.setWindowModality(Qt.WindowModal)
+            progress_dialog.setMinimumDuration(0)
+            progress_dialog.setValue(0)
+            
+            # Style progress dialog
+            progress_dialog.setStyleSheet("""
+                QProgressDialog {
+                    background: #0b1220;
+                    border: 1px solid #223046;
+                    border-radius: 12px;
+                    color: #e5e7eb;
+                }
+                QProgressDialog QLabel {
+                    color: #e5e7eb;
+                    font-family: 'Segoe UI', 'Roboto';
+                    font-size: 14px;
+                    font-weight: 600;
+                    padding: 10px 14px;
+                }
+                QProgressBar {
+                    border: 1px solid #2b3b55;
+                    border-radius: 8px;
+                    background: #0f172a;
+                    height: 14px;
+                    text-align: center;
+                    color: #94a3b8;
+                }
+                QProgressBar::chunk {
+                    border-radius: 8px;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                 stop:0 #38bdf8, stop:1 #60a5fa);
+                }
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #374151, stop:1 #1f2937);
+                    color: #e5e7eb;
+                    border: 1px solid #4b5563;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #4b5563, stop:1 #374151);
+                }
+            """)
+            
+            # Get sync service
+            sync_service = get_patient_sync_service()
+            
+            # Connect signals
+            def on_sync_started(uid):
+                if uid == study_uid:
+                    progress_dialog.setLabelText("🔄 Starting synchronization...")
+                    progress_dialog.setValue(5)
+            
+            def on_sync_progress(uid, current, total):
+                if uid == study_uid:
+                    if total > 0:
+                        percentage = int((current / total) * 90) + 5  # 5-95% for file uploads
+                        progress_dialog.setLabelText(f"📤 Uploading attachments... ({current}/{total})")
+                        progress_dialog.setValue(percentage)
+            
+            def on_sync_completed(uid, result):
+                if uid == study_uid:
+                    progress_dialog.setValue(100)
+                    progress_dialog.close()
+                    
+                    # Re-enable sync button
+                    if hasattr(self, 'sync_button'):
+                        self.sync_button.setEnabled(True)
+                    
+                    # Update patient_widget report_status to awaiting_secretary_approval
+                    self.patient_widget.report_status = 'awaiting_secretary_approval'
+                    
+                    # Update visited status to synced (green underline)
+                    try:
+                        from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
+                        home_widget = get_home_widget()
+                        if home_widget and hasattr(home_widget, 'patient_table_widget'):
+                            home_widget.patient_table_widget.update_visited_status(study_uid, status='synced')
+                    except Exception:
+                        pass
+                    
+                    # Show success message
+                    success_msg = f"✅ Synchronization completed!\n\n"
+                    success_msg += f"📤 Uploaded: {result['attachments_uploaded']} files\n"
+                    if result['attachments_failed'] > 0:
+                        success_msg += f"❌ Failed: {result['attachments_failed']} files\n"
+                    success_msg += f"📋 Status: Set to 'Awaiting Secretary Approval'"
+                    
+                    QMessageBox.information(
+                        self.patient_widget,
+                        "Sync Completed",
+                        success_msg
+                    )
+            
+            def on_sync_failed(uid, error_msg):
+                if uid == study_uid:
+                    progress_dialog.close()
+                    
+                    # Re-enable sync button
+                    if hasattr(self, 'sync_button'):
+                        self.sync_button.setEnabled(True)
+                    
+                    # QMessageBox.warning(
+                    #     self.patient_widget,
+                    #     "Sync Failed",
+                    #     f"Failed to synchronize patient data:\n{error_msg}"
+                    # )
+            
+            # Connect all signals
+            sync_service.sync_started.connect(on_sync_started)
+            sync_service.sync_progress.connect(on_sync_progress)
+            sync_service.sync_completed.connect(on_sync_completed)
+            sync_service.sync_failed.connect(on_sync_failed)
+            
+            # Handle cancel button
+            def on_cancel():
+                # Re-enable sync button
+                if hasattr(self, 'sync_button'):
+                    self.sync_button.setEnabled(True)
+                # QMessageBox.information(
+                #     self.patient_widget,
+                #     "Sync Cancelled",
+                #     "Synchronization was cancelled by user.\nNote: Some files may have been uploaded."
+                # )
+            
+            progress_dialog.canceled.connect(on_cancel)
+            
+            # Start sync
+            sync_service.sync_patient_data(study_uid, verbose=True)
+            
+            # Show progress dialog
+            progress_dialog.show()
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to start patient sync: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Re-enable sync button
+            if hasattr(self, 'sync_button'):
+                self.sync_button.setEnabled(True)
+            
+            from PySide6.QtWidgets import QMessageBox
+            # QMessageBox.warning(
+            #     self.patient_widget,
+            #     "Error",
+            #     f"Failed to start synchronization: {str(e)}"
+            # )
+    
+    def _update_report_status_display(self):
+        """Update the report status badge display"""
+        try:
+            # Get current report status from widget
+            current_status = getattr(self.patient_widget, 'report_status', 'pending')
+            
+            # Import status labels and colors
+            from PacsClient.components.socket_report_status_service import REPORT_STATUSES, STATUS_COLORS
+            
+            # Get status label and color
+            status_label = REPORT_STATUSES.get(current_status, current_status.title())
+            status_color = STATUS_COLORS.get(current_status, '#f59e0b')
+            
+            # Choose simple indicator based on status
+            # Use single character or symbol for compact display
+            status_indicator_map = {
+                'pending': 'P',
+                'awaiting_physician_approval': 'MD',
+                'awaiting_secretary_approval': 'SC',
+                'awaiting_approval': 'A',
+                'physician_approved': 'MD',  # Medical Doctor approved - different from secretary
+                'secretary_approved': 'SC',  # Secretary approved - different from physician
+                'completed': '✓✓',
+                'archived': 'A'
+            }
+            indicator_text = status_indicator_map.get(current_status, '?')
+            
+            # Update badge with colored background
+            self.report_status_badge.setText(indicator_text)
+            self.report_status_badge.setStyleSheet(f"""
+                QLabel {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {status_color}, stop:1 {status_color});
+                    color: #ffffff;
+                    border: 1px solid rgba(255, 255, 255, 0.3);
+                    border-radius: 8px;
+                    padding: 1px 4px;
+                    font-weight: 600;
+                    font-family: 'Roboto', sans-serif;
+                    font-size: 8px;
+                }}
+            """)
+            self.report_status_badge.show()
+            
+            # Update tooltip on button
+            button = self.report_status_badge.parent()
+            if button:
+                button.setToolTip(f"Report Status: {status_label}\n(Click to change)")
+            
+            print(f"📋 [Toolbar] Updated status badge: {current_status} -> {indicator_text} ({status_label})")
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to update report status display: {e}")
+            import traceback
+            traceback.print_exc()

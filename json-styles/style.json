@@ -1,0 +1,258 @@
+{
+  "LiveCompileQss": true,
+  "CheckForMissingicons": false,
+  "ShowLogs": true,
+  "QMainWindow": [
+    {
+      "tittle": "AIPacs",
+      "icon": "PacsClient/login/images/favicon.ico",
+      "frameless": true,
+      "transluscentBg": true,
+      "sizeGrip": "sizeGrip",
+      "navigation": [
+        {
+          "minimize": "minimizeBtn",
+          "close": "closeBtn",
+          "restore": [
+            {
+              "buttonName": "restoreBtn",
+              "normalIcon": ":/feather/Icons/feather/square.png",
+              "maximizedIcon": ":/feather/Icons/feather/copy.png"
+            }
+          ],
+          "moveWindow": "headerContainer",
+          "tittleBar": "headerContainer"
+        }
+      ]
+    }
+  ],
+  	"QCustomSlideMenu": [
+	  {
+		"name": "leftMenuContainer",
+		"defaultSize": [
+		  {
+			"width": 58,
+			"height": "parent"
+		  }
+		],
+		"collapsedSize": [
+		  {
+			"width": 58,
+			"height": "parent"
+		  }
+		],
+		"expandedSize": [
+		  {
+			"width": 230,
+			"height": "parent"
+		  }
+		],
+		"toggleButton": [
+		  {
+			"buttonName": "menuBtn",
+			"icons": [
+			  {
+				"whenMenuIsCollapsed": ":/feather/Icons/feather/align-justify.png",
+				"whenMenuIsExpanded": ":/feather/Icons/feather/arrow-left-circle.png"
+			  }
+			]
+		  }
+		],
+		"menuTransitionAnimation": [
+		  {
+			"animationDuration": 500,
+			"animationEasingCurve": "Linear"
+		  }
+		]
+	  },
+	  {
+		"name": "centerMenuContainer",
+		"defaultSize": [
+		  {
+			"width": 0,
+			"height": "parent"
+		  }
+		],
+		"collapsedSize": [
+		  {
+			"width": 0,
+			"height": "parent"
+		  }
+		],
+		"expandedSize": [
+		  {
+			"width": 200,
+			"height": "parent"
+		  }
+		],
+		"menuTransitionAnimation": [
+		  {
+			"animationDuration": 500,
+			"animationEasingCurve": "Linear"
+		  }
+		]
+	  },
+	  {
+		"name": "rightMenuContainer",
+		"defaultSize": [
+		  {
+			"width": 0,
+			"height": "parent"
+		  }
+		],
+		"collapsedSize": [
+		  {
+			"width": 0,
+			"height": "parent"
+		  }
+		],
+		"expandedSize": [
+		  {
+			"width": 200,
+			"height": "parent"
+		  }
+		],
+		"menuTransitionAnimation": [
+		  {
+			"animationDuration": 500,
+			"animationEasingCurve": "Linear"
+		  }
+		]
+	  }
+	],
+	"QCustomQStackedWidget": [
+	  {
+		"name": "mainPages",
+		"navigation": [
+		  {
+			"navigationButtons": [
+			  {
+				"home_btn": "home_widget",
+				"dataBtn": "dataPage",
+				"reportBtn": "reportsPage",
+				"settings_server_btn": "settings_widget"
+			  }
+			]
+		  }
+		],
+		"transitionAnimation": [
+		  {
+			"fade": [
+			  {
+				"active": true,
+				"duration": 500,
+				"easingCurve": "InSine"
+			  }
+			]
+		  }
+		]
+	  },
+	  {
+		"name": "centerMenuPages",
+		"navigation": [
+		  {
+			"navigationButtons": [
+			  {
+				"settingsBtn": "page_3",
+				"infoBtn": "page_4",
+				"helpBtn": "page_5"
+			  }
+			]
+		  }
+		]
+	  },
+	  {
+		"name": "rightMenuPages",
+		"navigation": [
+		  {
+			"navigationButtons": [
+			  {
+			  }
+			]
+		  }
+		]
+	  }
+	],
+	"QPushButtonGroup": [
+	  {
+		"Buttons": [
+		  "home_btn",
+		  "dataBtn",
+		  "reportBtn",
+		  "settings_server_btn"
+		],
+		"ActiveButton": "home_btn",
+		"Style": [
+		  {
+			"Active": "QPushButton{background-color: THEME.COLOR_BACKGROUND_2; font-weight: bold; border-top: 2px solid $COLOR_BACKGROUND_3; border-left: 5px solid $COLOR_BACKGROUND_3 ;border-bottom: 6px solid $COLOR_BACKGROUND_3;}",
+			"NotActive": "QPushButton{background-color: transparent; font-weight: normal; border-top: 2px solid transparent; border-left: 5px solid transparent;border-bottom: 6px solid transparent;}"
+		  }
+		]
+	  },
+	  {
+		"Buttons": [
+		  "settingsBtn",
+		  "infoBtn",
+		  "helpBtn",
+		  "closeCenterMenuBtn"
+		],
+		"ActiveButton": "closeCenterMenuBtn",
+		"Style": [
+		  {
+			"Active": "QPushButton{background-color: THEME.COLOR_ACCENT_1; font-weight: bold; border-top: 6px solid $COLOR_BACKGROUND_3; border-left: 6px solid $COLOR_BACKGROUND_3;border-bottom: 6px solid $COLOR_BACKGROUND_3;}",
+			"NotActive": "QPushButton{background-color: transparent; font-weight: normal; border-top: 6px solid transparent; border-left: 6px solid transparent;border-bottom: 6px solid transparent;}"
+		  }
+		]
+	  },
+	  {
+		"Buttons": [
+		  "closeRightMenuBtn"
+		],
+		"Style": [
+		  {
+			"Active": "QPushButton{background-color: THEME.COLOR_BACKGROUND_2; font-weight: bold; border-radius: 5px} QPushButton::hover{background-color: THEME.COLOR_ACCENT_1}",
+			"NotActive": "QPushButton{background-color: transparent; font-weight: normal; border-radius: 5px} QPushButton::hover{background-color: THEME.COLOR_ACCENT_1}"
+		  }
+		]
+	  }
+	],
+
+
+
+
+
+
+
+  "QSettings": [
+    {
+      "ThemeSettings": [
+        {
+          "CustomTheme": [
+            {
+              "Background-color": "#21272a",
+              "Text-color": "#fefefe",
+              "Accent-color": "#fba43b",
+              "Icons-color": "#fefefe",
+              "Theme-name": "Default-theme",
+              "Default-Theme": true
+            },
+			  {
+				"Background-color": "#FFFFFF",
+				"Text-color": "#010000",
+				"Icons-color": "#000000",
+				"Accent-color": "#26bae3",
+				"Theme-name": "LightBlue",
+				"Default-Theme": false
+			  }
+		  ]
+        }
+      ],
+      "AppSettings": {
+        "OrginizationName": "AIPacs",
+        "ApplicationName": "AIPacs",
+        "OrginizationDormain": "aipacs.com"
+      }
+    }
+  ],
+  "QtBinding": "PySide6"
+}

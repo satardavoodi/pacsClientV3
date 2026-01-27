@@ -1,0 +1,260 @@
+//===================================================//
+// FILE AUTO-GENERATED. PUT YOUR DEFAULT STYLES HERE. 
+// THESE STYLES WILL OVERIDE THE THEME STYLES
+//====================================================//
+*{
+    // border: none; 
+    // background-color: transparent;
+    // font: 400 1rem/1.5rem Google Sans, Roboto, Arial, sans-serif;
+    font-family: 'Sans Serif';
+}
+QMainWindow, #centralwidget{
+    background-color: $COLOR_BACKGROUND_1;
+    //border-radius: 10px;
+	//border: 3px solid $COLOR_BACKGROUND_4;
+}
+QPushButton, QLineEdit, QDateEdit{
+    padding: 8px 10px;
+    border-radius: 10px;
+	min-width: auto;
+    width: auto;
+}
+QDateEdit, QDateTimeEdit {
+    &::drop-down {
+        width: 24px;
+        border-left: 1px solid $COLOR_BACKGROUND_4;
+    }
+
+    &::down-arrow {
+        image: url($PATH_RESOURCES+'material_design/calendar_month.png');
+        height: 16px;
+        width: 16px;
+
+        &:on,
+        &:hover,
+        &:focus {
+            image: url($PATH_RESOURCES+'material_design/calendar_month.png');
+        }
+
+    }
+}
+QGroupBox {
+    border-radius: 10px;
+    &::title {
+        subcontrol-position: top center;
+    }
+}
+QTableView{
+	background-color: $COLOR_BACKGROUND_2;
+	alternate-background-color: $COLOR_BACKGROUND_3; /* Alternate row background color */
+	border: none;
+    gridline-color: $COLOR_BACKGROUND_4;
+    border-radius: $SIZE_BORDER_RADIUS;
+	&::item {
+		// margin: 10px;
+		padding: 0;
+		height: auto;
+	}
+	& * {
+		background-color: transparent;
+	}
+}
+QCustomCheckBox{
+    background-color: transparent;
+    qproperty-backgroundColor: $COLOR_BACKGROUND_5;
+    qproperty-circleColor: $COLOR_ACCENT_1;
+    qproperty-activeColor: $COLOR_ACCENT_2;
+}
+
+QCustomQDialog{
+	#widget {
+		background-color: $COLOR_BACKGROUND_1;
+		min-width: 300px;
+	}
+	#cancelButton{
+		background-color: $COLOR_BACKGROUND_3;
+		font-weight: bold;
+		icon: url($PATH_RESOURCES+'font_awesome/solid/circle-xmark.png');
+		icon-size: 20px 20px;
+	}
+	#yesButton{
+		background-color: $COLOR_ACCENT_1;
+		font-weight: bold;
+		icon: url($PATH_RESOURCES+'material_design/check_circle.png');
+		icon-size: 20px 20px;
+	}
+	#mainBody{
+		border-bottom: $BORDER_2;
+		background-color: $COLOR_BACKGROUND_3;
+		//***Other widgets
+	}
+	#footer{
+		background-color: transparent;
+	}
+}
+
+QTabWidget {
+	*{
+		border-radius: 10px;
+		// border: none;
+		// background-color: transparent;
+	}
+	QTabBar{
+		border: none;
+		&::tab {
+            background-color: $COLOR_ACCENT_2;
+            border: none;
+            font-weight: 1000;
+            border-radius: 10px;	
+            margin: 5px 8px;
+            padding: 8px 10px;
+			&:top {
+				&:selected {
+					background-color: $COLOR_ACCENT_2;
+					border: none;
+					font-weight: 1000;
+                    border-radius: 10px;	
+                    margin: 5px 8px;
+                    padding: 8px 10px;
+				}
+	
+				&:!selected:hover {
+					background-color: $COLOR_ACCENT_3;
+					border: none;
+                    font-weight: 1000;
+                    border-radius: 10px;
+                    margin: 5px 8px;
+                    padding: 8px 10px;
+				}
+				&:!selected {
+					background-color: $COLOR_BACKGROUND_1;
+					border: none;
+                    font-weight: normal;
+                    margin: 5px 8px;
+                    padding: 8px 10px;
+				}
+			}
+		}
+	}
+}
+QScrollArea, QScrollArea > *, QScrollArea > * > *, #mainContentsContainer, #mainPages, #mainPages > *{
+    background: none;
+    background-color: transparent;
+    border-color: transparent;
+    border: none;
+}
+#leftMenuContainer{
+    & QWidget{
+        background-color: transparent;
+    }
+    background-color: $COLOR_BACKGROUND_1;
+    padding-top: 10px;
+    border-right: 6px solid $COLOR_BACKGROUND_3;
+}
+#centerMenuContainer{
+    border-left: 6px solid $COLOR_ACCENT_1;
+    border-right: 6px solid $COLOR_BACKGROUND_3;
+}
+#rightMenuContainer{
+    background-color: $COLOR_BACKGROUND_1;
+    border-left: 6px solid $COLOR_BACKGROUND_3;
+}
+#leftMenuSubContainer QPushButton{
+    background-color: transparent;
+    text-align: left;
+    padding: 5px 10px;
+    border-radius: 0;
+    border-top-left-radius: 10px;
+    border-bottom-left-radius: 10px;
+}
+#centerMenuContainer, #rightMenuContainer{
+    #frame_4, #frame_17{
+        background-color: transparent;
+        padding: 10px;
+        border-bottom: $BORDER_2;
+        *{
+            background-color: transparent;
+        }
+    }
+    #centerMenuPages, #rightMenuPages{
+        border-radius: 10px;
+        background-color: transparent;
+    }
+}
+#headerContainer, #footerContainter{
+    background-color: $COLOR_BACKGROUND_1;
+    *{
+        background-color: transparent;
+    }
+    #frame_7 *{
+        padding: 2px;
+    }
+}
+#headerContainer{
+    border-bottom: $BORDER_2;
+}
+#footerContainter{
+    border-top: 6px solid $COLOR_BACKGROUND_3;
+}
+#logo{
+    color: $COLOR_ACCENT_1;
+}
+#mainBodyContent{
+    background-color: $COLOR_BACKGROUND_2;
+}
+#homePage, #dataPage, #reportsPage{
+    background-color: $COLOR_BACKGROUND_2;
+    #widget{
+        border-radius: 10px;
+        #roundProgress, #spiralProgress, #hybridProgressBar{
+            background-color: $COLOR_BACKGROUND_3;
+            border-radius: 10px;
+        }
+    }
+}
+#frame_8{
+    background-color: $COLOR_BACKGROUND_1;
+    border-radius: 10px;
+}
+QProgressBar {
+    height: 1px;
+    border-width: 1px;
+    ::chunk {
+        background-color: $COLOR_ACCENT_4;
+        border-radius: 5px;
+    }
+}
+#frame_6{
+    border-right: $BORDER_2;
+    border-left: $BORDER_2;
+    border-radius: 0;
+    *{
+        border: none;
+        background-color: transparent;
+        border-radius: 2px;
+    }
+}
+#searchCont{
+    border-right: $BORDER_2;
+    border-radius: 0;
+    *{
+        border: none;
+        background-color: transparent;
+        border-radius: 2px;
+    }
+    // QLineEdit{
+    //     border-right: $BORDER_2;
+    // }
+    QPushButton{
+        &:hover{
+            background-color: $COLOR_ACCENT_1;
+        }
+    }
+    &:hover{
+        background-color: $COLOR_BACKGROUND_2;
+    }
+}
+//===================================================//
+// END //
+//====================================================//
+            

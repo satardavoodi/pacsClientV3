@@ -1,0 +1,670 @@
+from PySide6.QtWidgets import (
+    QDialog,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+    QHBoxLayout,
+    QMessageBox,
+    QLabel,
+    QCheckBox,
+    QSpacerItem,
+    QSizePolicy,
+    QFrame,
+    QWidget,
+    QProgressBar,
+    QGraphicsDropShadowEffect,
+)
+from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QIcon
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
+import os
+import qtawesome as qta
+from .pacs.workstation_ui.mainwindow_ui import MainWindowWidget
+from PacsClient.utils import IMAGES_LOGIN_PATH
+from PacsClient.components.socket_service import SocketService
+from PacsClient.utils.socket_config import get_socket_config
+from PacsClient.utils.socket_token_manager import get_socket_token_manager
+
+
+class AppHandler(QDialog):
+    def __init__(self):
+        super(AppHandler, self).__init__()
+
+        # self.setWindowTitle("AIPacs - Professional Medical Imaging Suite")
+        self.setWindowTitle("")
+
+        # Get the absolute path to the icon
+        # icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "login", "images", "favicon.ico")
+        icon_path = fr"{IMAGES_LOGIN_PATH}/'favicon.ico'"
+
+        self.setWindowIcon(QIcon(icon_path))
+        self.resize(1000, 640)
+        self.setMinimumSize(900, 580)
+        
+        # Set window properties for better taskbar integration
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        
+        # Initialize socket service for authentication
+        self.socket_service = SocketService()
+        self.auth_token = None
+        self.auth_user = None
+
+        # Enhanced professional styling
+        self.setStyleSheet("""
+            QDialog { 
+                background: transparent;
+            }
+            
+            QFrame#MainContainer {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #0a0e13, stop:0.3 #0f1419, stop:0.7 #141a21, stop:1 #0a0e13);
+                border: 2px solid #1e2833;
+                border-radius: 16px;
+            }
+            
+            QLabel#BrandTitle { 
+                color: #ffffff; 
+                font-size: 28px; 
+                font-weight: 800; 
+                letter-spacing: 1px;
+                margin-bottom: 4px;
+            }
+            QLabel#BrandSubtitle { 
+                color: #94a3b8; 
+                font-size: 14px; 
+                font-weight: 400;
+                letter-spacing: 0.5px;
+            }
+            QLabel#BrandDescription {
+                color: #64748b;
+                font-size: 12px;
+                line-height: 1.5;
+                margin-top: 8px;
+            }
+            
+            QLabel#FormTitle { 
+                color: #f8fafc; 
+                font-size: 24px; 
+                font-weight: 700;
+                margin-bottom: 8px;
+            }
+            QLabel#FormSubtitle {
+                color: #94a3b8;
+                font-size: 14px;
+                margin-bottom: 24px;
+            }
+            
+            QLabel#ErrorLabel { 
+                color: #fca5a5; 
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(239, 68, 68, 0.12), stop:1 rgba(248, 113, 113, 0.08));
+                border: 1px solid rgba(239, 68, 68, 0.2);
+                border-radius: 8px; 
+                padding: 12px 16px;
+                font-weight: 500;
+            }
+
+            QFrame#BrandPanel {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #1e293b, stop:0.4 #334155, stop:0.6 #475569, stop:1 #1e293b);
+                border: 1px solid #334155;
+                border-radius: 12px;
+            }
+
+            QLineEdit {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1e293b, stop:1 #0f172a);
+                color: #f1f5f9;
+                border: 2px solid #334155;
+                border-radius: 10px; 
+                padding: 14px 16px;
+                font-size: 14px;
+                font-weight: 500;
+            }
+            QLineEdit:focus { 
+                border: 2px solid #3b82f6;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1e3a8a, stop:1 #1e293b);
+            }
+            QLineEdit:hover {
+                border: 2px solid #475569;
+            }
+
+            QPushButton[variant="primary"] {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3b82f6, stop:1 #2563eb);
+                color: #ffffff; 
+                border: none;
+                border-radius: 10px; 
+                padding: 14px 20px; 
+                font-weight: 700;
+                font-size: 15px;
+                letter-spacing: 0.5px;
+            }
+            QPushButton[variant="primary"]:hover { 
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2563eb, stop:1 #1d4ed8);
+            }
+            QPushButton[variant="primary"]:pressed { 
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1d4ed8, stop:1 #1e40af);
+            }
+            QPushButton[variant="primary"]:disabled {
+                background: #374151;
+                color: #6b7280;
+            }
+
+            QPushButton[variant="secondary"] {
+                background: transparent; 
+                color: #cbd5e1; 
+                border: 2px solid #475569;
+                border-radius: 10px; 
+                padding: 14px 20px;
+                font-weight: 600;
+                font-size: 14px;
+            }
+            QPushButton[variant="secondary"]:hover { 
+                border-color: #64748b; 
+                color: #f1f5f9;
+                background: rgba(71, 85, 105, 0.1);
+            }
+            
+            QProgressBar {
+                border: none;
+                background: #1e293b;
+                border-radius: 3px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #3b82f6, stop:1 #06b6d4);
+                border-radius: 3px;
+            }
+        """)
+
+        # Main container with rounded corners and shadow
+        main_container = QFrame(self)
+        main_container.setObjectName("MainContainer")
+        
+        # Add shadow effect
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(30)
+        shadow.setColor(QColor(0, 0, 0, 120))
+        shadow.setOffset(0, 8)
+        main_container.setGraphicsEffect(shadow)
+        
+        # Root layout
+        root_layout = QHBoxLayout(self)
+        root_layout.setContentsMargins(20, 20, 20, 20)
+        root_layout.addWidget(main_container)
+        
+        # Container layout: two panels
+        container_layout = QHBoxLayout(main_container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
+        # Brand panel (left) - Enhanced
+        brand_panel = QFrame(main_container)
+        brand_panel.setObjectName("BrandPanel")
+        brand_layout = QVBoxLayout(brand_panel)
+        brand_layout.setContentsMargins(40, 40, 40, 40)
+        brand_layout.setSpacing(16)
+
+        # AI Logo
+        logo_label = QLabel(brand_panel)
+        try:
+            # logo_pixmap = QPixmap("PacsClient/login/images/aiLogo.png")
+            logo_pixmap = QPixmap(fr"{IMAGES_LOGIN_PATH}/aiLogo.png")
+            if not logo_pixmap.isNull():
+                # Scale logo to appropriate size
+                scaled_logo = logo_pixmap.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                logo_label.setPixmap(scaled_logo)
+                logo_label.setAlignment(Qt.AlignCenter)
+                logo_label.setStyleSheet("""
+                    QLabel {
+                        margin: 10px;
+                        padding: 10px;
+                        background: rgba(255, 255, 255, 0.05);
+                        border: 2px solid rgba(255, 255, 255, 0.1);
+                        border-radius: 15px;
+                    }
+                """)
+            else:
+                logo_label.setText("🤖")
+                logo_label.setAlignment(Qt.AlignCenter)
+                logo_label.setStyleSheet("font-size: 48px; margin: 20px;")
+        except Exception as e:
+            print(f"Could not load logo: {e}")
+            logo_label.setText("🤖")
+            logo_label.setAlignment(Qt.AlignCenter)
+            logo_label.setStyleSheet("font-size: 48px; margin: 20px;")
+
+        # Brand content with better hierarchy
+        brand_title = QLabel("AiPACS", brand_panel)
+        brand_title.setObjectName("BrandTitle")
+        brand_subtitle = QLabel("Professional Medical Imaging Suite", brand_panel)
+        brand_subtitle.setObjectName("BrandSubtitle")
+        brand_description = QLabel("Secure DICOM viewing, analysis, and patient data management.\nBuilt for healthcare professionals.", brand_panel)
+        brand_description.setObjectName("BrandDescription")
+        brand_description.setWordWrap(True)
+
+        # Features list
+        features_label = QLabel("✓ DICOM Image Viewing\n✓ Patient Data Management\n✓ Secure Authentication\n✓ Multi-format Support", brand_panel)
+        features_label.setObjectName("BrandDescription")
+        features_label.setStyleSheet("margin-top: 20px; line-height: 1.6;")
+
+        brand_layout.addStretch()
+        brand_layout.addWidget(logo_label)
+        brand_layout.addWidget(brand_title)
+        brand_layout.addWidget(brand_subtitle)
+        brand_layout.addWidget(brand_description)
+        brand_layout.addWidget(features_label)
+        brand_layout.addStretch()
+
+        # Form panel (right) - Enhanced
+        form_panel = QFrame(main_container)
+        form_layout = QVBoxLayout(form_panel)
+        form_layout.setContentsMargins(40, 40, 40, 40)
+        form_layout.setSpacing(20)
+
+        # Form header
+        form_title = QLabel("Welcome Back", form_panel)
+        form_title.setObjectName("FormTitle")
+        form_subtitle = QLabel("Sign in to access your medical imaging workstation", form_panel)
+        form_subtitle.setObjectName("FormSubtitle")
+        form_layout.addWidget(form_title)
+        form_layout.addWidget(form_subtitle)
+
+        # Error display with animation support
+        self.error_label = QLabel("", form_panel)
+        self.error_label.setObjectName("ErrorLabel")
+        self.error_label.setVisible(False)
+        self.error_label.setMaximumHeight(0)
+        form_layout.addWidget(self.error_label)
+
+        # Username field with icon
+        username_container = QFrame(form_panel)
+        username_layout = QVBoxLayout(username_container)
+        username_layout.setContentsMargins(0, 0, 0, 0)
+        username_layout.setSpacing(6)
+        username_label = QLabel("Username", username_container)
+        username_label.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 13px;")
+        self.line_edit_username = QLineEdit(username_container)
+        self.line_edit_username.setPlaceholderText("Enter your username")
+        self.line_edit_username.returnPressed.connect(lambda: self.line_edit_password.setFocus())
+        username_layout.addWidget(username_label)
+        username_layout.addWidget(self.line_edit_username)
+        form_layout.addWidget(username_container)
+
+        # Password field with show/hide
+        password_container = QFrame(form_panel)
+        password_layout = QVBoxLayout(password_container)
+        password_layout.setContentsMargins(0, 0, 0, 0)
+        password_layout.setSpacing(6)
+        password_label = QLabel("Password", password_container)
+        password_label.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 13px;")
+        password_row = QHBoxLayout()
+        password_row.setSpacing(8)
+        self.line_edit_password = QLineEdit(password_container)
+        self.line_edit_password.setEchoMode(QLineEdit.Password)
+        self.line_edit_password.setPlaceholderText("Enter your password")
+        self.line_edit_password.returnPressed.connect(self.login)
+        
+        # Eye icon button
+        self.btn_toggle_password = QPushButton(password_container)
+        self.btn_toggle_password.setIcon(qta.icon('fa5s.eye', color='#cbd5e1'))
+        self.btn_toggle_password.setCheckable(True)
+        self.btn_toggle_password.setProperty("variant", "secondary")
+        self.btn_toggle_password.clicked.connect(self._toggle_password)
+        self.btn_toggle_password.setFixedSize(50, 48)
+        self.btn_toggle_password.setToolTip("Show/Hide Password")
+        
+        # Server settings button
+        self.btn_server_settings = QPushButton(password_container)
+        self.btn_server_settings.setIcon(qta.icon('fa5s.cog', color='#cbd5e1'))
+        self.btn_server_settings.setProperty("variant", "secondary")
+        self.btn_server_settings.clicked.connect(self._show_server_settings)
+        self.btn_server_settings.setFixedSize(50, 48)
+        self.btn_server_settings.setToolTip("Server Settings")
+        
+        password_row.addWidget(self.line_edit_password)
+        password_row.addWidget(self.btn_toggle_password)
+        password_row.addWidget(self.btn_server_settings)
+        password_layout.addWidget(password_label)
+        password_layout.addLayout(password_row)
+        form_layout.addWidget(password_container)
+
+        # Remember me + Forgot password
+        options_row = QHBoxLayout()
+        options_row.setSpacing(8)
+        
+        # Create custom checkbox using icons
+        self.checkbox_container = QHBoxLayout()
+        self.checkbox_container.setSpacing(8)
+        
+        # Checkbox button with icon
+        self.checkbox_button = QPushButton()
+        self.checkbox_button.setCheckable(True)
+        self.checkbox_button.setFixedSize(24, 24)
+        self.checkbox_button.setCursor(Qt.PointingHandCursor)
+        self.checkbox_button.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+        """)
+        self.checkbox_button.clicked.connect(self._toggle_checkbox)
+        
+        # Label
+        checkbox_label = QLabel("Remember me")
+        checkbox_label.setStyleSheet("color: #cbd5e1; font-weight: 500; font-size: 13px;")
+        checkbox_label.setCursor(Qt.PointingHandCursor)
+        checkbox_label.mousePressEvent = lambda e: self.checkbox_button.click()
+        
+        self.checkbox_container.addWidget(self.checkbox_button)
+        self.checkbox_container.addWidget(checkbox_label)
+        self.checkbox_container.addStretch()
+        
+        # Set initial icon
+        self.checkbox_remember = self.checkbox_button  # For compatibility
+        self._update_checkbox_icon()
+        
+        forgot_password = QLabel('<a href="#" style="color: #3b82f6; text-decoration: none;">Forgot password?</a>', form_panel)
+        forgot_password.setStyleSheet("font-size: 13px;")
+        options_row.addLayout(self.checkbox_container)
+        options_row.addWidget(forgot_password)
+        form_layout.addLayout(options_row)
+
+        # Loading progress bar (hidden by default)
+        self.progress_bar = QProgressBar(form_panel)
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setMaximumHeight(6)
+        form_layout.addWidget(self.progress_bar)
+
+        # Buttons with better spacing
+        buttons_container = QFrame(form_panel)
+        buttons_layout = QVBoxLayout(buttons_container)
+        buttons_layout.setContentsMargins(0, 10, 0, 0)
+        buttons_layout.setSpacing(12)
+        
+        self.button_login = QPushButton("Sign In", buttons_container)
+        self.button_login.setProperty("variant", "primary")
+        self.button_login.clicked.connect(self.login)
+        self.button_login.setMinimumHeight(50)
+        
+        self.button_cancel = QPushButton("Cancel", buttons_container)
+        self.button_cancel.setProperty("variant", "secondary")
+        self.button_cancel.clicked.connect(self.reject)
+        self.button_cancel.setMinimumHeight(50)
+        
+        buttons_layout.addWidget(self.button_login)
+        buttons_layout.addWidget(self.button_cancel)
+        form_layout.addWidget(buttons_container)
+
+        # Fill remaining space
+        form_layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
+        container_layout.addWidget(brand_panel, 5)
+        container_layout.addWidget(form_panel, 4)
+
+        # Initialize animations
+        self._setup_animations()
+
+        # Fade in animation on startup
+        self.setWindowOpacity(0)
+        self.fade_in_animation.start()
+
+    def _setup_animations(self):
+        """Setup smooth animations for UI interactions"""
+        # Fade in animation for startup
+        self.fade_in_animation = QPropertyAnimation(self, b"windowOpacity")
+        self.fade_in_animation.setDuration(600)
+        self.fade_in_animation.setStartValue(0)
+        self.fade_in_animation.setEndValue(1)
+        self.fade_in_animation.setEasingCurve(QEasingCurve.OutCubic)
+        
+        # Error label height animation
+        self.error_height_animation = QPropertyAnimation(self.error_label, b"maximumHeight")
+        self.error_height_animation.setDuration(300)
+        self.error_height_animation.setEasingCurve(QEasingCurve.OutCubic)
+        
+        # Error fade animation
+        self.error_fade_animation = QPropertyAnimation(self.error_label, b"windowOpacity")
+        self.error_fade_animation.setDuration(200)
+        
+        # Button animation group for loading state
+        self.button_animation_group = QParallelAnimationGroup()
+
+    def _show_error(self, message):
+        """Show error with smooth animation"""
+        self.error_label.setText(message)
+        self.error_label.setVisible(True)
+        
+        # Animate height from 0 to content height
+        self.error_height_animation.setStartValue(0)
+        self.error_height_animation.setEndValue(60)
+        self.error_height_animation.finished.connect(lambda: self._shake_form())
+        self.error_height_animation.start()
+
+    def _hide_error(self):
+        """Hide error with smooth animation"""
+        self.error_height_animation.setStartValue(60)
+        self.error_height_animation.setEndValue(0)
+        self.error_height_animation.finished.connect(lambda: self.error_label.setVisible(False))
+        self.error_height_animation.start()
+
+    def _shake_form(self):
+        """Subtle shake animation for form on error"""
+        original_pos = self.pos()
+        shake_animation = QPropertyAnimation(self, b"pos")
+        shake_animation.setDuration(400)
+        shake_animation.setKeyValueAt(0, original_pos)
+        shake_animation.setKeyValueAt(0.1, original_pos + QRect(5, 0, 0, 0).topLeft())
+        shake_animation.setKeyValueAt(0.2, original_pos + QRect(-5, 0, 0, 0).topLeft())
+        shake_animation.setKeyValueAt(0.3, original_pos + QRect(3, 0, 0, 0).topLeft())
+        shake_animation.setKeyValueAt(0.4, original_pos + QRect(-3, 0, 0, 0).topLeft())
+        shake_animation.setKeyValueAt(1, original_pos)
+        shake_animation.start()
+
+    def _set_loading_state(self, loading=True):
+        """Set UI to loading state with progress animation"""
+        self.button_login.setEnabled(not loading)
+        self.line_edit_username.setEnabled(not loading)
+        self.line_edit_password.setEnabled(not loading)
+        
+        if loading:
+            self.button_login.setText("Signing In...")
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setRange(0, 0)  # Indeterminate progress
+        else:
+            self.button_login.setText("Sign In")
+            self.progress_bar.setVisible(False)
+
+    def _toggle_checkbox(self):
+        """Toggle checkbox and update icon"""
+        self._update_checkbox_icon()
+    
+    def _update_checkbox_icon(self):
+        """Update checkbox icon based on state"""
+        if self.checkbox_button.isChecked():
+            # Checked - show filled check square
+            icon = qta.icon('fa5s.check-square', color='#3b82f6')
+        else:
+            # Unchecked - show empty square (regular style)
+            icon = qta.icon('fa5.square', color='#64748b')
+        
+        self.checkbox_button.setIcon(icon)
+        self.checkbox_button.setIconSize(self.checkbox_button.size())
+    
+    def _toggle_password(self):
+        if self.btn_toggle_password.isChecked():
+            self.line_edit_password.setEchoMode(QLineEdit.Normal)
+            self.btn_toggle_password.setIcon(qta.icon('fa5s.eye-slash', color='#cbd5e1'))
+            self.btn_toggle_password.setToolTip("Hide Password")
+        else:
+            self.line_edit_password.setEchoMode(QLineEdit.Password)
+            self.btn_toggle_password.setIcon(qta.icon('fa5s.eye', color='#cbd5e1'))
+            self.btn_toggle_password.setToolTip("Show Password")
+    
+    def _show_server_settings(self):
+        """Show server settings dialog"""
+        from PacsClient.utils.server_settings_dialog import ServerSettingsDialog
+        dialog = ServerSettingsDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            # Server settings updated, could show notification
+            pass
+
+    def login(self):
+        username = self.line_edit_username.text().strip()
+        password = self.line_edit_password.text().strip()
+
+        # Hide any existing errors
+        if self.error_label.isVisible():
+            self._hide_error()
+
+        # Set loading state
+        self._set_loading_state(True)
+
+        # Simulate login process with timer (replace with actual authentication)
+        QTimer.singleShot(1500, lambda: self._complete_login(username, password))
+
+    def _complete_login(self, username, password):
+        """Complete the login process after authentication"""
+        self._set_loading_state(False)
+        
+        # Try socket authentication first
+        success, message = self._authenticate_with_socket(username, password)
+        
+        # If socket fails, try demo mode
+        if not success:
+            success = self._authenticate_user(username, password)
+            if success:
+                message = "Login successful (Demo Mode)"
+        
+        if success:
+            # Success - fade out and open main window
+            fade_out = QPropertyAnimation(self, b"windowOpacity")
+            fade_out.setDuration(300)  # Shorter duration
+            fade_out.setStartValue(1.0)
+            fade_out.setEndValue(0.0)
+            fade_out.setEasingCurve(QEasingCurve.OutCubic)
+            
+            # Store animation reference to prevent garbage collection
+            self.fade_animation = fade_out
+            fade_out.finished.connect(self._open_main_window)
+            fade_out.start()
+        else:
+            # Show error
+            self._show_error(f"Login failed: {message}")
+    
+    def _authenticate_with_socket(self, username: str, password: str) -> tuple:
+        """
+        Authenticate user with Socket server
+        
+        Returns:
+            tuple: (success: bool, message: str)
+        """
+        try:
+            # Get socket client
+            client = self.socket_service._ensure_client()
+            if not client:
+                return False, "Could not create socket client"
+            
+            # Try to connect
+            if not client.connected:
+                if not client.connect():
+                    return False, "Could not connect to server"
+            
+            # Attempt login
+            success, message, token, user = client.login(username, password)
+            
+            if success:
+                self.auth_token = token
+                self.auth_user = user
+                
+                # Store token in TokenManager for use in all socket requests
+                token_manager = get_socket_token_manager()
+                token_manager.set_token(token, user)
+                
+                print(f"✅ Authenticated as: {user.get('full_name')} ({user.get('role')})")
+                print(f"✅ Token stored in TokenManager for socket requests")
+                return True, message
+            else:
+                return False, message
+                
+        except Exception as e:
+            print(f"❌ Socket authentication error: {e}")
+            return False, f"Authentication error: {str(e)}"
+    
+    def _authenticate_user(self, username, password):
+        """Authenticate user credentials - Replace with actual authentication logic"""
+        
+        # Demo mode: Allow empty credentials for testing
+        if username.strip() == "" and password.strip() == "":
+            return True
+            
+        # Prevent single empty field (both must be empty or both must be filled)
+        if not username.strip() or not password.strip():
+            return False
+            
+        # Add your authentication logic here
+        # For now, accepting common demo credentials or you can integrate with your auth system
+        valid_credentials = [
+            ("admin", "admin"),
+            ("user", "user"),
+            ("doctor", "doctor"),
+            ("radiologist", "password"),
+            ("test", "test")
+        ]
+        
+        # Check against valid credentials
+        for valid_user, valid_pass in valid_credentials:
+            if username.lower() == valid_user and password == valid_pass:
+                return True
+                
+        # TODO: Replace this with actual authentication system
+        # For example: database lookup, LDAP, OAuth, etc.
+        # return self.authenticate_with_database(username, password)
+        # return self.authenticate_with_ldap(username, password)
+        
+        return False
+
+    def _open_main_window(self):
+        """Open the main application window"""
+        try:
+            self.main_page = MainWindowWidget(
+                auth_user=self.auth_user,
+                auth_token=self.auth_token
+            )
+            self.main_page.showMaximized()  # Show maximized for better visibility
+            self.close()
+        except Exception as e:
+            print(f"Error opening main window: {e}")
+            import traceback
+            traceback.print_exc()
+            # Keep login window open if there's an error
+            QMessageBox.critical(self, "Error", f"Failed to open main window: {str(e)}")
+
+    def mousePressEvent(self, event):
+        """Enable window dragging"""
+        if event.button() == Qt.LeftButton:
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        """Handle window dragging"""
+        if event.buttons() == Qt.LeftButton and hasattr(self, 'drag_position'):
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+            event.accept()
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts"""
+        if event.key() == Qt.Key_Escape:
+            self.reject()
+        elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+            if self.line_edit_username.hasFocus():
+                self.line_edit_password.setFocus()
+            elif self.line_edit_password.hasFocus():
+                self.login()
+        super().keyPressEvent(event)

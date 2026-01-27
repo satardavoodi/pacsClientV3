@@ -1,0 +1,37 @@
+.idea
+**/__pycache__
+logs
+servers.json
+test/
+ship.stl
+thumbnails
+.DS_Store
+dist/
+build/
+Pacs.spec
+attachment/
+source/
+dicom.db
+cbct-sample/
+# SQLite artifacts
+**/*.db
+**/*.db-shm
+**/*.db-wal
+*.md
+data/
+Segments/
+dicom.*
+sample_files
+PacsClient/segments/
+*.spec
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+config/servers_address.json
+config/patient_table_columns.json
+
+config/

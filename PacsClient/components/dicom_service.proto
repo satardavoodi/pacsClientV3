@@ -1,0 +1,226 @@
+syntax = "proto3";
+
+package dicomservice;
+
+// --- Thumbnail Service ---
+
+message ThumbnailRequest {
+  string patient_id = 1;
+  string study_uid = 2;
+}
+
+// New message for series thumbnail query
+message SeriesQueryRequest {
+  string patient_id = 1;        // Optional filter
+  string study_uid = 2;         // Optional filter
+  string modality = 3;          // Optional filter (MR, CT, etc.)
+  string series_description = 4; // Optional filter
+  int32 limit = 5;              // Optional limit (default: 50)
+  int32 offset = 6;             // Optional offset for pagination
+}
+
+// Individual series thumbnail response
+message SeriesThumbnailResponse {
+  string series_uid = 1;
+  string series_number = 2;
+  string series_description = 3;
+  string modality = 4;
+  string study_uid = 5;
+  string patient_id = 6;
+  string patient_name = 7;
+  string study_date = 8;
+  int32 image_count = 9;
+  string thumbnail_path = 10;      // File path to thumbnail
+  string thumbnail_status = 11;    // AVAILABLE, NOT_FOUND, ERROR
+  bytes thumbnail_data = 12;       // Actual thumbnail image data (JPEG/PNG)
+  string thumbnail_base64 = 13;    // Base64 encoded thumbnail
+}
+
+// Response for series query
+message SeriesQueryResponse {
+  repeated SeriesThumbnailResponse series = 1;
+  int32 total_count = 2;          // Total matching series
+  int32 returned_count = 3;       // Number of series returned
+}
+
+// Request for single series thumbnail
+message SingleThumbnailRequest {
+  string series_uid = 1;
+  bool include_image_data = 2;    // Whether to include actual image bytes
+  bool include_base64 = 3;        // Whether to include base64 string
+}
+
+// Request for study thumbnails
+message StudyThumbnailsRequest {
+  string study_instance_uid = 1;   // Required: Study UID to get thumbnails for
+  bool include_image_data = 2;     // Whether to include actual image bytes
+  bool include_base64 = 3;         // Whether to include base64 string
+  string download_path = 4;        // Optional: Path where client wants to save thumbnails
+}
+
+// Response for study thumbnails
+message StudyThumbnailsResponse {
+  string study_instance_uid = 1;
+  string patient_id = 2;
+  string patient_name = 3;
+  string study_date = 4;
+  string study_description = 5;
+  repeated SeriesThumbnailResponse series_thumbnails = 6;
+  int32 total_series = 7;
+  int32 thumbnails_available = 8;
+}
+
+// Request for study DICOM files
+message StudyDicomRequest {
+  string study_instance_uid = 1;   // Required: Study UID to get DICOM files for
+  string series_uid = 2;           // Optional: Specific series (empty = all series)
+  bool include_metadata = 3;       // Whether to include DICOM metadata
+  int32 instance_limit = 4;        // Optional: Limit number of instances per series
+  string compression = 5;          // Optional: Compression type (none, gzip)
+}
+
+// Individual DICOM instance response
+message DicomInstanceResponse {
+  string study_instance_uid = 1;
+  string series_instance_uid = 2;
+  string sop_instance_uid = 3;
+  string instance_number = 4;
+  string series_number = 5;
+  string series_description = 6;
+  string modality = 7;
+  string patient_id = 8;
+  string patient_name = 9;
+  string study_date = 10;
+  string file_path = 11;           // Original file path on server
+  bytes dicom_data = 12;           // Actual DICOM file content
+  int32 file_size = 13;            // File size in bytes
+  string content_type = 14;        // MIME type (application/dicom)
+  bool is_compressed = 15;         // Whether data is compressed
+}
+
+// Response for study DICOM files
+message StudyDicomResponse {
+  string study_instance_uid = 1;
+  string patient_id = 2;
+  string patient_name = 3;
+  string study_date = 4;
+  string study_description = 5;
+  int32 total_instances = 6;
+  int32 total_series = 7;
+  int32 files_found = 8;
+  repeated DicomInstanceResponse instances = 9;
+}
+
+// Request for patient list
+message PatientListRequest {
+  string patient_id = 1;           // Optional: Patient ID filter
+  string patient_name = 2;         // Optional: Patient Name filter
+  string modality = 3;             // Optional: Modality filter
+  string date_from = 4;            // Optional: Date range from (YYYYMMDD)
+  string date_to = 5;              // Optional: Date range to (YYYYMMDD)
+  int32 limit = 6;                 // Optional: Limit number of patients
+  int32 offset = 7;                // Optional: Offset for pagination
+  bool include_study_count = 8;    // Optional: Include study count per patient
+  bool include_latest_study = 9;   // Optional: Include latest study info
+}
+
+// Individual patient information
+message PatientInfo {
+  string patient_id = 1;
+  string patient_name = 2;
+  string patient_birth_date = 3;
+  string patient_sex = 4;
+  string patient_age = 5;
+  int32 total_studies = 6;
+  int32 total_series = 7;
+  int32 total_instances = 8;
+  string first_study_date = 9;
+  string latest_study_date = 10;
+  string latest_study_uid = 11;
+  string latest_study_description = 12;
+  repeated string modalities = 13;
+  string latest_study_time = 14;
+  string body_part_examined = 15;
+}
+
+// Response for patient list
+message PatientListResponse {
+  repeated PatientInfo patients = 1;
+  int32 total_count = 2;
+  int32 returned_count = 3;
+  int32 offset = 4;
+  int32 limit = 5;
+}
+
+message SeriesThumbnailInfo {
+  string series_uid = 1;
+  string series_number = 2;
+  string series_description = 3;
+  string modality = 4;
+  string protocol_name = 5; // Added field
+  string body_part_examined = 6; // Added field
+  string manufacturer = 7; // Added field
+  string institution_name = 8; // Added field
+  int32 image_count = 9;
+  string first_image_thumbnail_base64 = 10; // Thumbnail as base64 string
+}
+
+message ThumbnailResponse {
+  string patient_name = 1;
+  string patient_id = 2;
+  string study_date = 3;
+  string study_description = 4;
+  string accession_number = 5; // Added field
+  string referring_physician_name = 6; // Added field
+  repeated SeriesThumbnailInfo series_thumbnails = 7;
+}
+
+// --- Dicom Image Service ---
+
+message DicomImageRequest {
+  string patient_id = 1;
+  string study_uid = 2;
+  string series_uid = 3;
+}
+
+// Response message for a single DICOM image (streamed)
+message DicomImageInfo {
+  string sop_instance_uid = 1;
+  string instance_number = 2;
+  bytes image_data = 3; // Raw DICOM file bytes
+  string file_name = 4; // Original filename (e.g., sop_instance_uid.dcm)
+}
+
+
+// --- Service Definition ---
+
+service DicomService {
+  // Fetches study info and series thumbnails (legacy method)
+  rpc GetThumbnails(ThumbnailRequest) returns (ThumbnailResponse);
+
+  // Fetches individual DICOM images for a series as a stream
+  rpc GetDicomImages(DicomImageRequest) returns (stream DicomImageInfo);
+  
+  // NEW THUMBNAIL ENDPOINTS:
+  
+  // Query series with optional filters and get thumbnails
+  rpc QuerySeriesThumbnails(SeriesQueryRequest) returns (SeriesQueryResponse);
+  
+  // Get thumbnail for a specific series
+  rpc GetSeriesThumbnail(SingleThumbnailRequest) returns (SeriesThumbnailResponse);
+  
+  // Stream thumbnails for large result sets
+  rpc StreamSeriesThumbnails(SeriesQueryRequest) returns (stream SeriesThumbnailResponse);
+  
+  // Get all thumbnails for a specific study
+  rpc GetStudyThumbnails(StudyThumbnailsRequest) returns (StudyThumbnailsResponse);
+  
+  // Get all DICOM files for a specific study
+  rpc GetStudyDicomFiles(StudyDicomRequest) returns (StudyDicomResponse);
+  
+  // Stream DICOM files for a specific study (for large datasets)
+  rpc StreamStudyDicomFiles(StudyDicomRequest) returns (stream DicomInstanceResponse);
+
+  // Get patient list with filtering and pagination
+  rpc GetPatientList(PatientListRequest) returns (PatientListResponse);
+} 

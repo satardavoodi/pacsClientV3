@@ -1,0 +1,335 @@
+import sys
+import os
+
+# Fix Windows console encoding for emoji support
+if sys.platform == 'win32':
+    try:
+        import codecs
+
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'ignore')
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'ignore')
+    except:
+        pass
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon
+from PacsClient import AppHandler
+from PacsClient.utils.font_manager import load_fonts, setup_font_rendering
+import vtkmodules.vtkCommonCore as vtkCommonCore
+
+vtkCommonCore.vtkObject.GlobalWarningDisplayOff()
+from qasync import QEventLoop
+import asyncio
+
+# qtawesome will be initialized after QApplication is created
+# if __name__ == "__main__":
+#     app = QApplication(sys.argv)
+#     window = AppHandler()
+#     window.show()
+#     sys.exit(app.exec())
+from PacsClient.utils import IMAGES_LOGIN_PATH
+
+import os
+
+# os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+#     "--disable-gpu --in-process-gpu --disable-gpu-compositing "
+#     "--disable-features=VizDisplayCompositor,UseSkiaRenderer "
+#     "--use-angle=d3d11 --ignore-gpu-blocklist"
+# )
+
+if sys.platform == 'win32':
+    # Use software rendering for maximum compatibility
+    os.environ["QT_OPENGL"] = "software"
+    os.environ["QSG_RHI_BACKEND"] = "software"
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream"
+
+if __name__ == "__main__":
+    # Set working directory to _internal for PyInstaller builds
+    if getattr(sys, 'frozen', False):
+        # Running as PyInstaller executable
+        os.chdir(sys._MEIPASS)
+    
+    # Set Qt attributes BEFORE creating QApplication
+    QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)  # Compatible with software rendering
+    QApplication.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings, True)  # Better performance for detached tabs
+    
+    app = QApplication(sys.argv)
+
+    # Get the absolute path to the icon
+    # icon_path = os.path.join(os.path.dirname(__file__), "PacsClient", "login", "images", "favicon.ico")
+    icon_path = str(IMAGES_LOGIN_PATH / "favicon.ico")
+
+    # Set application icon for taskbar and window
+    app.setWindowIcon(QIcon(icon_path))
+
+    # Set application properties for Windows taskbar
+    app.setApplicationName("AIPacs")
+    # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
+    app.setApplicationDisplayName("AIPacs")
+    app.setApplicationVersion("1.0.0")
+    app.setOrganizationName("AIPacs")
+
+    # Setup font rendering for better quality
+    setup_font_rendering()
+
+    # Load Roboto fonts
+    load_fonts()
+    
+    # Set global stylesheet for dialogs and message boxes (dark theme)
+    app.setStyleSheet("""
+        QMessageBox {
+            background-color: #1a202c;
+        }
+        QMessageBox QLabel {
+            color: #e2e8f0;
+            font-size: 13px;
+        }
+        QMessageBox QPushButton {
+            background-color: #3182ce;
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 20px;
+            font-size: 13px;
+            min-width: 80px;
+        }
+        QMessageBox QPushButton:hover {
+            background-color: #2c5aa0;
+        }
+        QMessageBox QPushButton:pressed {
+            background-color: #1e4a8a;
+        }
+        QInputDialog {
+            background-color: #1a202c;
+        }
+        QInputDialog QLabel {
+            color: #e2e8f0;
+            font-size: 13px;
+        }
+        QInputDialog QLineEdit {
+            background-color: #2d3748;
+            color: #e2e8f0;
+            border: 1px solid #4a5568;
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 13px;
+        }
+        QInputDialog QPushButton {
+            background-color: #3182ce;
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 20px;
+            font-size: 13px;
+            min-width: 80px;
+        }
+        QInputDialog QPushButton:hover {
+            background-color: #2c5aa0;
+        }
+        QFileDialog {
+            background-color: #1a202c;
+        }
+        QFileDialog QLabel {
+            color: #e2e8f0;
+        }
+        QFileDialog QLineEdit {
+            background-color: #2d3748;
+            color: #e2e8f0;
+            border: 1px solid #4a5568;
+            border-radius: 4px;
+            padding: 6px;
+        }
+        QFileDialog QTreeView, QFileDialog QListView {
+            background-color: #2d3748;
+            color: #e2e8f0;
+            border: 1px solid #4a5568;
+        }
+        QFileDialog QTreeView::item:selected, QFileDialog QListView::item:selected {
+            background-color: #3182ce;
+        }
+        QFileDialog QPushButton {
+            background-color: #3182ce;
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 16px;
+            min-width: 70px;
+        }
+        QFileDialog QPushButton:hover {
+            background-color: #2c5aa0;
+        }
+        QFileDialog QComboBox {
+            background-color: #2d3748;
+            color: #e2e8f0;
+            border: 1px solid #4a5568;
+            border-radius: 4px;
+            padding: 6px;
+        }
+        QFileDialog QComboBox QAbstractItemView {
+            background-color: #2d3748;
+            color: #e2e8f0;
+            selection-background-color: #3182ce;
+        }
+        QColorDialog {
+            background-color: #1a202c;
+        }
+        QColorDialog QLabel {
+            color: #e2e8f0;
+        }
+        QColorDialog QPushButton {
+            background-color: #3182ce;
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 16px;
+        }
+        QColorDialog QLineEdit {
+            background-color: #2d3748;
+            color: #e2e8f0;
+            border: 1px solid #4a5568;
+            border-radius: 4px;
+            padding: 4px;
+        }
+        QFontDialog {
+            background-color: #1a202c;
+        }
+        QFontDialog QLabel {
+            color: #e2e8f0;
+        }
+        QFontDialog QLineEdit {
+            background-color: #2d3748;
+            color: #e2e8f0;
+            border: 1px solid #4a5568;
+            border-radius: 4px;
+            padding: 4px;
+        }
+        QFontDialog QListView {
+            background-color: #2d3748;
+            color: #e2e8f0;
+            border: 1px solid #4a5568;
+        }
+        QFontDialog QPushButton {
+            background-color: #3182ce;
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 16px;
+        }
+        QProgressDialog {
+            background-color: #1a202c;
+        }
+        QProgressDialog QLabel {
+            color: #e2e8f0;
+            font-size: 13px;
+        }
+        QProgressDialog QProgressBar {
+            background-color: #2d3748;
+            border: none;
+            border-radius: 4px;
+            text-align: center;
+            color: #e2e8f0;
+        }
+        QProgressDialog QProgressBar::chunk {
+            background-color: #3182ce;
+            border-radius: 4px;
+        }
+        QProgressDialog QPushButton {
+            background-color: #4a5568;
+            color: #e2e8f0;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 16px;
+        }
+        QProgressDialog QPushButton:hover {
+            background-color: #374151;
+        }
+        QToolTip {
+            background-color: #1a202c;
+            color: #e2e8f0;
+            border: 1px solid #4a5568;
+            border-radius: 4px;
+            padding: 4px 8px;
+        }
+        
+        /* Remove default focus outlines globally */
+        *:focus {
+            outline: none;
+        }
+        QWidget:focus {
+            outline: none;
+        }
+        QPushButton:focus {
+            outline: none;
+        }
+        QLineEdit:focus {
+            outline: none;
+        }
+        QComboBox:focus {
+            outline: none;
+        }
+        QCheckBox:focus {
+            outline: none;
+        }
+        QRadioButton:focus {
+            outline: none;
+        }
+        QSpinBox:focus {
+            outline: none;
+        }
+        QDoubleSpinBox:focus {
+            outline: none;
+        }
+        QTextEdit:focus {
+            outline: none;
+        }
+        QPlainTextEdit:focus {
+            outline: none;
+        }
+        QListView:focus {
+            outline: none;
+        }
+        QTreeView:focus {
+            outline: none;
+        }
+        QTableView:focus {
+            outline: none;
+        }
+        QTableWidget:focus {
+            outline: none;
+        }
+        QSlider:focus {
+            outline: none;
+        }
+        QScrollBar:focus {
+            outline: none;
+        }
+        QTabBar:focus {
+            outline: none;
+        }
+        QTabBar::tab:focus {
+            outline: none;
+        }
+        QGroupBox:focus {
+            outline: none;
+        }
+    """)
+    
+    # Initialize qtawesome fonts (required for icons in PyInstaller builds)
+    try:
+        import qtawesome as qta
+        # Force qtawesome to load its fonts by creating a test icon
+        # This ensures icons work properly in PyInstaller builds
+        _ = qta.icon('fa5s.home')  # This triggers font loading
+    except Exception as e:
+        print(f"Warning: Could not initialize qtawesome fonts: {e}")
+
+    # Integrate asyncio with Qt event loop
+    loop = QEventLoop(app)
+    asyncio.set_event_loop(loop)
+
+    window = AppHandler()
+    window.show()
+    # sys.exit(app.exec())
+    with loop:
+        loop.run_forever()
