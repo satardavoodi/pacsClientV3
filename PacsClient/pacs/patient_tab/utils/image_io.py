@@ -779,15 +779,30 @@ def load_single_series_by_number_old(study_path, series_number, patient_pk=None,
 
 def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_pk):
     """
-        base_path: مسیر فولدرِ سری/ساب‌فولدر
-        size_groups: map از (rows, cols) -> list[file paths] که هر کدام یک سری‌اند
-        """
+        base_path: Path to series/subfolder
+        size_groups: map of (rows, cols) -> list[file paths] where each is a series
+    """
     # TIMING: Import time module
     import time
-
-    # اگر patient/study نداریم، از اولین فایل سریِ اول می‌سازیم
+    
+    # Fix: Check if size_groups is empty
+    if not size_groups:
+        print(f"[WARN] process_series_groups: No images found in {base_path}, skipping")
+        return
+    
+    # If we don't have patient/study, create from first file of first series
     if (patient_pk is None) and (study_pk is None):
-        first_file = list(size_groups.values())[0][0]
+        # Fix: Check data existence before accessing
+        if not size_groups or len(size_groups.values()) == 0:
+            print(f"[WARN] No size groups available to create patient/study")
+            return
+            
+        first_group = list(size_groups.values())
+        if not first_group or len(first_group[0]) == 0:
+            print(f"[WARN] First group is empty, cannot create patient/study")
+            return
+            
+        first_file = first_group[0][0]
         patient_pk_local = utils.get_or_create_patient(first_file)
 
         study_path = base_path
@@ -806,7 +821,7 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
     else:
         patient_pk_local, study_pk_local = patient_pk, study_pk
 
-    for i, files in enumerate(size_groups.values()):  # هر "files" یک سری است
+    for i, files in enumerate(size_groups.values()):  # each "files" is a series
         try:
             _series_start = time.time()
             main_thumbnail = (i == 0)
@@ -826,33 +841,32 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             # TIMING: Database operations
             _db_start = time.time()
             
-            # ✅ OPTIMIZATION: Check if series already exists in DB to skip redundant operations
+            # OPTIMIZATION: Check if series already exists in DB to skip redundant operations
             _series_lookup_start = time.time()
-            # ایجاد/به‌روزرسانی رکورد سری
+            # Create/update series record
             series_pk = utils.get_or_create_series(
                 files[0], study_pk_local, itk_image, main_thumbnail, base_path
             )
             _series_lookup_time = time.time() - _series_lookup_start
             print(f"               • Series lookup/create: {_series_lookup_time:.3f}s")
 
-            # درج اینستنس‌های جدید (صرفاً موارد جدید ثبت می‌شوند؛ تکراری‌ها skip می‌شوند)
+            # Insert new instances (only new ones are registered; duplicates are skipped)
             _instance_start = time.time()
             utils.get_or_create_instance(files, itk_image, series_pk, group_id=i)
             _instance_time = time.time() - _instance_start
             print(f"               • Instance create: {_instance_time:.3f}s")
 
-            # متادیتا + تولید vtkImageData
+            # Metadata + generate vtkImageData
             _metadata_start = time.time()
             instances = get_instances_by_series_pk(series_pk, group_id=i)
-            # print('instances:', instances)
             
-            # ✅ Use cached metadata for better performance
+            # Use cached metadata for better performance
             metadata = _get_cached_metadata(series_pk, instances)
             _metadata_time = time.time() - _metadata_start
             print(f"               • Metadata fetch: {_metadata_time:.3f}s")
             
             _db_time = time.time() - _db_start
-            print(f"            ⏱️  DB operations: {_db_time:.3f}s")
+            print(f"            ⏱️  Database operations: {_db_time:.3f}s")
 
             # Apply ITK filters before conversion
             _filter_start = time.time()
@@ -872,11 +886,11 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             gc.collect()
             
             _total_group = time.time() - _series_start
-            print(f"         ✅ Group {i+1} done in {_total_group:.3f}s\n")
+            print(f"         ✅ Group {i+1} completed in {_total_group:.3f}s\n")
             
             yield vtk_image_data, metadata, (patient_pk_local, study_pk_local)
 
         except Exception as e:
-            # ممکن است برخی فولدرها/سری‌ها خراب باشند؛ کل pipeline نباید بایستد
-            print(f"[WARN] load_images: failed series at {base_path} -> {e}")
+            # Some folders/series might be corrupted; the whole pipeline shouldn't stop
+            print(f"[WARN] load_images: Failed series at {base_path} -> {e}")
             continue

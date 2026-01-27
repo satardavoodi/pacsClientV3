@@ -554,6 +554,9 @@ class PatientWidget(QWidget):
                 # Show any cached thumbnails
                 self.show_exist_thumbnails()
             
+            if hasattr(self, 'toolbar_manager') and self.toolbar_manager:
+                QTimer.singleShot(1000, self.toolbar_manager._update_report_status_display)
+            
         except Exception as e:
             print(f"❌ _start_pipeline error: {e}")
             import traceback
@@ -2649,51 +2652,45 @@ class PatientWidget(QWidget):
         print(f"✅ [PatientWidget] Background thread started")
     
     def _handle_status_update_result(self, study_uid: str, new_status: str, response):
-        """Handle status update result in main thread"""
-        print(f"\n🎯 [PatientWidget Main Thread] Handling status update result")
+        """Handle status update result in main thread - with toolbar sync"""
+        print(f"\n{'='*60}")
+        print(f"[PatientWidget] Handling status update result")
         print(f"   Study UID: {study_uid}")
         print(f"   New Status: {new_status}")
-        print(f"   Response type: {type(response)}")
-        print(f"   Response value: {response}")
         
         from PySide6.QtWidgets import QMessageBox
-        from PacsClient.components.socket_report_status_service import REPORT_STATUSES
+        from PySide6.QtCore import QTimer
         
         if response:
-            print(f"✅ [PatientWidget] Response is valid")
+            print(f"[PatientWidget] Response valid")
             
-            # Get report_status from server response (preferred) or use new_status as fallback
+            # Get report_status from server response
             server_status = None
             if isinstance(response, dict):
-                # Check multiple possible field names for report_status
                 server_status = (
                     response.get('report_status') or 
                     response.get('reportStatus') or 
                     response.get('latest_study_report_status') or
                     response.get('new_status')
                 )
-                print(f"📋 [PatientWidget] Server returned report_status: {server_status}")
             
-            # Use server status if available, otherwise use the status we sent
             final_status = server_status if server_status else new_status
-            print(f"📋 [PatientWidget] Using final status: {final_status}")
+            print(f"[PatientWidget] Using final status: {final_status}")
             
             # Update stored report_status in widget
             self.report_status = final_status
-            print(f"📋 [PatientWidget] Updated widget report_status to: {final_status}")
+            print(f"[PatientWidget] Updated widget report_status to: {final_status}")
             
-            # Update toolbar badge display
-            if hasattr(self, 'toolbar_manager') and hasattr(self.toolbar_manager, '_update_report_status_display'):
+            # UPDATE TOOLBAR STATUS DISPLAY (3-line widget)
+            if hasattr(self, 'toolbar_manager') and self.toolbar_manager:
                 QTimer.singleShot(100, self.toolbar_manager._update_report_status_display)
-                print(f"📋 [PatientWidget] Triggered toolbar badge update")
-            
-            status_label = REPORT_STATUSES.get(final_status, final_status)
-            print(f"✅ [PatientWidget] Status updated. Showing success message: {status_label}")
-            QMessageBox.information(self, "Success", f"Report status changed to '{status_label}'.")
+                print(f"[PatientWidget] Triggered toolbar status update")
         else:
-            print(f"❌ [PatientWidget] Response is None or invalid. Showing error message.")
-            QMessageBox.warning(self, "Error", "Failed to change report status.")
+            print(f"[PatientWidget] Response is None or invalid")
+            QMessageBox.warning(self, "Error", "Failed to change status.")
+        
         print(f"{'='*60}\n")
+
 
     def ai_chat_layout_ui(self):
         # مهم: رفرنس سراسری روی self نگه داریم

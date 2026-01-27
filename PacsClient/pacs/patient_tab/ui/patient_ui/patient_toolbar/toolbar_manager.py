@@ -1304,10 +1304,14 @@ class ToolbarManager:
     def _on_mic_clicked(self, mic_btn):
         selected_widget = self.patient_widget.selected_widget
 
-        # 1. ابتدا فریم ویس را پنهان کن (حتی اگر نمایش داده نشده باشد)
+        # 1. ابتدا فریم ویس را بررسی کن
         soundbox = self.get_soundbox()
+        
+        # ❌ تغییر: اگر در حال نمایش است و کاربر دوباره کلیک کرد، فقط hide کن
         if soundbox.isVisible():
-            soundbox.hide()  # ← این خط حیاتی است: جلوی تکرار/دو فریم را می‌گیرد
+            soundbox.hide()
+            self.turn_on_off_mic_btn(False)
+            return
 
         # 2. چک میکروفون
         if not soundbox.check_microphone_available():
@@ -1317,40 +1321,24 @@ class ToolbarManager:
                                 "No microphone device found. Please connect a microphone and try again.")
             return
 
-        # 3. محاسبه موقعیت دقیق — با توجه به parent و global position
-        # ⚠️ مهم: mic_btn در یک QScrollArea داخل toolbar است → باید از parent toolbar برای offset استفاده کنیم
-        toolbar = self.patient_widget.findChild(QToolBar)  # یا اگر reference داری، مستقیم استفاده کن
-        if not toolbar:
-            toolbar = self.patient_widget.toolbar  # فرض می‌کنیم یک attr toolbar دارید
-
-        # محاسبه position نسبت به window (نه نسبت به toolbar)
+        # 3. محاسبه موقعیت دقیق
         btn_global_pos = mic_btn.mapToGlobal(QPoint(0, mic_btn.height()))
-        # اگر toolbar در scroll area است، ممکن است نیاز به offset اضافه داشته باشیم:
-        # ولی بهترین راه: از parent widget toolbar استفاده کنیم و offset را از آن بگیریم
-        toolbar_global_pos = toolbar.mapToGlobal(QPoint(0, 0))
-        # فرض کنیم mic_btn در toolbar قرار دارد و toolbar خودش در main window
-        final_x = btn_global_pos.x()
-        final_y = btn_global_pos.y()
+        
+        # تنظیم موقعیت فریم و نمایش
+        soundbox.show_under(mic_btn)
+        soundbox.activateWindow()  # 🔹 فعال‌سازی مجدد برای جلوگیری از پرش
+        soundbox.raise_()  # 🔹 بالا آوردن پنجره
 
-        # 4. تنظیم موقعیت فریم و نمایش
-        soundbox.move(final_x, final_y)
-        soundbox.setFixedWidth(320)  # ثابت — نه auto
-        soundbox.setFixedHeight(180)
-        soundbox.raise_()
-        soundbox.activateWindow()
-        soundbox.show()
-
-        # 5. شروع/توقف ضبط
+        # 4. شروع/توقف ضبط
         soundbox.toggle_recording(selected_widget)
 
-        # 6. وضعیت دکمه
+        # 5. وضعیت دکمه
         if self.tool_selected == self.tool_access.MICROPHONE:
             self.tool_selected = None
             self.update_audio_counter()
         else:
             self.tool_selected = self.tool_access.MICROPHONE
             self.handle_buttons_checked()
-
 
     def toggle_microphone(self, selected_widget, mic_btn):
         if self.tool_selected == self.tool_access.MICROPHONE:
@@ -2844,6 +2832,8 @@ class ToolbarManager:
         separator_layout.addWidget(separator_line)
         return separator_container
         
+
+        
     def add_toolbar_actions(self, toolbar: QToolBar):
         # تنظیم toolbar اصلی
         toolbar.setMovable(False)
@@ -3330,7 +3320,7 @@ class ToolbarManager:
                 color: #ffffff;
             }
         """)
-        capture_btn.clicked.connect(lambda: self.toggle_capture(self.patient_widget.selected_widget))
+        capture_btn.clicked.connect(lambda: self._show_capture_mode_dropdown(capture_btn))
 
         capture_layout.addWidget(capture_menu_btn)
         capture_layout.addWidget(capture_btn)
@@ -3641,6 +3631,8 @@ class ToolbarManager:
         self.sync_button = sync_btn
         toolbar_layout.addWidget(sync_btn)
         
+
+        
         # ============================================================
         # انتهای layout - افزودن فضای خالی برای راست‌چین شدن محتوا
         # ============================================================
@@ -3652,62 +3644,633 @@ class ToolbarManager:
         # افزودن scroll area به نوار ابزار
         toolbar.addWidget(scroll_area)
 
-    def _show_status_upload_dropdown(self, button):
+    def _check_status_change(self):
+        """Periodic check for status changes"""
         try:
+            current_widget_status = getattr(self.patient_widget, 'report_status', None)
+            if current_widget_status and hasattr(self, '_last_known_status'):
+                if current_widget_status != self._last_known_status:
+                    self._update_report_status_display()
+            self._last_known_status = current_widget_status
+        except Exception:
+            pass
+
+    def _show_capture_mode_dropdown(self, button):
+        """Show dropdown menu for capture options (Active vs Total layouts)"""
+        from PySide6.QtWidgets import QMenu, QWidgetAction, QLabel, QHBoxLayout, QWidget
+        
+        try:
+            menu = QMenu(self.patient_widget)
+            menu.setStyleSheet("""
+                QMenu {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #1f2937, stop:1 #111827);
+                    border: 2px solid #374151;
+                    border-radius: 10px;
+                    color: #f3f4f6;
+                    padding: 8px;
+                    min-width: 220px;
+                }
+                QMenu::item {
+                    padding: 0px;
+                    border-radius: 6px;
+                    margin: 2px 0px;
+                }
+                QMenu::item:hover {
+                    background: transparent;
+                }
+            """)
+            
+            # Header
+            header = QLabel("📸 Capture Options")
+            header.setStyleSheet("""
+                color: #f7fafc;
+                font-size: 14px;
+                font-weight: 700;
+                font-family: 'Roboto', sans-serif;
+                padding: 6px 8px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #3b82f6, stop:1 #2563eb);
+                border-radius: 6px;
+                margin-bottom: 6px;
+            """)
+            header_action = QWidgetAction(menu)
+            header_action.setDefaultWidget(header)
+            menu.addAction(header_action)
+            
+            # Active Layout Option
+            active_widget = QWidget()
+            active_layout = QHBoxLayout(active_widget)
+            active_layout.setContentsMargins(8, 6, 8, 6)
+            active_layout.setSpacing(8)
+            
+            active_icon = QLabel("📷")
+            active_icon.setStyleSheet("font-size: 16px; background: transparent;")
+            active_text = QLabel("Present Active Layout\n<small style='color: #9ca3af;'>Capture current viewer only</small>")
+            active_text.setStyleSheet("color: #f3f4f6; font-size: 12px; background: transparent;")
+            active_text.setTextFormat(Qt.RichText)
+            
+            active_layout.addWidget(active_icon)
+            active_layout.addWidget(active_text, 1)
+            active_layout.addStretch()
+            
+            active_widget.setStyleSheet("""
+                QWidget {
+                    background: transparent;
+                    border-radius: 6px;
+                }
+                QWidget:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #374151, stop:1 #2d3748);
+                }
+            """)
+            
+            active_widget.mousePressEvent = lambda e: self._capture_active_layout()
+            active_action = QWidgetAction(menu)
+            active_action.setDefaultWidget(active_widget)
+            menu.addAction(active_action)
+            
+            # Separator line
+            separator = QWidget()
+            separator.setFixedHeight(1)
+            separator.setStyleSheet("background-color: #4b5563; margin: 4px 0px;")
+            sep_action = QWidgetAction(menu)
+            sep_action.setDefaultWidget(separator)
+            menu.addAction(sep_action)
+            
+            # Total Layouts Option
+            total_widget = QWidget()
+            total_layout = QHBoxLayout(total_widget)
+            total_layout.setContentsMargins(8, 6, 8, 6)
+            total_layout.setSpacing(8)
+            
+            total_icon = QLabel("🎞️")
+            total_icon.setStyleSheet("font-size: 16px; background: transparent;")
+            total_text = QLabel("Total Layouts\n<small style='color: #9ca3af;'>Capture all viewers</small>")
+            total_text.setStyleSheet("color: #f3f4f6; font-size: 12px; background: transparent;")
+            total_text.setTextFormat(Qt.RichText)
+            
+            total_layout.addWidget(total_icon)
+            total_layout.addWidget(total_text, 1)
+            total_layout.addStretch()
+            
+            # Show count badge if available
+            if hasattr(self.patient_widget, 'lst_nodes_viewer'):
+                count = len(self.patient_widget.lst_nodes_viewer)
+                count_label = QLabel(f"{count}")
+                count_label.setStyleSheet("""
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #7c3aed, stop:1 #6d28d9);
+                    color: #ffffff;
+                    border-radius: 8px;
+                    padding: 2px 6px;
+                    font-size: 10px;
+                    font-weight: bold;
+                """)
+                total_layout.addWidget(count_label)
+            
+            total_widget.setStyleSheet("""
+                QWidget {
+                    background: transparent;
+                    border-radius: 6px;
+                }
+                QWidget:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #374151, stop:1 #2d3748);
+                }
+            """)
+            
+            total_widget.mousePressEvent = lambda e: self._capture_all_layouts()
+            total_action = QWidgetAction(menu)
+            total_action.setDefaultWidget(total_widget)
+            menu.addAction(total_action)
+            
+            # Position and show menu
+            pos = button.mapToGlobal(QPoint(0, button.height() + 2))
+            menu.exec(pos)
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to show capture mode dropdown: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback to active layout only
+            self._capture_active_layout()
+
+    def _capture_active_layout(self):
+        """Capture only the currently active layout (original behavior)"""
+        selected_widget = self.patient_widget.selected_widget
+        
+        if selected_widget is None:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self.patient_widget, "No Selection", "Please select a viewer first.")
+            return
+        
+        # Deactivate any existing tool first
+        self.check_and_deactivate_tools()
+        
+        # Set up and immediately execute capture
+        self.check_and_deactivate_tools()
+        selected_widget.set_new_interactorstyle(DefaultInteractionInteractorStyle)
+        selected_widget.current_style.activate(self.tool_access.CAPTURE)
+        
+        # Update counter
+        self.update_capture_counter()
+        
+        # Reset tool state
+        self.tool_selected = None
+        self.handle_buttons_checked()
+        
+        # Ensure cleanup
+        if hasattr(selected_widget, 'restore_default_interactorstyle'):
+            selected_widget.restore_default_interactorstyle()
+
+    def _capture_all_layouts(self):
+        """Capture all layouts in the viewer grid"""
+        import os
+        import random
+        from datetime import datetime
+        import vtkmodules.all as vtk
+        from PySide6.QtWidgets import QMessageBox, QApplication
+        from PySide6.QtCore import Qt
+        
+        try:
+            # Get study UID
+            study_uid = self.patient_widget.study_uid
+            if not study_uid:
+                study_uid = str(random.randint(10000, 100000))
+                print(f"Generated study_uid: {study_uid}")
+            
+            # Prepare directory
+            attach_path = ATTACHMENT_PATH / study_uid
+            if not attach_path.exists():
+                os.makedirs(attach_path, exist_ok=True)
+            
+            if not hasattr(self.patient_widget, 'lst_nodes_viewer') or not self.patient_widget.lst_nodes_viewer:
+                QMessageBox.warning(self.patient_widget, "No Viewers", "No viewers available to capture.")
+                return
+            
+            # Change cursor to wait
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            captured_count = 0
+            failed_count = 0
+            
+            # Capture each viewer
+            for i, node in enumerate(self.patient_widget.lst_nodes_viewer):
+                try:
+                    vtk_widget = node.vtk_widget
+                    
+                    # Check if widget has render window
+                    if hasattr(vtk_widget, 'GetRenderWindow'):
+                        render_window = vtk_widget.GetRenderWindow()
+                        
+                        # Ensure render is up to date
+                        render_window.Render()
+                        
+                        # Window to image filter
+                        wti = vtk.vtkWindowToImageFilter()
+                        wti.SetInput(render_window)
+                        wti.SetInputBufferTypeToRGB()
+                        wti.ReadFrontBufferOff()
+                        wti.Update()
+                        
+                        # Generate filename with position info
+                        filename = f"capture_total_{timestamp}_pos{i+1}.png"
+                        full_path = str(attach_path / filename)
+                        
+                        # PNG Writer
+                        writer = vtk.vtkPNGWriter()
+                        writer.SetFileName(full_path)
+                        writer.SetInputConnection(wti.GetOutputPort())
+                        writer.Write()
+                        
+                        captured_count += 1
+                        print(f"[CAPTURE] Saved: {filename}")
+                        
+                except Exception as e:
+                    print(f"[ERROR] Failed to capture layout {i}: {e}")
+                    failed_count += 1
+            
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
+            
+            # Update counter badge
+            self.update_capture_counter()
+            
+            # Show result message
+            msg = f"✅ Captured {captured_count} layouts successfully!\n"
+            if failed_count > 0:
+                msg += f"⚠️ {failed_count} layouts failed.\n"
+            msg += f"\n📁 Saved to: {attach_path}"
+            
+            QMessageBox.information(
+                self.patient_widget,
+                "Total Capture Complete",
+                msg
+            )
+            
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            print(f"[ERROR] Total capture failed: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self.patient_widget,
+                "Capture Error",
+                f"Failed to capture layouts:\n{str(e)}"
+            )
+            
+
+    def _show_status_upload_dropdown(self, button):
+        """Show dropdown menu for report status selection - 6 status states"""
+        try:
+            from PySide6.QtWidgets import QLabel, QHBoxLayout, QVBoxLayout, QWidget
+            from PySide6.QtCore import Qt, QPoint
+            
+            # Clean up any existing dropdown with proper C++ object check
+            if hasattr(self, '_status_dropdown') and self._status_dropdown:
+                try:
+                    self._status_dropdown.close()
+                except RuntimeError:
+                    # Object already deleted by Qt (WA_DeleteOnClose)
+                    pass
+                self._status_dropdown = None
+            
             dropdown = QWidget(self.patient_widget)
-            dropdown.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+            dropdown.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
             dropdown.setAttribute(Qt.WA_DeleteOnClose)
             dropdown.setStyleSheet("""
                 QWidget {
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                         stop:0 #1f2937, stop:1 #111827);
-                    border: 2px solid #374151;
-                    border-radius: 10px;
+                    border: 2px solid #4b5563;
+                    border-radius: 12px;
+                    padding: 8px;
                 }
             """)
-
+            
             layout = QVBoxLayout(dropdown)
-            layout.setContentsMargins(10, 10, 10, 10)
-            layout.setSpacing(8)
-
-            # Header with icon
-            from PySide6.QtWidgets import QLabel
-            header = QLabel("📊 Upload Status")
+            layout.setContentsMargins(12, 12, 12, 12)
+            layout.setSpacing(6)
+            
+            # Header
+            header = QLabel("📊 Change Report Status")
             header.setStyleSheet("""
                 QLabel {
                     color: #f7fafc;
-                    font-size: 15px;
+                    font-size: 14px;
                     font-weight: 700;
                     font-family: 'Roboto', sans-serif;
-                    padding: 6px 8px;
+                    padding: 8px 12px;
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 #10b981, stop:1 #059669);
-                    border-radius: 6px;
-                    margin-bottom: 4px;
+                        stop:0 #3b82f6, stop:1 #2563eb);
+                    border-radius: 8px;
+                    margin-bottom: 8px;
                 }
             """)
+            header.setAlignment(Qt.AlignCenter)
             layout.addWidget(header)
-
-            # TODO: replace with real status. report is sample
-            # Report button
-            report_btn = create_dropdown_tool('Report', 'report.png', '#3b82f6')
-            # report_btn.clicked.connect(lambda: [
-            #     self.toggle_angle(self.patient_widget.selected_widget), dropdown.close()])
-            layout.addWidget(report_btn)
-
+            
+            # Current status display
+            current_status = getattr(self.patient_widget, 'report_status', 'pending')
+            from PacsClient.components.socket_report_status_service import REPORT_STATUSES
+            
+            current_label = QLabel(f"Current Status: {REPORT_STATUSES.get(current_status, current_status)}")
+            current_label.setStyleSheet("""
+                QLabel {
+                    color: #94a3b8;
+                    font-size: 11px;
+                    font-weight: 500;
+                    background: rgba(59, 130, 246, 0.1);
+                    padding: 6px 10px;
+                    border-radius: 6px;
+                    margin-bottom: 8px;
+                }
+            """)
+            current_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(current_label)
+            
+            # Separator
+            line = QWidget()
+            line.setFixedHeight(1)
+            line.setStyleSheet("background-color: #4b5563; margin: 4px 0px;")
+            layout.addWidget(line)
+            
+            # 6 Status buttons with icons and colors
+            statuses = [
+                ('pending', '⏳', '#f59e0b', 'Pending'),
+                ('awaiting_physician_approval', '👨‍⚕️', '#3b82f6', 'Awaiting Physician'),
+                ('awaiting_secretary_approval', '👩‍💼', '#8b5cf6', 'Awaiting Secretary'),
+                ('physician_approved', '✅👨‍⚕️', '#10b981', 'Physician Approved'),
+                ('secretary_approved', '✅👩‍💼', '#059669', 'Secretary Approved'),
+                ('completed', '✓✓', '#06b6d4', 'Completed'),
+            ]
+            
+            for status_key, icon, color, display_name in statuses:
+                is_current = (current_status == status_key)
+                
+                btn_container = QWidget()
+                btn_layout = QHBoxLayout(btn_container)
+                btn_layout.setContentsMargins(8, 6, 8, 6)
+                btn_layout.setSpacing(8)
+                
+                # Icon label
+                icon_label = QLabel(icon)
+                icon_label.setStyleSheet(f"font-size: 16px; background: transparent;")
+                
+                # Text
+                text_label = QLabel(f"{display_name}")
+                text_label.setStyleSheet(f"""
+                    color: {'#fbbf24' if is_current else '#f3f4f6'};
+                    font-size: 12px;
+                    font-weight: {'700' if is_current else '500'};
+                    background: transparent;
+                """)
+                
+                # Status indicator
+                indicator = QWidget()
+                indicator.setFixedSize(8, 8)
+                indicator.setStyleSheet(f"""
+                    background-color: {color};
+                    border-radius: 4px;
+                    {'border: 2px solid white;' if is_current else ''}
+                """)
+                
+                btn_layout.addWidget(indicator)
+                btn_layout.addWidget(icon_label)
+                btn_layout.addWidget(text_label, 1)
+                
+                if is_current:
+                    check = QLabel("✓")
+                    check.setStyleSheet("color: #10b981; font-weight: bold; background: transparent;")
+                    btn_layout.addWidget(check)
+                
+                # Container styling
+                base_style = f"""
+                    QWidget {{
+                        background: {'qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #374151, stop:1 #1f2937)' if not is_current else 'qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #059669, stop:1 #047857)'};
+                        border: 1px solid {color if not is_current else '#10b981'};
+                        border-radius: 8px;
+                    }}
+                    QWidget:hover {{
+                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4b5563, stop:1 #374151);
+                        border-color: #60a5fa;
+                    }}
+                """
+                btn_container.setStyleSheet(base_style)
+                btn_container.setCursor(Qt.PointingHandCursor)
+                
+                # Click handler
+                btn_container.mousePressEvent = lambda e, s=status_key: self._change_status_from_dropdown(s, dropdown)
+                
+                layout.addWidget(btn_container)
+            
+            layout.addSpacing(8)
+            
+            # Sync and go home button at bottom
+            sync_btn = create_dropdown_tool('🔄 Sync and Return Home', 'fa5s.cloud-upload-alt', '#10b981')
+            sync_btn.clicked.connect(lambda: [dropdown.close(), self._sync_and_go_home()])
+            layout.addWidget(sync_btn)
+            
             # Position dropdown below the button
             button_pos = button.mapToGlobal(QPoint(0, button.height()))
             dropdown.move(button_pos)
-            dropdown.setFixedWidth(260)
+            dropdown.setFixedWidth(280)
             dropdown.raise_()
             dropdown.activateWindow()
-
+            
+            self._status_dropdown = dropdown
             dropdown.show()
+            
         except Exception as e:
             print(f"[ERROR] Failed to show status dropdown: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _change_status_from_dropdown(self, new_status: str, dropdown=None):
+        """Change report status from dropdown menu"""
+        try:
+            current_status = getattr(self.patient_widget, 'report_status', 'pending')
+            
+            if new_status == current_status:
+                print(f"[Toolbar] Status is already {new_status}, skipping")
+                if dropdown:
+                    dropdown.close()
+                return
+            
+            print(f"[Toolbar] Changing status via dropdown: {current_status} -> {new_status}")
+            
+            # Call patient widget's change method
+            if hasattr(self.patient_widget, '_change_report_status'):
+                self.patient_widget._change_report_status(
+                    study_uid=self.patient_widget.study_uid,
+                    old_status=current_status,
+                    new_status=new_status,
+                    comment=f"Status changed via toolbar dropdown"
+                )
+            else:
+                # Fallback: update directly
+                self.patient_widget.report_status = new_status
+                self._update_report_status_display()
+            
+            if dropdown:
+                dropdown.close()
+                
+        except Exception as e:
+            print(f"[ERROR] Failed to change status from dropdown: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _sync_and_go_home(self):
+        """Sync patient data and return to home page"""
+        try:
+            print("[Toolbar] Sync and go home triggered")
+            
+            # First sync
+            self._start_patient_sync()
+            
+            # Then close patient tab and go home (delayed to allow sync to start)
+            from PySide6.QtCore import QTimer
+            
+            def go_home():
+                try:
+                    if hasattr(self.patient_widget, 'close_and_remove_patient_tab'):
+                        self.patient_widget.close_and_remove_patient_tab()
+                        print("[Toolbar] Returned to home page")
+                except Exception as e:
+                    print(f"[Toolbar] Error closing tab: {e}")
+            
+            # Wait a bit for sync to initialize, then go home
+            QTimer.singleShot(500, go_home)
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to sync and go home: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _update_report_status_display(self):
+        """Update the report status badge display - handles both badge types safely"""
+        try:
+            # Get current report status from widget
+            current_status = getattr(self.patient_widget, 'report_status', 'pending')
+            
+            # Import status labels and colors
+            from PacsClient.components.socket_report_status_service import REPORT_STATUSES, STATUS_COLORS
+            
+            # Get status label and color
+            status_label = REPORT_STATUSES.get(current_status, current_status.title())
+            status_color = STATUS_COLORS.get(current_status, '#f59e0b')
+            
+            # Status mapping for indicator
+            status_indicator_map = {
+                'pending': '⏳',
+                'awaiting_physician_approval': '👨‍⚕️',
+                'awaiting_secretary_approval': '👩‍💼',
+                'awaiting_approval': '⏰',
+                'physician_approved': '✅P',
+                'secretary_approved': '✅S',
+                'completed': '✓✓',
+                'archived': '📦'
+            }
+            indicator_text = status_indicator_map.get(current_status, '?')
+            
+            # Update sync button badge if exists (legacy attribute name)
+            if hasattr(self, 'sync_button_badge') and self.sync_button_badge:
+                try:
+                    self.sync_button_badge.setText(indicator_text)
+                    self.sync_button_badge.setStyleSheet(f"""
+                        QLabel {{
+                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 {status_color}, stop:1 {status_color});
+                            color: #ffffff;
+                            border: 1px solid rgba(255, 255, 255, 0.3);
+                            border-radius: 8px;
+                            padding: 1px 4px;
+                            font-weight: 600;
+                            font-family: 'Roboto', sans-serif;
+                            font-size: 8px;
+                            min-width: 16px;
+                            min-height: 16px;
+                        }}
+                    """)
+                    self.sync_button_badge.show()
+                except RuntimeError:
+                    # Badge was deleted
+                    pass
+            
+            # Update report_status_badge if exists (new attribute name)
+            if hasattr(self, 'report_status_badge') and self.report_status_badge:
+                try:
+                    self.report_status_badge.setText(indicator_text)
+                    self.report_status_badge.setStyleSheet(f"""
+                        QLabel {{
+                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 {status_color}, stop:1 {status_color});
+                            color: #ffffff;
+                            border: 1px solid rgba(255, 255, 255, 0.3);
+                            border-radius: 8px;
+                            padding: 1px 4px;
+                            font-weight: 600;
+                            font-family: 'Roboto', sans-serif;
+                            font-size: 8px;
+                        }}
+                    """)
+                    self.report_status_badge.show()
+                    
+                    # Update tooltip on button parent
+                    if hasattr(self.report_status_badge, 'parent') and self.report_status_badge.parent():
+                        self.report_status_badge.parent().setToolTip(f"Report Status: {status_label}\n(Click to change)")
+                except RuntimeError:
+                    # Badge was deleted
+                    pass
+            
+            # Update tooltip on sync button if it exists
+            if hasattr(self, 'sync_button') and self.sync_button:
+                self.sync_button.setToolTip(f"Status: {status_label}\nClick to sync and return")
+            
+            print(f"[Toolbar] Status display updated: {current_status} -> {indicator_text}")
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to update report status display: {e}")
+            import traceback
+            traceback.print_exc()
 
+            
+    def initialize_status_sync(self):
+        """Initialize status synchronization between patient widget and toolbar"""
+        try:
+            # Connect to patient widget status changes if possible
+            if self.patient_widget:
+                # Initial update
+                self._update_report_status_display()
+                
+                # Create timer for periodic checks if not exists
+                if not hasattr(self, '_status_check_timer') or self._status_check_timer is None:
+                    self._status_check_timer = QTimer(self.patient_widget)
+                    self._status_check_timer.setInterval(1000)  # Check every second
+                    self._status_check_timer.timeout.connect(self._check_status_change)
+                    self._status_check_timer.start()
+                
+                print("✅ [Toolbar] Status sync initialized")
+        except Exception as e:
+            print(f"⚠️ [Toolbar] Failed to initialize status sync: {e}")
+
+
+
+    def _check_status_change(self):
+        """Periodic check for status changes"""
+        try:
+            current_widget_status = getattr(self.patient_widget, 'report_status', None)
+            if current_widget_status:
+                if not hasattr(self, '_last_known_status'):
+                    self._last_known_status = None
+                if current_widget_status != self._last_known_status:
+                    self._update_report_status_display()
+                    self._last_known_status = current_widget_status
+        except Exception:
+            pass
+        
     def turn_off_all_tools(self):
         self.check_and_deactivate_tools()
         self.handle_buttons_checked()
