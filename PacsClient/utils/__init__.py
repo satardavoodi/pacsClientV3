@@ -48,3 +48,5 @@ from .db_manager import (
 from .config import ICON_PATH, IMAGES_LOGIN_PATH
 from .upload_download_attchments import upload_attachments_for_study, download_attachments_for_study,\
     download_attachments_for_study_async
+from .license_manager import LicenseManager
+from .license_dialog import LicenseDialog

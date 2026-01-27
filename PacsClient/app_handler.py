@@ -23,6 +23,7 @@ from PacsClient.utils import IMAGES_LOGIN_PATH
 from PacsClient.components.socket_service import SocketService
 from PacsClient.utils.socket_config import get_socket_config
 from PacsClient.utils.socket_token_manager import get_socket_token_manager
+from PacsClient.utils.license_manager import LicenseManager
 
 
 class AppHandler(QDialog):
@@ -366,13 +367,31 @@ class AppHandler(QDialog):
         self.checkbox_container.addWidget(checkbox_label)
         self.checkbox_container.addStretch()
         
+        # License info label
+        self.license_info_label = QLabel()
+        self.license_info_label.setStyleSheet("""
+            color: #10b981; 
+            font-weight: 600; 
+            font-size: 12px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 4px;
+            padding: 4px 8px;
+        """)
+        self.license_info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        
+        # Update license info
+        self._update_license_info()
+        
         # Set initial icon
         self.checkbox_remember = self.checkbox_button  # For compatibility
         self._update_checkbox_icon()
         
+        options_row.addLayout(self.checkbox_container)
+        options_row.addWidget(self.license_info_label)
+        
         forgot_password = QLabel('<a href="#" style="color: #3b82f6; text-decoration: none;">Forgot password?</a>', form_panel)
         forgot_password.setStyleSheet("font-size: 13px;")
-        options_row.addLayout(self.checkbox_container)
         options_row.addWidget(forgot_password)
         form_layout.addLayout(options_row)
 
@@ -496,6 +515,55 @@ class AppHandler(QDialog):
         
         self.checkbox_button.setIcon(icon)
         self.checkbox_button.setIconSize(self.checkbox_button.size())
+    
+    def _update_license_info(self):
+        """Update license information display"""
+        try:
+            license_manager = LicenseManager()
+            is_valid, message = license_manager.check_license()
+            
+            if is_valid and "days remaining" in message.lower():
+                # Extract days from message
+                import re
+                days_match = re.search(r'(\d+)\s+days?\s+remaining', message, re.IGNORECASE)
+                if days_match:
+                    days = int(days_match.group(1))
+                    
+                    # Color based on days remaining
+                    if days > 30:
+                        color = "#10b981"  # Green
+                        bg_color = "rgba(16, 185, 129, 0.1)"
+                        border_color = "rgba(16, 185, 129, 0.3)"
+                        icon = "✓"
+                    elif days > 7:
+                        color = "#f59e0b"  # Orange
+                        bg_color = "rgba(245, 158, 11, 0.1)"
+                        border_color = "rgba(245, 158, 11, 0.3)"
+                        icon = "⚠"
+                    else:
+                        color = "#ef4444"  # Red
+                        bg_color = "rgba(239, 68, 68, 0.1)"
+                        border_color = "rgba(239, 68, 68, 0.3)"
+                        icon = "⚠"
+                    
+                    self.license_info_label.setText(f"{icon} License: {days} days left")
+                    self.license_info_label.setStyleSheet(f"""
+                        color: {color}; 
+                        font-weight: 600; 
+                        font-size: 12px;
+                        background: {bg_color};
+                        border: 1px solid {border_color};
+                        border-radius: 4px;
+                        padding: 4px 10px;
+                    """)
+                    self.license_info_label.setVisible(True)
+                else:
+                    self.license_info_label.setVisible(False)
+            else:
+                self.license_info_label.setVisible(False)
+        except Exception as e:
+            print(f"Error updating license info: {e}")
+            self.license_info_label.setVisible(False)
     
     def _toggle_password(self):
         if self.btn_toggle_password.isChecked():

@@ -12,10 +12,11 @@ if sys.platform == 'win32':
         pass
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 from PySide6.QtGui import QIcon
 from PacsClient import AppHandler
 from PacsClient.utils.font_manager import load_fonts, setup_font_rendering
+from PacsClient.utils import LicenseManager, LicenseDialog
 import vtkmodules.vtkCommonCore as vtkCommonCore
 
 vtkCommonCore.vtkObject.GlobalWarningDisplayOff()
@@ -324,6 +325,30 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Warning: Could not initialize qtawesome fonts: {e}")
 
+    # Check license
+    license_manager = LicenseManager()
+    is_licensed, message = license_manager.check_license()
+    
+    if not is_licensed:
+        # Show license activation dialog
+        license_dialog = LicenseDialog()
+        
+        # If user closed the window or chose to exit, close the application
+        result = license_dialog.exec()
+        if result != QDialog.Accepted:
+            sys.exit(0)
+        
+        # Re-check license
+        is_licensed, message = license_manager.check_license()
+        if not is_licensed:
+            QMessageBox.critical(
+                None,
+                "License Error",
+                "No valid license found. Application will close.",
+                QMessageBox.Ok
+            )
+            sys.exit(0)
+    
     # Integrate asyncio with Qt event loop
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
