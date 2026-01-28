@@ -232,6 +232,13 @@ class ToolbarManager:
             method_update_audio_counter=self.update_audio_counter,
             method_check_status_mic_btn=self.turn_on_off_mic_btn
         )
+        
+        # ✅ تایمر برای به‌روزرسانی موقعیت پنل ضبط هنگام حرکت پنجره
+        self._position_update_timer = QTimer()
+        self._position_update_timer.setInterval(100)  # هر 100 میلی‌ثانیه
+        self._position_update_timer.timeout.connect(self._update_soundbox_position)
+        self._mic_button_ref = None  # رفرنس به دکمه میکروفون
+
     def _show_curved_mpr_panel(self):
         """Show Curved MPR control panel"""
         try:
@@ -1301,6 +1308,47 @@ class ToolbarManager:
         capture_btn: BadgeButton = self.tools_button[self.tool_access.CAPTURE]
         capture_btn.setCount(len(lst_images))
 
+    def _update_soundbox_position(self):
+        try:
+            # Check if button reference exists and is valid
+            if not hasattr(self, '_mic_button_ref') or not self._mic_button_ref:
+                return
+                
+            # Check if soundbox exists and is visible
+            # Note: Accessing isVisible() can raise RuntimeError if C++ object is deleted
+            if not hasattr(self, '_ToolbarManager__soundbox'):
+                return
+                
+            if not self.__soundbox.isVisible():
+                return
+            
+            # محاسبه موقعیت دقیق دکمه به صورت گلوبال
+            button_global_pos = self._mic_button_ref.mapToGlobal(QPoint(0, 0))
+            button_height = self._mic_button_ref.height()
+            button_width = self._mic_button_ref.width()
+            
+            # محاسبه موقعیت جدید پنل (زیر دکمه، با راست‌چین)
+            panel_x = button_global_pos.x() + button_width - self.__soundbox.width()
+            panel_y = button_global_pos.y() + button_height + 2  # 2 پیکسل فاصله
+            
+            # تنظیم موقعیت مستقیم
+            self.__soundbox.move(panel_x, panel_y)
+            
+        except RuntimeError as e:
+            # Handle C++ object deletion specifically
+            if "already deleted" in str(e):
+                print(f"[Voice Panel] VoiceWidget deleted, stopping position timer")
+                self._position_update_timer.stop()
+                # Optionally reset the reference so it gets recreated on next use
+                if hasattr(self, '_ToolbarManager__soundbox'):
+                    delattr(self, '_ToolbarManager__soundbox')
+            else:
+                raise  # Re-raise if it's a different RuntimeError
+        except Exception as e:
+            # در صورت خطا، تایمر را متوقف کن
+            print(f"[Voice Panel] Error updating position: {e}")
+            self._position_update_timer.stop()
+    
     def _on_mic_clicked(self, mic_btn):
         selected_widget = self.patient_widget.selected_widget
 
@@ -1311,6 +1359,10 @@ class ToolbarManager:
         if soundbox.isVisible():
             soundbox.hide()
             self.turn_on_off_mic_btn(False)
+            # تغییر آیکون به حالت عادی
+            mic_btn.setIcon(QIcon(f"{ICON_PATH}/mic.png"))
+            # توقف تایمر به‌روزرسانی موقعیت
+            self._position_update_timer.stop()
             return
 
         # 2. چک میکروفون
@@ -1321,18 +1373,38 @@ class ToolbarManager:
                                 "No microphone device found. Please connect a microphone and try again.")
             return
 
-        # 3. محاسبه موقعیت دقیق
-        btn_global_pos = mic_btn.mapToGlobal(QPoint(0, mic_btn.height()))
+        # 3. نمایش دیالوگ تأیید
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self.patient_widget,
+            'Start Voice Recording',
+            'Do you want to start recording audio?',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
         
-        # تنظیم موقعیت فریم و نمایش
-        soundbox.show_under(mic_btn)
-        soundbox.activateWindow()  # 🔹 فعال‌سازی مجدد برای جلوگیری از پرش
-        soundbox.raise_()  # 🔹 بالا آوردن پنجره
+        if reply == QMessageBox.No:
+            mic_btn.setChecked(False)
+            return
 
-        # 4. شروع/توقف ضبط
+        # 4. ذخیره رفرنس دکمه برای به‌روزرسانی موقعیت
+        self._mic_button_ref = mic_btn
+        
+        # 5. تنظیم موقعیت فریم و نمایش
+        soundbox.show_under(mic_btn)
+        soundbox.activateWindow()
+        soundbox.raise_()
+        
+        # تغییر آیکون به حالت ضبط (قرمز)
+        mic_btn.setIcon(qta.icon('fa5s.microphone', color='#ef4444'))
+        
+        # شروع تایمر به‌روزرسانی موقعیت
+        self._position_update_timer.start()
+
+        # 6. شروع/توقف ضبط
         soundbox.toggle_recording(selected_widget)
 
-        # 5. وضعیت دکمه
+        # 7. وضعیت دکمه
         if self.tool_selected == self.tool_access.MICROPHONE:
             self.tool_selected = None
             self.update_audio_counter()
@@ -1381,13 +1453,21 @@ class ToolbarManager:
 
     def get_soundbox(self):
         """Get the VoiceWidget instance"""
-        if not hasattr(self, '__soundbox'):
-            # Initialize if not exists
-            self.__soundbox = VoiceWidget(
-                patient_widget=self.patient_widget,
-                method_update_audio_counter=self.update_audio_counter,
-                method_check_status_mic_btn=self.turn_on_off_mic_btn
-            )
+        try:
+            if hasattr(self, '_ToolbarManager__soundbox'):
+                # Verify C++ object still exists by calling a harmless method
+                self._ToolbarManager__soundbox.objectName()
+                return self._ToolbarManager__soundbox
+        except RuntimeError:
+            # C++ object was deleted, will recreate below
+            pass
+        
+        # Initialize if not exists or was deleted
+        self.__soundbox = VoiceWidget(
+            patient_widget=self.patient_widget,
+            method_update_audio_counter=self.update_audio_counter,
+            method_check_status_mic_btn=self.turn_on_off_mic_btn
+        )
         return self.__soundbox
 
     def turn_on_off_mic_btn(self, status=None):
@@ -3411,8 +3491,9 @@ class ToolbarManager:
             }
             QPushButton:checked {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #059669, stop:1 #047857);
-                border-color: #10b981;
+                    stop:0 #dc2626, stop:1 #b91c1c);
+                border: 1px solid #ef4444;
+                border-left: none;
                 color: #ffffff;
             }
         """)
@@ -4484,29 +4565,36 @@ class ToolbarManager:
             }
             indicator_text = status_indicator_map.get(current_status, '?')
             
-            # Update badge with colored background
-            self.report_status_badge.setText(indicator_text)
-            self.report_status_badge.setStyleSheet(f"""
-                QLabel {{
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 {status_color}, stop:1 {status_color});
-                    color: #ffffff;
-                    border: 1px solid rgba(255, 255, 255, 0.3);
-                    border-radius: 8px;
-                    padding: 1px 4px;
-                    font-weight: 600;
-                    font-family: 'Roboto', sans-serif;
-                    font-size: 8px;
-                }}
-            """)
-            self.report_status_badge.show()
-            
-            # Update tooltip on button
-            button = self.report_status_badge.parent()
-            if button:
-                button.setToolTip(f"Report Status: {status_label}\n(Click to change)")
-            
-            print(f"📋 [Toolbar] Updated status badge: {current_status} -> {indicator_text} ({status_label})")
+            # Update badge with colored background - with safety check
+            if hasattr(self, 'report_status_badge') and self.report_status_badge:
+                try:
+                    self.report_status_badge.setText(indicator_text)
+                    self.report_status_badge.setStyleSheet(f"""
+                        QLabel {{
+                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 {status_color}, stop:1 {status_color});
+                            color: #ffffff;
+                            border: 1px solid rgba(255, 255, 255, 0.3);
+                            border-radius: 8px;
+                            padding: 1px 4px;
+                            font-weight: 600;
+                            font-family: 'Roboto', sans-serif;
+                            font-size: 8px;
+                        }}
+                    """)
+                    self.report_status_badge.show()
+                    
+                    # Update tooltip on button
+                    button = self.report_status_badge.parent()
+                    if button:
+                        button.setToolTip(f"Report Status: {status_label}\n(Click to change)")
+                    
+                    print(f"📋 [Toolbar] Updated status badge: {current_status} -> {indicator_text} ({status_label})")
+                except RuntimeError:
+                    # Badge was deleted
+                    pass
+            else:
+                print(f"⚠️ [Toolbar] report_status_badge not available, skipping display update")
             
         except Exception as e:
             print(f"[ERROR] Failed to update report status display: {e}")

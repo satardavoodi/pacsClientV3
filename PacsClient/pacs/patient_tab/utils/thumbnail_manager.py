@@ -201,34 +201,39 @@ class CircularProgressborder(QFrame):
 
 
     def _hide_ready_label(self):
-        """Safely hide the ready label and reset border"""
+        """Hide the ready label with safety checks"""
         try:
-            if hasattr(self, '_progress_label') and self._progress_label:
-                self._progress_label.setVisible(False)
-                self._progress_label.update()
-            
-            # Also reset the border to normal state (not ready)
-            self._is_ready = False
-            self.update()
-        except Exception:
-            pass
+            # ✅ FIX: Check if object still exists before calling update
+            if not hasattr(self, '_ready_label') or self._ready_label is None:
+                return
+                
+            # Check if the underlying C++ object still exists
+            try:
+                self._ready_label.hide()
+                self._ready_label.update()
+            except RuntimeError:
+                # Object already deleted, ignore
+                pass
+                
+        except Exception as e:
+            print(f"⚠️ Error hiding ready label: {e}")
 
-            def safe_hide_label():
-                """Safely hide label if it still exists"""
-                try:
-                    label = weak_label()
-                    if label:
-                        # Check if C++ object is still valid
-                        try:
-                            _ = label.isVisible()
-                            label.setVisible(False)
-                        except RuntimeError:
-                            pass  # Object already deleted
-                except Exception:
-                    pass
-            
-            QTimer.singleShot(2000, safe_hide_label)
-        self.update()
+    # Also fix the timer callback in create_thumbnail_widget or similar:
+    def on_thumbnail_ready(self):
+        """Handle thumbnail ready state"""
+        try:
+            # Check if widget still exists
+            if not self or not hasattr(self, 'progress_border'):
+                return
+                
+            # Safely update
+            try:
+                self.progress_border.update()
+            except RuntimeError:
+                pass  # Object deleted
+                
+        except Exception as e:
+            print(f"Error in on_thumbnail_ready: {e}")
 
     def cleanup(self):
         """Clean up resources and timers"""
