@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QClipboard
 from .license_manager import LicenseManager
-
+from PySide6.QtWidgets import QApplication
 
 class LicenseDialog(QDialog):
     """License Activation Dialog"""
@@ -246,18 +246,16 @@ class LicenseDialog(QDialog):
         self.serial_text.setPlainText(formatted_id)
     
     def copy_serial(self):
-        """Copy system serial to clipboard"""
-        clipboard = QClipboard()
+        clipboard = QApplication.clipboard()
         clipboard.setText(self.serial_text.toPlainText())
-        
-        # Show success message
+
         QMessageBox.information(
             self,
             "Copied Successfully",
             "System serial number has been copied to clipboard.\nYou can now send it to our support team.",
             QMessageBox.Ok
         )
-    
+        
     def activate_license(self):
         """Activate license"""
         license_key = self.license_input.text().strip()
