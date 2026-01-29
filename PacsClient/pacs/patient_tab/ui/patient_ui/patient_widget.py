@@ -27,6 +27,8 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget, grow_vtk_inplace
 from PacsClient.pacs.patient_tab.utils import load_images, save_image_as_png, delete_widgets_in_layout, NodeViewer, \
     get_count_dicom_files_exist, load_images_from_server, VerticalButton
+from PacsClient.pacs.workstation_ui.settings_ui.filter_config import FilterConfigWidget
+from PacsClient.pacs.patient_tab.viewers.advanced_tools_panel import AdvancedToolsPanel
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import ToolbarManager, reference_line
 import asyncio
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, CallerTypes
@@ -2235,7 +2237,6 @@ class PatientWidget(QWidget):
             if self.advanced_tools_panel is None:
                 print("[PatientWidget] Creating AdvancedToolsPanel for the first time...")
                 try:
-                    from PacsClient.pacs.patient_tab.viewers import AdvancedToolsPanel
                     
                     # Create AdvancedToolsPanel
                     self.advanced_tools_panel = AdvancedToolsPanel()

@@ -1360,25 +1360,29 @@ class ThumbnailManager(QObject):
         try:
             series_key = str(series_number)
             print(f"🎯 [PRIORITY COMPLETE] Completing download for series {series_key}")
-            
+
             # 1. علامت‌گذاری به عنوان آماده
             self.ready_series.add(series_key)
-            
+
             # 2. فراخوانی نمایش اولویت‌دار در parent widget
             if hasattr(self, 'parent_widget') and self.parent_widget:
                 # اینجا باید parent widget (PatientWidget) را پیدا کنیم
                 # فرض می‌کنیم که parent_widget به PatientWidget اشاره دارد
                 try:
+                    # First try the existing method
                     if hasattr(self.parent_widget, '_trigger_priority_display'):
                         self.parent_widget._trigger_priority_display(series_key)
+                    # If that doesn't work, try the new method for post-download display
+                    elif hasattr(self.parent_widget, '_trigger_priority_display_after_download'):
+                        self.parent_widget._trigger_priority_display_after_download(series_key)
                 except Exception as e:
                     print(f"⚠️ Error triggering priority display: {e}")
-            
+
             # 3. به‌روزرسانی border
             self.apply_border_states_new()
-            
+
             print(f"✅ [PRIORITY COMPLETE] Series {series_key} ready for immediate display")
-            
+
         except Exception as e:
             print(f"❌ Error in complete_series_download: {e}")
             import traceback

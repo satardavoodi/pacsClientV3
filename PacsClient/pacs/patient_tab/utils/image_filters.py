@@ -739,6 +739,75 @@ def apply_multiscale_sharpening(
 
 #     return itk_image
 
+def get_modality_specific_params(modality: str, filter_type: str) -> dict:
+    """
+    Get modality-specific parameters for image filters.
+
+    Parameters
+    ----------
+    modality : str
+        Imaging modality (CT, MR, etc.)
+    filter_type : str
+        Type of filter to configure
+
+    Returns
+    -------
+    dict
+        Dictionary of filter parameters for the given modality and filter type
+    """
+    # Default parameters
+    params = {
+        "smoothing": {"sigma": 0.4},
+        "unsharp_mask": {"amount": 0.5, "radius": 1.0},
+        "gaussian_sharpening": {"sigma": 0.8, "alpha": 0.5},
+        "laplacian_sharpening": {"alpha": 0.3},
+        "adaptive_sharpening": {"base_amount": 0.3, "edge_boost": 1.5, "sigma": 0.6},
+        "edge_smooth_ultrafast": {"blur_sigma_mm": 1.0, "edge_sigma_mm": 0.4}
+    }
+
+    # Modality-specific overrides
+    modality_params = {
+        "CT": {
+            "smoothing": {"sigma": 0.3},
+            "unsharp_mask": {"amount": 0.4, "radius": 0.8},
+            "gaussian_sharpening": {"sigma": 0.6, "alpha": 0.4},
+            "laplacian_sharpening": {"alpha": 0.25},
+            "adaptive_sharpening": {"base_amount": 0.25, "edge_boost": 1.2, "sigma": 0.5},
+            "edge_smooth_ultrafast": {"blur_sigma_mm": 0.8, "edge_sigma_mm": 0.3}
+        },
+        "MR": {
+            "smoothing": {"sigma": 0.5},
+            "unsharp_mask": {"amount": 0.6, "radius": 1.2},
+            "gaussian_sharpening": {"sigma": 1.0, "alpha": 0.6},
+            "laplacian_sharpening": {"alpha": 0.35},
+            "adaptive_sharpening": {"base_amount": 0.35, "edge_boost": 1.8, "sigma": 0.7},
+            "edge_smooth_ultrafast": {"blur_sigma_mm": 1.2, "edge_sigma_mm": 0.5}
+        },
+        "CR": {
+            "smoothing": {"sigma": 0.2},
+            "unsharp_mask": {"amount": 0.3, "radius": 0.6},
+            "gaussian_sharpening": {"sigma": 0.5, "alpha": 0.3},
+            "laplacian_sharpening": {"alpha": 0.2},
+            "adaptive_sharpening": {"base_amount": 0.2, "edge_boost": 1.0, "sigma": 0.4},
+            "edge_smooth_ultrafast": {"blur_sigma_mm": 0.6, "edge_sigma_mm": 0.25}
+        },
+        "DX": {
+            "smoothing": {"sigma": 0.15},
+            "unsharp_mask": {"amount": 0.25, "radius": 0.5},
+            "gaussian_sharpening": {"sigma": 0.4, "alpha": 0.25},
+            "laplacian_sharpening": {"alpha": 0.15},
+            "adaptive_sharpening": {"base_amount": 0.15, "edge_boost": 0.8, "sigma": 0.3},
+            "edge_smooth_ultrafast": {"blur_sigma_mm": 0.5, "edge_sigma_mm": 0.2}
+        }
+    }
+
+    # Override defaults with modality-specific parameters if available
+    if modality in modality_params and filter_type in modality_params[modality]:
+        params[filter_type].update(modality_params[modality][filter_type])
+
+    return params[filter_type]
+
+
 def apply_filters(
     itk_image: sitk.Image,
     metadata: dict,
@@ -1030,3 +1099,64 @@ def enhance_local_contrast(itk_image: sitk.Image, radius_mm: float = 10.0) -> si
     enhanced = sitk.RescaleIntensity(enhanced, stats.GetMinimum(), stats.GetMaximum())
     
     return sitk.Cast(enhanced, itk_image.GetPixelID())
+
+
+def apply_filter_with_modality_params(
+    itk_image: sitk.Image,
+    metadata: dict,
+    filter_func_name: str,
+    custom_params: dict = None
+) -> sitk.Image:
+    """
+    Apply a filter with modality-specific parameters.
+
+    Parameters
+    ----------
+    itk_image : sitk.Image
+        Input image
+    metadata : dict
+        Metadata containing modality information
+    filter_func_name : str
+        Name of the filter function to apply
+    custom_params : dict, optional
+        Custom parameters to override modality defaults
+
+    Returns
+    -------
+    sitk.Image
+        Filtered image
+    """
+    # Get modality from metadata
+    modality = metadata.get("series", {}).get("modality", "MR").upper()
+
+    # Get modality-specific parameters
+    params = get_modality_specific_params(modality, filter_func_name)
+
+    # Override with custom parameters if provided
+    if custom_params:
+        params.update(custom_params)
+
+    # Apply the appropriate filter
+    if filter_func_name == "smoothing":
+        return smoothing(itk_image)
+    elif filter_func_name == "unsharp_mask":
+        return apply_unsharp_mask(itk_image, amount=params["amount"], radius=params["radius"])
+    elif filter_func_name == "gaussian_sharpening":
+        return apply_gaussian_sharpening(itk_image, sigma=params["sigma"], alpha=params["alpha"])
+    elif filter_func_name == "laplacian_sharpening":
+        return apply_laplacian_sharpening(itk_image, alpha=params["alpha"])
+    elif filter_func_name == "adaptive_sharpening":
+        return apply_adaptive_sharpening(
+            itk_image,
+            base_amount=params["base_amount"],
+            edge_boost=params["edge_boost"],
+            sigma=params["sigma"]
+        )
+    elif filter_func_name == "edge_smooth_ultrafast":
+        return edge_smooth_ultrafast(
+            itk_image,
+            blur_sigma_mm=params["blur_sigma_mm"],
+            edge_sigma_mm=params["edge_sigma_mm"]
+        )
+    else:
+        raise ValueError(f"Unknown filter function: {filter_func_name}")
