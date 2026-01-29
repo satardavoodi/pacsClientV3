@@ -599,8 +599,15 @@ class HomePanelWidget(QWidget):
                     font-weight: 600;
                     font-family: 'Roboto', sans-serif;
                     text-align: center;
+                    qproperty-alignment: AlignCenter;
                 }
             """)
+
+            # اطمینان از وسط چین بودن تمام هدرهای فرعی
+            for i in range(table.columnCount()):
+                header_item = table.horizontalHeaderItem(i)
+                if header_item:
+                    header_item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
             
             # تنظیم stretch برای ستون‌های خاص (اختیاری)
             # table.horizontalHeader().setStretchLastSection(True)
@@ -2362,65 +2369,47 @@ class HomePanelWidget(QWidget):
         self.patient_table_widget.add_patient_data(**kwargs)
         
 
-        row_index = self.patient_table_widget.results_table.rowCount() - 1
-        if row_index >= 0:
-            # گرفتن آیتم ستون اول (ستون چک‌باکس)
-            checkbox_item = self.patient_table_widget.results_table.item(row_index, 0)
-            if checkbox_item:
-                # تنظیم alignment به وسط (هم افقی و هم عمودی)
-                checkbox_item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-                
-                # اگر چک‌باکس به صورت ویجت جداگانه است (setCellWidget)
-                checkbox_widget = self.patient_table_widget.results_table.cellWidget(row_index, 0)
-                if checkbox_widget:
-                    # ایجاد layout با alignment center
-                    from PySide6.QtWidgets import QHBoxLayout, QWidget
-                    container = QWidget()
-                    layout = QHBoxLayout(container)
-                    layout.addWidget(checkbox_widget)
-                    layout.setAlignment(Qt.AlignCenter)
-                    layout.setContentsMargins(0, 0, 0, 0)
-                    self.patient_table_widget.results_table.setCellWidget(row_index, 0, checkbox_widget)
-
-                    checkbox_widget.setStyleSheet("""
-                        QCheckBox::indicator {
-                            subcontrol-position: center center;
-                        }
-                    """)
+        # Center align the checkbox column (handled by patient_table_widget now)
+        # The patient_table_widget handles this internally in its add_patient_data method
 
     def center_align_table_column(self, table_widget, column_index):
         """
         تنظیم وسط‌چین برای تمام سلول‌های یک ستون خاص
-        
+
         Args:
             table_widget: جدول مورد نظر (QTableWidget)
             column_index: ایندکس ستون (از 0 شروع می‌شود)
         """
         if not table_widget or column_index < 0:
             return
-        
+
         row_count = table_widget.rowCount()
-        
+
         for row in range(row_count):
             item = table_widget.item(row, column_index)
             if item:
                 item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-            
+
             # اگر ویجت داخل سلول است (مثل چک‌باکس)
             widget = table_widget.cellWidget(row, column_index)
             if widget:
                 from PySide6.QtWidgets import QHBoxLayout, QWidget, QCheckBox
-                
-                # اگر QCheckBox است
-                if isinstance(widget, QCheckBox):
+                from PacsClient.utils.custom_checkbox import CustomCheckbox
+
+                # اگر QCheckBox یا CustomCheckbox است
+                if isinstance(widget, (QCheckBox, CustomCheckbox)):
                     # استفاده از استایل برای وسط‌چین کردن indicator چک‌باکس
                     widget.setStyleSheet("""
                         QCheckBox {
                             spacing: 0px;
+                            margin: 0px;
+                            padding: 0px;
                         }
                         QCheckBox::indicator {
                             subcontrol-position: center center;
                             subcontrol-origin: padding;
+                            margin: 0px;
+                            padding: 0px;
                         }
                     """)
                     # تنظیم alignment خود ویجت
