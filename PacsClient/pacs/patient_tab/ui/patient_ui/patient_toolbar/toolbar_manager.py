@@ -1590,6 +1590,7 @@ class ToolbarManager:
     def _show_mpr_dropdown(self, button):
         """Show dropdown menu for MIP/MinIP/Thick Slab options"""
         try:
+            print("[DEBUG] _show_mpr_dropdown called! Creating MPR Visualization Options dropdown...")
             dropdown = QWidget(self.patient_widget)
             dropdown.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
             dropdown.setAttribute(Qt.WA_DeleteOnClose)
@@ -1655,6 +1656,15 @@ class ToolbarManager:
                 dropdown.close()
             ])
             layout.addWidget(thick_btn)
+
+            # ITK MPR (ITK-SNAP) button
+            itk_mpr_btn = create_dropdown_tool('ITK MPR (ITK-SNAP)', 'fa5s.cube', '#a855f7')
+            itk_mpr_btn.clicked.connect(lambda: [
+                self.on_itk_mpr_from_dropdown_requested(),
+                dropdown.close()
+            ])
+            layout.addWidget(itk_mpr_btn)
+            print("[DEBUG] ITK MPR (ITK-SNAP) button added to dropdown!")
 
             # Position dropdown below the button
             button_pos = button.mapToGlobal(QPoint(0, button.height()))
@@ -2246,6 +2256,105 @@ class ToolbarManager:
         except Exception as e:
             logger.error(f"ERROR in Thick Slab: {e}", exc_info=True)
             QMessageBox.critical(self.patient_widget, "Error", f"Error applying Thick Slab:\n{str(e)}")
+
+    def on_itk_mpr_from_dropdown_requested(self):
+        """
+        Handler for ITK MPR (ITK-SNAP) menu item from MPR dropdown.
+        
+        Retrieves the active DICOM series from the selected viewer and forwards it
+        to the newmpr4 module for ITK-SNAP integration.
+        """
+        import logging
+        from PySide6.QtWidgets import QMessageBox
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.info("=" * 60)
+            logger.info("ITK MPR (ITK-SNAP) requested from dropdown")
+            logger.info("=" * 60)
+            
+            # Get the selected widget (active viewer)
+            selected_widget = self.patient_widget.selected_widget
+            
+            # Check if widget is valid and has image viewer
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                logger.warning("No image viewer available in selected widget")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Image Available",
+                    "No active DICOM series available for ITK MPR.\n\nPlease load an image first."
+                )
+                return
+            
+            # Check if series index is available
+            if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
+                logger.warning("No active series index found")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Series Available",
+                    "No active DICOM series available for ITK MPR.\n\nPlease select a series first."
+                )
+                return
+            
+            # Get the active series index
+            series_index = selected_widget.last_series_show
+            logger.info(f"Active series index: {series_index}")
+            
+            # Get series data from patient widget's thumbnail data
+            if series_index >= len(self.patient_widget.lst_thumbnails_data):
+                logger.error(f"Series index {series_index} out of range")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Invalid Series",
+                    "No active DICOM series available for ITK MPR."
+                )
+                return
+            
+            # Retrieve series data
+            series_data = self.patient_widget.lst_thumbnails_data[series_index]
+            vtk_image_data = series_data.get('vtk_image_data')
+            metadata = series_data.get('metadata', {})
+            
+            if vtk_image_data is None:
+                logger.warning("VTK image data is None for active series")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Image Data",
+                    "No active DICOM series available for ITK MPR.\n\nImage data is not loaded."
+                )
+                return
+            
+            logger.info(f"Retrieved series data - metadata keys: {list(metadata.keys())}")
+            
+            # Get series information from metadata
+            series_metadata = metadata.get('series', {})
+            series_number = series_metadata.get('series_number', 'Unknown')
+            series_description = series_metadata.get('series_description', 'Unknown')
+            
+            logger.info(f"Series Number: {series_number}, Description: {series_description}")
+            
+            # Call newmpr4 module to launch ITK MPR for active series
+            from PacsClient.pacs.patient_tab.newmpr4 import launch_itk_mpr_for_active_series
+            
+            launch_itk_mpr_for_active_series(
+                vtk_image_data=vtk_image_data,
+                metadata=metadata,
+                series_index=series_index,
+                parent_widget=self.patient_widget
+            )
+            
+            logger.info("ITK MPR launch request completed")
+            logger.info("=" * 60)
+            
+        except Exception as e:
+            logger.error(f"ERROR in ITK MPR dropdown handler: {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self.patient_widget,
+                "Error",
+                f"Error launching ITK MPR:\n{str(e)}"
+            )
 
     def toggle_mpr(self, selected_widget=None):
         """Toggle MPR viewer for selected viewport only"""

@@ -1,0 +1,3 @@
+[submodule "external/itksnap"]
+	path = external/itksnap
+	url = https://github.com/pyushkevich/itksnap.git

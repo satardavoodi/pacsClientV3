@@ -140,6 +140,7 @@ class PatientWidget(QWidget):
         # Lazy load heavy panels (created when needed)
         self.reception_data_tab = None
         self.advanced_tools_panel = None
+        self.newmpr4_panel = None
         self._patient_id_for_lazy = patient_id
 
         self.right_panel.addWidget(self.thumb_panel)  # index 0
@@ -147,8 +148,10 @@ class PatientWidget(QWidget):
         # Placeholder widgets for lazy panels
         self._lazy_placeholder_2 = QWidget()
         self._lazy_placeholder_3 = QWidget()
+        self._lazy_placeholder_newmpr4 = QWidget()
         self.right_panel.addWidget(self._lazy_placeholder_2)  # index 2 (will be replaced)
         self.right_panel.addWidget(self._lazy_placeholder_3)  # index 3 (will be replaced)
+        self.right_panel.addWidget(self._lazy_placeholder_newmpr4)  # index 4 (will be replaced)
 
         self.container_layout.addWidget(self.right_panel)
         self.container_layout.addWidget(self.center_layout_ui())
@@ -2096,6 +2099,10 @@ class PatientWidget(QWidget):
         self.btn_advanced_tools.setCheckable(True)
         self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
 
+        self.btn_newmpr4 = VerticalButton("New MPR 4")
+        self.btn_newmpr4.setCheckable(True)
+        self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
+
         # گروه انحصاری
         self.sidebar_btn_group = QButtonGroup(sidebar)
         self.sidebar_btn_group.setExclusive(True)
@@ -2104,6 +2111,7 @@ class PatientWidget(QWidget):
         self.sidebar_btn_group.addButton(self.btn_ai_chat)
         self.sidebar_btn_group.addButton(self.btn_ai_module)
         self.sidebar_btn_group.addButton(self.btn_advanced_tools)
+        self.sidebar_btn_group.addButton(self.btn_newmpr4)
 
         # افزودن به لایه + دیوایدر بین هر دکمه
         layout.addWidget(self.btn_series, 1)
@@ -2119,6 +2127,9 @@ class PatientWidget(QWidget):
         layout.addWidget(self.make_divider())
 
         layout.addWidget(self.btn_advanced_tools, 1)
+        layout.addWidget(self.make_divider())
+
+        layout.addWidget(self.btn_newmpr4, 1)
 
         layout.addStretch(0)
 
@@ -2128,6 +2139,7 @@ class PatientWidget(QWidget):
         self.btn_ai_chat.clicked.connect(lambda: self.switch_right_panel("ai_chat"))
         self.btn_ai_module.clicked.connect(lambda: self.switch_right_panel("ai_module"))
         self.btn_advanced_tools.clicked.connect(lambda: self.switch_right_panel("advanced_tools"))
+        self.btn_newmpr4.clicked.connect(lambda: self.switch_right_panel("newmpr4"))
 
         return sidebar
 
@@ -2163,6 +2175,7 @@ class PatientWidget(QWidget):
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
 
         elif option == 'reception':
             print("[PatientWidget] Switching to Reception Data tab (index 2)")
@@ -2196,6 +2209,7 @@ class PatientWidget(QWidget):
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
 
             # Trigger data fetch when tab is activated
             if self.reception_data_tab is not None:
@@ -2210,6 +2224,7 @@ class PatientWidget(QWidget):
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(True))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
             self.ai_chat_layout_ui()
 
         elif option == 'ai_module':
@@ -2219,6 +2234,7 @@ class PatientWidget(QWidget):
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(True))
             self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
             if self.method_add_new_tab:
                 self.method_add_new_tab(open_ai_client_tab=True, study_uid=self.study_uid)
 
@@ -2252,6 +2268,7 @@ class PatientWidget(QWidget):
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(True))
+            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
 
             # Update tools panel with current image data
             if self.advanced_tools_panel is not None and self.selected_widget and hasattr(self.selected_widget, 'image_viewer'):
@@ -2260,6 +2277,46 @@ class PatientWidget(QWidget):
                     self.advanced_tools_panel.set_image_data(viewer.vtk_image_data)
                 if hasattr(viewer, 'renderer') and viewer.renderer:
                     self.advanced_tools_panel.set_renderer(viewer.renderer)
+
+        elif option == 'newmpr4':
+            print("[PatientWidget] Switching to New MPR4 panel (index 4)")
+            
+            # ✅ Lazy load NewMPR4Widget if not already created
+            if self.newmpr4_panel is None:
+                print("[PatientWidget] Creating NewMPR4Widget for the first time...")
+                try:
+                    from PacsClient.pacs.patient_tab.newmpr4 import NewMPR4Widget
+                    
+                    # Create NewMPR4Widget
+                    self.newmpr4_panel = NewMPR4Widget()
+                    
+                    # Replace placeholder widget with actual NewMPR4Widget
+                    self.right_panel.removeWidget(self._lazy_placeholder_newmpr4)
+                    self._lazy_placeholder_newmpr4.deleteLater()
+                    self.right_panel.insertWidget(4, self.newmpr4_panel)
+                    
+                    print("[PatientWidget] NewMPR4Widget created and inserted successfully")
+                except Exception as e:
+                    print(f"[PatientWidget] ERROR creating NewMPR4Widget: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            self.right_panel.setCurrentIndex(4)  # index 4 for New MPR4
+            self.right_panel.setFixedWidth(self.default_panel_width)  # Use default width
+            self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(True))
+
+            # TODO: Update newmpr4 panel with current image data when ITK-SNAP integration is complete
+            # if self.newmpr4_panel is not None and self.selected_widget and hasattr(self.selected_widget, 'image_viewer'):
+            #     viewer = self.selected_widget.image_viewer
+            #     if hasattr(viewer, 'vtk_image_data') and viewer.vtk_image_data:
+            #         self.newmpr4_panel.set_image_data(viewer.vtk_image_data)
+            #     if hasattr(viewer, 'renderer') and viewer.renderer:
+            #         self.newmpr4_panel.set_renderer(viewer.renderer)
 
     ########################################################
     def thumbnail_layout_ui(self):
