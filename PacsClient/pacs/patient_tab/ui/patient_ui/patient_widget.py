@@ -211,32 +211,38 @@ class PatientWidget(QWidget):
             if series_key not in self._priority_series_data:
                 print(f"⚠️ Series {series_key} not in priority data")
                 return False
-            
+
             # بررسی وجود ویوورها
-            if not self.lst_nodes_viewer:
+            if not hasattr(self, 'lst_nodes_viewer') or not self.lst_nodes_viewer:
                 print(f"⚠️ No viewers available for series {series_key}, will try later")
                 return False
-            
+
             data = self._priority_series_data[series_key]
             vtk_image_data = data['vtk_image_data']
             metadata = data['metadata']
-            
+
+            # Check if lst_thumbnails_data exists and initialize if not
+            if not hasattr(self, 'lst_thumbnails_data'):
+                self.lst_thumbnails_data = []
+                print(f"⚠️ lst_thumbnails_data not initialized")
+                return False
+
             # پیدا کردن ایندکس سری در lst_thumbnails_data
             series_idx = -1
             for i in range(len(self.lst_thumbnails_data)):
                 if str(self.lst_thumbnails_data[i]['metadata']['series']['series_number']) == series_key:
                     series_idx = i
                     break
-            
+
             if series_idx == -1:
                 print(f"⚠️ Series {series_key} not found in thumbnails data")
                 return False
-            
+
             print(f"🎬 [PRIORITY DISPLAY] Attempting immediate display of series {series_key}")
-            
+
             # استفاده از اولین ویوور
             viewer = self.lst_nodes_viewer[0]
-            
+
             # روش اصلی: استفاده از switch_series
             if hasattr(viewer, 'switch_series'):
                 print(f"   🔄 Using switch_series for series {series_key}")
@@ -246,35 +252,35 @@ class PatientWidget(QWidget):
                     series_idx,
                     metadata_fixed=self.metadata_fixed
                 )
-                
+
                 if flag_switch:
                     print(f"   ✅ switch_series succeeded for series {series_key}")
-                    
+
                     # تنظیم به عنوان ویوور اصلی
                     self.set_viewer_to_main_viewer(viewer)
-                    
+
                     # تنظیم اسلایدر
                     if hasattr(viewer, 'slider') and viewer.slider:
                         self.reset_slider(viewer.vtk_widget, viewer.slider)
-                    
+
                     # حذف از صف و دیکشنری
                     if series_key in self._priority_series_queue:
                         self._priority_series_queue.remove(series_key)
                     if series_key in self._priority_series_data:
                         del self._priority_series_data[series_key]
-                    
+
                     # رندر فوری
                     if hasattr(viewer.vtk_widget, 'GetRenderWindow'):
                         viewer.vtk_widget.GetRenderWindow().Render()
-                    
+
                     print(f"🎉 [PRIORITY DISPLAY] Series {series_key} displayed successfully!")
                     return True
                 else:
                     print(f"   ❌ switch_series failed for series {series_key}")
                     return False
-            
+
             return False
-            
+
         except Exception as e:
             print(f"❌ Error in priority display attempt: {e}")
             import traceback
@@ -286,10 +292,10 @@ class PatientWidget(QWidget):
         try:
             if not self._priority_series_queue or not self.isVisible():
                 return
-            
+
             # کپی از صف برای جلوگیری از تغییر در حین پردازش
             queue_copy = self._priority_series_queue.copy()
-            
+
             for series_key in queue_copy:
                 # بررسی timeout (بیش از 30 ثانیه نمانده باشد)
                 if series_key in self._priority_series_data:
@@ -299,11 +305,11 @@ class PatientWidget(QWidget):
                         self._priority_series_queue.remove(series_key)
                         del self._priority_series_data[series_key]
                         continue
-                
+
                 # تلاش برای نمایش
                 if self._try_display_priority_series(series_key):
                     break  # فقط یک سری در هر چرخه نمایش بده
-            
+
         except Exception as e:
             print(f"⚠️ Error processing priority queue: {e}")
 
@@ -324,26 +330,32 @@ class PatientWidget(QWidget):
         """
         try:
             print(f"🔄 [DISPLAY EXISTING] Displaying already loaded series {series_number}")
-            
+
+            # Check if lst_thumbnails_data exists and initialize if not
+            if not hasattr(self, 'lst_thumbnails_data'):
+                self.lst_thumbnails_data = []
+                print(f"❌ lst_thumbnails_data not initialized")
+                return
+
             # پیدا کردن داده‌های سری
             vtk_image_data = None
             metadata = None
             series_idx = -1
-            
+
             for i in range(len(self.lst_thumbnails_data)):
                 if int(self.lst_thumbnails_data[i]['metadata']['series']['series_number']) == int(series_number):
                     vtk_image_data = self.lst_thumbnails_data[i]['vtk_image_data']
                     metadata = self.lst_thumbnails_data[i]['metadata']
                     series_idx = i
                     break
-                    
+
             if metadata is None:
                 print(f"❌ Series {series_number} not found in loaded data")
                 return
-                
+
             # نمایش سری
             self._display_loaded_series_immediate(series_number, vtk_image_data, metadata, series_idx)
-            
+
         except Exception as e:
             print(f"❌ Error displaying existing series: {e}")
 
@@ -447,32 +459,33 @@ class PatientWidget(QWidget):
         # Ensure overlay is opaque
         self._init_overlay.setAttribute(Qt.WA_OpaquePaintEvent, True)
         self._init_overlay.setAutoFillBackground(True)
-        
+
         overlay_layout = QVBoxLayout(self._init_overlay)
         overlay_layout.setAlignment(Qt.AlignCenter)
         overlay_layout.setContentsMargins(0, 0, 0, 0)
-        
-        loading_label = QLabel("Loading Viewer...")
-        loading_label.setStyleSheet("""
-            QLabel {
-                color: #64b5f6;
-                font-size: 20px;
-                font-weight: bold;
-                background-color: transparent;
-            }
-        """)
-        loading_label.setAlignment(Qt.AlignCenter)
-        overlay_layout.addWidget(loading_label)
-        
+
+        # Commented out loading label so user won't see loading message
+        # loading_label = QLabel("Loading Viewer...")
+        # loading_label.setStyleSheet("""
+        #     QLabel {
+        #         color: #64b5f6;
+        #         font-size: 20px;
+        #         font-weight: bold;
+        #         background-color: transparent;
+        #     }
+        # """)
+        # loading_label.setAlignment(Qt.AlignCenter)
+        # overlay_layout.addWidget(loading_label)
+
         # Make overlay fill the entire widget - use very large size to ensure coverage
         # This will be updated when widget is resized
         self._init_overlay.setGeometry(0, 0, 10000, 10000)
         self._init_overlay.setParent(self)
         self._init_overlay.raise_()
-        self._init_overlay.show()
+        # self._init_overlay.show()  # Commented out to hide the loading overlay
         self._init_overlay.activateWindow()
         QApplication.processEvents()
-        
+
         # Update overlay size periodically to ensure it covers the widget
         QTimer.singleShot(50, self._update_overlay_size)
         QTimer.singleShot(200, self._update_overlay_size)
@@ -663,8 +676,8 @@ class PatientWidget(QWidget):
                     self.selected_widget = first_viewer.vtk_widget
                     self.slider = first_viewer.slider
 
-                if hasattr(first_viewer, 'vtk_widget') and hasattr(first_viewer.vtk_widget, 'viewport_spinner'):
-                    first_viewer.vtk_widget.viewport_spinner.show_loading("Downloading...")
+                # if hasattr(first_viewer, 'vtk_widget') and hasattr(first_viewer.vtk_widget, 'viewport_spinner'):
+                #     first_viewer.vtk_widget.viewport_spinner.show_loading("Downloading...")  # Commented out to avoid showing loading message to user
 
             # Load first series (either from disk or wait for download)
             if count_exist_thumbnails > 0:
@@ -740,14 +753,18 @@ class PatientWidget(QWidget):
     def _display_first_series_in_viewer(self):
         """Display first series in the viewer"""
         try:
+            # Check if lst_thumbnails_data exists and initialize if not
+            if not hasattr(self, 'lst_thumbnails_data'):
+                self.lst_thumbnails_data = []
+
             if not self.lst_thumbnails_data:
                 return
-            
+
             first_data = self.lst_thumbnails_data[0]
             vtk_image_data = first_data.get('vtk_image_data')
             metadata = first_data.get('metadata')
-            
-            if vtk_image_data and self.lst_nodes_viewer:
+
+            if vtk_image_data and hasattr(self, 'lst_nodes_viewer') and self.lst_nodes_viewer:
                 first_viewer = self.lst_nodes_viewer[0]
                 if hasattr(first_viewer, 'vtk_widget'):
                     first_viewer.vtk_widget.display_image(vtk_image_data, metadata)
@@ -851,8 +868,8 @@ class PatientWidget(QWidget):
             task.add_done_callback(self._background_tasks.discard)
             return
 
-        if getattr(self, "selected_widget", None) and getattr(self.selected_widget, "viewport_spinner", None):
-            self.selected_widget.viewport_spinner.show_loading("Loading...")
+        # if getattr(self, "selected_widget", None) and getattr(self.selected_widget, "viewport_spinner", None):
+        #     self.selected_widget.viewport_spinner.show_loading("Loading...")  # Commented out to avoid showing loading message to user
 
         if caller == CallerTypes.IMPORT:
             task = asyncio.create_task(
@@ -963,7 +980,7 @@ class PatientWidget(QWidget):
                 self.import_folder_path = series_dir
 
             # Show loading spinner
-            self._show_loading_spinner(f"Loading series {series_number}...")
+            # self._show_loading_spinner(f"Loading series {series_number}...")  # Commented out to avoid showing loading message to user
 
             # Check if series directory exists and has DICOM files
             from pathlib import Path
@@ -972,14 +989,14 @@ class PatientWidget(QWidget):
             
             if not dicom_files:
                 print(f"❌ No DICOM files found in {series_dir}")
-                self._hide_loading_spinner()
+                # self._hide_loading_spinner()  # Commented out to match _show_loading_spinner being disabled
                 return
 
             # Use existing method to load the series
             success = self._load_single_series_on_demand(int(series_number))
             if not success:
                 print(f"❌ Failed to load series {series_number}")
-                self._hide_loading_spinner()
+                # self._hide_loading_spinner()  # Commented out to match _show_loading_spinner being disabled
                 return
 
             # Find the loaded data
@@ -1043,6 +1060,10 @@ class PatientWidget(QWidget):
     def _on_series_ready_for_display(self, series_number):
         """Handle display of a series that is now ready"""
         try:
+            # Check if lst_thumbnails_data exists and initialize if not
+            if not hasattr(self, 'lst_thumbnails_data'):
+                self.lst_thumbnails_data = []
+
             # Find the series data
             vtk_image_data = None
             metadata = None
@@ -1055,7 +1076,7 @@ class PatientWidget(QWidget):
                 return
 
             # Display in the first viewer
-            if self.lst_nodes_viewer:
+            if hasattr(self, 'lst_nodes_viewer') and self.lst_nodes_viewer:
                 first_viewer = self.lst_nodes_viewer[0]
                 if hasattr(first_viewer, 'switch_series'):
                     # Find index of this series in thumbnails data
@@ -1086,6 +1107,10 @@ class PatientWidget(QWidget):
         Display the loaded series in the viewer after successful loading.
         """
         try:
+            # Check if lst_thumbnails_data exists and initialize if not
+            if not hasattr(self, 'lst_thumbnails_data'):
+                self.lst_thumbnails_data = []
+
             # Find the loaded data
             vtk_image_data = None
             metadata = None
@@ -1094,7 +1119,7 @@ class PatientWidget(QWidget):
                     vtk_image_data = self.lst_thumbnails_data[i]['vtk_image_data']
                     metadata = self.lst_thumbnails_data[i]['metadata']
                     break
-                    
+
             if metadata is None:
                 print(f"❌ Series data not found after loading")
                 return
@@ -1277,24 +1302,29 @@ class PatientWidget(QWidget):
     def _trigger_priority_display(self, series_key):
         """تحریک نمایش سری اولویت‌دار که قبلاً لود شده"""
         try:
+            # Check if lst_thumbnails_data exists and is initialized
+            if not hasattr(self, 'lst_thumbnails_data') or not self.lst_thumbnails_data:
+                print(f"⚠️ lst_thumbnails_data not initialized or empty, cannot trigger priority display for series {series_key}")
+                return
+
             # پیدا کردن داده‌های سری
             vtk_image_data = None
             metadata = None
             series_idx = -1
-            
+
             for i in range(len(self.lst_thumbnails_data)):
                 if str(self.lst_thumbnails_data[i]['metadata']['series']['series_number']) == series_key:
                     vtk_image_data = self.lst_thumbnails_data[i]['vtk_image_data']
                     metadata = self.lst_thumbnails_data[i]['metadata']
                     series_idx = i
                     break
-            
+
             if vtk_image_data and metadata:
                 print(f"🎯 [EXISTING PRIORITY] Adding existing series {series_key} to priority display")
                 self.add_priority_series_for_display(series_key, vtk_image_data, metadata)
             else:
                 print(f"⚠️ Cannot find data for existing series {series_key}")
-                
+
         except Exception as e:
             print(f"❌ Error triggering priority display: {e}")
 
@@ -1303,12 +1333,13 @@ class PatientWidget(QWidget):
     def _display_loaded_series_immediate_enhanced(self, series_number, vtk_image_data, metadata, series_idx):
         """نسخه بهبود یافته برای نمایش سری"""
         try:
-            if not self.lst_nodes_viewer:
+            # Check if lst_nodes_viewer exists
+            if not hasattr(self, 'lst_nodes_viewer') or not self.lst_nodes_viewer:
                 print(f"❌ No viewers available")
                 return
-            
+
             viewer = self.lst_nodes_viewer[0]
-            
+
             # ابتدا سعی کن از display_image مستقیم استفاده کنی
             if hasattr(viewer, 'vtk_widget') and hasattr(viewer.vtk_widget, 'display_image'):
                 try:
@@ -1320,7 +1351,7 @@ class PatientWidget(QWidget):
                     return
                 except Exception as e:
                     print(f"⚠️ Direct display_image failed: {e}")
-            
+
             # اگر نشد، از switch_series استفاده کن
             if hasattr(viewer, 'switch_series'):
                 print(f"🎯 Trying switch_series for series {series_number}")
@@ -1330,7 +1361,7 @@ class PatientWidget(QWidget):
                     series_idx,
                     metadata_fixed=self.metadata_fixed
                 )
-                
+
                 if flag_switch:
                     self.set_viewer_to_main_viewer(viewer)
                     if hasattr(viewer, 'slider') and viewer.slider:
@@ -1338,7 +1369,7 @@ class PatientWidget(QWidget):
                     print(f"✅ Series {series_number} displayed successfully (via switch_series)")
                 else:
                     print(f"❌ All display methods failed for series {series_number}")
-                    
+
         except Exception as e:
             print(f"❌ Error in enhanced display: {e}")
             import traceback
@@ -1391,6 +1422,10 @@ class PatientWidget(QWidget):
 
                 
     def _distribute_series_to_viewers(self):
+        # Check if lst_thumbnails_data exists and initialize if not
+        if not hasattr(self, 'lst_thumbnails_data'):
+            self.lst_thumbnails_data = []
+
         self.logger.info(f"Distributing {len(self.lst_thumbnails_data)} series to {len(self.lst_nodes_viewer)} viewers")
         """
         Distribute available series to all viewers for non-MG modalities
@@ -1398,11 +1433,11 @@ class PatientWidget(QWidget):
         """
         try:
             print(f"🔀 [DISTRIBUTE] Distributing series to {len(self.lst_nodes_viewer)} viewers")
-            
+
             if not self.lst_nodes_viewer:
                 print("⚠️ [DISTRIBUTE] No viewers available")
                 return
-                
+
             if not self.lst_thumbnails_data:
                 print("⚠️ [DISTRIBUTE] No thumbnail data available")
                 return
@@ -2253,7 +2288,7 @@ class PatientWidget(QWidget):
                     traceback.print_exc()
             
             self.right_panel.setCurrentIndex(3)  # index 3 for Advanced Tools
-            self.right_panel.setFixedWidth(350)  # Wider for tools
+            self.right_panel.setFixedWidth(550)  # Wider for tools
             self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
@@ -2267,6 +2302,22 @@ class PatientWidget(QWidget):
                     self.advanced_tools_panel.set_image_data(viewer.vtk_image_data)
                 if hasattr(viewer, 'renderer') and viewer.renderer:
                     self.advanced_tools_panel.set_renderer(viewer.renderer)
+
+            # Connect the new signal for applying filters to all images of same modality
+            if self.advanced_tools_panel is not None:
+                try:
+                    # Disconnect previous connections to avoid duplicates
+                    self.advanced_tools_panel.filter_applied_to_modality.disconnect()
+                except:
+                    pass  # Signal was not connected before
+                self.advanced_tools_panel.filter_applied_to_modality.connect(self.apply_filters_to_all_series_of_modality)
+
+                # Also connect to the general tool_applied signal for other tools
+                try:
+                    self.advanced_tools_panel.tool_applied.disconnect()
+                except:
+                    pass  # Signal was not connected before
+                self.advanced_tools_panel.tool_applied.connect(self._on_advanced_tool_applied)
 
     ########################################################
     def thumbnail_layout_ui(self):
@@ -2751,13 +2802,13 @@ class PatientWidget(QWidget):
         self.logger.info(f"Creating new viewer with thumb index {default_thumb_index}")
         # Let UI breathe before heavy VTK initialization
         QApplication.processEvents()
-        
+
         layout = QGridLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         # Check if we have thumbnail data
-        if not self.lst_thumbnails_data or len(self.lst_thumbnails_data) == 0:
+        if not hasattr(self, 'lst_thumbnails_data') or not self.lst_thumbnails_data or len(self.lst_thumbnails_data) == 0:
             vtk_widget = self.create_dummy_vtk_widget()
         else:
             vtk_widget = self.create_new_vtk_widget(default_thumb_index)
@@ -2910,6 +2961,11 @@ class PatientWidget(QWidget):
         return VTKWidget(height_viewer=height)
 
     def create_new_vtk_widget(self, default_thumb_index):
+        # Check if lst_thumbnails_data exists and has sufficient data
+        if not hasattr(self, 'lst_thumbnails_data') or not self.lst_thumbnails_data or len(self.lst_thumbnails_data) <= default_thumb_index:
+            # Return a dummy widget if no data is available
+            return self.create_dummy_vtk_widget()
+
         vtk_widget_data = self.lst_thumbnails_data[default_thumb_index]['vtk_image_data']
         metadata = self.lst_thumbnails_data[default_thumb_index]['metadata']
 
@@ -2991,9 +3047,13 @@ class PatientWidget(QWidget):
             vtk_image_data = None
             metadata = None
             series_idx = -1
-            
+
+            # Check if lst_thumbnails_data exists and initialize if not
+            if not hasattr(self, 'lst_thumbnails_data'):
+                self.lst_thumbnails_data = []
+
             print(f"🔄 [CHANGE SERIES] Requested series {series_number}, available: {len(self.lst_thumbnails_data)}")
-            
+
             # 1. Search in existing loaded data
             for i, data in enumerate(self.lst_thumbnails_data):
                 data_series_num = str(data['metadata']['series']['series_number'])
@@ -3100,15 +3160,19 @@ class PatientWidget(QWidget):
         """Perform the actual series switch with widget transfer"""
         try:
             series_number = metadata['series']['series_number']
-            
+
+            # Check if lst_thumbnails_data exists and initialize if not
+            if not hasattr(self, 'lst_thumbnails_data'):
+                self.lst_thumbnails_data = []
+
             # Check for combined viewer (if series has paired data)
             vtk_widget_data_2 = None
             metadata_2 = None
-            
+
             # Look for paired series (same series name, different data)
             series_name = metadata['series']['series_name']
             for data in self.lst_thumbnails_data:
-                if (data['metadata']['series']['series_name'] == series_name and 
+                if (data['metadata']['series']['series_name'] == series_name and
                     data['metadata']['series']['series_number'] != series_number):
                     vtk_widget_data_2 = data['vtk_image_data']
                     metadata_2 = data['metadata']
@@ -3160,14 +3224,18 @@ class PatientWidget(QWidget):
 
 
     def _show_loading_spinner(self, message="Loading..."):
-        """نمایش spinner در viewport فعلی"""
-        if hasattr(self, 'selected_widget') and hasattr(self.selected_widget, 'viewport_spinner'):
-            self.selected_widget.viewport_spinner.show_loading(message)
+        """نمایش spinner در viewport فعلی - DISABLED TO AVOID SHOWING LOADING MESSAGE TO USER"""
+        # COMMENTED OUT TO AVOID SHOWING LOADING MESSAGE TO USER
+        # if hasattr(self, 'selected_widget') and hasattr(self.selected_widget, 'viewport_spinner'):
+        #     self.selected_widget.viewport_spinner.show_loading(message)
+        pass  # Do nothing to avoid showing loading message to user
 
     def _hide_loading_spinner(self):
-        """مخفی کردن spinner در viewport فعلی"""
-        if hasattr(self, 'selected_widget') and hasattr(self.selected_widget, 'viewport_spinner'):
-            self.selected_widget.viewport_spinner.hide_loading()
+        """مخفی کردن spinner در viewport فعلی - DISABLED TO MATCH SHOW FUNCTION BEING DISABLED"""
+        # COMMENTED OUT TO MATCH _show_loading_spinner BEING DISABLED
+        # if hasattr(self, 'selected_widget') and hasattr(self.selected_widget, 'viewport_spinner'):
+        #     self.selected_widget.viewport_spinner.hide_loading()
+        pass  # Do nothing to match _show_loading_spinner being disabled
 
     def _load_single_series_on_demand(self, series_number: int, study_path: str = None) -> bool:
         """
@@ -3353,22 +3421,24 @@ class PatientWidget(QWidget):
         print(f"   📋 Loading {len(series_to_load)} series: {series_to_load}")
         
         # ✅ Show loading progress dialog
-        try:
-            from PySide6.QtWidgets import QProgressDialog, QApplication
-            progress_dialog = QProgressDialog(
-                f"Loading {len(series_to_load)} series...",
-                "Cancel",
-                0,
-                len(series_to_load),
-                self
-            )
-            progress_dialog.setWindowTitle("Series Loading")
-            progress_dialog.setWindowModality(Qt.WindowModal)
-            progress_dialog.setMinimumDuration(500)  # Show after 500ms
-            progress_dialog.setValue(0)
-            QApplication.processEvents()
-        except Exception:
-            progress_dialog = None
+        # COMMENTED OUT TO AVOID SHOWING LOADING MESSAGE TO USER
+        # try:
+        #     from PySide6.QtWidgets import QProgressDialog, QApplication
+        #     progress_dialog = QProgressDialog(
+        #         f"Loading {len(series_to_load)} series...",
+        #         "Cancel",
+        #         0,
+        #         len(series_to_load),
+        #         self
+        #     )
+        #     progress_dialog.setWindowTitle("Series Loading")
+        #     progress_dialog.setWindowModality(Qt.WindowModal)
+        #     progress_dialog.setMinimumDuration(500)  # Show after 500ms
+        #     progress_dialog.setValue(0)
+        #     QApplication.processEvents()
+        # except Exception:
+        #     progress_dialog = None
+        progress_dialog = None  # Set to None since we're not showing the dialog
         
         # Create a thread pool for concurrent loading
         with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
@@ -3692,13 +3762,17 @@ class PatientWidget(QWidget):
             # Check if we have a selected_widget set
             if flag_change_selected_widget and self.selected_widget is None:
                 print(f"⚠️ [DISPLAY] selected_widget is None, trying to set from lst_nodes_viewer")
-                if self.lst_nodes_viewer and len(self.lst_nodes_viewer) > 0:
+                if hasattr(self, 'lst_nodes_viewer') and self.lst_nodes_viewer and len(self.lst_nodes_viewer) > 0:
                     self.selected_widget = self.lst_nodes_viewer[0].vtk_widget
                     self.slider = self.lst_nodes_viewer[0].slider
                     print(f"   ✅ Set selected_widget from first viewer")
                 else:
                     print(f"   ❌ No viewers available!")
                     return
+
+            # Check if lst_thumbnails_data exists and initialize if not
+            if not hasattr(self, 'lst_thumbnails_data'):
+                self.lst_thumbnails_data = []
 
             # ادامه کد change_series_on_viewer از اینجا
             vtk_widget_data_2 = None
@@ -3812,27 +3886,31 @@ class PatientWidget(QWidget):
         self._loading_cnt = 0
 
     def _show_loading_msg(self, text="Applying layout..."):
-        self._ensure_loading_dialog()
-        self._loading_cnt += 1
-        # یک متن دوستانه با ایموجی تک‌رنگ (روی تم تیره خوب دیده می‌شود)
-        pretty = f"⚙️  {text}\nThis may take a few seconds…"
-        self._loading_dlg.setLabelText(pretty)
-        self._loading_dlg.setRange(0, 0)  # حالت نامشخص (اسپینینگ)
-        self._loading_dlg.show()
-        self._loading_dlg.raise_()
+        # COMMENTED OUT TO AVOID SHOWING LOADING MESSAGE TO USER
+        # self._ensure_loading_dialog()
+        # self._loading_cnt += 1
+        # # یک متن دوستانه با ایموجی تک‌رنگ (روی تم تیره خوب دیده می‌شود)
+        # pretty = f"⚙️  {text}\nThis may take a few seconds…"
+        # self._loading_dlg.setLabelText(pretty)
+        # self._loading_dlg.setRange(0, 0)  # حالت نامشخص (اسپینینگ)
+        # self._loading_dlg.show()
+        # self._loading_dlg.raise_()
 
-        center = QApplication.primaryScreen().availableGeometry().center()
-        self._loading_dlg.move(center - self._loading_dlg.rect().center())
+        # center = QApplication.primaryScreen().availableGeometry().center()
+        # self._loading_dlg.move(center - self._loading_dlg.rect().center())
 
-        QApplication.processEvents()
+        # QApplication.processEvents()
+        pass  # Do nothing to avoid showing loading message to user
 
     def _hide_loading_msg(self):
-        if getattr(self, "_loading_dlg", None) is None:
-            return
-        self._loading_cnt = max(0, self._loading_cnt - 1)
-        if self._loading_cnt == 0:
-            self._loading_dlg.hide()
-            QApplication.processEvents()
+        # COMMENTED OUT TO MATCH _show_loading_msg BEING DISABLED
+        # if getattr(self, "_loading_dlg", None) is None:
+        #     return
+        # self._loading_cnt = max(0, self._loading_cnt - 1)
+        # if self._loading_cnt == 0:
+        #     self._loading_dlg.hide()
+        #     QApplication.processEvents()
+        pass  # Do nothing to match _show_loading_msg being disabled
 
     def apply_multi_viewer(self, numbers, modify_by_user=False):
         """
@@ -3847,8 +3925,9 @@ class PatientWidget(QWidget):
             print(f"🔧 [LAYOUT] Applying {rows}x{cols} layout (need {required_count} viewers, have {current_count})")
             
             if modify_by_user:
-                self._show_loading_msg("Applying layout...")
-            
+                # self._show_loading_msg("Applying layout...")  # Commented out to avoid showing loading message to user
+                pass  
+
             # 1. Cleanup existing viewers but preserve data
             self.cleanup_all_viewers()
             self.lst_nodes_viewer.clear()
@@ -4008,18 +4087,25 @@ class PatientWidget(QWidget):
 
     def exit_patient_widget(self):
         self.cleanup_all_viewers()
-        for i in range(len(self.lst_thumbnails_data)):
-            self.lst_thumbnails_data[i]['vtk_image_data'].GetPointData().SetScalars(None)
-            del self.lst_thumbnails_data[i]['vtk_image_data']
 
-            self.lst_thumbnails_data[i]['metadata'] = None
-            del self.lst_thumbnails_data[i]['metadata']
+        # Check if lst_thumbnails_data exists before trying to access it
+        if hasattr(self, 'lst_thumbnails_data') and self.lst_thumbnails_data:
+            for i in range(len(self.lst_thumbnails_data)):
+                self.lst_thumbnails_data[i]['vtk_image_data'].GetPointData().SetScalars(None)
+                del self.lst_thumbnails_data[i]['vtk_image_data']
 
-            self.lst_thumbnails_data[i]['file_path'] = None
-            del self.lst_thumbnails_data[i]['file_path']
+                self.lst_thumbnails_data[i]['metadata'] = None
+                del self.lst_thumbnails_data[i]['metadata']
+
+                self.lst_thumbnails_data[i]['file_path'] = None
+                del self.lst_thumbnails_data[i]['file_path']
 
         del self.lst_nodes_viewer
-        del self.lst_thumbnails_data
+
+        # Only delete lst_thumbnails_data if it exists
+        if hasattr(self, 'lst_thumbnails_data'):
+            del self.lst_thumbnails_data
+
         gc.collect()
 
     def manage_reference_line(self):
@@ -4320,6 +4406,134 @@ class PatientWidget(QWidget):
             logging.getLogger(__name__).error(
                 f"Failed to add mask ({tool_name}) to viewer", exc_info=True
             )
+
+    def apply_filters_to_all_series_of_modality(self, modality: str, filter_params: dict):
+        """
+        Apply the same filters to all series of the same modality.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Check if lst_thumbnails_data exists and initialize if not
+            if not hasattr(self, 'lst_thumbnails_data'):
+                self.lst_thumbnails_data = []
+
+            logger.info(f"[PatientWidget] Starting to apply filters to all {modality} series...")
+            logger.info(f"Filter parameters: {filter_params}")
+
+            # Find all series of the same modality
+            series_to_update = []
+            metadata_to_update = []
+            indices_to_update = []
+
+            for i, thumbnail_data in enumerate(self.lst_thumbnails_data):
+                series_modality = thumbnail_data['metadata']['series'].get('modality', '').upper()
+                if series_modality == modality:
+                    series_to_update.append(thumbnail_data['vtk_image_data'])
+                    metadata_to_update.append(thumbnail_data['metadata'])
+                    indices_to_update.append(i)
+
+            if not series_to_update:
+                logger.warning(f"[PatientWidget] No {modality} series found to update")
+                return
+
+            logger.info(f"[PatientWidget] Found {len(series_to_update)} {modality} series to update")
+
+            # Apply filters to all series of the same modality
+            from PacsClient.pacs.patient_tab.utils.image_filters import apply_filters_to_multiple_series
+            logger.info(f"[PatientWidget] About to apply filters to {len(series_to_update)} series")
+            updated_series = apply_filters_to_multiple_series(
+                series_to_update,
+                metadata_to_update,
+                filter_params.get("filter_type", "smoothing"),
+                filter_params.get("params", {})
+            )
+            logger.info(f"[PatientWidget] Filters applied successfully to {len(updated_series)} series")
+
+            # Update the stored image data
+            for idx, updated_data in zip(indices_to_update, updated_series):
+                self.lst_thumbnails_data[idx]['vtk_image_data'] = updated_data
+                logger.info(f"[PatientWidget] Updated series at index {idx} with filtered data")
+
+            logger.info(f"[PatientWidget] Successfully updated {len(series_to_update)} {modality} series")
+
+            # If the current viewer is showing a series of this modality, update it
+            if (self.selected_widget and
+                hasattr(self.selected_widget, 'image_viewer') and
+                hasattr(self.selected_widget.image_viewer, 'metadata')):
+                current_modality = self.selected_widget.image_viewer.metadata['series'].get('modality', '').upper()
+                if current_modality == modality:
+                    logger.info(f"[PatientWidget] Current viewer is showing {current_modality} series, updating...")
+                    # Refresh the current view
+                    # Find the current series index by matching the metadata
+                    current_series_number = self.selected_widget.image_viewer.metadata['series'].get('series_number')
+                    current_series_idx = -1
+                    for i, thumbnail_data in enumerate(self.lst_thumbnails_data):
+                        if thumbnail_data['metadata']['series'].get('series_number') == current_series_number:
+                            current_series_idx = i
+                            break
+
+                    if current_series_idx != -1:
+                        logger.info(f"[PatientWidget] Updating current viewer with filtered data for series {current_series_number}")
+                        current_vtk_data = self.lst_thumbnails_data[current_series_idx]['vtk_image_data']
+                        # Check if the viewer has the display_image method before calling it
+                        if hasattr(self.selected_widget.image_viewer, 'display_image'):
+                            self.selected_widget.image_viewer.display_image(current_vtk_data,
+                                                                          self.lst_thumbnails_data[current_series_idx]['metadata'])
+                        else:
+                            # Alternative method for viewers that don't have display_image
+                            # This might be a VTK widget that needs to be updated differently
+                            logger.warning(f"[PatientWidget] Viewer doesn't have display_image method, trying alternative update")
+                            # Update the viewer's image data directly if possible
+                            if hasattr(self.selected_widget.image_viewer, 'reset_image_viewer'):
+                                self.selected_widget.image_viewer.reset_image_viewer(
+                                    current_vtk_data,
+                                    self.lst_thumbnails_data[current_series_idx]['metadata']
+                                )
+                            else:
+                                # If neither method is available, try to update through the VTK widget
+                                logger.warning(f"[PatientWidget] Neither display_image nor reset_image_viewer available, trying direct update")
+                                # Update the VTK widget's image data directly
+                                if hasattr(self.selected_widget, 'start_process_series'):
+                                    # Restart the series processing with the new data
+                                    self.selected_widget.start_process_series(
+                                        current_vtk_data,
+                                        self.lst_thumbnails_data[current_series_idx]['metadata'],
+                                        self.lst_thumbnails_data[current_series_idx]['metadata']['series']['series_number'],
+                                        self.selected_widget.id_vtk_widget,
+                                        self.metadata_fixed
+                                    )
+
+                        logger.info(f"[PatientWidget] Updated current viewer with filtered data")
+                    else:
+                        logger.warning(f"[PatientWidget] Could not find current series index for series number {current_series_number}")
+
+        except Exception as e:
+            logger.error(f"[PatientWidget] Error applying filters to all {modality} series: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+    def handle_tool_applied(self, tool_name: str, result):
+        """
+        Handle results from advanced tools including filters
+        """
+        try:
+            print(f"[PatientWidget] Tool applied: {tool_name}")
+
+            if tool_name == "filters_applied_to_modality":
+                # Handle filter application to all series of a modality
+                modality = result.get("modality", "")
+                filter_params = result.get("filter_params", {})
+
+                if modality:
+                    self.apply_filters_to_all_series_of_modality(modality, filter_params)
+            else:
+                # Handle other tools (original functionality)
+                self._on_advanced_tool_applied(tool_name, result)
+
+        except Exception as e:
+            print(f"[PatientWidget] Error handling tool applied: {e}", exc_info=True)
 
     def set_tab_manager(self, tab_manager):
         self.tab_manager = tab_manager

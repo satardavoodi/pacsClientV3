@@ -1,9 +1,9 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, 
-                                QPushButton, QLabel, QHeaderView, QAbstractItemView, QCheckBox, 
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+                                QPushButton, QLabel, QHeaderView, QAbstractItemView, QCheckBox,
                                 QSizePolicy, QStyledItemDelegate, QDialog, QListWidget, QListWidgetItem,
                                 QDialogButtonBox, QMessageBox, QProgressDialog)
-from PySide6.QtCore import Signal, Qt, QTimer, QRect
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import Signal, Qt, QTimer, QRect, QPersistentModelIndex
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont
 import threading
 import logging
 import qtawesome as qta
@@ -73,35 +73,96 @@ class SortableItem(QTableWidgetItem):
 
 class PatientNameDelegate(QStyledItemDelegate):
     """Custom delegate to draw underline for patient names based on status"""
-    
+
     def paint(self, painter, option, index):
         # First, let parent paint the default content
         super().paint(painter, option, index)
-        
+
         # Check status to determine underline color
         status = index.data(Qt.UserRole + 1)
-        
+
         # Determine the underline color based on status
         underline_color = None
         if status == 'synced':
             underline_color = QColor('#10b981')  # Green
         elif status == 'opened':
             underline_color = QColor('#f59e0b')  # Orange
-        
+
         if underline_color:
             # Draw underline
             painter.save()
-            
+
             pen = QPen(underline_color)
             pen.setWidth(3)
             painter.setPen(pen)
-            
+
             # Draw line at bottom of cell
             rect = option.rect
             y = rect.bottom() - 2
             painter.drawLine(rect.left() + 6, y, rect.right() - 6, y)
-            
+
             painter.restore()
+
+
+class CombinedDelegate(QStyledItemDelegate):
+    """Custom delegate that combines neon highlight effect and patient name underline"""
+
+    def __init__(self, parent=None, is_patient_name_column=False):
+        super().__init__(parent)
+        self.is_patient_name_column = is_patient_name_column
+
+    def paint(self, painter, option, index):
+        # Check if this item should have a neon highlight
+        neon_effect = index.data(Qt.UserRole + 2)
+
+        if neon_effect == "neon-glow":
+            # Draw the subtle highlight effect first
+            painter.save()
+
+            # Fill the background with subtle teal color that matches the theme
+            painter.fillRect(option.rect, QColor("#2d3748"))
+
+            # Draw a subtle border
+            pen = QPen(QColor("#4fd1c6"), 2)
+            pen.setJoinStyle(Qt.MiterJoin)
+            painter.setPen(pen)
+            painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
+
+            # Draw text with white color for contrast
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(option.rect, Qt.AlignCenter | Qt.AlignVCenter, index.data(Qt.DisplayRole) or "")
+
+            painter.restore()
+        else:
+            # Use default painting for non-highlighted items
+            super().paint(painter, option, index)
+
+        # If this is the patient name column, draw the underline based on status
+        if self.is_patient_name_column:
+            # Check status to determine underline color
+            status = index.data(Qt.UserRole + 1)
+
+            # Determine the underline color based on status
+            underline_color = None
+            if status == 'synced':
+                underline_color = QColor('#10b981')  # Green
+            elif status == 'opened':
+                underline_color = QColor('#f59e0b')  # Orange
+
+            if underline_color:
+                # Draw underline
+                painter.save()
+
+                pen = QPen(underline_color)
+                pen.setWidth(3)
+                painter.setPen(pen)
+
+                # Draw line at bottom of cell
+                rect = option.rect
+                y = rect.bottom() - 2
+                painter.drawLine(rect.left() + 6, y, rect.right() - 6, y)
+
+                painter.restore()
 
 
 COL = {
@@ -696,7 +757,10 @@ class PatientTableWidget(QWidget):
         
         # Setup custom delegate for patient name column (for visited patient border)
         self._setup_patient_name_delegate()
-        
+
+        # Setup custom delegate for neon highlight effect
+        self._setup_neon_highlight_delegate()
+
         # Setup layout after table is created
         self._setup_layout()
 
@@ -723,8 +787,17 @@ class PatientTableWidget(QWidget):
         
     def _setup_patient_name_delegate(self):
         """Setup custom delegate for patient name column"""
-        delegate = PatientNameDelegate(self.results_table)
+        delegate = CombinedDelegate(self.results_table, is_patient_name_column=True)
         self.results_table.setItemDelegateForColumn(COL['patient_name'], delegate)
+
+    def _setup_neon_highlight_delegate(self):
+        """Setup custom delegate for neon highlight effect on all columns"""
+        # Apply the combined delegate to all columns except the checkbox column (COL['select'])
+        # For the patient name column, we already set it with is_patient_name_column=True
+        for col in range(self.results_table.columnCount()):
+            if col != COL['select'] and col != COL['patient_name']:  # Don't apply to checkbox column or patient name column
+                delegate = CombinedDelegate(self.results_table, is_patient_name_column=False)
+                self.results_table.setItemDelegateForColumn(col, delegate)
 
     def _on_header_clicked(self, logical_index):
         """Handle header clicks: Select-All toggle + tri-state sorting (desc -> asc -> default) for allowed columns."""
@@ -1136,8 +1209,68 @@ class PatientTableWidget(QWidget):
             self.pending_click_item = item
             self.click_timer.start(300)
 
+            # Highlight the clicked row with neon effect
+            selected_row = item.row()
+            self.highlight_selected_row(selected_row)
+
         except Exception as e:
             print(f"Error in patient click: {str(e)}")
+
+    def highlight_selected_row(self, row_index):
+        """Highlight the selected row with a neon effect"""
+        try:
+            # Remove highlight from previously selected row
+            if hasattr(self, '_previous_highlighted_row') and self._previous_highlighted_row is not None:
+                self.remove_row_highlight(self._previous_highlighted_row)
+
+            # Apply neon highlight to the selected row by setting properties
+            for col in range(self.results_table.columnCount()):
+                # Only apply to non-checkbox columns
+                if col != COL['select']:
+                    item = self.results_table.item(row_index, col)
+                    if item:
+                        # Store original background color
+                        if not hasattr(self, '_original_colors'):
+                            self._original_colors = {}
+                        if row_index not in self._original_colors:
+                            self._original_colors[row_index] = {}
+                        self._original_colors[row_index][col] = {
+                            'background': item.background(),
+                            'foreground': item.foreground()
+                        }
+
+                        # Apply neon effect using CSS properties
+                        item.setData(Qt.UserRole + 2, "neon-glow")  # Custom property for styling
+
+            # Store the currently highlighted row
+            self._previous_highlighted_row = row_index
+
+            # Refresh the table to apply the changes
+            self.results_table.viewport().update()
+
+        except Exception as e:
+            print(f"Error highlighting row: {str(e)}")
+
+    def remove_row_highlight(self, row_index):
+        """Remove the neon highlight from a row"""
+        try:
+            if hasattr(self, '_original_colors') and row_index in self._original_colors:
+                for col in range(self.results_table.columnCount()):
+                    # Only apply to non-checkbox columns
+                    if col != COL['select']:
+                        item = self.results_table.item(row_index, col)
+                        if item and col in self._original_colors[row_index]:
+                            # Restore original colors
+                            orig_data = self._original_colors[row_index][col]
+                            item.setBackground(orig_data['background'])
+                            item.setForeground(orig_data['foreground'])
+                            # Remove the custom property
+                            item.setData(Qt.UserRole + 2, None)
+
+                # Refresh the table to apply the changes
+                self.results_table.viewport().update()
+        except Exception as e:
+            print(f"Error removing row highlight: {str(e)}")
 
     def _on_single_click_timeout(self):
         try:
@@ -2639,7 +2772,24 @@ class PatientTableWidget(QWidget):
             QTableWidget::item:alternate:hover {{
                 background: #2d3748;
             }}
-            
+
+            /* Subtle highlight effect for selected row */
+            QTableWidget::item.neon-highlight {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #38b2ac, stop:1 #2d9cb5);
+                color: #ffffff;
+                border: 1px solid #4fd1c6;
+                border-radius: 4px;
+            }}
+
+            /* Subtle glow effect for highlight */
+            QTableWidget::item.neon-glow {{
+                background: #2d3748;
+                color: #ffffff;
+                border: 2px solid #4fd1c6;
+                border-radius: 4px;
+            }}
+
             QHeaderView::section {{
                 background: #0f1419;
                 color: #f7fafc;

@@ -13,7 +13,7 @@ import numpy as np
 import time
 from pathlib import Path
 import json
-
+from typing import Dict
 from PacsClient.pacs.workstation_ui.settings_ui.filter_config import FilterConfigWidget
 # Attempt to load project-level config path; fallback to local ./config directory
 try:
@@ -126,12 +126,12 @@ def edge_smooth_ultrafast(
 ) -> sitk.Image:
     """
     هموارسازی هوشمند فقط در اطراف لبه‌ها با سرعت بالا.
-    
+
     این تابع یک روش پیشرفته برای نرم کردن لبه‌ها بدون از دست دادن جزئیات است.
-    ابتدا لبه‌های قوی شناسایی می‌شوند، سپس یک ناحیه اطراف آنها به صورت 
+    ابتدا لبه‌های قوی شناسایی می‌شوند، سپس یک ناحیه اطراف آنها به صورت
     نرم محو می‌شود. این کار باعث می‌شود لبه‌ها طبیعی‌تر به نظر برسند
     در حالی که جزئیات ظریف حفظ می‌شوند.
-    
+
     Parameters
     ----------
     img : sitk.Image
@@ -166,12 +166,12 @@ def edge_smooth_ultrafast(
         سیگمای هموارسازی در جهت Z برای تصاویر 3D
         • اگر None باشد، مقدار blur_sigma_mm استفاده می‌شود
         • برای برش‌های ضخیم (>2mm) مقدار کوچکتر پیشنهاد می‌شود
-        
+
     Returns
     -------
     sitk.Image
         تصویر با لبه‌های نرم شده
-        
+
     Algorithm
     ---------
     1. محاسبه گرادیان تصویر با گاوسی (تشخیص لبه‌ها)
@@ -179,7 +179,7 @@ def edge_smooth_ultrafast(
     3. گشایش (dilation) ماسک برای گسترش ناحیه اطراف لبه
     4. ایجاد ماسک نرم با feathering برای انتقال ملایم
     5. ترکیب تصویر اصلی و تصویر محو شده با استفاده از ماسک
-    
+
     Notes
     -----
     - این فیلتر برای کاهش آثار پلکانی (staircase artifacts) در تصاویر مفید است
@@ -210,7 +210,7 @@ def edge_smooth_ultrafast(
         sigma=max(0.1, w_blur_mm * 0.35)
     )
     mask = sitk.RescaleIntensity(mask, 0.0, 1.0)  # تضمین محدوده [0,1]
-    
+
     # تنظیم سختی ماسک
     if pow_sharp != 1.0:
         mask = sitk.Pow(mask, pow_sharp)
@@ -231,10 +231,10 @@ def edge_smooth_ultrafast(
 def apply_unsharp_mask(img: sitk.Image, amount: float = 0.5, radius: float = 1.0) -> sitk.Image:
     """
     اعمال Unsharp Masking برای افزایش تیزی تصویر.
-    
+
     این تکنیک کلاسیک با تفریق یک نسخه محو شده از تصویر اصلی،
     جزئیات فرکانس بالا را استخراج و تقویت می‌کند.
-    
+
     Parameters
     ----------
     img : sitk.Image
@@ -250,16 +250,16 @@ def apply_unsharp_mask(img: sitk.Image, amount: float = 0.5, radius: float = 1.0
         • مقدار بیشتر: جزئیات درشت‌تر تقویت می‌شوند
         • مقدار کمتر: جزئیات ظریف‌تر تقویت می‌شوند
         • محدوده پیشنهادی: 0.3 تا 2.0 میلی‌متر
-        
+
     Returns
     -------
     sitk.Image
         تصویر تیز شده
-        
+
     Formula
     -------
     sharpened = original + amount * (original - blurred)
-    
+
     Notes
     -----
     - برای تصاویر با نویز زیاد، amount کمتری استفاده شود
@@ -268,19 +268,19 @@ def apply_unsharp_mask(img: sitk.Image, amount: float = 0.5, radius: float = 1.0
     """
     # ذخیره نوع داده اصلی
     orig_type = img.GetPixelID()
-    
+
     # تبدیل به float برای محاسبات
     imgf = sitk.Cast(img, sitk.sitkFloat32)
-    
-    # ایجاد نسخه محو شده
+
+    # ایجاد نسخه محو شده - radius is already in mm, so we can use it directly
     blurred = sitk.SmoothingRecursiveGaussian(imgf, sigma=radius)
-    
+
     # استخراج جزئیات فرکانس بالا
     details = sitk.Subtract(imgf, blurred)
-    
+
     # اضافه کردن جزئیات تقویت شده به تصویر اصلی
     sharpened = sitk.Add(imgf, sitk.Multiply(details, amount))
-    
+
     return sitk.Cast(sharpened, orig_type)
 
 
@@ -328,10 +328,10 @@ def smoothing(itk_image: sitk.Image) -> sitk.Image:
 def apply_gaussian_sharpening(img: sitk.Image, sigma: float = 0.8, alpha: float = 0.5) -> sitk.Image:
     """
     تیز کردن تصویر با استفاده از تفاضل گاوسی‌ها (Difference of Gaussians - DoG).
-    
+
     این روش با تفریق دو فیلتر گاوسی با مقیاس‌های مختلف،
     محدوده خاصی از فرکانس‌ها را تقویت می‌کند.
-    
+
     Parameters
     ----------
     img : sitk.Image
@@ -347,21 +347,21 @@ def apply_gaussian_sharpening(img: sitk.Image, sigma: float = 0.8, alpha: float 
         • 0.3-0.6: مقدار متعادل
         • 0.7-1.0: تقویت قوی، ممکن است نویز ایجاد کند
         • محدوده ایمن: 0.1 تا 0.8
-        
+
     Returns
     -------
     sitk.Image
         تصویر تیز شده
-        
+
     Formula
     -------
     DoG = G_small - G_large
     sharpened = original + alpha * DoG
-    
+
     Where:
         G_small = Gaussian(sigma)
         G_large = Gaussian(sigma * 2.0)
-        
+
     Notes
     -----
     - DoG یک تقریب خوب از فیلتر لاپلاسین-گاوسی است
@@ -371,29 +371,29 @@ def apply_gaussian_sharpening(img: sitk.Image, sigma: float = 0.8, alpha: float 
     # ذخیره نوع داده اصلی
     orig_type = img.GetPixelID()
     imgf = sitk.Cast(img, sitk.sitkFloat32)
-    
-    # گاوسی با سیگمای کوچک (حفظ جزئیات)
+
+    # گاوسی با سیگمای کوچک (حفظ جزئیات) - sigma is already in mm, so we can use it directly
     gauss_small = sitk.SmoothingRecursiveGaussian(imgf, sigma=sigma)
-    
-    # گاوسی با سیگمای بزرگ (هموارسازی بیشتر)
+
+    # گاوسی با سیگمای بزرگ (هموارسازی بیشتر) - sigma is already in mm, so we can use it directly
     gauss_large = sitk.SmoothingRecursiveGaussian(imgf, sigma=sigma * 2.0)
-    
+
     # تفاضل دو گاوسی (استخراج جزئیات فرکانس متوسط)
     details = sitk.Subtract(gauss_small, gauss_large)
-    
+
     # اضافه کردن جزئیات تقویت شده به تصویر اصلی
     sharpened = sitk.Add(imgf, sitk.Multiply(details, alpha))
-    
+
     return sitk.Cast(sharpened, orig_type)
 
 
 def apply_laplacian_sharpening(img: sitk.Image, alpha: float = 0.3) -> sitk.Image:
     """
     تیز کردن تصویر با استفاده از لاپلاسین-گاوسی.
-    
+
     لاپلاسین مشتق دوم تصویر را محاسبه می‌کند و برای آشکارسازی
     سریع تغییرات شدت (لبه‌ها) مناسب است.
-    
+
     Parameters
     ----------
     img : sitk.Image
@@ -404,16 +404,16 @@ def apply_laplacian_sharpening(img: sitk.Image, alpha: float = 0.3) -> sitk.Imag
         • 0.1-0.3: تقویت ملایم لبه‌ها
         • 0.4-0.6: تقویت قوی، ممکن است overshoot ایجاد کند
         • محدوده ایمن: 0.05 تا 0.5
-        
+
     Returns
     -------
     sitk.Image
         تصویر تیز شده
-        
+
     Formula
     -------
     sharpened = original - alpha * Laplacian(original)
-    
+
     Notes
     -----
     - لاپلاسین به نویز حساس است، بنابراین بهتر است روی تصویر نسبتاً هموار اعمال شود
@@ -424,29 +424,29 @@ def apply_laplacian_sharpening(img: sitk.Image, alpha: float = 0.3) -> sitk.Imag
     # ذخیره نوع داده اصلی
     orig_type = img.GetPixelID()
     imgf = sitk.Cast(img, sitk.sitkFloat32)
-    
-    # محاسبه لاپلاسین-گاوسی با سیگمای 0.5mm
+
+    # محاسبه لاپلاسین-گاوسی با سیگمای 0.5mm - sigma is already in mm, so we can use it directly
     laplacian = sitk.LaplacianRecursiveGaussian(imgf, sigma=0.5)
-    
+
     # اعمال لاپلاسین منفی برای تیز کردن
     # لاپلاسین منفی در مرکز مثبت است که لبه‌ها را تقویت می‌کند
     sharpened = sitk.Subtract(imgf, sitk.Multiply(laplacian, alpha))
-    
+
     return sitk.Cast(sharpened, orig_type)
 
 
 def apply_adaptive_sharpening(
-    img: sitk.Image, 
-    base_amount: float = 0.3, 
-    edge_boost: float = 1.5, 
+    img: sitk.Image,
+    base_amount: float = 0.3,
+    edge_boost: float = 1.5,
     sigma: float = 0.6
 ) -> sitk.Image:
     """
     تیز کردن تطبیقی که بر اساس قدرت لبه‌ها، شدت تیز کردن را تنظیم می‌کند.
-    
+
     این روش هوشمند بر مناطق با گرادیان قوی (لبه‌ها) بیشتر تأکید می‌کند
     و در مناطق هموار تیز کردن کمتری اعمال می‌کند.
-    
+
     Parameters
     ----------
     img : sitk.Image
@@ -465,17 +465,17 @@ def apply_adaptive_sharpening(
         • مقدار بیشتر: تشخیص لبه‌های درشت‌تر
         • مقدار کمتر: تشخیص لبه‌های ظریف‌تر
         • محدوده پیشنهادی: 0.3 تا 1.2 میلی‌متر
-        
+
     Returns
     -------
     sitk.Image
         تصویر تیز شده به صورت تطبیقی
-        
+
     Formula
     -------
     weight_map = base_amount + edge_boost * normalized_gradient
     sharpened = original + weight_map * (original - blurred)
-    
+
     Notes
     -----
     - برای تصاویری که هم نواحی هموار و هم نواحی با جزئیات زیاد دارند ایده‌آل است
@@ -485,39 +485,39 @@ def apply_adaptive_sharpening(
     # ذخیره نوع داده اصلی
     orig_type = img.GetPixelID()
     imgf = sitk.Cast(img, sitk.sitkFloat32)
-    
-    # محاسبه گرادیان برای تشخیص لبه‌ها
+
+    # محاسبه گرادیان برای تشخیص لبه‌ها - sigma is already in mm, so we can use it directly
     gradient = sitk.GradientMagnitudeRecursiveGaussian(imgf, sigma=sigma)
-    
+
     # نرمالایز کردن گرادیان به محدوده [0, 1]
     gradient_norm = sitk.RescaleIntensity(gradient, 0.0, 1.0)
-    
+
     # ایجاد نقشه وزنی: لبه‌ها وزن بیشتر
     edge_weight = sitk.Add(base_amount, sitk.Multiply(gradient_norm, edge_boost))
-    
-    # محاسبه جزئیات با Unsharp Masking
+
+    # محاسبه جزئیات با Unsharp Masking - sigma is already in mm, so we can use it directly
     blurred = sitk.SmoothingRecursiveGaussian(imgf, sigma=sigma)
     details = sitk.Subtract(imgf, blurred)
-    
+
     # اعمال تیز کردن با وزن‌های تطبیقی
     sharpened = sitk.Add(imgf, sitk.Multiply(details, edge_weight))
-    
+
     return sitk.Cast(sharpened, orig_type)
 
 
 def apply_multiscale_sharpening(
-    img: sitk.Image, 
+    img: sitk.Image,
     sigmas: list[float] = [0.8, 1.5, 2.5],
     amounts: list[float] = [0.4, 0.2, 0.1]
 ) -> sitk.Image:
     """
     تیز کردن چندمقیاسه برای تقویت همزمان جزئیات در مقیاس‌های مختلف.
-    
+
     این روش جزئیات را در چندین مقیاس فضایی استخراج و تقویت می‌کند:
     - مقیاس کوچک: جزئیات ظریف و بافت
     - مقیاس متوسط: ساختارهای کوچک
     - مقیاس بزرگ: ساختارهای درشت
-    
+
     Parameters
     ----------
     img : sitk.Image
@@ -533,12 +533,12 @@ def apply_multiscale_sharpening(
         • معمولاً مقیاس‌های کوچک مقدار بیشتر (جزئیات مهم)
         • مقیاس‌های بزرگ مقدار کمتر (جلوگیری از ایجاد هاله)
         • مجموع مقادیر نباید از 1.0 خیلی بیشتر شود
-        
+
     Returns
     -------
     sitk.Image
         تصویر تیز شده با جزئیات چندمقیاسه
-        
+
     Notes
     -----
     - طول لیست sigmas و amounts باید برابر باشد
@@ -549,19 +549,19 @@ def apply_multiscale_sharpening(
     # ذخیره نوع داده اصلی
     orig_type = img.GetPixelID()
     imgf = sitk.Cast(img, sitk.sitkFloat32)
-    
+
     # شروع با تصویر اصلی
     sharpened = imgf
-    
-    # اعمال تیز کردن در هر مقیاس
+
+    # اعمال تیز کردن در هر مقیاس - sigmas are already in mm, so we can use them directly
     for sigma, amount in zip(sigmas, amounts):
-        # محاسبه جزئیات در این مقیاس
+        # محاسبه جزئیات در این مقیاس - sigma is already in mm, so we can use it directly
         blurred = sitk.SmoothingRecursiveGaussian(sharpened, sigma=sigma)
         details = sitk.Subtract(sharpened, blurred)
-        
+
         # اضافه کردن جزئیات تقویت شده
         sharpened = sitk.Add(sharpened, sitk.Multiply(details, amount))
-    
+
     return sitk.Cast(sharpened, orig_type)
 
 # def apply_filters(
@@ -739,75 +739,6 @@ def apply_multiscale_sharpening(
 
 #     return itk_image
 
-def get_modality_specific_params(modality: str, filter_type: str) -> dict:
-    """
-    Get modality-specific parameters for image filters.
-
-    Parameters
-    ----------
-    modality : str
-        Imaging modality (CT, MR, etc.)
-    filter_type : str
-        Type of filter to configure
-
-    Returns
-    -------
-    dict
-        Dictionary of filter parameters for the given modality and filter type
-    """
-    # Default parameters
-    params = {
-        "smoothing": {"sigma": 0.4},
-        "unsharp_mask": {"amount": 0.5, "radius": 1.0},
-        "gaussian_sharpening": {"sigma": 0.8, "alpha": 0.5},
-        "laplacian_sharpening": {"alpha": 0.3},
-        "adaptive_sharpening": {"base_amount": 0.3, "edge_boost": 1.5, "sigma": 0.6},
-        "edge_smooth_ultrafast": {"blur_sigma_mm": 1.0, "edge_sigma_mm": 0.4}
-    }
-
-    # Modality-specific overrides
-    modality_params = {
-        "CT": {
-            "smoothing": {"sigma": 0.3},
-            "unsharp_mask": {"amount": 0.4, "radius": 0.8},
-            "gaussian_sharpening": {"sigma": 0.6, "alpha": 0.4},
-            "laplacian_sharpening": {"alpha": 0.25},
-            "adaptive_sharpening": {"base_amount": 0.25, "edge_boost": 1.2, "sigma": 0.5},
-            "edge_smooth_ultrafast": {"blur_sigma_mm": 0.8, "edge_sigma_mm": 0.3}
-        },
-        "MR": {
-            "smoothing": {"sigma": 0.5},
-            "unsharp_mask": {"amount": 0.6, "radius": 1.2},
-            "gaussian_sharpening": {"sigma": 1.0, "alpha": 0.6},
-            "laplacian_sharpening": {"alpha": 0.35},
-            "adaptive_sharpening": {"base_amount": 0.35, "edge_boost": 1.8, "sigma": 0.7},
-            "edge_smooth_ultrafast": {"blur_sigma_mm": 1.2, "edge_sigma_mm": 0.5}
-        },
-        "CR": {
-            "smoothing": {"sigma": 0.2},
-            "unsharp_mask": {"amount": 0.3, "radius": 0.6},
-            "gaussian_sharpening": {"sigma": 0.5, "alpha": 0.3},
-            "laplacian_sharpening": {"alpha": 0.2},
-            "adaptive_sharpening": {"base_amount": 0.2, "edge_boost": 1.0, "sigma": 0.4},
-            "edge_smooth_ultrafast": {"blur_sigma_mm": 0.6, "edge_sigma_mm": 0.25}
-        },
-        "DX": {
-            "smoothing": {"sigma": 0.15},
-            "unsharp_mask": {"amount": 0.25, "radius": 0.5},
-            "gaussian_sharpening": {"sigma": 0.4, "alpha": 0.25},
-            "laplacian_sharpening": {"alpha": 0.15},
-            "adaptive_sharpening": {"base_amount": 0.15, "edge_boost": 0.8, "sigma": 0.3},
-            "edge_smooth_ultrafast": {"blur_sigma_mm": 0.5, "edge_sigma_mm": 0.2}
-        }
-    }
-
-    # Override defaults with modality-specific parameters if available
-    if modality in modality_params and filter_type in modality_params[modality]:
-        params[filter_type].update(modality_params[modality][filter_type])
-
-    return params[filter_type]
-
-
 def apply_filters(
     itk_image: sitk.Image,
     metadata: dict,
@@ -817,6 +748,8 @@ def apply_filters(
     Unified medical image filtering pipeline.
     MR filters are applied normally, CT images get only noise reduction.
     """
+    import logging
+    logger = logging.getLogger(__name__)
 
     # ------------------------------------------------------------------
     # Default filter configuration
@@ -827,8 +760,8 @@ def apply_filters(
             "min_slices": 4,
 
             "noise_reduction": {
-                "sigma": 0.25,  
-                "mild_sigma": 0.3  
+                "sigma": 0.25,
+                "mild_sigma": 0.3
             },
 
             "multiscale_sharpening": {
@@ -855,13 +788,13 @@ def apply_filters(
                 "mild_sigma": 0.80
             }
         },
-        
+
         "CT": {
-            "enabled": True, 
+            "enabled": True,
             "min_slices": 4,
             "noise_reduction": {
                 "sigma": 0.25,
-                "mild_sigma": 0.3 
+                "mild_sigma": 0.3
             },
         }
     }
@@ -874,8 +807,8 @@ def apply_filters(
     modality = metadata["series"]["modality"].upper()
     series_name = metadata["series"].get("series_name", "Unknown")
 
-    print(
-        f"series: {series_name} | "
+    logger.info(
+        f"Applying filters to series: {series_name} | "
         f"modality: {modality} | "
         f"spacing: {itk_image.GetSpacing()}"
     )
@@ -888,25 +821,35 @@ def apply_filters(
         if filter_settings_path.exists():
             with open(filter_settings_path, "r", encoding="utf-8") as f:
                 filter_settings = json.load(f)
+            logger.info(f"Loaded filter settings from {filter_settings_path}")
+        else:
+            logger.warning(f"Filter settings file does not exist: {filter_settings_path}")
     except Exception as e:
-        print(f"   ⚠️ Failed to load filter settings: {e}")
+        logger.error(f"Failed to load filter settings: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
     modality_settings = DEFAULT_FILTERS.get(modality)
     if modality_settings is None:
-        print(f"   ℹ️ No filters defined for modality '{modality}'")
+        logger.info(f"No filters defined for modality '{modality}'")
         return itk_image
 
     # merge external overrides
     if modality in filter_settings:
+        logger.info(f"Applying custom filter settings for {modality}")
         for k, v in filter_settings[modality].items():
             if isinstance(v, dict) and isinstance(modality_settings.get(k), dict):
+                logger.debug(f"Updating {k} with custom settings: {v}")
                 modality_settings[k].update(v)
             else:
+                logger.debug(f"Setting {k} to custom value: {v}")
                 modality_settings[k] = v
+    else:
+        logger.info(f"Using default filter settings for {modality}")
 
     # بررسی می‌کنیم آیا فیلترها برای این مودالیته فعال هستند
     if not modality_settings.get("enabled", True):
-        print(f"   ℹ️ Filters disabled for {modality} - returning original image")
+        logger.info(f"Filters disabled for {modality} - returning original image")
         return itk_image
 
     # ------------------------------------------------------------------
@@ -916,41 +859,44 @@ def apply_filters(
     min_slices = modality_settings.get("min_slices", 4)
 
     if nz < min_slices:
-        print(f"   ⚠️ Not enough slices ({nz} < {min_slices}), skipping filters")
+        logger.warning(f"Not enough slices ({nz} < {min_slices}), skipping filters")
         return itk_image
+
+    logger.info(f"Starting filter pipeline for {modality} ({nx}×{ny}×{nz})")
 
     # ------------------------------------------------------------------
     # Noise reduction (برای هر دو مودالیته MR و CT)
     # ------------------------------------------------------------------
     if "noise_reduction" in modality_settings:
         noise_cfg = modality_settings["noise_reduction"]
-        
+
         # تشخیص حالت mild برای MR
         if modality == "MR":
             spacing = itk_image.GetSpacing()
             max_spacing = max(spacing)
             mild_mode = max_spacing > 1.5
-            
+
             if mild_mode:
-                print(f"   ⚠️ Large spacing detected ({max_spacing:.2f} mm) → mild mode")
+                logger.info(f"Large spacing detected ({max_spacing:.2f} mm) → mild mode")
                 sigma = noise_cfg.get("mild_sigma", noise_cfg.get("sigma", 0.4))
             else:
                 sigma = noise_cfg.get("sigma", 0.4)
         else:
             # برای CT و دیگر مودالیته‌ها از sigma استاندارد استفاده می‌کنیم
             sigma = noise_cfg.get("sigma", 0.4)
-        
+
+        logger.info(f"Applying noise reduction with sigma={sigma} mm")
         itk_image = sitk.SmoothingRecursiveGaussian(itk_image, sigma=sigma)
-        print(f"   ├── Noise reduction (sigma={sigma} mm)")
+        logger.info(f"Completed noise reduction (sigma={sigma} mm)")
     else:
-        print(f"   ⚠️ No noise reduction configuration for {modality}")
+        logger.warning(f"No noise reduction configuration for {modality}")
 
     # ------------------------------------------------------------------
     # سایر فیلترها (فقط برای MR)
     # ------------------------------------------------------------------
     if modality == "MR":
-        print(f"   🔧 Applying filters to {modality} ({nx}×{ny}×{nz})")
-        
+        logger.info(f"Applying advanced filters to {modality} ({nx}×{ny}×{nz})")
+
         spacing = itk_image.GetSpacing()
         max_spacing = max(spacing)
         mild_mode = max_spacing > 1.5
@@ -963,12 +909,13 @@ def apply_filters(
             sigmas = ms_cfg["mild_sigmas"] if mild_mode else ms_cfg["sigmas"]
             amounts = ms_cfg["mild_amounts"] if mild_mode else ms_cfg["amounts"]
 
+            logger.info(f"Applying multiscale sharpening with sigmas={sigmas}, amounts={amounts}")
             itk_image = apply_multiscale_sharpening(
                 itk_image,
                 sigmas=sigmas,
                 amounts=amounts
             )
-            print(f"   ├── Multiscale sharpening ({len(sigmas)} scales)")
+            logger.info(f"Completed multiscale sharpening ({len(sigmas)} scales)")
 
         # ------------------------------------------------------------------
         # Laplacian sharpening (فقط برای MR)
@@ -976,8 +923,9 @@ def apply_filters(
         lap_cfg = modality_settings.get("laplacian_sharpening", {})
         if lap_cfg.get("enabled", True):
             alpha = lap_cfg["mild_alpha"] if mild_mode else lap_cfg["alpha"]
+            logger.info(f"Applying laplacian sharpening with alpha={alpha}")
             itk_image = apply_laplacian_sharpening(itk_image, alpha=alpha)
-            print(f"   ├── Laplacian sharpening (alpha={alpha})")
+            logger.info(f"Completed laplacian sharpening (alpha={alpha})")
 
         # ------------------------------------------------------------------
         # Adaptive sharpening (فقط برای MR)
@@ -988,14 +936,15 @@ def apply_filters(
             edge_boost = ad_cfg["mild_edge_boost"] if mild_mode else ad_cfg["edge_boost"]
             sigma_val = ad_cfg["mild_sigma"] if mild_mode else ad_cfg["sigma"]
 
+            logger.info(f"Applying adaptive sharpening with base={base_amount}, boost={edge_boost}, sigma={sigma_val}")
             itk_image = apply_adaptive_sharpening(
                 itk_image,
                 base_amount=base_amount,
                 edge_boost=edge_boost,
                 sigma=sigma_val
             )
-            print(
-                f"   └── Adaptive sharpening "
+            logger.info(
+                f"Completed adaptive sharpening "
                 f"(base={base_amount}, boost={edge_boost}, sigma={sigma_val})"
             )
 
@@ -1003,18 +952,19 @@ def apply_filters(
         # Timing end برای MR
         # ------------------------------------------------------------------
         dt = time.time() - t0
-        print(f"   ✅ All filters applied successfully to MR")
-        print(f"   ⏱️ Total filter time: {dt:.3f}s")
-    
+        logger.info(f"All filters applied successfully to MR")
+        logger.info(f"Total filter time: {dt:.3f}s")
+
     elif modality == "CT":
         # فقط noise reduction برای CT اعمال شده است
         dt = time.time() - t0
-        print(f"   ✅ Only noise reduction applied to CT (no other filters)")
-        print(f"   ⏱️ Total filter time: {dt:.3f}s")
-    
-    else:
-        print(f"   ℹ️ Basic noise reduction applied to {modality} - no additional filters")
+        logger.info(f"Only noise reduction applied to CT (no other filters)")
+        logger.info(f"Total filter time: {dt:.3f}s")
 
+    else:
+        logger.info(f"Basic noise reduction applied to {modality} - no additional filters")
+
+    logger.info(f"Filtering completed for {series_name}")
     return itk_image
 
 def enhance_resolution(itk_image: sitk.Image, scale_factor: float = 1.5) -> sitk.Image:
@@ -1059,7 +1009,7 @@ def enhance_resolution(itk_image: sitk.Image, scale_factor: float = 1.5) -> sitk
 def enhance_local_contrast(itk_image: sitk.Image, radius_mm: float = 10.0) -> sitk.Image:
     """
     بهبود کنتراست محلی برای آشکارسازی جزئیات.
-    
+
     Parameters
     ----------
     itk_image : sitk.Image
@@ -1069,94 +1019,424 @@ def enhance_local_contrast(itk_image: sitk.Image, radius_mm: float = 10.0) -> si
         • کوچک: بهبود کنتراست محلی دقیق
         • بزرگ: بهبود کنتراست ناحیه‌ای
         • محدوده پیشنهادی: 5.0 تا 20.0 میلی‌متر
-        
+
     Returns
     -------
     sitk.Image
         تصویر با کنتراست محلی بهبود یافته
     """
     imgf = sitk.Cast(itk_image, sitk.sitkFloat32)
-    
+
     # تبدیل شعاع به پیکسل
     spacing = itk_image.GetSpacing()
     radius_pixels = [int(radius_mm / s) for s in spacing]
-    
+
     # محاسبه میانگین محلی
     local_mean = sitk.Mean(imgf, radius_pixels)
-    
+
     # محاسبه انحراف معیار محلی
     squared = sitk.Multiply(imgf, imgf)
     local_mean_sq = sitk.Mean(squared, radius_pixels)
     local_std = sitk.Sqrt(sitk.Subtract(local_mean_sq, sitk.Multiply(local_mean, local_mean)))
-    
+
     # بهبود کنتراست: (I - mean) / (std + epsilon)
     epsilon = 0.001  # جلوگیری از تقسیم بر صفر
     enhanced = sitk.Divide(sitk.Subtract(imgf, local_mean), sitk.Add(local_std, epsilon))
-    
+
     # نرمالایز کردن به محدوده اصلی
     stats = sitk.StatisticsImageFilter()
     stats.Execute(imgf)
     enhanced = sitk.RescaleIntensity(enhanced, stats.GetMinimum(), stats.GetMaximum())
-    
+
     return sitk.Cast(enhanced, itk_image.GetPixelID())
 
 
-def apply_filter_with_modality_params(
-    itk_image: sitk.Image,
-    metadata: dict,
-    filter_func_name: str,
-    custom_params: dict = None
-) -> sitk.Image:
+def apply_filters_to_multiple_series(series_list, metadata_list, filter_type, filter_params):
     """
-    Apply a filter with modality-specific parameters.
+    Apply filters to multiple series based on filter type and parameters.
 
     Parameters
     ----------
-    itk_image : sitk.Image
-        Input image
-    metadata : dict
-        Metadata containing modality information
-    filter_func_name : str
-        Name of the filter function to apply
-    custom_params : dict, optional
-        Custom parameters to override modality defaults
+    series_list : list
+        List of SimpleITK images
+    metadata_list : list
+        List of metadata corresponding to each series
+    filter_type : str
+        Type of filter to apply
+    filter_params : dict
+        Parameters for the filter
 
     Returns
     -------
-    sitk.Image
-        Filtered image
+    list
+        List of filtered SimpleITK images
     """
+    filtered_series = []
+
+    for i, (series, metadata) in enumerate(zip(series_list, metadata_list)):
+        try:
+            # Apply the appropriate filter based on type
+            if filter_type == "smoothing":
+                filtered = smoothing(series)
+            elif filter_type == "unsharp_mask":
+                amount = filter_params.get("amount", 0.5)
+                radius = filter_params.get("radius", 1.0)
+                filtered = apply_unsharp_mask(series, amount=amount, radius=radius)
+            elif filter_type == "adaptive_sharpening":
+                base_amount = filter_params.get("base_amount", 0.12)
+                edge_boost = filter_params.get("edge_boost", 0.90)
+                sigma = filter_params.get("sigma", 0.70)
+                filtered = apply_adaptive_sharpening(
+                    series,
+                    base_amount=base_amount,
+                    edge_boost=edge_boost,
+                    sigma=sigma
+                )
+            elif filter_type == "gaussian_sharpening":
+                sigma = filter_params.get("sigma", 0.8)
+                alpha = filter_params.get("alpha", 0.5)
+                filtered = apply_gaussian_sharpening(series, sigma=sigma, alpha=alpha)
+            elif filter_type == "laplacian_sharpening":
+                alpha = filter_params.get("alpha", 0.3)
+                filtered = apply_laplacian_sharpening(series, alpha=alpha)
+            elif filter_type == "multiscale_sharpening":
+                sigmas = filter_params.get("sigmas", [0.5, 1.0, 2.0])
+                amounts = filter_params.get("amounts", [0.25, 0.12, 0.06])
+                filtered = apply_multiscale_sharpening(series, sigmas=sigmas, amounts=amounts)
+            elif filter_type == "edge_smooth_ultrafast":
+                blur_sigma_mm = filter_params.get("blur_sigma_mm", 1.0)
+                edge_sigma_mm = filter_params.get("edge_sigma_mm", 0.4)
+                filtered = edge_smooth_ultrafast(
+                    series,
+                    blur_sigma_mm=blur_sigma_mm,
+                    edge_sigma_mm=edge_sigma_mm
+                )
+            elif filter_type == "enhance_local_contrast":
+                radius_mm = filter_params.get("radius_mm", 10.0)
+                filtered = enhance_local_contrast(series, radius_mm=radius_mm)
+            elif filter_type == "enhance_resolution":
+                scale_factor = filter_params.get("scale_factor", 1.5)
+                filtered = enhance_resolution(series, scale_factor=scale_factor)
+            else:
+                # Default to no filtering if filter type is unknown
+                filtered = series
+
+            filtered_series.append(filtered)
+
+        except Exception as e:
+            print(f"Error applying {filter_type} filter to series {i}: {e}")
+            # If filtering fails, append the original series
+            filtered_series.append(series)
+
+    return filtered_series
+
+
+def save_filter_settings_to_json(settings: Dict):
+    """Save filter settings to JSON file"""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Ensure directory exists
+        FILTER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save to file
+        with open(FILTER_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=4)
+
+        logger.info(f"Filter settings saved to {FILTER_CONFIG_PATH}")
+    except Exception as e:
+        logger.error(f"Error saving filter settings: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+def load_filter_settings_from_json() -> Dict:
+    """Load filter settings from JSON file"""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        if FILTER_CONFIG_PATH.exists():
+            with open(FILTER_CONFIG_PATH, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+            logger.info(f"Filter settings loaded from {FILTER_CONFIG_PATH}")
+            return settings
+        else:
+            logger.warning(f"Filter settings file not found at {FILTER_CONFIG_PATH}, using defaults")
+            # Return default filter settings
+            return {
+                "CT": {
+                    "enabled": True,
+                    "min_slices": 4,
+                    "noise_reduction": {
+                        "enabled": True,
+                        "sigma": 0.25,
+                        "mild_sigma": 0.30
+                    },
+                    "gaussian_smoothing": {
+                        "enabled": True,
+                        "sigma": 0.5,
+                        "mild_sigma": 0.3
+                    },
+                    "multiscale_sharpening": {
+                        "enabled": True,
+                        "sigmas": [0.5, 1.0, 2.0],
+                        "amounts": [0.25, 0.12, 0.06],
+                        "mild_sigmas": [0.5, 1.0, 2.0, 4.0],
+                        "mild_amounts": [0.20, 0.10, 0.05, 0.025]
+                    },
+                    "laplacian_sharpening": {
+                        "enabled": True,
+                        "alpha": 0.12,
+                        "mild_alpha": 0.10
+                    },
+                    "adaptive_sharpening": {
+                        "enabled": True,
+                        "base_amount": 0.12,
+                        "edge_boost": 0.90,
+                        "sigma": 0.70,
+                        "mild_base_amount": 0.10,
+                        "mild_edge_boost": 0.80,
+                        "mild_sigma": 0.80
+                    },
+                    "gaussian_high_pass": {
+                        "enabled": True,
+                        "sigma": 1.0,
+                        "mild_sigma": 1.5
+                    },
+                    "gaussian_low_pass": {
+                        "enabled": True,
+                        "sigma": 2.0,
+                        "mild_sigma": 3.0
+                    },
+                    "gaussian_band_pass": {
+                        "enabled": False,
+                        "low_sigma": 1.0,
+                        "high_sigma": 0.5,
+                        "mild_low_sigma": 1.5,
+                        "mild_high_sigma": 0.8
+                    }
+                },
+                "MR": {
+                    "enabled": True,
+                    "min_slices": 4,
+                    "noise_reduction": {
+                        "enabled": True,
+                        "sigma": 0.25,
+                        "mild_sigma": 0.30
+                    },
+                    "gaussian_smoothing": {
+                        "enabled": True,
+                        "sigma": 0.5,
+                        "mild_sigma": 0.3
+                    },
+                    "multiscale_sharpening": {
+                        "enabled": True,
+                        "sigmas": [0.5, 1.0, 2.0],
+                        "amounts": [0.25, 0.12, 0.06],
+                        "mild_sigmas": [0.5, 1.0, 2.0, 4.0],
+                        "mild_amounts": [0.20, 0.10, 0.05, 0.025]
+                    },
+                    "laplacian_sharpening": {
+                        "enabled": True,
+                        "alpha": 0.12,
+                        "mild_alpha": 0.10
+                    },
+                    "adaptive_sharpening": {
+                        "enabled": True,
+                        "base_amount": 0.12,
+                        "edge_boost": 0.90,
+                        "sigma": 0.70,
+                        "mild_base_amount": 0.10,
+                        "mild_edge_boost": 0.80,
+                        "mild_sigma": 0.80
+                    },
+                    "gaussian_high_pass": {
+                        "enabled": True,
+                        "sigma": 1.0,
+                        "mild_sigma": 1.5
+                    },
+                    "gaussian_low_pass": {
+                        "enabled": True,
+                        "sigma": 2.0,
+                        "mild_sigma": 3.0
+                    },
+                    "gaussian_band_pass": {
+                        "enabled": False,
+                        "low_sigma": 1.0,
+                        "high_sigma": 0.5,
+                        "mild_low_sigma": 1.5,
+                        "mild_high_sigma": 0.8
+                    }
+                }
+            }
+    except Exception as e:
+        print(f"Error loading filter settings: {e}")
+        return {
+            "CT": {
+                "enabled": True,
+                "min_slices": 4,
+                "noise_reduction": {
+                    "enabled": True,
+                    "sigma": 0.25,
+                    "mild_sigma": 0.30
+                },
+                "gaussian_smoothing": {
+                    "enabled": True,
+                    "sigma": 0.5,
+                    "mild_sigma": 0.3
+                },
+                "multiscale_sharpening": {
+                    "enabled": True,
+                    "sigmas": [0.5, 1.0, 2.0],
+                    "amounts": [0.25, 0.12, 0.06],
+                    "mild_sigmas": [0.5, 1.0, 2.0, 4.0],
+                    "mild_amounts": [0.20, 0.10, 0.05, 0.025]
+                },
+                "laplacian_sharpening": {
+                    "enabled": True,
+                    "alpha": 0.12,
+                    "mild_alpha": 0.10
+                },
+                "adaptive_sharpening": {
+                    "enabled": True,
+                    "base_amount": 0.12,
+                    "edge_boost": 0.90,
+                    "sigma": 0.70,
+                    "mild_base_amount": 0.10,
+                    "mild_edge_boost": 0.80,
+                    "mild_sigma": 0.80
+                },
+                "gaussian_high_pass": {
+                    "enabled": True,
+                    "sigma": 1.0,
+                    "mild_sigma": 1.5
+                },
+                "gaussian_low_pass": {
+                    "enabled": True,
+                    "sigma": 2.0,
+                    "mild_sigma": 3.0
+                },
+                "gaussian_band_pass": {
+                    "enabled": False,
+                    "low_sigma": 1.0,
+                    "high_sigma": 0.5,
+                    "mild_low_sigma": 1.5,
+                    "mild_high_sigma": 0.8
+                }
+            },
+            "MR": {
+                "enabled": True,
+                "min_slices": 4,
+                "noise_reduction": {
+                    "enabled": True,
+                    "sigma": 0.25,
+                    "mild_sigma": 0.30
+                },
+                "gaussian_smoothing": {
+                    "enabled": True,
+                    "sigma": 0.5,
+                    "mild_sigma": 0.3
+                },
+                "multiscale_sharpening": {
+                    "enabled": True,
+                    "sigmas": [0.5, 1.0, 2.0],
+                    "amounts": [0.25, 0.12, 0.06],
+                    "mild_sigmas": [0.5, 1.0, 2.0, 4.0],
+                    "mild_amounts": [0.20, 0.10, 0.05, 0.025]
+                },
+                "laplacian_sharpening": {
+                    "enabled": True,
+                    "alpha": 0.12,
+                    "mild_alpha": 0.10
+                },
+                "adaptive_sharpening": {
+                    "enabled": True,
+                    "base_amount": 0.12,
+                    "edge_boost": 0.90,
+                    "sigma": 0.70,
+                    "mild_base_amount": 0.10,
+                    "mild_edge_boost": 0.80,
+                    "mild_sigma": 0.80
+                },
+                "gaussian_high_pass": {
+                    "enabled": True,
+                    "sigma": 1.0,
+                    "mild_sigma": 1.5
+                },
+                "gaussian_low_pass": {
+                    "enabled": True,
+                    "sigma": 2.0,
+                    "mild_sigma": 3.0
+                },
+                "gaussian_band_pass": {
+                    "enabled": False,
+                    "low_sigma": 1.0,
+                    "high_sigma": 0.5,
+                    "mild_low_sigma": 1.5,
+                    "mild_high_sigma": 0.8
+                }
+            }
+        }
+
+
+def apply_filter_with_modality_params(sitk_image, metadata, filter_type):
+    """
+    Apply a specific filter with modality-specific parameters
+    """
+    # Load current filter settings
+    settings = load_filter_settings_from_json()
+
     # Get modality from metadata
     modality = metadata.get("series", {}).get("modality", "MR").upper()
 
-    # Get modality-specific parameters
-    params = get_modality_specific_params(modality, filter_func_name)
+    # Get the specific filter configuration for this modality
+    modality_settings = settings.get(modality, settings.get("MR", {}))  # Default to MR settings
 
-    # Override with custom parameters if provided
-    if custom_params:
-        params.update(custom_params)
+    if filter_type == "unsharp_mask":
+        filter_config = modality_settings.get("unsharp_mask", {})
+        amount = filter_config.get("amount", 0.5)
+        radius = filter_config.get("radius", 1.0)
+        return apply_unsharp_mask(sitk_image, amount=amount, radius=radius)
 
-    # Apply the appropriate filter
-    if filter_func_name == "smoothing":
-        return smoothing(itk_image)
-    elif filter_func_name == "unsharp_mask":
-        return apply_unsharp_mask(itk_image, amount=params["amount"], radius=params["radius"])
-    elif filter_func_name == "gaussian_sharpening":
-        return apply_gaussian_sharpening(itk_image, sigma=params["sigma"], alpha=params["alpha"])
-    elif filter_func_name == "laplacian_sharpening":
-        return apply_laplacian_sharpening(itk_image, alpha=params["alpha"])
-    elif filter_func_name == "adaptive_sharpening":
-        return apply_adaptive_sharpening(
-            itk_image,
-            base_amount=params["base_amount"],
-            edge_boost=params["edge_boost"],
-            sigma=params["sigma"]
-        )
-    elif filter_func_name == "edge_smooth_ultrafast":
-        return edge_smooth_ultrafast(
-            itk_image,
-            blur_sigma_mm=params["blur_sigma_mm"],
-            edge_sigma_mm=params["edge_sigma_mm"]
-        )
+    elif filter_type == "adaptive_sharpening":
+        filter_config = modality_settings.get("adaptive_sharpening", {})
+        base_amount = filter_config.get("base_amount", 0.12)
+        edge_boost = filter_config.get("edge_boost", 0.90)
+        sigma = filter_config.get("sigma", 0.70)
+        return apply_adaptive_sharpening(sitk_image, base_amount=base_amount, edge_boost=edge_boost, sigma=sigma)
+
+    elif filter_type == "edge_smooth_ultrafast":
+        filter_config = modality_settings.get("noise_reduction", {})
+        blur_sigma_mm = filter_config.get("sigma", 1.0)
+        return edge_smooth_ultrafast(sitk_image, blur_sigma_mm=blur_sigma_mm)
+
+    elif filter_type == "gaussian_sharpening":
+        filter_config = modality_settings.get("gaussian_sharpening", {})
+        sigma = filter_config.get("sigma", 0.8)
+        alpha = filter_config.get("alpha", 0.5)
+        return apply_gaussian_sharpening(sitk_image, sigma=sigma, alpha=alpha)
+
+    elif filter_type == "laplacian_sharpening":
+        filter_config = modality_settings.get("laplacian_sharpening", {})
+        alpha = filter_config.get("alpha", 0.3)
+        return apply_laplacian_sharpening(sitk_image, alpha=alpha)
+
+    elif filter_type == "multiscale_sharpening":
+        filter_config = modality_settings.get("multiscale_sharpening", {})
+        sigmas = filter_config.get("sigmas", [0.5, 1.0, 2.0])
+        amounts = filter_config.get("amounts", [0.25, 0.12, 0.06])
+        return apply_multiscale_sharpening(sitk_image, sigmas=sigmas, amounts=amounts)
+
+    elif filter_type == "enhance_local_contrast":
+        # Use a default radius or get from settings if available
+        return enhance_local_contrast(sitk_image)
+
+    elif filter_type == "enhance_resolution":
+        # Use a default scale factor or get from settings if available
+        return enhance_resolution(sitk_image)
+
     else:
-        raise ValueError(f"Unknown filter function: {filter_func_name}")
+        # Default to basic smoothing if filter type is not recognized
+        return smoothing(sitk_image)

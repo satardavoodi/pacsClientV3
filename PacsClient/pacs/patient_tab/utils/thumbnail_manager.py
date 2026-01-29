@@ -992,19 +992,21 @@ class ThumbnailManager(QObject):
             def on_thumb_clicked():
                 if image_button.isChecked():
                     self.selected_series = str(thumbnail_index)
-                    self.method_change_series(thumbnail_index)
-                    self.apply_border_states_new()
-                    
+
                     # 🔥 انتشار سیگنال برای دانلود اولویت‌دار
                     study_uid = ''
                     if series_info and 'study_uid' in series_info:
                         study_uid = series_info.get('study_uid', '')
                     elif self.current_study_uid:
                         study_uid = self.current_study_uid
-                    
+
                     print(f"🔥 [ThumbnailManager] Emitting priority download for series {thumbnail_index}, study {study_uid}")
                     self.priority_download_requested.emit(str(thumbnail_index), study_uid)
-            
+
+                    # First try to change series normally (this will trigger loading if needed)
+                    self.method_change_series(thumbnail_index)
+                    self.apply_border_states_new()
+
             image_button.clicked.connect(on_thumb_clicked)
             
             # Clean main widget styling
