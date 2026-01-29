@@ -130,10 +130,10 @@ class AdvancedToolsPanel(QWidget):
         """)
         
         # Add tabs
+        self.tabs.addTab(self._create_image_filter_tab(), "🖼️ Filters")
         self.tabs.addTab(self._create_rendering_tab(), "🎨 Rendering")
         self.tabs.addTab(self._create_segmentation_tab(), "✂️ Segmentation")
         self.tabs.addTab(self._create_surface_tab(), "🏗️ Surface")
-        self.tabs.addTab(self._create_image_filter_tab(), "🖼️ Filters")
         self.tabs.addTab(self._create_curved_mpr_tab(), "📐 Curved MPR")
         
         main_layout.addWidget(self.tabs)
