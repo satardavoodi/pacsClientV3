@@ -679,10 +679,12 @@ class HomePanelWidget(QWidget):
             except RuntimeError as e:
                 if "Cannot enter into task" in str(e) or "already deleted" in str(e).lower():
                     # Ignore task re-entry errors - this is a known qasync issue
-                    pass
+                    print(f"⚠️ [TASK:{name}] Ignoring task re-entry error: {e}")
+                    return None
                 else:
                     print(f"⚠️ [TASK:{name}] RuntimeError: {e}")
             except asyncio.CancelledError:
+                print(f"⚠️ [TASK:{name}] Task was cancelled")
                 pass  # Task was cancelled, ignore
             except Exception as e:
                 print(f"⚠️ [TASK:{name}] Error: {e}")

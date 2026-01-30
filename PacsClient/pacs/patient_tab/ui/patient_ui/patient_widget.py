@@ -97,6 +97,9 @@ class PatientWidget(QWidget):
         # This prevents "Cannot enter into task while another task is being executed" RuntimeError
         self._async_operation_lock = None  # Will be initialized as asyncio.Lock when needed
 
+        # Flag to prevent duplicate execution of lazy loading
+        self._lazy_load_in_progress = False
+
         # Progressive display support
         self._progressive_display_enabled = enable_progressive_mode
         
@@ -1169,7 +1172,12 @@ class PatientWidget(QWidget):
     async def lazy_load_first_series_progressive(self, size_init_viewers):
         """Wait for first series to download, then load it - OR load immediately if already exists"""
         print(f"🔍 [PROGRESSIVE] Starting lazy_load_first_series_progressive")
-        
+
+        # Check if another instance of this method is already running
+        if hasattr(self, '_lazy_load_in_progress') and self._lazy_load_in_progress:
+            print(f"🔍 [PROGRESSIVE] Lazy load already in progress, skipping duplicate call")
+            return
+
         # Initialize lock lazily if needed
         if self._async_operation_lock is None:
             try:
@@ -1177,14 +1185,21 @@ class PatientWidget(QWidget):
             except RuntimeError:
                 import threading
                 self._async_operation_lock = threading.Lock()
-        
-        # Use lock to prevent race condition with _async_load_and_display_series
-        if isinstance(self._async_operation_lock, asyncio.Lock):
-            async with self._async_operation_lock:
+
+        # Set the flag to prevent duplicate execution
+        self._lazy_load_in_progress = True
+
+        try:
+            # Use lock to prevent race condition with _async_load_and_display_series
+            if isinstance(self._async_operation_lock, asyncio.Lock):
+                async with self._async_operation_lock:
+                    await self._do_lazy_load_first_series(size_init_viewers)
+            else:
+                # Fallback for threading.Lock - this should not happen in async context
                 await self._do_lazy_load_first_series(size_init_viewers)
-        else:
-            # Fallback for threading.Lock - this should not happen in async context
-            await self._do_lazy_load_first_series(size_init_viewers)
+        finally:
+            # Reset the flag after execution
+            self._lazy_load_in_progress = False
 
     async def _do_lazy_load_first_series(self, size_init_viewers):
         from pathlib import Path
