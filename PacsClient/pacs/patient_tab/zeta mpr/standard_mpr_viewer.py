@@ -55,15 +55,46 @@ class StandardMPRViewer(QWidget):
         self.origin = vtk_image_data.GetOrigin()
         self.scalar_range = vtk_image_data.GetScalarRange()
         
+        # Extract Direction Matrix for proper MPR orientation
+        self.direction_matrix = vtk.vtkMatrix4x4()
+        self.direction_matrix.Identity()  # Default to identity
+        
+        # Try to get direction matrix from field data
+        field_data = vtk_image_data.GetFieldData()
+        direction_loaded = False
+        
+        if field_data:
+            direction_array = field_data.GetArray("DirectionMatrix")
+            if direction_array and direction_array.GetNumberOfTuples() == 16:
+                for i in range(4):
+                    for j in range(4):
+                        self.direction_matrix.SetElement(i, j, direction_array.GetValue(i * 4 + j))
+                logger.info("Direction matrix loaded from DICOM orientation")
+                direction_loaded = True
+            else:
+                print("DEBUG: No DirectionMatrix array found in field data")
+                print(f"DEBUG: Field data arrays count: {field_data.GetNumberOfArrays()}")
+                for i in range(field_data.GetNumberOfArrays()):
+                    arr = field_data.GetArray(i)
+                    if arr:
+                        print(f"  Array {i}: {arr.GetName()} (tuples: {arr.GetNumberOfTuples()})")
+                logger.info("No direction matrix found, using identity (standard orientation)")
+        else:
+            print("DEBUG: No field data in VTK image!")
+            logger.info("No field data found, using identity (standard orientation)")
+        
         logger.info(f"Image dimensions: {self.dims}")
         logger.info(f"Scalar range: {self.scalar_range}")
         
-        # Calculate center
+        # Calculate center BEFORE logging orientation info
         self.center = [
             self.origin[0] + (self.dims[0] - 1) * self.spacing[0] * 0.5,
             self.origin[1] + (self.dims[1] - 1) * self.spacing[1] * 0.5,
             self.origin[2] + (self.dims[2] - 1) * self.spacing[2] * 0.5
         ]
+        
+        # Log orientation info for debugging (after center is calculated)
+        self._log_orientation_info()
         
         # Store viewers
         self.viewers = {}
@@ -129,9 +160,7 @@ class StandardMPRViewer(QWidget):
             modality = "CT"
             
             # Detect anatomy based on HU range distribution
-            # Sample some voxels to analyze distribution
             mean_hu = (scalar_min + scalar_max) / 2
-            range_hu = scalar_max - scalar_min
             
             # Brain: mostly soft tissue (-100 to 100 HU)
             if scalar_min > -200 and scalar_max < 200 and abs(mean_hu) < 50:
@@ -159,15 +188,375 @@ class StandardMPRViewer(QWidget):
         
         return modality, anatomy
     
+    def _get_camera_vectors_for_view(self, view_name):
+        """
+        Calculate camera position, focal point, and view-up vectors for a view
+        using the DICOM direction matrix for proper orientation.
+        
+        This method properly handles different scan orientations:
+        - Head-First Supine (HFS) - most common
+        - Feet-First Supine (FFS)
+        - Head-First Prone (HFP)
+        - Feet-First Prone (FFP)
+        - Left/Right variations
+        
+        The direction matrix from DICOM ImageOrientationPatient defines how
+        image coordinates map to patient coordinates (LPS - Left, Posterior, Superior).
+        """
+        # Extract direction vectors from the 4x4 direction matrix
+        # Row vectors: direction of image X, Y, Z axes in patient space
+        row_dir = [
+            self.direction_matrix.GetElement(0, 0),
+            self.direction_matrix.GetElement(0, 1),
+            self.direction_matrix.GetElement(0, 2)
+        ]
+        col_dir = [
+            self.direction_matrix.GetElement(1, 0),
+            self.direction_matrix.GetElement(1, 1),
+            self.direction_matrix.GetElement(1, 2)
+        ]
+        slice_dir = [
+            self.direction_matrix.GetElement(2, 0),
+            self.direction_matrix.GetElement(2, 1),
+            self.direction_matrix.GetElement(2, 2)
+        ]
+        
+        # Check if direction matrix is identity (standard orientation)
+        is_identity = self._is_identity_direction()
+        
+        if is_identity:
+            # Standard orientation - use default camera positions
+            return self._get_standard_camera_vectors(view_name)
+        
+        # For all orientations, use simple radiological convention camera setup
+        # IMPORTANT: After Y-flip in data:
+        #   - col_dir = [0, -1, 0] means image +Y points to patient -Y (Anterior)
+        #   - So +Y in image space = Anterior, -Y in image space = Posterior
+        
+        if view_name == 'axial':
+            # Axial: Look from feet toward head (standard radiological)
+            # Camera BELOW the patient, looking UP
+            camera_pos = [
+                self.center[0],
+                self.center[1], 
+                self.center[2] - 1  # Camera below (feet direction)
+            ]
+            # ViewUp toward Anterior = +Y in image space (because col_dir[1] = -1)
+            view_up = [0, 1, 0]
+            
+        elif view_name == 'sagittal':
+            # Sagittal: Camera from RIGHT side looking toward LEFT
+            # X+ = Right
+            camera_pos = [
+                self.center[0] + 1,  # From Right side
+                self.center[1],
+                self.center[2]
+            ]
+            # ViewUp toward Superior (head) = +Z
+            view_up = [0, 0, 1]
+            
+        elif view_name == 'coronal':
+            # Coronal: Camera from ANTERIOR looking toward POSTERIOR
+            # After Y-flip: +Y = Anterior
+            camera_pos = [
+                self.center[0],
+                self.center[1] + 1,  # From Anterior side
+                self.center[2]
+            ]
+            # ViewUp toward Superior (head) = +Z
+            view_up = [0, 0, 1]
+        else:
+            return self._get_standard_camera_vectors(view_name)
+        
+        # Log the computed orientation for debugging
+        logger.debug(f"{view_name} camera: pos={camera_pos}, up={view_up}")
+        
+        return camera_pos, self.center, view_up
+    
+    def _is_identity_direction(self):
+        """Check if direction matrix is identity (standard RAS orientation)"""
+        tolerance = 0.01
+        for i in range(3):
+            for j in range(3):
+                expected = 1.0 if i == j else 0.0
+                actual = self.direction_matrix.GetElement(i, j)
+                if abs(actual - expected) > tolerance:
+                    return False
+        return True
+    
+    def _log_orientation_info(self):
+        """Log orientation information for debugging"""
+        import sys
+        try:
+            print("=" * 80)
+            print("DEBUG: ORIENTATION INFORMATION")
+            print("=" * 80)
+            sys.stdout.flush()
+            
+            # Print the full 4x4 direction matrix
+            print("Full Direction Matrix (4x4):")
+            for i in range(4):
+                row = [self.direction_matrix.GetElement(i, j) for j in range(4)]
+                print(f"  Row {i}: [{row[0]:8.4f}, {row[1]:8.4f}, {row[2]:8.4f}, {row[3]:8.4f}]")
+            sys.stdout.flush()
+            
+            # Extract direction vectors
+            row_dir = [
+                self.direction_matrix.GetElement(0, 0),
+                self.direction_matrix.GetElement(0, 1),
+                self.direction_matrix.GetElement(0, 2)
+            ]
+            col_dir = [
+                self.direction_matrix.GetElement(1, 0),
+                self.direction_matrix.GetElement(1, 1),
+                self.direction_matrix.GetElement(1, 2)
+            ]
+            slice_dir = [
+                self.direction_matrix.GetElement(2, 0),
+                self.direction_matrix.GetElement(2, 1),
+                self.direction_matrix.GetElement(2, 2)
+            ]
+            
+            print(f"\nExtracted Direction Vectors:")
+            print(f"  Row direction (Image X axis): [{row_dir[0]:.4f}, {row_dir[1]:.4f}, {row_dir[2]:.4f}]")
+            print(f"  Col direction (Image Y axis): [{col_dir[0]:.4f}, {col_dir[1]:.4f}, {col_dir[2]:.4f}]")
+            print(f"  Slice direction (Image Z axis): [{slice_dir[0]:.4f}, {slice_dir[1]:.4f}, {slice_dir[2]:.4f}]")
+            sys.stdout.flush()
+            
+            # Image properties
+            print(f"\nImage Properties:")
+            print(f"  Dimensions: {self.dims}")
+            print(f"  Spacing: {self.spacing}")
+            print(f"  Origin: {self.origin}")
+            print(f"  Center: {self.center}")
+            print(f"  Scalar Range: {self.scalar_range}")
+            sys.stdout.flush()
+            
+            # Determine likely patient position based on slice direction
+            abs_slice = [abs(slice_dir[0]), abs(slice_dir[1]), abs(slice_dir[2])]
+            dominant_axis = abs_slice.index(max(abs_slice))
+            
+            print(f"\nOrientation Analysis:")
+            print(f"  Slice dominant axis: {['X', 'Y', 'Z'][dominant_axis]}")
+            
+            if dominant_axis == 2:  # Z is dominant
+                if slice_dir[2] > 0:
+                    print("  Detected: HEAD-FIRST acquisition (slices go toward head)")
+                else:
+                    print("  Detected: FEET-FIRST acquisition (slices go toward feet)")
+            elif dominant_axis == 1:  # Y is dominant
+                print("  Detected: Non-standard slice orientation (Y dominant - possibly coronal acquisition)")
+            else:  # X is dominant
+                print("  Detected: Non-standard slice orientation (X dominant - possibly sagittal acquisition)")
+            
+            is_identity = self._is_identity_direction()
+            print(f"  Is standard (identity) orientation: {is_identity}")
+            sys.stdout.flush()
+            
+            # Log camera vectors that will be computed
+            print(f"\nComputed Camera Vectors:")
+            for view_name in ['axial', 'sagittal', 'coronal']:
+                try:
+                    camera_pos, focal, view_up = self._get_camera_vectors_for_view(view_name)
+                    print(f"  {view_name.upper()}:")
+                    print(f"    Camera Position: [{camera_pos[0]:.2f}, {camera_pos[1]:.2f}, {camera_pos[2]:.2f}]")
+                    print(f"    Focal Point: [{focal[0]:.2f}, {focal[1]:.2f}, {focal[2]:.2f}]")
+                    print(f"    View Up: [{view_up[0]:.2f}, {view_up[1]:.2f}, {view_up[2]:.2f}]")
+                except Exception as cam_err:
+                    print(f"  {view_name.upper()}: ERROR - {cam_err}")
+            sys.stdout.flush()
+            
+            # Log scroll directions
+            print(f"\nScroll Directions:")
+            for view_name in ['axial', 'sagittal', 'coronal']:
+                try:
+                    scroll_dir = self._get_scroll_direction(view_name)
+                    print(f"  {view_name}: [{scroll_dir[0]:.2f}, {scroll_dir[1]:.2f}, {scroll_dir[2]:.2f}]")
+                except Exception as scroll_err:
+                    print(f"  {view_name}: ERROR - {scroll_err}")
+            
+            print("=" * 80)
+            sys.stdout.flush()
+            
+            # Also log to file logger
+            logger.info("Orientation info logged to console - check terminal output")
+            
+        except Exception as e:
+            print(f"ERROR in _log_orientation_info: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.stdout.flush()
+    
+    def _get_standard_camera_vectors(self, view_name):
+        """
+        Get standard camera vectors.
+        Uses standard DICOM radiological conventions:
+        - Patient's LEFT appears on viewer's RIGHT
+        - Anterior at TOP for axial
+        - Head at TOP for sagittal and coronal
+        
+        IMPORTANT: After Y-flip in data, +Y in image = Anterior, -Y = Posterior
+        """
+        if view_name == 'axial':
+            # Axial: Camera BELOW (feet), looking UP toward head
+            camera_pos = [
+                self.center[0],
+                self.center[1],
+                self.center[2] - 1  # Below (feet direction)
+            ]
+            # ViewUp toward Anterior = +Y (after Y-flip)
+            view_up = [0, 1, 0]
+            
+        elif view_name == 'sagittal':
+            # Sagittal: Camera from RIGHT side looking toward LEFT
+            # X+ = Right
+            camera_pos = [
+                self.center[0] + 1,  # From Right side
+                self.center[1],
+                self.center[2]
+            ]
+            view_up = [0, 0, 1]  # Head at top
+            
+        elif view_name == 'coronal':
+            # Coronal: Camera from ANTERIOR looking toward POSTERIOR
+            # After Y-flip: +Y = Anterior
+            camera_pos = [
+                self.center[0],
+                self.center[1] + 1,  # From Anterior side
+                self.center[2]
+            ]
+            view_up = [0, 0, 1]  # Head at top
+        else:
+            camera_pos = [self.center[0], self.center[1], self.center[2] - 1]
+            view_up = [0, 1, 0]
+        
+        return camera_pos, self.center, view_up
+    
+    def _get_scroll_direction(self, view_name):
+        """
+        Get the scroll direction vector for a view based on image orientation.
+        
+        Scroll forward (mouse wheel down) should move toward FEET
+        Scroll backward (mouse wheel up) should move toward HEAD
+        
+        Returns a 3D direction vector [dx, dy, dz] for scrolling.
+        """
+        # Extract direction vectors from the direction matrix
+        slice_dir = [
+            self.direction_matrix.GetElement(2, 0),
+            self.direction_matrix.GetElement(2, 1),
+            self.direction_matrix.GetElement(2, 2)
+        ]
+        row_dir = [
+            self.direction_matrix.GetElement(0, 0),
+            self.direction_matrix.GetElement(0, 1),
+            self.direction_matrix.GetElement(0, 2)
+        ]
+        col_dir = [
+            self.direction_matrix.GetElement(1, 0),
+            self.direction_matrix.GetElement(1, 1),
+            self.direction_matrix.GetElement(1, 2)
+        ]
+        
+        # For axial view: scroll along slice direction
+        # Positive slice_dir points toward Superior (head)
+        # So negative scroll = toward feet (caudal)
+        if view_name == 'axial':
+            return [-slice_dir[0], -slice_dir[1], -slice_dir[2]]
+        elif view_name == 'sagittal':
+            # Scroll along row direction (patient left-right)
+            return [-row_dir[0], -row_dir[1], -row_dir[2]]
+        elif view_name == 'coronal':
+            # Scroll along column direction (anterior-posterior)
+            return [-col_dir[0], -col_dir[1], -col_dir[2]]
+        
+        return [0, 0, -1]
+    
+    def _get_orientation_labels(self):
+        """
+        Get orientation labels for display based on direction matrix.
+        
+        Standard radiological convention:
+        - Axial: L/R for left/right, A/P for top/bottom
+        - Sagittal: A/P for left/right, H/F (or S/I) for top/bottom
+        - Coronal: L/R for left/right, H/F (or S/I) for top/bottom
+        """
+        # Extract direction vectors
+        row_dir = [
+            self.direction_matrix.GetElement(0, 0),
+            self.direction_matrix.GetElement(0, 1),
+            self.direction_matrix.GetElement(0, 2)
+        ]
+        col_dir = [
+            self.direction_matrix.GetElement(1, 0),
+            self.direction_matrix.GetElement(1, 1),
+            self.direction_matrix.GetElement(1, 2)
+        ]
+        slice_dir = [
+            self.direction_matrix.GetElement(2, 0),
+            self.direction_matrix.GetElement(2, 1),
+            self.direction_matrix.GetElement(2, 2)
+        ]
+        
+        def get_label(direction, use_hf=False):
+            """
+            Get anatomical label for a direction vector.
+            use_hf: if True, use H/F instead of S/I for vertical axis
+            """
+            abs_dir = [abs(d) for d in direction]
+            max_idx = abs_dir.index(max(abs_dir))
+            val = direction[max_idx]
+            
+            if max_idx == 0:  # X axis - Left/Right
+                return 'R' if val > 0 else 'L'
+            elif max_idx == 1:  # Y axis - Anterior/Posterior
+                return 'A' if val > 0 else 'P'
+            else:  # Z axis - Superior/Inferior (or Head/Feet)
+                if use_hf:
+                    return 'F' if val > 0 else 'H'  # Head/Feet
+                else:
+                    return 'I' if val > 0 else 'S'  # Superior/Inferior
+        
+        labels = {}
+        
+        # Axial view labels - L/R on sides, A/P on top/bottom
+        # In radiological view, patient's left is on viewer's right
+        labels['axial'] = {
+            'left': 'R',   # Patient's Right on viewer's Left
+            'right': 'L',  # Patient's Left on viewer's Right  
+            'top': 'A',    # Anterior at top
+            'bottom': 'P'  # Posterior at bottom
+        }
+        
+        # Sagittal view labels - A/P on sides, H/F on top/bottom
+        # Camera from Right side looking Left
+        labels['sagittal'] = {
+            'left': 'A',   # Anterior on left
+            'right': 'P',  # Posterior on right
+            'top': 'H',    # Head at top
+            'bottom': 'F'  # Feet at bottom
+        }
+        
+        # Coronal view labels - L/R on sides, H/F on top/bottom
+        # Camera from Anterior looking Posterior (radiological convention)
+        labels['coronal'] = {
+            'left': 'R',   # Patient's Right on viewer's Left
+            'right': 'L',  # Patient's Left on viewer's Right
+            'top': 'H',    # Head at top
+            'bottom': 'F'  # Feet at bottom
+        }
+        
+        return labels
+    
     def _get_best_3d_preset(self):
         """Get the best 3D preset based on detected series type"""
         preset_map = {
-            ("CT", "Brain"): "CT-Soft-Tissue",        # Brain with skull
-            ("CT", "Bone"): "CT-Bone",                # Skeletal
-            ("CT", "Chest"): "CT-Lung",               # Lung window
-            ("CT", "Abdomen"): "CT-Soft-Tissue",      # Abdominal organs
-            ("MR", "Brain"): "MRI-Brain-T1",          # Brain MR T1
-            ("MR", "General"): "MRI-Brain-T1",        # General MR
+            ("CT", "Brain"): "CT-Soft-Tissue",
+            ("CT", "Bone"): "CT-Bone",
+            ("CT", "Chest"): "CT-Lung",
+            ("CT", "Abdomen"): "CT-Soft-Tissue",
+            ("MR", "Brain"): "MRI-Brain-T1",
+            ("MR", "General"): "MRI-Brain-T1",
         }
         
         key = (self.detected_modality, self.detected_anatomy)
@@ -189,44 +578,61 @@ class StandardMPRViewer(QWidget):
             return window, level
     
     def _setup_ui(self):
-        """Setup UI"""
+        """Setup clean, professional UI inspired by RadiAnt/Horos"""
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(2, 2, 2, 2)
-        main_layout.setSpacing(2)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         
-        # Control panel
-        control_panel = self._create_control_panel()
-        main_layout.addWidget(control_panel)
+        # Clean dark theme
+        self.setStyleSheet("""
+            QWidget {
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background-color: #1a1a1a;
+            }
+        """)
         
-        # Views grid
-        views_widget = QWidget()
-        views_layout = QGridLayout(views_widget)
-        views_layout.setContentsMargins(0, 0, 0, 0)
-        views_layout.setSpacing(4)
+        # Minimal top toolbar
+        toolbar = self._create_toolbar()
+        main_layout.addWidget(toolbar)
         
-        # Create 4 views
+        # Views container - pure black background
+        views_container = QWidget()
+        views_container.setStyleSheet("background-color: #000000;")
+        views_layout = QGridLayout(views_container)
+        views_layout.setContentsMargins(2, 2, 2, 2)
+        views_layout.setSpacing(2)
+        
+        # Create 4 clean views
         self._create_axial_view(views_layout, 0, 0)
         self._create_3d_view(views_layout, 0, 1)
         self._create_sagittal_view(views_layout, 1, 0)
         self._create_coronal_view(views_layout, 1, 1)
         
-        views_widget.setStyleSheet("QWidget { background-color: #000000; }")
-        main_layout.addWidget(views_widget)
+        main_layout.addWidget(views_container)
         
         self.setLayout(main_layout)
     
-    def _create_control_panel(self):
-        """Create control panel"""
-        logger.info("Creating control panel with MPR tools...")
-        control_panel = QWidget()
-        control_layout = QHBoxLayout(control_panel)
-        control_layout.setContentsMargins(4, 4, 4, 4)
-        control_layout.setSpacing(8)
+    def _create_toolbar(self):
+        """Create clean, minimal toolbar like professional DICOM viewers"""
+        logger.info("Creating professional toolbar...")
         
-        # W/L preset
+        toolbar = QWidget()
+        toolbar.setFixedHeight(40)
+        toolbar.setStyleSheet("""
+            QWidget {
+                background-color: #252525;
+                border-bottom: 1px solid #3a3a3a;
+            }
+        """)
+        
+        layout = QHBoxLayout(toolbar)
+        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setSpacing(16)
+        
+        # Window/Level
         wl_label = QLabel("W/L:")
-        wl_label.setStyleSheet("color: white; font-weight: bold;")
-        control_layout.addWidget(wl_label)
+        wl_label.setStyleSheet("color: #aaa; font-size: 12px;")
+        layout.addWidget(wl_label)
         
         self.wl_combo = QComboBox()
         self.wl_combo.addItems(list(WL_PRESETS.keys()))
@@ -234,138 +640,132 @@ class StandardMPRViewer(QWidget):
         self.wl_combo.currentTextChanged.connect(self._on_wl_changed)
         self.wl_combo.setStyleSheet("""
             QComboBox {
-                background: #2a2a2a;
-                color: white;
-                border: 1px solid #555;
-                padding: 4px;
-                min-width: 100px;
+                background: #333;
+                color: #fff;
+                border: 1px solid #444;
+                border-radius: 3px;
+                padding: 4px 24px 4px 8px;
+                min-width: 90px;
+                font-size: 12px;
+            }
+            QComboBox:hover { border-color: #666; }
+            QComboBox::drop-down { border: none; width: 20px; }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid #888;
+            }
+            QComboBox QAbstractItemView {
+                background: #333;
+                color: #fff;
+                border: 1px solid #444;
+                selection-background-color: #0066cc;
             }
         """)
-        control_layout.addWidget(self.wl_combo)
+        layout.addWidget(self.wl_combo)
         
-        control_layout.addSpacing(20)
+        # Separator
+        layout.addWidget(self._create_separator())
         
-        # 3D Volume preset
-        vol_label = QLabel("3D Preset:")
-        vol_label.setStyleSheet("color: white; font-weight: bold;")
-        control_layout.addWidget(vol_label)
+        # 3D Preset
+        vol_label = QLabel("3D:")
+        vol_label.setStyleSheet("color: #aaa; font-size: 12px;")
+        layout.addWidget(vol_label)
         
         self.vol_combo = QComboBox()
-        # Load all available presets from preset manager
         all_presets = self.preset_manager.get_all_preset_names()
         self.vol_combo.addItems(all_presets)
-        
-        # Set best preset based on detection
         best_preset = self._get_best_3d_preset()
         if best_preset in all_presets:
             self.vol_combo.setCurrentText(best_preset)
-        
         self.vol_combo.currentTextChanged.connect(self._on_volume_preset_changed)
-        self.vol_combo.setStyleSheet("""
-            QComboBox {
-                background: #2a2a2a;
-                color: white;
-                border: 1px solid #555;
-                padding: 4px;
-                min-width: 120px;
-            }
-        """)
-        control_layout.addWidget(self.vol_combo)
+        self.vol_combo.setStyleSheet(self.wl_combo.styleSheet())
+        layout.addWidget(self.vol_combo)
         
-        # Add stretch to push buttons to the right
-        control_layout.addStretch()
+        # Stretch
+        layout.addStretch()
         
-        # Crosshairs toggle button (moved to right)
-        self.crosshair_btn = QPushButton("⊕ Crosshairs")
+        # Crosshairs button
+        self.crosshair_btn = QPushButton("Crosshairs")
         self.crosshair_btn.setCheckable(True)
         self.crosshair_btn.setChecked(True)
         self.crosshair_btn.clicked.connect(self._toggle_crosshairs)
         self.crosshair_btn.setContextMenuPolicy(Qt.CustomContextMenu)
         self.crosshair_btn.customContextMenuRequested.connect(self._show_crosshair_settings_menu)
-        self.crosshair_btn.setCursor(Qt.PointingHandCursor)  # ✅ Pointer cursor
+        self.crosshair_btn.setCursor(Qt.PointingHandCursor)
+        self.crosshair_btn.setMinimumWidth(120)  # عریض‌تر
         self.crosshair_btn.setStyleSheet("""
             QPushButton {
-                background: #2563eb;
-                color: white;
-                border: none;
-                padding: 6px 12px;
-                border-radius: 4px;
-                font-weight: bold;
-                min-width: 100px;
+                background: #333;
+                color: #ccc;
+                border: 1px solid #444;
+                border-radius: 3px;
+                padding: 5px 20px;
+                font-size: 12px;
             }
-            QPushButton:hover {
-                background: #1d4ed8;
-            }
-            QPushButton:checked {
-                background: #16a34a;
-            }
-            QPushButton:checked:hover {
-                background: #15803d;
-            }
+            QPushButton:hover { background: #3a3a3a; border-color: #555; }
+            QPushButton:checked { background: #0066cc; color: #fff; border-color: #0077ee; }
+            QPushButton:checked:hover { background: #0077dd; }
         """)
-        control_layout.addWidget(self.crosshair_btn)
+        layout.addWidget(self.crosshair_btn)
         
-        control_layout.addSpacing(8)
+        # Reset button
+        self.reset_btn = QPushButton("Reset")
+        self.reset_btn.clicked.connect(self._reset_rendering)
+        self.reset_btn.setCursor(Qt.PointingHandCursor)
+        self.reset_btn.setStyleSheet("""
+            QPushButton {
+                background: #333;
+                color: #ccc;
+                border: 1px solid #444;
+                border-radius: 3px;
+                padding: 5px 14px;
+                font-size: 12px;
+            }
+            QPushButton:hover { background: #3a3a3a; border-color: #555; }
+        """)
+        layout.addWidget(self.reset_btn)
         
-        # Close/Exit MPR button
-        self.close_btn = QPushButton("✕ Close MPR")
+        # Close button
+        self.close_btn = QPushButton("Close")
         self.close_btn.clicked.connect(self._close_mpr)
-        self.close_btn.setCursor(Qt.PointingHandCursor)  # ✅ Pointer cursor
+        self.close_btn.setCursor(Qt.PointingHandCursor)
         self.close_btn.setStyleSheet("""
             QPushButton {
-                background: #dc2626;
-                color: white;
-                border: none;
-                padding: 6px 12px;
-                border-radius: 4px;
-                font-weight: bold;
-                min-width: 100px;
+                background: #8b0000;
+                color: #fff;
+                border: 1px solid #a00;
+                border-radius: 3px;
+                padding: 5px 14px;
+                font-size: 12px;
             }
-            QPushButton:hover {
-                background: #b91c1c;
-            }
-            QPushButton:pressed {
-                background: #991b1b;
-            }
+            QPushButton:hover { background: #a00000; }
         """)
-        control_layout.addWidget(self.close_btn)
-        control_panel.setStyleSheet("background: #1a1a1a;")
+        layout.addWidget(self.close_btn)
         
-        return control_panel
+        return toolbar
+    
+    def _create_separator(self):
+        """Create a vertical separator line"""
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFixedWidth(1)
+        sep.setStyleSheet("background: #3a3a3a;")
+        return sep
     
     def _create_axial_view(self, layout, row, col):
-        """Create axial view (XY plane)"""
-        # Use QFrame for proper border support
+        """Create axial view (XY plane) - Original slices, NO interpolation between slices"""
+        # Simple container - no header
         container = QFrame()
-        container.setObjectName("MPRViewportContainer")
-        container.setFrameStyle(QFrame.Box | QFrame.Plain)
-        container.setLineWidth(2)
-        container.setStyleSheet("""
-            QFrame#MPRViewportContainer {
-                border: 2px solid #9ca3af;
-                border-radius: 2px;
-                background-color: transparent;
-            }
-        """)
-        
+        container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
         
-        # Label without border
-        label = QLabel("Axial")
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet("color: #888; background: transparent; padding: 2px; font-size: 11px;")
-        container_layout.addWidget(label)
-        
-        # VTK widget without border (border is on container)
+        # VTK widget
         vtk_widget = QVTKRenderWindowInteractor(container)
-        vtk_widget.setStyleSheet("""
-            QVTKRenderWindowInteractor {
-                border: none;
-                background: black;
-            }
-        """)
+        vtk_widget.setStyleSheet("border: none; background: black;")
         container_layout.addWidget(vtk_widget)
         
         # Renderer
@@ -373,11 +773,14 @@ class StandardMPRViewer(QWidget):
         renderer.SetBackground(0, 0, 0)
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
         
-        # Image slice using vtkImageSlice (modern approach)
+        # Use vtkImageResliceMapper but with NEAREST neighbor interpolation
+        # This shows original DICOM slices without creating interpolated data between slices
         slice_mapper = vtk.vtkImageResliceMapper()
         slice_mapper.SetInputData(self.image_data)
         slice_mapper.SliceFacesCameraOn()
         slice_mapper.SliceAtFocalPointOn()
+        # Use nearest neighbor for slice selection - no interpolation between original slices
+        slice_mapper.SetResampleToScreenPixels(False)
         
         # Image slice actor
         image_slice = vtk.vtkImageSlice()
@@ -387,14 +790,20 @@ class StandardMPRViewer(QWidget):
         window, level = self._get_default_window_level()
         image_slice.GetProperty().SetColorWindow(window)
         image_slice.GetProperty().SetColorLevel(level)
+        # NEAREST interpolation - shows original slices without creating interpolated data
+        image_slice.GetProperty().SetInterpolationTypeToNearest()
         
         renderer.AddViewProp(image_slice)
         
-        # Setup camera for axial view
+        # Setup camera for axial view using DICOM orientation
         camera = renderer.GetActiveCamera()
-        camera.SetPosition(self.center[0], self.center[1], self.center[2] + 1)
-        camera.SetFocalPoint(self.center[0], self.center[1], self.center[2])
-        camera.SetViewUp(0, 1, 0)
+        
+        # Get proper camera vectors based on DICOM direction matrix
+        camera_pos, focal_point, view_up = self._get_camera_vectors_for_view('axial')
+        camera.SetPosition(camera_pos)
+        camera.SetFocalPoint(focal_point)
+        camera.SetViewUp(view_up)
+        
         camera.ParallelProjectionOn()
         renderer.ResetCamera()
         
@@ -425,29 +834,13 @@ class StandardMPRViewer(QWidget):
         layout.addWidget(container, row, col)
     
     def _create_sagittal_view(self, layout, row, col):
-        """Create sagittal view (YZ plane)"""
-        # Use QFrame for proper border support
+        """Create sagittal view (YZ plane) - MPR reconstructed with interpolation"""
+        # Simple container - no header
         container = QFrame()
-        container.setObjectName("MPRViewportContainer")
-        container.setFrameStyle(QFrame.Box | QFrame.Plain)
-        container.setLineWidth(2)
-        container.setStyleSheet("""
-            QFrame#MPRViewportContainer {
-                border: 2px solid #9ca3af;
-                border-radius: 2px;
-                background-color: transparent;
-            }
-        """)
-        
+        container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
-        
-        # Label without border
-        label = QLabel("Sagittal")
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet("color: #888; background: transparent; padding: 2px; font-size: 11px;")
-        container_layout.addWidget(label)
         
         # VTK widget without border (border is on container)
         vtk_widget = QVTKRenderWindowInteractor(container)
@@ -464,7 +857,7 @@ class StandardMPRViewer(QWidget):
         renderer.SetBackground(0, 0, 0)
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
         
-        # Image slice
+        # MPR Reconstructed view - uses vtkImageResliceMapper for proper interpolation
         slice_mapper = vtk.vtkImageResliceMapper()
         slice_mapper.SetInputData(self.image_data)
         slice_mapper.SliceFacesCameraOn()
@@ -478,18 +871,25 @@ class StandardMPRViewer(QWidget):
         window, level = self._get_default_window_level()
         image_slice.GetProperty().SetColorWindow(window)
         image_slice.GetProperty().SetColorLevel(level)
+        # Linear interpolation for smooth MPR reconstruction
+        image_slice.GetProperty().SetInterpolationTypeToLinear()
         
         renderer.AddViewProp(image_slice)
         
-        # Setup camera for sagittal view (looking from right side)
+        # Setup camera for sagittal view using DICOM orientation
         camera = renderer.GetActiveCamera()
-        camera.SetPosition(self.center[0] + 1, self.center[1], self.center[2])
-        camera.SetFocalPoint(self.center[0], self.center[1], self.center[2])
-        camera.SetViewUp(0, 0, 1)
+        
+        # Get proper camera vectors based on DICOM direction matrix
+        camera_pos, focal_point, view_up = self._get_camera_vectors_for_view('sagittal')
+        camera.SetPosition(camera_pos)
+        camera.SetFocalPoint(focal_point)
+        camera.SetViewUp(view_up)
+        
         camera.ParallelProjectionOn()
         
-        # Flip view (radiological convention)
-        camera.Roll(180)
+        # Flip view for radiological convention (CT only)
+        if self.detected_modality == "CT":
+            camera.Roll(180)
         
         renderer.ResetCamera()
         
@@ -520,29 +920,13 @@ class StandardMPRViewer(QWidget):
         layout.addWidget(container, row, col)
     
     def _create_coronal_view(self, layout, row, col):
-        """Create coronal view (XZ plane)"""
-        # Use QFrame for proper border support
+        """Create coronal view (XZ plane) - MPR reconstructed with interpolation"""
+        # Simple container - no header
         container = QFrame()
-        container.setObjectName("MPRViewportContainer")
-        container.setFrameStyle(QFrame.Box | QFrame.Plain)
-        container.setLineWidth(2)
-        container.setStyleSheet("""
-            QFrame#MPRViewportContainer {
-                border: 2px solid #9ca3af;
-                border-radius: 2px;
-                background-color: transparent;
-            }
-        """)
-        
+        container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
-        
-        # Label without border
-        label = QLabel("Coronal")
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet("color: #888; background: transparent; padding: 2px; font-size: 11px;")
-        container_layout.addWidget(label)
         
         # VTK widget without border (border is on container)
         vtk_widget = QVTKRenderWindowInteractor(container)
@@ -559,7 +943,7 @@ class StandardMPRViewer(QWidget):
         renderer.SetBackground(0, 0, 0)
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
         
-        # Image slice
+        # MPR Reconstructed view - uses vtkImageResliceMapper for proper interpolation
         slice_mapper = vtk.vtkImageResliceMapper()
         slice_mapper.SetInputData(self.image_data)
         slice_mapper.SliceFacesCameraOn()
@@ -573,19 +957,26 @@ class StandardMPRViewer(QWidget):
         window, level = self._get_default_window_level()
         image_slice.GetProperty().SetColorWindow(window)
         image_slice.GetProperty().SetColorLevel(level)
+        # Linear interpolation for smooth MPR reconstruction
+        image_slice.GetProperty().SetInterpolationTypeToLinear()
         
         renderer.AddViewProp(image_slice)
         
-        # Setup camera for coronal view (looking from front)
+        # Setup camera for coronal view using DICOM orientation
         camera = renderer.GetActiveCamera()
-        camera.SetPosition(self.center[0], self.center[1] - 1, self.center[2])
-        camera.SetFocalPoint(self.center[0], self.center[1], self.center[2])
-        camera.SetViewUp(0, 0, 1)
+        
+        # Get proper camera vectors based on DICOM direction matrix
+        camera_pos, focal_point, view_up = self._get_camera_vectors_for_view('coronal')
+        camera.SetPosition(camera_pos)
+        camera.SetFocalPoint(focal_point)
+        camera.SetViewUp(view_up)
+        
         camera.ParallelProjectionOn()
         
-        # Flip and mirror for radiological convention
-        camera.Azimuth(180)  # First flip
-        camera.Roll(180)     # Then mirror
+        # Flip and mirror for radiological convention (CT only)
+        if self.detected_modality == "CT":
+            camera.Azimuth(180)  # First flip
+            camera.Roll(180)     # Then mirror
         
         renderer.ResetCamera()
         
@@ -617,28 +1008,12 @@ class StandardMPRViewer(QWidget):
     
     def _create_3d_view(self, layout, row, col):
         """Create advanced 3D volume view with best quality"""
-        # Use QFrame for proper border support
+        # Simple container - no header
         container = QFrame()
-        container.setObjectName("MPRViewportContainer")
-        container.setFrameStyle(QFrame.Box | QFrame.Plain)
-        container.setLineWidth(2)
-        container.setStyleSheet("""
-            QFrame#MPRViewportContainer {
-                border: 2px solid #9ca3af;
-                border-radius: 2px;
-                background-color: transparent;
-            }
-        """)
-        
+        container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
-        
-        # Label without border
-        label = QLabel("3D Volume")
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet("color: #888; background: transparent; padding: 2px; font-size: 11px;")
-        container_layout.addWidget(label)
         
         # VTK widget without border (border is on container)
         vtk_widget = QVTKRenderWindowInteractor(container)
@@ -650,23 +1025,23 @@ class StandardMPRViewer(QWidget):
         """)
         container_layout.addWidget(vtk_widget)
         
-        # Renderer with better background
+        # Renderer with simple dark background
         renderer = vtk.vtkRenderer()
-        renderer.SetBackground(0.1, 0.1, 0.15)  # Dark blue background
-        renderer.SetBackground2(0.0, 0.0, 0.0)   # Gradient to black
+        renderer.SetBackground(0.1, 0.1, 0.1)   # Dark gray
+        renderer.SetBackground2(0.0, 0.0, 0.0)  # Black
         renderer.GradientBackgroundOn()
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
         
-        # Enable anti-aliasing for smoother rendering
+        # Anti-aliasing
         vtk_widget.GetRenderWindow().SetMultiSamples(4)
         
-        # Volume mapper with best quality settings
+        # Volume mapper
         volume_mapper = vtk.vtkGPUVolumeRayCastMapper()
         volume_mapper.SetInputData(self.image_data)
         
-        # Advanced quality settings
+        # Quality settings
         volume_mapper.SetAutoAdjustSampleDistances(0)
-        volume_mapper.SetSampleDistance(0.5)  # Smaller = better quality
+        volume_mapper.SetSampleDistance(0.5)
         volume_mapper.SetImageSampleDistance(1.0)
         volume_mapper.SetMaxMemoryInBytes(1024 * 1024 * 512)  # 512MB
         volume_mapper.SetBlendModeToComposite()
@@ -704,31 +1079,36 @@ class StandardMPRViewer(QWidget):
         
         renderer.AddVolume(volume)
         
-        # Setup camera for better initial view
+        # Setup camera for better initial view - modality-specific orientation
         camera = renderer.GetActiveCamera()
         
         # Reset camera first to fit volume in view
         renderer.ResetCamera()
         
-        # Position camera behind the volume (looking from back to front)
-        # Z axis is typically up in medical images
-        camera.SetViewUp(0, 0, 1)  # Z is up
+        # Set ViewUp to match superior direction (typically Z axis in DICOM)
+        camera.SetViewUp(0, 0, 1)  # Z is up (superior direction)
         
-        # Position camera behind (positive Y direction looking at negative Y)
+        # Calculate distance for good view
         bounds = self.image_data.GetBounds()
-        distance = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4]) * 2.5
+        distance = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4]) * 2.0
         
+        # Anterior-oblique view
+        # After Y-flip: +Y = Anterior (Front)
         camera.SetPosition(
-            self.center[0],           # Center X
-            self.center[1] + distance,  # Behind (positive Y)
-            self.center[2] + distance * 0.5  # Elevated for better view
+            self.center[0] + distance * 0.7,   # Right side
+            self.center[1] + distance * 1.2,   # Front (Anterior)
+            self.center[2] + distance * 0.4    # Elevated
         )
         camera.SetFocalPoint(self.center[0], self.center[1], self.center[2])
         
-        # Adjust camera for nice viewing angle
-        camera.Elevation(15)  # Tilt up slightly for better perspective
-        camera.Roll(180)      # Flip for correct orientation
-        camera.Zoom(1.3)      # Zoom in to see details better
+        # Adjust camera for nice viewing angle (CT only)
+        if self.detected_modality == "CT":
+            camera.Elevation(15)  # Tilt up slightly for better perspective
+            camera.Roll(180)      # Flip for correct orientation
+            camera.Zoom(1.3)      # Zoom in to see details better
+        else:
+            # MR: simpler camera setup
+            camera.Zoom(1.2)
         
         # Add subtle lighting for depth perception
         light1 = vtk.vtkLight()
@@ -942,109 +1322,113 @@ class StandardMPRViewer(QWidget):
         logger.info(f"Crosshairs with handles created for {view_name} view")
     
     def _calculate_crosshair_endpoints(self, view_name, bounds):
-        """Calculate crosshair line endpoints based on view and rotation angle"""
-        angle = self.crosshair_angles[view_name]
+        """
+        Calculate crosshair line endpoints with rotation support.
+        """
         import math
         
-        # Get center position
+        # Get center position and rotation angle
         cx, cy, cz = self.current_position
+        angle = self.crosshair_angles.get(view_name, 0.0)
         
-        # Calculate line length (from bounds)
+        # 50% of view coverage
+        extend = 0.5
+        
         if view_name == 'axial':
             # XY plane
-            length_h = (bounds[1] - bounds[0]) / 2
-            length_v = (bounds[3] - bounds[2]) / 2
+            len_h = (bounds[1] - bounds[0]) * extend
+            len_v = (bounds[3] - bounds[2]) * extend
             
             # Horizontal line (rotated)
             h_p1 = [
-                cx + length_h * math.cos(angle),
-                cy + length_h * math.sin(angle),
+                cx + len_h * math.cos(angle),
+                cy + len_h * math.sin(angle),
                 cz
             ]
             h_p2 = [
-                cx - length_h * math.cos(angle),
-                cy - length_h * math.sin(angle),
+                cx - len_h * math.cos(angle),
+                cy - len_h * math.sin(angle),
                 cz
             ]
             
-            # Vertical line (rotated 90 degrees from horizontal)
+            # Vertical line (perpendicular to horizontal)
             v_p1 = [
-                cx + length_v * math.cos(angle + math.pi/2),
-                cy + length_v * math.sin(angle + math.pi/2),
+                cx + len_v * math.cos(angle + math.pi/2),
+                cy + len_v * math.sin(angle + math.pi/2),
                 cz
             ]
             v_p2 = [
-                cx - length_v * math.cos(angle + math.pi/2),
-                cy - length_v * math.sin(angle + math.pi/2),
+                cx - len_v * math.cos(angle + math.pi/2),
+                cy - len_v * math.sin(angle + math.pi/2),
                 cz
             ]
             
         elif view_name == 'sagittal':
             # YZ plane
-            length_h = (bounds[3] - bounds[2]) / 2
-            length_v = (bounds[5] - bounds[4]) / 2
+            len_h = (bounds[3] - bounds[2]) * extend
+            len_v = (bounds[5] - bounds[4]) * extend
             
-            # Horizontal line (along Y axis, rotated)
+            # Horizontal line (rotated)
             h_p1 = [
                 cx,
-                cy + length_h * math.cos(angle),
-                cz + length_h * math.sin(angle)
+                cy + len_h * math.cos(angle),
+                cz + len_h * math.sin(angle)
             ]
             h_p2 = [
                 cx,
-                cy - length_h * math.cos(angle),
-                cz - length_h * math.sin(angle)
+                cy - len_h * math.cos(angle),
+                cz - len_h * math.sin(angle)
             ]
             
-            # Vertical line (along Z axis, rotated 90 degrees)
+            # Vertical line (perpendicular)
             v_p1 = [
                 cx,
-                cy + length_v * math.cos(angle + math.pi/2),
-                cz + length_v * math.sin(angle + math.pi/2)
+                cy + len_v * math.cos(angle + math.pi/2),
+                cz + len_v * math.sin(angle + math.pi/2)
             ]
             v_p2 = [
                 cx,
-                cy - length_v * math.cos(angle + math.pi/2),
-                cz - length_v * math.sin(angle + math.pi/2)
+                cy - len_v * math.cos(angle + math.pi/2),
+                cz - len_v * math.sin(angle + math.pi/2)
             ]
             
         elif view_name == 'coronal':
             # XZ plane
-            length_h = (bounds[1] - bounds[0]) / 2
-            length_v = (bounds[5] - bounds[4]) / 2
+            len_h = (bounds[1] - bounds[0]) * extend
+            len_v = (bounds[5] - bounds[4]) * extend
             
-            # Horizontal line (along X axis, rotated)
+            # Horizontal line (rotated)
             h_p1 = [
-                cx + length_h * math.cos(angle),
+                cx + len_h * math.cos(angle),
                 cy,
-                cz + length_h * math.sin(angle)
+                cz + len_h * math.sin(angle)
             ]
             h_p2 = [
-                cx - length_h * math.cos(angle),
+                cx - len_h * math.cos(angle),
                 cy,
-                cz - length_h * math.sin(angle)
+                cz - len_h * math.sin(angle)
             ]
             
-            # Vertical line (along Z axis, rotated 90 degrees)
+            # Vertical line (perpendicular)
             v_p1 = [
-                cx + length_v * math.cos(angle + math.pi/2),
+                cx + len_v * math.cos(angle + math.pi/2),
                 cy,
-                cz + length_v * math.sin(angle + math.pi/2)
+                cz + len_v * math.sin(angle + math.pi/2)
             ]
             v_p2 = [
-                cx - length_v * math.cos(angle + math.pi/2),
+                cx - len_v * math.cos(angle + math.pi/2),
                 cy,
-                cz - length_v * math.sin(angle + math.pi/2)
+                cz - len_v * math.sin(angle + math.pi/2)
             ]
         
         return h_p1, h_p2, v_p1, v_p2
     
     def _create_crosshair_handles(self, renderer, h_p1, h_p2, v_p1, v_p2, view_name):
-        """Create interactive handles (small squares) at crosshair endpoints"""
+        """Create small square handles at crosshair endpoints"""
         handles = []
-        handle_size = 24.0  # Size of handles (3x larger for easier interaction)
+        handle_size = 8.0  # Small square handles
         
-        # Define handle positions (4 handles: 2 for horizontal line, 2 for vertical line)
+        # 4 handles: at end of each line
         handle_positions = [
             ('h1', h_p1),
             ('h2', h_p2),
@@ -1053,11 +1437,11 @@ class StandardMPRViewer(QWidget):
         ]
         
         for handle_id, pos in handle_positions:
-            # Create a small square using vtkCubeSource
+            # Create small square using vtkCubeSource
             cube = vtk.vtkCubeSource()
             cube.SetXLength(handle_size)
             cube.SetYLength(handle_size)
-            cube.SetZLength(0.1)  # Flat square
+            cube.SetZLength(0.1)  # Flat
             cube.SetCenter(pos)
             
             # Mapper
@@ -1067,8 +1451,8 @@ class StandardMPRViewer(QWidget):
             # Actor
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
-            actor.GetProperty().SetColor(1.0, 1.0, 0.0)  # Yellow handles
-            actor.GetProperty().SetOpacity(0.8)
+            actor.GetProperty().SetColor(0.0, 1.0, 0.0)  # Green like crosshairs
+            actor.GetProperty().SetOpacity(1.0)
             
             # Add to renderer
             renderer.AddActor(actor)
@@ -1084,7 +1468,7 @@ class StandardMPRViewer(QWidget):
         return handles
     
     def _create_slice_info_text(self, renderer, view_name):
-        """Create text annotation showing slice information"""
+        """Create text annotation showing slice information and orientation labels"""
         # Create text actor for slice info
         text_actor = vtk.vtkTextActor()
         text_actor.SetInput(self._get_slice_info_text(view_name))
@@ -1102,12 +1486,74 @@ class StandardMPRViewer(QWidget):
         text_property.SetFontFamilyToArial()
         
         # Add to renderer
-        renderer.AddActor2D(text_actor)
+        renderer.AddViewProp(text_actor)
         
         # Store for later updates
         self.text_actors[view_name] = text_actor
         
+        # Add orientation labels (L/R, A/P, S/I) on viewport edges
+        self._add_orientation_labels(renderer, view_name)
+        
         logger.info(f"Slice info text created for {view_name} view")
+    
+    def _add_orientation_labels(self, renderer, view_name):
+        """Add anatomical orientation labels to viewport edges"""
+        try:
+            labels = self._get_orientation_labels()
+            view_labels = labels.get(view_name, {})
+            
+            # Create text actors for orientation labels
+            # Left label
+            left_actor = vtk.vtkTextActor()
+            left_actor.SetInput(view_labels.get('left', 'L'))
+            left_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
+            left_actor.SetPosition(0.02, 0.5)
+            left_actor.GetTextProperty().SetFontSize(16)
+            left_actor.GetTextProperty().SetColor(1.0, 1.0, 0.0)  # Yellow
+            left_actor.GetTextProperty().SetBold(True)
+            left_actor.GetTextProperty().SetShadow(True)
+            renderer.AddViewProp(left_actor)
+            
+            # Right label
+            right_actor = vtk.vtkTextActor()
+            right_actor.SetInput(view_labels.get('right', 'R'))
+            right_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
+            right_actor.SetPosition(0.95, 0.5)
+            right_actor.GetTextProperty().SetFontSize(16)
+            right_actor.GetTextProperty().SetColor(1.0, 1.0, 0.0)  # Yellow
+            right_actor.GetTextProperty().SetBold(True)
+            right_actor.GetTextProperty().SetShadow(True)
+            right_actor.GetTextProperty().SetJustificationToRight()
+            renderer.AddViewProp(right_actor)
+            
+            # Top label
+            top_actor = vtk.vtkTextActor()
+            top_actor.SetInput(view_labels.get('top', 'A'))
+            top_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
+            top_actor.SetPosition(0.5, 0.95)
+            top_actor.GetTextProperty().SetFontSize(16)
+            top_actor.GetTextProperty().SetColor(1.0, 1.0, 0.0)  # Yellow
+            top_actor.GetTextProperty().SetBold(True)
+            top_actor.GetTextProperty().SetShadow(True)
+            top_actor.GetTextProperty().SetJustificationToCentered()
+            renderer.AddViewProp(top_actor)
+            
+            # Bottom label
+            bottom_actor = vtk.vtkTextActor()
+            bottom_actor.SetInput(view_labels.get('bottom', 'P'))
+            bottom_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
+            bottom_actor.SetPosition(0.5, 0.02)
+            bottom_actor.GetTextProperty().SetFontSize(16)
+            bottom_actor.GetTextProperty().SetColor(1.0, 1.0, 0.0)  # Yellow
+            bottom_actor.GetTextProperty().SetBold(True)
+            bottom_actor.GetTextProperty().SetShadow(True)
+            bottom_actor.GetTextProperty().SetJustificationToCentered()
+            renderer.AddViewProp(bottom_actor)
+            
+            logger.debug(f"Orientation labels added to {view_name} view: {view_labels}")
+            
+        except Exception as e:
+            logger.warning(f"Could not add orientation labels to {view_name}: {e}")
     
     def _get_slice_info_text(self, view_name):
         """Get slice information text for a view"""
@@ -1160,21 +1606,21 @@ class StandardMPRViewer(QWidget):
                 self.AddObserver("MouseWheelBackwardEvent", self.on_mouse_wheel_backward)
             
             def check_handle_hover(self, click_pos):
-                """Check if mouse is hovering over a handle and change cursor"""
+                """Check if mouse is hovering over a handle"""
                 self.prop_picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
                 picked_actor = self.prop_picker.GetActor()
                 
                 # Check if hovering over a handle
                 if picked_actor and self.view_name in self.parent.crosshair_actors:
-                    handles = self.parent.crosshair_actors[self.view_name]['handles']
+                    handles = self.parent.crosshair_actors[self.view_name].get('handles', [])
                     for handle in handles:
                         if handle['actor'] == picked_actor:
-                            # Change cursor to hand/pointer
-                            self.GetInteractor().GetRenderWindow().SetCurrentCursor(9)  # Hand cursor
+                            # Change cursor to hand
+                            self.GetInteractor().GetRenderWindow().SetCurrentCursor(9)
                             return True
                 
-                # Reset cursor to default
-                self.GetInteractor().GetRenderWindow().SetCurrentCursor(0)  # Default cursor
+                # Reset cursor
+                self.GetInteractor().GetRenderWindow().SetCurrentCursor(0)
                 return False
             
             def on_left_button_press(self, obj, event):
@@ -1188,7 +1634,7 @@ class StandardMPRViewer(QWidget):
                 # Check if a handle was picked
                 handle_picked = None
                 if picked_actor and self.view_name in self.parent.crosshair_actors:
-                    handles = self.parent.crosshair_actors[self.view_name]['handles']
+                    handles = self.parent.crosshair_actors[self.view_name].get('handles', [])
                     for handle in handles:
                         if handle['actor'] == picked_actor:
                             handle_picked = handle
@@ -1198,78 +1644,83 @@ class StandardMPRViewer(QWidget):
                     # Start dragging handle for rotation
                     self.dragging_handle = True
                     self.current_handle = handle_picked['id']
-                    logger.info(f"Started dragging handle {handle_picked['id']} in {self.view_name}")
-                    
-                    # Abort event to prevent default interactor behavior
+                    logger.info(f"Started rotating via handle {handle_picked['id']}")
                     self.OnLeftButtonDown()
                     return
-                else:
-                    # Check if clicked on crosshair lines (not handles)
-                    # For now, start drag mode for center repositioning
-                    # This will be handled in mouse move
-                    self.parent.dragging_center = False
-                    self.parent.drag_start_pos = click_pos
-                    
-                # Call parent class method for default behavior (panning, etc.)
+                
+                # Otherwise, reposition crosshair
+                self.parent.dragging_center = True
+                self.parent.drag_start_pos = click_pos
+                
+                # Immediately move crosshair to click position
+                picker = vtk.vtkWorldPointPicker()
+                picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
+                picked_pos = picker.GetPickPosition()
+                
+                # Update position based on view
+                if self.view_name == 'axial':
+                    self.parent.current_position[0] = picked_pos[0]
+                    self.parent.current_position[1] = picked_pos[1]
+                elif self.view_name == 'sagittal':
+                    self.parent.current_position[1] = picked_pos[1]
+                    self.parent.current_position[2] = picked_pos[2]
+                elif self.view_name == 'coronal':
+                    self.parent.current_position[0] = picked_pos[0]
+                    self.parent.current_position[2] = picked_pos[2]
+                
+                # Update all views
+                self.parent._update_all_crosshairs()
+                self.parent._update_slice_positions()
+                self.parent._update_slice_info_texts()
+                
                 self.OnLeftButtonDown()
             
             def on_mouse_move(self, obj, event):
-                """Handle mouse move for dragging handles or center"""
+                """Handle mouse move - drag handle to rotate or drag to move"""
                 click_pos = self.GetInteractor().GetEventPosition()
                 
-                # Handle rotation (dragging handle)
+                # Handle rotation by dragging handle
                 if self.dragging_handle and self.current_handle:
-                    # Convert to world coordinates
                     picker = vtk.vtkWorldPointPicker()
                     picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
                     picked_pos = picker.GetPickPosition()
                     
-                    # Calculate angle based on drag position
+                    # Calculate angle
                     import math
                     cx, cy, cz = self.parent.current_position
                     
                     if self.view_name == 'axial':
+                        # XY plane
                         angle = math.atan2(picked_pos[1] - cy, picked_pos[0] - cx)
-                        if self.current_handle.startswith('v'):  # Vertical line handles
+                        if self.current_handle.startswith('v'):
                             angle -= math.pi/2
                     elif self.view_name == 'sagittal':
+                        # YZ plane
                         angle = math.atan2(picked_pos[2] - cz, picked_pos[1] - cy)
                         if self.current_handle.startswith('v'):
                             angle -= math.pi/2
                     elif self.view_name == 'coronal':
+                        # XZ plane
                         angle = math.atan2(picked_pos[2] - cz, picked_pos[0] - cx)
                         if self.current_handle.startswith('v'):
                             angle -= math.pi/2
                     
-                    # Update angle for this view
+                    # Update angle
                     self.parent.crosshair_angles[self.view_name] = angle
                     
-                    # Update crosshairs in all views (visual only)
+                    # Update crosshairs
                     self.parent._update_all_crosshairs()
                     
-                    logger.debug(f"Rotating crosshairs in {self.view_name}: angle={math.degrees(angle):.1f}°")
+                    logger.debug(f"Rotating {self.view_name}: {math.degrees(angle):.1f}°")
                     return
-                
-                # Handle center repositioning (drag without handle)
-                elif self.parent.drag_start_pos and not self.parent.dragging_center:
-                    # Check if mouse moved enough to start drag
-                    import math
-                    dx = click_pos[0] - self.parent.drag_start_pos[0]
-                    dy = click_pos[1] - self.parent.drag_start_pos[1]
-                    distance = math.sqrt(dx*dx + dy*dy)
-                    
-                    if distance > 5:  # Threshold to distinguish click from drag
-                        self.parent.dragging_center = True
-                        logger.info(f"Started dragging center in {self.view_name}")
                 
                 # Update center position during drag
                 if self.parent.dragging_center:
-                    # Convert to world coordinates
                     picker = vtk.vtkWorldPointPicker()
                     picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
                     picked_pos = picker.GetPickPosition()
                     
-                    # Update current position based on the view
+                    # Update position based on view
                     if self.view_name == 'axial':
                         self.parent.current_position[0] = picked_pos[0]
                         self.parent.current_position[1] = picked_pos[1]
@@ -1280,56 +1731,49 @@ class StandardMPRViewer(QWidget):
                         self.parent.current_position[0] = picked_pos[0]
                         self.parent.current_position[2] = picked_pos[2]
                     
-                    # Update crosshairs in all views
+                    # Update all views
                     self.parent._update_all_crosshairs()
                     self.parent._update_slice_positions()
                     self.parent._update_slice_info_texts()
-                    self.parent._update_coordinates_label()
-                    
-                    logger.debug(f"Crosshair center moved to: {self.parent.current_position}")
                     return
                 
-                # Check for handle hover to change cursor (when not dragging)
+                # Check hover for cursor change
                 if not self.dragging_handle and not self.parent.dragging_center:
                     self.check_handle_hover(click_pos)
                 
-                # Call parent class method for default behavior (window/level, etc.)
+                # Default behavior
                 self.OnMouseMove()
             
             def on_left_button_release(self, obj, event):
                 """Handle mouse button release"""
                 if self.dragging_handle:
-                    logger.info(f"Stopped dragging handle")
+                    logger.info("Stopped rotating")
                     self.dragging_handle = False
                     self.current_handle = None
                 
                 if self.parent.dragging_center:
-                    logger.info(f"Stopped dragging center")
                     self.parent.dragging_center = False
                 
-                # Reset drag start position
                 self.parent.drag_start_pos = None
-                
-                # Call parent class method for default behavior
                 self.OnLeftButtonUp()
             
             def on_mouse_wheel_forward(self, obj, event):
-                """Scroll forward through slices"""
+                """Scroll forward through slices - direction depends on image orientation"""
                 # Get current focal point
                 camera = self.renderer.GetActiveCamera()
                 focal = list(camera.GetFocalPoint())
                 
-                # Move focal point along the slice axis
-                step = 2.0  # Adjust for smoother scrolling
-                if self.orientation == 2:  # Axial - Z axis
-                    focal[2] += step
-                    self.parent.current_position[2] = focal[2]
-                elif self.orientation == 0:  # Sagittal - X axis
-                    focal[0] += step
-                    self.parent.current_position[0] = focal[0]
-                else:  # Coronal - Y axis
-                    focal[1] += step
-                    self.parent.current_position[1] = focal[1]
+                # Get scroll direction based on orientation matrix
+                scroll_dir = self.parent._get_scroll_direction(self.view_name)
+                step = 2.0
+                
+                focal[0] += scroll_dir[0] * step
+                focal[1] += scroll_dir[1] * step
+                focal[2] += scroll_dir[2] * step
+                
+                self.parent.current_position[0] = focal[0]
+                self.parent.current_position[1] = focal[1]
+                self.parent.current_position[2] = focal[2]
                 
                 camera.SetFocalPoint(focal)
                 
@@ -1341,22 +1785,22 @@ class StandardMPRViewer(QWidget):
                 self.renderer.GetRenderWindow().Render()
             
             def on_mouse_wheel_backward(self, obj, event):
-                """Scroll backward through slices"""
+                """Scroll backward through slices - direction depends on image orientation"""
                 # Get current focal point
                 camera = self.renderer.GetActiveCamera()
                 focal = list(camera.GetFocalPoint())
                 
-                # Move focal point along the slice axis
+                # Get scroll direction based on orientation matrix (negate for backward)
+                scroll_dir = self.parent._get_scroll_direction(self.view_name)
                 step = 2.0
-                if self.orientation == 2:  # Axial - Z axis
-                    focal[2] -= step
-                    self.parent.current_position[2] = focal[2]
-                elif self.orientation == 0:  # Sagittal - X axis
-                    focal[0] -= step
-                    self.parent.current_position[0] = focal[0]
-                else:  # Coronal - Y axis
-                    focal[1] -= step
-                    self.parent.current_position[1] = focal[1]
+                
+                focal[0] -= scroll_dir[0] * step
+                focal[1] -= scroll_dir[1] * step
+                focal[2] -= scroll_dir[2] * step
+                
+                self.parent.current_position[0] = focal[0]
+                self.parent.current_position[1] = focal[1]
+                self.parent.current_position[2] = focal[2]
                 
                 camera.SetFocalPoint(focal)
                 
@@ -1375,14 +1819,14 @@ class StandardMPRViewer(QWidget):
         self.crosshair_styles[view_name] = style
     
     def _update_all_crosshairs(self):
-        """Update crosshair positions and rotations in all views"""
+        """Update crosshair positions in all views"""
         if not self.crosshairs_enabled:
             return
         
         bounds = self.image_data.GetBounds()
         
         for view_name, actors in self.crosshair_actors.items():
-            # Calculate new endpoints based on current position and angle
+            # Calculate new endpoints
             h_p1, h_p2, v_p1, v_p2 = self._calculate_crosshair_endpoints(view_name, bounds)
             
             # Update line sources
@@ -1394,23 +1838,23 @@ class StandardMPRViewer(QWidget):
             v_line_source.SetPoint1(v_p1)
             v_line_source.SetPoint2(v_p2)
             
-            # Update handles positions
-            handles = actors['handles']
+            h_line_source.Update()
+            v_line_source.Update()
+            
+            # Update handle positions
+            handles = actors.get('handles', [])
             handle_positions = [h_p1, h_p2, v_p1, v_p2]
             
             for i, handle in enumerate(handles):
-                handle['cube'].SetCenter(handle_positions[i])
-                handle['position'] = handle_positions[i]
-            
-            # Update the sources
-            h_line_source.Update()
-            v_line_source.Update()
+                if i < len(handle_positions):
+                    handle['cube'].SetCenter(handle_positions[i])
+                    handle['position'] = handle_positions[i]
             
             # Render the view
             if view_name in self.viewers:
                 self.viewers[view_name]['renderer'].GetRenderWindow().Render()
         
-        # Apply oblique reslicing when rotation is non-zero
+        # Apply oblique reslicing when rotation exists
         self._update_oblique_reslicing()
         
         # Log rotation angles for debugging
@@ -1650,10 +2094,14 @@ class StandardMPRViewer(QWidget):
         """Set crosshair color"""
         self.crosshair_color = color
         
-        # Update all crosshair actors
+        # Update all crosshair actors and handles
         for view_name, actors in self.crosshair_actors.items():
             actors['h_line_actor'].GetProperty().SetColor(*color)
             actors['v_line_actor'].GetProperty().SetColor(*color)
+            
+            # Update handle colors too
+            for handle in actors.get('handles', []):
+                handle['actor'].GetProperty().SetColor(*color)
             
             # Render
             if view_name in self.viewers:
@@ -1687,135 +2135,156 @@ class StandardMPRViewer(QWidget):
         logger.info("Crosshair rotation reset to 0°")
     
     def _update_oblique_reslicing(self):
-        """Update oblique reslicing for perpendicular views when one view is rotated"""
+        """
+        Update oblique reslicing when crosshairs rotate.
+        Uses vtkTransform for proper 3D rotation.
+        """
         import math
         
-        # Process each view's rotation
-        for rotated_view, angle in self.crosshair_angles.items():
-            if abs(angle) < 0.01:  # No significant rotation
-                # Reset dependent views to orthogonal if this view was rotated before
-                if rotated_view in self.reslice_filters:
-                    self._reset_dependent_views(rotated_view)
-                continue
-            
-            # When a view is rotated, update the PERPENDICULAR views, not the view itself
-            # For example: when Axial rotates, update Sagittal and Coronal
-            if rotated_view == 'axial':
-                # Axial rotation affects Sagittal and Coronal
-                self._apply_oblique_to_view('sagittal', angle, 'axial')
-                self._apply_oblique_to_view('coronal', angle, 'axial')
-            elif rotated_view == 'sagittal':
-                # Sagittal rotation affects Axial and Coronal
-                self._apply_oblique_to_view('axial', angle, 'sagittal')
-                self._apply_oblique_to_view('coronal', angle, 'sagittal')
-            elif rotated_view == 'coronal':
-                # Coronal rotation affects Axial and Sagittal
-                self._apply_oblique_to_view('axial', angle, 'coronal')
-                self._apply_oblique_to_view('sagittal', angle, 'coronal')
-    
-    def _reset_dependent_views(self, rotated_view):
-        """Reset dependent views to orthogonal when rotation is removed"""
-        if rotated_view == 'axial':
-            dependent_views = ['sagittal', 'coronal']
-        elif rotated_view == 'sagittal':
-            dependent_views = ['axial', 'coronal']
-        elif rotated_view == 'coronal':
-            dependent_views = ['axial', 'sagittal']
-        else:
+        # Check if any view has rotation
+        has_rotation = any(abs(angle) > 0.01 for angle in self.crosshair_angles.values())
+        
+        if not has_rotation:
+            self._reset_all_to_orthogonal()
             return
         
-        for view_name in dependent_views:
-            if view_name in self.viewers and 'original_mapper' in self.viewers[view_name]:
-                # Restore original mapper
+        # Apply oblique slicing to perpendicular views
+        for source_view, angle in self.crosshair_angles.items():
+            if abs(angle) < 0.01:
+                continue
+            
+            # Use angle directly
+            adjusted_angle = angle * -1.0
+            
+            if source_view == 'axial':
+                # Axial rotates around Z axis
+                self._apply_oblique_transform('sagittal', adjusted_angle, 'z')
+                self._apply_oblique_transform('coronal', adjusted_angle, 'z')
+            elif source_view == 'sagittal':
+                # Sagittal rotates around X axis
+                self._apply_oblique_transform('axial', adjusted_angle, 'x')
+                self._apply_oblique_transform('coronal', adjusted_angle, 'x')
+            elif source_view == 'coronal':
+                # Coronal rotates around Y axis
+                self._apply_oblique_transform('axial', adjusted_angle, 'y')
+                self._apply_oblique_transform('sagittal', adjusted_angle, 'y')
+    
+    def _reset_all_to_orthogonal(self):
+        """Reset all views to orthogonal slicing"""
+        for view_name in ['axial', 'sagittal', 'coronal']:
+            if view_name not in self.viewers:
+                continue
+            
+            if 'original_mapper' in self.viewers[view_name]:
                 original_mapper = self.viewers[view_name]['original_mapper']
                 self.viewers[view_name]['actor'].SetMapper(original_mapper)
-                logger.debug(f"Reset {view_name} to orthogonal view")
+                self.viewers[view_name]['mapper'] = original_mapper
+                
+                # Restore window/level
+                window, level = self._get_default_window_level()
+                self.viewers[view_name]['actor'].GetProperty().SetColorWindow(window)
+                self.viewers[view_name]['actor'].GetProperty().SetColorLevel(level)
+                
+                self.viewers[view_name]['renderer'].GetRenderWindow().Render()
+                logger.debug(f"Reset {view_name} to orthogonal")
     
-    def _apply_oblique_to_view(self, target_view, rotation_angle, source_view):
-        """Apply oblique reslicing to target view based on source view's rotation"""
+    def _apply_oblique_transform(self, target_view, rotation_angle, rotation_axis):
+        """
+        Apply oblique transformation using vtkTransform and vtkImageReslice.
+        Simple and robust approach.
+        """
         import math
         
         if target_view not in self.viewers:
             return
         
-        # Get viewer components
-        mapper_key = f"oblique_mapper_{source_view}"
+        # Store original mapper
+        if 'original_mapper' not in self.viewers[target_view]:
+            self.viewers[target_view]['original_mapper'] = self.viewers[target_view]['mapper']
         
-        # Create oblique mapper if not exists
-        if mapper_key not in self.viewers[target_view]:
-            oblique_mapper = vtk.vtkImageResliceMapper()
-            oblique_mapper.SetInputData(self.image_data)
-            oblique_mapper.SliceFacesCameraOff()
-            oblique_mapper.borderOn()
-            self.viewers[target_view][mapper_key] = oblique_mapper
+        # Get or create transform
+        transform_key = f"transform_{target_view}"
+        if transform_key not in self.reslice_transforms:
+            transform = vtk.vtkTransform()
+            self.reslice_transforms[transform_key] = transform
         else:
-            oblique_mapper = self.viewers[target_view][mapper_key]
+            transform = self.reslice_transforms[transform_key]
         
-        # Calculate the slice plane based on rotation
+        # Reset transform
+        transform.Identity()
+        
+        # Move to origin, rotate, move back
         cx, cy, cz = self.current_position
-        cos_a = math.cos(rotation_angle)
-        sin_a = math.sin(rotation_angle)
+        transform.Translate(-cx, -cy, -cz)
         
-        # Create plane normal and origin based on view combination
-        if source_view == 'axial' and target_view == 'sagittal':
-            # Axial rotates around Z, Sagittal plane normal rotates in XY
-            normal = [cos_a, sin_a, 0]
-            origin = [cx, cy, cz]
-            
-        elif source_view == 'axial' and target_view == 'coronal':
-            # Axial rotates around Z, Coronal plane normal rotates in XY
-            normal = [-sin_a, cos_a, 0]
-            origin = [cx, cy, cz]
-            
-        elif source_view == 'sagittal' and target_view == 'axial':
-            # Sagittal rotates, Axial plane normal changes
-            normal = [0, 0, 1]
-            origin = [cx, cy, cz]
-            
-        elif source_view == 'sagittal' and target_view == 'coronal':
-            # Sagittal rotates, Coronal plane normal changes
-            normal = [0, cos_a, sin_a]
-            origin = [cx, cy, cz]
-            
-        elif source_view == 'coronal' and target_view == 'axial':
-            # Coronal rotates, Axial plane normal changes
-            normal = [0, 0, 1]
-            origin = [cx, cy, cz]
-            
-        elif source_view == 'coronal' and target_view == 'sagittal':
-            # Coronal rotates, Sagittal plane normal changes
-            normal = [cos_a, 0, sin_a]
-            origin = [cx, cy, cz]
+        # Apply rotation around axis
+        if rotation_axis == 'z':
+            transform.RotateZ(math.degrees(rotation_angle))
+        elif rotation_axis == 'x':
+            transform.RotateX(math.degrees(rotation_angle))
+        elif rotation_axis == 'y':
+            transform.RotateY(math.degrees(rotation_angle))
+        
+        transform.Translate(cx, cy, cz)
+        
+        # Get or create reslice filter
+        reslice_key = f"reslice_{target_view}"
+        if reslice_key not in self.reslice_filters:
+            reslice = vtk.vtkImageReslice()
+            reslice.SetInputData(self.image_data)
+            reslice.SetOutputDimensionality(3)
+            reslice.SetInterpolationModeToLinear()
+            reslice.SetBackgroundLevel(self.scalar_range[0])
+            self.reslice_filters[reslice_key] = reslice
         else:
-            logger.warning(f"Unknown view combination: {source_view} -> {target_view}")
+            reslice = self.reslice_filters[reslice_key]
+        
+        # Apply transform
+        reslice.SetResliceTransform(transform)
+        reslice.Update()
+        
+        # Get output
+        oblique_volume = reslice.GetOutput()
+        
+        if oblique_volume is None or oblique_volume.GetNumberOfPoints() == 0:
+            logger.warning(f"Reslice failed for {target_view}")
             return
         
-        # Create a plane
-        plane = vtk.vtkPlane()
-        plane.SetNormal(normal)
-        plane.SetOrigin(origin)
+        # Create mapper for oblique volume
+        new_mapper = vtk.vtkImageResliceMapper()
+        new_mapper.SetInputData(oblique_volume)
+        new_mapper.SliceFacesCameraOn()
+        new_mapper.SliceAtFocalPointOn()
         
-        # Set the slice plane for the mapper
-        oblique_mapper.SetSlicePlane(plane)
-        
-        # Update the actor to use oblique mapper
-        self.viewers[target_view]['actor'].SetMapper(oblique_mapper)
+        # Update actor
+        actor = self.viewers[target_view]['actor']
+        actor.SetMapper(new_mapper)
         
         # Preserve window/level
-        actor = self.viewers[target_view]['actor']
         window = actor.GetProperty().GetColorWindow()
         level = actor.GetProperty().GetColorLevel()
         actor.GetProperty().SetColorWindow(window)
         actor.GetProperty().SetColorLevel(level)
         
-        # Force render
-        if target_view in self.viewers:
-            self.viewers[target_view]['renderer'].GetRenderWindow().Render()
+        # Store
+        self.viewers[target_view]['mapper'] = new_mapper
+        self.viewers[target_view]['oblique_volume'] = oblique_volume
         
-        logger.info(f"Applied oblique plane to {target_view} from {source_view}: normal={normal}, origin={origin}, angle={math.degrees(rotation_angle):.1f}°")
+        # Render
+        self.viewers[target_view]['renderer'].GetRenderWindow().Render()
+        
+        logger.info(f"Applied oblique transform to {target_view}: axis={rotation_axis}, angle={math.degrees(rotation_angle):.1f}°")
+    
+    def get_current_volume(self, view_name):
+        """Get current volume for a view (for stack tools)"""
+        if view_name in self.viewers and 'oblique_volume' in self.viewers[view_name]:
+            return self.viewers[view_name]['oblique_volume']
+        return self.image_data
     
     def _update_coordinates_label(self):
-      return False
+        """Update slice info text overlays in viewports"""
+        # Slice info is shown in VTK text actors (created in _create_slice_info_text)
+        pass
     
     def cleanup(self):
         """Cleanup"""
@@ -2074,6 +2543,31 @@ class StandardMPRViewer(QWidget):
                     self._apply_volume_preset(volume_property, self.current_3d_preset)
                     logger.info(f"Preset {self.current_3d_preset} reapplied")
                     
+                    # Reset camera to standard radiological orientation
+                    camera = renderer.GetActiveCamera()
+                    
+                    # Reset camera to fit volume
+                    renderer.ResetCamera()
+                    
+                    # Set ViewUp
+                    camera.SetViewUp(0, 0, 1)  # Z is up (superior direction)
+                    
+                    # Calculate distance for good view
+                    bounds = self.image_data.GetBounds()
+                    distance = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4]) * 2.0
+                    
+                    # Anterior-oblique view
+                    # After Y-flip: +Y = Anterior (Front)
+                    camera.SetPosition(
+                        self.center[0] + distance * 0.7,   # Right side
+                        self.center[1] + distance * 1.2,   # Front (Anterior)
+                        self.center[2] + distance * 0.4    # Elevated
+                    )
+                    camera.SetFocalPoint(self.center[0], self.center[1], self.center[2])
+                    camera.Zoom(1.2)
+                    
+                    logger.info("3D camera orientation reset to standard view")
+                    
                     # Render
                     renderer.GetRenderWindow().Render()
                     views_reset += 1
@@ -2109,21 +2603,15 @@ class StandardMPRViewer(QWidget):
                     renderer.RemoveAllViewProps()
                     renderer.AddViewProp(image_slice)
                     
-                    # Reset camera to original position
+                    # Reset camera to original position (standard radiological convention)
                     camera = renderer.GetActiveCamera()
+                    camera.ParallelProjectionOn()
                     
-                    if view_name == 'axial':
-                        camera.SetPosition(self.center[0], self.center[1], self.center[2] + 1)
-                        camera.SetFocalPoint(self.center[0], self.center[1], self.center[2])
-                        camera.SetViewUp(0, 1, 0)
-                    elif view_name == 'sagittal':
-                        camera.SetPosition(self.center[0] + 1, self.center[1], self.center[2])
-                        camera.SetFocalPoint(self.center[0], self.center[1], self.center[2])
-                        camera.SetViewUp(0, 0, 1)
-                    elif view_name == 'coronal':
-                        camera.SetPosition(self.center[0], self.center[1] + 1, self.center[2])
-                        camera.SetFocalPoint(self.center[0], self.center[1], self.center[2])
-                        camera.SetViewUp(0, 0, 1)
+                    # Use DICOM orientation for proper camera setup
+                    camera_pos, focal_point, view_up = self._get_camera_vectors_for_view(view_name)
+                    camera.SetPosition(camera_pos)
+                    camera.SetFocalPoint(focal_point)
+                    camera.SetViewUp(view_up)
                     
                     renderer.ResetCamera()
                     camera.Zoom(1.5)
@@ -2316,60 +2804,6 @@ class StandardMPRViewer(QWidget):
             logger.error(f"Error clearing segmentation: {e}")
     
     def get_active_viewport_for_measurements(self):
-        """Enable/disable curved MPR point picking mode"""
-        try:
-            self.curved_mpr_mode_active = enabled
-            
-            if enabled:
-                logger.info("Curved MPR mode ENABLED - click on 2D views to add points")
-                # Clear previous points
-                self.curved_mpr_points = []
-                self._clear_curved_mpr_visuals()
-                
-                # Disable crosshairs temporarily
-                if self.crosshairs_enabled:
-                    self.crosshair_btn.setChecked(False)
-                    self._toggle_crosshairs(False)
-                
-                # Enable point picking on 2D views
-                self._enable_2d_point_picking(True)
-                
-                # Show instruction
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.information(
-                    self,
-                    "Curved MPR Mode Active",
-                    "Click on any 2D view (Axial/Sagittal/Coronal) to add points along the path.\n\n"
-                    "• Each click adds a point\n"
-                    "• Points will be connected with a yellow line\n"
-                    "• Points shown on all views\n"
-                    "• Click 'Curved MPR' button again to generate\n"
-                    "• Minimum 2 points required"
-                )
-            else:
-                logger.info("Curved MPR mode DISABLED - generating...")
-                # Disable point picking
-                self._enable_2d_point_picking(False)
-                
-                if len(self.curved_mpr_points) >= 2:
-                    self._generate_curved_mpr()
-                else:
-                    from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.warning(
-                        self,
-                        "Not Enough Points",
-                        f"Need at least 2 points. You have {len(self.curved_mpr_points)}."
-                    )
-                    # Recheck the button
-                    if hasattr(self, '_toolbar'):
-                        self._toolbar.curved_mpr_btn.setChecked(False)
-                
-        except Exception as e:
-            logger.error(f"Error in curved MPR mode: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    def get_active_viewport_for_measurements(self):
         """
         Get the active viewport widget for measurement tools.
         Returns the VTK widget of the active measurement viewport.
@@ -2394,4 +2828,5 @@ class StandardMPRViewer(QWidget):
             logger.info(f"Active measurement viewport set to: {view_name}")
         else:
             logger.warning(f"Invalid viewport name: {view_name}")
+
 

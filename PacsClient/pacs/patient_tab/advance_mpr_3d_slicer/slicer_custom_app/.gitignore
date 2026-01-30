@@ -1,0 +1,14 @@
+# Build directories
+build/
+Build/
+Release/
+Debug/
+
+# IDE files
+.vs/
+*.user
+*.suo
+
+# Generated files
+*.pyc
+__pycache__/
