@@ -1293,23 +1293,75 @@ class StandardMPRViewer(QWidget):
         logger.info(f"Applied 3D preset: {preset_name}")
     
     def _close_mpr(self):
-        """Close MPR viewer"""
+        """Close MPR viewer and return to normal view"""
+        import logging
+        logger = logging.getLogger(__name__)
         logger.info("Closing MPR viewer...")
+        
         try:
+            # Find the patient widget with toolbar_manager
             parent = self.parent()
             while parent is not None:
                 if hasattr(parent, 'toolbar_manager'):
-                    for node in parent.lst_nodes_viewer:
-                        if hasattr(node.vtk_widget, '_mpr_widget'):
-                            if node.vtk_widget._mpr_widget == self:
-                                parent.toolbar_manager.toggle_mpr(node.vtk_widget)
-                                return
-                    parent.toolbar_manager.toggle_mpr(parent.selected_widget)
+                    toolbar_manager = parent.toolbar_manager
+                    
+                    # Find the original widget that has reference to this MPR
+                    found = False
+                    if hasattr(parent, 'lst_nodes_viewer'):
+                        for node in parent.lst_nodes_viewer:
+                            vtk_widget = getattr(node, 'vtk_widget', None)
+                            if vtk_widget:
+                                if (hasattr(vtk_widget, '_mpr_widget') and vtk_widget._mpr_widget == self) or \
+                                (hasattr(vtk_widget, '_zeta_mpr_widget') and vtk_widget._zeta_mpr_widget == self):
+                                    # Found original widget, call toggle to close
+                                    toolbar_manager.toggle_mpr(vtk_widget)
+                                    found = True
+                                    logger.info("✓ MPR closed via toggle_mpr")
+                                    break
+                    
+                    # If using toolbar_integration pattern (_original_widget)
+                    if not found and hasattr(self, '_original_widget'):
+                        original = self._original_widget
+                        toolbar_manager._restore_selected_viewer(original)
+                        toolbar_manager.tool_selected = None
+                        toolbar_manager.handle_buttons_checked()
+                        found = True
+                        logger.info("✓ MPR closed via _restore_selected_viewer")
+                    
+                    # If still not found, try selected_widget
+                    if not found and hasattr(parent, 'selected_widget'):
+                        current = parent.selected_widget
+                        if current == self:
+                            # Current selected is the MPR itself
+                            if hasattr(self, '_original_widget'):
+                                toolbar_manager._restore_selected_viewer(self._original_widget)
+                            else:
+                                # Fallback: iterate to find owner
+                                for node in getattr(parent, 'lst_nodes_viewer', []):
+                                    vtk_widget = getattr(node, 'vtk_widget', None)
+                                    if vtk_widget and hasattr(vtk_widget, '_mpr_widget'):
+                                        toolbar_manager._restore_selected_viewer(vtk_widget)
+                                        break
+                            toolbar_manager.tool_selected = None
+                            toolbar_manager.handle_buttons_checked()
+                    
                     return
+                    
                 parent = parent.parent()
+            
+            logger.warning("Could not find toolbar_manager to close MPR")
+            
         except Exception as e:
             logger.error(f"Error closing MPR: {e}", exc_info=True)
-    
+            # Fallback: try to cleanup manually
+            try:
+                self.cleanup()
+                self.hide()
+                self.deleteLater()
+            except:
+                pass
+            
+
     def setup_auto_rotation(self):
         """Setup auto-rotation for 3D view"""
         if '3d' not in self.viewers:

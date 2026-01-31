@@ -516,22 +516,27 @@ class MprViewerWrapper(QWidget):
     Wrapper class that integrates MprViewer with the existing system
     Provides the same interface as StandardMPRViewer
     """
-    
-    def __init__(self, vtk_image_data=None, dicom_directory=None, parent=None, window_width=None, window_center=None):
+    mpr_closed = PySideSignal()  # Signal emitted when MPR is closed
+
+    def __init__(self, vtk_image_data=None, dicom_directory=None, parent=None, window_width=None, window_center=None, close_callback=None):
         """
         Initialize MPR Viewer Wrapper
-        
+
         Args:
             vtk_image_data: VTK image data object (fallback if dicom_directory not provided)
             dicom_directory: Path to DICOM series directory (preferred - preserves orientation!)
             parent: Parent widget (REQUIRED to avoid popup window)
             window_width: Window width for display (optional)
             window_center: Window center for display (optional)
+            close_callback: Callback function to call when this widget is closed
         """
         super().__init__(parent)  # Set parent first to avoid popup
-        
+
         # Set window flags to ensure it's embedded, not a separate window
         self.setWindowFlags(Qt.Widget)
+
+        # Store the close callback
+        self.close_callback = close_callback
         
         logger.info("=" * 80)
         logger.info("MPR VIEWER WRAPPER INITIALIZATION STARTED")
@@ -594,6 +599,10 @@ class MprViewerWrapper(QWidget):
             self.QtVolumeViewer = QtVolumeViewer(
                 self.vtkBaseClass, label="3D Volume"
             )
+            
+            # اصلاح: انتقال این خط به اینجا (بعد از ساخت QtVolumeViewer)
+            self.QtSegmentationViewer = self.QtVolumeViewer
+            
             logger.info("All viewers created successfully")
         except Exception as e:
             logger.error(f"Failed to create viewers: {e}", exc_info=True)
@@ -635,12 +644,14 @@ class MprViewerWrapper(QWidget):
                 self.QtSagittalOrthoViewer.render()
                 self.QtCoronalOrthoViewer.render()
                 self.QtAxialOrthoViewer.render()
-                self.QtSegmentationViewer.render()
+                self.QtVolumeViewer.render() 
                 logger.info("Window/level applied successfully")
             except Exception as e:
                 logger.error(f"Failed to apply window/level: {e}", exc_info=True)
         
         # Set up the main layout
+        # Assign QtSegmentationViewer for backward compatibility before UI setup
+        self.QtSegmentationViewer = self.QtVolumeViewer
         try:
             logger.info("Setting up UI layout...")
             self._setup_ui()
@@ -648,10 +659,78 @@ class MprViewerWrapper(QWidget):
         except Exception as e:
             logger.error(f"Failed to setup UI: {e}", exc_info=True)
             raise
-        
         logger.info("MPR Viewer Wrapper created successfully!")
         logger.info("=" * 80)
     
+    def _close_mpr(self):
+        """Close MPR viewer and return to normal view"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Closing MPR viewer...")
+        
+        try:
+            # Find the patient widget with toolbar_manager
+            parent = self.parent()
+            while parent is not None:
+                if hasattr(parent, 'toolbar_manager'):
+                    toolbar_manager = parent.toolbar_manager
+                    
+                    # Find the original widget that has reference to this MPR
+                    found = False
+                    if hasattr(parent, 'lst_nodes_viewer'):
+                        for node in parent.lst_nodes_viewer:
+                            vtk_widget = getattr(node, 'vtk_widget', None)
+                            if vtk_widget:
+                                if (hasattr(vtk_widget, '_mpr_widget') and vtk_widget._mpr_widget == self) or \
+                                (hasattr(vtk_widget, '_zeta_mpr_widget') and vtk_widget._zeta_mpr_widget == self):
+                                    # Found original widget, call toggle to close
+                                    toolbar_manager.toggle_mpr(vtk_widget)
+                                    found = True
+                                    logger.info("✓ MPR closed via toggle_mpr")
+                                    break
+                    
+                    # If using toolbar_integration pattern (_original_widget)
+                    if not found and hasattr(self, '_original_widget'):
+                        original = self._original_widget
+                        toolbar_manager._restore_selected_viewer(original)
+                        toolbar_manager.tool_selected = None
+                        toolbar_manager.handle_buttons_checked()
+                        found = True
+                        logger.info("✓ MPR closed via _restore_selected_viewer")
+                    
+                    # If still not found, try selected_widget
+                    if not found and hasattr(parent, 'selected_widget'):
+                        current = parent.selected_widget
+                        if current == self:
+                            # Current selected is the MPR itself
+                            if hasattr(self, '_original_widget'):
+                                toolbar_manager._restore_selected_viewer(self._original_widget)
+                            else:
+                                # Fallback: iterate to find owner
+                                for node in getattr(parent, 'lst_nodes_viewer', []):
+                                    vtk_widget = getattr(node, 'vtk_widget', None)
+                                    if vtk_widget and hasattr(vtk_widget, '_mpr_widget'):
+                                        toolbar_manager._restore_selected_viewer(vtk_widget)
+                                        break
+                            toolbar_manager.tool_selected = None
+                            toolbar_manager.handle_buttons_checked()
+                    
+                    return
+                    
+                parent = parent.parent()
+            
+            logger.warning("Could not find toolbar_manager to close MPR")
+            
+        except Exception as e:
+            logger.error(f"Error closing MPR: {e}", exc_info=True)
+            # Fallback: try to cleanup manually
+            try:
+                self.cleanup()
+                self.hide()
+                self.deleteLater()
+            except:
+                pass
+
     def _setup_ui(self):
         """Setup the UI layout - Clean 2x2 grid layout"""
         import sys
@@ -662,7 +741,18 @@ class MprViewerWrapper(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         print("Main layout created", file=sys.stderr, flush=True)
-        
+
+        # Create top toolbar
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setContentsMargins(6, 2, 6, 2)
+        toolbar_layout.setSpacing(6)
+
+        # Add stretch to push other elements to the right (if any)
+        toolbar_layout.addStretch()
+
+        # Add toolbar to main layout
+        main_layout.addLayout(toolbar_layout)
+
         # Simple dark theme - no internal toolbar, use main toolbar
         self.setStyleSheet("""
             QWidget { background-color: #000000; }
@@ -690,35 +780,40 @@ class MprViewerWrapper(QWidget):
                 border: 1px solid #333333;
             }
             QLabel { color: #666666; font-size: 10px; }
-            #PresetBar {
-                background-color: #0a0a0a;
-                border-bottom: 1px solid #1a1a1a;
-                max-height: 26px;
-                min-height: 26px;
+            QPushButton {
+                background-color: #2a2a2a;
+                color: white;
+                border: 1px solid #444444;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                background-color: #3a3a3a;
             }
         """)
-        
+
         # Simple preset bar only - tools come from main toolbar
         preset_bar = QFrame()
         preset_bar.setObjectName("PresetBar")
         preset_layout = QHBoxLayout(preset_bar)
         preset_layout.setContentsMargins(6, 2, 6, 2)
         preset_layout.setSpacing(6)
-        
+
         # Preset dropdown
         preset_label = QLabel("W/L:")
         preset_layout.addWidget(preset_label)
-        
+
         self.preset_combo = QComboBox()
         for preset_name in CT_PRESETS.keys():
             self.preset_combo.addItem(preset_name)
         self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
         preset_layout.addWidget(self.preset_combo)
-        
+
         self.wl_label = QLabel("")
         self._update_wl_label()
         preset_layout.addWidget(self.wl_label)
-        
+
         preset_layout.addStretch()
         main_layout.addWidget(preset_bar)
         
@@ -1196,7 +1291,7 @@ class MprViewerWrapper(QWidget):
                 (self.QtAxialOrthoViewer, "Axial"),
                 (self.QtCoronalOrthoViewer, "Coronal"),
                 (self.QtSagittalOrthoViewer, "Sagittal"),
-                (self.QtSegmentationViewer, "3D")
+                (self.QtVolumeViewer, "3D")  
             ]
             
             for qt_viewer, name in viewers:
@@ -1207,8 +1302,13 @@ class MprViewerWrapper(QWidget):
                     qt_viewer.viewer.GetRenderWindow().Render()
                     logger.info(f"{name} viewer initialized with camera reset")
             
-            # Set trackball style for 3D viewer
-            if hasattr(self.QtSegmentationViewer, 'viewer') and self.QtSegmentationViewer.viewer:
+            # اصلاح: چک ایمنی برای QtSegmentationViewer قبل از دسترسی
+            if (hasattr(self, 'QtSegmentationViewer') and 
+                self.QtSegmentationViewer is not None and
+                hasattr(self.QtSegmentationViewer, 'viewer') and 
+                self.QtSegmentationViewer.viewer):
+                
+                # Set trackball style for 3D viewer
                 interactor = self.QtSegmentationViewer.viewer.GetRenderWindow().GetInteractor()
                 if interactor:
                     style = vtk.vtkInteractorStyleTrackballCamera()
@@ -1217,7 +1317,8 @@ class MprViewerWrapper(QWidget):
             logger.info("All viewers initialized successfully")
         except Exception as e:
             logger.warning(f"Error initializing viewers: {e}", exc_info=True)
-    
+            
+
     def _save_camera_state(self, viewer_name, renderer):
         """Save camera state for a viewer"""
         if renderer:
@@ -1249,7 +1350,7 @@ class MprViewerWrapper(QWidget):
             ('axial', self.QtAxialOrthoViewer),
             ('coronal', self.QtCoronalOrthoViewer),
             ('sagittal', self.QtSagittalOrthoViewer),
-            ('3d', self.QtSegmentationViewer)
+            ('3d', self.QtVolumeViewer)
         ]
         for name, qt_viewer in viewers:
             if hasattr(qt_viewer, 'viewer') and qt_viewer.viewer:
@@ -1261,7 +1362,7 @@ class MprViewerWrapper(QWidget):
             ('axial', self.QtAxialOrthoViewer),
             ('coronal', self.QtCoronalOrthoViewer),
             ('sagittal', self.QtSagittalOrthoViewer),
-            ('3d', self.QtSegmentationViewer)
+            ('3d', self.QtVolumeViewer)  
         ]
         for name, qt_viewer in viewers:
             if hasattr(qt_viewer, 'viewer') and qt_viewer.viewer:
@@ -1294,8 +1395,8 @@ class MprViewerWrapper(QWidget):
             self.QtSagittalOrthoViewer.render()
             self.QtCoronalOrthoViewer.render()
             self.QtAxialOrthoViewer.render()
-            self.QtSegmentationViewer.render()
-            
+            self.QtVolumeViewer.render()
+
             # Update label
             self._update_wl_label()
             
@@ -1315,8 +1416,8 @@ class MprViewerWrapper(QWidget):
             self.QtSagittalOrthoViewer.render()
             self.QtCoronalOrthoViewer.render()
             self.QtAxialOrthoViewer.render()
-            self.QtSegmentationViewer.render()
-            
+            self.QtVolumeViewer.render() 
+                        
             # Update label
             self._update_wl_label()
         except Exception as e:
@@ -1329,104 +1430,292 @@ class MprViewerWrapper(QWidget):
         VTK's QVTKRenderWindowInteractor must be Finalized before Qt destroys the widget.
         """
         logger.info("MprViewerWrapper.cleanup() called - Finalizing VTK viewers...")
-        
+
         # Flag to track if cleanup was already done
         if getattr(self, '_cleanup_done', False):
             logger.info("Cleanup already done, skipping...")
             return
         self._cleanup_done = True
-        
+
+        # Stop any running threads first
+        try:
+            # Stop any playing slices in ortho viewers
+            ortho_viewers = [
+                getattr(self, 'QtSagittalOrthoViewer', None),
+                getattr(self, 'QtCoronalOrthoViewer', None),
+                getattr(self, 'QtAxialOrthoViewer', None)
+            ]
+
+            for ortho_viewer in ortho_viewers:
+                if ortho_viewer and hasattr(ortho_viewer, 'status') and ortho_viewer.status:
+                    ortho_viewer.pause_slices()
+
+                # Stop any running threads
+                if hasattr(ortho_viewer, 'thread') and ortho_viewer.thread:
+                    try:
+                        if ortho_viewer.thread.isRunning():
+                            ortho_viewer.thread.quit()
+                            ortho_viewer.thread.wait(1000)  # Wait up to 1 second
+                    except Exception as e:
+                        logger.warning(f"Error stopping thread: {e}")
+
+        except Exception as e:
+            logger.warning(f"Error stopping threads during cleanup: {e}")
+
         # Cleanup order is important:
         # 1. First, disable any interactors to prevent callbacks during cleanup
         # 2. Then finalize viewers (this releases OpenGL resources)
         # 3. Finally cleanup any temporary files
-        
+
         try:
             # Cleanup ViewersConnection first (removes observers)
             if hasattr(self, 'ViewersConnection') and self.ViewersConnection:
                 try:
-                    # ViewersConnection may have cleanup or simply setting to None
+                    # Disconnect all viewers from the connection
                     self.ViewersConnection = None
                     logger.info("ViewersConnection cleaned up")
                 except Exception as e:
                     logger.warning(f"Error cleaning up ViewersConnection: {e}")
-            
+
             # Cleanup each viewer - must call Finalize() on the underlying VtkViewer
+            # اصلاح: حذف QtSegmentationViewer از اینجا چون همان QtVolumeViewer است و دوباری finalize نمی‌شود
             viewers_to_cleanup = [
                 ('QtSagittalOrthoViewer', 'Sagittal'),
                 ('QtCoronalOrthoViewer', 'Coronal'),
                 ('QtAxialOrthoViewer', 'Axial'),
-                ('QtSegmentationViewer', 'Segmentation'),
+                ('QtVolumeViewer', 'Volume'),  # فقط VolumeViewer
             ]
-            
+
             for viewer_attr, viewer_name in viewers_to_cleanup:
                 try:
                     if hasattr(self, viewer_attr):
                         qt_viewer = getattr(self, viewer_attr)
                         if qt_viewer:
-                            # Get the underlying VtkViewer (which is QVTKRenderWindowInteractor)
+                            # Get the underlying VtkViewer
                             vtk_viewer = qt_viewer.get_viewer() if hasattr(qt_viewer, 'get_viewer') else None
-                            
+
                             if vtk_viewer:
+                                # Disable the interactor first
+                                try:
+                                    interactor = vtk_viewer.GetRenderWindow().GetInteractor()
+                                    if interactor:
+                                        interactor.Disable()
+                                        interactor.TerminateApp()
+                                except Exception as e:
+                                    logger.warning(f"Error disabling interactor for {viewer_name}: {e}")
+
                                 # Finalize the render window interactor
                                 try:
                                     render_window = vtk_viewer.GetRenderWindow()
                                     if render_window:
-                                        # Remove all renderers first
+                                        # Remove all actors and volumes from renderers
                                         renderers = render_window.GetRenderers()
                                         if renderers:
                                             renderers.InitTraversal()
                                             renderer = renderers.GetNextItem()
                                             while renderer:
-                                                render_window.RemoveRenderer(renderer)
+                                                # Remove all actors
+                                                actors = renderer.GetActors()
+                                                if actors:
+                                                    actors.InitTraversal()
+                                                    actor = actors.GetNextItem()
+                                                    while actor:
+                                                        renderer.RemoveActor(actor)
+                                                        actor = actors.GetNextItem()
+
+                                                # Remove all volumes
+                                                volumes = renderer.GetVolumes()
+                                                if volumes:
+                                                    volumes.InitTraversal()
+                                                    volume = volumes.GetNextItem()
+                                                    while volume:
+                                                        renderer.RemoveVolume(volume)
+                                                        volume = volumes.GetNextItem()
+
+                                                # Remove all lights
+                                                lights = renderer.GetLights()
+                                                if lights:
+                                                    lights.InitTraversal()
+                                                    light = lights.GetNextItem()
+                                                    while light:
+                                                        renderer.RemoveLight(light)
+                                                        light = lights.GetNextItem()
+
                                                 renderer = renderers.GetNextItem()
+
+                                        # Finalize the render window
                                         render_window.Finalize()
                                 except Exception as e:
                                     logger.warning(f"Error finalizing render window for {viewer_name}: {e}")
-                                
+
                                 # Finalize the interactor
                                 try:
                                     vtk_viewer.Finalize()
                                     logger.info(f"{viewer_name} viewer Finalized")
                                 except Exception as e:
                                     logger.warning(f"Error finalizing {viewer_name} viewer: {e}")
-                            
+
                             # Hide and prepare for deletion
-                            qt_viewer.hide()
+                            try:
+                                qt_viewer.hide()
+                            except:
+                                pass
                             setattr(self, viewer_attr, None)
                 except Exception as e:
                     logger.warning(f"Error cleaning up {viewer_name} viewer: {e}")
-            
+
             # Cleanup VtkBase
             if hasattr(self, 'vtkBaseClass') and self.vtkBaseClass:
                 try:
+                    # Clean up any remaining VTK objects in VtkBase
                     self.vtkBaseClass = None
                     logger.info("VtkBase cleaned up")
                 except Exception as e:
                     logger.warning(f"Error cleaning up VtkBase: {e}")
-            
+
+            # Explicitly delete any remaining VTK objects
+            try:
+                if hasattr(self, 'vtkBaseClass'):
+                    delattr(self, 'vtkBaseClass')
+            except:
+                pass
+
             logger.info("MprViewerWrapper.cleanup() completed successfully")
-            
+
         except Exception as e:
             logger.error(f"Error during MprViewerWrapper cleanup: {e}", exc_info=True)
 
+
     def closeEvent(self, event):
-        """Handle close event - cleanup VTK viewers and temporary MHD file"""
+        """
+        Handle close event - cleanup VTK viewers and temporary MHD file.
+        This is called when the widget is closed, either programmatically or by user action.
+        """
+        import logging
+        import os
+        logger = logging.getLogger(__name__)
         logger.info("MprViewerWrapper.closeEvent() called")
         
-        # First cleanup VTK viewers (CRITICAL - must be done before Qt destroys the widget)
-        self.cleanup()
-        
-        # Clean up temporary MHD file
-        if hasattr(self, 'mhd_path') and self.mhd_path and os.path.exists(self.mhd_path):
+        # First, try to properly close through toolbar_manager to restore original viewer
+        try:
+            # Navigate up to find the patient_widget with toolbar_manager
+            parent = self.parent()
+            toolbar_found = False
+            parent_chain = []
+            
+            while parent is not None:
+                parent_chain.append(type(parent).__name__)
+                
+                # Check if this is the patient widget with toolbar_manager
+                if hasattr(parent, 'toolbar_manager') and parent.toolbar_manager:
+                    toolbar_manager = parent.toolbar_manager
+                    
+                    # Try to close properly via toolbar toggle
+                    # This ensures the original viewer is restored
+                    logger.info("Found toolbar_manager, attempting proper closure via toggle_mpr")
+                    
+                    # Determine which widget to pass to toggle_mpr
+                    if hasattr(self, '_original_widget'):
+                        # We are the MPR widget, pass ourselves
+                        toolbar_manager.toggle_mpr(self)
+                        toolbar_found = True
+                        logger.info("Called toggle_mpr with MPR widget (self)")
+                    else:
+                        # Try to find the original widget that owns us
+                        if hasattr(parent, 'selected_widget'):
+                            current_selected = parent.selected_widget
+                            if current_selected == self:
+                                # Current selected is this MPR, find the original
+                                for node in getattr(parent, 'lst_nodes_viewer', []):
+                                    vtk_widget = getattr(node, 'vtk_widget', None)
+                                    if vtk_widget and hasattr(vtk_widget, '_mpr_widget') and vtk_widget._mpr_widget == self:
+                                        toolbar_manager.toggle_mpr(vtk_widget)
+                                        toolbar_found = True
+                                        logger.info("Called toggle_mpr with original vtk_widget")
+                                        break
+                    
+                    if not toolbar_found:
+                        logger.warning("Could not determine original widget, calling cleanup directly")
+                    
+                    break
+                
+                parent = parent.parent()
+            
+            if not toolbar_found:
+                logger.warning(f"Could not find toolbar_manager in parent chain: {' -> '.join(parent_chain)}")
+                # Fallback to direct cleanup
+                self.cleanup()
+                
+        except Exception as e:
+            logger.error(f"Error during toolbar-mediated close: {e}", exc_info=True)
+            # Ensure cleanup happens even if toolbar method fails
             try:
-                raw_path = self.mhd_path.replace('.mhd', '.raw')
-                if os.path.exists(raw_path):
-                    os.remove(raw_path)
-                os.remove(self.mhd_path)
-                logger.info(f"Cleaned up temporary MHD file: {self.mhd_path}")
+                self.cleanup()
+            except Exception as cleanup_error:
+                logger.error(f"Cleanup also failed: {cleanup_error}", exc_info=True)
+
+        # Clean up temporary MHD file
+        if hasattr(self, 'mhd_path') and self.mhd_path:
+            try:
+                if os.path.exists(self.mhd_path):
+                    raw_path = self.mhd_path.replace('.mhd', '.raw')
+                    if os.path.exists(raw_path):
+                        os.remove(raw_path)
+                        logger.info(f"Cleaned up temporary RAW file: {raw_path}")
+                    os.remove(self.mhd_path)
+                    logger.info(f"Cleaned up temporary MHD file: {self.mhd_path}")
             except Exception as e:
-                logger.warning(f"Failed to clean up temporary file: {e}")
+                logger.warning(f"Failed to clean up temporary files: {e}", exc_info=True)
+
+        # Accept the close event
+        event.accept()
+        logger.info("MprViewerWrapper.closeEvent() completed")
         
-        super().closeEvent(event)
+    def close(self):
+        """
+        Override close() to ensure cleanup always runs even if external code calls .close()
+        """
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+        return super().close()
+
+    def shutdown(self):
+        """Public method to force proper cleanup and deletion"""
+        logger.info("MprViewerWrapper.shutdown() called")
+        
+        # First call close callback
+        if self.close_callback:
+            try:
+                logger.info("Calling close_callback to restore original viewer")
+                self.close_callback()  # ✅ This should restore the original widget
+            except Exception as e:
+                logger.warning(f"Error in close_callback: {e}")
+        
+        # Then cleanup VTK
+        try:
+            self.cleanup()
+        except Exception as e:
+            logger.warning(f"Error during cleanup: {e}")
+        
+        # Remove from layout
+        try:
+            parent = self.parent()
+            if parent and hasattr(parent, 'layout'):
+                layout = parent.layout()
+                if layout:
+                    layout.removeWidget(self)
+                    logger.info("Removed MPR widget from layout")
+        except Exception as e:
+            logger.warning(f"Error removing from layout: {e}")
+        
+        # Schedule deletion
+        try:
+            self.hide()
+            self.setParent(None)
+            self.deleteLater()
+            logger.info("MPR widget scheduled for deletion")
+        except Exception as e:
+            logger.warning(f"Error during deletion: {e}")
 
