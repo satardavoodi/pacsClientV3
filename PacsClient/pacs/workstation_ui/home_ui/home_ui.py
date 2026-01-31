@@ -1303,7 +1303,7 @@ class HomePanelWidget(QWidget):
                 # Start downloads automatically (no dialog)
                 download_manager.start_all_downloads()
             else:
-                QMessageBox.warning(self, "خطا در اضافه کردن",
+                print(self, "خطا در اضافه کردن",
                                     "خطا در اضافه کردن مطالعات به لیست دانلود.")
 
         except Exception as e:

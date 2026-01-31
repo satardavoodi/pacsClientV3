@@ -475,29 +475,6 @@ class MainWindowWidget(QWidget):
         except Exception:
             return False
 
-    def setup_ui(self):
-        self._main_layout = QVBoxLayout(self)
-        main_layout = self._main_layout
-        main_layout.setContentsMargins(2, 2, 2, 2)
-        main_layout.setSpacing(0)
-
-        self.setup_title_bar(main_layout)
-
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setTabsClosable(True)
-        self.tab_widget.setMovable(True)
-
-        # ✅ robust: هم از خود QTabWidget و هم QTabBar وصل کن
-        self.tab_widget.tabCloseRequested.connect(self.close_tab)
-        try:
-            self.tab_widget.tabBar().tabCloseRequested.connect(self.close_tab)
-        except Exception:
-            pass
-
-        main_layout.addWidget(self.tab_widget)
-
-        self.apply_modern_styling()
-
     def setup_title_bar(self, parent_layout):
         self.title_bar = QFrame()
         self.title_bar.setObjectName("TitleBar")
@@ -634,60 +611,6 @@ class MainWindowWidget(QWidget):
             }
             QTabBar::close-button:hover { background: rgba(239, 68, 68, 1.0); }
 
-            /* دکمه‌های کنترل پنجره - استایل مدرن شبیه ویندوز 10 */
-            QPushButton#minimize_button, 
-            QPushButton#maximize_button, 
-            QPushButton#close_button {
-                background: transparent;
-                border: none;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 500;
-                min-width: 46px;
-                max-width: 46px;
-                min-height: 32px;
-                max-height: 32px;
-                margin: 0px;
-                padding: 0px;
-                border-radius: 0px;
-                transition: all 0.2s ease;
-            }
-            
-            /* دکمه Minimize */
-            QPushButton#minimize_button:hover {
-                background: rgba(255, 255, 255, 0.1);
-            }
-            QPushButton#minimize_button:pressed {
-                background: rgba(255, 255, 255, 0.2);
-            }
-            
-            /* دکمه Maximize/Restore */
-            QPushButton#maximize_button:hover {
-                background: rgba(255, 255, 255, 0.1);
-            }
-            QPushButton#maximize_button:pressed {
-                background: rgba(255, 255, 255, 0.2);
-            }
-            
-            /* دکمه Close - رنگ‌های متمایز */
-            QPushButton#close_button:hover {
-                background: #e81123;
-                color: white;
-            }
-            QPushButton#close_button:pressed {
-                background: #f1707a;
-            }
-            
-            /* حالت maximized - دکمه‌ها نزدیک‌تر به هم */
-            MainWindowWidget[maximized="true"] QPushButton#minimize_button,
-            MainWindowWidget[maximized="true"] QPushButton#maximize_button,
-            MainWindowWidget[maximized="true"] QPushButton#close_button {
-                min-width: 44px;
-                max-width: 44px;
-                min-height: 30px;
-                max-height: 30px;
-            }
-
             MainWindowWidget[maximized="true"] {
                 border: none;
                 border-radius: 0px;
@@ -695,30 +618,8 @@ class MainWindowWidget(QWidget):
             MainWindowWidget[maximized="true"] QFrame#TitleBar {
                 border-radius: 0px;
             }
-            
-            /* هایلایت برای دکمه‌ها هنگام hover */
-            QPushButton#minimize_button:hover:!pressed,
-            QPushButton#maximize_button:hover:!pressed {
-                background: rgba(255, 255, 255, 0.08);
-            }
-            
-            /* افکت نوری ظریف */
-            QPushButton#minimize_button,
-            QPushButton#maximize_button,
-            QPushButton#close_button {
-                border: 1px solid transparent;
-            }
-            
-            QPushButton#minimize_button:hover,
-            QPushButton#maximize_button:hover {
-                border: 1px solid rgba(255, 255, 255, 0.15);
-            }
-            
-            QPushButton#close_button:hover {
-                border: 1px solid rgba(232, 17, 35, 0.3);
-            }
         """)
-                
+
     def _set_maximized_appearance(self, is_max: bool):
         self.setProperty("maximized", "true" if is_max else "false")
 
@@ -787,22 +688,6 @@ class MainWindowWidget(QWidget):
         delay = 50 if IS_MAC else 0
         QTimer.singleShot(delay, _cleanup)
 
-    def _is_over_tabbar(self, global_pos) -> bool:
-        """
-        True اگر موس روی ناحیه واقعی QTabBar باشد (حتی اگر widgetAt درست کار نکند).
-        این تابع کلید حل مشکل consume شدن کلیک close تب توسط TitleBar است.
-        """
-        try:
-            if not hasattr(self, "tab_widget") or self.tab_widget is None:
-                return False
-            tb = self.tab_widget.tabBar()
-            if tb is None or not tb.isVisible():
-                return False
-            p = tb.mapFromGlobal(global_pos)
-            return tb.rect().contains(p)
-        except Exception:
-            return False
-
     def _is_in_tabbar_chain(self, w: QWidget) -> bool:
         """True اگر widget مقصد (obj) خودش یا یکی از والدها QTabBar باشد."""
         while w is not None:
@@ -825,21 +710,73 @@ class MainWindowWidget(QWidget):
 
     # ---------------- Window buttons ----------------
     def window_buttons(self):
-        self.minimize_button = QPushButton("—")
-        self.minimize_button.setObjectName("minimize_button")
+        # Minimize Button - Windows 10 Style
+        self.minimize_button = QPushButton("─")
+        self.minimize_button.setObjectName("MinimizeButton")
         self.minimize_button.setToolTip("Minimize")
-        
-        self.maximize_button = QPushButton("□")
-        self.maximize_button.setObjectName("maximize_button")
-        self.maximize_button.setToolTip("Maximize")
-        
-        self.close_button = QPushButton("×")
-        self.close_button.setObjectName("close_button")
-        self.close_button.setToolTip("Close")
-        
-        # حذف استایل قدیمی و استفاده از استایل جدید در تابع apply_modern_styling
+        self.minimize_button.setFixedSize(46, 32)
+        self.minimize_button.setStyleSheet("""
+            QPushButton#MinimizeButton {
+                background: transparent;
+                border: none;
+                color: #ffffff;
+                font-size: 16px;
+                font-weight: normal;
+            }
+            QPushButton#MinimizeButton:hover {
+                background: rgba(255, 255, 255, 0.1);
+                color: #ffffff;
+            }
+            QPushButton#MinimizeButton:pressed {
+                background: rgba(255, 255, 255, 0.05);
+            }
+        """)
         self.minimize_button.clicked.connect(self.showMinimized)
+
+        # Maximize/Restore Button - Windows 10 Style
+        self.maximize_button = QPushButton("□")
+        self.maximize_button.setObjectName("MaximizeButton")
+        self.maximize_button.setToolTip("Maximize")
+        self.maximize_button.setFixedSize(46, 32)
+        self.maximize_button.setStyleSheet("""
+            QPushButton#MaximizeButton {
+                background: transparent;
+                border: none;
+                color: #ffffff;
+                font-size: 16px;
+                font-weight: normal;
+            }
+            QPushButton#MaximizeButton:hover {
+                background: rgba(255, 255, 255, 0.1);
+                color: #ffffff;
+            }
+            QPushButton#MaximizeButton:pressed {
+                background: rgba(255, 255, 255, 0.05);
+            }
+        """)
         self.maximize_button.clicked.connect(self._toggle_max_restore)
+
+        # Close Button - Windows 10 Style (Red on hover)
+        self.close_button = QPushButton("✕")
+        self.close_button.setObjectName("CloseButton")
+        self.close_button.setToolTip("Close")
+        self.close_button.setFixedSize(46, 32)
+        self.close_button.setStyleSheet("""
+            QPushButton#CloseButton {
+                background: transparent;
+                border: none;
+                color: #ffffff;
+                font-size: 16px;
+                font-weight: normal;
+            }
+            QPushButton#CloseButton:hover {
+                background: #e81123;
+                color: #ffffff;
+            }
+            QPushButton#CloseButton:pressed {
+                background: rgba(232, 17, 35, 0.8);
+            }
+        """)
         self.close_button.clicked.connect(self.close)
 
         title_layout = self.title_bar.layout()
@@ -848,7 +785,6 @@ class MainWindowWidget(QWidget):
         title_layout.addWidget(self.close_button)
 
         self._sync_maximize_button_state()
-
 
     def _toggle_max_restore(self):
         if not self.isMaximized():
@@ -875,19 +811,11 @@ class MainWindowWidget(QWidget):
         if getattr(self, "maximize_button", None) is None:
             return
         if self.isMaximized():
-            self.maximize_button.setText("❐")  # نماد restore در ویندوز 10
+            self.maximize_button.setText("❐")
             self.maximize_button.setToolTip("Restore Down")
         else:
-            self.maximize_button.setText("🗖")  # نماد maximize در ویندوز 10
+            self.maximize_button.setText("□")
             self.maximize_button.setToolTip("Maximize")
-            
-    def _is_in_tabbar_chain(self, w: QWidget) -> bool:
-        """True اگر widget زیر موس، خودش یا یکی از والدها QTabBar باشد (یعنی تعامل با تب‌ها)."""
-        while w is not None:
-            if isinstance(w, QTabBar):
-                return True
-            w = w.parentWidget()
-        return False
 
     def _is_tab_interaction_at(self, global_pos) -> bool:
         """تشخیص اینکه موقعیت موس روی تب‌ها/close-button هست یا نه."""

@@ -1,10 +1,4 @@
 import asyncio
-from pathlib import Path
-import os
-import sys
-import logging
-import time
-from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, 
@@ -13,9 +7,15 @@ from PySide6.QtWidgets import (
     QCheckBox, QGroupBox, QScrollArea, QSizePolicy, QFileDialog, QInputDialog,
     QMessageBox
 )
-from PySide6.QtCore import Signal, Qt, QTimer, QThread, QObject, QMutex, QMutexLocker
+from PySide6.QtCore import Signal, Qt, QTimer, QThread, QObject, QMutex, QMutexLocker,QSize,QEvent
 from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
 import qtawesome as qta
+import time
+from datetime import datetime
+import os
+import sys
+import logging
+from pathlib import Path
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -28,7 +28,6 @@ if str(pacs_client_dir) not in sys.path:
 
 from PacsClient.utils.socket_config import get_socket_config
 from PacsClient.utils import download_attachments_for_study, download_attachments_for_study_async
-
 
 class DownloadItem:
     """Represents a single download item"""
@@ -371,8 +370,9 @@ class DownloadManagerWidget(QWidget):
         self._initializing = False  # Prevent re-entry during initialization
         self._socket_connected_once = False  # Track if we've ever connected successfully
         
-        # Fix: Use a more appropriate directory for persistence
-        self._persistence_file = self._get_persistence_file_path()
+        # Persistence file path
+        self._persistence_file = Path.home() / '.aipacs' / 'download_manager_state.json'
+        self._persistence_file.parent.mkdir(parents=True, exist_ok=True)
         
         # Auto-save timer
         self._auto_save_timer = QTimer()
@@ -393,52 +393,6 @@ class DownloadManagerWidget(QWidget):
         
         # Initialize database progress tracking
         self._init_database_progress()
-    
-    def _get_persistence_file_path(self):
-        """Get the appropriate path for persistence file based on OS"""
-        try:
-            # Try to use app-specific data directory first
-            if sys.platform == "win32":
-                # Windows: Use AppData/Local
-                appdata_path = os.getenv('LOCALAPPDATA')
-                if appdata_path:
-                    base_dir = Path(appdata_path) / 'AIPACS' / 'DownloadManager'
-                else:
-                    base_dir = Path.home() / 'AppData' / 'Local' / 'AIPACS' / 'DownloadManager'
-            elif sys.platform == "darwin":
-                # macOS: Use Application Support
-                base_dir = Path.home() / 'Library' / 'Application Support' / 'AIPACS' / 'DownloadManager'
-            else:
-                # Linux/Unix: Use .config or home directory
-                config_dir = os.getenv('XDG_CONFIG_HOME', Path.home() / '.config')
-                base_dir = Path(config_dir) / 'aipacs' / 'download_manager'
-            
-            # Create directory if it doesn't exist
-            base_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Check if we have write permissions
-            test_file = base_dir / '.test_write'
-            try:
-                test_file.touch()
-                test_file.unlink()
-                logger.info(f"✅ Using persistence directory: {base_dir}")
-                return base_dir / 'download_manager_state.json'
-            except (PermissionError, OSError) as e:
-                logger.warning(f"⚠️ No write permission to {base_dir}: {e}")
-                
-                # Fallback 1: Try to use home directory with different folder name
-                fallback_dir = Path.home() / '.aipacs_downloads'
-                fallback_dir.mkdir(parents=True, exist_ok=True)
-                logger.info(f"🔄 Falling back to: {fallback_dir}")
-                return fallback_dir / 'download_manager_state.json'
-                
-        except Exception as e:
-            logger.error(f"❌ Error getting persistence file path: {e}")
-            # Ultimate fallback: current directory
-            current_dir = Path(__file__).parent
-            fallback_file = current_dir / 'download_manager_state.json'
-            logger.info(f"🔄 Ultimate fallback to: {fallback_file}")
-            return fallback_file
     
     def _init_database_progress(self):
         """Initialize database progress tracking (thread-safe)"""
@@ -558,55 +512,20 @@ class DownloadManagerWidget(QWidget):
         try:
             import json
             
-            # Only save if we have study downloads
-            if not self.study_downloads:
-                return
-            
             state = {
                 'version': '1.0',
                 'timestamp': time.time(),
                 'study_downloads': [item.to_dict() for item in self.study_downloads]
             }
             
-            # Write to temporary file first, then rename (atomic write)
-            temp_file = self._persistence_file.with_suffix('.tmp')
-            
-            with open(temp_file, 'w', encoding='utf-8') as f:
+            with open(self._persistence_file, 'w', encoding='utf-8') as f:
                 json.dump(state, f, indent=2)
-            
-            # Replace the original file with the temporary one
-            if self._persistence_file.exists():
-                self._persistence_file.unlink()
-            temp_file.rename(self._persistence_file)
             
             logger.debug(f"✅ Saved download manager state: {len(self.study_downloads)} items")
             
-        except PermissionError as e:
-            logger.warning(f"⚠️ Permission denied when saving state to {self._persistence_file}: {e}")
-            # Don't show error to user as this is background operation
-            # Try to use a different location next time
-            self._handle_persistence_error()
         except Exception as e:
             logger.error(f"❌ Failed to save download manager state: {e}")
             # Don't show error to user as this is background operation
-    
-    def _handle_persistence_error(self):
-        """Handle persistence file errors by trying alternative locations"""
-        try:
-            # Try to use a temporary directory as fallback
-            import tempfile
-            temp_dir = Path(tempfile.gettempdir()) / 'aipacs_download_manager'
-            temp_dir.mkdir(parents=True, exist_ok=True)
-            
-            self._persistence_file = temp_dir / 'download_manager_state.json'
-            logger.info(f"🔄 Changed persistence file to: {self._persistence_file}")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to set alternative persistence location: {e}")
-            # Disable auto-save if we can't find a writable location
-            if hasattr(self, '_auto_save_timer'):
-                self._auto_save_timer.stop()
-                logger.warning("🛑 Disabled auto-save due to persistence errors")
     
     def _load_persisted_state(self):
         """Load download manager state from file"""
@@ -649,10 +568,6 @@ class DownloadManagerWidget(QWidget):
                 # Refresh UI
                 QTimer.singleShot(500, self._refresh_ui_from_persisted_state)
             
-        except (PermissionError, OSError) as e:
-            logger.warning(f"⚠️ Cannot access persistence file {self._persistence_file}: {e}")
-            # Try alternative location
-            self._handle_persistence_error()
         except Exception as e:
             logger.error(f"❌ Failed to load download manager state: {e}")
             # Don't show error to user, just start fresh
@@ -677,10 +592,7 @@ class DownloadManagerWidget(QWidget):
     
     def _auto_save_state(self):
         """Auto-save state periodically"""
-        try:
-            self._save_persisted_state()
-        except Exception as e:
-            logger.error(f"Error in auto-save: {e}")
+        self._save_persisted_state()
     
     def _sort_downloads(self):
         """Sort downloads by created_at (newest first)"""
@@ -1333,7 +1245,6 @@ class DownloadManagerWidget(QWidget):
                 logger.error(f"Server connection setup error: {e}")
                 # Recovery: Will use default config from socket_config.py
                 self.log_message("Will use default server configuration")
-    
         
     def setup_ui(self):
         """Setup the Download Manager UI"""
@@ -1361,130 +1272,240 @@ class DownloadManagerWidget(QWidget):
         self.apply_styling()
         
     def setup_header(self, layout):
-        """Setup the header section"""
+        """Setup the header section with Windows 10 style window controls"""
         header_widget = QWidget()
-        header_widget.setFixedHeight(40)  # Fixed height for header
+        header_widget.setFixedHeight(48)  # افزایش ارتفاع هدر برای دکمه‌های بزرگتر
         header_layout = QHBoxLayout(header_widget)
-        header_layout.setContentsMargins(4, 2, 4, 2)  # Reduced margins
-        header_layout.setSpacing(8)  # Reduced spacing
+        header_layout.setContentsMargins(8, 0, 0, 0)  # حذف margin راست برای چسبیدگی دکمه‌ها به گوشه
+        header_layout.setSpacing(8)
         
-        # Title with icon - Ultra compact layout
+        # Title with icon
         title_container = QWidget()
         title_layout = QHBoxLayout(title_container)
         title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(4)  # Reduced spacing
+        title_layout.setSpacing(6)
         
         title_icon = QLabel()
-        title_icon.setPixmap(qta.icon('fa5s.download', color='#3b82f6').pixmap(14, 14))  # Smaller icon
+        title_icon.setPixmap(qta.icon('fa5s.download', color='#3b82f6').pixmap(16, 16))
         
         title_text = QLabel("Download Manager")
         title_text.setStyleSheet("""
             QLabel {
-                font-size: 12px;
+                font-size: 13px;
                 font-weight: bold;
-                font-family: 'Roboto', sans-serif;
+                font-family: 'Segoe UI', sans-serif;
                 color: #f7fafc;
-                padding: 2px 0px;
+                padding: 4px 0px;
             }
         """)
         
         title_layout.addWidget(title_icon)
         title_layout.addWidget(title_text)
         
-        # Status summary - Ultra compact
+        # Status summary
         self.status_summary = QLabel("Ready")
         self.status_summary.setStyleSheet("""
             QLabel {
-                font-size: 11px;
-                font-family: 'Roboto', sans-serif;
+                font-size: 12px;
+                font-family: 'Segoe UI', sans-serif;
                 color: #a0aec0;
-                padding: 2px 6px;
+                padding: 4px 8px;
                 background: rgba(160, 174, 192, 0.1);
                 border: 1px solid rgba(160, 174, 192, 0.2);
-                border-radius: 3px;
+                border-radius: 4px;
             }
         """)
         
-        # Control buttons - Ultra compact
+        # Control buttons
         button_layout = QHBoxLayout()
-        button_layout.setSpacing(2)  # Minimal spacing
+        button_layout.setSpacing(4)
         
-        # Add download button
         self.add_btn = QPushButton()
         self.add_btn.setIcon(qta.icon('fa5s.plus', color='#10b981'))
         self.add_btn.setToolTip("Add New Download")
         self.add_btn.clicked.connect(self.add_download)
+        self.add_btn.setFixedSize(34, 34)
         self.add_btn.setStyleSheet("""
             QPushButton {
                 background: #10b981;
                 border: none;
-                border-radius: 3px;
-                padding: 4px;
+                border-radius: 4px;
+                padding: 6px;
                 color: white;
                 font-weight: bold;
             }
-            QPushButton:hover {
-                background: #059669;
-            }
-            QPushButton:pressed {
-                background: #047857;
-            }
+            QPushButton:hover { background: #059669; }
+            QPushButton:pressed { background: #047857; }
         """)
         
-        # Start all button
         self.start_all_btn = QPushButton()
         self.start_all_btn.setIcon(qta.icon('fa5s.play', color='#3b82f6'))
         self.start_all_btn.setToolTip("Start All Downloads")
+        self.start_all_btn.setFixedSize(34, 34)
         self.start_all_btn.clicked.connect(self.start_all_downloads)
         
-        # Resume all incomplete button
         self.resume_all_btn = QPushButton()
         self.resume_all_btn.setIcon(qta.icon('fa5s.redo', color='#8b5cf6'))
         self.resume_all_btn.setToolTip("Resume All Incomplete Downloads")
+        self.resume_all_btn.setFixedSize(34, 34)
         self.resume_all_btn.clicked.connect(self.resume_all_incomplete_downloads)
         
-        # Pause all button
         self.pause_all_btn = QPushButton()
         self.pause_all_btn.setIcon(qta.icon('fa5s.pause', color='#f59e0b'))
         self.pause_all_btn.setToolTip("Pause All Downloads")
+        self.pause_all_btn.setFixedSize(34, 34)
         self.pause_all_btn.clicked.connect(self.pause_all_downloads)
         
-        # Clear completed button
         self.clear_btn = QPushButton()
         self.clear_btn.setIcon(qta.icon('fa5s.trash', color='#ef4444'))
         self.clear_btn.setToolTip("Clear Completed")
+        self.clear_btn.setFixedSize(34, 34)
         self.clear_btn.clicked.connect(self.clear_completed)
         
-        # Settings button
-        self.settings_btn = QPushButton()
-        self.settings_btn.setIcon(qta.icon('fa5s.cog', color='#6b7280'))
-        self.settings_btn.setToolTip("Settings")
-        self.settings_btn.clicked.connect(self.show_settings)
-        
-        # Refresh progress button
         self.refresh_btn = QPushButton()
         self.refresh_btn.setIcon(qta.icon('fa5s.sync', color='#10b981'))
         self.refresh_btn.setToolTip("Refresh Progress from Database")
+        self.refresh_btn.setFixedSize(34, 34)
         self.refresh_btn.clicked.connect(self.refresh_progress_from_database)
         
-        # Add buttons to layout - Even smaller size
-        for btn in [self.add_btn, self.start_all_btn, self.resume_all_btn, self.pause_all_btn, self.clear_btn, self.refresh_btn, self.settings_btn]:
-            btn.setFixedSize(30, 30)  # Slightly larger for better visibility
-            btn.setStyleSheet(btn.styleSheet() + """
-                QPushButton {
-                    border-radius: 3px;
-                    padding: 4px;
-                }
-            """)
+        self.settings_btn = QPushButton()
+        self.settings_btn.setIcon(qta.icon('fa5s.cog', color='#6b7280'))
+        self.settings_btn.setToolTip("Settings")
+        self.settings_btn.setFixedSize(34, 34)
+        self.settings_btn.clicked.connect(self.show_settings)
+        
+        for btn in [self.add_btn, self.start_all_btn, self.resume_all_btn, 
+                    self.pause_all_btn, self.clear_btn, self.refresh_btn, self.settings_btn]:
+            if btn != self.add_btn:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background: #374151;
+                        border: none;
+                        border-radius: 4px;
+                        padding: 6px;
+                    }
+                    QPushButton:hover { background: #4b5563; }
+                """)
             button_layout.addWidget(btn)
         
+        # ==================== WINDOWS 10 STYLE WINDOW CONTROLS (بزرگتر) ====================
+        # Container for window controls - بدون هیچ فاصله‌ای از لبه راست
+        win_controls_container = QWidget()
+        win_controls_layout = QHBoxLayout(win_controls_container)
+        win_controls_layout.setContentsMargins(0, 0, 0, 0)
+        win_controls_layout.setSpacing(0)  # بدون فاصله بین دکمه‌ها
+        
+        # Minimize Button (50×36 - بزرگتر)
+        self.minimize_btn = QPushButton()
+        self.minimize_btn.setFixedSize(50, 36)
+        self.minimize_btn.setIcon(qta.icon('fa5s.minus', color='#ffffff'))
+        self.minimize_btn.setIconSize(QSize(14, 14))  # آیکون بزرگتر
+        self.minimize_btn.setToolTip("Minimize")
+        self.minimize_btn.clicked.connect(self.showMinimized)
+        self.minimize_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+                margin: 0px;
+            }
+            QPushButton:hover {
+                background-color: #404040;
+            }
+            QPushButton:pressed {
+                background-color: #505050;
+            }
+        """)
+        
+        # Maximize/Restore Button (50×36)
+        self.maximize_btn = QPushButton()
+        self.maximize_btn.setFixedSize(50, 36)
+        self.maximize_btn.setIcon(qta.icon('fa5s.square', color='#ffffff'))
+        self.maximize_btn.setIconSize(QSize(12, 12))
+        self.maximize_btn.setToolTip("Maximize")
+        self.maximize_btn.clicked.connect(self.toggle_maximize_restore)
+        self.maximize_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+                margin: 0px;
+            }
+            QPushButton:hover {
+                background-color: #404040;
+            }
+            QPushButton:pressed {
+                background-color: #505050;
+            }
+        """)
+        
+        # Close Button (50×36) - قرمز روشن در حالت hover مثل ویندوز 10
+        self.close_btn = QPushButton()
+        self.close_btn.setFixedSize(50, 36)
+        self.close_btn.setIcon(qta.icon('fa5s.times', color='#ffffff'))
+        self.close_btn.setIconSize(QSize(14, 14))
+        self.close_btn.setToolTip("Close")
+        self.close_btn.clicked.connect(self.close)
+        self.close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+                margin: 0px;
+            }
+            QPushButton:hover {
+                background-color: #e81123;  /* قرمز استاندارد ویندوز 10 */
+            }
+            QPushButton:pressed {
+                background-color: #f1707a;  /* قرمز روشن‌تر هنگام کلیک */
+            }
+        """)
+        
+        win_controls_layout.addWidget(self.minimize_btn)
+        win_controls_layout.addWidget(self.maximize_btn)
+        win_controls_layout.addWidget(self.close_btn)
+        
+        # Add everything to header layout
         header_layout.addWidget(title_container)
         header_layout.addStretch()
         header_layout.addWidget(self.status_summary)
         header_layout.addLayout(button_layout)
+        header_layout.addSpacing(12)  # فاصله قبل از دکمه‌های پنجره
+        header_layout.addWidget(win_controls_container)
         
         layout.addWidget(header_widget)
-        
+
+
+    def toggle_maximize_restore(self):
+        """Toggle between maximized and normal window state"""
+        if self.isMaximized():
+            self.showNormal()
+            self.maximize_btn.setIcon(qta.icon('fa5s.square', color='#ffffff'))
+            self.maximize_btn.setToolTip("Maximize")
+        else:
+            self.showMaximized()
+            # استفاده از آیکون restore (دو مربع)
+            self.maximize_btn.setIcon(qta.icon('fa5s.copy', color='#ffffff'))
+            self.maximize_btn.setToolTip("Restore Down")
+
+
+    def changeEvent(self, event):
+        """Handle window state changes to update maximize button icon"""
+        if event.type() == QEvent.WindowStateChange:
+            if self.isMaximized():
+                if hasattr(self, 'maximize_btn'):
+                    self.maximize_btn.setIcon(qta.icon('fa5s.copy', color='#ffffff'))
+                    self.maximize_btn.setToolTip("Restore Down")
+            else:
+                if hasattr(self, 'maximize_btn'):
+                    self.maximize_btn.setIcon(qta.icon('fa5s.square', color='#ffffff'))
+                    self.maximize_btn.setToolTip("Maximize")
+        super().changeEvent(event)
+            
+
     def setup_download_queue(self, splitter):
         """Setup the download queue table"""
         queue_widget = QWidget()
@@ -1862,24 +1883,36 @@ class DownloadManagerWidget(QWidget):
                 border: none;
                 background: transparent;
             }
-            
             QScrollBar:vertical {
-                background: #1a202c;
+                border: 1px solid #4b5563;
+                background: #1f2937;
                 width: 12px;
+                margin: 12px 0px 12px 0px;
                 border-radius: 6px;
             }
-            
             QScrollBar::handle:vertical {
-                background: #4b5563;
-                border-radius: 6px;
-                min-height: 20px;
+                background: #374151;
+                min-height: 40px;
+                border-radius: 5px;
             }
-            
             QScrollBar::handle:vertical:hover {
-                background: #6b7280;
+                background: #4b5563;
             }
-            
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
                 height: 0px;
             }
         """)
