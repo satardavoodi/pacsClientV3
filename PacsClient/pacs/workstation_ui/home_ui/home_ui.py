@@ -1314,40 +1314,8 @@ class HomePanelWidget(QWidget):
             if added_count > 0:
                 print(f"[HomePanelWidget] Added {added_count} new studies to download queue")
             else:
-<<<<<<< HEAD
-                # Check status of the selected studies in the queue
-                study_uids = {study.get('study_uid') for study in selected_studies if study.get('study_uid')}
-                queue_studies = [sd for sd in download_manager.study_downloads if sd.study_uid in study_uids]
-                
-                if queue_studies:
-                    pending = sum(1 for sd in queue_studies if sd.status == "Pending")
-                    downloading = sum(1 for sd in queue_studies if sd.status == "Downloading")
-                    completed = sum(1 for sd in queue_studies if sd.status == "Completed")
-                    
-                    print(f"[HomePanelWidget] Studies in queue: {len(queue_studies)} (pending={pending}, downloading={downloading}, completed={completed})")
-                    
-                    if downloading > 0:
-                        QMessageBox.information(self, "Download in Progress",
-                                              f"{downloading} studies are currently downloading.\n"
-                                              "Check the Download Manager tab for progress.")
-                    elif pending > 0:
-                        QMessageBox.information(self, "Downloads Queued",
-                                              f"{pending} studies are queued for download.\n"
-                                              "Check the Download Manager tab for progress.")
-                    elif completed > 0:
-                        QMessageBox.information(self, "Already Downloaded",
-                                              f"{completed} studies were already downloaded.\n"
-                                              "Check the Download Manager tab for status.")
-                else:
-                    # Studies not in queue at all - this shouldn't happen
-                    print(f"[HomePanelWidget] ERROR: Studies not found in queue after add_study_downloads")
-                    QMessageBox.warning(self, "Add Error",
-                                        "Could not add studies to download list.\n"
-                                        "Please try again or check the Download Manager.")
-=======
                 print(self, "خطا در اضافه کردن",
                                     "خطا در اضافه کردن مطالعات به لیست دانلود.")
->>>>>>> 0a1676c06fe56a7fb77f3ca67a672ae452d994b9
 
         except Exception as e:
             print(f"Error in _on_download_requested: {str(e)}")

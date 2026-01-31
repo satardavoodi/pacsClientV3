@@ -2,13 +2,8 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
                                 QPushButton, QLabel, QHeaderView, QAbstractItemView, QCheckBox,
                                 QSizePolicy, QStyledItemDelegate, QDialog, QListWidget, QListWidgetItem,
                                 QDialogButtonBox, QMessageBox, QProgressDialog)
-<<<<<<< HEAD
-from PySide6.QtCore import Signal, Qt, QTimer, QRect
-from PySide6.QtGui import QColor, QPainter, QPen, QIcon
-=======
 from PySide6.QtCore import Signal, Qt, QTimer, QRect, QPersistentModelIndex
-from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont
->>>>>>> 0a1676c06fe56a7fb77f3ca67a672ae452d994b9
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont,QIcon
 import threading
 import logging
 import qtawesome as qta

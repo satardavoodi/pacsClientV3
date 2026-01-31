@@ -1839,17 +1839,7 @@ class ToolbarManager:
             ])
             layout.addWidget(thick_btn)
 
-<<<<<<< HEAD
-            # Orthogonal MPR button (New - Full MPR Viewer)
-            ortho_mpr_btn = create_dropdown_tool('Orthogonal MPR Viewer', 'fa5s.th-large', '#10b981')
-            ortho_mpr_btn.clicked.connect(lambda: [
-                self._show_orthogonal_mpr_viewer(),
-                dropdown.close()
-            ])
-            layout.addWidget(ortho_mpr_btn)
-=======
             # Note: Zeta MPR removed from dropdown - now the main MPR button
->>>>>>> 0a1676c06fe56a7fb77f3ca67a672ae452d994b9
 
             # Position dropdown below the button
             button_pos = button.mapToGlobal(QPoint(0, button.height()))
