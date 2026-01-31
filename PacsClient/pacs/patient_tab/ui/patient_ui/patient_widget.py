@@ -97,9 +97,6 @@ class PatientWidget(QWidget):
         # This prevents "Cannot enter into task while another task is being executed" RuntimeError
         self._async_operation_lock = None  # Will be initialized as asyncio.Lock when needed
 
-        # Flag to prevent duplicate execution of lazy loading
-        self._lazy_load_in_progress = False
-
         # Progressive display support
         self._progressive_display_enabled = enable_progressive_mode
         
@@ -147,13 +144,16 @@ class PatientWidget(QWidget):
         self.thumbnail_manager.parent_widget = self
         # Lazy load heavy panels (created when needed)
         self.reception_data_tab = None
+        self.advanced_tools_panel = None
         self._patient_id_for_lazy = patient_id
 
         self.right_panel.addWidget(self.thumb_panel)  # index 0
         self.right_panel.addWidget(self.reception_panel)  # index 1
-        # Placeholder widget for lazy panel
+        # Placeholder widgets for lazy panels
         self._lazy_placeholder_2 = QWidget()
+        self._lazy_placeholder_3 = QWidget()
         self.right_panel.addWidget(self._lazy_placeholder_2)  # index 2 (will be replaced)
+        self.right_panel.addWidget(self._lazy_placeholder_3)  # index 3 (will be replaced)
 
         self.container_layout.addWidget(self.right_panel)
         self.container_layout.addWidget(self.center_layout_ui())
@@ -1169,12 +1169,7 @@ class PatientWidget(QWidget):
     async def lazy_load_first_series_progressive(self, size_init_viewers):
         """Wait for first series to download, then load it - OR load immediately if already exists"""
         print(f"🔍 [PROGRESSIVE] Starting lazy_load_first_series_progressive")
-
-        # Check if another instance of this method is already running
-        if hasattr(self, '_lazy_load_in_progress') and self._lazy_load_in_progress:
-            print(f"🔍 [PROGRESSIVE] Lazy load already in progress, skipping duplicate call")
-            return
-
+        
         # Initialize lock lazily if needed
         if self._async_operation_lock is None:
             try:
@@ -1182,21 +1177,14 @@ class PatientWidget(QWidget):
             except RuntimeError:
                 import threading
                 self._async_operation_lock = threading.Lock()
-
-        # Set the flag to prevent duplicate execution
-        self._lazy_load_in_progress = True
-
-        try:
-            # Use lock to prevent race condition with _async_load_and_display_series
-            if isinstance(self._async_operation_lock, asyncio.Lock):
-                async with self._async_operation_lock:
-                    await self._do_lazy_load_first_series(size_init_viewers)
-            else:
-                # Fallback for threading.Lock - this should not happen in async context
+        
+        # Use lock to prevent race condition with _async_load_and_display_series
+        if isinstance(self._async_operation_lock, asyncio.Lock):
+            async with self._async_operation_lock:
                 await self._do_lazy_load_first_series(size_init_viewers)
-        finally:
-            # Reset the flag after execution
-            self._lazy_load_in_progress = False
+        else:
+            # Fallback for threading.Lock - this should not happen in async context
+            await self._do_lazy_load_first_series(size_init_viewers)
 
     async def _do_lazy_load_first_series(self, size_init_viewers):
         from pathlib import Path
@@ -2147,9 +2135,9 @@ class PatientWidget(QWidget):
         self.btn_ai_module.setCheckable(True)
         self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
 
-        self.btn_advanced_image_reconstruction = VerticalButton("Advanced Image")
-        self.btn_advanced_image_reconstruction.setCheckable(False)  # Not checkable, acts as action button
-        self.btn_advanced_image_reconstruction.setStyleSheet(self.sidebar_btn_style(False))
+        self.btn_advanced_tools = VerticalButton("🛠️ Tools")
+        self.btn_advanced_tools.setCheckable(True)
+        self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
 
         # گروه انحصاری
         self.sidebar_btn_group = QButtonGroup(sidebar)
@@ -2158,6 +2146,7 @@ class PatientWidget(QWidget):
         self.sidebar_btn_group.addButton(self.btn_reception)
         self.sidebar_btn_group.addButton(self.btn_ai_chat)
         self.sidebar_btn_group.addButton(self.btn_ai_module)
+        self.sidebar_btn_group.addButton(self.btn_advanced_tools)
 
         # افزودن به لایه + دیوایدر بین هر دکمه
         layout.addWidget(self.btn_series, 1)
@@ -2172,7 +2161,7 @@ class PatientWidget(QWidget):
         layout.addWidget(self.btn_ai_module, 1)
         layout.addWidget(self.make_divider())
 
-        layout.addWidget(self.btn_advanced_image_reconstruction, 1)
+        layout.addWidget(self.btn_advanced_tools, 1)
 
         layout.addStretch(0)
 
@@ -2181,7 +2170,7 @@ class PatientWidget(QWidget):
         self.btn_reception.clicked.connect(lambda: self.switch_right_panel("reception"))
         self.btn_ai_chat.clicked.connect(lambda: self.switch_right_panel("ai_chat"))
         self.btn_ai_module.clicked.connect(lambda: self.switch_right_panel("ai_module"))
-        self.btn_advanced_image_reconstruction.clicked.connect(self.launch_advanced_image_reconstruction)
+        self.btn_advanced_tools.clicked.connect(lambda: self.switch_right_panel("advanced_tools"))
 
         return sidebar
 
@@ -2194,7 +2183,7 @@ class PatientWidget(QWidget):
                     font-weight: bold;
                     border: none;
                     border-radius: 8px;
-                    padding: 9px 0;
+                    padding: 10px 0;
                 }
             """
         else:
@@ -2204,7 +2193,7 @@ class PatientWidget(QWidget):
                     color: #aaa;
                     border: none;
                     border-radius: 8px;
-                    padding: 9px 0;
+                    padding: 10px 0;
                 }
             """
 
@@ -2216,6 +2205,7 @@ class PatientWidget(QWidget):
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
 
         elif option == 'reception':
             print("[PatientWidget] Switching to Reception Data tab (index 2)")
@@ -2248,6 +2238,7 @@ class PatientWidget(QWidget):
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(True))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
 
             # Trigger data fetch when tab is activated
             if self.reception_data_tab is not None:
@@ -2261,6 +2252,7 @@ class PatientWidget(QWidget):
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(True))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
+            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
             self.ai_chat_layout_ui()
 
         elif option == 'ai_module':
@@ -2269,94 +2261,31 @@ class PatientWidget(QWidget):
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(True))
+            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
             if self.method_add_new_tab:
                 self.method_add_new_tab(open_ai_client_tab=True, study_uid=self.study_uid)
 
-    def launch_advanced_image_reconstruction(self):
-        """
-        Launch Advanced Image Reconstruction (3D Slicer) for the active series.
-        
-        This method is called when the Advanced Image Reconstruction button is clicked
-        in the left sidebar. It launches the 3D Slicer application with the currently
-        active DICOM series.
-        """
-        import logging
-        import os
-        from PySide6.QtWidgets import QMessageBox
-        from pathlib import Path
-        logger = logging.getLogger(__name__)
-        
-        try:
-            logger.info("=" * 60)
-            logger.info("Advanced Image Reconstruction (3D Slicer) requested from sidebar")
-            logger.info("=" * 60)
+        elif option == 'advanced_tools':
+            print("[PatientWidget] Switching to Advanced Tools panel (index 3)")
             
-            # Get the selected widget (active viewer)
-            selected_widget = self.selected_widget
-            
-            # Check if widget is valid and has image viewer
-            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
-                logger.warning("No image viewer available in selected widget")
-                QMessageBox.warning(
-                    self,
-                    "No Image Available",
-                    "No active DICOM series available.\n\nPlease load an image first."
-                )
-                return
-            
-            # Check if series index is available
-            if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
-                logger.warning("No active series index found")
-                QMessageBox.warning(
-                    self,
-                    "No Series Available",
-                    "No active DICOM series available.\n\nPlease select a series first."
-                )
-                return
-            
-            # Get the active series number
-            active_series_number = selected_widget.last_series_show
-            logger.info(f"Active series number: {active_series_number}")
-            
-            # Find the series data by searching for matching series_number
-            series_data = None
-            dicom_directory = None
-            series_uid = None
-            window_width = None
-            window_center = None
-            
-            for i in range(len(self.lst_thumbnails_data)):
+            # ✅ Lazy load AdvancedToolsPanel if not already created
+            if self.advanced_tools_panel is None:
+                print("[PatientWidget] Creating AdvancedToolsPanel for the first time...")
                 try:
                     
-                    logger.info(f"   [{i}] series_number={series_num}, looking for {active_series_number}")
+                    # Create AdvancedToolsPanel
+                    self.advanced_tools_panel = AdvancedToolsPanel()
                     
-                    if series_num == int(active_series_number):
-                        series_data = thumbnail_data
-                        
-                        # Get DICOM directory from series path or first instance
-                        dicom_directory = series_metadata.get('series_path')
-                        series_uid = series_metadata.get('series_uid')
-                        
-                        # If no series_path, get from first instance
-                        instances = thumb_metadata.get('instances', [])
-                        if instances and len(instances) > 0:
-                            first_instance = instances[0]
-                            if not dicom_directory:
-                                first_instance_path = first_instance.get('instance_path')
-                                if first_instance_path:
-                                    dicom_directory = os.path.dirname(first_instance_path)
-                            
-                            # Get window/level from first instance
-                            window_width = first_instance.get('window_width')
-                            window_center = first_instance.get('window_center')
-                        
-                        logger.info(f"   ✅ MATCH! Found series at index {i}")
-                        logger.info(f"   DICOM directory: {dicom_directory}")
-                        logger.info(f"   Series UID: {series_uid}")
-                        break
-                except (KeyError, ValueError, TypeError) as e:
-                    logger.debug(f"   [ERROR] checking thumbnail data at index {i}: {e}")
-                    continue
+                    # Replace placeholder widget with actual AdvancedToolsPanel
+                    self.right_panel.removeWidget(self._lazy_placeholder_3)
+                    self._lazy_placeholder_3.deleteLater()
+                    self.right_panel.insertWidget(3, self.advanced_tools_panel)
+                    
+                    print("[PatientWidget] AdvancedToolsPanel created and inserted successfully")
+                except Exception as e:
+                    print(f"[PatientWidget] ERROR creating AdvancedToolsPanel: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             self.right_panel.setCurrentIndex(3)  # index 3 for Advanced Tools
             self.right_panel.setFixedWidth(550)  # Wider for tools
