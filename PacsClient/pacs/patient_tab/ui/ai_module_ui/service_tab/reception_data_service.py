@@ -37,24 +37,14 @@ class ReceptionDataFetchWorker(QThread):
     def run(self):
         """Execute the API request in background."""
         try:
-            # Construct URL with query parameter  
-            # Try to determine if patient_id is a reception ID (numeric) or National Code
-            url = f"{self.base_url}/api/pacs/patients"
-            
-            # If patient_id looks like a number and length < 10, assume it's receptionId
-            # Otherwise use nationalCode
-            if self.patient_id and self.patient_id.isdigit() and len(self.patient_id) < 10:
-                params = {"receptionId": self.patient_id}
-                print(f"[ReceptionDataService] Using receptionId: {self.patient_id}")
-            else:
-                params = {"nationalCode": self.patient_id}
-                print(f"[ReceptionDataService] Using nationalCode: {self.patient_id}")
+            # Construct URL with patient ID in path
+            # API: GET /api/pacs/patients/{patientId}
+            url = f"{self.base_url}/api/pacs/patients/{self.patient_id}"
             
             print(f"[ReceptionDataService] Fetching data from: {url}")
-            print(f"[ReceptionDataService] Parameters: {params}")
             
-            # Make GET request (the API uses GET with query params, not POST)
-            response = requests.get(url, params=params, timeout=30)
+            # Make GET request
+            response = requests.get(url, timeout=30)
             
             print(f"[ReceptionDataService] Response status: {response.status_code}")
             print(f"[ReceptionDataService] Response text: {response.text[:500]}")

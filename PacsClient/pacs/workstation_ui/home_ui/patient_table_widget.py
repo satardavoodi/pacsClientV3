@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
                                 QSizePolicy, QStyledItemDelegate, QDialog, QListWidget, QListWidgetItem,
                                 QDialogButtonBox, QMessageBox, QProgressDialog)
 from PySide6.QtCore import Signal, Qt, QTimer, QRect
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen, QIcon
 import threading
 import logging
 import qtawesome as qta
@@ -505,6 +505,7 @@ class PatientTableWidget(QWidget):
     patientClicked = Signal(str, str, str)  # patient_id, patient_name, study_uid - for thumbnail display
     checkboxStateChanged = Signal(int, bool)  # row index, checked state
     downloadRequested = Signal(list)  # list of patient data dictionaries for download
+    cdBurnRequested = Signal(list)  # list of patient data dictionaries for CD burning
     statusUpdateResult = Signal(str, str, object)  # study_uid, new_status, response
 
     def __init__(self, parent=None):
@@ -995,6 +996,76 @@ class PatientTableWidget(QWidget):
         self.delete_btn.setCursor(Qt.PointingHandCursor)
         self.delete_btn.setEnabled(False)  # Initially disabled
         
+        # CD Burn button for writing downloaded studies to CD/DVD - ONLY ICON
+        cd_icon_path = Path(__file__).parent.parent.parent.parent / "components" / "cd_burner" / "assets" / "cd_icon.png"
+        if cd_icon_path.exists():
+            self.cd_burn_btn = QPushButton(QIcon(str(cd_icon_path)), "")
+        else:
+            self.cd_burn_btn = QPushButton(qta.icon('fa5s.compact-disc', color='white'), "")
+        self.cd_burn_btn.setToolTip("Write selected downloaded studies to CD/DVD with DICOMDIR")
+        self.cd_burn_btn.clicked.connect(self._on_cd_burn_clicked)
+        self.cd_burn_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.cd_burn_btn.setMinimumWidth(36)
+        self.cd_burn_btn.setMaximumWidth(36)
+        self.cd_burn_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #6366f1, stop:1 #4f46e5);
+                color: transparent;
+                border: 1px solid #6366f1;
+                border-radius: 8px;
+                padding: 10px 8px;
+                font-size: 1px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 600;
+                margin: 4px 0px;
+                min-width: 36px;
+                max-width: 36px;
+                qproperty-iconSize: 16px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4f46e5, stop:1 #4338ca);
+                border-color: #4f46e5;
+                color: #ffffff;
+                font-size: 13px;
+                min-width: 180px;
+                max-width: 200px;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4338ca, stop:1 #3730a3);
+            }
+            QPushButton:disabled {
+                background: #374151;
+                border-color: #4b5563;
+                color: #6b7280;
+            }
+        """)
+        
+        # برای نمایش متن هنگام hover
+        def on_cd_burn_btn_hover(event):
+            if self.cd_burn_btn.isEnabled():
+                selected_count = self.get_checked_count()
+                if selected_count > 0:
+                    self.cd_burn_btn.setText(f"Write {selected_count} to CD")
+                else:
+                    self.cd_burn_btn.setText("Write to CD")
+                self.cd_burn_btn.style().unpolish(self.cd_burn_btn)
+                self.cd_burn_btn.style().polish(self.cd_burn_btn)
+            return super(QPushButton, self.cd_burn_btn).enterEvent(event)
+        
+        def on_cd_burn_btn_leave(event):
+            self.cd_burn_btn.setText("")
+            self.cd_burn_btn.style().unpolish(self.cd_burn_btn)
+            self.cd_burn_btn.style().polish(self.cd_burn_btn)
+            return super(QPushButton, self.cd_burn_btn).leaveEvent(event)
+        
+        self.cd_burn_btn.enterEvent = on_cd_burn_btn_hover
+        self.cd_burn_btn.leaveEvent = on_cd_burn_btn_leave
+        
+        self.cd_burn_btn.setCursor(Qt.PointingHandCursor)
+        self.cd_burn_btn.setEnabled(False)  # Initially disabled
 
         # Settings button
         self.settings_btn = QPushButton(qta.icon('fa5s.cog', color='#a0aec0'), "")
@@ -1099,6 +1170,7 @@ class PatientTableWidget(QWidget):
         header_layout.addWidget(self.refresh_btn)
         header_layout.addWidget(self.settings_btn)
         header_layout.addWidget(self.delete_btn)
+        header_layout.addWidget(self.cd_burn_btn)
         header_layout.addWidget(self.download_btn)
         layout.addWidget(header_widget)
         
@@ -1228,6 +1300,28 @@ class PatientTableWidget(QWidget):
             print(f"Error in download studies: {str(e)}")
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Error in download studies: {str(e)}")
+    
+    def _on_cd_burn_clicked(self):
+        """Handle CD burn button click"""
+        try:
+            # Get all selected patient data (will download if needed)
+            selected_data = self.get_selected_patient_data_list()
+            
+            if not selected_data:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "No Studies Selected", 
+                                   "Please select at least one study to burn to CD.")
+                return
+            
+            # Emit signal with all selected data
+            self.cdBurnRequested.emit(selected_data)
+            
+            print(f"💿 CD burn requested for {len(selected_data)} studies")
+            
+        except Exception as e:
+            print(f"Error in CD burn: {str(e)}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"Error in CD burn: {str(e)}")
     
     def _on_delete_clicked(self):
         """Handle delete button click - only delete downloaded studies"""
@@ -1443,9 +1537,11 @@ class PatientTableWidget(QWidget):
         
         if selected_count > 0:
             self.download_btn.setEnabled(True)
+            self.cd_burn_btn.setEnabled(True)  # CD burn فعال برای همه انتخاب شده‌ها
             # متن فقط هنگام hover نشان داده می‌شود
         else:
             self.download_btn.setEnabled(False)
+            self.cd_burn_btn.setEnabled(False)
             # متن پاک می‌شود
         
         # Update delete button - only enable if at least one downloaded study is selected

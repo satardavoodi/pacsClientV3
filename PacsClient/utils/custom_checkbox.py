@@ -27,11 +27,11 @@ class CustomCheckbox(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         
-        # Checkbox button with icon - MINIMAL SIZE
+        # Checkbox button with icon - 2X SIZE
         self.checkbox_button = QPushButton()
         self.checkbox_button.setCheckable(True)
         self.checkbox_button.setChecked(checked)
-        self.checkbox_button.setFixedSize(18, 18)
+        self.checkbox_button.setFixedSize(27, 27)
         self.checkbox_button.setCursor(Qt.PointingHandCursor)
         self.checkbox_button.setStyleSheet("""
             QPushButton {
@@ -42,10 +42,10 @@ class CustomCheckbox(QWidget):
         """)
         self.checkbox_button.clicked.connect(self._on_toggle)
         
-        # Label - SMALLER FONT
+        # Label - 2X FONT SIZE
         if text:
             self.label = QLabel(text)
-            self.label.setStyleSheet("color: #cbd5e1; font-weight: 500; font-size: 12px;")
+            self.label.setStyleSheet("color: #cbd5e1; font-weight: 500; font-size: 18px;")
             self.label.setCursor(Qt.PointingHandCursor)
             self.label.mousePressEvent = lambda e: self.checkbox_button.click()
         else:

@@ -477,6 +477,108 @@ class ToolbarManager:
         except Exception as e:
             print(f"[CURVED MPR] Close error: {e}")
     
+    def _show_orthogonal_mpr_viewer(self):
+        """Show the new Orthogonal MPR Viewer with three synchronized views"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
+        from PySide6.QtCore import Qt
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        logger.info("Opening Orthogonal MPR Viewer...")
+        
+        try:
+            selected_widget = self.patient_widget.selected_widget
+            
+            # Check if we have a valid widget with image data
+            if not self.is_vtk_widget(selected_widget):
+                QMessageBox.warning(
+                    self.patient_widget, 
+                    "Error", 
+                    "Please select a valid viewer first."
+                )
+                return
+            
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                QMessageBox.warning(
+                    self.patient_widget, 
+                    "Error", 
+                    "No image loaded in viewer. Please load a DICOM series first."
+                )
+                return
+            
+            # Try to get VTK image data
+            vtk_image_data = None
+            if hasattr(selected_widget, 'vtk_image_data') and selected_widget.vtk_image_data is not None:
+                vtk_image_data = selected_widget.vtk_image_data
+            elif hasattr(selected_widget.image_viewer, 'GetInput'):
+                vtk_image_data = selected_widget.image_viewer.GetInput()
+            
+            if vtk_image_data is None:
+                QMessageBox.warning(
+                    self.patient_widget, 
+                    "Error", 
+                    "Could not get image data from viewer."
+                )
+                return
+            
+            # Import the Orthogonal MPR Widget
+            from PacsClient.pacs.patient_tab.orthogonal_mpr import OrthogonalMPRWidget
+            
+            # Create dialog to host the MPR viewer
+            dialog = QDialog(self.patient_widget)
+            dialog.setWindowTitle("Orthogonal MPR Viewer - Axial / Sagittal / Coronal")
+            dialog.setWindowFlags(Qt.Window)
+            dialog.resize(1400, 600)
+            dialog.setStyleSheet("""
+                QDialog {
+                    background-color: #0d0d0d;
+                }
+            """)
+            
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(0, 0, 0, 0)
+            
+            # Create and add the MPR widget
+            mpr_widget = OrthogonalMPRWidget()
+            layout.addWidget(mpr_widget)
+            
+            # Load the VTK image data
+            if mpr_widget.load_vtk_image(vtk_image_data):
+                logger.info("Orthogonal MPR Viewer loaded successfully")
+                
+                # Apply default window/level if available
+                if hasattr(selected_widget, 'window_width') and hasattr(selected_widget, 'window_center'):
+                    mpr_widget.set_window_level(
+                        selected_widget.window_width,
+                        selected_widget.window_center
+                    )
+                
+                dialog.show()
+            else:
+                QMessageBox.warning(
+                    self.patient_widget, 
+                    "Error", 
+                    "Failed to load image into MPR viewer."
+                )
+                dialog.close()
+                
+        except ImportError as e:
+            logger.error(f"Failed to import OrthogonalMPRWidget: {e}")
+            QMessageBox.critical(
+                self.patient_widget, 
+                "Import Error", 
+                f"Failed to import Orthogonal MPR module:\n{e}"
+            )
+        except Exception as e:
+            logger.error(f"Error showing Orthogonal MPR Viewer: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self.patient_widget, 
+                "Error", 
+                f"Error opening Orthogonal MPR Viewer:\n{e}"
+            )
+    
     def _generate_curved_mpr_from_points(self, points, image_data):
         """Generate curved MPR from points and display it"""
         from PySide6.QtWidgets import QMessageBox, QApplication
@@ -1655,6 +1757,14 @@ class ToolbarManager:
                 dropdown.close()
             ])
             layout.addWidget(thick_btn)
+
+            # Orthogonal MPR button (New - Full MPR Viewer)
+            ortho_mpr_btn = create_dropdown_tool('Orthogonal MPR Viewer', 'fa5s.th-large', '#10b981')
+            ortho_mpr_btn.clicked.connect(lambda: [
+                self._show_orthogonal_mpr_viewer(),
+                dropdown.close()
+            ])
+            layout.addWidget(ortho_mpr_btn)
 
             # Position dropdown below the button
             button_pos = button.mapToGlobal(QPoint(0, button.height()))

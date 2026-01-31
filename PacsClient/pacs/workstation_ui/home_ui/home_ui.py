@@ -578,6 +578,7 @@ class HomePanelWidget(QWidget):
         self.patient_table_widget.thumbnailRequested.connect(self._on_thumbnail_requested)
         self.patient_table_widget.patientClicked.connect(self._on_patient_single_clicked)
         self.patient_table_widget.downloadRequested.connect(self._on_download_requested)
+        self.patient_table_widget.cdBurnRequested.connect(self._on_cd_burn_requested)
 
         # Add to main layout
         self.main_layout.addWidget(self.patient_table_widget)
@@ -1221,8 +1222,8 @@ class HomePanelWidget(QWidget):
             # Check if server is selected
             server = self.data_access_panel_widget.get_server_selected()
             if not server:
-                QMessageBox.warning(self, "سرور انتخاب نشده",
-                                    "لطفاً ابتدا یک سرور PACS را انتخاب کنید.")
+                QMessageBox.warning(self, "No Server Selected",
+                                    "Please select a PACS server first.")
                 return
             print('on download requested.!! 2')
 
@@ -1263,21 +1264,82 @@ class HomePanelWidget(QWidget):
             download_manager.set_server_connection(server)
 
             # Add studies to download manager
+            print(f"[HomePanelWidget] Adding {len(selected_studies)} studies to download manager")
+            # Debug: print study data to understand format
+            for i, study in enumerate(selected_studies[:3]):  # Print first 3
+                print(f"[HomePanelWidget] Study {i}: study_uid={study.get('study_uid', 'MISSING')}, patient_name={study.get('patient_name', 'MISSING')}")
+            
             added_count = download_manager.add_study_downloads(selected_studies, server)
+            print(f"[HomePanelWidget] Added count: {added_count}, existing queue size: {len(download_manager.study_downloads)}")
 
+            # Always try to start downloads (even if added_count is 0, there might be pending ones)
+            print('home_ui - start all download.!! - 1106')
+            download_manager.start_all_downloads()
+            
             if added_count > 0:
-                print('home_ui - start all download.!! - 1106')
-                # Start downloads automatically (no dialog)
-                download_manager.start_all_downloads()
+                print(f"[HomePanelWidget] Added {added_count} new studies to download queue")
             else:
-                QMessageBox.warning(self, "خطا در اضافه کردن",
-                                    "خطا در اضافه کردن مطالعات به لیست دانلود.")
+                # Check status of the selected studies in the queue
+                study_uids = {study.get('study_uid') for study in selected_studies if study.get('study_uid')}
+                queue_studies = [sd for sd in download_manager.study_downloads if sd.study_uid in study_uids]
+                
+                if queue_studies:
+                    pending = sum(1 for sd in queue_studies if sd.status == "Pending")
+                    downloading = sum(1 for sd in queue_studies if sd.status == "Downloading")
+                    completed = sum(1 for sd in queue_studies if sd.status == "Completed")
+                    
+                    print(f"[HomePanelWidget] Studies in queue: {len(queue_studies)} (pending={pending}, downloading={downloading}, completed={completed})")
+                    
+                    if downloading > 0:
+                        QMessageBox.information(self, "Download in Progress",
+                                              f"{downloading} studies are currently downloading.\n"
+                                              "Check the Download Manager tab for progress.")
+                    elif pending > 0:
+                        QMessageBox.information(self, "Downloads Queued",
+                                              f"{pending} studies are queued for download.\n"
+                                              "Check the Download Manager tab for progress.")
+                    elif completed > 0:
+                        QMessageBox.information(self, "Already Downloaded",
+                                              f"{completed} studies were already downloaded.\n"
+                                              "Check the Download Manager tab for status.")
+                else:
+                    # Studies not in queue at all - this shouldn't happen
+                    print(f"[HomePanelWidget] ERROR: Studies not found in queue after add_study_downloads")
+                    QMessageBox.warning(self, "Add Error",
+                                        "Could not add studies to download list.\n"
+                                        "Please try again or check the Download Manager.")
 
         except Exception as e:
             print(f"Error in _on_download_requested: {str(e)}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "خطا", f"خطا در درخواست دانلود: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error in download request: {str(e)}")
+
+    def _on_cd_burn_requested(self, selected_studies):
+        """Handle CD burn request from patient table"""
+        print('💿 CD burn requested')
+        try:
+            if not selected_studies:
+                QMessageBox.warning(self, "No Studies Selected",
+                                    "Please select at least one study for CD burning.")
+                return
+            
+            # Import and show CD burn dialog
+            from PacsClient.components.cd_burner.cd_burn_dialog import CDBurnDialog
+            
+            dialog = CDBurnDialog(selected_studies, self)
+            dialog.exec()
+            
+        except ImportError as e:
+            print(f"Error importing CD burn dialog: {str(e)}")
+            QMessageBox.critical(self, "Error", 
+                               "CD burn module is not available.\n\n"
+                               "Please make sure pydicom and comtypes libraries are installed.")
+        except Exception as e:
+            print(f"Error in _on_cd_burn_requested: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Error in CD burn request: {str(e)}")
 
     def _get_or_create_download_manager_tab(self):
         """Get existing download manager tab or create new one"""

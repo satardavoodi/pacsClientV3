@@ -3,19 +3,33 @@ Reception Data Tab Module
 
 This module provides a beautiful UI tab for displaying patient reception data.
 It fetches data from the API and displays it in an organized, user-friendly format.
+
+Refactored to use modular widgets and centralized styles.
 """
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QGroupBox, QGridLayout, QScrollArea, QFrame,
     QMessageBox, QDialog, QFileDialog, QProgressDialog, QGraphicsView, 
-    QGraphicsScene, QGraphicsPixmapItem
+    QGraphicsScene, QGraphicsPixmapItem, QTextEdit, QSplitter, QTabWidget
 )
 from PySide6.QtCore import Qt, QUrl, QByteArray, QBuffer, QIODevice, Signal, QFile, QRectF
 from PySide6.QtGui import QFont, QDesktopServices, QCursor, QPixmap, QMouseEvent, QWheelEvent, QPainter
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from .reception_data_service import ReceptionDataService
+from .reception_data_styles import (
+    COLORS, FONTS, FONT_SIZES, BORDER_RADIUS, SPACING,
+    get_main_background_style, get_group_box_style, get_button_style,
+    get_label_style, get_progress_dialog_style, get_image_viewer_style,
+    get_gradient_button_style, is_rtl_content
+)
+from .widgets.report_editor_dialog import ReportEditorDialog
+from .widgets.patient_info_card import PatientInfoCard, ReceptionInfoCard
+from .widgets.attachment_viewer import AttachmentGrid, AttachmentThumbnail
+from PacsClient.utils.socket_token_manager import get_socket_token_manager
+import qtawesome as qta
 import os
+import json
 
 
 class ZoomableImageView(QGraphicsView):
@@ -85,16 +99,16 @@ class ClickableAttachmentWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setStyleSheet("""
-            ClickableAttachmentWidget {
-                background-color: #2d2d2d;
-                border: 2px solid #444;
-                border-radius: 4px;
-            }
-            ClickableAttachmentWidget:hover {
-                background-color: #3a3a3a;
-                border-color: #2196f3;
-            }
+        self.setStyleSheet(f"""
+            ClickableAttachmentWidget {{
+                background-color: {COLORS['bg_lighter']};
+                border: 2px solid {COLORS['border_medium']};
+                border-radius: {BORDER_RADIUS['sm']}px;
+            }}
+            ClickableAttachmentWidget:hover {{
+                background-color: {COLORS['bg_card']};
+                border-color: {COLORS['info']};
+            }}
         """)
     
     def mousePressEvent(self, event: QMouseEvent):
@@ -187,11 +201,7 @@ class ReceptionDataTab(QWidget):
         self.vertical_layout.addWidget(main_container)
 
         # Set main background style
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #1e1e1e;
-            }
-        """)
+        self.setStyleSheet(get_main_background_style())
 
 
     def _create_search_section(self) -> QWidget:
@@ -306,16 +316,22 @@ class ReceptionDataTab(QWidget):
             self._on_error(error_msg)
             return
         
-        # Check if data array exists and has items
-        patient_data_list = data.get("data", [])
+        # Check if data exists - can be array or object
+        patient_data = data.get("data")
 
-        if not patient_data_list:
-
+        if not patient_data:
             self._on_error("No patient data found for this Patient ID")
             return
         
-        # Get first patient data (should be only one)
-        self.current_data = patient_data_list[0]
+        # Handle both array and object response formats
+        if isinstance(patient_data, list):
+            if not patient_data:
+                self._on_error("No patient data found for this Patient ID")
+                return
+            self.current_data = patient_data[0]
+        else:
+            # Direct object response
+            self.current_data = patient_data
 
         # Display data
 
@@ -377,67 +393,36 @@ class ReceptionDataTab(QWidget):
         # Add stretch at the end
         self.content_layout.addStretch()
 
-    def _create_info_group(self, title: str, data: dict) -> QGroupBox:
+    def _create_info_group(self, title: str, data: dict, color_key: str = "info") -> QGroupBox:
         """
         Create a styled group box with information.
         
         Args:
             title: Title of the group box
             data: Dictionary of label-value pairs
+            color_key: Color key for styling ('info', 'success', 'warning', etc.)
             
         Returns:
             QGroupBox with formatted information
         """
         group = QGroupBox(title)
-        group.setStyleSheet("""
-            QGroupBox {
-                background-color: #2b2b2b;
-                border: 1px solid #444;
-                border-radius: 6px;
-                margin-top: 8px;
-                padding-top: 12px;
-                font-family: 'Tahoma', 'Segoe UI', sans-serif;
-                font-size: 14px;
-                font-weight: bold;
-                color: white;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 3px 8px;
-                color: #2196f3;
-            }
-        """)
+        group.setStyleSheet(get_group_box_style(color_key))
         
         layout = QGridLayout(group)
         layout.setContentsMargins(10, 15, 10, 10)
-        layout.setSpacing(8)
+        layout.setSpacing(SPACING['md'])
         layout.setColumnStretch(1, 1)
         
         row = 0
         for label, value in data.items():
             # Label
             label_widget = QLabel(f"{label}:")
-            label_widget.setStyleSheet("""
-                QLabel {
-                    color: #aaa;
-                    font-family: 'Tahoma', 'Segoe UI', sans-serif;
-                    font-size: 13px;
-                    font-weight: normal;
-                }
-            """)
+            label_widget.setStyleSheet(get_label_style("secondary", "lg"))
             
             # Value
             value_widget = QLabel(str(value))
             value_widget.setWordWrap(True)
-            value_widget.setStyleSheet("""
-                QLabel {
-                    color: white;
-                    font-family: 'Tahoma', 'Segoe UI', sans-serif;
-                    font-size: 13px;
-                    font-weight: normal;
-                }
-            """)
+            value_widget.setStyleSheet(get_label_style("primary", "lg", bold=True))
             
             layout.addWidget(label_widget, row, 0, Qt.AlignmentFlag.AlignTop)
             layout.addWidget(value_widget, row, 1)
@@ -454,29 +439,11 @@ class ReceptionDataTab(QWidget):
         
         # Create group box
         group = QGroupBox(f"Services ({len(services)})")
-        group.setStyleSheet("""
-            QGroupBox {
-                background-color: #1e3a1e;
-                border: 2px solid #4caf50;
-                border-radius: 6px;
-                margin-top: 8px;
-                padding-top: 12px;
-                font-family: 'Tahoma', 'Segoe UI', sans-serif;
-                font-size: 14px;
-                font-weight: bold;
-                color: white;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 3px 8px;
-                color: #4caf50;
-            }
-        """)
+        group.setStyleSheet(get_group_box_style("success"))
         
         layout = QVBoxLayout(group)
         layout.setContentsMargins(10, 15, 10, 10)
-        layout.setSpacing(6)
+        layout.setSpacing(SPACING['sm'])
         
         for idx, service in enumerate(services, 1):
             service_name = service.get("Service", "N/A")
@@ -485,32 +452,32 @@ class ReceptionDataTab(QWidget):
             
             # Service container
             service_widget = QWidget()
-            service_widget.setStyleSheet("""
-                QWidget {
-                    background-color: #2d2d2d;
-                    border-radius: 4px;
+            service_widget.setStyleSheet(f"""
+                QWidget {{
+                    background-color: {COLORS['bg_lighter']};
+                    border-radius: {BORDER_RADIUS['sm']}px;
                     padding: 5px;
-                }
+                }}
             """)
             service_layout = QVBoxLayout(service_widget)
-            service_layout.setContentsMargins(6, 6, 6, 6)
+            service_layout.setContentsMargins(SPACING['sm'], SPACING['sm'], SPACING['sm'], SPACING['sm'])
             service_layout.setSpacing(3)
             
             # Service number and group
             header = QLabel(f"#{idx} - {service_group}")
-            header.setStyleSheet("color: #4caf50; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px; font-weight: bold;")
+            header.setStyleSheet(get_label_style("success", "md", bold=True))
             service_layout.addWidget(header)
             
             # Service name
             name_label = QLabel(service_name)
             name_label.setWordWrap(True)
-            name_label.setStyleSheet("color: white; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px;")
+            name_label.setStyleSheet(get_label_style("primary", "md"))
             service_layout.addWidget(name_label)
             
             # Quantity
             if qty > 1:
                 qty_label = QLabel(f"Quantity: {qty}")
-                qty_label.setStyleSheet("color: #aaa; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 11px;")
+                qty_label.setStyleSheet(get_label_style("secondary", "sm"))
                 service_layout.addWidget(qty_label)
             
             layout.addWidget(service_widget)
@@ -519,7 +486,12 @@ class ReceptionDataTab(QWidget):
     
     def _create_report_section(self):
         """Create report status section."""
+        # Get report - try both direct and imagingWorkflow paths
         report = self.current_data.get("report", {})
+        if not report:
+            # Fallback to imagingWorkflow.report
+            imaging_workflow = self.current_data.get("imagingWorkflow", {})
+            report = imaging_workflow.get("report", {})
         
         if not report:
             return
@@ -619,139 +591,60 @@ class ReceptionDataTab(QWidget):
             radiologist_label.setStyleSheet("color: #2196f3; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px; font-weight: bold;")
             layout.addWidget(radiologist_label)
         
+        # Check if report content exists
+        report_content = report.get("content", "") or report.get("findings", "")
+        if report_content:
+            # Add View/Edit Report button
+            view_btn = QPushButton(" View / Edit Report")
+            view_btn.setIcon(qta.icon('fa5s.file-medical', color='white'))
+            view_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #9c27b0;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 8px 16px;
+                    font-family: 'Segoe UI', sans-serif;
+                    font-size: 12px;
+                    font-weight: bold;
+                    margin-top: 8px;
+                }
+                QPushButton:hover {
+                    background-color: #7b1fa2;
+                }
+                QPushButton:pressed {
+                    background-color: #6a1b9a;
+                }
+            """)
+            view_btn.clicked.connect(lambda: self._show_report_editor(report))
+            layout.addWidget(view_btn)
+        
         self.content_layout.addWidget(group)
     
     def _create_attachments_section(self):
-        """Create attachments section showing all attached files."""
+        """Create attachments section using the modern AttachmentGrid widget."""
         attachments = self.current_data.get("attachments", [])
         attachments_count = self.current_data.get("attachmentsCount", 0)
         
         if not attachments or attachments_count == 0:
             return
         
-        # Create group box
-        group = QGroupBox(f"Attachments ({attachments_count})")
-        group.setStyleSheet("""
-            QGroupBox {
-                background-color: #1e2a3a;
-                border: 2px solid #2196f3;
-                border-radius: 6px;
-                margin-top: 8px;
-                padding-top: 12px;
-                font-family: 'Tahoma', 'Segoe UI', sans-serif;
-                font-size: 14px;
-                font-weight: bold;
-                color: white;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 3px 8px;
-                color: #2196f3;
-            }
-        """)
+        # Get base URL for thumbnail loading
+        base_url = self.service.base_url if hasattr(self.service, 'base_url') else "http://81.16.117.196:8080"
         
-        layout = QVBoxLayout(group)
-        layout.setContentsMargins(10, 15, 10, 10)
-        layout.setSpacing(6)
+        # Create the new AttachmentGrid widget
+        attachment_grid = AttachmentGrid(attachments, base_url, self)
+        attachment_grid.attachment_clicked.connect(self._on_attachment_clicked)
+        attachment_grid.setMinimumHeight(250)
+        attachment_grid.setMaximumHeight(400)
         
-        for idx, attachment in enumerate(attachments, 1):
-            file_type = attachment.get("fileType", "")
-            file_name = attachment.get("fileName", "N/A")
-            file_url = attachment.get("fileUrl", "")
-            file_size = attachment.get("fileSize", 0)
-            upload_date = attachment.get("uploadDate", "")
-            upload_time = attachment.get("uploadTime", "")
-            tags = attachment.get("tags", [])
-            
-            # Determine file type icon/label
-            if "image" in file_type.lower():
-                type_label = "📷 Image"
-                type_color = "#4caf50"
-            elif "pdf" in file_type.lower():
-                type_label = "📄 PDF"
-                type_color = "#f44336"
-            elif "video" in file_type.lower():
-                type_label = "🎥 Video"
-                type_color = "#ff9800"
-            else:
-                type_label = "📎 File"
-                type_color = "#9e9e9e"
-            
-            # Format file size
-            if file_size < 1024:
-                size_str = f"{file_size} B"
-            elif file_size < 1024 * 1024:
-                size_str = f"{file_size / 1024:.1f} KB"
-            else:
-                size_str = f"{file_size / (1024 * 1024):.2f} MB"
-            
-            # Attachment container (clickable widget)
-            attachment_widget = ClickableAttachmentWidget()
-            
-            # Create content layout
-            attachment_layout = QVBoxLayout(attachment_widget)
-            attachment_layout.setContentsMargins(8, 8, 8, 8)
-            attachment_layout.setSpacing(4)
-            
-            # Header: Type and number
-            header_widget = QWidget()
-            header_layout = QHBoxLayout(header_widget)
-            header_layout.setContentsMargins(0, 0, 0, 0)
-            header_layout.setSpacing(5)
-            
-            type_label_widget = QLabel(f"#{idx} {type_label}")
-            type_label_widget.setStyleSheet(f"color: {type_color}; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px; font-weight: bold;")
-            header_layout.addWidget(type_label_widget)
-            
-            header_layout.addStretch()
-            
-            size_label = QLabel(size_str)
-            size_label.setStyleSheet("color: #aaa; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 11px;")
-            header_layout.addWidget(size_label)
-            
-            attachment_layout.addWidget(header_widget)
-            
-            # File name
-            name_label = QLabel(file_name)
-            name_label.setWordWrap(True)
-            name_label.setStyleSheet("color: white; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px;")
-            attachment_layout.addWidget(name_label)
-            
-            # File path (truncated if too long)
-            if file_url:
-                url_display = file_url if len(file_url) <= 40 else "..." + file_url[-37:]
-                url_label = QLabel(f"📁 {url_display}")
-                url_label.setStyleSheet("color: #2196f3; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 11px;")
-                url_label.setToolTip(file_url)  # Show full path on hover
-                attachment_layout.addWidget(url_label)
-            
-            # Upload date/time and tags
-            meta_widget = QWidget()
-            meta_layout = QHBoxLayout(meta_widget)
-            meta_layout.setContentsMargins(0, 0, 0, 0)
-            meta_layout.setSpacing(5)
-            
-            if upload_date or upload_time:
-                datetime_label = QLabel(f"📅 {upload_date} {upload_time}")
-                datetime_label.setStyleSheet("color: #aaa; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 11px;")
-                meta_layout.addWidget(datetime_label)
-            
-            if tags:
-                tags_str = ", ".join(tags)
-                tags_label = QLabel(f"🏷️ {tags_str}")
-                tags_label.setStyleSheet("color: #ff9800; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 11px;")
-                meta_layout.addWidget(tags_label)
-            
-            meta_layout.addStretch()
-            attachment_layout.addWidget(meta_widget)
-            
-            # Connect click event
-            attachment_widget.clicked.connect(lambda url=file_url, ftype=file_type: self._open_attachment(url, ftype))
-            
-            layout.addWidget(attachment_widget)
-        
-        self.content_layout.addWidget(group)
+        self.content_layout.addWidget(attachment_grid)
+    
+    def _on_attachment_clicked(self, attachment: dict):
+        """Handle attachment click from the grid widget."""
+        file_url = attachment.get("fileUrl", "")
+        file_type = attachment.get("fileType", "")
+        self._open_attachment(file_url, file_type)
     
     def _open_attachment(self, file_url: str, file_type: str):
         """
@@ -1313,39 +1206,144 @@ class ReceptionDataTab(QWidget):
             traceback.print_exc()
             loading_label.setText(f"Error:\n{str(e)}\n\nClick 'Open in Browser' to view")
     
-    def _create_reception_info_section(self):
-        """Create reception information section."""
-        data = {
-            "Reception ID": self.current_data.get("receptionId", "N/A"),
-            "Date": self.current_data.get("date", "N/A"),
-            "Time": self.current_data.get("time", "N/A"),
-            "Insurance": self.current_data.get("insuranceType", "N/A"),
-            "Status": self.current_data.get("workflowStatus", "N/A"),
+    def _show_report_editor(self, report: dict):
+        """
+        Show professional dialog for viewing and editing report HTML content.
+        
+        Uses the new ReportEditorDialog widget with full RTL support and editing tools.
+        
+        Args:
+            report: The report dictionary containing content/findings
+        """
+        # Create the new ReportEditorDialog
+        dialog = ReportEditorDialog(report, self.current_data, self)
+        
+        # Connect the save signal (now with content and status)
+        dialog.report_saved.connect(lambda content, status: self._on_report_saved(content, status, dialog))
+        
+        # Show the dialog
+        dialog.exec()
+    
+    def _on_report_saved(self, new_content: str, new_status: str, dialog: ReportEditorDialog):
+        """
+        Handle report save from the editor dialog.
+        
+        Args:
+            new_content: The new HTML content
+            new_status: The new report status
+            dialog: The editor dialog
+        """
+        # Get reception ID - API uses receptionId not patient _id
+        reception_id = self.current_data.get("receptionId") or self.current_data.get("ReceptionID")
+        
+        if not reception_id:
+            # Fallback to _id
+            reception_id = self.current_data.get("_id") or self.current_data.get("id")
+        
+        if not reception_id:
+            QMessageBox.warning(dialog, "خطا", "شماره پذیرش یافت نشد.")
+            return
+        
+        self._save_report_to_api(reception_id, new_content, new_status, dialog)
+    
+    def _save_report_to_api(self, reception_id, new_content: str, new_status: str, dialog):
+        """
+        Save report content to API using the update-report endpoint.
+        
+        Args:
+            reception_id: The reception ID (receptionId)
+            new_content: The new HTML content
+            new_status: The new report status
+            dialog: The parent dialog for showing messages
+        """
+        import requests
+        
+        # Get authentication token
+        token_manager = get_socket_token_manager()
+        token = token_manager.get_token()
+        
+        if not token:
+            QMessageBox.critical(dialog, "خطای احراز هویت", "توکن احراز هویت یافت نشد. لطفاً مجدداً لاگین کنید.")
+            return
+        
+        # Prepare update data for the new API
+        update_data = {
+            "receptionId": int(reception_id) if isinstance(reception_id, str) and reception_id.isdigit() else reception_id,
+            "content": new_content,
+            "findings": new_content,
+            "status": new_status
         }
         
-        section = self._create_info_group("Reception", data)
-        self.content_layout.addWidget(section)
+        # Make API call
+        try:
+            url = f"{self.service.base_url}/api/pacs/update-report"
+            
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
+            
+            response = requests.post(
+                url,
+                json=update_data,
+                headers=headers,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                
+                if response_data.get("success"):
+                    # Update local data
+                    if "report" in self.current_data and self.current_data["report"]:
+                        self.current_data["report"]["content"] = new_content
+                        self.current_data["report"]["findings"] = new_content
+                        self.current_data["report"]["status"] = new_status
+                    elif "imagingWorkflow" in self.current_data:
+                        if "report" in self.current_data["imagingWorkflow"]:
+                            self.current_data["imagingWorkflow"]["report"]["content"] = new_content
+                            self.current_data["imagingWorkflow"]["report"]["findings"] = new_content
+                            self.current_data["imagingWorkflow"]["report"]["status"] = new_status
+                    
+                    success_msg = response_data.get("message", "گزارش با موفقیت ذخیره شد.")
+                    QMessageBox.information(dialog, "موفقیت", success_msg)
+                else:
+                    error_msg = response_data.get("message", "خطا در ذخیره گزارش")
+                    QMessageBox.critical(dialog, "خطا", error_msg)
+            elif response.status_code == 401:
+                QMessageBox.critical(dialog, "خطای احراز هویت", "توکن نامعتبر یا منقضی شده است. لطفاً مجدداً لاگین کنید.")
+            elif response.status_code == 403:
+                QMessageBox.critical(dialog, "خطای دسترسی", "شما دسترسی لازم برای این عملیات را ندارید.")
+            elif response.status_code == 404:
+                QMessageBox.critical(dialog, "خطا", "پذیرش مورد نظر یافت نشد.")
+            else:
+                error_msg = f"خطا در ذخیره گزارش: {response.status_code}"
+                try:
+                    error_data = response.json()
+                    if "message" in error_data:
+                        error_msg = error_data["message"]
+                except:
+                    pass
+                QMessageBox.critical(dialog, "خطا", error_msg)
+                
+        except requests.exceptions.Timeout:
+            QMessageBox.critical(dialog, "خطا", "زمان درخواست به پایان رسید. لطفاً دوباره تلاش کنید.")
+        except requests.exceptions.ConnectionError:
+            QMessageBox.critical(dialog, "خطای اتصال", "خطا در برقراری ارتباط با سرور. لطفاً اتصال اینترنت را بررسی کنید.")
+        except Exception as e:
+            QMessageBox.critical(dialog, "خطا", f"خطای غیرمنتظره: {str(e)}")
+
+    def _create_reception_info_section(self):
+        """Create reception information section using the modern ReceptionInfoCard widget."""
+        # Use the new ReceptionInfoCard widget for modern design
+        reception_card = ReceptionInfoCard(self.current_data, self)
+        self.content_layout.addWidget(reception_card)
     
     def _create_patient_info_section(self):
-        """Create patient information section."""
-        patient = self.current_data.get("patient", {})
-        
-        # Format age and gender
-        age = patient.get("Age", "N/A")
-        gender = patient.get("Gender", "")
-        gender_display = {"M": "Male", "F": "Female"}.get(gender, gender) if gender else "N/A"
-        age_gender = f"{age} yrs, {gender_display}" if age != "N/A" and gender else (age if age != "N/A" else gender_display)
-        
-        data = {
-            "Name": patient.get("Name", "N/A"),
-            "National ID": patient.get("NationalID", "N/A"),
-            "Age & Gender": age_gender,
-            "Birth": patient.get("BD", "N/A"),
-            "Phone": patient.get("Tel", "N/A"),
-        }
-        
-        section = self._create_info_group("Patient", data)
-        self.content_layout.addWidget(section)
+        """Create patient information section using the modern PatientInfoCard widget."""
+        # Use the new PatientInfoCard widget for modern design
+        patient_card = PatientInfoCard(self.current_data, self)
+        self.content_layout.addWidget(patient_card)
     
     def _create_modality_info_section(self):
         """Create modality information section."""
