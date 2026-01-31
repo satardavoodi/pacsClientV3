@@ -12,7 +12,7 @@ UI panel for accessing advanced medical imaging tools:
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QComboBox, QSlider, QGroupBox, QProgressBar, QSpinBox,
-    QDoubleSpinBox, QCheckBox, QTabWidget, QMessageBox,QScrollArea
+    QDoubleSpinBox, QCheckBox, QTabWidget, QMessageBox, QScrollArea
 )
 from PySide6.QtCore import Qt, QThread, Signal
 import vtkmodules.all as vtk
@@ -204,12 +204,14 @@ class AdvancedToolsPanel(QWidget):
         self.minip_min_spin.setRange(-1024, 0)
         self.minip_min_spin.setValue(-1024)
         self.minip_min_spin.setStyleSheet(self._spinbox_style())
+        self.minip_min_spin.setMinimumWidth(150)
         minip_range_layout.addWidget(self.minip_min_spin)
         minip_range_layout.addWidget(QLabel("to"))
         self.minip_max_spin = QSpinBox()
         self.minip_max_spin.setRange(-1000, 500)
         self.minip_max_spin.setValue(-300)
         self.minip_max_spin.setStyleSheet(self._spinbox_style())
+        self.minip_max_spin.setMinimumWidth(150)
         minip_range_layout.addWidget(self.minip_max_spin)
         minip_layout.addLayout(minip_range_layout)
         
@@ -233,6 +235,7 @@ class AdvancedToolsPanel(QWidget):
         self.slab_thickness_spin.setValue(10.0)
         self.slab_thickness_spin.setSingleStep(1.0)
         self.slab_thickness_spin.setStyleSheet(self._spinbox_style())
+        self.slab_thickness_spin.setMinimumWidth(150)
         thickness_layout.addWidget(self.slab_thickness_spin)
         slab_layout.addLayout(thickness_layout)
         
@@ -327,12 +330,14 @@ class AdvancedToolsPanel(QWidget):
         self.vessel_min_spin.setRange(0, 500)
         self.vessel_min_spin.setValue(150)
         self.vessel_min_spin.setStyleSheet(self._spinbox_style())
+        self.vessel_min_spin.setMinimumWidth(150)
         vessel_range_layout.addWidget(self.vessel_min_spin)
         vessel_range_layout.addWidget(QLabel("to"))
         self.vessel_max_spin = QSpinBox()
         self.vessel_max_spin.setRange(200, 1000)
         self.vessel_max_spin.setValue(800)
         self.vessel_max_spin.setStyleSheet(self._spinbox_style())
+        self.vessel_max_spin.setMinimumWidth(150)
         vessel_range_layout.addWidget(self.vessel_max_spin)
         vessel_layout.addLayout(vessel_range_layout)
         
@@ -354,6 +359,7 @@ class AdvancedToolsPanel(QWidget):
         self.bone_threshold_spin.setRange(100, 500)
         self.bone_threshold_spin.setValue(250)
         self.bone_threshold_spin.setStyleSheet(self._spinbox_style())
+        self.bone_threshold_spin.setMinimumWidth(150)
         bone_threshold_layout.addWidget(self.bone_threshold_spin)
         bone_layout.addLayout(bone_threshold_layout)
         
@@ -406,6 +412,7 @@ class AdvancedToolsPanel(QWidget):
         self.surface_decimation_spin.setValue(0.5)
         self.surface_decimation_spin.setSingleStep(0.1)
         self.surface_decimation_spin.setStyleSheet(self._spinbox_style())
+        self.surface_decimation_spin.setMinimumWidth(150)
         decimation_layout.addWidget(self.surface_decimation_spin)
         options_layout.addLayout(decimation_layout)
         
@@ -474,6 +481,7 @@ class AdvancedToolsPanel(QWidget):
         self.cmpr_width_spin.setRange(10.0, 100.0)
         self.cmpr_width_spin.setValue(50.0)
         self.cmpr_width_spin.setStyleSheet(self._spinbox_style())
+        self.cmpr_width_spin.setMinimumWidth(150)
         width_layout.addWidget(self.cmpr_width_spin)
         controls_layout.addLayout(width_layout)
         
@@ -483,6 +491,7 @@ class AdvancedToolsPanel(QWidget):
         self.cmpr_height_spin.setRange(10.0, 100.0)
         self.cmpr_height_spin.setValue(50.0)
         self.cmpr_height_spin.setStyleSheet(self._spinbox_style())
+        self.cmpr_height_spin.setMinimumWidth(150)
         height_layout.addWidget(self.cmpr_height_spin)
         controls_layout.addLayout(height_layout)
         
@@ -526,19 +535,12 @@ class AdvancedToolsPanel(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        # REMOVE THIS DUPLICATE TITLE - the ImageFilterSidebar already has one
-        # title_label = QLabel("🖼️ Image Filters")
-        # title_label.setStyleSheet("""
-        #     QLabel {
-        #         font-size: 16px;
-        #         font-weight: bold;
-        #         color: #63b3ed;
-        #         padding: 8px;
-        #         border-bottom: 2px solid #2d3748;
-        #         margin-bottom: 10px;
-        #     }
-        # """)
-        # layout.addWidget(title_label)
+        # Create a scroll area for the image filter sidebar to ensure proper scrolling
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
 
         # Create the image filter sidebar
         self.image_filter_sidebar = ImageFilterSidebar()
@@ -630,7 +632,9 @@ class AdvancedToolsPanel(QWidget):
                 height: 0px;
             }
         """)
-        layout.addWidget(self.image_filter_sidebar)
+
+        scroll_area.setWidget(self.image_filter_sidebar)
+        layout.addWidget(scroll_area)
 
         # Connect the filters applied signal
         self.image_filter_sidebar.filtersApplied.connect(self._on_filters_applied)
@@ -1135,6 +1139,7 @@ Voxel Count: {stats['voxel_count']}"""
                 border-radius: 4px;
                 padding: 8px;
                 min-height: 30px;
+                min-width: 120px;
                 font-size: 14px;
             }
             QSpinBox:hover, QDoubleSpinBox:hover {

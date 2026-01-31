@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTabWidget, QGroupBox, QCheckBox, QSpinBox, QDoubleSpinBox,
     QListWidget, QLineEdit, QMessageBox, QGridLayout, QScrollArea,
-    QComboBox,QSlider
+    QComboBox,QSlider,QSizePolicy
 )
 from PySide6.QtCore import Signal, Qt
 
@@ -65,43 +65,57 @@ class ImageFilterSidebar(QWidget):
             color: #63b3ed;
         }
         QSpinBox, QDoubleSpinBox {
-            min-height: 32px;
-            max-height: 32px;
+            min-height: 30px;
+            max-height: 30px;
+            min-width: 80px;
+            max-width: 150px;
             background-color: #2d3748;
             color: #e2e8f0;
             border: 1px solid #4a5568;
             border-radius: 4px;
-            padding: 8px;
-            font-size: 14px;
+            padding: 4px 8px;
+            font-size: 13px;
         }
         QCheckBox {
             color: #e2e8f0;
-            spacing: 6px;
+            spacing: 8px;
+            font-size: 13px;
+            min-height: 24px;
         }
         QLabel {
             color: #e2e8f0;
+            font-size: 13px;
+            min-width: 100px;
         }
         QLineEdit {
             background-color: #2d3748;
             color: #e2e8f0;
             border: 1px solid #4a5568;
             border-radius: 4px;
-            padding: 4px;
+            padding: 6px 10px;
+            min-height: 30px;
+            max-width: 200px;
+            font-size: 13px;
         }
         QComboBox {
             background-color: #2d3748;
             color: #e2e8f0;
             border: 1px solid #4a5568;
             border-radius: 4px;
-            padding: 4px;
+            padding: 6px 10px;
+            min-height: 30px;
+            max-width: 200px;
+            font-size: 13px;
         }
         QPushButton {
             background-color: #4299e1;
             color: white;
             border: none;
             border-radius: 4px;
-            padding: 6px 12px;
+            padding: 10px 20px;
             font-weight: 500;
+            min-height: 40px;
+            font-size: 14px;
         }
         QPushButton:hover {
             background-color: #63b3ed;
@@ -141,68 +155,57 @@ class ImageFilterSidebar(QWidget):
             width: 0px;
             height: 0px;
         }
-        /* اسکرولر افقی با همان استایل اسکرولر عمودی */
-        QScrollBar:horizontal {
-            border: 1px solid #4b5563;
-            background: #1f2937;
-            height: 12px;
-            margin: 0px 12px 0px 12px;
-            border-radius: 6px;
-        }
-        QScrollBar::handle:horizontal {
-            background: #374151;
-            min-width: 40px;
-            border-radius: 5px;
-        }
-        QScrollBar::handle:horizontal:hover {
-            background: #4b5563;
-        }
-        QScrollBar::add-line:horizontal,
-        QScrollBar::sub-line:horizontal {
-            height: 12px;
-            width: 12px;
-            background: transparent;
-            border: none;
-            subcontrol-origin: margin;
-        }
-        QScrollBar::add-page:horizontal,
-        QScrollBar::sub-page:horizontal {
-            background: none;
-        }
-        QScrollBar::left-arrow:horizontal,
-        QScrollBar::right-arrow:horizontal {
-            width: 0px;
-            height: 0px;
-        }
         """)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
 
         # Main layout with scrollable content and fixed buttons at bottom
         main_content_layout = QVBoxLayout()
 
         title = QLabel("🖼️ Image Filters")
-        title.setStyleSheet("font-size:18px;font-weight:700;color:#63b3ed;margin-bottom: 10px;")
+        title.setStyleSheet("font-size:18px;font-weight:700;color:#63b3ed;margin-bottom: 12px;")
         main_content_layout.addWidget(title)
 
         # Modality selector
         modality_layout = QHBoxLayout()
-        modality_layout.addWidget(QLabel("Modality: "))
+        modality_layout.setSpacing(10)
+        modality_label = QLabel("Modality: ")
+        modality_label.setStyleSheet("font-size: 13px; font-weight: 600;")
+        modality_layout.addWidget(modality_label)
+        
         self.modality_combo = QComboBox()
         self.modality_combo.addItems(["CT", "MR", "PET", "US", "X-Ray", "Other"])
+        self.modality_combo.setMaximumWidth(150)
         self.modality_combo.currentTextChanged.connect(self.on_modality_changed)
         modality_layout.addWidget(self.modality_combo)
+        modality_layout.addStretch()
         main_content_layout.addLayout(modality_layout)
 
-        # Scroll area for filter controls (افزایش ارتفاع برای نمایش بیشتر)
+        # Scroll area for filter controls
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setMinimumHeight(600)  # افزایش ارتفاع از 400 به 600
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # فعال کردن اسکرول افقی
+        scroll.setMinimumHeight(350)
+        scroll.setMaximumHeight(500)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # حذف اسکرول افقی
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
+        scroll.setStyleSheet("""
+            QScrollArea {
+                border: 1px solid #4a5568;
+                background-color: transparent;
+                border-radius: 6px;
+            }
+        """)
 
         self.filter_widget = QWidget()
+        self.filter_widget.setMaximumWidth(450)  # محدود کردن عرض برای جلوگیری از اسکرول افقی
+
         self.filter_layout = QVBoxLayout(self.filter_widget)
+        self.filter_layout.setSpacing(12)
+        self.filter_layout.setContentsMargins(8, 8, 8, 8)
 
         # Create filter controls for each modality
         self.create_filter_controls()
@@ -211,20 +214,23 @@ class ImageFilterSidebar(QWidget):
         main_content_layout.addWidget(scroll)
 
         # Add the main content layout to the root
-        root.addLayout(main_content_layout)
+        root.addLayout(main_content_layout, 1)
 
         # Button layout at the bottom
         button_layout = QHBoxLayout()
-        button_layout.setSpacing(10)
+        button_layout.setSpacing(12)
+        button_layout.setContentsMargins(0, 10, 0, 0)
 
         # Apply button
         apply_btn = QPushButton("✨ Apply Filters")
+        apply_btn.setMinimumWidth(180)
+        apply_btn.setMinimumHeight(42)
         apply_btn.setStyleSheet("""
             QPushButton {
                 background-color: #48bb78;
                 color: white;
                 border: none;
-                padding: 10px;
+                padding: 10px 20px;
                 border-radius: 6px;
                 font-weight: bold;
                 font-size: 14px;
@@ -241,12 +247,14 @@ class ImageFilterSidebar(QWidget):
 
         # Reset button
         reset_btn = QPushButton("🔄 Reset to Defaults")
+        reset_btn.setMinimumWidth(180)
+        reset_btn.setMinimumHeight(42)
         reset_btn.setStyleSheet("""
             QPushButton {
                 background-color: #e53e3e;
                 color: white;
                 border: none;
-                padding: 10px;
+                padding: 10px 20px;
                 border-radius: 6px;
                 font-weight: bold;
                 font-size: 14px;
@@ -267,66 +275,69 @@ class ImageFilterSidebar(QWidget):
         """Create filter controls for different filter types"""
         # Enable all filters checkbox
         self.enable_all_cb = QCheckBox("Enable All Filters")
+        self.enable_all_cb.setMinimumHeight(28)
         self.enable_all_cb.stateChanged.connect(self.toggle_all_filters)
         self.filter_layout.addWidget(self.enable_all_cb)
 
-        # Create a grid layout to arrange groups more compactly
-        grid_layout = QGridLayout()
-        grid_layout.setSpacing(8)  # Reduced spacing for more compact layout
-        grid_layout.setContentsMargins(5, 5, 5, 5)  # Reduced margins
+        # Create a vertical layout instead of grid to ensure proper scrolling
+        controls_layout = QVBoxLayout()
+        controls_layout.setSpacing(12)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Noise Reduction - Top Left
+        # Noise Reduction
         self.noise_group = self.create_noise_reduction_group()
-        self.noise_group.setMinimumHeight(90)  # Reduced from 120
-        
-        # Smoothing Filters - Top Right
+        self.noise_group.setMaximumWidth(420)
+        controls_layout.addWidget(self.noise_group)
+
+        # Smoothing Filters
         self.smoothing_group = self.create_smoothing_group()
-        self.smoothing_group.setMinimumHeight(230)  # Reduced from 280
-        
-        # Sharpening Filters - Bottom Left
+        self.smoothing_group.setMaximumWidth(420)
+        controls_layout.addWidget(self.smoothing_group)
+
+        # Sharpening Filters
         self.sharpening_group = self.create_sharpening_group()
-        self.sharpening_group.setMinimumHeight(280)  # Reduced from 320
-        
-        # Advanced Filters - Bottom Right
+        self.sharpening_group.setMaximumWidth(420)
+        controls_layout.addWidget(self.sharpening_group)
+
+        # Advanced Filters
         self.advanced_group = self.create_advanced_filters_group()
-        self.advanced_group.setMinimumHeight(170)  # Reduced from 200
+        self.advanced_group.setMaximumWidth(420)
+        controls_layout.addWidget(self.advanced_group)
 
-        # Add the grid layout to the main filter layout
-        grid_layout.addWidget(self.noise_group, 0, 0)
-        grid_layout.addWidget(self.smoothing_group, 0, 1)
-        grid_layout.addWidget(self.sharpening_group, 1, 0)
-        grid_layout.addWidget(self.advanced_group, 1, 1)
-
-        self.filter_layout.addLayout(grid_layout)
-        self.filter_layout.addStretch()
-        
+        # Add the vertical layout to the main filter layout
+        self.filter_layout.addLayout(controls_layout)
+        self.filter_layout.addStretch(1)
+            
 
     def create_noise_reduction_group(self):
         """Create noise reduction filter controls"""
         group = QGroupBox("Noise Reduction")
-        group.setMinimumHeight(80)  # کاهش ارتفاع چون اسلایدرها حذف شدند
         layout = QGridLayout()
+        layout.setSpacing(10)
+        layout.setContentsMargins(12, 15, 12, 12)
+        layout.setColumnStretch(1, 1)
 
         # Enable checkbox
         self.noise_enable = QCheckBox("Enable")
-        layout.addWidget(self.noise_enable, 0, 0, 1, 3)
+        self.noise_enable.setMinimumHeight(26)
+        layout.addWidget(self.noise_enable, 0, 0, 1, 2)
 
-        # Sigma controls بدون اسلایدر
+        # Sigma controls
         self.noise_sigma = QDoubleSpinBox()
         self.noise_sigma.setRange(0.05, 3.0)
         self.noise_sigma.setSingleStep(0.05)
         self.noise_sigma.setValue(0.25)
-        self.noise_sigma.setFixedWidth(120)
+        self.noise_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.noise_mild_sigma = QDoubleSpinBox()
         self.noise_mild_sigma.setRange(0.05, 3.0)
         self.noise_mild_sigma.setSingleStep(0.05)
         self.noise_mild_sigma.setValue(0.30)
-        self.noise_mild_sigma.setFixedWidth(120)
+        self.noise_mild_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        layout.addWidget(QLabel("Sigma"), 1, 0)
+        layout.addWidget(QLabel("Sigma:"), 1, 0)
         layout.addWidget(self.noise_sigma, 1, 1)
-        layout.addWidget(QLabel("Sigma (Mild)"), 2, 0)
+        layout.addWidget(QLabel("Sigma (Mild):"), 2, 0)
         layout.addWidget(self.noise_mild_sigma, 2, 1)
 
         group.setLayout(layout)
@@ -336,70 +347,75 @@ class ImageFilterSidebar(QWidget):
     def create_smoothing_group(self):
         """Create smoothing filter controls"""
         group = QGroupBox("Smoothing Filters")
-        group.setMinimumHeight(220)  # کاهش ارتفاع
         layout = QGridLayout()
+        layout.setSpacing(10)
+        layout.setContentsMargins(12, 15, 12, 12)
+        layout.setColumnStretch(1, 1)
 
         # Gaussian Smoothing
         self.gaussian_smooth_enable = QCheckBox("Gaussian Smoothing")
-        layout.addWidget(self.gaussian_smooth_enable, 0, 0, 1, 4)
+        self.gaussian_smooth_enable.setMinimumHeight(26)
+        layout.addWidget(self.gaussian_smooth_enable, 0, 0, 1, 2)
 
         self.gaussian_smooth_sigma = QDoubleSpinBox()
         self.gaussian_smooth_sigma.setRange(0.1, 5.0)
         self.gaussian_smooth_sigma.setSingleStep(0.1)
         self.gaussian_smooth_sigma.setValue(0.5)
-        self.gaussian_smooth_sigma.setFixedWidth(80)
+        self.gaussian_smooth_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.gaussian_smooth_mild_sigma = QDoubleSpinBox()
         self.gaussian_smooth_mild_sigma.setRange(0.1, 5.0)
         self.gaussian_smooth_mild_sigma.setSingleStep(0.1)
         self.gaussian_smooth_mild_sigma.setValue(0.3)
-        self.gaussian_smooth_mild_sigma.setFixedWidth(80)
+        self.gaussian_smooth_mild_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        layout.addWidget(QLabel("Gaussian Sigma"), 1, 0)
+        layout.addWidget(QLabel("Gaussian Sigma:"), 1, 0)
         layout.addWidget(self.gaussian_smooth_sigma, 1, 1)
-        layout.addWidget(QLabel("Gaussian Sigma (Mild)"), 2, 0)
+        layout.addWidget(QLabel("Gaussian Sigma (Mild):"), 2, 0)
         layout.addWidget(self.gaussian_smooth_mild_sigma, 2, 1)
 
         # High Pass Filter
         self.high_pass_enable = QCheckBox("High Pass Filter")
-        layout.addWidget(self.high_pass_enable, 3, 0, 1, 4)
+        self.high_pass_enable.setMinimumHeight(26)
+        layout.addWidget(self.high_pass_enable, 3, 0, 1, 2)
 
         self.high_pass_sigma = QDoubleSpinBox()
         self.high_pass_sigma.setRange(0.1, 5.0)
         self.high_pass_sigma.setSingleStep(0.1)
         self.high_pass_sigma.setValue(1.0)
-        self.high_pass_sigma.setFixedWidth(120)
+        self.high_pass_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.high_pass_mild_sigma = QDoubleSpinBox()
         self.high_pass_mild_sigma.setRange(0.1, 5.0)
         self.high_pass_mild_sigma.setSingleStep(0.1)
         self.high_pass_mild_sigma.setValue(1.5)
-        self.high_pass_mild_sigma.setFixedWidth(120)
+        self.high_pass_mild_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        layout.addWidget(QLabel("High Pass Sigma"), 4, 0)
+        layout.addWidget(QLabel("High Pass Sigma:"), 4, 0)
         layout.addWidget(self.high_pass_sigma, 4, 1)
-        layout.addWidget(QLabel("High Pass Sigma (Mild)"), 5, 0)
+        layout.addWidget(QLabel("High Pass Sigma (Mild):"), 5, 0)
         layout.addWidget(self.high_pass_mild_sigma, 5, 1)
 
         # Low Pass Filter
         self.low_pass_enable = QCheckBox("Low Pass Filter")
-        layout.addWidget(self.low_pass_enable, 6, 0, 1, 4)
+        self.low_pass_enable.setMinimumHeight(26)
+        layout.addWidget(self.low_pass_enable, 6, 0, 1, 2)
 
         self.low_pass_sigma = QDoubleSpinBox()
         self.low_pass_sigma.setRange(0.1, 5.0)
         self.low_pass_sigma.setSingleStep(0.1)
         self.low_pass_sigma.setValue(2.0)
-        self.low_pass_sigma.setFixedWidth(120)
+        self.low_pass_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.low_pass_mild_sigma = QDoubleSpinBox()
         self.low_pass_mild_sigma.setRange(0.1, 5.0)
         self.low_pass_mild_sigma.setSingleStep(0.1)
         self.low_pass_mild_sigma.setValue(3.0)
-        self.low_pass_mild_sigma.setFixedWidth(120)
+        self.low_pass_mild_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        layout.addWidget(QLabel("Low Pass Sigma"), 7, 0)
+        layout.addWidget(QLabel("Low Pass Sigma:"), 7, 0)
         layout.addWidget(self.low_pass_sigma, 7, 1)
-        layout.addWidget(QLabel("Low Pass Sigma (Mild)"), 8, 0)
+        layout.addWidget(QLabel("Low Pass Sigma (Mild):"), 8, 0)
         layout.addWidget(self.low_pass_mild_sigma, 8, 1)
 
         group.setLayout(layout)
@@ -408,110 +424,115 @@ class ImageFilterSidebar(QWidget):
     def create_sharpening_group(self):
         """Create sharpening filter controls"""
         group = QGroupBox("Sharpening Filters")
-        group.setMinimumHeight(240)  # کاهش ارتفاع
         layout = QGridLayout()
+        layout.setSpacing(10)
+        layout.setContentsMargins(12, 15, 12, 12)
+        layout.setColumnStretch(1, 1)
 
         # Multiscale Sharpening
         self.multiscale_enable = QCheckBox("Multiscale Sharpening")
+        self.multiscale_enable.setMinimumHeight(26)
         layout.addWidget(self.multiscale_enable, 0, 0, 1, 2)
 
         layout.addWidget(QLabel("Sigmas:"), 1, 0)
         self.multiscale_sigmas = QLineEdit()
         self.multiscale_sigmas.setPlaceholderText("0.5,1.0,2.0")
-        self.multiscale_sigmas.setMaximumWidth(250)
+        self.multiscale_sigmas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout.addWidget(self.multiscale_sigmas, 1, 1)
 
         layout.addWidget(QLabel("Amounts:"), 2, 0)
         self.multiscale_amounts = QLineEdit()
         self.multiscale_amounts.setPlaceholderText("0.25,0.12,0.06")
-        self.multiscale_amounts.setMaximumWidth(250)
+        self.multiscale_amounts.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout.addWidget(self.multiscale_amounts, 2, 1)
 
         layout.addWidget(QLabel("Mild Sigmas:"), 3, 0)
         self.multiscale_mild_sigmas = QLineEdit()
         self.multiscale_mild_sigmas.setPlaceholderText("0.5,1.0,2.0,4.0")
-        self.multiscale_mild_sigmas.setMaximumWidth(250)
+        self.multiscale_mild_sigmas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout.addWidget(self.multiscale_mild_sigmas, 3, 1)
 
         layout.addWidget(QLabel("Mild Amounts:"), 4, 0)
         self.multiscale_mild_amounts = QLineEdit()
         self.multiscale_mild_amounts.setPlaceholderText("0.20,0.10,0.05,0.025")
-        self.multiscale_mild_amounts.setMaximumWidth(250)
+        self.multiscale_mild_amounts.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout.addWidget(self.multiscale_mild_amounts, 4, 1)
 
         # Laplacian Sharpening
         self.laplacian_enable = QCheckBox("Laplacian Sharpening")
-        layout.addWidget(self.laplacian_enable, 5, 0, 1, 4)
+        self.laplacian_enable.setMinimumHeight(26)
+        layout.addWidget(self.laplacian_enable, 5, 0, 1, 2)
 
         self.laplacian_alpha = QDoubleSpinBox()
         self.laplacian_alpha.setRange(0, 1)
         self.laplacian_alpha.setSingleStep(0.01)
         self.laplacian_alpha.setValue(0.12)
-        self.laplacian_alpha.setFixedWidth(120)
+        self.laplacian_alpha.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.laplacian_mild_alpha = QDoubleSpinBox()
         self.laplacian_mild_alpha.setRange(0, 1)
         self.laplacian_mild_alpha.setSingleStep(0.01)
         self.laplacian_mild_alpha.setValue(0.10)
-        self.laplacian_mild_alpha.setFixedWidth(120)
+        self.laplacian_mild_alpha.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        layout.addWidget(QLabel("Alpha"), 6, 0)
+        layout.addWidget(QLabel("Alpha:"), 6, 0)
         layout.addWidget(self.laplacian_alpha, 6, 1)
-        layout.addWidget(QLabel("Alpha (Mild)"), 7, 0)
+        layout.addWidget(QLabel("Alpha (Mild):"), 7, 0)
         layout.addWidget(self.laplacian_mild_alpha, 7, 1)
 
         # Adaptive Sharpening
         self.adaptive_enable = QCheckBox("Adaptive Sharpening")
-        layout.addWidget(self.adaptive_enable, 8, 0, 1, 4)
+        self.adaptive_enable.setMinimumHeight(26)
+        layout.addWidget(self.adaptive_enable, 8, 0, 1, 2)
 
         self.adaptive_base = QDoubleSpinBox()
         self.adaptive_base.setRange(0, 2)
         self.adaptive_base.setSingleStep(0.01)
         self.adaptive_base.setValue(0.12)
-        self.adaptive_base.setFixedWidth(120)
+        self.adaptive_base.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.adaptive_boost = QDoubleSpinBox()
         self.adaptive_boost.setRange(0, 2)
         self.adaptive_boost.setSingleStep(0.01)
         self.adaptive_boost.setValue(0.90)
-        self.adaptive_boost.setFixedWidth(120)
+        self.adaptive_boost.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.adaptive_sigma = QDoubleSpinBox()
         self.adaptive_sigma.setRange(0, 2)
         self.adaptive_sigma.setSingleStep(0.01)
         self.adaptive_sigma.setValue(0.70)
-        self.adaptive_sigma.setFixedWidth(120)
+        self.adaptive_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.adaptive_mild_base = QDoubleSpinBox()
         self.adaptive_mild_base.setRange(0, 2)
         self.adaptive_mild_base.setSingleStep(0.01)
         self.adaptive_mild_base.setValue(0.10)
-        self.adaptive_mild_base.setFixedWidth(120)
+        self.adaptive_mild_base.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.adaptive_mild_boost = QDoubleSpinBox()
         self.adaptive_mild_boost.setRange(0, 2)
         self.adaptive_mild_boost.setSingleStep(0.01)
         self.adaptive_mild_boost.setValue(0.80)
-        self.adaptive_mild_boost.setFixedWidth(120)
+        self.adaptive_mild_boost.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.adaptive_mild_sigma = QDoubleSpinBox()
         self.adaptive_mild_sigma.setRange(0, 2)
         self.adaptive_mild_sigma.setSingleStep(0.01)
         self.adaptive_mild_sigma.setValue(0.80)
-        self.adaptive_mild_sigma.setFixedWidth(120)
+        self.adaptive_mild_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        layout.addWidget(QLabel("Base"), 9, 0)
+        layout.addWidget(QLabel("Base:"), 9, 0)
         layout.addWidget(self.adaptive_base, 9, 1)
-        layout.addWidget(QLabel("Boost"), 10, 0)
+        layout.addWidget(QLabel("Boost:"), 10, 0)
         layout.addWidget(self.adaptive_boost, 10, 1)
-        layout.addWidget(QLabel("Sigma"), 11, 0)
+        layout.addWidget(QLabel("Sigma:"), 11, 0)
         layout.addWidget(self.adaptive_sigma, 11, 1)
 
-        layout.addWidget(QLabel("Base (Mild)"), 12, 0)
+        layout.addWidget(QLabel("Base (Mild):"), 12, 0)
         layout.addWidget(self.adaptive_mild_base, 12, 1)
-        layout.addWidget(QLabel("Boost (Mild)"), 13, 0)
+        layout.addWidget(QLabel("Boost (Mild):"), 13, 0)
         layout.addWidget(self.adaptive_mild_boost, 13, 1)
-        layout.addWidget(QLabel("Sigma (Mild)"), 14, 0)
+        layout.addWidget(QLabel("Sigma (Mild):"), 14, 0)
         layout.addWidget(self.adaptive_mild_sigma, 14, 1)
 
         group.setLayout(layout)
@@ -521,50 +542,52 @@ class ImageFilterSidebar(QWidget):
     def create_advanced_filters_group(self):
         """Create advanced filter controls"""
         group = QGroupBox("Advanced Filters")
-        group.setMinimumHeight(140)  # کاهش ارتفاع
         layout = QGridLayout()
+        layout.setSpacing(10)
+        layout.setContentsMargins(12, 15, 12, 12)
+        layout.setColumnStretch(1, 1)
 
         # Band Pass Filter
         self.band_pass_enable = QCheckBox("Band Pass Filter")
-        layout.addWidget(self.band_pass_enable, 0, 0, 1, 4)
+        self.band_pass_enable.setMinimumHeight(26)
+        layout.addWidget(self.band_pass_enable, 0, 0, 1, 2)
 
         self.band_pass_low_sigma = QDoubleSpinBox()
         self.band_pass_low_sigma.setRange(0.1, 5.0)
         self.band_pass_low_sigma.setSingleStep(0.1)
         self.band_pass_low_sigma.setValue(1.0)
-        self.band_pass_low_sigma.setFixedWidth(120)
+        self.band_pass_low_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.band_pass_high_sigma = QDoubleSpinBox()
         self.band_pass_high_sigma.setRange(0.1, 5.0)
         self.band_pass_high_sigma.setSingleStep(0.1)
         self.band_pass_high_sigma.setValue(0.5)
-        self.band_pass_high_sigma.setFixedWidth(120)
+        self.band_pass_high_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.band_pass_mild_low_sigma = QDoubleSpinBox()
         self.band_pass_mild_low_sigma.setRange(0.1, 5.0)
         self.band_pass_mild_low_sigma.setSingleStep(0.1)
         self.band_pass_mild_low_sigma.setValue(1.5)
-        self.band_pass_mild_low_sigma.setFixedWidth(120)
+        self.band_pass_mild_low_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.band_pass_mild_high_sigma = QDoubleSpinBox()
         self.band_pass_mild_high_sigma.setRange(0.1, 5.0)
         self.band_pass_mild_high_sigma.setSingleStep(0.1)
         self.band_pass_mild_high_sigma.setValue(0.8)
-        self.band_pass_mild_high_sigma.setFixedWidth(120)
+        self.band_pass_mild_high_sigma.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        layout.addWidget(QLabel("Low Sigma"), 1, 0)
+        layout.addWidget(QLabel("Low Sigma:"), 1, 0)
         layout.addWidget(self.band_pass_low_sigma, 1, 1)
-        layout.addWidget(QLabel("High Sigma"), 2, 0)
+        layout.addWidget(QLabel("High Sigma:"), 2, 0)
         layout.addWidget(self.band_pass_high_sigma, 2, 1)
 
-        layout.addWidget(QLabel("Low Sigma (Mild)"), 3, 0)
+        layout.addWidget(QLabel("Low Sigma (Mild):"), 3, 0)
         layout.addWidget(self.band_pass_mild_low_sigma, 3, 1)
-        layout.addWidget(QLabel("High Sigma (Mild)"), 4, 0)
+        layout.addWidget(QLabel("High Sigma (Mild):"), 4, 0)
         layout.addWidget(self.band_pass_mild_high_sigma, 4, 1)
 
         group.setLayout(layout)
         return group
-
 
     def toggle_all_filters(self, state):
         """Toggle all filter checkboxes based on the master checkbox"""
