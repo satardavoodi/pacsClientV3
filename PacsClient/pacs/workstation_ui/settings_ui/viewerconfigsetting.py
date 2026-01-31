@@ -104,6 +104,11 @@ class ModalityGridConfigWidget(QWidget):
         "CR": (1, 2),
         "DX": (1, 2),
         "US": (1, 2),
+        "XA": (1, 2),
+        "RF": (1, 2),
+        "NM": (1, 2),
+        "PT": (1, 2),
+        "OT": (1, 2),
     }
 
     GRID_PRESETS = {
@@ -224,14 +229,22 @@ class ModalityGridConfigWidget(QWidget):
     # Logic
     # --------------------------------------------------
     def load_config(self):
+        # ابتدا همه مودالیتی‌های پیش‌فرض را لود می‌کنیم
+        self.config_data = {
+            k: {"rows": v[0], "cols": v[1]}
+            for k, v in self.DEFAULT_LAYOUTS.items()
+        }
+        
+        # اگر فایل کانفیگ وجود داشت، مقادیر آن را override می‌کنیم
         if self.config_path.exists():
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                self.config_data = json.load(f)
-        else:
-            self.config_data = {
-                k: {"rows": v[0], "cols": v[1]}
-                for k, v in self.DEFAULT_LAYOUTS.items()
-            }
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    saved_config = json.load(f)
+                    # مقادیر ذخیره شده را به config_data اضافه/بروزرسانی می‌کنیم
+                    self.config_data.update(saved_config)
+            except Exception as e:
+                print(f"Error loading config: {e}")
+        
         self._rebuild()
 
     def _rebuild(self):

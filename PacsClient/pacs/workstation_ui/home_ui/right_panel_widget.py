@@ -143,26 +143,39 @@ class RightPanelWidget(QWidget):
         self.scroll_area.setStyleSheet("""
             QScrollArea {
                 border: none;
-                border-radius: 8px;
-                background: #0f1419;
+                background: transparent;
             }
             QScrollBar:vertical {
-                border: none;
-                background: #0f1419;
-                width: 14px;
-                border-radius: 8px;
-                margin: 0px;
+                border: 1px solid #4b5563;
+                background: #1f2937;
+                width: 12px;
+                margin: 12px 0px 12px 0px;
+                border-radius: 6px;
             }
             QScrollBar::handle:vertical {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #4a5568, stop:1 #718096);
-                border-radius: 8px;
-                min-height: 30px;
-                margin: 2px;
+                background: #374151;
+                min-height: 40px;
+                border-radius: 5px;
             }
             QScrollBar::handle:vertical:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #718096, stop:1 #a0aec0);
+                background: #4b5563;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
+                height: 0px;
             }
         """)
         

@@ -12,7 +12,7 @@ UI panel for accessing advanced medical imaging tools:
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QComboBox, QSlider, QGroupBox, QProgressBar, QSpinBox,
-    QDoubleSpinBox, QCheckBox, QTabWidget, QMessageBox
+    QDoubleSpinBox, QCheckBox, QTabWidget, QMessageBox, QScrollArea
 )
 from PySide6.QtCore import Qt, QThread, Signal
 import vtkmodules.all as vtk
@@ -30,6 +30,7 @@ from .surface_reconstruction import (
     create_bone_actor, create_transparent_organ_actor
 )
 from .curved_mpr import InteractiveCurvedMPR
+from .image_filter_sidebar import ImageFilterSidebar
 from typing import Dict
 
 
@@ -40,6 +41,7 @@ class AdvancedToolsPanel(QWidget):
     
     # Signals
     tool_applied = Signal(str, object)  # tool_name, result
+    filter_applied_to_modality = Signal(str, dict)  # modality, filter_params
     processing_started = Signal(str)
     processing_finished = Signal(str)
     
@@ -93,9 +95,42 @@ class AdvancedToolsPanel(QWidget):
             QTabBar::tab:hover {
                 background: #4299e1;
             }
+            QScrollBar:vertical {
+                border: 1px solid #4b5563;
+                background: #1f2937;
+                width: 12px;
+                margin: 12px 0px 12px 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #374151;
+                min-height: 40px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #4b5563;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
+                height: 0px;
+            }
         """)
         
         # Add tabs
+        self.tabs.addTab(self._create_image_filter_tab(), "🖼️ Filters")
         self.tabs.addTab(self._create_rendering_tab(), "🎨 Rendering")
         self.tabs.addTab(self._create_segmentation_tab(), "✂️ Segmentation")
         self.tabs.addTab(self._create_surface_tab(), "🏗️ Surface")
@@ -169,12 +204,14 @@ class AdvancedToolsPanel(QWidget):
         self.minip_min_spin.setRange(-1024, 0)
         self.minip_min_spin.setValue(-1024)
         self.minip_min_spin.setStyleSheet(self._spinbox_style())
+        self.minip_min_spin.setMinimumWidth(150)
         minip_range_layout.addWidget(self.minip_min_spin)
         minip_range_layout.addWidget(QLabel("to"))
         self.minip_max_spin = QSpinBox()
         self.minip_max_spin.setRange(-1000, 500)
         self.minip_max_spin.setValue(-300)
         self.minip_max_spin.setStyleSheet(self._spinbox_style())
+        self.minip_max_spin.setMinimumWidth(150)
         minip_range_layout.addWidget(self.minip_max_spin)
         minip_layout.addLayout(minip_range_layout)
         
@@ -198,6 +235,7 @@ class AdvancedToolsPanel(QWidget):
         self.slab_thickness_spin.setValue(10.0)
         self.slab_thickness_spin.setSingleStep(1.0)
         self.slab_thickness_spin.setStyleSheet(self._spinbox_style())
+        self.slab_thickness_spin.setMinimumWidth(150)
         thickness_layout.addWidget(self.slab_thickness_spin)
         slab_layout.addLayout(thickness_layout)
         
@@ -292,12 +330,14 @@ class AdvancedToolsPanel(QWidget):
         self.vessel_min_spin.setRange(0, 500)
         self.vessel_min_spin.setValue(150)
         self.vessel_min_spin.setStyleSheet(self._spinbox_style())
+        self.vessel_min_spin.setMinimumWidth(150)
         vessel_range_layout.addWidget(self.vessel_min_spin)
         vessel_range_layout.addWidget(QLabel("to"))
         self.vessel_max_spin = QSpinBox()
         self.vessel_max_spin.setRange(200, 1000)
         self.vessel_max_spin.setValue(800)
         self.vessel_max_spin.setStyleSheet(self._spinbox_style())
+        self.vessel_max_spin.setMinimumWidth(150)
         vessel_range_layout.addWidget(self.vessel_max_spin)
         vessel_layout.addLayout(vessel_range_layout)
         
@@ -319,6 +359,7 @@ class AdvancedToolsPanel(QWidget):
         self.bone_threshold_spin.setRange(100, 500)
         self.bone_threshold_spin.setValue(250)
         self.bone_threshold_spin.setStyleSheet(self._spinbox_style())
+        self.bone_threshold_spin.setMinimumWidth(150)
         bone_threshold_layout.addWidget(self.bone_threshold_spin)
         bone_layout.addLayout(bone_threshold_layout)
         
@@ -371,6 +412,7 @@ class AdvancedToolsPanel(QWidget):
         self.surface_decimation_spin.setValue(0.5)
         self.surface_decimation_spin.setSingleStep(0.1)
         self.surface_decimation_spin.setStyleSheet(self._spinbox_style())
+        self.surface_decimation_spin.setMinimumWidth(150)
         decimation_layout.addWidget(self.surface_decimation_spin)
         options_layout.addLayout(decimation_layout)
         
@@ -439,6 +481,7 @@ class AdvancedToolsPanel(QWidget):
         self.cmpr_width_spin.setRange(10.0, 100.0)
         self.cmpr_width_spin.setValue(50.0)
         self.cmpr_width_spin.setStyleSheet(self._spinbox_style())
+        self.cmpr_width_spin.setMinimumWidth(150)
         width_layout.addWidget(self.cmpr_width_spin)
         controls_layout.addLayout(width_layout)
         
@@ -448,6 +491,7 @@ class AdvancedToolsPanel(QWidget):
         self.cmpr_height_spin.setRange(10.0, 100.0)
         self.cmpr_height_spin.setValue(50.0)
         self.cmpr_height_spin.setStyleSheet(self._spinbox_style())
+        self.cmpr_height_spin.setMinimumWidth(150)
         height_layout.addWidget(self.cmpr_height_spin)
         controls_layout.addLayout(height_layout)
         
@@ -477,12 +521,154 @@ class AdvancedToolsPanel(QWidget):
         
         layout.addStretch()
         return tab
-    
+
+    def _create_image_filter_tab(self) -> QWidget:
+        """Create image filter tab with enhanced styling and controls"""
+        tab = QWidget()
+        tab.setStyleSheet("""
+            QWidget {
+                background-color: #1a202c;
+                color: #e2e8f0;
+            }
+        """)
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        # Create a scroll area for the image filter sidebar to ensure proper scrolling
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+
+        # Create the image filter sidebar
+        self.image_filter_sidebar = ImageFilterSidebar()
+
+        # Apply the same styling to the sidebar
+        self.image_filter_sidebar.setStyleSheet("""
+            QGroupBox {
+                border: 1px solid #4a5568;
+                border-radius: 6px;
+                margin-top: 6px;
+                font-weight: 600;
+                color: #cbd5e0;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+            }
+            QCheckBox {
+                color: #e2e8f0;
+                spacing: 6px;
+            }
+            QSpinBox, QDoubleSpinBox {
+                background-color: #2d3748;
+                color: #e2e8f0;
+                border: 1px solid #4a5568;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QLineEdit {
+                background-color: #2d3748;
+                color: #e2e8f0;
+                border: 1px solid #4a5568;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QComboBox {
+                background-color: #2d3748;
+                color: #e2e8f0;
+                border: 1px solid #4a5568;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QPushButton {
+                background-color: #4299e1;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: #63b3ed;
+            }
+            QPushButton:pressed {
+                background-color: #2b6cb0;
+            }
+            QScrollBar:vertical {
+                border: 1px solid #4b5563;
+                background: #1f2937;
+                width: 12px;
+                margin: 12px 0px 12px 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #374151;
+                min-height: 40px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #4b5563;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
+                height: 0px;
+            }
+        """)
+
+        scroll_area.setWidget(self.image_filter_sidebar)
+        layout.addWidget(scroll_area)
+
+        # Connect the filters applied signal
+        self.image_filter_sidebar.filtersApplied.connect(self._on_filters_applied)
+
+        return tab
+
     def set_image_data(self, image_data: vtk.vtkImageData):
         """Set image data for processing"""
         self.image_data = image_data
         self.status_label.setText(f"Ready | Image: {image_data.GetDimensions()}")
-    
+
+    def _on_filters_applied(self, modality: str, filter_params: dict):
+        """Handle when filters are applied from the image filter sidebar"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            logger.info(f"Filters applied for modality: {modality}")
+            logger.info(f"Filter parameters: {filter_params}")
+
+            # Emit signal to apply filters to all series of the same modality
+            logger.info(f"Emitting filter_applied_to_modality signal for {modality}")
+            self.filter_applied_to_modality.emit(modality, filter_params)
+
+            # Update status
+            self.status_label.setText(f"✅ Filters applied to {modality} series")
+            logger.info(f"Status updated: Filters applied to {modality} series")
+
+        except Exception as e:
+            logger.error(f"Error handling filters applied: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            self.status_label.setText(f"❌ Error applying filters: {e}")
+
     def set_renderer(self, renderer: vtk.vtkRenderer):
         """Set VTK renderer for display"""
         self.renderer = renderer
@@ -951,7 +1137,10 @@ Voxel Count: {stats['voxel_count']}"""
                 color: #e5e7eb;
                 border: 1px solid #4b5563;
                 border-radius: 4px;
-                padding: 4px;
+                padding: 8px;
+                min-height: 30px;
+                min-width: 120px;
+                font-size: 14px;
             }
             QSpinBox:hover, QDoubleSpinBox:hover {
                 border-color: #6b7280;
@@ -1004,4 +1193,3 @@ Voxel Count: {stats['voxel_count']}"""
             "#ef4444": "#dc2626"
         }
         return colors.get(color, "#2563eb")
-

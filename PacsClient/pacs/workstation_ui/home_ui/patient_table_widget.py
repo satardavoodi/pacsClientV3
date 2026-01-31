@@ -1,9 +1,9 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, 
-                                QPushButton, QLabel, QHeaderView, QAbstractItemView, QCheckBox, 
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+                                QPushButton, QLabel, QHeaderView, QAbstractItemView, QCheckBox,
                                 QSizePolicy, QStyledItemDelegate, QDialog, QListWidget, QListWidgetItem,
                                 QDialogButtonBox, QMessageBox, QProgressDialog)
-from PySide6.QtCore import Signal, Qt, QTimer, QRect
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import Signal, Qt, QTimer, QRect, QPersistentModelIndex
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont
 import threading
 import logging
 import qtawesome as qta
@@ -73,35 +73,74 @@ class SortableItem(QTableWidgetItem):
 
 class PatientNameDelegate(QStyledItemDelegate):
     """Custom delegate to draw underline for patient names based on status"""
-    
+
     def paint(self, painter, option, index):
         # First, let parent paint the default content
         super().paint(painter, option, index)
-        
+
         # Check status to determine underline color
         status = index.data(Qt.UserRole + 1)
-        
+
         # Determine the underline color based on status
         underline_color = None
         if status == 'synced':
             underline_color = QColor('#10b981')  # Green
         elif status == 'opened':
             underline_color = QColor('#f59e0b')  # Orange
-        
+
         if underline_color:
             # Draw underline
             painter.save()
-            
+
             pen = QPen(underline_color)
             pen.setWidth(3)
             painter.setPen(pen)
-            
+
             # Draw line at bottom of cell
             rect = option.rect
             y = rect.bottom() - 2
             painter.drawLine(rect.left() + 6, y, rect.right() - 6, y)
-            
+
             painter.restore()
+
+
+class CombinedDelegate(QStyledItemDelegate):
+    """Custom delegate that combines neon highlight effect and patient name underline"""
+
+    def __init__(self, parent=None, is_patient_name_column=False):
+        super().__init__(parent)
+        self.is_patient_name_column = is_patient_name_column
+
+    def paint(self, painter, option, index):
+        # Use default painting for all items (removed neon-glow effect)
+        super().paint(painter, option, index)
+
+        # If this is the patient name column, draw the underline based on status
+        if self.is_patient_name_column:
+            # Check status to determine underline color
+            status = index.data(Qt.UserRole + 1)
+
+            # Determine the underline color based on status
+            underline_color = None
+            if status == 'synced':
+                underline_color = QColor('#10b981')  # Green
+            elif status == 'opened':
+                underline_color = QColor('#f59e0b')  # Orange
+
+            if underline_color:
+                # Draw underline
+                painter.save()
+
+                pen = QPen(underline_color)
+                pen.setWidth(3)
+                painter.setPen(pen)
+
+                # Draw line at bottom of cell
+                rect = option.rect
+                y = rect.bottom() - 2
+                painter.drawLine(rect.left() + 6, y, rect.right() - 6, y)
+
+                painter.restore()
 
 
 COL = {
@@ -560,6 +599,13 @@ class PatientTableWidget(QWidget):
         ]
         self.results_table.setHorizontalHeaderLabels(headers)
         self.results_table.horizontalHeader().setTextElideMode(Qt.ElideRight)
+
+        # Center all header text
+        header = self.results_table.horizontalHeader()
+        for i in range(self.results_table.columnCount()):
+            header_item = self.results_table.horizontalHeaderItem(i)
+            if header_item:
+                header_item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         
         # Enable column reordering (drag & drop)
         self.results_table.horizontalHeader().setSectionsMovable(True)
@@ -683,40 +729,53 @@ class PatientTableWidget(QWidget):
         # Set header height - ULTRA MINIMAL
         self.results_table.horizontalHeader().setMinimumSectionSize(28)
         self.results_table.horizontalHeader().setFixedHeight(45)
+
+        # Ensure header sections are centered
+        self.results_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         
         # Setup custom delegate for patient name column (for visited patient border)
         self._setup_patient_name_delegate()
-        
+
+        # Setup custom delegate for neon highlight effect
+        self._setup_neon_highlight_delegate()
+
         # Setup layout after table is created
         self._setup_layout()
 
     def _setup_select_all_header(self):
-        """Setup Select All checkbox in the header"""
+        """Setup Select All checkbox in the header - با ایموجی وسط‌چین"""
         try:
             select_header = QTableWidgetItem()
-            # متن هدر خالی باشد تا با آیکن تداخل نکند
-            select_header.setText("")
-            # آیکن کوچک‌تر تا داخل کادر بماند
-            select_icon = qta.icon('fa5s.square', color='white', options=[{'scale_factor': 0.9}])
-            select_header.setIcon(select_icon)
+            # استفاده از ایموجی به جای آیکن برای وسط‌چین شدن بهتر
+            select_header.setText("⬜")  # Empty square emoji
             select_header.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
             select_header.setData(Qt.TextAlignmentRole, Qt.AlignCenter | Qt.AlignVCenter)
+            select_header.setToolTip("Select All")
             self.results_table.setHorizontalHeaderItem(COL['select'], select_header)
             self.results_table.horizontalHeader().setSectionResizeMode(COL['select'], QHeaderView.Fixed)
-
-            # اتصال کلیک هدر
-            self.results_table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
 
             # وضعیت اولیه
             self.select_all_state = False
 
+            # اتصال کلیک هدر
+            self.results_table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
+
         except Exception as e:
             print(f"Error setting up select all header: {e}")
-    
+        
     def _setup_patient_name_delegate(self):
         """Setup custom delegate for patient name column"""
-        delegate = PatientNameDelegate(self.results_table)
+        delegate = CombinedDelegate(self.results_table, is_patient_name_column=True)
         self.results_table.setItemDelegateForColumn(COL['patient_name'], delegate)
+
+    def _setup_neon_highlight_delegate(self):
+        """Setup custom delegate for neon highlight effect on all columns"""
+        # Apply the combined delegate to all columns except the checkbox column (COL['select'])
+        # For the patient name column, we already set it with is_patient_name_column=True
+        for col in range(self.results_table.columnCount()):
+            if col != COL['select'] and col != COL['patient_name']:  # Don't apply to checkbox column or patient name column
+                delegate = CombinedDelegate(self.results_table, is_patient_name_column=False)
+                self.results_table.setItemDelegateForColumn(col, delegate)
 
     def _on_header_clicked(self, logical_index):
         """Handle header clicks: Select-All toggle + tri-state sorting (desc -> asc -> default) for allowed columns."""
@@ -729,18 +788,25 @@ class PatientTableWidget(QWidget):
                 for row in range(self.results_table.rowCount()):
                     checkbox_widget = self.results_table.cellWidget(row, COL['select'])
                     if checkbox_widget:
-                        # Find CustomCheckbox widget
-                        from PacsClient.utils.custom_checkbox import CustomCheckbox
-                        cb = checkbox_widget.findChild(CustomCheckbox)
-                        if cb:
-                            cb.setChecked(self.select_all_state)
-                
-                # Update header icon to show checked/unchecked state
+                        # Find emoji label widget
+                        checkbox_label = checkbox_widget.findChild(QLabel, f"checkbox_{row}")
+                        if checkbox_label:
+                            # Update emoji based on state
+                            if self.select_all_state:
+                                checkbox_label.setText("✅")  # Check mark emoji
+                            else:
+                                checkbox_label.setText("⬜")  # Empty square emoji
+
+                            # Update the property
+                            checkbox_label.setProperty("checked", self.select_all_state)
+
+                # Update header emoji to show checked/unchecked state
                 select_header = self.results_table.horizontalHeaderItem(COL['select'])
                 if select_header:
-                    icon_name = 'fa5s.check-square' if self.select_all_state else 'fa5s.square'
-                    select_header.setText("")
-                    select_header.setIcon(qta.icon(icon_name, color='white', options=[{'scale_factor': 0.9}]))
+                    if self.select_all_state:
+                        select_header.setText("✅")  # Check mark emoji
+                    else:
+                        select_header.setText("⬜")  # Empty square emoji
 
                 self._update_download_button_state()
                 return
@@ -789,7 +855,7 @@ class PatientTableWidget(QWidget):
         try:
             # Status (دانلود شده/نشده) -> download
             status_header = QTableWidgetItem()
-            status_icon = qta.icon('fa5s.download', color='white', options=[{'scale_factor': 1.0}])
+            status_icon = qta.icon('  fa5s.download', color='white', options=[{'scale_factor': 1.0}])
             status_header.setIcon(status_icon)
             status_header.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
             status_header.setData(Qt.TextAlignmentRole, Qt.AlignCenter | Qt.AlignVCenter)
@@ -797,7 +863,7 @@ class PatientTableWidget(QWidget):
 
             # Report (گزارش) -> file-alt
             report_header = QTableWidgetItem()
-            report_icon = qta.icon('fa5s.file-alt', color='white', options=[{'scale_factor': 1.0}])
+            report_icon = qta.icon('  fa5s.file-alt', color='white', options=[{'scale_factor': 1.0}])
             report_header.setIcon(report_icon)
             report_header.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
             report_header.setData(Qt.TextAlignmentRole, Qt.AlignCenter | Qt.AlignVCenter)
@@ -805,7 +871,7 @@ class PatientTableWidget(QWidget):
 
             # Assign (ارجاع) -> user-check
             assign_header = QTableWidgetItem()
-            assign_icon = qta.icon('fa5s.user-check', color='white', options=[{'scale_factor': 1.0}])
+            assign_icon = qta.icon('  fa5s.user-check', color='white', options=[{'scale_factor': 1.0}])
             assign_header.setIcon(assign_icon)
             assign_header.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
             assign_header.setData(Qt.TextAlignmentRole, Qt.AlignCenter | Qt.AlignVCenter)
@@ -861,48 +927,42 @@ class PatientTableWidget(QWidget):
         """)
         
         # Download button for selected patients with auto-sizing - ONLY ICON
-        self.download_btn = QPushButton(qta.icon('fa5s.download', color='white'), "")  # متن حذف شد
+        self.download_btn = QPushButton(qta.icon('fa5s.download', color='white'), "")
         self.download_btn.setToolTip("Download selected studies to download manager")
         self.download_btn.clicked.connect(self._on_download_clicked)
-        self.download_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.download_btn.setMinimumWidth(36)  # عرض کمتر برای آیکون خالی
-        self.download_btn.setMaximumWidth(36)  # عرض ثابت برای آیکون
+        self.download_btn.setFixedSize(36, 36)
         self.download_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #059669, stop:1 #047857);
-                color: transparent;  /* رنگ متن شفاف */
-                border: 1px solid #059669;
-                border-radius: 8px;
-                padding: 10px 8px;
-                font-size: 1px; /* صفر نیست، اما بسیار کوچک */
-                font-family: 'Roboto', sans-serif;
-                font-weight: 600;
-                margin: 4px 0px;
-                min-width: 36px;
-                max-width: 36px;
-                qproperty-iconSize: 16px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #047857, stop:1 #065f46);
-                border-color: #047857;
-                color: #ffffff; /* نمایش متن هنگام hover */
-                font-size: 13px; /* نمایش متن هنگام hover */
-                min-width: 180px; /* هنگام hover عرض بیشتر */
-                max-width: 200px;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #065f46, stop:1 #064e3b);
-            }
-            QPushButton:disabled {
-                background: #374151;
-                border-color: #4b5563;
-                color: #6b7280;
-            }
+        QPushButton {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #059669, stop:1 #047857);
+            color: white;
+            border: 1px solid #059669;
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 12px;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 600;
+            margin: 4px 0px;
+            qproperty-iconSize: 16px;
+        }
+        QPushButton:hover {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #047857, stop:1 #065f46);
+            border-color: #047857;
+        }
+        QPushButton:pressed {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #065f46, stop:1 #064e3b);
+        }
+        QPushButton:disabled {
+            background: #374151;
+            border-color: #4b5563;
+            color: #6b7280;
+        }
         """)
-        
+        self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.setEnabled(False)
+                
         # برای نمایش متن هنگام hover
         def on_download_btn_hover(event):
             if self.download_btn.isEnabled():
@@ -921,56 +981,50 @@ class PatientTableWidget(QWidget):
             self.download_btn.style().polish(self.download_btn)
             return super(QPushButton, self.download_btn).leaveEvent(event)
         
-        self.download_btn.enterEvent = on_download_btn_hover
-        self.download_btn.leaveEvent = on_download_btn_leave
+    #    self.download_btn.enterEvent = on_download_btn_hover
+    #    self.download_btn.leaveEvent = on_download_btn_leave
         
         # Set cursor using Qt method instead of CSS
         self.download_btn.setCursor(Qt.PointingHandCursor)
         self.download_btn.setEnabled(False)  # Initially disabled
         
         # Delete button for selected downloaded patients - ONLY ICON
-        self.delete_btn = QPushButton(qta.icon('fa5s.trash-alt', color='white'), "")  # متن حذف شد
-        self.delete_btn.setToolTip("Delete selected studies that are downloaded locally\n(Only downloaded studies can be deleted)")
+        self.delete_btn = QPushButton(qta.icon('fa5s.trash-alt', color='white'), "")
+        self.delete_btn.setToolTip("Delete selected downloaded studies")
         self.delete_btn.clicked.connect(self._on_delete_clicked)
-        self.delete_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.delete_btn.setMinimumWidth(36)  # عرض کمتر برای آیکون خالی
-        self.delete_btn.setMaximumWidth(36)  # عرض ثابت برای آیکون
+        self.delete_btn.setFixedSize(36, 36)
         self.delete_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #dc2626, stop:1 #b91c1c);
-                color: transparent;  /* رنگ متن شفاف */
-                border: 1px solid #dc2626;
-                border-radius: 8px;
-                padding: 10px 8px;
-                font-size: 1px; /* صفر نیست، اما بسیار کوچک */
-                font-family: 'Roboto', sans-serif;
-                font-weight: 600;
-                margin: 4px 0px;
-                min-width: 36px;
-                max-width: 36px;
-                qproperty-iconSize: 16px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #b91c1c, stop:1 #991b1b);
-                border-color: #b91c1c;
-                color: #ffffff; /* نمایش متن هنگام hover */
-                font-size: 13px; /* نمایش متن هنگام hover */
-                min-width: 180px; /* هنگام hover عرض بیشتر */
-                max-width: 200px;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #991b1b, stop:1 #7f1d1d);
-            }
-            QPushButton:disabled {
-                background: #374151;
-                border-color: #4b5563;
-                color: #6b7280;
-            }
+        QPushButton {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #dc2626, stop:1 #b91c1c);
+            color: white;
+            border: 1px solid #dc2626;
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 12px;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 600;
+            margin: 4px 0px;
+            qproperty-iconSize: 16px;
+        }
+        QPushButton:hover {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #b91c1c, stop:1 #991b1b);
+            border-color: #b91c1c;
+        }
+        QPushButton:pressed {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #991b1b, stop:1 #7f1d1d);
+        }
+        QPushButton:disabled {
+            background: #374151;
+            border-color: #4b5563;
+            color: #6b7280;
+        }
         """)
-        
+        self.delete_btn.setCursor(Qt.PointingHandCursor)
+        self.delete_btn.setEnabled(False)
+            
         # برای نمایش متن هنگام hover
         def on_delete_btn_hover(event):
             if self.delete_btn.isEnabled():
@@ -989,8 +1043,8 @@ class PatientTableWidget(QWidget):
             self.delete_btn.style().polish(self.delete_btn)
             return super(QPushButton, self.delete_btn).leaveEvent(event)
         
-        self.delete_btn.enterEvent = on_delete_btn_hover
-        self.delete_btn.leaveEvent = on_delete_btn_leave
+        #self.delete_btn.enterEvent = on_delete_btn_hover
+        #self.delete_btn.leaveEvent = on_delete_btn_leave
         
         self.delete_btn.setCursor(Qt.PointingHandCursor)
         self.delete_btn.setEnabled(False)  # Initially disabled
@@ -1133,8 +1187,43 @@ class PatientTableWidget(QWidget):
             self.pending_click_item = item
             self.click_timer.start(300)
 
+            # Highlight the clicked row with neon effect
+            selected_row = item.row()
+            self.highlight_selected_row(selected_row)
+
         except Exception as e:
             print(f"Error in patient click: {str(e)}")
+
+    def highlight_selected_row(self, row_index):
+        """Highlight the selected row by selecting it in the table"""
+        try:
+            # Clear any existing selection
+            self.results_table.clearSelection()
+
+            # Select the entire row
+            self.results_table.selectRow(row_index)
+
+            # Store the currently highlighted row
+            self._previous_highlighted_row = row_index
+
+            # Refresh the table to apply the changes
+            self.results_table.viewport().update()
+
+        except Exception as e:
+            print(f"Error highlighting row: {str(e)}")
+
+    def remove_row_highlight(self, row_index):
+        """Remove row highlight by deselecting the row"""
+        try:
+            # Deselect the row if it's the currently selected row
+            current_selections = self.results_table.selectionModel().selectedRows()
+            if any(index.row() == row_index for index in current_selections):
+                self.results_table.clearSelection()
+
+            # Refresh the table to apply the changes
+            self.results_table.viewport().update()
+        except Exception as e:
+            print(f"Error removing row highlight: {str(e)}")
 
     def _on_single_click_timeout(self):
         try:
@@ -1630,6 +1719,23 @@ class PatientTableWidget(QWidget):
         except Exception:
             pass
 
+    def _center_checkbox_in_cell(self, row, col):
+        """
+        Ensure checkbox is centered in the cell
+        """
+        try:
+            # Get the checkbox widget in the specified cell
+            checkbox_container = self.results_table.cellWidget(row, col)
+            if checkbox_container:
+                # The checkbox is already centered via the QHBoxLayout with AlignCenter
+                # But we can ensure the alignment is correct by re-setting it
+                checkbox_label = checkbox_container.findChild(QLabel, f"checkbox_{row}")
+                if checkbox_label:
+                    # Make sure the emoji label is centered within its container
+                    checkbox_label.setAlignment(Qt.AlignCenter)
+        except Exception as e:
+            print(f"Error centering checkbox in cell: {e}")
+
     def check_patient_visited(self, patient_id):
         patient_pk = find_patient_pk(patient_id)
         if patient_pk is None:
@@ -1655,20 +1761,32 @@ class PatientTableWidget(QWidget):
         patient_id = kwargs.get('patient_id', '') or ''
         visited_patient = self.check_patient_visited(patient_id)
 
-        # --- Select checkbox ---
+        # --- Select checkbox with emoji ---
         checkbox_container = QWidget()
         checkbox_layout = QHBoxLayout(checkbox_container)
         checkbox_layout.setContentsMargins(0, 0, 0, 0)
         checkbox_layout.setAlignment(Qt.AlignCenter)
-        
-        # Use CustomCheckbox with Font Awesome icons
-        checkbox_widget = CustomCheckbox(text="")
-        checkbox_widget.stateChanged.connect(lambda state, r=row: self._on_checkbox_changed(r, state))
-        
-        # No background on checkbox - will show indicator on patient name instead
-        checkbox_container.setStyleSheet("background: transparent;")
-            
-        checkbox_layout.addWidget(checkbox_widget)
+
+        # Use emoji instead of checkbox - initially show empty square
+        checkbox_label = QLabel("⬜")  # Empty square emoji
+        checkbox_label.setAlignment(Qt.AlignCenter)
+        checkbox_label.setObjectName(f"checkbox_{row}")  # Set object name for identification
+        checkbox_label.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                qproperty-alignment: AlignCenter;
+                background: transparent;
+                border: none;
+            }
+        """)
+
+        # Store checkbox state in the label's property
+        checkbox_label.setProperty("checked", False)
+
+        # Make the label clickable
+        checkbox_label.mousePressEvent = lambda event, r=row: self._toggle_checkbox_state(r)
+
+        checkbox_layout.addWidget(checkbox_label)
         self.results_table.setCellWidget(row, COL['select'], checkbox_container)
 
         # --- Values with safe defaults ---
@@ -1848,6 +1966,9 @@ class PatientTableWidget(QWidget):
         # ظاهر
         self.results_table.setRowHeight(row, 50)
         self._set_row_cursor(row)
+
+        # Ensure checkbox is centered in the cell
+        self._center_checkbox_in_cell(row, COL['select'])
 
         # شمارنده و سایز
         self._update_results_count()
@@ -2249,7 +2370,7 @@ class PatientTableWidget(QWidget):
     def get_selected_rows(self):
         """
         Get list of row indices that have checkboxes checked
-        
+
         Returns:
             list: List of row indices that are checked
         """
@@ -2257,9 +2378,9 @@ class PatientTableWidget(QWidget):
         for row in range(self.results_table.rowCount()):
             checkbox_container = self.results_table.cellWidget(row, 0)
             if checkbox_container:
-                # Find the CustomCheckbox inside the container
-                checkbox_widget = checkbox_container.findChild(CustomCheckbox)
-                if checkbox_widget and checkbox_widget.isChecked():
+                # Find the emoji label inside the container
+                checkbox_label = checkbox_container.findChild(QLabel, f"checkbox_{row}")
+                if checkbox_label and checkbox_label.property("checked"):
                     selected_rows.append(row)
         return selected_rows
     
@@ -2280,7 +2401,7 @@ class PatientTableWidget(QWidget):
     def set_row_checked(self, row, checked=True):
         """
         Set checkbox state for a specific row
-        
+
         Args:
             row (int): Row index
             checked (bool): Whether to check or uncheck the checkbox
@@ -2288,10 +2409,17 @@ class PatientTableWidget(QWidget):
         if 0 <= row < self.results_table.rowCount():
             checkbox_container = self.results_table.cellWidget(row, 0)
             if checkbox_container:
-                # Find the CustomCheckbox inside the container
-                checkbox_widget = checkbox_container.findChild(CustomCheckbox)
-                if checkbox_widget:
-                    checkbox_widget.setChecked(checked)
+                # Find the emoji label inside the container
+                checkbox_label = checkbox_container.findChild(QLabel, f"checkbox_{row}")
+                if checkbox_label:
+                    # Update emoji based on state
+                    if checked:
+                        checkbox_label.setText("✅")  # Check mark emoji
+                    else:
+                        checkbox_label.setText("⬜")  # Empty square emoji
+
+                    # Update the property
+                    checkbox_label.setProperty("checked", checked)
     
     def set_all_rows_checked(self, checked=True):
         """
@@ -2306,20 +2434,20 @@ class PatientTableWidget(QWidget):
     def is_row_checked(self, row):
         """
         Check if a specific row is checked
-        
+
         Args:
             row (int): Row index
-            
+
         Returns:
             bool: True if row is checked, False otherwise
         """
         if 0 <= row < self.results_table.rowCount():
             checkbox_container = self.results_table.cellWidget(row, 0)
             if checkbox_container:
-                # Find the CustomCheckbox inside the container
-                checkbox_widget = checkbox_container.findChild(CustomCheckbox)
-                if checkbox_widget:
-                    return checkbox_widget.isChecked()
+                # Find the emoji label inside the container
+                checkbox_label = checkbox_container.findChild(QLabel, f"checkbox_{row}")
+                if checkbox_label:
+                    return checkbox_label.property("checked")
         return False
     
     def get_checked_count(self):
@@ -2345,17 +2473,46 @@ class PatientTableWidget(QWidget):
             current_state = self.is_row_checked(row)
             self.set_row_checked(row, not current_state)
     
+    def _toggle_checkbox_state(self, row):
+        """
+        Toggle the checkbox state for a specific row using emoji
+
+        Args:
+            row (int): Row index
+        """
+        checkbox_container = self.results_table.cellWidget(row, 0)
+        if checkbox_container:
+            checkbox_label = checkbox_container.findChild(QLabel, f"checkbox_{row}")
+            if checkbox_label:
+                current_checked = checkbox_label.property("checked")
+                new_checked = not current_checked
+
+                # Update emoji based on state
+                if new_checked:
+                    checkbox_label.setText("✅")  # Check mark emoji
+                else:
+                    checkbox_label.setText("⬜")  # Empty square emoji
+
+                # Update the property
+                checkbox_label.setProperty("checked", new_checked)
+
+                # Emit signal for checkbox state change
+                self.checkboxStateChanged.emit(row, new_checked)
+
+                # Update download button state
+                self._update_download_button_state()
+
     def _on_checkbox_changed(self, row, state):
         """
-        Handle checkbox state change
-        
+        Handle checkbox state change (maintained for compatibility)
+
         Args:
             row (int): Row index
             state (int): Checkbox state (Qt.Checked or Qt.Unchecked)
         """
         # Emit signal for checkbox state change
         self.checkboxStateChanged.emit(row, state == Qt.Checked)
-        
+
         # Update download button state
         self._update_download_button_state()
 
@@ -2568,7 +2725,9 @@ class PatientTableWidget(QWidget):
             QTableWidget::item:alternate:hover {{
                 background: #2d3748;
             }}
-            
+
+
+
             QHeaderView::section {{
                 background: #0f1419;
                 color: #f7fafc;
@@ -2608,6 +2767,11 @@ class PatientTableWidget(QWidget):
             
             QCheckBox::indicator:hover {{
                 border: 2px solid #3182ce;
+            }}
+
+            QLabel[objectName^="checkbox_"] {{
+                font-size: 16px;
+                qproperty-alignment: AlignCenter;
             }}
         """
         self.results_table.setStyleSheet(stylesheet)
