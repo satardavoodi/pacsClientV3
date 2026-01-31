@@ -1,0 +1,1135 @@
+/*
+ * NewMPR2Slicer Custom Stylesheet
+ * 
+ * This stylesheet provides consistent branding with the main AIPacs application.
+ * It uses the SAME background colors and visual style as the main software,
+ * with a professional BLUE accent color scheme for dark theme.
+ * 
+ * Color Palette Reference:
+ *   Background 1:       #21272a (main background - matching main app)
+ *   Background 2:       #1a1e21 (secondary)
+ *   Background 3:       #14181a (darker panels)
+ *   Background 4:       #0f1214 (borders, separators)
+ *   Background 5:       #0b0d0e (deepest)
+ *   Background 6:       #08090a (hover states)
+ *   Text Primary:       #fefefe (white)
+ *   Text Secondary:     #CBCBCB
+ *   Text Muted:         #989898
+ *   Text Disabled:      #656565
+ *   
+ *   Blue Accent Colors (Material Design 200-tone for dark theme):
+ *   Accent Primary:     #60a5fa (Blue 400 - desaturated for readability)
+ *   Accent Hover:       #3b82f6 (Blue 500 - used in main app status colors)
+ *   Accent Active:      #2563eb (Blue 600)
+ *   Accent Dark:        #1d4ed8 (Blue 700)
+ *   
+ *   Border Radius:      4px (consistent with main app)
+ */
+
+/* ============================================================
+   GLOBAL STYLES
+   ============================================================ */
+
+QWidget {
+    background-color: #21272a;
+    color: #fefefe;
+    font-family: 'Roboto', 'Roboto-Regular', 'Segoe UI', sans-serif;
+    font-size: 13px;
+}
+
+QMainWindow {
+    background-color: #21272a;
+}
+
+/* ============================================================
+   MENU BAR
+   ============================================================ */
+
+QMenuBar {
+    background-color: #0f1214;
+    color: #fefefe;
+    border: 1px solid #21272a;
+    padding: 2px;
+    spacing: 2px;
+    selection-background-color: #2563eb;
+}
+
+QMenuBar:focus {
+    border: 1px solid #3b82f6;
+}
+
+QMenuBar::item {
+    background: transparent;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin: 1px;
+}
+
+QMenuBar::item:selected {
+    background-color: #2563eb;
+}
+
+QMenuBar::item:pressed {
+    background-color: #3b82f6;
+    color: #fefefe;
+}
+
+/* ============================================================
+   MENUS
+   ============================================================ */
+
+QMenu {
+    background-color: #21272a;
+    color: #fefefe;
+    border: 3px solid #0f1214;
+    border-radius: 4px;
+    padding: 2px;
+    margin: 0px;
+    selection-background-color: #60a5fa;
+}
+
+QMenu::item {
+    background-color: #14181a;
+    padding: 4px 24px 4px 28px;
+    border: 1px transparent #0f1214;
+    border-radius: 0px;
+}
+
+QMenu::item:selected {
+    background-color: #2563eb;
+    color: #fefefe;
+}
+
+QMenu::item:pressed {
+    background-color: #2563eb;
+}
+
+QMenu::item:disabled {
+    color: #656565;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #08090a;
+    color: #fefefe;
+    margin: 2px 4px;
+}
+
+QMenu::indicator {
+    width: 12px;
+    height: 12px;
+    padding-left: 8px;
+}
+
+/* ============================================================
+   TOOLBARS
+   ============================================================ */
+
+QToolBar {
+    background-color: #14181a;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 4px;
+    spacing: 4px;
+    qproperty-iconSize: 18px 18px;
+}
+
+/* Toolbar embedded inside left module dock (ModulePanelDockWidget) */
+QDockWidget#ModulePanelDockWidget QToolBar,
+QDockWidget#PanelDockWidget QToolBar {
+    border: none;
+    border-radius: 0px;
+    padding: 2px 4px;
+    margin: 0px;
+    background: transparent;
+    background-color: #21272a;
+}
+
+QDockWidget#ModulePanelDockWidget QToolBar QToolButton,
+QDockWidget#PanelDockWidget QToolBar QToolButton {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 4px;
+    margin: 1px;
+}
+
+QToolBar::separator {
+    width: 1px;
+    background-color: #08090a;
+    margin: 4px 6px;
+}
+
+QToolButton {
+    background-color: #1a1e21;
+    color: #fefefe;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 6px;
+    margin: 1px;
+    min-width: 28px;
+    min-height: 28px;
+}
+
+QToolButton:hover {
+    background-color: #21272a;
+    border-color: #2563eb;
+}
+
+QToolButton:pressed {
+    background-color: #0f1214;
+}
+
+QToolButton:checked {
+    background-color: #3b82f6;
+    border-color: #60a5fa;
+    color: #fefefe;
+}
+
+QToolButton:disabled {
+    background-color: #14181a;
+    border-color: #0f1214;
+    color: #656565;
+}
+
+QToolButton::menu-indicator {
+    image: none;
+    width: 0px;
+}
+
+/* ============================================================
+   AI-PACS MODULE TOOLBAR (taller, modern styling)
+   Targets the "Modules:" combo/toolbar at the top
+   ============================================================ */
+
+/* Main Module toolbar container - taller height with modern feel */
+QToolBar#AIPacsModuleToolbar {
+    background-color: #0f1214;
+    border: 1px solid #21272a;
+    border-bottom: 2px solid #60a5fa;
+    border-radius: 0px;
+    padding: 8px 12px;
+    spacing: 10px;
+    min-height: 44px;
+    qproperty-iconSize: 24px 24px;
+}
+
+/* "Modules:" label - larger font, clearer typography */
+QLabel#AIPacsModuleLabel {
+    background: transparent;
+    color: #60a5fa;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: 'Roboto-Bold', 'Roboto', sans-serif;
+    padding: 4px 8px;
+    margin-right: 4px;
+}
+
+/* Module combo box - modern style matching main app */
+QComboBox#AIPacsModuleCombo {
+    background-color: #14181a;
+    color: #fefefe;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 8px 36px 8px 14px;
+    min-width: 220px;
+    min-height: 32px;
+    font-size: 13px;
+    font-family: 'Roboto', sans-serif;
+    selection-background-color: #3b82f6;
+}
+
+QComboBox#AIPacsModuleCombo:hover {
+    border-color: #3b82f6;
+    background-color: #1a1e21;
+}
+
+QComboBox#AIPacsModuleCombo:focus {
+    border-color: #60a5fa;
+    border-width: 2px;
+}
+
+QComboBox#AIPacsModuleCombo:on {
+    border-color: #60a5fa;
+    border-bottom-left-radius: 0px;
+    border-bottom-right-radius: 0px;
+}
+
+/* Combo box dropdown button arrow */
+QComboBox#AIPacsModuleCombo::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 28px;
+    border-left: 1px solid #0f1214;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+    background: transparent;
+}
+
+QComboBox#AIPacsModuleCombo::down-arrow {
+    image: none;
+    width: 0px;
+    height: 0px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #CBCBCB;
+}
+
+QComboBox#AIPacsModuleCombo:hover::down-arrow {
+    border-top-color: #60a5fa;
+}
+
+/* Combo box dropdown list - matching main app */
+QComboBox#AIPacsModuleCombo QAbstractItemView {
+    background-color: #21272a;
+    color: #fefefe;
+    border: 1px solid #3b82f6;
+    border-top: none;
+    border-radius: 0px;
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+    padding: 2px;
+    outline: none;
+    selection-background-color: #2563eb;
+    selection-color: #fefefe;
+}
+
+QComboBox#AIPacsModuleCombo QAbstractItemView::item {
+    padding: 4px 12px;
+    min-height: 24px;
+    border-radius: 0px;
+    margin: 0px;
+    background-color: #14181a;
+}
+
+QComboBox#AIPacsModuleCombo QAbstractItemView::item:hover {
+    background-color: #2563eb;
+    color: #fefefe;
+}
+
+QComboBox#AIPacsModuleCombo QAbstractItemView::item:selected {
+    background-color: #3b82f6;
+    color: #fefefe;
+}
+
+/* ============================================================
+   PUSH BUTTONS
+   ============================================================ */
+
+QPushButton {
+    background-color: #1a1e21;
+    color: #fefefe;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-family: 'Roboto', sans-serif;
+    min-height: 24px;
+}
+
+QPushButton:hover {
+    background-color: #21272a;
+    border-color: #2563eb;
+}
+
+QPushButton:pressed {
+    background-color: #0f1214;
+}
+
+QPushButton:checked {
+    background-color: #3b82f6;
+    border-color: #60a5fa;
+    color: #fefefe;
+}
+
+QPushButton:disabled {
+    background-color: #14181a;
+    border-color: #0f1214;
+    color: #656565;
+}
+
+/* Primary button variant */
+QPushButton[variant="primary"] {
+    background-color: #3b82f6;
+    border-color: #60a5fa;
+    color: #fefefe;
+}
+
+QPushButton[variant="primary"]:hover {
+    background-color: #60a5fa;
+}
+
+/* ============================================================
+   SCROLL BARS
+   ============================================================ */
+
+QScrollBar:vertical {
+    background-color: #14181a;
+    width: 12px;
+    margin: 0px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #21272a;
+    min-height: 30px;
+    border-radius: 4px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #2563eb;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    background-color: #14181a;
+    height: 12px;
+    margin: 0px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #21272a;
+    min-width: 30px;
+    border-radius: 4px;
+    margin: 2px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #2563eb;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+
+/* ============================================================
+   TAB WIDGET
+   ============================================================ */
+
+QTabWidget::pane {
+    background-color: #21272a;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 4px;
+}
+
+QTabBar::tab {
+    background-color: #14181a;
+    color: #989898;
+    border: 1px solid #0f1214;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    padding: 8px 16px;
+    margin-right: 2px;
+}
+
+QTabBar::tab:selected {
+    background-color: #21272a;
+    color: #fefefe;
+    border-bottom: 2px solid #60a5fa;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #1a1e21;
+    color: #fefefe;
+}
+
+/* ============================================================
+   TEXT INPUTS
+   ============================================================ */
+
+QLineEdit {
+    background-color: #14181a;
+    color: #fefefe;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 8px 12px;
+    selection-background-color: #3b82f6;
+}
+
+QLineEdit:focus {
+    border: 2px solid #3b82f6;
+    background-color: #1a1e21;
+}
+
+QLineEdit:hover {
+    border: 1px solid #2563eb;
+}
+
+QLineEdit:disabled {
+    background-color: #0f1214;
+    color: #656565;
+    border-color: #08090a;
+}
+
+QTextEdit, QPlainTextEdit {
+    background-color: #14181a;
+    color: #fefefe;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 8px;
+    selection-background-color: #3b82f6;
+}
+
+/* ============================================================
+   COMBO BOX
+   ============================================================ */
+
+QComboBox {
+    background-color: #14181a;
+    color: #fefefe;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 6px 12px;
+    min-height: 24px;
+}
+
+QComboBox:hover {
+    border-color: #2563eb;
+}
+
+QComboBox:on {
+    border-color: #60a5fa;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox::down-arrow {
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 6px solid #CBCBCB;
+    margin-right: 8px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #21272a;
+    color: #fefefe;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    selection-background-color: #2563eb;
+    padding: 4px;
+}
+
+/* ============================================================
+   SLIDERS
+   ============================================================ */
+
+QSlider::groove:horizontal {
+    background-color: #14181a;
+    height: 6px;
+    border-radius: 3px;
+}
+
+QSlider::handle:horizontal {
+    background-color: #3b82f6;
+    width: 16px;
+    height: 16px;
+    margin: -5px 0;
+    border-radius: 8px;
+}
+
+QSlider::handle:horizontal:hover {
+    background-color: #60a5fa;
+}
+
+QSlider::groove:vertical {
+    background-color: #14181a;
+    width: 6px;
+    border-radius: 3px;
+}
+
+QSlider::handle:vertical {
+    background-color: #3b82f6;
+    width: 16px;
+    height: 16px;
+    margin: 0 -5px;
+    border-radius: 8px;
+}
+
+/* ============================================================
+   SPIN BOX
+   ============================================================ */
+
+QSpinBox, QDoubleSpinBox {
+    background-color: #14181a;
+    color: #fefefe;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 4px 8px;
+    min-height: 24px;
+}
+
+QSpinBox:hover, QDoubleSpinBox:hover {
+    border-color: #2563eb;
+}
+
+QSpinBox:focus, QDoubleSpinBox:focus {
+    border-color: #3b82f6;
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    background-color: #1a1e21;
+    border: none;
+    border-left: 1px solid #0f1214;
+    border-top-right-radius: 4px;
+    width: 20px;
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    background-color: #1a1e21;
+    border: none;
+    border-left: 1px solid #0f1214;
+    border-bottom-right-radius: 4px;
+    width: 20px;
+}
+
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+    background-color: #2563eb;
+}
+
+/* ============================================================
+   CHECK BOX & RADIO BUTTON
+   ============================================================ */
+
+QCheckBox, QRadioButton {
+    color: #fefefe;
+    spacing: 8px;
+    background-color: transparent;
+}
+
+QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    background-color: #14181a;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #2563eb;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #3b82f6;
+    border-color: #60a5fa;
+}
+
+QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #0f1214;
+    border-radius: 7px;
+    background-color: #14181a;
+}
+
+QRadioButton::indicator:hover {
+    border-color: #2563eb;
+}
+
+QRadioButton::indicator:checked {
+    background-color: #3b82f6;
+    border-color: #60a5fa;
+}
+
+/* ============================================================
+   PROGRESS BAR
+   ============================================================ */
+
+QProgressBar {
+    background-color: #14181a;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    height: 16px;
+    text-align: center;
+    color: #fefefe;
+}
+
+QProgressBar::chunk {
+    background-color: #3b82f6;
+    border-radius: 3px;
+}
+
+/* ============================================================
+   GROUP BOX
+   ============================================================ */
+
+QGroupBox {
+    background-color: #1a1e21;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    margin-top: 16px;
+    padding-top: 16px;
+    font-weight: 600;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 12px;
+    padding: 0 8px;
+    color: #60a5fa;
+    background-color: #1a1e21;
+}
+
+/* ============================================================
+   DOCK WIDGETS
+   ============================================================ */
+
+QDockWidget {
+    color: #fefefe;
+    titlebar-close-icon: url(:/Icons/close.png);
+    titlebar-normal-icon: url(:/Icons/undock.png);
+}
+
+QDockWidget::title {
+    background-color: #14181a;
+    padding: 8px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+QDockWidget::close-button, QDockWidget::float-button {
+    background: transparent;
+    border: none;
+    padding: 2px;
+}
+
+QDockWidget::close-button:hover, QDockWidget::float-button:hover {
+    background-color: #2563eb;
+    border-radius: 4px;
+}
+
+/* ============================================================
+   SPLITTER
+   ============================================================ */
+
+QSplitter::handle {
+    background-color: #0f1214;
+}
+
+QSplitter::handle:horizontal {
+    width: 4px;
+}
+
+QSplitter::handle:vertical {
+    height: 4px;
+}
+
+QSplitter::handle:hover {
+    background-color: #3b82f6;
+}
+
+/* ============================================================
+   TOOLTIPS
+   ============================================================ */
+
+QToolTip {
+    background-color: #3b82f6;
+    color: #fefefe;
+    border: 1px solid #08090a;
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 12px;
+}
+
+/* ============================================================
+   STATUS BAR
+   ============================================================ */
+
+QStatusBar {
+    background-color: #0f1214;
+    color: #989898;
+    border: 1px solid #21272a;
+}
+
+QStatusBar::item {
+    border: none;
+}
+
+/* ============================================================
+   TREE VIEW & LIST VIEW
+   ============================================================ */
+
+QTreeView, QListView, QTableView {
+    background-color: #21272a;
+    color: #fefefe;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    alternate-background-color: #1a1e21;
+    selection-background-color: #2563eb;
+}
+
+QTreeView::item, QListView::item, QTableView::item {
+    padding: 4px;
+    border-radius: 0px;
+}
+
+QTreeView::item:hover, QListView::item:hover, QTableView::item:hover {
+    background-color: #14181a;
+}
+
+QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {
+    background-color: #2563eb;
+    color: #fefefe;
+}
+
+QHeaderView::section {
+    background-color: #14181a;
+    color: #fefefe;
+    padding: 8px;
+    border: none;
+    border-right: 1px solid #0f1214;
+    border-bottom: 1px solid #0f1214;
+    font-weight: 600;
+}
+
+QHeaderView::section:hover {
+    background-color: #2563eb;
+}
+
+/* ============================================================
+   SLICER-SPECIFIC WIDGETS (if applicable)
+   ============================================================ */
+
+/* Module selector panel */
+qSlicerModuleSelectorToolBar {
+    background-color: #14181a;
+    border: none;
+}
+
+/* DICOM browser */
+ctkDICOMBrowser {
+    background-color: #21272a;
+}
+
+/* VTK render windows - minimal styling to not interfere */
+QVTKOpenGLNativeWidget {
+    background-color: #000000;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+}
+/* ============================================================
+   NEWMPR2MPR MODULE STYLES
+   ============================================================
+   These styles match the in-app "MPR Δ" popup design for
+   visual consistency between the main app and Slicer module.
+   
+   Class selectors used:
+   - mprHeader: Orange gradient header bar (matching main app accent)
+   - mprBodyPanel: Dark body panel with accent border
+   - mprInfoBar: Footer/info bar with subtle styling
+   - mprControlPanel: Control section with collapsible styling
+   ============================================================ */
+
+/* MPR Header - Orange gradient matching main app accent */
+QFrame#mprHeader {
+    background-color: #3b82f6;
+    border: none;
+    border-radius: 4px;
+    padding: 8px;
+    min-height: 44px;
+    max-height: 50px;
+}
+
+QFrame#mprHeader QLabel {
+    color: #fefefe;
+    font-size: 15px;
+    font-weight: 700;
+    font-family: 'Roboto-Bold', 'Roboto', sans-serif;
+    background: transparent;
+}
+
+QFrame#mprHeader QLabel#mprSubtitle {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: 400;
+}
+
+/* MPR Body Panel - Dark background with orange accent border */
+QFrame#mprBodyPanel {
+    background-color: #21272a;
+    border: 1px solid #3b82f6;
+    border-radius: 4px;
+    padding: 8px;
+}
+
+/* MPR Control Panel - Collapsible sections */
+QFrame#mprControlPanel {
+    background-color: #14181a;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 6px;
+    margin: 4px 0px;
+}
+
+QFrame#mprControlPanel QLabel {
+    color: #fefefe;
+    font-size: 12px;
+}
+
+QFrame#mprControlPanel QLabel#sectionTitle {
+    color: #60a5fa;
+    font-size: 13px;
+    font-weight: 600;
+    padding-bottom: 4px;
+}
+
+/* MPR Info Bar - Footer with DICOM path and metadata */
+QFrame#mprInfoBar {
+    background-color: #14181a;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 6px 10px;
+    min-height: 32px;
+    max-height: 40px;
+}
+
+QFrame#mprInfoBar QLabel {
+    color: #989898;
+    font-size: 11px;
+    background: transparent;
+}
+
+QFrame#mprInfoBar QLabel#infoPath {
+    color: #656565;
+    font-family: "Consolas", "Courier New", monospace;
+}
+
+/* MPR Action Buttons - Orange accent style */
+QPushButton#mprActionBtn {
+    background-color: #3b82f6;
+    color: #fefefe;
+    border: 1px solid #60a5fa;
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-weight: 500;
+    font-size: 12px;
+}
+
+QPushButton#mprActionBtn:hover {
+    background-color: #60a5fa;
+    border-color: #60a5fa;
+}
+
+QPushButton#mprActionBtn:pressed {
+    background-color: #2563eb;
+}
+
+/* MPR Close/Reset Buttons - Red accent */
+QPushButton#mprCloseBtn {
+    background-color: #dc2626;
+    color: #fefefe;
+    border: 1px solid #ef4444;
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-weight: 500;
+}
+
+QPushButton#mprCloseBtn:hover {
+    background-color: #ef4444;
+}
+
+/* MPR Value Labels - Read-only info display */
+QLabel#mprValueLabel {
+    color: #fefefe;
+    background-color: #14181a;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+/* MPR Linked Views Checkbox */
+QCheckBox#mprCheckbox {
+    color: #fefefe;
+    font-size: 12px;
+    spacing: 6px;
+}
+
+QCheckBox#mprCheckbox::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid #0f1214;
+    background-color: #14181a;
+}
+
+QCheckBox#mprCheckbox::indicator:checked {
+    background-color: #3b82f6;
+    border-color: #60a5fa;
+}
+
+QCheckBox#mprCheckbox::indicator:hover {
+    border-color: #2563eb;
+}
+
+/* MPR Sliders - Orange accent */
+QSlider#mprSlider::groove:horizontal {
+    border: 1px solid #0f1214;
+    height: 6px;
+    background-color: #14181a;
+    border-radius: 3px;
+}
+
+QSlider#mprSlider::handle:horizontal {
+    background-color: #3b82f6;
+    border: 1px solid #60a5fa;
+    width: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+}
+
+QSlider#mprSlider::handle:horizontal:hover {
+    background-color: #60a5fa;
+}
+
+/* MPR Collapsible Button (ctkCollapsibleButton) */
+ctkCollapsibleButton#mprCollapsible {
+    background-color: #14181a;
+    color: #60a5fa;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+    padding: 8px;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+ctkCollapsibleButton#mprCollapsible:hover {
+    background-color: #1a1e21;
+    border-color: #3b82f6;
+}
+
+
+/* ============================================================
+   SLICE VIEW CONTROLLERS - AI-PACS Orange Theme
+   Override default Slicer red/green/yellow slice controllers
+   ============================================================ */
+
+/* Slice controller widget backgrounds - dark panel instead of colored */
+qMRMLSliceControllerWidget {
+    background-color: #14181a;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+}
+
+/* Override Red/Yellow/Green slice controller color bars */
+qMRMLSliceControllerWidget#RedSliceController,
+qMRMLSliceControllerWidget#YellowSliceController,
+qMRMLSliceControllerWidget#GreenSliceController {
+    background-color: #14181a;
+    border: 1px solid #0f1214;
+}
+
+/* Slice controller buttons - consistent dark style */
+qMRMLSliceControllerWidget QPushButton,
+qMRMLSliceControllerWidget QToolButton {
+    background-color: #1a1e21;
+    border: 1px solid #0f1214;
+    border-radius: 3px;
+    padding: 2px 4px;
+    min-width: 18px;
+    min-height: 18px;
+}
+
+qMRMLSliceControllerWidget QPushButton:hover,
+qMRMLSliceControllerWidget QToolButton:hover {
+    background-color: #21272a;
+    border-color: #2563eb;
+}
+
+qMRMLSliceControllerWidget QPushButton:pressed,
+qMRMLSliceControllerWidget QToolButton:pressed {
+    background-color: #0f1214;
+}
+
+/* Slice controller labels - orange accent instead of R/G/Y */
+qMRMLSliceControllerWidget QLabel {
+    color: #60a5fa;
+    background: transparent;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+/* Slice offset sliders - orange theme instead of colored bars */
+ctkSliderWidget {
+    background: transparent;
+}
+
+ctkSliderWidget QSlider::groove:horizontal {
+    background-color: #0f1214;
+    height: 6px;
+    border-radius: 3px;
+    border: 1px solid #08090a;
+}
+
+ctkSliderWidget QSlider::handle:horizontal {
+    background-color: #3b82f6;
+    border: 1px solid #60a5fa;
+    width: 12px;
+    height: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
+}
+
+ctkSliderWidget QSlider::handle:horizontal:hover {
+    background-color: #60a5fa;
+}
+
+/* Reduce slider height for a thinner bar */
+ctkSliderWidget QSlider {
+    min-height: 12px;
+    max-height: 14px;
+}
+
+/* Slice controller spinbox styling */
+ctkSliderWidget QDoubleSpinBox,
+ctkSliderWidget QSpinBox {
+    background-color: #14181a;
+    color: #fefefe;
+    border: 1px solid #0f1214;
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 11px;
+    min-width: 50px;
+    max-height: 20px;
+}
+
+/* 3D View widget - dark background */
+qMRMLThreeDViewControllerWidget {
+    background-color: #14181a;
+    border: 1px solid #0f1214;
+    border-radius: 4px;
+}
+
+qMRMLThreeDViewControllerWidget QPushButton,
+qMRMLThreeDViewControllerWidget QToolButton {
+    background-color: #1a1e21;
+    border: 1px solid #0f1214;
+    border-radius: 3px;
+}
+
+qMRMLThreeDViewControllerWidget QLabel {
+    color: #60a5fa;
+    background: transparent;
+}
+
+/* Slice view frame - dark background */
+qMRMLSliceWidget {
+    background-color: #0f1214;
+}
+
+/* 3D view frame - dark background */
+qMRMLThreeDWidget {
+    background-color: #0f1214;
+}

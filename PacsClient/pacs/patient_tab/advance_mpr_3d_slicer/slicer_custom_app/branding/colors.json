@@ -1,0 +1,75 @@
+{
+  "name": "NewMPR2Slicer Color Palette",
+  "description": "Color palette matching the main NewMPR2/AIPacs application",
+  "version": "1.0.0",
+  "colors": {
+    "background": {
+      "dark": "#1a202c",
+      "medium": "#1f2937",
+      "light": "#374151",
+      "input": "#0f172a"
+    },
+    "accent": {
+      "primary": "#3b82f6",
+      "primaryHover": "#60a5fa",
+      "primaryPressed": "#2563eb",
+      "secondary": "#22d3ee",
+      "secondaryHover": "#67e8f9",
+      "success": "#10b981",
+      "successHover": "#34d399",
+      "warning": "#f59e0b",
+      "warningHover": "#fbbf24",
+      "error": "#ef4444",
+      "errorHover": "#f87171"
+    },
+    "text": {
+      "primary": "#f3f4f6",
+      "secondary": "#9ca3af",
+      "muted": "#6b7280",
+      "disabled": "#4b5563"
+    },
+    "border": {
+      "default": "#4b5563",
+      "hover": "#6b7280",
+      "focus": "#3b82f6"
+    },
+    "special": {
+      "mprDelta": "#22d3ee",
+      "slicer": "#a78bfa"
+    }
+  },
+  "gradients": {
+    "backgroundMain": "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1a202c, stop:1 #0f1419)",
+    "backgroundPanel": "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1f2937, stop:1 #111827)",
+    "buttonDefault": "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #374151, stop:1 #1f2937)",
+    "buttonHover": "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4b5563, stop:1 #374151)",
+    "buttonPrimary": "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3b82f6, stop:1 #2563eb)",
+    "buttonPrimaryHover": "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #60a5fa, stop:1 #3b82f6)"
+  },
+  "fonts": {
+    "family": "Segoe UI, Roboto, sans-serif",
+    "sizeSmall": "11px",
+    "sizeNormal": "13px",
+    "sizeMedium": "14px",
+    "sizeLarge": "16px",
+    "sizeTitle": "20px",
+    "weightNormal": "400",
+    "weightMedium": "500",
+    "weightBold": "600",
+    "weightExtraBold": "700"
+  },
+  "spacing": {
+    "borderRadius": {
+      "small": "4px",
+      "medium": "6px",
+      "large": "8px",
+      "xlarge": "12px"
+    },
+    "padding": {
+      "small": "4px",
+      "medium": "8px",
+      "large": "12px",
+      "xlarge": "16px"
+    }
+  }
+}

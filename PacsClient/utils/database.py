@@ -242,6 +242,44 @@ def init_database():
             )
         """)
 
+        # Educational courses tables
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS courses (
+                course_pk INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_name TEXT NOT NULL,
+                course_description TEXT,
+                author_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                outline TEXT,
+                thumbnail_path TEXT
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS slides (
+                slide_pk INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_fk INTEGER NOT NULL,
+                slide_order INTEGER NOT NULL,
+                slide_title TEXT,
+                slide_notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(course_fk) REFERENCES courses(course_pk) ON DELETE CASCADE
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS slide_content (
+                content_pk INTEGER PRIMARY KEY AUTOINCREMENT,
+                slide_fk INTEGER NOT NULL,
+                content_type TEXT NOT NULL,
+                content_order INTEGER NOT NULL,
+                content_data TEXT NOT NULL,
+                layout_position TEXT,
+                FOREIGN KEY(slide_fk) REFERENCES slides(slide_pk) ON DELETE CASCADE
+            )
+        """)
+
         conn.commit()
         
         # Ensure report status schema exists

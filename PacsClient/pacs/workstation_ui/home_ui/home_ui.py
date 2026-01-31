@@ -3908,6 +3908,43 @@ Study UID: {study_uid}
             import traceback
             traceback.print_exc()
     
+    def open_education_module(self):
+        """Open education module in a new tab"""
+        print("[HomePanelWidget] open_education_module called")
+        try:
+            # Check if education module tab already exists
+            if self.custom_tab_manager:
+                for i in range(self.tab_widget.count()):
+                    tab_data = self.custom_tab_manager.patient_tabs.get(i, {})
+                    if tab_data.get('is_education_tab', False):
+                        # Tab exists, just switch to it
+                        self.tab_widget.setCurrentIndex(i)
+                        print(f"[HomePanelWidget] Switched to existing Education Module tab at index {i}")
+                        return
+            
+            # Import EducationMainWidget
+            from PacsClient.pacs.education.education_main_widget import EducationMainWidget
+            
+            # Create education module widget
+            education_widget = EducationMainWidget(parent=self)
+            
+            # Use custom tab manager if available
+            if self.custom_tab_manager:
+                print("[HomePanelWidget] Using custom tab manager")
+                tab_index = self.custom_tab_manager.add_education_module_tab(widget=education_widget)
+                print(f"[HomePanelWidget] Education Module tab added at index: {tab_index}")
+            else:
+                print("[HomePanelWidget] Using default tab widget")
+                # Fallback to normal tab
+                self.tab_widget.addTab(education_widget, "📚 Educational Module")
+                self.tab_widget.setCurrentWidget(education_widget)
+            
+            print("[HomePanelWidget] Education Module opened successfully")
+        except Exception as e:
+            print(f"[HomePanelWidget] Error opening education module: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
     def open_reception_data_tab(self):
         """Open Reception Data tab"""
         print("[HomePanelWidget] open_reception_data_tab called")
