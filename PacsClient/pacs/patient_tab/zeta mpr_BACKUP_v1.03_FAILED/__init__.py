@@ -1,11 +1,11 @@
 """
-Zeta MPR Module
+New MPR Zeta Module
 
-This module contains the Zeta MPR (Multi-Planar Reconstruction) viewer -
-the primary and recommended MPR implementation for the PACS system.
+This module contains the original/alternative MPR (Multi-Planar Reconstruction) viewer
+implementation, kept for comparison and backwards compatibility with the newer MPR implementations.
 
 Main Components:
-- StandardMPRViewer: The main Zeta MPR viewer widget with three orthogonal views
+- StandardMPRViewer: The main MPR viewer widget with three orthogonal views
 - preset_manager: Window/Level preset management
 - advanced_rendering: Volume rendering and thick slab features
 - segmentation_tools: Lung, airway, vessel, and bone segmentation
@@ -23,5 +23,5 @@ __all__ = [
     'PresetCategory',
 ]
 
-__version__ = '1.04'
+__version__ = '2.0.0'
 __author__ = 'PACS Development Team'

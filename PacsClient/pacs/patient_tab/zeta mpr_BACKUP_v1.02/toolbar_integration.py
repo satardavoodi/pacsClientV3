@@ -1,8 +1,8 @@
 """
-Toolbar Integration for Zeta MPR Module
+Toolbar Integration for New MPR Zeta Module
 
 This module contains the button integration code that should be added to toolbar_manager.py
-to enable the Zeta MPR button functionality.
+to enable the NEW MPR ZETA button functionality.
 
 Usage in toolbar_manager.py:
     1. Add to imports:
@@ -15,8 +15,8 @@ Usage in toolbar_manager.py:
        self._new_mpr_zeta_active = False
     
     3. Add button to MPR dropdown menu:
-       mpr_zeta_action = mpr_dropdown_menu.addAction("Zeta MPR")
-       mpr_zeta_action.setToolTip("Zeta MPR viewer - primary MPR implementation")
+       mpr_zeta_action = mpr_dropdown_menu.addAction("MPR ζ (Zeta)")
+       mpr_zeta_action.setToolTip("Standard MPR viewer - old MPR implementation for comparison")
        mpr_zeta_action.triggered.connect(lambda: toggle_new_mpr_zeta(
            self, self.patient_widget.selected_widget
        ))
@@ -30,7 +30,7 @@ from PySide6.QtWidgets import QMessageBox, QSizePolicy, QWidget
 
 def toggle_new_mpr_zeta(toolbar_manager, selected_widget=None):
     """
-    Toggle Zeta MPR viewer - primary MPR implementation
+    Toggle New MPR Zeta (old Standard MPR) viewer - for comparison with newer implementations
     
     Args:
         toolbar_manager: The toolbar manager instance (self)
@@ -39,7 +39,7 @@ def toggle_new_mpr_zeta(toolbar_manager, selected_widget=None):
     logger = logging.getLogger(__name__)
 
     print("=" * 80, file=sys.stderr, flush=True)
-    print("TOGGLE ZETA MPR FUNCTION STARTED", file=sys.stderr, flush=True)
+    print("TOGGLE NEW MPR ZETA (OLD STANDARD MPR) FUNCTION STARTED", file=sys.stderr, flush=True)
 
     if selected_widget is None:
         selected_widget = toolbar_manager.patient_widget.selected_widget
@@ -51,13 +51,13 @@ def toggle_new_mpr_zeta(toolbar_manager, selected_widget=None):
     print(f"tool_access.NEW_MPR_ZETA: {getattr(toolbar_manager.tool_access, 'NEW_MPR_ZETA', 'NOT FOUND')}", file=sys.stderr, flush=True)
 
     logger.info("=" * 80)
-    logger.info("TOGGLE ZETA MPR CALLED")
+    logger.info("TOGGLE NEW MPR ZETA (OLD STANDARD MPR) CALLED")
     logger.info(f"selected_widget: {selected_widget}")
     logger.info(f"selected_widget type: {type(selected_widget)}")
 
     # Check if zeta MPR is already active (deactivate if so)
     if toolbar_manager.tool_selected is not None and hasattr(toolbar_manager, '_new_mpr_zeta_active') and toolbar_manager._new_mpr_zeta_active:
-        logger.info("Deactivating Zeta MPR (already active)")
+        logger.info("Deactivating New MPR Zeta (already active)")
         print("[DEACTIVATE] Closing New MPR Zeta and restoring original viewer...", file=sys.stderr, flush=True)
         toolbar_manager._new_mpr_zeta_active = False
         try:
@@ -94,7 +94,7 @@ def toggle_new_mpr_zeta(toolbar_manager, selected_widget=None):
         toolbar_manager.handle_buttons_checked()
         return
 
-    logger.info("Activating Zeta MPR")
+    logger.info("Activating New MPR Zeta (Old Standard MPR)")
     toolbar_manager.check_and_deactivate_tools()
 
     if selected_widget is None:
@@ -196,7 +196,7 @@ def toggle_new_mpr_zeta(toolbar_manager, selected_widget=None):
 
 def replace_selected_viewport_with_new_mpr_zeta(toolbar_manager, selected_widget, vtk_image_data, dicom_directory=None, window_width=None, window_center=None):
     """
-    Replace the selected viewport with Zeta MPR viewer
+    Replace the selected viewport with New MPR Zeta (old Standard MPR) viewer
     
     Args:
         toolbar_manager: The toolbar manager instance

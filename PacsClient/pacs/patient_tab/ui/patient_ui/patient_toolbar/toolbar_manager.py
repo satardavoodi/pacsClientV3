@@ -790,7 +790,7 @@ class ToolbarManager:
             pass
         
         try:
-            # Check for StandardMPRViewer (old MPR)
+            # Check for Zeta MPR viewer
             from PacsClient.pacs.patient_tab.viewers.standard_mpr_viewer import StandardMPRViewer
             if hasattr(widget, '_mpr_widget') and isinstance(widget._mpr_widget, StandardMPRViewer):
                 return True
@@ -827,7 +827,7 @@ class ToolbarManager:
                 f"Current widget type: {type(widget).__name__}\n\n"
                 "Measurement tools work on:\n"
                 "  • Standard 2D viewers (VTKWidget)\n"
-                "  • MPR viewers (StandardMPRViewer)"
+                "  • Zeta MPR viewers"
             )
             msg.setStandardButtons(QMessageBox.Ok)
             msg.exec()
@@ -1657,32 +1657,7 @@ class ToolbarManager:
             ])
             layout.addWidget(thick_btn)
 
-            # ITK MPR (ITK-SNAP) button
-            itk_mpr_btn = create_dropdown_tool('ITK MPR (ITK-SNAP)', 'fa5s.cube', '#a855f7')
-            itk_mpr_btn.clicked.connect(lambda: [
-                self.on_itk_mpr_from_dropdown_requested(),
-                dropdown.close()
-            ])
-            layout.addWidget(itk_mpr_btn)
-            print("[DEBUG] ITK MPR (ITK-SNAP) button added to dropdown!")
-
-            # Advanced MPR (3D Slicer) button
-            advanced_mpr_btn = create_dropdown_tool('Advanced MPR (3D Slicer)', 'fa5s.cubes', '#ec4899')
-            advanced_mpr_btn.clicked.connect(lambda: [
-                self.launch_advanced_mpr_slicer(),
-                dropdown.close()
-            ])
-            layout.addWidget(advanced_mpr_btn)
-            print("[DEBUG] Advanced MPR (3D Slicer) button added to dropdown!")
-
-            # Zeta MPR button
-            zeta_mpr_btn = create_dropdown_tool('Zeta MPR', 'fa5s.th', '#06b6d4')
-            zeta_mpr_btn.clicked.connect(lambda: [
-                self.launch_zeta_mpr(),
-                dropdown.close()
-            ])
-            layout.addWidget(zeta_mpr_btn)
-            print("[DEBUG] Zeta MPR button added to dropdown!")
+            # Note: Zeta MPR removed from dropdown - now the main MPR button
 
             # Position dropdown below the button
             button_pos = button.mapToGlobal(QPoint(0, button.height()))
@@ -2636,9 +2611,9 @@ class ToolbarManager:
             selected_widget.setVisible(False)
             
             # Create Zeta MPR widget WITH PARENT to keep it embedded
-            print("Creating Zeta MPR StandardMPRViewer...", file=sys.stderr, flush=True)
+            print("Creating Zeta MPR viewer...", file=sys.stderr, flush=True)
             
-            # Import StandardMPRViewer from zeta mpr folder (folder name has space)
+            # Import Zeta MPR viewer from zeta mpr folder (folder name has space)
             import os
             import shutil
             import importlib.util
@@ -3950,7 +3925,7 @@ class ToolbarManager:
         mpr_menu_btn.setCursor(Qt.PointingHandCursor)
         mpr_menu_btn.clicked.connect(lambda: self._show_mpr_dropdown(mpr_menu_btn))
 
-        mpr_btn = create_tool_btn(self.patient_widget, 'MPR Viewer', icon_name=None, text_icon='MPR')
+        mpr_btn = create_tool_btn(self.patient_widget, 'Zeta MPR Viewer', icon_name=None, text_icon='MPR')
         mpr_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -3987,7 +3962,7 @@ class ToolbarManager:
             }
         """)
         
-        mpr_btn.clicked.connect(lambda: self.toggle_mpr())
+        mpr_btn.clicked.connect(lambda: self.launch_zeta_mpr())
         
         mpr_layout.addWidget(mpr_menu_btn)
         mpr_layout.addWidget(mpr_btn)

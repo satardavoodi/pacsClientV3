@@ -1,0 +1,1 @@
+"""Educational course presentation module."""

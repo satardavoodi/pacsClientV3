@@ -19,7 +19,7 @@ class MPRMeasurementTools:
         """
         Initialize MPR measurement tools
         Args:
-            mpr_viewer: Zeta MPR viewer instance (StandardMPRViewer)
+            mpr_viewer: StandardMPRViewer instance
         """
         self.mpr_viewer = mpr_viewer
         self.active_tools = {}  # {view_name: {'ruler': [widgets], 'angle': [widgets], ...}}

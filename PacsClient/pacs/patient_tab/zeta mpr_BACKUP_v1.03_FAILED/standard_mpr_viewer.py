@@ -1,20 +1,29 @@
 """
-Zeta MPR Viewer based on VTK official patterns
+Standard MPR Viewer based on VTK official patterns
 Uses vtkImageResliceMapper for proper orthogonal views
 
-VERSION: 1.04 (Module: 1.03-dev experimental oblique)
+VERSION: 1.03 - OBLIQUE MPR ENABLED
 Date: 2026-01-31
-Status: ✅ STABLE - UI unified, naming consistent, oblique MPR experimental (tested at 15°)
-Rollback: v1.02 stable available at zeta mpr_BACKUP_v1.02/
+Status: ⚠️ TESTING - Oblique reconstruction implemented, needs verification
 
 CRITICAL CHANGES:
 =================
 
-v1.02 (Current):
-- ✓ FIXED: Oblique reslicing disabled (line ~2185)
-  Crosshair rotation is now VISUAL ONLY - lines rotate but slices stay orthogonal
-  This prevents black screens and misalignment issues with flipped coordinate system
-- ✓ FIXED: Reset button now restores correct v1.01 state with CT transformations
+v1.03 (Current):
+- ✓ IMPLEMENTED: Proper oblique MPR using SetResliceAxes with direction cosines
+  - Uses vtkMatrix4x4 to define oblique slice orientation
+  - Extracts 2D slices without modifying input volume or transforms
+  - See _apply_oblique_slice_with_axes() method (~line 2250)
+- ✓ NEW METHODS:
+  - _get_base_reslice_matrix(): Defines standard orientation matrices
+  - _rotate_reslice_matrix(): Rotates direction cosines for oblique views
+- ✓ Updated _reset_all_to_orthogonal() to handle new oblique implementation
+- ⚠️ NEEDS TESTING: Verify oblique slices display correctly and maintain coordinate accuracy
+
+v1.02:
+- ✓ FIXED: Oblique reslicing disabled (temporary measure)
+  Crosshair rotation was VISUAL ONLY - prevented issues
+- ✓ FIXED: Reset button restores correct v1.01 state with CT transformations
 - ✓ FIXED: Crosshairs recreated properly during reset
 
 v1.01 (Baseline):
@@ -77,14 +86,14 @@ WL_PRESETS = {
 
 class StandardMPRViewer(QWidget):
     """
-    Zeta MPR Viewer using VTK best practices
+    Standard MPR Viewer using VTK best practices
     """
     
     def __init__(self, vtk_image_data, parent=None):
         super().__init__(parent)
         
         logger.info("=" * 80)
-        logger.info("ZETA MPR VIEWER INITIALIZATION STARTED")
+        logger.info("STANDARD MPR VIEWER INITIALIZATION STARTED")
         logger.info("=" * 80)
         
         # Apply left-right flip to input volume data
@@ -207,7 +216,7 @@ class StandardMPRViewer(QWidget):
         
         logger.info("Calling _setup_ui()...")
         self._setup_ui()
-        logger.info("Zeta MPR Viewer created successfully!")
+        logger.info("StandardMPRViewer created successfully!")
         logger.info("=" * 80)
     
     def _detect_series_type(self):
@@ -2197,21 +2206,38 @@ class StandardMPRViewer(QWidget):
     def _update_oblique_reslicing(self):
         """
         Update oblique reslicing when crosshairs rotate.
-        Uses vtkTransform for proper 3D rotation.
+        Uses vtkImageReslice with SetResliceAxes for proper oblique slice extraction.
         
-        TEMPORARILY DISABLED in v1.01+:
-        Oblique reslicing was causing issues with flipped coordinate system.
-        Crosshair rotation is now VISUAL ONLY - the crosshair lines rotate
-        but the underlying slice extraction remains orthogonal.
+        v1.03 IMPLEMENTATION:
+        Uses direction cosines (vtkMatrix4x4) to define oblique slice orientation.
+        This extracts slices from the volume without modifying input data or transforms.
         """
         import math
         
-        # DISABLED: Just reset to orthogonal and return
-        # The crosshair lines will still rotate visually, but we won't
-        # actually reslice the volumes obliquely
-        logger.debug("Oblique reslicing disabled - crosshair rotation is visual only")
-        self._reset_all_to_orthogonal()
-        return
+        # Check if any view has rotation
+        has_rotation = any(abs(angle) > 0.01 for angle in self.crosshair_angles.values())
+        
+        if not has_rotation:
+            self._reset_all_to_orthogonal()
+            return
+        
+        # Apply oblique slicing to perpendicular views
+        for source_view, angle in self.crosshair_angles.items():
+            if abs(angle) < 0.01:
+                continue
+            
+            if source_view == 'axial':
+                # Axial rotates around Z axis - affects sagittal and coronal
+                self._apply_oblique_slice_with_axes('sagittal', angle, 'z')
+                self._apply_oblique_slice_with_axes('coronal', angle, 'z')
+            elif source_view == 'sagittal':
+                # Sagittal rotates around X axis - affects axial and coronal
+                self._apply_oblique_slice_with_axes('axial', angle, 'x')
+                self._apply_oblique_slice_with_axes('coronal', angle, 'x')
+            elif source_view == 'coronal':
+                # Coronal rotates around Y axis - affects axial and sagittal
+                self._apply_oblique_slice_with_axes('axial', angle, 'y')
+                self._apply_oblique_slice_with_axes('sagittal', angle, 'y')
         
         # ORIGINAL CODE BELOW (disabled):
         # Check if any view has rotation
@@ -2248,106 +2274,285 @@ class StandardMPRViewer(QWidget):
             if view_name not in self.viewers:
                 continue
             
+            renderer = self.viewers[view_name]['renderer']
+            actor = self.viewers[view_name]['actor']
+            
+            # If we have an oblique mapper, restore original
             if 'original_mapper' in self.viewers[view_name]:
                 original_mapper = self.viewers[view_name]['original_mapper']
-                self.viewers[view_name]['actor'].SetMapper(original_mapper)
+                actor.SetMapper(original_mapper)
                 self.viewers[view_name]['mapper'] = original_mapper
+                
+                # Clean up oblique references
+                if 'oblique_slice' in self.viewers[view_name]:
+                    del self.viewers[view_name]['oblique_slice']
+                if 'oblique_mapper' in self.viewers[view_name]:
+                    del self.viewers[view_name]['oblique_mapper']
                 
                 # Restore window/level
                 window, level = self._get_default_window_level()
-                self.viewers[view_name]['actor'].GetProperty().SetColorWindow(window)
-                self.viewers[view_name]['actor'].GetProperty().SetColorLevel(level)
+                actor.GetProperty().SetColorWindow(window)
+                actor.GetProperty().SetColorLevel(level)
                 
-                self.viewers[view_name]['renderer'].GetRenderWindow().Render()
+                renderer.GetRenderWindow().Render()
                 logger.debug(f"Reset {view_name} to orthogonal")
     
-    def _simple_oblique_slice(self, view_name, angle_degrees):
+    def _apply_oblique_slice_with_axes(self, target_view, rotation_angle, rotation_axis):
         """
-        EXPERIMENTAL v1.03: Simple VTK-based oblique slicing.
-        
-        Direct VTK approach using vtkImageReslice with simple rotation transform.
-        NOT based on 3D Slicer - uses minimal, straightforward VTK methods.
-        
-        Status: Method added but NOT ENABLED yet - for incremental testing
+        Apply oblique slicing using SetResliceAxes with direction cosines.
+        This is the CORRECT VTK approach for oblique MPR.
         
         Args:
-            view_name: Target view ('axial', 'sagittal', 'coronal')
-            angle_degrees: Rotation angle in degrees
-        
-        Implementation:
-        1. Simple rotation transform around crosshair center
-        2. Apply to volume using vtkImageReslice with SetResliceTransform
-        3. Output 3D volume (works with existing vtkImageResliceMapper)
-        4. No complex matrices or direction cosines
+            target_view: View to apply oblique slicing to ('axial', 'sagittal', 'coronal')
+            rotation_angle: Rotation angle in radians
+            rotation_axis: Axis of rotation ('x', 'y', or 'z')
         """
         import math
+        import numpy as np
         
-        if view_name not in self.viewers:
-            logger.warning(f"View {view_name} not found for oblique slicing")
-            return False
+        if target_view not in self.viewers:
+            return
         
-        # Get crosshair center position
-        center = self.current_position
+        # Store original mapper
+        if 'original_mapper' not in self.viewers[target_view]:
+            self.viewers[target_view]['original_mapper'] = self.viewers[target_view]['mapper']
         
-        logger.debug(f"=== Simple Oblique: {view_name} @ {angle_degrees}° ===")
-        logger.debug(f"  Center: ({center[0]:.1f}, {center[1]:.1f}, {center[2]:.1f})")
+        # Get base orientation for this view
+        base_matrix = self._get_base_reslice_matrix(target_view)
         
-        # Create simple rotation transform
-        transform = vtk.vtkTransform()
-        transform.PostMultiply()
+        # Apply rotation to the base matrix
+        rotated_matrix = self._rotate_reslice_matrix(base_matrix, rotation_angle, rotation_axis)
         
-        # Rotate around point: translate to origin, rotate, translate back
-        transform.Translate(-center[0], -center[1], -center[2])
+        # Get or create reslice filter
+        reslice_key = f"reslice_{target_view}"
+        if reslice_key not in self.reslice_filters:
+            reslice = vtk.vtkImageReslice()
+            reslice.SetInputData(self.image_data)
+            reslice.SetOutputDimensionality(2)  # 2D slice output
+            reslice.SetInterpolationModeToLinear()
+            reslice.SetBackgroundLevel(self.scalar_range[0])
+            
+            # Set output spacing to match input
+            reslice.SetOutputSpacing(self.spacing[0], self.spacing[1], self.spacing[2])
+            
+            # Set output extent for a 2D slice matching input XY dimensions
+            input_extent = self.image_data.GetExtent()
+            # Use full XY extent but Z=0 for single slice output
+            reslice.SetOutputExtent(input_extent[0], input_extent[1], 
+                                   input_extent[2], input_extent[3], 
+                                   0, 0)  # Single slice in Z
+            
+            self.reslice_filters[reslice_key] = reslice
+        else:
+            reslice = self.reslice_filters[reslice_key]
         
-        # Rotate around appropriate axis
-        if view_name == 'axial':
-            transform.RotateZ(angle_degrees)  # Rotate in XY plane
-        elif view_name == 'sagittal':
-            transform.RotateX(angle_degrees)  # Rotate in YZ plane
-        elif view_name == 'coronal':
-            transform.RotateY(angle_degrees)  # Rotate in XZ plane
-        
-        transform.Translate(center[0], center[1], center[2])
-        
-        # Create reslice filter
-        reslice = vtk.vtkImageReslice()
-        reslice.SetInputData(self.image_data)  # X-flipped volume from v1.01
-        reslice.SetResliceTransform(transform)  # Simple transform
-        reslice.SetInterpolationModeToLinear()
-        reslice.SetOutputDimensionality(3)  # 3D volume output
-        reslice.SetBackgroundLevel(self.scalar_range[0])
+        # Set the reslice axes (direction cosines matrix)
+        reslice.SetResliceAxes(rotated_matrix)
         reslice.Update()
         
         # Get output
-        oblique_volume = reslice.GetOutput()
+        oblique_slice = reslice.GetOutput()
         
-        if oblique_volume is None or oblique_volume.GetNumberOfPoints() == 0:
-            logger.error(f"Oblique reslice failed for {view_name}")
-            return False
+        if oblique_slice is None or oblique_slice.GetNumberOfPoints() == 0:
+            logger.warning(f"Oblique reslice failed for {target_view}")
+            logger.warning(f"  Output is None={oblique_slice is None}, NumPoints={oblique_slice.GetNumberOfPoints() if oblique_slice else 0}")
+            return
         
-        logger.debug(f"  Output: dims={oblique_volume.GetDimensions()}, range={oblique_volume.GetScalarRange()}")
+        # Debug logging
+        logger.debug(f"=== Oblique Slice for {target_view} ===")
+        logger.debug(f"  Rotation: {math.degrees(rotation_angle):.1f}° around {rotation_axis}-axis")
+        logger.debug(f"  Output dims: {oblique_slice.GetDimensions()}")
+        logger.debug(f"  Output extent: {oblique_slice.GetExtent()}")
+        logger.debug(f"  Output spacing: {oblique_slice.GetSpacing()}")
+        logger.debug(f"  Output scalar range: {oblique_slice.GetScalarRange()}")
+        logger.debug(f"  Output num points: {oblique_slice.GetNumberOfPoints()}")
         
-        # Store original mapper if first time
-        if 'original_mapper' not in self.viewers[view_name]:
-            self.viewers[view_name]['original_mapper'] = self.viewers[view_name]['mapper']
+        # Verify output is valid
+        dims = oblique_slice.GetDimensions()
+        scalar_range = oblique_slice.GetScalarRange()
+        if dims[0] == 0 or dims[1] == 0 or scalar_range[0] == scalar_range[1]:
+            logger.error(f"Invalid oblique slice output for {target_view}: dims={dims}, range={scalar_range}")
+            return
         
-        # Update mapper with rotated volume
-        mapper = self.viewers[view_name]['mapper']
-        mapper.SetInputData(oblique_volume)
-        mapper.Update()
+        # Create a new mapper for the resliced 2D image
+        # Use vtkImageSliceMapper for 2D slice display
+        slice_mapper = vtk.vtkImageSliceMapper()
+        slice_mapper.SetInputData(oblique_slice)
+        
+        # For 2D output, BorderOff is important
+        slice_mapper.BorderOff()
+        
+        # Get the existing actor and update its mapper
+        actor = self.viewers[target_view]['actor']
         
         # Preserve window/level
-        actor = self.viewers[view_name]['actor']
         window = actor.GetProperty().GetColorWindow()
         level = actor.GetProperty().GetColorLevel()
+        
+        # Set the new mapper
+        actor.SetMapper(slice_mapper)
+        
+        # Restore window/level
         actor.GetProperty().SetColorWindow(window)
         actor.GetProperty().SetColorLevel(level)
+        actor.GetProperty().SetInterpolationTypeToLinear()
+        
+        # Store for later restoration
+        self.viewers[target_view]['oblique_slice'] = oblique_slice
+        self.viewers[target_view]['oblique_mapper'] = slice_mapper
         
         # Render
-        self.viewers[view_name]['renderer'].GetRenderWindow().Render()
+        renderer = self.viewers[target_view]['renderer']
+        renderer.GetRenderWindow().Render()
         
-        logger.info(f"✓ Simple oblique applied to {view_name}: {angle_degrees}°")
-        return True
+        logger.info(f"Applied oblique slice to {target_view}: axis={rotation_axis}, angle={math.degrees(rotation_angle):.1f}°")
+    
+    def _get_base_reslice_matrix(self, view_name):
+        """
+        Get the base reslice matrix (direction cosines) for a view.
+        This defines the standard orthogonal orientation for each view.
+        
+        Matrix format:
+        | X_x  Y_x  Z_x  Origin_x |
+        | X_y  Y_y  Z_y  Origin_y |
+        | X_z  Y_z  Z_z  Origin_z |
+        |  0    0    0      1      |
+        
+        Where columns represent X, Y, Z direction vectors and origin.
+        """
+        matrix = vtk.vtkMatrix4x4()
+        matrix.Identity()
+        
+        cx, cy, cz = self.current_position
+        
+        if view_name == 'axial':
+            # Axial: XY plane, looking down Z axis
+            # X = right, Y = anterior, Z = superior
+            matrix.SetElement(0, 0, 1)  # X direction: (1, 0, 0)
+            matrix.SetElement(1, 0, 0)
+            matrix.SetElement(2, 0, 0)
+            
+            matrix.SetElement(0, 1, 0)  # Y direction: (0, 1, 0)
+            matrix.SetElement(1, 1, 1)
+            matrix.SetElement(2, 1, 0)
+            
+            matrix.SetElement(0, 2, 0)  # Z direction: (0, 0, 1)
+            matrix.SetElement(1, 2, 0)
+            matrix.SetElement(2, 2, 1)
+            
+            matrix.SetElement(0, 3, cx)  # Origin
+            matrix.SetElement(1, 3, cy)
+            matrix.SetElement(2, 3, cz)
+            
+        elif view_name == 'sagittal':
+            # Sagittal: YZ plane, looking along X axis
+            # X = anterior, Y = superior, Z = right
+            matrix.SetElement(0, 0, 0)  # X direction: (0, 1, 0)
+            matrix.SetElement(1, 0, 1)
+            matrix.SetElement(2, 0, 0)
+            
+            matrix.SetElement(0, 1, 0)  # Y direction: (0, 0, 1)
+            matrix.SetElement(1, 1, 0)
+            matrix.SetElement(2, 1, 1)
+            
+            matrix.SetElement(0, 2, 1)  # Z direction: (1, 0, 0)
+            matrix.SetElement(1, 2, 0)
+            matrix.SetElement(2, 2, 0)
+            
+            matrix.SetElement(0, 3, cx)  # Origin
+            matrix.SetElement(1, 3, cy)
+            matrix.SetElement(2, 3, cz)
+            
+        elif view_name == 'coronal':
+            # Coronal: XZ plane, looking along Y axis
+            # X = right, Y = superior, Z = posterior
+            matrix.SetElement(0, 0, 1)  # X direction: (1, 0, 0)
+            matrix.SetElement(1, 0, 0)
+            matrix.SetElement(2, 0, 0)
+            
+            matrix.SetElement(0, 1, 0)  # Y direction: (0, 0, 1)
+            matrix.SetElement(1, 1, 0)
+            matrix.SetElement(2, 1, 1)
+            
+            matrix.SetElement(0, 2, 0)  # Z direction: (0, 1, 0)
+            matrix.SetElement(1, 2, 1)
+            matrix.SetElement(2, 2, 0)
+            
+            matrix.SetElement(0, 3, cx)  # Origin
+            matrix.SetElement(1, 3, cy)
+            matrix.SetElement(2, 3, cz)
+        
+        return matrix
+    
+    def _rotate_reslice_matrix(self, base_matrix, angle, axis):
+        """
+        Rotate a reslice matrix around a specified axis.
+        
+        Args:
+            base_matrix: Base vtkMatrix4x4
+            angle: Rotation angle in radians
+            axis: 'x', 'y', or 'z'
+        
+        Returns:
+            Rotated vtkMatrix4x4
+        """
+        import math
+        import numpy as np
+        
+        # Extract direction vectors and origin from base matrix
+        x_vec = np.array([base_matrix.GetElement(0, 0), 
+                          base_matrix.GetElement(1, 0), 
+                          base_matrix.GetElement(2, 0)])
+        y_vec = np.array([base_matrix.GetElement(0, 1), 
+                          base_matrix.GetElement(1, 1), 
+                          base_matrix.GetElement(2, 1)])
+        z_vec = np.array([base_matrix.GetElement(0, 2), 
+                          base_matrix.GetElement(1, 2), 
+                          base_matrix.GetElement(2, 2)])
+        origin = np.array([base_matrix.GetElement(0, 3), 
+                           base_matrix.GetElement(1, 3), 
+                           base_matrix.GetElement(2, 3)])
+        
+        # Create rotation matrix
+        c = math.cos(angle)
+        s = math.sin(angle)
+        
+        if axis == 'x':
+            rot_matrix = np.array([
+                [1,  0,  0],
+                [0,  c, -s],
+                [0,  s,  c]
+            ])
+        elif axis == 'y':
+            rot_matrix = np.array([
+                [ c,  0,  s],
+                [ 0,  1,  0],
+                [-s,  0,  c]
+            ])
+        elif axis == 'z':
+            rot_matrix = np.array([
+                [c, -s,  0],
+                [s,  c,  0],
+                [0,  0,  1]
+            ])
+        
+        # Rotate the direction vectors
+        x_vec_rot = rot_matrix @ x_vec
+        y_vec_rot = rot_matrix @ y_vec
+        z_vec_rot = rot_matrix @ z_vec
+        
+        # Create new matrix
+        rotated = vtk.vtkMatrix4x4()
+        rotated.Identity()
+        
+        # Set rotated direction vectors
+        for i in range(3):
+            rotated.SetElement(i, 0, x_vec_rot[i])
+            rotated.SetElement(i, 1, y_vec_rot[i])
+            rotated.SetElement(i, 2, z_vec_rot[i])
+            rotated.SetElement(i, 3, origin[i])
+        
+        return rotated
     
     def _apply_oblique_transform(self, target_view, rotation_angle, rotation_axis):
         """

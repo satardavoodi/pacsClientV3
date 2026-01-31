@@ -1,11 +1,10 @@
 """
-Zeta MPR Viewer based on VTK official patterns
+Standard MPR Viewer based on VTK official patterns
 Uses vtkImageResliceMapper for proper orthogonal views
 
-VERSION: 1.04 (Module: 1.03-dev experimental oblique)
+VERSION: 1.02 - STABLE WITH CROSSHAIR FIX
 Date: 2026-01-31
-Status: ✅ STABLE - UI unified, naming consistent, oblique MPR experimental (tested at 15°)
-Rollback: v1.02 stable available at zeta mpr_BACKUP_v1.02/
+Status: ✓ WORKING - All views correctly oriented, crosshairs synchronized, rotation visual-only
 
 CRITICAL CHANGES:
 =================
@@ -77,14 +76,14 @@ WL_PRESETS = {
 
 class StandardMPRViewer(QWidget):
     """
-    Zeta MPR Viewer using VTK best practices
+    Standard MPR Viewer using VTK best practices
     """
     
     def __init__(self, vtk_image_data, parent=None):
         super().__init__(parent)
         
         logger.info("=" * 80)
-        logger.info("ZETA MPR VIEWER INITIALIZATION STARTED")
+        logger.info("STANDARD MPR VIEWER INITIALIZATION STARTED")
         logger.info("=" * 80)
         
         # Apply left-right flip to input volume data
@@ -207,7 +206,7 @@ class StandardMPRViewer(QWidget):
         
         logger.info("Calling _setup_ui()...")
         self._setup_ui()
-        logger.info("Zeta MPR Viewer created successfully!")
+        logger.info("StandardMPRViewer created successfully!")
         logger.info("=" * 80)
     
     def _detect_series_type(self):
@@ -2260,94 +2259,6 @@ class StandardMPRViewer(QWidget):
                 
                 self.viewers[view_name]['renderer'].GetRenderWindow().Render()
                 logger.debug(f"Reset {view_name} to orthogonal")
-    
-    def _simple_oblique_slice(self, view_name, angle_degrees):
-        """
-        EXPERIMENTAL v1.03: Simple VTK-based oblique slicing.
-        
-        Direct VTK approach using vtkImageReslice with simple rotation transform.
-        NOT based on 3D Slicer - uses minimal, straightforward VTK methods.
-        
-        Status: Method added but NOT ENABLED yet - for incremental testing
-        
-        Args:
-            view_name: Target view ('axial', 'sagittal', 'coronal')
-            angle_degrees: Rotation angle in degrees
-        
-        Implementation:
-        1. Simple rotation transform around crosshair center
-        2. Apply to volume using vtkImageReslice with SetResliceTransform
-        3. Output 3D volume (works with existing vtkImageResliceMapper)
-        4. No complex matrices or direction cosines
-        """
-        import math
-        
-        if view_name not in self.viewers:
-            logger.warning(f"View {view_name} not found for oblique slicing")
-            return False
-        
-        # Get crosshair center position
-        center = self.current_position
-        
-        logger.debug(f"=== Simple Oblique: {view_name} @ {angle_degrees}° ===")
-        logger.debug(f"  Center: ({center[0]:.1f}, {center[1]:.1f}, {center[2]:.1f})")
-        
-        # Create simple rotation transform
-        transform = vtk.vtkTransform()
-        transform.PostMultiply()
-        
-        # Rotate around point: translate to origin, rotate, translate back
-        transform.Translate(-center[0], -center[1], -center[2])
-        
-        # Rotate around appropriate axis
-        if view_name == 'axial':
-            transform.RotateZ(angle_degrees)  # Rotate in XY plane
-        elif view_name == 'sagittal':
-            transform.RotateX(angle_degrees)  # Rotate in YZ plane
-        elif view_name == 'coronal':
-            transform.RotateY(angle_degrees)  # Rotate in XZ plane
-        
-        transform.Translate(center[0], center[1], center[2])
-        
-        # Create reslice filter
-        reslice = vtk.vtkImageReslice()
-        reslice.SetInputData(self.image_data)  # X-flipped volume from v1.01
-        reslice.SetResliceTransform(transform)  # Simple transform
-        reslice.SetInterpolationModeToLinear()
-        reslice.SetOutputDimensionality(3)  # 3D volume output
-        reslice.SetBackgroundLevel(self.scalar_range[0])
-        reslice.Update()
-        
-        # Get output
-        oblique_volume = reslice.GetOutput()
-        
-        if oblique_volume is None or oblique_volume.GetNumberOfPoints() == 0:
-            logger.error(f"Oblique reslice failed for {view_name}")
-            return False
-        
-        logger.debug(f"  Output: dims={oblique_volume.GetDimensions()}, range={oblique_volume.GetScalarRange()}")
-        
-        # Store original mapper if first time
-        if 'original_mapper' not in self.viewers[view_name]:
-            self.viewers[view_name]['original_mapper'] = self.viewers[view_name]['mapper']
-        
-        # Update mapper with rotated volume
-        mapper = self.viewers[view_name]['mapper']
-        mapper.SetInputData(oblique_volume)
-        mapper.Update()
-        
-        # Preserve window/level
-        actor = self.viewers[view_name]['actor']
-        window = actor.GetProperty().GetColorWindow()
-        level = actor.GetProperty().GetColorLevel()
-        actor.GetProperty().SetColorWindow(window)
-        actor.GetProperty().SetColorLevel(level)
-        
-        # Render
-        self.viewers[view_name]['renderer'].GetRenderWindow().Render()
-        
-        logger.info(f"✓ Simple oblique applied to {view_name}: {angle_degrees}°")
-        return True
     
     def _apply_oblique_transform(self, target_view, rotation_angle, rotation_axis):
         """

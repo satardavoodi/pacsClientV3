@@ -139,19 +139,13 @@ class PatientWidget(QWidget):
         self.thumbnail_manager.parent_widget = self
         # Lazy load heavy panels (created when needed)
         self.reception_data_tab = None
-        self.advanced_tools_panel = None
-        self.newmpr4_panel = None
         self._patient_id_for_lazy = patient_id
 
         self.right_panel.addWidget(self.thumb_panel)  # index 0
         self.right_panel.addWidget(self.reception_panel)  # index 1
-        # Placeholder widgets for lazy panels
+        # Placeholder widget for lazy panel
         self._lazy_placeholder_2 = QWidget()
-        self._lazy_placeholder_3 = QWidget()
-        self._lazy_placeholder_newmpr4 = QWidget()
         self.right_panel.addWidget(self._lazy_placeholder_2)  # index 2 (will be replaced)
-        self.right_panel.addWidget(self._lazy_placeholder_3)  # index 3 (will be replaced)
-        self.right_panel.addWidget(self._lazy_placeholder_newmpr4)  # index 4 (will be replaced)
 
         self.container_layout.addWidget(self.right_panel)
         self.container_layout.addWidget(self.center_layout_ui())
@@ -2095,13 +2089,9 @@ class PatientWidget(QWidget):
         self.btn_ai_module.setCheckable(True)
         self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
 
-        self.btn_advanced_tools = VerticalButton("🛠️ Tools")
-        self.btn_advanced_tools.setCheckable(True)
-        self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
-
-        self.btn_newmpr4 = VerticalButton("New MPR 4")
-        self.btn_newmpr4.setCheckable(True)
-        self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
+        self.btn_advanced_image_reconstruction = VerticalButton("Advanced Image")
+        self.btn_advanced_image_reconstruction.setCheckable(False)  # Not checkable, acts as action button
+        self.btn_advanced_image_reconstruction.setStyleSheet(self.sidebar_btn_style(False))
 
         # گروه انحصاری
         self.sidebar_btn_group = QButtonGroup(sidebar)
@@ -2110,8 +2100,6 @@ class PatientWidget(QWidget):
         self.sidebar_btn_group.addButton(self.btn_reception)
         self.sidebar_btn_group.addButton(self.btn_ai_chat)
         self.sidebar_btn_group.addButton(self.btn_ai_module)
-        self.sidebar_btn_group.addButton(self.btn_advanced_tools)
-        self.sidebar_btn_group.addButton(self.btn_newmpr4)
 
         # افزودن به لایه + دیوایدر بین هر دکمه
         layout.addWidget(self.btn_series, 1)
@@ -2126,10 +2114,7 @@ class PatientWidget(QWidget):
         layout.addWidget(self.btn_ai_module, 1)
         layout.addWidget(self.make_divider())
 
-        layout.addWidget(self.btn_advanced_tools, 1)
-        layout.addWidget(self.make_divider())
-
-        layout.addWidget(self.btn_newmpr4, 1)
+        layout.addWidget(self.btn_advanced_image_reconstruction, 1)
 
         layout.addStretch(0)
 
@@ -2138,8 +2123,7 @@ class PatientWidget(QWidget):
         self.btn_reception.clicked.connect(lambda: self.switch_right_panel("reception"))
         self.btn_ai_chat.clicked.connect(lambda: self.switch_right_panel("ai_chat"))
         self.btn_ai_module.clicked.connect(lambda: self.switch_right_panel("ai_module"))
-        self.btn_advanced_tools.clicked.connect(lambda: self.switch_right_panel("advanced_tools"))
-        self.btn_newmpr4.clicked.connect(lambda: self.switch_right_panel("newmpr4"))
+        self.btn_advanced_image_reconstruction.clicked.connect(self.launch_advanced_image_reconstruction)
 
         return sidebar
 
@@ -2152,7 +2136,7 @@ class PatientWidget(QWidget):
                     font-weight: bold;
                     border: none;
                     border-radius: 8px;
-                    padding: 10px 0;
+                    padding: 9px 0;
                 }
             """
         else:
@@ -2162,7 +2146,7 @@ class PatientWidget(QWidget):
                     color: #aaa;
                     border: none;
                     border-radius: 8px;
-                    padding: 10px 0;
+                    padding: 9px 0;
                 }
             """
 
@@ -2174,8 +2158,6 @@ class PatientWidget(QWidget):
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
 
         elif option == 'reception':
             print("[PatientWidget] Switching to Reception Data tab (index 2)")
@@ -2208,8 +2190,6 @@ class PatientWidget(QWidget):
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(True))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
 
             # Trigger data fetch when tab is activated
             if self.reception_data_tab is not None:
@@ -2223,8 +2203,6 @@ class PatientWidget(QWidget):
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(True))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
             self.ai_chat_layout_ui()
 
         elif option == 'ai_module':
@@ -2233,90 +2211,156 @@ class PatientWidget(QWidget):
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(True))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
             if self.method_add_new_tab:
                 self.method_add_new_tab(open_ai_client_tab=True, study_uid=self.study_uid)
 
-        elif option == 'advanced_tools':
-            print("[PatientWidget] Switching to Advanced Tools panel (index 3)")
+    def launch_advanced_image_reconstruction(self):
+        """
+        Launch Advanced Image Reconstruction (3D Slicer) for the active series.
+        
+        This method is called when the Advanced Image Reconstruction button is clicked
+        in the left sidebar. It launches the 3D Slicer application with the currently
+        active DICOM series.
+        """
+        import logging
+        import os
+        from PySide6.QtWidgets import QMessageBox
+        from pathlib import Path
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.info("=" * 60)
+            logger.info("Advanced Image Reconstruction (3D Slicer) requested from sidebar")
+            logger.info("=" * 60)
             
-            # ✅ Lazy load AdvancedToolsPanel if not already created
-            if self.advanced_tools_panel is None:
-                print("[PatientWidget] Creating AdvancedToolsPanel for the first time...")
+            # Get the selected widget (active viewer)
+            selected_widget = self.selected_widget
+            
+            # Check if widget is valid and has image viewer
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                logger.warning("No image viewer available in selected widget")
+                QMessageBox.warning(
+                    self,
+                    "No Image Available",
+                    "No active DICOM series available.\n\nPlease load an image first."
+                )
+                return
+            
+            # Check if series index is available
+            if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
+                logger.warning("No active series index found")
+                QMessageBox.warning(
+                    self,
+                    "No Series Available",
+                    "No active DICOM series available.\n\nPlease select a series first."
+                )
+                return
+            
+            # Get the active series number
+            active_series_number = selected_widget.last_series_show
+            logger.info(f"Active series number: {active_series_number}")
+            
+            # Find the series data by searching for matching series_number
+            series_data = None
+            dicom_directory = None
+            series_uid = None
+            window_width = None
+            window_center = None
+            
+            for i in range(len(self.lst_thumbnails_data)):
                 try:
-                    from PacsClient.pacs.patient_tab.viewers import AdvancedToolsPanel
+                    thumbnail_data = self.lst_thumbnails_data[i]
+                    thumb_metadata = thumbnail_data.get('metadata', {})
+                    series_metadata = thumb_metadata.get('series', {})
+                    series_num = int(series_metadata.get('series_number', -1))
                     
-                    # Create AdvancedToolsPanel
-                    self.advanced_tools_panel = AdvancedToolsPanel()
+                    logger.info(f"   [{i}] series_number={series_num}, looking for {active_series_number}")
                     
-                    # Replace placeholder widget with actual AdvancedToolsPanel
-                    self.right_panel.removeWidget(self._lazy_placeholder_3)
-                    self._lazy_placeholder_3.deleteLater()
-                    self.right_panel.insertWidget(3, self.advanced_tools_panel)
-                    
-                    print("[PatientWidget] AdvancedToolsPanel created and inserted successfully")
-                except Exception as e:
-                    print(f"[PatientWidget] ERROR creating AdvancedToolsPanel: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    if series_num == int(active_series_number):
+                        series_data = thumbnail_data
+                        
+                        # Get DICOM directory from series path or first instance
+                        dicom_directory = series_metadata.get('series_path')
+                        series_uid = series_metadata.get('series_uid')
+                        
+                        # If no series_path, get from first instance
+                        instances = thumb_metadata.get('instances', [])
+                        if instances and len(instances) > 0:
+                            first_instance = instances[0]
+                            if not dicom_directory:
+                                first_instance_path = first_instance.get('instance_path')
+                                if first_instance_path:
+                                    dicom_directory = os.path.dirname(first_instance_path)
+                            
+                            # Get window/level from first instance
+                            window_width = first_instance.get('window_width')
+                            window_center = first_instance.get('window_center')
+                        
+                        logger.info(f"   ✅ MATCH! Found series at index {i}")
+                        logger.info(f"   DICOM directory: {dicom_directory}")
+                        logger.info(f"   Series UID: {series_uid}")
+                        break
+                except (KeyError, ValueError, TypeError) as e:
+                    logger.debug(f"   [ERROR] checking thumbnail data at index {i}: {e}")
+                    continue
             
-            self.right_panel.setCurrentIndex(3)  # index 3 for Advanced Tools
-            self.right_panel.setFixedWidth(350)  # Wider for tools
-            self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(True))
-            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(False))
-
-            # Update tools panel with current image data
-            if self.advanced_tools_panel is not None and self.selected_widget and hasattr(self.selected_widget, 'image_viewer'):
-                viewer = self.selected_widget.image_viewer
-                if hasattr(viewer, 'vtk_image_data') and viewer.vtk_image_data:
-                    self.advanced_tools_panel.set_image_data(viewer.vtk_image_data)
-                if hasattr(viewer, 'renderer') and viewer.renderer:
-                    self.advanced_tools_panel.set_renderer(viewer.renderer)
-
-        elif option == 'newmpr4':
-            print("[PatientWidget] Switching to New MPR4 panel (index 4)")
+            if series_data is None or not dicom_directory:
+                logger.error(f"Series number {active_series_number} not found or no DICOM directory")
+                QMessageBox.warning(
+                    self,
+                    "Invalid Series",
+                    "Could not find DICOM directory for the active series."
+                )
+                return
             
-            # ✅ Lazy load NewMPR4Widget if not already created
-            if self.newmpr4_panel is None:
-                print("[PatientWidget] Creating NewMPR4Widget for the first time...")
-                try:
-                    from PacsClient.pacs.patient_tab.newmpr4 import NewMPR4Widget
-                    
-                    # Create NewMPR4Widget
-                    self.newmpr4_panel = NewMPR4Widget()
-                    
-                    # Replace placeholder widget with actual NewMPR4Widget
-                    self.right_panel.removeWidget(self._lazy_placeholder_newmpr4)
-                    self._lazy_placeholder_newmpr4.deleteLater()
-                    self.right_panel.insertWidget(4, self.newmpr4_panel)
-                    
-                    print("[PatientWidget] NewMPR4Widget created and inserted successfully")
-                except Exception as e:
-                    print(f"[PatientWidget] ERROR creating NewMPR4Widget: {e}")
-                    import traceback
-                    traceback.print_exc()
+            # Verify DICOM directory exists
+            if not os.path.exists(dicom_directory):
+                logger.error(f"DICOM directory does not exist: {dicom_directory}")
+                QMessageBox.warning(
+                    self,
+                    "Directory Not Found",
+                    f"DICOM directory not found:\n{dicom_directory}"
+                )
+                return
             
-            self.right_panel.setCurrentIndex(4)  # index 4 for New MPR4
-            self.right_panel.setFixedWidth(self.default_panel_width)  # Use default width
-            self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_newmpr4.setStyleSheet(self.sidebar_btn_style(True))
-
-            # TODO: Update newmpr4 panel with current image data when ITK-SNAP integration is complete
-            # if self.newmpr4_panel is not None and self.selected_widget and hasattr(self.selected_widget, 'image_viewer'):
-            #     viewer = self.selected_widget.image_viewer
-            #     if hasattr(viewer, 'vtk_image_data') and viewer.vtk_image_data:
-            #         self.newmpr4_panel.set_image_data(viewer.vtk_image_data)
-            #     if hasattr(viewer, 'renderer') and viewer.renderer:
-            #         self.newmpr4_panel.set_renderer(viewer.renderer)
+            logger.info(f"Launching Advanced Image Reconstruction (3D Slicer) with DICOM directory: {dicom_directory}")
+            
+            # Import and use the SlicerLauncher
+            from PacsClient.pacs.patient_tab.advance_mpr_3d_slicer.slicer_launcher import get_slicer_launcher
+            
+            launcher = get_slicer_launcher(parent_widget=self)
+            
+            # Get patient and study info
+            patient_id = getattr(self, 'patient_id', None)
+            study_uid = getattr(self, 'study_uid', None)
+            
+            # Launch Slicer with the DICOM directory
+            success = launcher.launch_with_dicom(
+                dicom_dir=dicom_directory,
+                layout='mpr',  # Default to MPR layout
+                patient_id=patient_id,
+                study_id=study_uid,
+                window_width=window_width,
+                window_level=window_center,
+                series_uid=series_uid
+            )
+            
+            if success:
+                logger.info("Advanced Image Reconstruction (3D Slicer) launched successfully")
+            else:
+                logger.warning("Advanced Image Reconstruction (3D Slicer) launch was blocked (already running)")
+            
+            logger.info("=" * 60)
+            
+        except Exception as e:
+            logger.error(f"ERROR launching Advanced Image Reconstruction (3D Slicer): {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Error launching Advanced Image Reconstruction (3D Slicer):\n{str(e)}"
+            )
 
     ########################################################
     def thumbnail_layout_ui(self):
