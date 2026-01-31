@@ -112,30 +112,8 @@ class CombinedDelegate(QStyledItemDelegate):
         self.is_patient_name_column = is_patient_name_column
 
     def paint(self, painter, option, index):
-        # Check if this item should have a neon highlight
-        neon_effect = index.data(Qt.UserRole + 2)
-
-        if neon_effect == "neon-glow":
-            # Draw the subtle highlight effect first
-            painter.save()
-
-            # Fill the background with subtle teal color that matches the theme
-            painter.fillRect(option.rect, QColor("#2d3748"))
-
-            # Draw a subtle border
-            pen = QPen(QColor("#4fd1c6"), 2)
-            pen.setJoinStyle(Qt.MiterJoin)
-            painter.setPen(pen)
-            painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
-
-            # Draw text with white color for contrast
-            painter.setPen(QColor("#ffffff"))
-            painter.drawText(option.rect, Qt.AlignCenter | Qt.AlignVCenter, index.data(Qt.DisplayRole) or "")
-
-            painter.restore()
-        else:
-            # Use default painting for non-highlighted items
-            super().paint(painter, option, index)
+        # Use default painting for all items (removed neon-glow effect)
+        super().paint(painter, option, index)
 
         # If this is the patient name column, draw the underline based on status
         if self.is_patient_name_column:
@@ -1217,30 +1195,13 @@ class PatientTableWidget(QWidget):
             print(f"Error in patient click: {str(e)}")
 
     def highlight_selected_row(self, row_index):
-        """Highlight the selected row with a neon effect"""
+        """Highlight the selected row by selecting it in the table"""
         try:
-            # Remove highlight from previously selected row
-            if hasattr(self, '_previous_highlighted_row') and self._previous_highlighted_row is not None:
-                self.remove_row_highlight(self._previous_highlighted_row)
+            # Clear any existing selection
+            self.results_table.clearSelection()
 
-            # Apply neon highlight to the selected row by setting properties
-            for col in range(self.results_table.columnCount()):
-                # Only apply to non-checkbox columns
-                if col != COL['select']:
-                    item = self.results_table.item(row_index, col)
-                    if item:
-                        # Store original background color
-                        if not hasattr(self, '_original_colors'):
-                            self._original_colors = {}
-                        if row_index not in self._original_colors:
-                            self._original_colors[row_index] = {}
-                        self._original_colors[row_index][col] = {
-                            'background': item.background(),
-                            'foreground': item.foreground()
-                        }
-
-                        # Apply neon effect using CSS properties
-                        item.setData(Qt.UserRole + 2, "neon-glow")  # Custom property for styling
+            # Select the entire row
+            self.results_table.selectRow(row_index)
 
             # Store the currently highlighted row
             self._previous_highlighted_row = row_index
@@ -1252,23 +1213,15 @@ class PatientTableWidget(QWidget):
             print(f"Error highlighting row: {str(e)}")
 
     def remove_row_highlight(self, row_index):
-        """Remove the neon highlight from a row"""
+        """Remove row highlight by deselecting the row"""
         try:
-            if hasattr(self, '_original_colors') and row_index in self._original_colors:
-                for col in range(self.results_table.columnCount()):
-                    # Only apply to non-checkbox columns
-                    if col != COL['select']:
-                        item = self.results_table.item(row_index, col)
-                        if item and col in self._original_colors[row_index]:
-                            # Restore original colors
-                            orig_data = self._original_colors[row_index][col]
-                            item.setBackground(orig_data['background'])
-                            item.setForeground(orig_data['foreground'])
-                            # Remove the custom property
-                            item.setData(Qt.UserRole + 2, None)
+            # Deselect the row if it's the currently selected row
+            current_selections = self.results_table.selectionModel().selectedRows()
+            if any(index.row() == row_index for index in current_selections):
+                self.results_table.clearSelection()
 
-                # Refresh the table to apply the changes
-                self.results_table.viewport().update()
+            # Refresh the table to apply the changes
+            self.results_table.viewport().update()
         except Exception as e:
             print(f"Error removing row highlight: {str(e)}")
 
@@ -2773,22 +2726,7 @@ class PatientTableWidget(QWidget):
                 background: #2d3748;
             }}
 
-            /* Subtle highlight effect for selected row */
-            QTableWidget::item.neon-highlight {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #38b2ac, stop:1 #2d9cb5);
-                color: #ffffff;
-                border: 1px solid #4fd1c6;
-                border-radius: 4px;
-            }}
 
-            /* Subtle glow effect for highlight */
-            QTableWidget::item.neon-glow {{
-                background: #2d3748;
-                color: #ffffff;
-                border: 2px solid #4fd1c6;
-                border-radius: 4px;
-            }}
 
             QHeaderView::section {{
                 background: #0f1419;
