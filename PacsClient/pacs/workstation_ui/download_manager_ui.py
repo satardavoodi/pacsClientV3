@@ -337,7 +337,7 @@ class DownloadManagerWidget(QWidget):
     Download Manager Component
     Provides a comprehensive UI for managing downloads
     """
-    
+    logMessageSignal = Signal(str)
     # Signals
     downloadStarted = Signal(str)  # filename
     downloadCompleted = Signal(str)  # filename
@@ -357,7 +357,7 @@ class DownloadManagerWidget(QWidget):
         self.study_downloads = []  # List of StudyDownloadItem objects
         self.current_download_index = -1
         self.current_study_download_index = -1
-        
+        self.logMessageSignal.connect(self._append_log_message)        
         # Worker threads for downloads
         self.active_workers = {}  # study_uid -> worker
         self.workers_mutex = QMutex()  # Thread safety for active_workers
@@ -394,6 +394,11 @@ class DownloadManagerWidget(QWidget):
         # Initialize database progress tracking
         self._init_database_progress()
     
+    def _append_log_message(self, message):
+        """Slot to append log message (always runs on main thread)"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.append(f"[{timestamp}] {message}")
+        
     def _init_database_progress(self):
         """Initialize database progress tracking (thread-safe)"""
         try:
@@ -2324,9 +2329,24 @@ class DownloadManagerWidget(QWidget):
                 priority_item.setText(download.priority)
     
     def log_message(self, message):
-        """Add a message to the log area"""
+        """Add a message to the log area (thread-safe)"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.append(f"[{timestamp}] {message}")
+        formatted_message = f"[{timestamp}] {message}"
+        
+        # Check if we're on the main thread
+        from PySide6.QtCore import QThread
+        if QThread.currentThread() == self.thread():
+            # Already on main thread, update directly
+            self.log_text.append(formatted_message)
+        else:
+            # Called from worker thread, use signal to update on main thread
+            from PySide6.QtCore import QMetaObject, Qt
+            QMetaObject.invokeMethod(
+                self.log_text,
+                "append",
+                Qt.QueuedConnection,
+                formatted_message
+            )
     
     def format_size(self, size_bytes):
         """Format file size in human readable format"""
