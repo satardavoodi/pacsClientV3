@@ -662,6 +662,75 @@ class MprViewerWrapper(QWidget):
         logger.info("MPR Viewer Wrapper created successfully!")
         logger.info("=" * 80)
     
+    def _close_mpr(self):
+        """Close MPR viewer and return to normal view"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Closing MPR viewer...")
+        
+        try:
+            # Find the patient widget with toolbar_manager
+            parent = self.parent()
+            while parent is not None:
+                if hasattr(parent, 'toolbar_manager'):
+                    toolbar_manager = parent.toolbar_manager
+                    
+                    # Find the original widget that has reference to this MPR
+                    found = False
+                    if hasattr(parent, 'lst_nodes_viewer'):
+                        for node in parent.lst_nodes_viewer:
+                            vtk_widget = getattr(node, 'vtk_widget', None)
+                            if vtk_widget:
+                                if (hasattr(vtk_widget, '_mpr_widget') and vtk_widget._mpr_widget == self) or \
+                                (hasattr(vtk_widget, '_zeta_mpr_widget') and vtk_widget._zeta_mpr_widget == self):
+                                    # Found original widget, call toggle to close
+                                    toolbar_manager.toggle_mpr(vtk_widget)
+                                    found = True
+                                    logger.info("✓ MPR closed via toggle_mpr")
+                                    break
+                    
+                    # If using toolbar_integration pattern (_original_widget)
+                    if not found and hasattr(self, '_original_widget'):
+                        original = self._original_widget
+                        toolbar_manager._restore_selected_viewer(original)
+                        toolbar_manager.tool_selected = None
+                        toolbar_manager.handle_buttons_checked()
+                        found = True
+                        logger.info("✓ MPR closed via _restore_selected_viewer")
+                    
+                    # If still not found, try selected_widget
+                    if not found and hasattr(parent, 'selected_widget'):
+                        current = parent.selected_widget
+                        if current == self:
+                            # Current selected is the MPR itself
+                            if hasattr(self, '_original_widget'):
+                                toolbar_manager._restore_selected_viewer(self._original_widget)
+                            else:
+                                # Fallback: iterate to find owner
+                                for node in getattr(parent, 'lst_nodes_viewer', []):
+                                    vtk_widget = getattr(node, 'vtk_widget', None)
+                                    if vtk_widget and hasattr(vtk_widget, '_mpr_widget'):
+                                        toolbar_manager._restore_selected_viewer(vtk_widget)
+                                        break
+                            toolbar_manager.tool_selected = None
+                            toolbar_manager.handle_buttons_checked()
+                    
+                    return
+                    
+                parent = parent.parent()
+            
+            logger.warning("Could not find toolbar_manager to close MPR")
+            
+        except Exception as e:
+            logger.error(f"Error closing MPR: {e}", exc_info=True)
+            # Fallback: try to cleanup manually
+            try:
+                self.cleanup()
+                self.hide()
+                self.deleteLater()
+            except:
+                pass
+
     def _setup_ui(self):
         """Setup the UI layout - Clean 2x2 grid layout"""
         import sys
@@ -673,31 +742,10 @@ class MprViewerWrapper(QWidget):
         main_layout.setSpacing(0)
         print("Main layout created", file=sys.stderr, flush=True)
 
-        # Create top toolbar with close button
+        # Create top toolbar
         toolbar_layout = QHBoxLayout()
         toolbar_layout.setContentsMargins(6, 2, 6, 2)
         toolbar_layout.setSpacing(6)
-
-        # Create and configure the close button
-        self.close_button = QPushButton("✕")
-        self.close_button.setFixedSize(24, 24)
-        self.close_button.setStyleSheet("""
-            QPushButton {
-                background-color: #ff4444;
-                color: white;
-                border: none;
-                border-radius: 12px;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #ff6666;
-            }
-        """)
-        self.close_button.setToolTip("Close MPR Viewer")
-        self.close_button.clicked.connect(self._on_close_clicked)
-
-        toolbar_layout.addWidget(self.close_button)
 
         # Add stretch to push other elements to the right (if any)
         toolbar_layout.addStretch()
@@ -1539,33 +1587,90 @@ class MprViewerWrapper(QWidget):
 
 
     def closeEvent(self, event):
-        """Handle close event - cleanup VTK viewers and temporary MHD file"""
+        """
+        Handle close event - cleanup VTK viewers and temporary MHD file.
+        This is called when the widget is closed, either programmatically or by user action.
+        """
+        import logging
+        import os
+        logger = logging.getLogger(__name__)
         logger.info("MprViewerWrapper.closeEvent() called")
-
-        # Call the close callback if it exists (to restore original viewer)
-        if self.close_callback:
+        
+        # First, try to properly close through toolbar_manager to restore original viewer
+        try:
+            # Navigate up to find the patient_widget with toolbar_manager
+            parent = self.parent()
+            toolbar_found = False
+            parent_chain = []
+            
+            while parent is not None:
+                parent_chain.append(type(parent).__name__)
+                
+                # Check if this is the patient widget with toolbar_manager
+                if hasattr(parent, 'toolbar_manager') and parent.toolbar_manager:
+                    toolbar_manager = parent.toolbar_manager
+                    
+                    # Try to close properly via toolbar toggle
+                    # This ensures the original viewer is restored
+                    logger.info("Found toolbar_manager, attempting proper closure via toggle_mpr")
+                    
+                    # Determine which widget to pass to toggle_mpr
+                    if hasattr(self, '_original_widget'):
+                        # We are the MPR widget, pass ourselves
+                        toolbar_manager.toggle_mpr(self)
+                        toolbar_found = True
+                        logger.info("Called toggle_mpr with MPR widget (self)")
+                    else:
+                        # Try to find the original widget that owns us
+                        if hasattr(parent, 'selected_widget'):
+                            current_selected = parent.selected_widget
+                            if current_selected == self:
+                                # Current selected is this MPR, find the original
+                                for node in getattr(parent, 'lst_nodes_viewer', []):
+                                    vtk_widget = getattr(node, 'vtk_widget', None)
+                                    if vtk_widget and hasattr(vtk_widget, '_mpr_widget') and vtk_widget._mpr_widget == self:
+                                        toolbar_manager.toggle_mpr(vtk_widget)
+                                        toolbar_found = True
+                                        logger.info("Called toggle_mpr with original vtk_widget")
+                                        break
+                    
+                    if not toolbar_found:
+                        logger.warning("Could not determine original widget, calling cleanup directly")
+                    
+                    break
+                
+                parent = parent.parent()
+            
+            if not toolbar_found:
+                logger.warning(f"Could not find toolbar_manager in parent chain: {' -> '.join(parent_chain)}")
+                # Fallback to direct cleanup
+                self.cleanup()
+                
+        except Exception as e:
+            logger.error(f"Error during toolbar-mediated close: {e}", exc_info=True)
+            # Ensure cleanup happens even if toolbar method fails
             try:
-                logger.info("Calling close callback to restore original viewer")
-                self.close_callback()
-            except Exception as e:
-                logger.error(f"Error in close callback: {e}", exc_info=True)
-
-        # First cleanup VTK viewers (CRITICAL - must be done before Qt destroys the widget)
-        self.cleanup()
+                self.cleanup()
+            except Exception as cleanup_error:
+                logger.error(f"Cleanup also failed: {cleanup_error}", exc_info=True)
 
         # Clean up temporary MHD file
-        if hasattr(self, 'mhd_path') and self.mhd_path and os.path.exists(self.mhd_path):
+        if hasattr(self, 'mhd_path') and self.mhd_path:
             try:
-                raw_path = self.mhd_path.replace('.mhd', '.raw')
-                if os.path.exists(raw_path):
-                    os.remove(raw_path)
-                os.remove(self.mhd_path)
-                logger.info(f"Cleaned up temporary MHD file: {self.mhd_path}")
+                if os.path.exists(self.mhd_path):
+                    raw_path = self.mhd_path.replace('.mhd', '.raw')
+                    if os.path.exists(raw_path):
+                        os.remove(raw_path)
+                        logger.info(f"Cleaned up temporary RAW file: {raw_path}")
+                    os.remove(self.mhd_path)
+                    logger.info(f"Cleaned up temporary MHD file: {self.mhd_path}")
             except Exception as e:
-                logger.warning(f"Failed to clean up temporary file: {e}")
+                logger.warning(f"Failed to clean up temporary files: {e}", exc_info=True)
 
-        super().closeEvent(event)
-
+        # Accept the close event
+        event.accept()
+        logger.info("MprViewerWrapper.closeEvent() completed")
+        
     def close(self):
         """
         Override close() to ensure cleanup always runs even if external code calls .close()
@@ -1614,74 +1719,3 @@ class MprViewerWrapper(QWidget):
         except Exception as e:
             logger.warning(f"Error during deletion: {e}")
 
-    def _on_close_clicked(self):
-        """Handle close button click"""
-        logger.info("MPR Close button clicked")
-
-        # Method 1: Try to find toolbar_manager through parent hierarchy
-        parent = self.parent()
-        original_widget = None
-
-        # First, try to find the original widget that contains this MPR widget
-        # by traversing up the parent hierarchy and checking siblings
-        current = self
-        while current and current.parent():
-            # Look for sibling widgets that might have _mpr_widget pointing to self
-            parent_widget = current.parent()
-            for child in parent_widget.findChildren(QWidget):
-                if hasattr(child, '_mpr_widget') and child._mpr_widget == self:
-                    original_widget = child
-                    break
-
-            if original_widget:
-                break
-            current = parent_widget
-
-        # Now look for toolbar_manager in the parent hierarchy
-        search_parent = self.parent()
-        toolbar_manager = None
-        while search_parent:
-            # Check if this parent has toggle_mpr method (toolbar manager)
-            if hasattr(search_parent, 'toggle_mpr'):
-                toolbar_manager = search_parent
-                break
-            search_parent = search_parent.parent()
-
-        if toolbar_manager is not None:
-            logger.info("Found toolbar_manager, calling toggle_mpr to deactivate MPR")
-
-            # If we found the original widget, call toggle_mpr with it
-            if original_widget:
-                logger.info(f"Found original widget, calling toggle_mpr with original widget: {original_widget}")
-                toolbar_manager.toggle_mpr(original_widget)
-            else:
-                # If we can't find the original widget, call toggle_mpr without arguments
-                # This will use the internally tracked selected widget
-                logger.info("Could not find original widget, calling toggle_mpr without arguments")
-                toolbar_manager.toggle_mpr()
-            return
-
-        # Method 2: If we can't find through parent hierarchy, try to access patient_widget global reference
-        # This might be accessible through the application's main window or central widget
-        try:
-            # Try to find the main window or patient widget that contains the toolbar manager
-            from PySide6.QtWidgets import QApplication
-            app = QApplication.instance()
-            if app:
-                for widget in app.topLevelWidgets():
-                    if hasattr(widget, 'findChild'):
-                        # Look for toolbar_manager as a child
-                        tb_manager = widget.findChild(type(self).__class__.__bases__)  # This won't work
-                        # Instead, let's try to find it by looking for attributes
-                        pass
-        except:
-            pass
-
-        # Fallback: just shutdown using the close callback if available
-        logger.warning("Could not find toolbar_manager parent, using close callback")
-        if hasattr(self, 'close_callback') and self.close_callback:
-            logger.info("Calling close_callback to restore original viewer")
-            self.close_callback()
-        else:
-            logger.warning("No close_callback available, calling shutdown")
-            self.shutdown()

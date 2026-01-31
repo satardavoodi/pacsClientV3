@@ -2895,6 +2895,7 @@ class ToolbarManager:
         """Toggle MPR viewer for selected viewport only"""
         import logging
         import sys
+        import os
         logger = logging.getLogger(__name__)
         
         print("=" * 80, file=sys.stderr, flush=True)
@@ -2904,96 +2905,160 @@ class ToolbarManager:
             selected_widget = self.patient_widget.selected_widget
         
         logger.info(f"selected_widget: {selected_widget}")
+        logger.info(f"selected_widget type: {type(selected_widget)}")
         
-        if self.tool_selected is not None and self.tool_access.MPR in str(self.tool_selected):
+        # Check if MPR is currently active on this widget
+        mpr_active = False
+        mpr_widget = None
+        
+        if hasattr(selected_widget, '_mpr_widget') and selected_widget._mpr_widget:
+            mpr_active = True
+            mpr_widget = selected_widget._mpr_widget
+            logger.info("Found _mpr_widget on selected_widget")
+        elif hasattr(selected_widget, '_zeta_mpr_widget') and selected_widget._zeta_mpr_widget:
+            mpr_active = True
+            mpr_widget = selected_widget._zeta_mpr_widget
+            logger.info("Found _zeta_mpr_widget on selected_widget")
+        elif hasattr(selected_widget, '_new_mpr_zeta_widget') and selected_widget._new_mpr_zeta_widget:
+            mpr_active = True
+            mpr_widget = selected_widget._new_mpr_zeta_widget
+            logger.info("Found _new_mpr_zeta_widget on selected_widget")
+        elif hasattr(selected_widget, '_original_widget'):
+            # selected_widget itself IS the MPR widget (back-reference exists)
+            mpr_active = True
+            mpr_widget = selected_widget
+            logger.info("selected_widget has _original_widget - it IS the MPR widget")
+        
+        # Also check tool_selected state
+        tool_is_mpr = (self.tool_selected is not None and 
+                    (self.tool_access.MPR in str(self.tool_selected) or 
+                        getattr(self, '_new_mpr_zeta_active', False)))
+        
+        if mpr_active or tool_is_mpr:
             logger.info("Deactivating MPR (already active)")
+            print("[DEACTIVATE] Closing MPR and restoring original viewer...", file=sys.stderr, flush=True)
+            
             self.tool_selected = None
+            if hasattr(self, '_new_mpr_zeta_active'):
+                self._new_mpr_zeta_active = False
+            
             try:
-                self._restore_selected_viewer(selected_widget)
+                # Determine the original widget to restore
+                original_widget = selected_widget
+                
+                if hasattr(selected_widget, '_original_widget'):
+                    # Case: selected_widget is the MPR widget itself
+                    original_widget = selected_widget._original_widget
+                    logger.info(f"Restoring from MPR widget back-reference: {original_widget}")
+                elif mpr_widget and mpr_widget != selected_widget:
+                    # Case: selected_widget is the original, mpr_widget is the MPR
+                    original_widget = selected_widget
+                    logger.info(f"Restoring using selected_widget as original: {original_widget}")
+                
+                # Call the restoration method
+                self._restore_selected_viewer(original_widget)
+                print("[DEACTIVATE] Original viewer restored successfully", file=sys.stderr, flush=True)
+                
             except Exception as e:
                 logger.error(f"Error restoring viewer: {e}", exc_info=True)
+                print(f"[DEACTIVATE] ERROR restoring viewer: {e}", file=sys.stderr, flush=True)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+                
             self.handle_buttons_checked()
-        else:
-            logger.info("Activating MPR")
-            self.check_and_deactivate_tools()
-
-            if selected_widget is None:
-                print("ERROR: selected_widget is None!", file=sys.stderr, flush=True)
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(self.patient_widget, "MPR Viewer", "Please select a viewer first.")
-                return
-
-            try:
-                if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
-                    logger.warning("No series loaded in selected viewport")
-                    from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.warning(self.patient_widget, "MPR Viewer", "No series loaded in selected viewport.")
-                    return
-
-                # ✅ FIX: Use last_series_show as INDEX (not series number)
-                active_series_index = selected_widget.last_series_show
-                logger.info(f"Active series index: {active_series_index}")
-                
-                # Validate index
-                total_thumbnails = len(self.patient_widget.lst_thumbnails_data)
-                if active_series_index < 0 or active_series_index >= total_thumbnails:
-                    logger.error(f"Invalid index: {active_series_index}")
-                    QMessageBox.warning(self.patient_widget, "Error", f"Invalid series index: {active_series_index}")
-                    return
-                
-                # Get data directly by index
-                thumbnail_data = self.patient_widget.lst_thumbnails_data[active_series_index]
-                vtk_image_data = thumbnail_data.get('vtk_image_data')
-                metadata = thumbnail_data.get('metadata', {})
-                series_metadata = metadata.get('series', {})
-                
-                series_number = series_metadata.get('series_number', 'Unknown')
-                logger.info(f"   ✅ Found series at index {active_series_index}, series_number={series_number}")
-
-                if vtk_image_data is None:
-                    logger.warning(f"No image data available at index {active_series_index}")
-                    from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.warning(self.patient_widget, "MPR Viewer", f"No image data available.")
-                    return
-
-                logger.info(f"vtk_image_data found: {vtk_image_data}")
-                
-                # Get DICOM directory and window/level from this specific series
-                dicom_directory = series_metadata.get('series_path')
-                window_width = None
-                window_center = None
-                
-                instances = metadata.get('instances', [])
-                if instances and len(instances) > 0:
-                    first_instance = instances[0]
-                    if not dicom_directory:
-                        first_instance_path = first_instance.get('instance_path')
-                        if first_instance_path:
-                            dicom_directory = os.path.dirname(first_instance_path)
-                    window_width = first_instance.get('window_width')
-                    window_center = first_instance.get('window_center')
-                    logger.info(f"   DICOM directory: {dicom_directory}")
-                    logger.info(f"   Window/Level: {window_width}/{window_center}")
-
-                print("Calling _replace_selected_viewport_with_mpr...", file=sys.stderr, flush=True)
-                self._replace_selected_viewport_with_mpr(
-                    selected_widget, 
-                    vtk_image_data, 
-                    dicom_directory, 
-                    window_width, 
-                    window_center
-                )
-
-            except Exception as e:
-                logger.error(f"Error opening MPR viewer: {e}", exc_info=True)
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.critical(self.patient_widget, "MPR Viewer Error", f"Error opening MPR viewer:\n{str(e)}")
-                return
-
-            self.tool_selected = self.tool_access.MPR
-            self.handle_buttons_checked()
-            logger.info("MPR toggle completed successfully")
+            print("MPR deactivated successfully", file=sys.stderr, flush=True)
+            logger.info("MPR deactivated successfully")
             logger.info("=" * 80)
+            return
+
+        # ==================== ACTIVATION CODE ====================
+        logger.info("Activating MPR")
+        print("[ACTIVATE] Opening MPR viewer...", file=sys.stderr, flush=True)
+        self.check_and_deactivate_tools()
+
+        if selected_widget is None:
+            print("ERROR: selected_widget is None!", file=sys.stderr, flush=True)
+            logger.error("selected_widget is None! Cannot open MPR viewer.")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self.patient_widget, "MPR Viewer", "Please select a viewer first.")
+            return
+
+        try:
+            if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
+                logger.warning("No series loaded in selected viewport")
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.patient_widget, "MPR Viewer", "No series loaded in selected viewport.")
+                return
+
+            # ✅ FIX: Use last_series_show as INDEX (not series number)
+            active_series_index = selected_widget.last_series_show
+            logger.info(f"Active series index: {active_series_index}")
+            
+            # Validate index
+            total_thumbnails = len(self.patient_widget.lst_thumbnails_data)
+            if active_series_index < 0 or active_series_index >= total_thumbnails:
+                logger.error(f"Invalid index: {active_series_index}")
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.patient_widget, "Error", f"Invalid series index: {active_series_index}")
+                return
+            
+            # Get data directly by index
+            thumbnail_data = self.patient_widget.lst_thumbnails_data[active_series_index]
+            vtk_image_data = thumbnail_data.get('vtk_image_data')
+            metadata = thumbnail_data.get('metadata', {})
+            series_metadata = metadata.get('series', {})
+            
+            series_number = series_metadata.get('series_number', 'Unknown')
+            logger.info(f"   ✅ Found series at index {active_series_index}, series_number={series_number}")
+
+            if vtk_image_data is None:
+                logger.warning(f"No image data available at index {active_series_index}")
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.patient_widget, "MPR Viewer", f"No image data available.")
+                return
+
+            logger.info(f"vtk_image_data found: {vtk_image_data}")
+            
+            # Get DICOM directory and window/level from this specific series
+            dicom_directory = series_metadata.get('series_path')
+            window_width = None
+            window_center = None
+            
+            instances = metadata.get('instances', [])
+            if instances and len(instances) > 0:
+                first_instance = instances[0]
+                if not dicom_directory:
+                    first_instance_path = first_instance.get('instance_path')
+                    if first_instance_path:
+                        dicom_directory = os.path.dirname(first_instance_path)
+                window_width = first_instance.get('window_width')
+                window_center = first_instance.get('window_center')
+                logger.info(f"   DICOM directory: {dicom_directory}")
+                logger.info(f"   Window/Level: {window_width}/{window_center}")
+
+            print("Calling _replace_selected_viewport_with_mpr...", file=sys.stderr, flush=True)
+            self._replace_selected_viewport_with_mpr(
+                selected_widget, 
+                vtk_image_data, 
+                dicom_directory, 
+                window_width, 
+                window_center
+            )
+            print("_replace_selected_viewport_with_mpr completed successfully", file=sys.stderr, flush=True)
+
+        except Exception as e:
+            logger.error(f"Error opening MPR viewer: {e}", exc_info=True)
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self.patient_widget, "MPR Viewer Error", f"Error opening MPR viewer:\n{str(e)}")
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            return
+
+        self.tool_selected = self.tool_access.MPR
+        self.handle_buttons_checked()
+        logger.info("MPR toggle completed successfully")
+        logger.info("=" * 80)
+
 
     def _replace_selected_viewport_with_mpr(self, selected_widget, vtk_image_data, dicom_directory=None, window_width=None, window_center=None):
         """Replace the selected viewport with MPR viewer
@@ -3239,14 +3304,27 @@ class ToolbarManager:
         import logging
         logger = logging.getLogger(__name__)
         
-        # Remove MPR widget if exists
-        print('flag:', hasattr(selected_widget, '_mpr_widget'))
+        # Find MPR widget (handle different MPR implementations)
+        mpr_widget = None
+        original_widget = selected_widget
+        
+        # Case 1: selected_widget has _mpr_widget attribute (MprViewerWrapper)
         if hasattr(selected_widget, '_mpr_widget'):
             mpr_widget = selected_widget._mpr_widget
             
-            # CRITICAL: Must cleanup VTK resources BEFORE deleteLater()
-            # This prevents crashes in frozen (exe) builds where VTK OpenGL
-            # resources must be properly released before Qt destroys the widget
+        # Case 2: selected_widget has _zeta_mpr_widget attribute (StandardMPRViewer/Zeta)
+        elif hasattr(selected_widget, '_zeta_mpr_widget'):
+            mpr_widget = selected_widget._zeta_mpr_widget
+            
+        # Case 3: selected_widget itself is the MPR widget (toolbar_integration pattern)
+        elif hasattr(selected_widget, '_original_widget'):
+            mpr_widget = selected_widget
+            original_widget = selected_widget._original_widget
+        
+        if mpr_widget:
+            logger.info(f"Restoring viewer: MPR widget found {type(mpr_widget).__name__}")
+            
+            # CRITICAL: Cleanup VTK resources BEFORE deleteLater()
             try:
                 if hasattr(mpr_widget, 'cleanup'):
                     logger.info("Calling mpr_widget.cleanup() before deleteLater...")
@@ -3255,17 +3333,72 @@ class ToolbarManager:
             except Exception as e:
                 logger.error(f"Error during MPR cleanup: {e}", exc_info=True)
             
+            # CRITICAL: Remove MPR from layout before deleteLater
+            try:
+                parent = mpr_widget.parent()
+                if parent:
+                    parent_layout = parent.layout()
+                    if parent_layout:
+                        parent_layout.removeWidget(mpr_widget)
+                        logger.info("MPR widget removed from layout")
+            except Exception as e:
+                logger.error(f"Error removing MPR from layout: {e}", exc_info=True)
+            
+            # Hide and schedule deletion
             mpr_widget.hide()
+            mpr_widget.setParent(None)  # Remove parent to ensure complete cleanup
             mpr_widget.deleteLater()
-            delattr(selected_widget, '_mpr_widget')
+            
+            # Clean up references
+            if hasattr(original_widget, '_mpr_widget'):
+                delattr(original_widget, '_mpr_widget')
+            if hasattr(original_widget, '_zeta_mpr_widget'):
+                delattr(original_widget, '_zeta_mpr_widget')
+            if hasattr(original_widget, '_new_mpr_zeta_widget'):
+                delattr(original_widget, '_new_mpr_zeta_widget')
+            if hasattr(mpr_widget, '_original_widget'):
+                delattr(mpr_widget, '_original_widget')
+
+        # CRITICAL: Re-add original widget to layout at (0,0)
+        # When MPR was added, it displaced the original widget from layout
+        try:
+            parent = original_widget.parent()
+            if parent:
+                parent_layout = parent.layout()
+                if parent_layout:
+                    # Remove from layout first (in case it's still there)
+                    parent_layout.removeWidget(original_widget)
+                    # Re-add at (0,0) 
+                    parent_layout.addWidget(original_widget, 0, 0)
+                    logger.info("Original widget re-added to layout at (0,0)")
+        except Exception as e:
+            logger.error(f"Error re-adding original widget to layout: {e}", exc_info=True)
 
         # Show original widget
-        selected_widget.show()
+        original_widget.show()
+        original_widget.setVisible(True)
+        original_widget.setEnabled(True)
+        
+        # Force update
+        try:
+            original_widget.update()
+            if original_widget.parent():
+                original_widget.parent().update()
+        except:
+            pass
 
-        # Clean up backup reference
-        print('flag cleanup:', hasattr(selected_widget, '_mpr_backup_widget'))
-        if hasattr(selected_widget, '_mpr_backup_widget'):
-            delattr(selected_widget, '_mpr_backup_widget')
+        # Clean up other references
+        if hasattr(original_widget, '_mpr_backup_widget'):
+            delattr(original_widget, '_mpr_backup_widget')
+        if hasattr(original_widget, '_original_visible'):
+            delattr(original_widget, '_original_visible')
+            
+        # Reset tool state if needed
+        if hasattr(self, '_new_mpr_zeta_active'):
+            self._new_mpr_zeta_active = False
+            
+        logger.info("Original viewer restored successfully")
+
 
     def handle_buttons_checked(self):
         for tool_name, tool_btn in self.tools_button.items():
