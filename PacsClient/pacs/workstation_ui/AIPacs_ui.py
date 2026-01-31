@@ -156,6 +156,9 @@ class ControlPanelWindow(object):
         self.web_browser_btn = self._create_menu_button(self.frame_2, "web_browser_btn", "globe.png", "", "Web Browser")
         self.verticalLayout_3.addWidget(self.web_browser_btn)
 
+        self.education_btn = self._create_menu_button(self.frame_2, "education_btn", "book-open.png", "", "Educational Courses")
+        self.verticalLayout_3.addWidget(self.education_btn)
+
         self.verticalLayout_2.addWidget(self.frame_2)
 
         # Spacer
@@ -439,6 +442,7 @@ class ControlPanelWindow(object):
         self.settings_server_btn.clicked.connect(lambda: self.mainPages.setCurrentIndex(1))
         self.dataBtn.clicked.connect(lambda: self.mainPages.setCurrentIndex(2))
         self.reportBtn.clicked.connect(lambda: self.mainPages.setCurrentIndex(3))
+        self.education_btn.clicked.connect(self.open_education_module)
         
         self.download_manager_btn.clicked.connect(self.open_download_manager)
         self.web_browser_btn.clicked.connect(self.open_web_browser)
@@ -458,3 +462,37 @@ class ControlPanelWindow(object):
                 self.home_widget.open_web_browser()
         except Exception as e:
             print(f"Error opening web browser: {str(e)}")
+    
+    def open_education_module(self):
+        """Open education module in a new tab"""
+        try:
+            if hasattr(self, 'home_widget') and hasattr(self.home_widget, 'open_education_module'):
+                self.home_widget.open_education_module()
+        except Exception as e:
+            print(f"Error opening education module: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    def open_education_page(self):
+        """Open education page with lazy loading"""
+        try:
+            # Lazy load the education module on first access
+            if not self.educationPage_loaded:
+                from PacsClient.pacs.education.education_main_widget import EducationMainWidget
+                
+                # Remove placeholder widget
+                self.mainPages.removeWidget(self.educationPage)
+                self.educationPage.deleteLater()
+                
+                # Create and add actual education widget
+                self.educationPage = EducationMainWidget(parent=self)
+                self.educationPage.setObjectName(u"educationPage")
+                self.mainPages.insertWidget(5, self.educationPage)
+                self.educationPage_loaded = True
+            
+            # Switch to education page
+            self.mainPages.setCurrentIndex(5)
+        except Exception as e:
+            print(f"Error opening education page: {str(e)}")
+            import traceback
+            traceback.print_exc()

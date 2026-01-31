@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QFrame
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QClipboard, QIcon
+from PySide6.QtGui import QFont, QClipboard, QIcon, QKeyEvent
 
 from license_manager import LicenseManager
 
@@ -25,8 +25,10 @@ class LicenseGeneratorWindow(QMainWindow):
     def setup_ui(self):
         """Setup user interface"""
         self.setWindowTitle("AIPacs License Generator - Admin Tool")
-        self.setMinimumWidth(800)
-        self.setMinimumHeight(700)
+        
+        # اندازه پنجره
+        self.setMinimumSize(900, 700)
+        self.resize(1000, 750)
         
         # Set LTR for English
         self.setLayoutDirection(Qt.LeftToRight)
@@ -37,8 +39,8 @@ class LicenseGeneratorWindow(QMainWindow):
         
         # Main layout
         main_layout = QVBoxLayout()
-        main_layout.setSpacing(25)
-        main_layout.setContentsMargins(40, 40, 40, 40)
+        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(40, 30, 40, 30)
         
         # Title
         title_label = QLabel("AIPacs License Generator")
@@ -66,10 +68,11 @@ class LicenseGeneratorWindow(QMainWindow):
         
         # Customer Serial Section
         serial_group = QVBoxLayout()
+        serial_group.setSpacing(8)
         
         serial_label = QLabel("Customer System Serial")
         serial_font = QFont()
-        serial_font.setPointSize(13)
+        serial_font.setPointSize(12)
         serial_font.setBold(True)
         serial_label.setFont(serial_font)
         serial_group.addWidget(serial_label)
@@ -84,49 +87,55 @@ class LicenseGeneratorWindow(QMainWindow):
         self.serial_input.setPlaceholderText("ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456")
         self.serial_input.setStyleSheet("""
             QLineEdit {
-                border: 1px solid #4a5568;
-                border-radius: 6px;
-                padding: 14px;
+                border: 2px solid #4a5568;
+                border-radius: 8px;
+                padding: 12px 15px;
                 font-size: 14px;
                 font-family: 'Courier New', monospace;
                 background-color: #2d3748;
                 color: #e2e8f0;
+                min-height: 20px;
             }
             QLineEdit:focus {
                 border: 2px solid #3b82f6;
                 background-color: #374151;
             }
+            QLineEdit::placeholder {
+                color: #9ca3af;
+            }
         """)
         serial_group.addWidget(self.serial_input)
         
         main_layout.addLayout(serial_group)
-        
         main_layout.addSpacing(10)
         
         # Validity Duration Section
         days_group = QVBoxLayout()
-        
+        days_group.setSpacing(8)
+
         days_label = QLabel("License Validity Period")
         days_label.setFont(serial_font)
         days_group.addWidget(days_label)
-        
+
         days_layout = QHBoxLayout()
         days_layout.setSpacing(10)
-        
+
         self.days_spinbox = QSpinBox()
         self.days_spinbox.setMinimum(1)
-        self.days_spinbox.setMaximum(3650)  # Max 10 years
+        self.days_spinbox.setMaximum(3650)
         self.days_spinbox.setValue(365)
         self.days_spinbox.setSuffix(" days")
         self.days_spinbox.setStyleSheet("""
             QSpinBox {
-                border: 1px solid #4a5568;
-                border-radius: 6px;
-                padding: 12px;
-                font-size: 13px;
+                border: 2px solid #4a5568;
+                border-radius: 8px;
+                padding: 10px 12px;
+                font-size: 14px;
                 background-color: #2d3748;
                 color: #e2e8f0;
                 min-width: 150px;
+                max-width: 180px;
+                min-height: 20px;
             }
             QSpinBox:focus {
                 border: 2px solid #3b82f6;
@@ -135,32 +144,33 @@ class LicenseGeneratorWindow(QMainWindow):
             QSpinBox::up-button, QSpinBox::down-button {
                 background-color: #374151;
                 border: none;
-                width: 20px;
+                width: 25px;
+                border-radius: 4px;
             }
             QSpinBox::up-button:hover, QSpinBox::down-button:hover {
                 background-color: #4a5568;
             }
         """)
+
         days_layout.addWidget(self.days_spinbox)
-        
-        # Preset buttons
+
+        # Preset buttons با اندازه مناسب
         preset_30 = self._create_preset_button("30 Days", 30)
         preset_90 = self._create_preset_button("90 Days", 90)
         preset_180 = self._create_preset_button("180 Days", 180)
         preset_365 = self._create_preset_button("1 Year", 365)
         preset_730 = self._create_preset_button("2 Years", 730)
-        
+
         days_layout.addWidget(preset_30)
         days_layout.addWidget(preset_90)
         days_layout.addWidget(preset_180)
         days_layout.addWidget(preset_365)
         days_layout.addWidget(preset_730)
         days_layout.addStretch()
-        
+
         days_group.addLayout(days_layout)
         main_layout.addLayout(days_group)
-        
-        main_layout.addSpacing(10)
+        main_layout.addSpacing(15)
         
         # Generate button
         generate_btn = QPushButton("⚡ Generate License Key")
@@ -170,9 +180,10 @@ class LicenseGeneratorWindow(QMainWindow):
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 16px;
+                padding: 15px 30px;
                 font-size: 16px;
                 font-weight: bold;
+                min-height: 20px;
             }
             QPushButton:hover {
                 background-color: #059669;
@@ -201,15 +212,16 @@ class LicenseGeneratorWindow(QMainWindow):
         
         self.result_text = QTextEdit()
         self.result_text.setReadOnly(True)
-        self.result_text.setMaximumHeight(100)
+        self.result_text.setMinimumHeight(100)
+        self.result_text.setMaximumHeight(120)
         self.result_text.setStyleSheet("""
             QTextEdit {
                 background-color: #064e3b;
                 border: 2px solid #10b981;
-                border-radius: 6px;
+                border-radius: 8px;
                 padding: 15px;
                 font-family: 'Courier New', monospace;
-                font-size: 15px;
+                font-size: 14px;
                 color: #10b981;
                 font-weight: bold;
             }
@@ -223,10 +235,11 @@ class LicenseGeneratorWindow(QMainWindow):
                 background-color: #3b82f6;
                 color: white;
                 border: none;
-                border-radius: 6px;
-                padding: 12px;
-                font-size: 14px;
+                border-radius: 8px;
+                padding: 12px 25px;
+                font-size: 15px;
                 font-weight: bold;
+                min-height: 20px;
             }
             QPushButton:hover {
                 background-color: #2563eb;
@@ -252,7 +265,7 @@ class LicenseGeneratorWindow(QMainWindow):
                 background-color: #78350f;
                 border: 1px solid #f59e0b;
                 border-radius: 6px;
-                padding: 14px;
+                padding: 12px;
                 color: #fbbf24;
                 font-size: 11px;
             }
@@ -281,10 +294,14 @@ class LicenseGeneratorWindow(QMainWindow):
             QPushButton {
                 background-color: #374151;
                 color: #e2e8f0;
-                border: 1px solid #4a5568;
-                border-radius: 4px;
-                padding: 10px 14px;
-                font-size: 11px;
+                border: 2px solid #4a5568;
+                border-radius: 6px;
+                padding: 10px 15px;
+                font-size: 13px;
+                font-weight: bold;
+                min-height: 20px;
+                min-width: 80px;
+                max-width: 100px;
             }
             QPushButton:hover {
                 background-color: #4a5568;
@@ -296,7 +313,7 @@ class LicenseGeneratorWindow(QMainWindow):
         """)
         btn.clicked.connect(lambda: self.days_spinbox.setValue(days))
         return btn
-    
+
     def generate_license(self):
         """Generate license key"""
         # Get serial

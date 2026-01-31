@@ -232,6 +232,13 @@ class ToolbarManager:
             method_update_audio_counter=self.update_audio_counter,
             method_check_status_mic_btn=self.turn_on_off_mic_btn
         )
+        
+        # ✅ تایمر برای به‌روزرسانی موقعیت پنل ضبط هنگام حرکت پنجره
+        self._position_update_timer = QTimer()
+        self._position_update_timer.setInterval(100)  # هر 100 میلی‌ثانیه
+        self._position_update_timer.timeout.connect(self._update_soundbox_position)
+        self._mic_button_ref = None  # رفرنس به دکمه میکروفون
+
     def _show_curved_mpr_panel(self):
         """Show Curved MPR control panel"""
         try:
@@ -892,7 +899,7 @@ class ToolbarManager:
             pass
         
         try:
-            # Check for StandardMPRViewer (old MPR)
+            # Check for Zeta MPR viewer
             from PacsClient.pacs.patient_tab.viewers.standard_mpr_viewer import StandardMPRViewer
             if hasattr(widget, '_mpr_widget') and isinstance(widget._mpr_widget, StandardMPRViewer):
                 return True
@@ -929,7 +936,7 @@ class ToolbarManager:
                 f"Current widget type: {type(widget).__name__}\n\n"
                 "Measurement tools work on:\n"
                 "  • Standard 2D viewers (VTKWidget)\n"
-                "  • MPR viewers (StandardMPRViewer)"
+                "  • Zeta MPR viewers"
             )
             msg.setStandardButtons(QMessageBox.Ok)
             msg.exec()
@@ -1403,6 +1410,47 @@ class ToolbarManager:
         capture_btn: BadgeButton = self.tools_button[self.tool_access.CAPTURE]
         capture_btn.setCount(len(lst_images))
 
+    def _update_soundbox_position(self):
+        try:
+            # Check if button reference exists and is valid
+            if not hasattr(self, '_mic_button_ref') or not self._mic_button_ref:
+                return
+                
+            # Check if soundbox exists and is visible
+            # Note: Accessing isVisible() can raise RuntimeError if C++ object is deleted
+            if not hasattr(self, '_ToolbarManager__soundbox'):
+                return
+                
+            if not self.__soundbox.isVisible():
+                return
+            
+            # محاسبه موقعیت دقیق دکمه به صورت گلوبال
+            button_global_pos = self._mic_button_ref.mapToGlobal(QPoint(0, 0))
+            button_height = self._mic_button_ref.height()
+            button_width = self._mic_button_ref.width()
+            
+            # محاسبه موقعیت جدید پنل (زیر دکمه، با راست‌چین)
+            panel_x = button_global_pos.x() + button_width - self.__soundbox.width()
+            panel_y = button_global_pos.y() + button_height + 2  # 2 پیکسل فاصله
+            
+            # تنظیم موقعیت مستقیم
+            self.__soundbox.move(panel_x, panel_y)
+            
+        except RuntimeError as e:
+            # Handle C++ object deletion specifically
+            if "already deleted" in str(e):
+                print(f"[Voice Panel] VoiceWidget deleted, stopping position timer")
+                self._position_update_timer.stop()
+                # Optionally reset the reference so it gets recreated on next use
+                if hasattr(self, '_ToolbarManager__soundbox'):
+                    delattr(self, '_ToolbarManager__soundbox')
+            else:
+                raise  # Re-raise if it's a different RuntimeError
+        except Exception as e:
+            # در صورت خطا، تایمر را متوقف کن
+            print(f"[Voice Panel] Error updating position: {e}")
+            self._position_update_timer.stop()
+    
     def _on_mic_clicked(self, mic_btn):
         selected_widget = self.patient_widget.selected_widget
 
@@ -1413,6 +1461,10 @@ class ToolbarManager:
         if soundbox.isVisible():
             soundbox.hide()
             self.turn_on_off_mic_btn(False)
+            # تغییر آیکون به حالت عادی
+            mic_btn.setIcon(QIcon(f"{ICON_PATH}/mic.png"))
+            # توقف تایمر به‌روزرسانی موقعیت
+            self._position_update_timer.stop()
             return
 
         # 2. چک میکروفون
@@ -1423,18 +1475,38 @@ class ToolbarManager:
                                 "No microphone device found. Please connect a microphone and try again.")
             return
 
-        # 3. محاسبه موقعیت دقیق
-        btn_global_pos = mic_btn.mapToGlobal(QPoint(0, mic_btn.height()))
+        # 3. نمایش دیالوگ تأیید
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self.patient_widget,
+            'Start Voice Recording',
+            'Do you want to start recording audio?',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
         
-        # تنظیم موقعیت فریم و نمایش
-        soundbox.show_under(mic_btn)
-        soundbox.activateWindow()  # 🔹 فعال‌سازی مجدد برای جلوگیری از پرش
-        soundbox.raise_()  # 🔹 بالا آوردن پنجره
+        if reply == QMessageBox.No:
+            mic_btn.setChecked(False)
+            return
 
-        # 4. شروع/توقف ضبط
+        # 4. ذخیره رفرنس دکمه برای به‌روزرسانی موقعیت
+        self._mic_button_ref = mic_btn
+        
+        # 5. تنظیم موقعیت فریم و نمایش
+        soundbox.show_under(mic_btn)
+        soundbox.activateWindow()
+        soundbox.raise_()
+        
+        # تغییر آیکون به حالت ضبط (قرمز)
+        mic_btn.setIcon(qta.icon('fa5s.microphone', color='#ef4444'))
+        
+        # شروع تایمر به‌روزرسانی موقعیت
+        self._position_update_timer.start()
+
+        # 6. شروع/توقف ضبط
         soundbox.toggle_recording(selected_widget)
 
-        # 5. وضعیت دکمه
+        # 7. وضعیت دکمه
         if self.tool_selected == self.tool_access.MICROPHONE:
             self.tool_selected = None
             self.update_audio_counter()
@@ -1483,13 +1555,21 @@ class ToolbarManager:
 
     def get_soundbox(self):
         """Get the VoiceWidget instance"""
-        if not hasattr(self, '__soundbox'):
-            # Initialize if not exists
-            self.__soundbox = VoiceWidget(
-                patient_widget=self.patient_widget,
-                method_update_audio_counter=self.update_audio_counter,
-                method_check_status_mic_btn=self.turn_on_off_mic_btn
-            )
+        try:
+            if hasattr(self, '_ToolbarManager__soundbox'):
+                # Verify C++ object still exists by calling a harmless method
+                self._ToolbarManager__soundbox.objectName()
+                return self._ToolbarManager__soundbox
+        except RuntimeError:
+            # C++ object was deleted, will recreate below
+            pass
+        
+        # Initialize if not exists or was deleted
+        self.__soundbox = VoiceWidget(
+            patient_widget=self.patient_widget,
+            method_update_audio_counter=self.update_audio_counter,
+            method_check_status_mic_btn=self.turn_on_off_mic_btn
+        )
         return self.__soundbox
 
     def turn_on_off_mic_btn(self, status=None):
@@ -1692,6 +1772,7 @@ class ToolbarManager:
     def _show_mpr_dropdown(self, button):
         """Show dropdown menu for MIP/MinIP/Thick Slab options"""
         try:
+            print("[DEBUG] _show_mpr_dropdown called! Creating MPR Visualization Options dropdown...")
             dropdown = QWidget(self.patient_widget)
             dropdown.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
             dropdown.setAttribute(Qt.WA_DeleteOnClose)
@@ -1758,6 +1839,7 @@ class ToolbarManager:
             ])
             layout.addWidget(thick_btn)
 
+<<<<<<< HEAD
             # Orthogonal MPR button (New - Full MPR Viewer)
             ortho_mpr_btn = create_dropdown_tool('Orthogonal MPR Viewer', 'fa5s.th-large', '#10b981')
             ortho_mpr_btn.clicked.connect(lambda: [
@@ -1765,6 +1847,9 @@ class ToolbarManager:
                 dropdown.close()
             ])
             layout.addWidget(ortho_mpr_btn)
+=======
+            # Note: Zeta MPR removed from dropdown - now the main MPR button
+>>>>>>> 0a1676c06fe56a7fb77f3ca67a672ae452d994b9
 
             # Position dropdown below the button
             button_pos = button.mapToGlobal(QPoint(0, button.height()))
@@ -2356,6 +2441,447 @@ class ToolbarManager:
         except Exception as e:
             logger.error(f"ERROR in Thick Slab: {e}", exc_info=True)
             QMessageBox.critical(self.patient_widget, "Error", f"Error applying Thick Slab:\n{str(e)}")
+
+    def on_itk_mpr_from_dropdown_requested(self):
+        """
+        Handler for ITK MPR (ITK-SNAP) menu item from MPR dropdown.
+        
+        Retrieves the active DICOM series from the selected viewer and forwards it
+        to the newmpr4 module for ITK-SNAP integration.
+        """
+        import logging
+        from PySide6.QtWidgets import QMessageBox
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.info("=" * 60)
+            logger.info("ITK MPR (ITK-SNAP) requested from dropdown")
+            logger.info("=" * 60)
+            
+            # Get the selected widget (active viewer)
+            selected_widget = self.patient_widget.selected_widget
+            
+            # Check if widget is valid and has image viewer
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                logger.warning("No image viewer available in selected widget")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Image Available",
+                    "No active DICOM series available for ITK MPR.\n\nPlease load an image first."
+                )
+                return
+            
+            # Check if series index is available
+            if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
+                logger.warning("No active series index found")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Series Available",
+                    "No active DICOM series available for ITK MPR.\n\nPlease select a series first."
+                )
+                return
+            
+            # Get the active series number (not list index!)
+            active_series_number = selected_widget.last_series_show
+            logger.info(f"Active series number: {active_series_number}")
+            
+            # Find the series data by searching for matching series_number
+            series_data = None
+            vtk_image_data = None
+            metadata = {}
+            
+            for i in range(len(self.patient_widget.lst_thumbnails_data)):
+                try:
+                    thumbnail_data = self.patient_widget.lst_thumbnails_data[i]
+                    thumb_metadata = thumbnail_data.get('metadata', {})
+                    series_metadata = thumb_metadata.get('series', {})
+                    series_num = int(series_metadata.get('series_number', -1))
+                    
+                    logger.info(f"   [{i}] series_number={series_num}, looking for {active_series_number}")
+                    
+                    if series_num == int(active_series_number):
+                        series_data = thumbnail_data
+                        vtk_image_data = thumbnail_data.get('vtk_image_data')
+                        metadata = thumb_metadata
+                        logger.info(f"   ✅ MATCH! Found series at index {i}")
+                        break
+                except (KeyError, ValueError, TypeError) as e:
+                    logger.debug(f"   [ERROR] checking thumbnail data at index {i}: {e}")
+                    continue
+            
+            if series_data is None:
+                logger.error(f"Series number {active_series_number} not found in thumbnail data")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Invalid Series",
+                    "No active DICOM series available for ITK MPR."
+                )
+                return
+            
+            if vtk_image_data is None:
+                logger.warning("VTK image data is None for active series")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Image Data",
+                    "No active DICOM series available for ITK MPR.\n\nImage data is not loaded."
+                )
+                return
+            
+            logger.info(f"Retrieved series data - metadata keys: {list(metadata.keys())}")
+            
+            # Get series information from metadata
+            series_metadata = metadata.get('series', {})
+            series_number = series_metadata.get('series_number', 'Unknown')
+            series_description = series_metadata.get('series_description', 'Unknown')
+            
+            logger.info(f"Series Number: {series_number}, Description: {series_description}")
+            
+            # Call newmpr4 module to launch ITK MPR for active series
+            from PacsClient.pacs.patient_tab.newmpr4 import launch_itk_mpr_for_active_series
+            
+            launch_itk_mpr_for_active_series(
+                vtk_image_data=vtk_image_data,
+                metadata=metadata,
+                series_index=active_series_number,
+                parent_widget=self.patient_widget
+            )
+            
+            logger.info("ITK MPR launch request completed")
+            logger.info("=" * 60)
+            
+        except Exception as e:
+            logger.error(f"ERROR in ITK MPR dropdown handler: {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self.patient_widget,
+                "Error",
+                f"Error launching ITK MPR:\n{str(e)}"
+            )
+
+    def launch_advanced_mpr_slicer(self):
+        """
+        Launch Advanced MPR (3D Slicer) as a popup for the active series.
+        
+        This opens the custom 3D Slicer application with the DICOM directory
+        of the currently selected series.
+        """
+        import logging
+        import os
+        from PySide6.QtWidgets import QMessageBox
+        from pathlib import Path
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.info("=" * 60)
+            logger.info("Advanced MPR (3D Slicer) requested from dropdown")
+            logger.info("=" * 60)
+            
+            # Get the selected widget (active viewer)
+            selected_widget = self.patient_widget.selected_widget
+            
+            # Check if widget is valid and has image viewer
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                logger.warning("No image viewer available in selected widget")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Image Available",
+                    "No active DICOM series available.\n\nPlease load an image first."
+                )
+                return
+            
+            # Check if series index is available
+            if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
+                logger.warning("No active series index found")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Series Available",
+                    "No active DICOM series available.\n\nPlease select a series first."
+                )
+                return
+            
+            # Get the active series number
+            active_series_number = selected_widget.last_series_show
+            logger.info(f"Active series number: {active_series_number}")
+            
+            # Find the series data by searching for matching series_number
+            series_data = None
+            dicom_directory = None
+            series_uid = None
+            window_width = None
+            window_center = None
+            
+            for i in range(len(self.patient_widget.lst_thumbnails_data)):
+                try:
+                    thumbnail_data = self.patient_widget.lst_thumbnails_data[i]
+                    thumb_metadata = thumbnail_data.get('metadata', {})
+                    series_metadata = thumb_metadata.get('series', {})
+                    series_num = int(series_metadata.get('series_number', -1))
+                    
+                    logger.info(f"   [{i}] series_number={series_num}, looking for {active_series_number}")
+                    
+                    if series_num == int(active_series_number):
+                        series_data = thumbnail_data
+                        
+                        # Get DICOM directory from series path or first instance
+                        dicom_directory = series_metadata.get('series_path')
+                        series_uid = series_metadata.get('series_uid')
+                        
+                        # If no series_path, get from first instance
+                        instances = thumb_metadata.get('instances', [])
+                        if instances and len(instances) > 0:
+                            first_instance = instances[0]
+                            if not dicom_directory:
+                                first_instance_path = first_instance.get('instance_path')
+                                if first_instance_path:
+                                    dicom_directory = os.path.dirname(first_instance_path)
+                            
+                            # Get window/level from first instance
+                            window_width = first_instance.get('window_width')
+                            window_center = first_instance.get('window_center')
+                        
+                        logger.info(f"   ✅ MATCH! Found series at index {i}")
+                        logger.info(f"   DICOM directory: {dicom_directory}")
+                        logger.info(f"   Series UID: {series_uid}")
+                        break
+                except (KeyError, ValueError, TypeError) as e:
+                    logger.debug(f"   [ERROR] checking thumbnail data at index {i}: {e}")
+                    continue
+            
+            if series_data is None or not dicom_directory:
+                logger.error(f"Series number {active_series_number} not found or no DICOM directory")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Invalid Series",
+                    "Could not find DICOM directory for the active series."
+                )
+                return
+            
+            # Verify DICOM directory exists
+            if not os.path.exists(dicom_directory):
+                logger.error(f"DICOM directory does not exist: {dicom_directory}")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Directory Not Found",
+                    f"DICOM directory not found:\n{dicom_directory}"
+                )
+                return
+            
+            logger.info(f"Launching Advanced MPR Slicer with DICOM directory: {dicom_directory}")
+            
+            # Import and use the SlicerLauncher
+            from PacsClient.pacs.patient_tab.advance_mpr_3d_slicer.slicer_launcher import get_slicer_launcher
+            
+            launcher = get_slicer_launcher(parent_widget=self.patient_widget)
+            
+            # Get patient and study info
+            patient_id = getattr(self.patient_widget, 'patient_id', None)
+            study_uid = getattr(self.patient_widget, 'study_uid', None)
+            
+            # Launch Slicer with the DICOM directory
+            success = launcher.launch_with_dicom(
+                dicom_dir=dicom_directory,
+                layout='mpr',  # Default to MPR layout
+                patient_id=patient_id,
+                study_id=study_uid,
+                window_width=window_width,
+                window_level=window_center,
+                series_uid=series_uid
+            )
+            
+            if success:
+                logger.info("Advanced MPR Slicer launched successfully")
+            else:
+                logger.warning("Advanced MPR Slicer launch was blocked (already running)")
+            
+            logger.info("=" * 60)
+            
+        except Exception as e:
+            logger.error(f"ERROR launching Advanced MPR Slicer: {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self.patient_widget,
+                "Error",
+                f"Error launching Advanced MPR Slicer:\n{str(e)}"
+            )
+
+    def launch_zeta_mpr(self):
+        """
+        Launch Zeta MPR viewer in place of the selected viewport.
+        
+        This replaces the current viewport with the Zeta MPR viewer,
+        similar to how the regular MPR works.
+        """
+        import logging
+        import sys
+        from PySide6.QtWidgets import QMessageBox
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.info("=" * 60)
+            logger.info("Zeta MPR requested from dropdown")
+            logger.info("=" * 60)
+            
+            # Get the selected widget (active viewer)
+            selected_widget = self.patient_widget.selected_widget
+            
+            # Check if widget is valid and has image viewer
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                logger.warning("No image viewer available in selected widget")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Image Available",
+                    "No active DICOM series available.\n\nPlease load an image first."
+                )
+                return
+            
+            # Check if series index is available
+            if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
+                logger.warning("No active series index found")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Series Available",
+                    "No active DICOM series available.\n\nPlease select a series first."
+                )
+                return
+            
+            # Get the active series number
+            active_series_number = selected_widget.last_series_show
+            logger.info(f"Active series number: {active_series_number}")
+            
+            # Find the series data by searching for matching series_number
+            series_data = None
+            vtk_image_data = None
+            
+            for i in range(len(self.patient_widget.lst_thumbnails_data)):
+                try:
+                    thumbnail_data = self.patient_widget.lst_thumbnails_data[i]
+                    thumb_metadata = thumbnail_data.get('metadata', {})
+                    series_metadata = thumb_metadata.get('series', {})
+                    series_num = int(series_metadata.get('series_number', -1))
+                    
+                    logger.info(f"   [{i}] series_number={series_num}, looking for {active_series_number}")
+                    
+                    if series_num == int(active_series_number):
+                        series_data = thumbnail_data
+                        vtk_image_data = thumbnail_data.get('vtk_image_data')
+                        logger.info(f"   ✅ MATCH! Found series at index {i}")
+                        break
+                except (KeyError, ValueError, TypeError) as e:
+                    logger.debug(f"   [ERROR] checking thumbnail data at index {i}: {e}")
+                    continue
+            
+            if series_data is None or vtk_image_data is None:
+                logger.error(f"Series number {active_series_number} not found or no VTK data")
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Invalid Series",
+                    "Could not find VTK image data for the active series."
+                )
+                return
+            
+            logger.info("Replacing viewport with Zeta MPR viewer...")
+            
+            # Get parent widget and layout
+            parent_widget = selected_widget.parent()
+            parent_layout = parent_widget.layout()
+            
+            # Find the position of the selected widget in the grid layout
+            grid_position = None
+            if parent_layout:
+                from PySide6.QtWidgets import QGridLayout
+                if isinstance(parent_layout, QGridLayout):
+                    # Find the widget's position in the grid
+                    for i in range(parent_layout.count()):
+                        item = parent_layout.itemAt(i)
+                        if item and item.widget() == selected_widget:
+                            grid_position = parent_layout.getItemPosition(i)  # Returns (row, col, rowSpan, colSpan)
+                            break
+            
+            # Hide the original widget
+            selected_widget.setVisible(False)
+            
+            # Create Zeta MPR widget WITH PARENT to keep it embedded
+            print("Creating Zeta MPR viewer...", file=sys.stderr, flush=True)
+            
+            # Import Zeta MPR viewer from zeta mpr folder (folder name has space)
+            import os
+            import shutil
+            import importlib.util
+            
+            # Get path to patient_tab directory (4 levels up from toolbar_manager.py)
+            patient_tab_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta mpr")
+            viewers_dir = os.path.join(patient_tab_dir, "viewers")
+            
+            # Temporarily copy vtk_3d_presets.py to zeta mpr folder to fix imports
+            vtk_presets_src = os.path.join(viewers_dir, "vtk_3d_presets.py")
+            vtk_presets_dst = os.path.join(zeta_mpr_dir, "vtk_3d_presets.py")
+            copied_file = False
+            
+            try:
+                # Copy the file if it doesn't exist in zeta mpr
+                if os.path.exists(vtk_presets_src) and not os.path.exists(vtk_presets_dst):
+                    shutil.copy2(vtk_presets_src, vtk_presets_dst)
+                    copied_file = True
+                    print(f"Copied vtk_3d_presets.py to zeta mpr folder", file=sys.stderr, flush=True)
+                
+                # Import the zeta mpr package properly using importlib
+                # This allows the package's __init__.py to run and set up relative imports
+                init_path = os.path.join(zeta_mpr_dir, "__init__.py")
+                spec = importlib.util.spec_from_file_location("zeta_mpr_pkg", init_path)
+                zeta_mpr_pkg = importlib.util.module_from_spec(spec)
+                sys.modules["zeta_mpr_pkg"] = zeta_mpr_pkg
+                spec.loader.exec_module(zeta_mpr_pkg)
+                
+                # Now we can access StandardMPRViewer from the package
+                zeta_widget = zeta_mpr_pkg.StandardMPRViewer(
+                    vtk_image_data=vtk_image_data,
+                    parent=parent_widget
+                )
+                
+                # Add to layout at the same position
+                if parent_layout and grid_position:
+                    from PySide6.QtWidgets import QGridLayout
+                    if isinstance(parent_layout, QGridLayout):
+                        row, col, rowSpan, colSpan = grid_position
+                        parent_layout.addWidget(zeta_widget, row, col, rowSpan, colSpan)
+                        logger.info(f"Zeta MPR added to grid at position ({row}, {col})")
+                elif parent_layout:
+                    # Fallback: just add to layout
+                    parent_layout.addWidget(zeta_widget)
+                    logger.info("Zeta MPR added to layout (non-grid)")
+                
+                # Store reference to restore later
+                selected_widget._zeta_mpr_widget = zeta_widget
+                selected_widget._original_visible = True
+                
+                logger.info("Zeta MPR viewer replaced viewport successfully")
+            finally:
+                # Clean up sys.modules
+                if "zeta_mpr_pkg" in sys.modules:
+                    del sys.modules["zeta_mpr_pkg"]
+                
+                # Remove copied file if we created it
+                if copied_file and os.path.exists(vtk_presets_dst):
+                    try:
+                        os.remove(vtk_presets_dst)
+                        print(f"Cleaned up temporary vtk_3d_presets.py", file=sys.stderr, flush=True)
+                    except:
+                        pass  # Ignore cleanup errors
+            
+            logger.info("=" * 60)
+            
+        except Exception as e:
+            logger.error(f"ERROR launching Zeta MPR: {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self.patient_widget,
+                "Error",
+                f"Error launching Zeta MPR:\n{str(e)}"
+            )
 
     def toggle_mpr(self, selected_widget=None):
         """Toggle MPR viewer for selected viewport only"""
@@ -3521,8 +4047,9 @@ class ToolbarManager:
             }
             QPushButton:checked {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #059669, stop:1 #047857);
-                border-color: #10b981;
+                    stop:0 #dc2626, stop:1 #b91c1c);
+                border: 1px solid #ef4444;
+                border-left: none;
                 color: #ffffff;
             }
         """)
@@ -3591,7 +4118,7 @@ class ToolbarManager:
         mpr_menu_btn.setCursor(Qt.PointingHandCursor)
         mpr_menu_btn.clicked.connect(lambda: self._show_mpr_dropdown(mpr_menu_btn))
 
-        mpr_btn = create_tool_btn(self.patient_widget, 'MPR Viewer', icon_name=None, text_icon='MPR')
+        mpr_btn = create_tool_btn(self.patient_widget, 'Zeta MPR Viewer', icon_name=None, text_icon='MPR')
         mpr_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -3628,7 +4155,7 @@ class ToolbarManager:
             }
         """)
         
-        mpr_btn.clicked.connect(self.toggle_mpr)
+        mpr_btn.clicked.connect(lambda: self.launch_zeta_mpr())
         
         mpr_layout.addWidget(mpr_menu_btn)
         mpr_layout.addWidget(mpr_btn)
@@ -4594,29 +5121,36 @@ class ToolbarManager:
             }
             indicator_text = status_indicator_map.get(current_status, '?')
             
-            # Update badge with colored background
-            self.report_status_badge.setText(indicator_text)
-            self.report_status_badge.setStyleSheet(f"""
-                QLabel {{
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 {status_color}, stop:1 {status_color});
-                    color: #ffffff;
-                    border: 1px solid rgba(255, 255, 255, 0.3);
-                    border-radius: 8px;
-                    padding: 1px 4px;
-                    font-weight: 600;
-                    font-family: 'Roboto', sans-serif;
-                    font-size: 8px;
-                }}
-            """)
-            self.report_status_badge.show()
-            
-            # Update tooltip on button
-            button = self.report_status_badge.parent()
-            if button:
-                button.setToolTip(f"Report Status: {status_label}\n(Click to change)")
-            
-            print(f"📋 [Toolbar] Updated status badge: {current_status} -> {indicator_text} ({status_label})")
+            # Update badge with colored background - with safety check
+            if hasattr(self, 'report_status_badge') and self.report_status_badge:
+                try:
+                    self.report_status_badge.setText(indicator_text)
+                    self.report_status_badge.setStyleSheet(f"""
+                        QLabel {{
+                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 {status_color}, stop:1 {status_color});
+                            color: #ffffff;
+                            border: 1px solid rgba(255, 255, 255, 0.3);
+                            border-radius: 8px;
+                            padding: 1px 4px;
+                            font-weight: 600;
+                            font-family: 'Roboto', sans-serif;
+                            font-size: 8px;
+                        }}
+                    """)
+                    self.report_status_badge.show()
+                    
+                    # Update tooltip on button
+                    button = self.report_status_badge.parent()
+                    if button:
+                        button.setToolTip(f"Report Status: {status_label}\n(Click to change)")
+                    
+                    print(f"📋 [Toolbar] Updated status badge: {current_status} -> {indicator_text} ({status_label})")
+                except RuntimeError:
+                    # Badge was deleted
+                    pass
+            else:
+                print(f"⚠️ [Toolbar] report_status_badge not available, skipping display update")
             
         except Exception as e:
             print(f"[ERROR] Failed to update report status display: {e}")

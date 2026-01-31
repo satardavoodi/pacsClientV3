@@ -580,10 +580,43 @@ class HomePanelWidget(QWidget):
         self.patient_table_widget.downloadRequested.connect(self._on_download_requested)
         self.patient_table_widget.cdBurnRequested.connect(self._on_cd_burn_requested)
 
+        # ★★★ تنظیمات وسط‌چین کردن هدر جدول ★★★
+        if hasattr(self.patient_table_widget, 'results_table'):
+            table = self.patient_table_widget.results_table
+            
+            # وسط‌چین کردن تمام هدرها
+            table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+            
+            # تنظیم رفتار resize برای وسط‌چین بهتر
+            table.horizontalHeader().setHighlightSections(True)
+            
+            # استایل‌دهی CSS به هدر (اختیاری - برای زیباتر شدن)
+            table.horizontalHeader().setStyleSheet("""
+                QHeaderView::section {
+                    background-color: #1a202c;
+                    color: #e2e8f0;
+                    padding: 8px;
+                    border: 1px solid #2d3748;
+                    font-weight: 600;
+                    font-family: 'Roboto', sans-serif;
+                    text-align: center;
+                    qproperty-alignment: AlignCenter;
+                }
+            """)
+
+            # اطمینان از وسط چین بودن تمام هدرهای فرعی
+            for i in range(table.columnCount()):
+                header_item = table.horizontalHeaderItem(i)
+                if header_item:
+                    header_item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+            
+            # تنظیم stretch برای ستون‌های خاص (اختیاری)
+            # table.horizontalHeader().setStretchLastSection(True)
+        # ★★★ پایان تنظیمات هدر ★★★
+
         # Add to main layout
         self.main_layout.addWidget(self.patient_table_widget)
 
-    # --- helpers for "thumbnails are ready" barrier ---
     def _reset_thumbnails_event(self):
         import asyncio
         self._thumbs_event = asyncio.Event()
@@ -647,10 +680,12 @@ class HomePanelWidget(QWidget):
             except RuntimeError as e:
                 if "Cannot enter into task" in str(e) or "already deleted" in str(e).lower():
                     # Ignore task re-entry errors - this is a known qasync issue
-                    pass
+                    print(f"⚠️ [TASK:{name}] Ignoring task re-entry error: {e}")
+                    return None
                 else:
                     print(f"⚠️ [TASK:{name}] RuntimeError: {e}")
             except asyncio.CancelledError:
+                print(f"⚠️ [TASK:{name}] Task was cancelled")
                 pass  # Task was cancelled, ignore
             except Exception as e:
                 print(f"⚠️ [TASK:{name}] Error: {e}")
@@ -1279,6 +1314,7 @@ class HomePanelWidget(QWidget):
             if added_count > 0:
                 print(f"[HomePanelWidget] Added {added_count} new studies to download queue")
             else:
+<<<<<<< HEAD
                 # Check status of the selected studies in the queue
                 study_uids = {study.get('study_uid') for study in selected_studies if study.get('study_uid')}
                 queue_studies = [sd for sd in download_manager.study_downloads if sd.study_uid in study_uids]
@@ -1308,6 +1344,10 @@ class HomePanelWidget(QWidget):
                     QMessageBox.warning(self, "Add Error",
                                         "Could not add studies to download list.\n"
                                         "Please try again or check the Download Manager.")
+=======
+                print(self, "خطا در اضافه کردن",
+                                    "خطا در اضافه کردن مطالعات به لیست دانلود.")
+>>>>>>> 0a1676c06fe56a7fb77f3ca67a672ae452d994b9
 
         except Exception as e:
             print(f"Error in _on_download_requested: {str(e)}")
@@ -2396,6 +2436,63 @@ class HomePanelWidget(QWidget):
         kwargs.setdefault('is_reported', False)
 
         self.patient_table_widget.add_patient_data(**kwargs)
+        
+
+        # Center align the checkbox column (handled by patient_table_widget now)
+        # The patient_table_widget handles this internally in its add_patient_data method
+
+    def center_align_table_column(self, table_widget, column_index):
+        """
+        تنظیم وسط‌چین برای تمام سلول‌های یک ستون خاص
+
+        Args:
+            table_widget: جدول مورد نظر (QTableWidget)
+            column_index: ایندکس ستون (از 0 شروع می‌شود)
+        """
+        if not table_widget or column_index < 0:
+            return
+
+        row_count = table_widget.rowCount()
+
+        for row in range(row_count):
+            item = table_widget.item(row, column_index)
+            if item:
+                item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+
+            # اگر ویجت داخل سلول است (مثل چک‌باکس)
+            widget = table_widget.cellWidget(row, column_index)
+            if widget:
+                from PySide6.QtWidgets import QHBoxLayout, QWidget, QCheckBox
+                from PacsClient.utils.custom_checkbox import CustomCheckbox
+
+                # اگر QCheckBox یا CustomCheckbox است
+                if isinstance(widget, (QCheckBox, CustomCheckbox)):
+                    # استفاده از استایل برای وسط‌چین کردن indicator چک‌باکس
+                    widget.setStyleSheet("""
+                        QCheckBox {
+                            spacing: 0px;
+                            margin: 0px;
+                            padding: 0px;
+                        }
+                        QCheckBox::indicator {
+                            subcontrol-position: center center;
+                            subcontrol-origin: padding;
+                            margin: 0px;
+                            padding: 0px;
+                        }
+                    """)
+                    # تنظیم alignment خود ویجت
+                    widget.setAlignment(Qt.AlignCenter)
+                else:
+                    # برای سایر ویجت‌ها، استفاده از layout
+                    parent = widget.parentWidget()
+                    if not isinstance(parent, QWidget) or parent.layout() is None:
+                        container = QWidget()
+                        layout = QHBoxLayout(container)
+                        layout.addWidget(widget)
+                        layout.setAlignment(Qt.AlignCenter)
+                        layout.setContentsMargins(0, 0, 0, 0)
+                        table_widget.setCellWidget(row, column_index, container)
 
     def _update_results_count(self):
         """Update the results count label"""
@@ -3875,6 +3972,43 @@ Study UID: {study_uid}
             print("[HomePanelWidget] Web Browser opened successfully")
         except Exception as e:
             print(f"[HomePanelWidget] Error opening web browser: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    def open_education_module(self):
+        """Open education module in a new tab"""
+        print("[HomePanelWidget] open_education_module called")
+        try:
+            # Check if education module tab already exists
+            if self.custom_tab_manager:
+                for i in range(self.tab_widget.count()):
+                    tab_data = self.custom_tab_manager.patient_tabs.get(i, {})
+                    if tab_data.get('is_education_tab', False):
+                        # Tab exists, just switch to it
+                        self.tab_widget.setCurrentIndex(i)
+                        print(f"[HomePanelWidget] Switched to existing Education Module tab at index {i}")
+                        return
+            
+            # Import EducationMainWidget
+            from PacsClient.pacs.education.education_main_widget import EducationMainWidget
+            
+            # Create education module widget
+            education_widget = EducationMainWidget(parent=self)
+            
+            # Use custom tab manager if available
+            if self.custom_tab_manager:
+                print("[HomePanelWidget] Using custom tab manager")
+                tab_index = self.custom_tab_manager.add_education_module_tab(widget=education_widget)
+                print(f"[HomePanelWidget] Education Module tab added at index: {tab_index}")
+            else:
+                print("[HomePanelWidget] Using default tab widget")
+                # Fallback to normal tab
+                self.tab_widget.addTab(education_widget, "📚 Educational Module")
+                self.tab_widget.setCurrentWidget(education_widget)
+            
+            print("[HomePanelWidget] Education Module opened successfully")
+        except Exception as e:
+            print(f"[HomePanelWidget] Error opening education module: {str(e)}")
             import traceback
             traceback.print_exc()
     

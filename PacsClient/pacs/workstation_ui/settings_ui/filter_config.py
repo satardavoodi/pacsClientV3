@@ -1069,23 +1069,61 @@ def apply_filters(
     return itk_image
 
 
+def apply_filters_to_all_series_of_modality(series_list: list, metadata_list: list,
+                                          filter_settings_path: Path = FILTER_CONFIG_PATH):
+    """
+    Apply filters to all series of the same modality based on saved settings.
+
+    Parameters
+    ----------
+    series_list : list
+        List of image series to apply filters to
+    metadata_list : list
+        List of metadata corresponding to each series
+    filter_settings_path : Path
+        Path to the filter settings file
+
+    Returns
+    -------
+    list
+        List of filtered image series
+    """
+    try:
+        filtered_series = []
+
+        for i, (series, metadata) in enumerate(zip(series_list, metadata_list)):
+            print(f"Applying filters to series {i+1}/{len(series_list)}...")
+
+            # Apply filters using the apply_filters function
+            filtered_series.append(apply_filters(series, metadata, filter_settings_path))
+
+        print(f"Successfully applied filters to {len(series_list)} series of the same modality")
+        return filtered_series
+
+    except Exception as e:
+        print(f"Error applying filters to all series: {e}")
+        import traceback
+        traceback.print_exc()
+        return series_list  # Return original if error occurs
+
+
 # ----------------------------------------------------------------------
 # Test function
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
     from PySide6.QtWidgets import QApplication
     import sys
-    
+
     app = QApplication(sys.argv)
-    
+
     # Create and show widget
     widget = FilterConfigWidget()
     widget.setWindowTitle("Filter Config Test")
     widget.resize(700, 600)
     widget.show()
-    
+
     # Test save/load
     print(f"Current working directory: {os.getcwd()}")
     print(f"Config file path: {widget.config_path}")
-    
+
     sys.exit(app.exec())

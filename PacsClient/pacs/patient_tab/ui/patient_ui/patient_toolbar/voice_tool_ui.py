@@ -201,14 +201,11 @@ class VoiceWidget(QWidget):
         main.setContentsMargins(10, 10, 10, 10)
         main.setSpacing(8)
 
-        # 🔹 استایل شیشه‌ای برای کل ویجت
         self.setStyleSheet("""
         QWidget {
             background-color: rgba(17, 24, 39, 0.95);
             border-radius: 10px;
             border: 1px solid rgba(255, 255, 255, 0.2);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
         }
         """)
 

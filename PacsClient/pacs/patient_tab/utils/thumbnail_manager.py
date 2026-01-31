@@ -201,34 +201,39 @@ class CircularProgressborder(QFrame):
 
 
     def _hide_ready_label(self):
-        """Safely hide the ready label and reset border"""
+        """Hide the ready label with safety checks"""
         try:
-            if hasattr(self, '_progress_label') and self._progress_label:
-                self._progress_label.setVisible(False)
-                self._progress_label.update()
-            
-            # Also reset the border to normal state (not ready)
-            self._is_ready = False
-            self.update()
-        except Exception:
-            pass
+            # ✅ FIX: Check if object still exists before calling update
+            if not hasattr(self, '_ready_label') or self._ready_label is None:
+                return
+                
+            # Check if the underlying C++ object still exists
+            try:
+                self._ready_label.hide()
+                self._ready_label.update()
+            except RuntimeError:
+                # Object already deleted, ignore
+                pass
+                
+        except Exception as e:
+            print(f"⚠️ Error hiding ready label: {e}")
 
-            def safe_hide_label():
-                """Safely hide label if it still exists"""
-                try:
-                    label = weak_label()
-                    if label:
-                        # Check if C++ object is still valid
-                        try:
-                            _ = label.isVisible()
-                            label.setVisible(False)
-                        except RuntimeError:
-                            pass  # Object already deleted
-                except Exception:
-                    pass
-            
-            QTimer.singleShot(2000, safe_hide_label)
-        self.update()
+    # Also fix the timer callback in create_thumbnail_widget or similar:
+    def on_thumbnail_ready(self):
+        """Handle thumbnail ready state"""
+        try:
+            # Check if widget still exists
+            if not self or not hasattr(self, 'progress_border'):
+                return
+                
+            # Safely update
+            try:
+                self.progress_border.update()
+            except RuntimeError:
+                pass  # Object deleted
+                
+        except Exception as e:
+            print(f"Error in on_thumbnail_ready: {e}")
 
     def cleanup(self):
         """Clean up resources and timers"""
@@ -987,19 +992,21 @@ class ThumbnailManager(QObject):
             def on_thumb_clicked():
                 if image_button.isChecked():
                     self.selected_series = str(thumbnail_index)
-                    self.method_change_series(thumbnail_index)
-                    self.apply_border_states_new()
-                    
+
                     # 🔥 انتشار سیگنال برای دانلود اولویت‌دار
                     study_uid = ''
                     if series_info and 'study_uid' in series_info:
                         study_uid = series_info.get('study_uid', '')
                     elif self.current_study_uid:
                         study_uid = self.current_study_uid
-                    
+
                     print(f"🔥 [ThumbnailManager] Emitting priority download for series {thumbnail_index}, study {study_uid}")
                     self.priority_download_requested.emit(str(thumbnail_index), study_uid)
-            
+
+                    # First try to change series normally (this will trigger loading if needed)
+                    self.method_change_series(thumbnail_index)
+                    self.apply_border_states_new()
+
             image_button.clicked.connect(on_thumb_clicked)
             
             # Clean main widget styling
@@ -1355,25 +1362,29 @@ class ThumbnailManager(QObject):
         try:
             series_key = str(series_number)
             print(f"🎯 [PRIORITY COMPLETE] Completing download for series {series_key}")
-            
+
             # 1. علامت‌گذاری به عنوان آماده
             self.ready_series.add(series_key)
-            
+
             # 2. فراخوانی نمایش اولویت‌دار در parent widget
             if hasattr(self, 'parent_widget') and self.parent_widget:
                 # اینجا باید parent widget (PatientWidget) را پیدا کنیم
                 # فرض می‌کنیم که parent_widget به PatientWidget اشاره دارد
                 try:
+                    # First try the existing method
                     if hasattr(self.parent_widget, '_trigger_priority_display'):
                         self.parent_widget._trigger_priority_display(series_key)
+                    # If that doesn't work, try the new method for post-download display
+                    elif hasattr(self.parent_widget, '_trigger_priority_display_after_download'):
+                        self.parent_widget._trigger_priority_display_after_download(series_key)
                 except Exception as e:
                     print(f"⚠️ Error triggering priority display: {e}")
-            
+
             # 3. به‌روزرسانی border
             self.apply_border_states_new()
-            
+
             print(f"✅ [PRIORITY COMPLETE] Series {series_key} ready for immediate display")
-            
+
         except Exception as e:
             print(f"❌ Error in complete_series_download: {e}")
             import traceback

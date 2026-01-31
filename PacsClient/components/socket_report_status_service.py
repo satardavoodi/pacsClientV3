@@ -109,70 +109,29 @@ class SocketReportStatusService(QObject):
         Returns:
             PatientListSocketClient or None
         """
-        clients_to_try = []
-        
-        # 1. Try to reuse client from socket_patient_service first
+        # Try to reuse client from socket_patient_service first
         try:
             patient_service = get_socket_patient_service()
-            if patient_service and patient_service.client and patient_service.client.is_connected():
-                logger.debug("✅ Using client from socket_patient_service")
+            if patient_service and patient_service.client:
                 return patient_service.client
         except Exception as e:
-            logger.debug(f"Could not get client from patient service: {e}")
+            logger.warning(f"Could not get client from patient service: {e}")
         
-        # 2. Try connection pool
+        # Fallback to own client
         if self.connection_pool:
-            try:
-                client = self.connection_pool.get_connection()
-                if client and client.is_connected():
-                    logger.debug("✅ Got client from connection pool")
-                    return client
-            except Exception as e:
-                logger.warning(f"Failed to get client from pool: {e}")
-        
-        # 3. Create new client
-        try:
-            if not self.client or not self.client.is_connected():
-                logger.info("🆕 Creating new Socket client")
+            return self.connection_pool.get_connection()
+        else:
+            if not self.client:
                 self.client = PatientListSocketClient(
                     host=self.config.get_socket_host(),
                     port=self.config.get_socket_port(),
                     timeout=self.config.get_connection_timeout()
                 )
+                # Try to connect immediately
+                if not self.client.is_connected():
+                    self.client.connect()
             return self.client
-        except Exception as e:
-            logger.error(f"❌ Failed to create client: {e}")
-            return None
-
-    def test_socket_connection(self):
-        """Test Socket server connection"""
-        try:
-            from PySide6.QtWidgets import QMessageBox
-            
-            service = get_report_status_service()
-            if service.test_connection():
-                QMessageBox.information(
-                    self.patient_widget,
-                    "Connection Test",
-                    "✅ Socket server connection successful!"
-                )
-            else:
-                QMessageBox.warning(
-                    self.patient_widget,
-                    "Connection Test",
-                    "❌ Failed to connect to Socket server.\n"
-                    "Please check:\n"
-                    "1. Socket server is running\n"
-                    "2. Network connectivity\n"
-                    "3. Firewall settings"
-                )
-        except Exception as e:
-            QMessageBox.critical(
-                self.patient_widget,
-                "Connection Test Error",
-                f"Error testing connection:\n{str(e)}"
-            )          
-
+    
     def _return_client(self, client: PatientListSocketClient):
         """
         Return client to pool or keep for reuse
@@ -256,80 +215,42 @@ class SocketReportStatusService(QObject):
             return None
         
         client = None
-        retry_count = 0
-        max_retries = 2
-        
-        while retry_count <= max_retries:
-            try:
-                logger.info(f"🔄 Attempting to update report status: {study_uid} -> {new_status} (attempt {retry_count + 1})")
-                
-                client = self._get_client()
-                if not client:
-                    error_msg = "Failed to get client instance"
-                    logger.error(error_msg)
-                    retry_count += 1
-                    continue
-                
-                # Ensure client is connected
-                if not client.is_connected():
-                    logger.info("🔌 Client not connected, attempting to connect...")
-                    if not client.connect():
-                        error_msg = "Failed to connect to server"
-                        logger.error(error_msg)
-                        retry_count += 1
-                        
-                        # Try to reconnect on retry
-                        if retry_count <= max_retries:
-                            logger.info(f"🔄 Retrying connection in 1 second...")
-                            import time
-                            time.sleep(1)
-                        continue
-                
-                # Send update request
-                logger.info(f"📤 Sending status update to server...")
-                response = client.update_report_status(study_uid, new_status, user_id, comment)
-                
-                if response:
-                    old_status = response.get("previous_status", "unknown")
-                    logger.info(f"✅ Report status updated: {study_uid} from {old_status} to {new_status}")
-                    self.statusUpdated.emit(study_uid, old_status, new_status)
-                    return response
-                else:
-                    error_msg = "Update failed - no response from server"
-                    logger.error(error_msg)
-                    retry_count += 1
-                    
-            except ConnectionError as e:
-                error_msg = f"Connection error: {str(e)}"
-                logger.error(f"❌ {error_msg}")
-                retry_count += 1
-                
-            except TimeoutError as e:
-                error_msg = f"Timeout error: {str(e)}"
-                logger.error(f"⏰ {error_msg}")
-                retry_count += 1
-                
-            except Exception as e:
-                error_msg = f"Unexpected error updating report status: {str(e)}"
-                logger.error(f"❌ {error_msg}")
-                logger.exception(e)  # Log full traceback
-                break
-                
-            finally:
-                if client:
-                    self._return_client(client)
+        try:
+            client = self._get_client()
+            if not client:
+                error_msg = "Failed to get client instance"
+                logger.error(error_msg)
+                self.statusError.emit(study_uid, error_msg)
+                return None
             
-            # Wait before retry
-            if retry_count <= max_retries:
-                logger.info(f"🔄 Retrying in 2 seconds... (attempt {retry_count + 1}/{max_retries + 1})")
-                import time
-                time.sleep(2)
-        
-        # All retries failed
-        final_error_msg = f"Failed to update report status after {max_retries + 1} attempts"
-        logger.error(f"❌ {final_error_msg}")
-        self.statusError.emit(study_uid, final_error_msg)
-        return None
+            # Ensure client is connected (reuse existing connection if available)
+            if not client.is_connected():
+                if not client.connect():
+                    error_msg = "Failed to connect to server"
+                    logger.error(error_msg)
+                    self.statusError.emit(study_uid, error_msg)
+                    return None
+            
+            response = client.update_report_status(study_uid, new_status, user_id, comment)
+            
+            if response:
+                old_status = response.get("previous_status", "unknown")
+                self.statusUpdated.emit(study_uid, old_status, new_status)
+                return response
+            else:
+                error_msg = "Update failed - no response from server"
+                logger.error(error_msg)
+                self.statusError.emit(study_uid, error_msg)
+                return None
+                
+        except Exception as e:
+            error_msg = f"Error updating report status: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            self.statusError.emit(study_uid, error_msg)
+            return None
+        finally:
+            if client:
+                self._return_client(client)
     
     def get_report_status(self, study_uid: str) -> Optional[Dict[str, Any]]:
         """

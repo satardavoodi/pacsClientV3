@@ -216,15 +216,6 @@ class ResumableDicomSocketClient:
         """
         with self.lock:
             try:
-                # Close existing socket if any before creating new one
-                if self.socket:
-                    try:
-                        self.socket.close()
-                    except:
-                        pass
-                    self.socket = None
-                    self.connected = False
-                
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.socket.settimeout(self.timeout)
                 
@@ -337,9 +328,8 @@ class ResumableDicomSocketClient:
             dict: Response from server or None if failed
         """
         try:
-            # Check connection status without lock to avoid deadlock
             if not self.connected:
-                if not self.connect_with_retry():
+                if not self.connect():
                     return None
             
             request = {
@@ -355,28 +345,12 @@ class ResumableDicomSocketClient:
             message = json.dumps(request).encode('utf-8')
             length = len(message).to_bytes(4, byteorder='big')
             
-            # Use lock only for socket operations
-            with self.lock:
-                if not self.socket or not self.connected:
-                    return None
-                self.socket.sendall(length + message)
+            self.socket.sendall(length + message)
             
             # Receive response length
-            with self.lock:
-                if not self.socket or not self.connected:
-                    return None
-                length_data = self.socket.recv(4)
-            
+            length_data = self.socket.recv(4)
             if not length_data:
                 logger.error("❌ Connection closed by server")
-                with self.lock:
-                    self.connected = False
-                    if self.socket:
-                        try:
-                            self.socket.close()
-                        except:
-                            pass
-                        self.socket = None
                 return None
                 
             response_length = int.from_bytes(length_data, byteorder='big')
@@ -384,21 +358,9 @@ class ResumableDicomSocketClient:
             
             # Receive response data
             while len(response_data) < response_length:
-                with self.lock:
-                    if not self.socket or not self.connected:
-                        return None
-                    chunk = self.socket.recv(min(4096, response_length - len(response_data)))
-                
+                chunk = self.socket.recv(min(4096, response_length - len(response_data)))
                 if not chunk:
                     logger.error("❌ Connection lost while receiving data")
-                    with self.lock:
-                        self.connected = False
-                        if self.socket:
-                            try:
-                                self.socket.close()
-                            except:
-                                pass
-                            self.socket = None
                     return None
                 response_data += chunk
             
@@ -407,14 +369,6 @@ class ResumableDicomSocketClient:
             
         except Exception as e:
             logger.error(f"❌ Request error: {e}")
-            with self.lock:
-                self.connected = False
-                if self.socket:
-                    try:
-                        self.socket.close()
-                    except:
-                        pass
-                    self.socket = None
             return None
     
     def login(self, username: str, password: str) -> tuple:
@@ -2412,16 +2366,6 @@ class ResumableDicomSocketClient:
                 logger.error(f"❌ Batch {batch_number} failed")
         
         return downloaded_count > 0
-    
-    def is_connected(self) -> bool:
-        """
-        Check if connected to the server
-        
-        Returns:
-            bool: True if connected, False otherwise
-        """
-        with self.lock:
-            return self.connected and self.socket is not None
     
     def get_connection_info(self) -> Dict[str, Any]:
         """
