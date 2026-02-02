@@ -48,6 +48,13 @@ from PacsClient.utils import get_connection_database, get_all_patients, search_p
     find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 
 from PacsClient.pacs.patient_tab import PatientWidget, AiMainWindow
+
+# Import priority manager for download coordination
+try:
+    from PacsClient.components.download_priority_manager import get_download_priority_manager
+    PRIORITY_MANAGER_AVAILABLE = True
+except ImportError:
+    PRIORITY_MANAGER_AVAILABLE = False
 from PacsClient.pacs.patient_tab.ui.patient_ui.custom_tab_manager import CustomTabManager
 import warnings
 from PacsClient.utils.config import SOURCE_PATH
@@ -638,6 +645,65 @@ class HomePanelWidget(QWidget):
         if not widget:
             return
         
+        # --- STEP 3.5: IMMEDIATE PRIORITY DOWNLOAD ---
+        # When a patient is double-clicked:
+        # 1. ALL active downloads are INSTANTLY paused
+        # 2. This patient is added with CRITICAL priority
+        # 3. Download starts IMMEDIATELY (no delay)
+        # 4. Queue is reorganized in the background AFTER download starts
+        if not is_local:
+            try:
+                download_manager = self._get_or_create_download_manager_tab()
+                if download_manager:
+                    # Get server info
+                    server = self.data_access_panel_widget.get_server_selected()
+                    
+                    # Create study info for Download Manager
+                    # Try to get series info from server if not in study_data
+                    series_list = []
+                    series_count = 0
+                    images_count = 0
+                    
+                    if study_data and 'series' in study_data:
+                        series_list = study_data.get('series', [])
+                        series_count = len(series_list)
+                        images_count = sum(s.get('image_count', 0) for s in series_list)
+                    else:
+                        # Fetch series info from server if not available
+                        try:
+                            study_info = self.get_series_info_from_server(study_uid, patient_id)
+                            if study_info:
+                                series_list = study_info.get('series', [])
+                                series_count = study_info.get('count_of_series', len(series_list))
+                                images_count = sum(s.get('image_count', 0) for s in series_list)
+                        except Exception as e:
+                            print(f"Warning: Could not fetch series info: {e}")
+                    
+                    dm_study_data = {
+                        'patient_id': patient_id,
+                        'patient_name': patient_name,
+                        'study_uid': study_uid,
+                        'study_date': study_data.get('study_date', 'Unknown') if study_data else 'Unknown',
+                        'modality': study_data.get('modality', 'Unknown') if study_data else 'Unknown',
+                        'description': study_data.get('study_description', '') if study_data else '',
+                        'series_count': series_count,
+                        'images_count': images_count,
+                        'series': series_list,  # Include series array for Download Manager UI
+                    }
+                    
+                    # ⚡ IMMEDIATE START - pauses all, starts this one right away
+                    download_manager.start_priority_download_immediately(
+                        study_data=dm_study_data,
+                        server_info=server,
+                        priority="Critical"  # Double-clicked patient = Critical priority
+                    )
+                    
+                    # Connect Download Manager progress signals to this widget
+                    # This allows real-time progress tracking for the opened patient
+                    self._connect_download_manager_to_widget(download_manager, widget, study_uid)
+            except Exception as e:
+                print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
+        
         # --- STEP 4: Background tasks (non-blocking) ---
         async def _safe_task_wrapper(coro, name="unknown"):
             """Wrapper to safely run async tasks and catch errors"""
@@ -698,20 +764,9 @@ class HomePanelWidget(QWidget):
                 if widget and series_list:
                     widget.set_server_series_info(series_list)
                 
-                # Start on-demand download if needed
-                if not is_local:
-                    server = self.data_access_panel_widget.get_server_selected()
-                    if server and series_list:
-                        if not hasattr(self, '_download_tasks'):
-                            self._download_tasks = set()
-                        
-                        task = asyncio.create_task(_safe_task_wrapper(
-                            self._download_series_on_demand(widget, study_uid, series_list, output_dir, server),
-                            "download_series"
-                        ))
-                        self._download_tasks.add(task)
-                        # Use QTimer for callback to avoid task re-entry issues
-                        task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: self._download_tasks.discard(t)))
+                # Download is already started by add_study_downloads(start_immediately=True)
+                # in Step 3.5 above. No need to start again here.
+                # The Download Manager handles progress tracking and priority ordering.
                         
             except Exception as e:
                 print(f"⚠️ [BACKGROUND] Error in background setup: {e}")
@@ -907,49 +962,6 @@ class HomePanelWidget(QWidget):
             print("🔄 Attempting fallback download with basic downloader...")
             await self._download_series_fallback(widget, study_uid, series_list, base_output_dir, server, clicked_series)
     
-    def _handle_priority_download_from_thumbnail(self, series_number, study_uid, widget):
-        """Handle priority download request from thumbnail click"""
-        print(f"\n{'='*80}")
-        print(f"🔥 [DIRECT PRIORITY] Thumbnail click for series {series_number}")
-        print(f"📁 Study: {study_uid}")
-        print(f"{'='*80}\n")
-        
-        # Get server connection
-        server = self.data_access_panel_widget.get_server_selected()
-        if not server:
-            print(f"❌ No server selected")
-            return
-        
-        # Get series list from widget
-        series_list = []
-        if hasattr(widget, 'server_series_info'):
-            series_list = widget.server_series_info
-            print(f"📋 Got {len(series_list)} series from widget.server_series_info")
-        elif hasattr(self.right_panel_widget, '_current_series_info'):
-            series_list = self.right_panel_widget._current_series_info
-            print(f"📋 Got {len(series_list)} series from right_panel_widget")
-        else:
-            print(f"❌ No series list available")
-            return
-        
-        # Create output directory
-        from PacsClient.utils.config import SOURCE_PATH
-        from pathlib import Path
-        output_dir = str(SOURCE_PATH / study_uid)
-        
-        # Start immediate priority download
-        asyncio.create_task(
-            self._download_series_on_demand(
-                widget=widget,
-                study_uid=study_uid,
-                series_list=series_list,
-                base_output_dir=output_dir,
-                server=server,
-                clicked_series=series_number  # Pass clicked series for priority
-            )
-        )
-    
-
     async def _download_series_fallback(self, widget, study_uid, series_list, base_output_dir, server):
         """
         Fallback download method using basic SeriesDownloader
@@ -1221,8 +1233,8 @@ class HomePanelWidget(QWidget):
             # Check if server is selected
             server = self.data_access_panel_widget.get_server_selected()
             if not server:
-                QMessageBox.warning(self, "سرور انتخاب نشده",
-                                    "لطفاً ابتدا یک سرور PACS را انتخاب کنید.")
+                QMessageBox.warning(self, "Server Not Selected",
+                                    "Please select a PACS server first.")
                 return
             print('on download requested.!! 2')
 
@@ -1262,6 +1274,25 @@ class HomePanelWidget(QWidget):
             # Set server connection for resumable downloads
             download_manager.set_server_connection(server)
 
+            # Enhance selected_studies with series information if not present
+            for study in selected_studies:
+                if 'series' not in study or not study.get('series'):
+                    # Try to fetch series info from server
+                    try:
+                        study_uid = study.get('study_uid')
+                        patient_id = study.get('patient_id')
+                        if study_uid:
+                            study_info = self.get_series_info_from_server(study_uid, patient_id)
+                            if study_info:
+                                study['series'] = study_info.get('series', [])
+                                study['series_count'] = study_info.get('count_of_series', len(study.get('series', [])))
+                                # Calculate total images
+                                if study.get('series'):
+                                    study['images_count'] = sum(s.get('image_count', 0) for s in study['series'])
+                                print(f"📋 Fetched {len(study.get('series', []))} series for {study.get('patient_name', 'Unknown')}")
+                    except Exception as e:
+                        print(f"⚠️ Could not fetch series info for {study.get('study_uid', 'Unknown')}: {e}")
+
             # Add studies to download manager
             added_count = download_manager.add_study_downloads(selected_studies, server)
 
@@ -1270,8 +1301,8 @@ class HomePanelWidget(QWidget):
                 # Start downloads automatically (no dialog)
                 download_manager.start_all_downloads()
             else:
-                QMessageBox.warning(self, "خطا در اضافه کردن",
-                                    "خطا در اضافه کردن مطالعات به لیست دانلود.")
+                QMessageBox.warning(self, "Error Adding Studies",
+                                    "Error adding studies to download list.")
 
         except Exception as e:
             print(f"Error in _on_download_requested: {str(e)}")
@@ -1300,6 +1331,82 @@ class HomePanelWidget(QWidget):
         except Exception as e:
             print(f"Error creating download manager tab: {str(e)}")
             return None
+    
+    def _connect_download_manager_to_widget(self, download_manager, widget, study_uid: str):
+        """
+        Connect Download Manager progress signals to a patient widget.
+        
+        This allows real-time progress tracking for opened patients.
+        The widget will receive updates on:
+        - Overall study progress (images downloaded)
+        - Series-level progress (which series is being downloaded)
+        - Series completion events
+        """
+        try:
+            # Store connection key to avoid duplicate connections
+            if not hasattr(self, '_dm_widget_connections'):
+                self._dm_widget_connections = {}
+            
+            connection_key = f"{study_uid}_{id(widget)}"
+            if connection_key in self._dm_widget_connections:
+                return  # Already connected
+            
+            # Filter function to only process events for this study
+            def on_study_progress(uid, current, total, percent):
+                if uid == study_uid and widget:
+                    try:
+                        # Update widget's progress tracking
+                        if hasattr(widget, 'update_download_progress'):
+                            widget.update_download_progress(current, total, percent)
+                    except Exception:
+                        pass  # Widget may have been deleted
+            
+            def on_series_started(uid, series_uid, series_desc):
+                if uid == study_uid and widget:
+                    try:
+                        if hasattr(widget, 'thumbnail_manager'):
+                            widget.thumbnail_manager.start_series_download(series_uid)
+                    except Exception:
+                        pass
+            
+            def on_series_progress(uid, series_uid, current, total):
+                if uid == study_uid and widget:
+                    try:
+                        if hasattr(widget, 'thumbnail_manager'):
+                            if total > 0:
+                                progress_percent = (current / total) * 100
+                                widget.thumbnail_manager.update_series_progress(
+                                    series_number=series_uid,
+                                    progress_percent=progress_percent,
+                                    status_text=f"{current}/{total}"
+                                )
+                    except Exception:
+                        pass
+            
+            def on_series_completed(uid, series_uid):
+                if uid == study_uid and widget:
+                    try:
+                        if hasattr(widget, 'thumbnail_manager'):
+                            widget.thumbnail_manager.complete_series_download(series_uid)
+                        # Also notify the widget that a series is ready for display
+                        if hasattr(widget, 'series_downloaded'):
+                            widget.series_downloaded.emit(series_uid)
+                    except Exception:
+                        pass
+            
+            # Connect signals
+            download_manager.studyProgressUpdated.connect(on_study_progress)
+            download_manager.seriesDownloadStarted.connect(on_series_started)
+            download_manager.seriesProgressUpdated.connect(on_series_progress)
+            download_manager.seriesDownloadCompleted.connect(on_series_completed)
+            
+            # Track connection
+            self._dm_widget_connections[connection_key] = True
+            
+            print(f"✅ Connected Download Manager signals to widget for study: {study_uid[:30]}...")
+            
+        except Exception as e:
+            print(f"⚠️ Error connecting Download Manager to widget: {e}")
     
     def _on_study_download_completed(self, study_uid: str):
         """Update patient list when a study download completes"""
@@ -3830,11 +3937,11 @@ Study UID: {study_uid}
                         print(f"[HomePanelWidget] Switched to existing Education Module tab at index {i}")
                         return
             
-            # Import EducationMainWidget
-            from PacsClient.pacs.education.education_main_widget import EducationMainWidget
-            
+            # Import EducationModuleRedesigned
+            from PacsClient.pacs.education.education_module_redesigned import EducationModuleRedesigned
+
             # Create education module widget
-            education_widget = EducationMainWidget(parent=self)
+            education_widget = EducationModuleRedesigned(parent=self)
             
             # Use custom tab manager if available
             if self.custom_tab_manager:
@@ -3960,89 +4067,117 @@ Study UID: {study_uid}
                 self.tab_widget.addTab(widget, patient_name)
                 self.tab_widget.setCurrentWidget(widget)
 
+            # Notify priority manager that patient tab was opened
+            # This promotes all series of this patient to HIGH priority
+            if study_uid and PRIORITY_MANAGER_AVAILABLE:
+                try:
+                    print(f"🏠 [HOME-UI] Calling on_patient_tab_opened for {patient_name}")
+                    priority_manager = get_download_priority_manager()
+                    priority_manager.on_patient_tab_opened(
+                        study_uid=study_uid,
+                        patient_id=patient_id or "",
+                        patient_name=patient_name or ""
+                    )
+                    print(f"🏠 [HOME-UI] on_patient_tab_opened completed")
+                except Exception as e:
+                    print(f"🏠 [HOME-UI] ERROR in on_patient_tab_opened: {e}")
+                    import traceback
+                    traceback.print_exc()
+
             return widget
 
-    def _handle_priority_download_from_thumbnail(self, series_number, study_uid, widget):
-        """Handle priority download request from thumbnail click"""
-        print(f"\n{'='*80}")
-        print(f"🔥 [DIRECT PRIORITY] Thumbnail click for series {series_number}")
-        print(f"📁 Study: {study_uid}")
-        print(f"{'='*80}\n")
-        
-        # Get server connection
-        server = self.data_access_panel_widget.get_server_selected()
-        if not server:
-            print(f"❌ No server selected")
-            return
-        
-        # Get series list from widget
-        series_list = []
-        if hasattr(widget, 'server_series_info'):
-            series_list = widget.server_series_info
-            print(f"📋 Got {len(series_list)} series from widget.server_series_info")
-        elif hasattr(self.right_panel_widget, '_current_series_info'):
-            series_list = self.right_panel_widget._current_series_info
-            print(f"📋 Got {len(series_list)} series from right_panel_widget")
-        else:
-            print(f"❌ No series list available")
-            return
-        
-        # Create output directory
-        from PacsClient.utils.config import SOURCE_PATH
-        from pathlib import Path
-        output_dir = str(SOURCE_PATH / study_uid)
-        
-        # Start immediate priority download
-        asyncio.create_task(
-            self._download_single_series_immediately(
-                widget=widget,
-                series_number=series_number,
-                series_list=series_list,
-                output_dir=output_dir,
-                server=server,
-                study_uid=study_uid
-            )
-        )
-
     def _handle_priority_download_from_thumbnail(self, series_number, study_uid, widget=None):
-        print(f"🔥 [DEBUG] _handle_priority_download_from_thumbnail called with series={series_number}, study={study_uid}")
-
         """
-        Handle priority download request from thumbnail click - optimized version
-        دانلود اولویت‌دار سری کلیک شده را مدیریت می‌کند
+        Handle priority download request from thumbnail click - UNIFIED with Download Manager
+        
+        This method now properly coordinates with the Download Manager to avoid parallel downloads.
+        When the study is already being downloaded by the Download Manager, it just updates priority.
         
         Args:
-            series_number (str): شماره سری که کلیک شده
-            study_uid (str): شناسه مطالعه
-            widget (PatientWidget, optional): ویجت بیمار. اگر ارسال نشود، پیدا می‌شود
+            series_number (str): Series number that was clicked
+            study_uid (str): Study Instance UID
+            widget (PatientWidget, optional): Patient widget. Will be found if not provided.
         """
-        print(f"\n{'='*80}")
-        print(f"🔥 [HIGH PRIORITY] User clicked series {series_number} - IMMEDIATE DOWNLOAD REQUEST")
-        print(f"📁 Study: {study_uid}")
-        print(f"{'='*80}\n")
+        print(f"🔥 [PRIORITY] Thumbnail clicked: series={series_number}, study={study_uid}")
         
         try:
-            # پیدا کردن widget اگر ارسال نشده باشد
+            from pathlib import Path
+            from PacsClient.utils.config import SOURCE_PATH
+            
+            # Check if series is already downloaded locally
+            output_dir = SOURCE_PATH / study_uid
+            series_dir = output_dir / str(series_number)
+            if series_dir.exists() and any(series_dir.glob("*.dcm")):
+                print(f"✅ Series {series_number} already downloaded - loading immediately")
+                # Find widget if not provided
+                if widget is None:
+                    widget = self._find_widget_by_study_uid(study_uid)
+                if widget and hasattr(widget, 'load_series_immediately'):
+                    QTimer.singleShot(100, lambda sn=series_number, od=str(series_dir):
+                        widget.load_series_immediately(sn, od))
+                return
+            
+            # ========== CRITICAL: Check if Download Manager is already handling this study ==========
+            download_manager = self._get_or_create_download_manager_tab()
+            study_being_downloaded = False
+            
+            if download_manager:
+                # Check if this study is in the Download Manager's queue
+                for study_download in download_manager.study_downloads:
+                    if study_download.study_uid == study_uid:
+                        if study_download.status in ["Downloading", "Pending", "Paused"]:
+                            study_being_downloaded = True
+                            print(f"📥 Study {study_uid} is already in Download Manager (status: {study_download.status})")
+                            break
+            
+            if study_being_downloaded:
+                # Study is being handled by Download Manager - just update priority
+                print(f"🎯 Updating priority: series {series_number} to CRITICAL")
+                
+                # Notify priority manager that this series should be CRITICAL
+                if PRIORITY_MANAGER_AVAILABLE:
+                    try:
+                        priority_manager = get_download_priority_manager()
+                        priority_manager.on_series_loaded_in_viewer(study_uid, str(series_number))
+                        print(f"✅ Priority manager notified: series {series_number} is now CRITICAL")
+                    except Exception as e:
+                        print(f"⚠️ Error notifying priority manager: {e}")
+                
+                # Update UI to show this series is being prioritized
+                if widget is None:
+                    widget = self._find_widget_by_study_uid(study_uid)
+                if widget and hasattr(widget, 'thumbnail_manager'):
+                    widget.thumbnail_manager.start_series_download(str(series_number))
+                    widget.thumbnail_manager.update_series_progress(
+                        series_number=str(series_number),
+                        progress_percent=0.0,
+                        status_text="Prioritized..."
+                    )
+                
+                # Don't start a parallel download - let Download Manager continue
+                print(f"✅ Letting Download Manager handle the prioritized download")
+                return
+            
+            # ========== Study is NOT in Download Manager - handle directly ==========
+            print(f"📋 Study not in Download Manager - starting new prioritized download")
+            
+            # Find widget if not provided
             if widget is None:
                 widget = self._find_widget_by_study_uid(study_uid)
                 if widget is None:
-                    print(f"❌ Widget not found for study {study_uid}")
-                    # سعی برای باز کردن تب جدید برای این مطالعه
-                    print(f"🔄 Creating new tab for study {study_uid}")
+                    print(f"⚠️ Widget not found for study {study_uid}")
+                    # Try to create a new tab
                     try:
-                        # دریافت اطلاعات بیمار از right_panel یا دیتابیس
                         patient_info = {}
                         if hasattr(self, 'right_panel_widget') and hasattr(self.right_panel_widget, '_current_study_info'):
                             patient_info = self.right_panel_widget._current_study_info
                         else:
-                            # دریافت از دیتابیس
                             from PacsClient.utils.db_manager import get_patient_by_study_uid
                             patient_info = get_patient_by_study_uid(study_uid) or {}
                         
                         patient_id = patient_info.get('patient_id', 'N/A')
                         patient_name = patient_info.get('patient_name', 'N/A')
                         
-                        # ایجاد تب جدید
                         widget = self.add_new_tab_widget(
                             patient_id=patient_id,
                             patient_name=patient_name,
@@ -4054,123 +4189,137 @@ Study UID: {study_uid}
                         print(f"✅ New tab created for study {study_uid}")
                     except Exception as e:
                         print(f"❌ Failed to create new tab: {e}")
-                        import traceback
-                        traceback.print_exc()
                         return
             
             if widget is None:
                 print(f"❌ No widget available for priority download")
                 return
             
-            # دریافت لیست سری‌ها از منابع مختلف
+            # Get series list
             series_list = self._get_series_list_for_study(widget, study_uid)
-            
-            # اگر لیست سری‌ها پیدا نشد، تلاش برای دریافت مستقیم از سرور
             if not series_list:
-                print(f"❌ No series list available for priority download")
                 study_info = self.get_series_info_from_server(study_uid)
                 if study_info:
                     series_list = study_info.get('series', [])
-                    print(f"📋 Retrieved {len(series_list)} series from server directly")
                 if not series_list:
-                    print(f"❌ Failed to fetch series list from server")
-                    QMessageBox.warning(self, "Error", "Could not retrieve series information from server")
+                    print(f"❌ Failed to fetch series list")
                     return
             
-            # تنظیم مسیر خروجی
-            from PacsClient.utils.config import SOURCE_PATH
-            from pathlib import Path
-            output_dir = SOURCE_PATH / study_uid
+            # Get server connection
+            server = self.data_access_panel_widget.get_server_selected()
+            if not server:
+                print(f"❌ No server selected")
+                return
+            
+            # Create output directory
             output_dir.mkdir(parents=True, exist_ok=True)
             output_dir_str = str(output_dir)
             
-            # دریافت اتصال سرور
-            server = self.data_access_panel_widget.get_server_selected()
-            if not server:
-                print(f"❌ No server selected, cannot proceed with download")
-                QMessageBox.warning(self, "Server Error", "No server selected. Please select a PACS server first.")
-                return
-            
-            # اتصال سیگنال priority_download_requested برای این widget
-            if hasattr(widget, 'thumbnail_manager') and widget.thumbnail_manager is not None:
-                # تنظیم study_uid فعلی
-                widget.thumbnail_manager.set_current_study_uid(study_uid)
+            # ========== IMMEDIATE START via Download Manager ==========
+            # This ensures all downloads go through the unified path with immediate response
+            if download_manager:
+                print(f"⚡ IMMEDIATE START: Adding study with CRITICAL priority")
                 
-                # حذف اتصالات قبلی برای جلوگیری از duplicate signals
-                try:
-                    widget.thumbnail_manager.priority_download_requested.disconnect()
-                except Exception:
-                    pass
+                # === PROPERLY EXTRACT PATIENT INFO FROM MULTIPLE SOURCES ===
+                # Priority: 1. widget attributes, 2. study_info from server, 3. database lookup
+                dm_patient_id = ''
+                dm_patient_name = ''
+                dm_study_date = ''
+                dm_modality = ''
+                dm_description = ''
                 
-                # اتصال سیگنال با استفاده از lambda برای ارسال widget فعلی
-                def on_priority_download_requested(sn, suid):
-                    print(f"🎯 [HomeUI] Priority download requested: series={sn}, study={suid}")
-                    self._handle_priority_download_from_thumbnail(sn, suid, widget)
+                # 1. Try widget attributes first
+                if hasattr(widget, 'patient_id') and widget.patient_id:
+                    dm_patient_id = widget.patient_id
+                if hasattr(widget, 'patient_name') and widget.patient_name:
+                    dm_patient_name = widget.patient_name
                 
-                widget.thumbnail_manager.priority_download_requested.connect(on_priority_download_requested)
-                print(f"✅ Connected priority download signal for study {study_uid}")
-            
-            # بررسی اینکه آیا سری قبلاً دانلود شده است
-            series_dir = Path(output_dir_str) / str(series_number)
-            if series_dir.exists() and any(series_dir.glob("*.dcm")):
-                print(f"✅ Series {series_number} already downloaded - loading immediately")
-                if hasattr(widget, 'load_series_immediately'):
-                    QTimer.singleShot(100, lambda sn=series_number, od=str(series_dir):
-                        widget.load_series_immediately(sn, od))
-                return
-            
-            # شروع دانلود اولویت‌دار
-            print(f"🚀 Starting IMMEDIATE download for series {series_number}")
-            
-            # ایجاد تسک async برای دانلود
-            async def _priority_download_task():
-                try:
-                    await self._download_single_series_with_priority(
-                        widget=widget,
-                        study_uid=study_uid,
-                        series_list=series_list,
-                        base_output_dir=output_dir_str,
-                        server=server,
-                        clicked_series=series_number
-                    )
-                    print(f"✅ Priority download task completed for series {series_number}")
-                except Exception as e:
-                    print(f"❌ Error in priority download task: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    # نمایش خطا به کاربر
+                # 2. If still missing, try study_info from server (already fetched above)
+                if (not dm_patient_id or not dm_patient_name) and 'study_info' in dir():
+                    dm_patient_id = dm_patient_id or study_info.get('patient_id', '')
+                    dm_patient_name = dm_patient_name or study_info.get('patient_name', '')
+                    dm_study_date = study_info.get('study_date', '')
+                    dm_modality = study_info.get('modality', '')
+                    dm_description = study_info.get('study_description', '')
+                
+                # 3. If still missing, try database lookup
+                if not dm_patient_id or not dm_patient_name:
                     try:
-                        QTimer.singleShot(0, lambda: QMessageBox.critical(
-                            self, "Download Error", 
-                            f"Error downloading series {series_number}:\n{str(e)}"
-                        ))
+                        from PacsClient.utils.db_manager import get_patient_by_study_uid
+                        db_info = get_patient_by_study_uid(study_uid)
+                        if db_info:
+                            dm_patient_id = dm_patient_id or db_info.get('patient_id', '')
+                            dm_patient_name = dm_patient_name or db_info.get('patient_name', '')
+                            dm_study_date = dm_study_date or db_info.get('study_date', '')
+                            dm_modality = dm_modality or db_info.get('modality', '')
+                    except Exception as e:
+                        print(f"⚠️ Database lookup failed: {e}")
+                
+                # 4. Final validation - reject if still missing critical info
+                if not dm_patient_id or not dm_patient_name:
+                    print(f"❌ Cannot start download: Missing patient info (id={dm_patient_id}, name={dm_patient_name})")
+                    return
+                
+                dm_study_data = {
+                    'patient_id': dm_patient_id,
+                    'patient_name': dm_patient_name,
+                    'study_uid': study_uid,
+                    'study_date': dm_study_date,
+                    'modality': dm_modality,
+                    'description': dm_description,
+                    'series_count': len(series_list),
+                    'images_count': sum(s.get('image_count', 0) for s in series_list),
+                }
+                
+                # ⚡ IMMEDIATE START - pauses all, starts this one right away
+                download_manager.start_priority_download_immediately(
+                    study_data=dm_study_data,
+                    server_info=server,
+                    priority="Critical"
+                )
+                
+                # Notify priority manager about the clicked series
+                if PRIORITY_MANAGER_AVAILABLE:
+                    try:
+                        priority_manager = get_download_priority_manager()
+                        priority_manager.on_series_loaded_in_viewer(study_uid, str(series_number))
                     except Exception:
                         pass
-            
-            # اجرای تسک
-            task = asyncio.create_task(_priority_download_task())
-            self._background_tasks.add(task)
-            task.add_done_callback(lambda t: self._background_tasks.discard(t))
-            
-            # نمایش وضعیت دانلود به کاربر
-            if hasattr(widget, 'thumbnail_manager'):
-                widget.thumbnail_manager.start_series_download(str(series_number))
-                widget.thumbnail_manager.update_series_progress(
-                    series_number=str(series_number),
-                    progress_percent=0.0,
-                    status_text="Starting..."
-                )
-            
-            print(f"✅ Priority download initiated for series {series_number}")
+                
+                # Update thumbnail UI
+                if hasattr(widget, 'thumbnail_manager'):
+                    widget.thumbnail_manager.start_series_download(str(series_number))
+                    widget.thumbnail_manager.update_series_progress(
+                        series_number=str(series_number),
+                        progress_percent=0.0,
+                        status_text="Starting..."
+                    )
+                
+                print(f"✅ Immediate priority download started for series {series_number}")
+            else:
+                # Fallback: direct download if Download Manager not available
+                print(f"⚠️ Download Manager not available, using direct download")
+                async def _priority_download_task():
+                    try:
+                        await self._download_single_series_with_priority(
+                            widget=widget,
+                            study_uid=study_uid,
+                            series_list=series_list,
+                            base_output_dir=output_dir_str,
+                            server=server,
+                            clicked_series=series_number
+                        )
+                    except Exception as e:
+                        print(f"❌ Error in priority download: {e}")
+                
+                task = asyncio.create_task(_priority_download_task())
+                self._background_tasks.add(task)
+                task.add_done_callback(lambda t: self._background_tasks.discard(t))
             
         except Exception as e:
-            print(f"❌ Critical error in priority download handler: {e}")
+            print(f"❌ Error in priority download handler: {e}")
             import traceback
             traceback.print_exc()
-            try:
-                QMessageBox.critical(self, "Error", f"Critical error in priority download:\n{str(e)}")
-            except Exception:
-                pass
             
 
     def _get_series_list_for_study(self, widget, study_uid):

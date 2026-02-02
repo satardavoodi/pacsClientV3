@@ -118,6 +118,7 @@ class SocketService:
         compression: str = "gzip",
         resume: bool = True,
         progress_callback=None,
+        patient_info: dict = None,
     ) -> bool:
         logger.info(f"🔄 SocketService.download_study_resumable called")
         logger.info(f"   Study UID: {study_uid}")
@@ -126,6 +127,7 @@ class SocketService:
         logger.info(f"   Compression: {compression}")
         logger.info(f"   Resume: {resume}")
         logger.info(f"   Progress callback: {progress_callback is not None}")
+        logger.info(f"   Patient info: {patient_info.get('patient_name', 'N/A') if patient_info else 'None'}")
         
         client = self._ensure_client()
         if not client:
@@ -150,7 +152,8 @@ class SocketService:
                 batch_size,
                 compression,
                 resume,
-                progress_callback
+                progress_callback,
+                patient_info=patient_info  # Pass patient info to avoid "Unknown Patient"
             )
             logger.info(f"🔍 download_study_batch_like_working_code result: {result}")
             return result

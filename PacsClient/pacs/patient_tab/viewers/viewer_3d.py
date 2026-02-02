@@ -6,7 +6,22 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, Signal
 from typing import Optional, Dict, Any
 
-from .preset_manager import get_preset_manager, PresetCategory
+try:
+    from .preset_manager import get_preset_manager, PresetCategory
+except ImportError:
+    # Try alternative path (zeta mpr folder)
+    try:
+        import sys
+        from pathlib import Path
+        mpr_path = Path(__file__).parent.parent / "zeta mpr"
+        if str(mpr_path) not in sys.path:
+            sys.path.insert(0, str(mpr_path))
+        from preset_manager import get_preset_manager, PresetCategory
+    except ImportError:
+        # Fallback if module not found
+        get_preset_manager = lambda: None
+        PresetCategory = None
+        print("Warning: preset_manager not available")
 
 
 class Viewer3DWidget(QWidget):

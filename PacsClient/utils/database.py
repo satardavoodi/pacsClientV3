@@ -252,9 +252,35 @@ def init_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 outline TEXT,
-                thumbnail_path TEXT
+                thumbnail_path TEXT,
+                tags TEXT DEFAULT '[]',
+                modality TEXT DEFAULT '',
+                body_regions TEXT DEFAULT '[]',
+                level TEXT DEFAULT 'Intermediate',
+                is_my_course INTEGER DEFAULT 1,
+                is_downloaded INTEGER DEFAULT 0
             )
         """)
+        
+        # Migrate existing courses table if needed
+        try:
+            cur.execute("PRAGMA table_info(courses)")
+            columns = [col[1] for col in cur.fetchall()]
+            
+            if 'tags' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN tags TEXT DEFAULT '[]'")
+            if 'modality' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN modality TEXT DEFAULT ''")
+            if 'body_regions' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN body_regions TEXT DEFAULT '[]'")
+            if 'level' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN level TEXT DEFAULT 'Intermediate'")
+            if 'is_my_course' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN is_my_course INTEGER DEFAULT 1")
+            if 'is_downloaded' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN is_downloaded INTEGER DEFAULT 0")
+        except Exception as e:
+            print(f"Migration warning: {e}")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS slides (
@@ -2008,6 +2034,31 @@ def delete_download_progress(study_uid: str):
     except Exception as e:
         print(f"⚠️ Database error in delete_download_progress: {e}")
         raise
+
+
+def clear_all_download_progress():
+    """
+    Clear ALL download progress records from the database.
+    Called on application shutdown to ensure clean state on next startup.
+    """
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Delete all download progress records
+            cur.execute("DELETE FROM download_progress")
+            deleted_count = cur.rowcount
+            
+            conn.commit()
+            
+            if deleted_count > 0:
+                print(f"🧹 Cleared {deleted_count} download progress records from database")
+            
+            return deleted_count
+        
+    except Exception as e:
+        print(f"⚠️ Database error in clear_all_download_progress: {e}")
+        return 0
 
 
 def get_all_download_progress() -> list:

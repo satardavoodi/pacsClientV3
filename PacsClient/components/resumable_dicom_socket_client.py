@@ -17,6 +17,7 @@ import threading
 import base64
 import concurrent.futures
 import queue
+import random  # For retry jitter to prevent thundering herd
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
@@ -207,6 +208,32 @@ class ResumableDicomSocketClient:
             self.thread_optimizer = None
             self.adaptive_connection_manager = None
         
+        # === ENDPOINT CACHING ===
+        # Cache which endpoint configuration works to avoid trial-and-error on every request
+        self._cached_endpoint_config = None  # Tuple of (endpoint, params_template)
+        self._endpoint_cache_hits = 0
+        self._endpoint_cache_misses = 0
+        
+        # === SERIES INFO CACHING ===
+        # Cache series info to avoid repeated gRPC calls (expensive on slow networks)
+        # Key: study_uid, Value: series_list
+        self._series_info_cache = {}
+        
+    def _get_cached_series_info(self, study_uid: str) -> list:
+        """Get cached series info for a study, or None if not cached."""
+        return self._series_info_cache.get(study_uid)
+    
+    def _cache_series_info(self, study_uid: str, series_list: list):
+        """Cache series info for a study."""
+        self._series_info_cache[study_uid] = series_list
+    
+    def _clear_series_cache(self, study_uid: str = None):
+        """Clear series info cache. If study_uid is None, clear all."""
+        if study_uid:
+            self._series_info_cache.pop(study_uid, None)
+        else:
+            self._series_info_cache.clear()
+        
     def connect(self):
         """
         Connect to the Socket server
@@ -294,11 +321,15 @@ class ResumableDicomSocketClient:
                 else:
                     logger.warning(f"❌ Attempt {attempt + 1} failed")
                     if attempt < self.max_retries - 1:
-                        time.sleep(self.retry_delay * (2 ** attempt))  # Exponential backoff
+                        # Exponential backoff WITH JITTER to prevent thundering herd
+                        jitter = random.uniform(0, 0.5)
+                        time.sleep(self.retry_delay * (2 ** attempt) + jitter)
             except Exception as e:
                 logger.error(f"❌ Attempt {attempt + 1} failed: {e}")
                 if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay * (2 ** attempt))
+                    # Exponential backoff WITH JITTER
+                    jitter = random.uniform(0, 0.5)
+                    time.sleep(self.retry_delay * (2 ** attempt) + jitter)
                 else:
                     return False
         return False
@@ -735,22 +766,76 @@ class ResumableDicomSocketClient:
         """
         logger.info(f"🔍 Getting study info for: {study_uid}")
         
-        if not self.send_request("GetStudyInfo", {"study_instance_uid": study_uid}):
+        try:
+            if not self.send_request("GetStudyInfo", {"study_instance_uid": study_uid}):
+                logger.error(f"❌ Failed to send GetStudyInfo request")
+                return None
+            
+            logger.info(f"📡 GetStudyInfo request sent, waiting for response...")
+            
+            # Add timeout wrapper for receive_response
+            import threading
+            response_holder = [None]
+            error_holder = [None]
+            
+            def receive_with_timeout():
+                try:
+                    response_holder[0] = self.receive_response()
+                except Exception as e:
+                    error_holder[0] = e
+                    logger.error(f"❌ Error in receive_response: {e}")
+            
+            # Run receive in a thread with timeout
+            recv_thread = threading.Thread(target=receive_with_timeout, daemon=True)
+            recv_thread.start()
+            recv_thread.join(timeout=60)  # 60 second timeout
+            
+            if recv_thread.is_alive():
+                logger.error(f"❌ GetStudyInfo response TIMEOUT after 60 seconds - server not responding!")
+                logger.error(f"⚠️ The server may not support 'GetStudyInfo' endpoint")
+                # Try to create dummy study info from study UID
+                logger.info(f"🔄 Creating fallback study info without server response...")
+                return {
+                    "patient_id": "Unknown",
+                    "patient_name": "Unknown Patient",
+                    "study_date": "",
+                    "study_description": "",
+                    "modality": "Unknown",
+                    "total_instances": 0,  # Will be determined during download
+                    "total_series": 0,
+                    "study_instance_uid": study_uid
+                }
+            
+            if error_holder[0]:
+                logger.error(f"❌ Receive error: {error_holder[0]}")
+                return None
+            
+            response = response_holder[0]
+            if not response:
+                logger.error(f"❌ No response received from server")
+                return None
+            
+            logger.info(f"✅ GetStudyInfo response received")
+            
+            if response.get("status") != "success":
+                error_msg = response.get("error", "Unknown error")
+                logger.error(f"❌ Request failed: {error_msg}")
+                return None
+            
+            return response.get("data", {})
+            
+        except Exception as e:
+            logger.error(f"❌ Error in get_study_info: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
-        
-        response = self.receive_response()
-        
-        if response.get("status") != "success":
-            error_msg = response.get("error", "Unknown error")
-            logger.error(f"❌ Request failed: {error_msg}")
-            return None
-        
-        return response.get("data", {})
     
     def get_study_dicom_files_batch(self, study_uid: str, batch_size: int = 10, 
                                    offset: int = 0, compression: str = "gzip") -> Optional[Dict[str, Any]]:
         """
         Get a batch of DICOM files for a study with retry mechanism
+        
+        OPTIMIZED: Uses endpoint caching to avoid trial-and-error on every request.
         
         Args:
             study_uid (str): Study Instance UID
@@ -772,81 +857,133 @@ class ResumableDicomSocketClient:
                 batch_size = min(20, batch_size * 2)
                 logger.info(f"🔄 Increasing batch size due to successes: {batch_size}")
         
+        # === ENDPOINT CACHING: Try cached endpoint first ===
+        if self._cached_endpoint_config:
+            cached_endpoint, params_template = self._cached_endpoint_config
+            # Build params from template
+            params = self._build_params_from_template(params_template, study_uid, batch_size, offset, compression)
+            
+            result = self._try_single_endpoint(cached_endpoint, params)
+            if result is not None:
+                self._endpoint_cache_hits += 1
+                if self._endpoint_cache_hits % 50 == 0:
+                    logger.info(f"📊 Endpoint cache stats: hits={self._endpoint_cache_hits}, misses={self._endpoint_cache_misses}")
+                return result
+            else:
+                # Cached endpoint failed - clear cache and try all
+                logger.warning(f"⚠️ Cached endpoint {cached_endpoint} failed, trying all endpoints")
+                self._cached_endpoint_config = None
+        
+        self._endpoint_cache_misses += 1
+        
         # Try different endpoint names and parameter combinations
         endpoint_configs = [
-            ("GetStudyDicomFiles", {
-                "study_instance_uid": study_uid,
-                "instance_limit": batch_size,
-                "compression": compression
-            }),
-            ("GetStudyDicomFiles", {
-                "study_instance_uid": study_uid,
-                "batch_size": batch_size,
-                "offset": offset,
-                "compression": compression
-            }),
-            ("GetStudyDicomFilesBatch", {
-                "study_uid": study_uid,
-                "batch_size": batch_size,
-                "offset": offset,
-                "compression": compression
-            }),
-            ("GetStudyDicomFiles", {
-                "study_instance_uid": study_uid,
-                "limit": batch_size,
-                "offset": offset
-            }),
+            ("GetStudyDicomFiles", "study_instance_uid_limit"),
+            ("GetStudyDicomFiles", "study_instance_uid_batch"),
+            ("GetStudyDicomFilesBatch", "study_uid_batch"),
+            ("GetStudyDicomFiles", "study_instance_uid_offset"),
         ]
         
         # Retry mechanism for each endpoint
-        for endpoint, params in endpoint_configs:
+        for endpoint, params_template in endpoint_configs:
+            params = self._build_params_from_template(params_template, study_uid, batch_size, offset, compression)
             logger.info(f"🧪 Trying endpoint: {endpoint}")
             
-            for retry_attempt in range(self.max_retries):
-                try:
-                    if not self.send_request(endpoint, params):
-                        if retry_attempt < self.max_retries - 1:
-                            logger.warning(f"⚠️ Send request failed, retry {retry_attempt + 1}/{self.max_retries}")
-                            time.sleep(self.retry_delay * (2 ** retry_attempt))
-                            continue
-                        else:
-                            break
-                    
-                    response = self.receive_response()
-                    
-                    if response.get("status") == "success":
-                        logger.info(f"✅ Success with endpoint: {endpoint}")
-                        self.consecutive_failures = 0
-                        self.consecutive_successes += 1
-                        return response.get("data", {})
-                    else:
-                        error_msg = response.get("error", "Unknown error")
-                        logger.warning(f"⚠️ {endpoint} failed: {error_msg}")
-                        
-                        # If it's "Response too large", try with smaller batch immediately
-                        if "too large" in error_msg.lower() and batch_size > 1:
-                            logger.info(f"🔄 Response too large, trying smaller batch size: {batch_size // 2}")
-                            self.consecutive_failures += 1
-                            return self.get_study_dicom_files_batch(study_uid, batch_size // 2, offset, compression)
-                        
-                        # For other errors, retry
-                        if retry_attempt < self.max_retries - 1:
-                            logger.warning(f"⚠️ Retrying {endpoint}, attempt {retry_attempt + 1}/{self.max_retries}")
-                            time.sleep(self.retry_delay * (2 ** retry_attempt))
-                        else:
-                            break
-                            
-                except Exception as e:
-                    logger.error(f"❌ Exception in batch request: {e}")
-                    if retry_attempt < self.max_retries - 1:
-                        logger.warning(f"⚠️ Retrying due to exception, attempt {retry_attempt + 1}/{self.max_retries}")
-                        time.sleep(self.retry_delay * (2 ** retry_attempt))
-                    else:
-                        break
+            result = self._try_single_endpoint(endpoint, params)
+            if result is not None:
+                # Cache this working endpoint for future requests
+                self._cached_endpoint_config = (endpoint, params_template)
+                logger.info(f"💾 Cached working endpoint: {endpoint}")
+                return result
         
         logger.error(f"❌ All batch request attempts failed after {self.max_retries} retries")
         self.consecutive_failures += 1
         self.consecutive_successes = 0
+        return None
+    
+    def _build_params_from_template(self, template: str, study_uid: str, batch_size: int, 
+                                    offset: int, compression: str) -> dict:
+        """Build request parameters from a template name"""
+        if template == "study_instance_uid_limit":
+            return {
+                "study_instance_uid": study_uid,
+                "instance_limit": batch_size,
+                "compression": compression
+            }
+        elif template == "study_instance_uid_batch":
+            return {
+                "study_instance_uid": study_uid,
+                "batch_size": batch_size,
+                "offset": offset,
+                "compression": compression
+            }
+        elif template == "study_uid_batch":
+            return {
+                "study_uid": study_uid,
+                "batch_size": batch_size,
+                "offset": offset,
+                "compression": compression
+            }
+        elif template == "study_instance_uid_offset":
+            return {
+                "study_instance_uid": study_uid,
+                "limit": batch_size,
+                "offset": offset
+            }
+        else:
+            # Fallback
+            return {
+                "study_instance_uid": study_uid,
+                "batch_size": batch_size,
+                "offset": offset,
+                "compression": compression
+            }
+    
+    def _try_single_endpoint(self, endpoint: str, params: dict) -> dict:
+        """Try a single endpoint with retries. Returns data dict or None."""
+        for retry_attempt in range(self.max_retries):
+            try:
+                if not self.send_request(endpoint, params):
+                    if retry_attempt < self.max_retries - 1:
+                        logger.warning(f"⚠️ Send request failed, retry {retry_attempt + 1}/{self.max_retries}")
+                        jitter = random.uniform(0, 0.5)
+                        time.sleep(self.retry_delay * (2 ** retry_attempt) + jitter)
+                        continue
+                    else:
+                        return None
+                
+                response = self.receive_response()
+                
+                if response.get("status") == "success":
+                    logger.info(f"✅ Success with endpoint: {endpoint}")
+                    self.consecutive_failures = 0
+                    self.consecutive_successes += 1
+                    return response.get("data", {})
+                else:
+                    error_msg = response.get("error", "Unknown error")
+                    logger.warning(f"⚠️ {endpoint} failed: {error_msg}")
+                    
+                    # If it's "Response too large", return None to try next endpoint
+                    if "too large" in error_msg.lower():
+                        return None
+                    
+                    # For other errors, retry
+                    if retry_attempt < self.max_retries - 1:
+                        logger.warning(f"⚠️ Retrying {endpoint}, attempt {retry_attempt + 1}/{self.max_retries}")
+                        jitter = random.uniform(0, 0.5)
+                        time.sleep(self.retry_delay * (2 ** retry_attempt) + jitter)
+                    else:
+                        return None
+                        
+            except Exception as e:
+                logger.error(f"❌ Exception in batch request: {e}")
+                if retry_attempt < self.max_retries - 1:
+                    logger.warning(f"⚠️ Retrying due to exception, attempt {retry_attempt + 1}/{self.max_retries}")
+                    jitter = random.uniform(0, 0.5)
+                    time.sleep(self.retry_delay * (2 ** retry_attempt) + jitter)
+                else:
+                    return None
+        
         return None
     
     def download_batch_by_instance_numbers(self, study_uid: str, instance_numbers: list, 
@@ -1227,62 +1364,84 @@ class ResumableDicomSocketClient:
     
     def download_study_batch_like_working_code(self, study_uid: str, output_dir: str = "./downloads",
                                              batch_size: int = 10, compression: str = "gzip", 
-                                             resume: bool = True, progress_callback: Optional[Callable] = None) -> bool:
+                                             resume: bool = True, progress_callback: Optional[Callable] = None,
+                                             patient_info: Optional[Dict[str, Any]] = None,
+                                             cancellation_callback: Optional[Callable] = None) -> bool:
         """
-        Download study using the same approach as the working batch downloader
-        """
-        logger.info(f"🔄 Starting batch download (working code style) for study: {study_uid}")
+        Download study using gRPC for series list + RobustSeriesDownloader for files.
+        This mirrors the working double-click download approach.
         
-        # Use SOURCE_PATH structure instead of downloads
+        ENHANCED: Added cancellation_callback parameter for preemption support.
+        
+        Args:
+            study_uid: The study instance UID
+            output_dir: Output directory for downloaded files
+            batch_size: Number of instances per batch
+            compression: Compression type
+            resume: Whether to resume from previous progress
+            progress_callback: Callback for progress updates
+            patient_info: Optional dict with patient info (patient_id, patient_name, study_date, etc.)
+                         to avoid "Unknown Patient" entries
+        """
+        logger.info(f"📥 Starting download for study: {study_uid}")
+        
+        # Import required modules
         try:
             from PacsClient.utils.config import SOURCE_PATH
-            logger.info(f"✅ Imported SOURCE_PATH: {SOURCE_PATH}")
         except Exception as e:
-            logger.error(f"❌ Failed to import SOURCE_PATH: {e}")
+            logger.error(f"Failed to import SOURCE_PATH: {e}")
             return False
             
         try:
             from PacsClient.utils import insert_patient, insert_study, insert_series, insert_instance
-            logger.info(f"✅ Imported database functions")
         except Exception as e:
-            logger.warning(f"⚠️ Failed to import database functions: {e}")
+            logger.debug(f"Database functions not available: {e}")
             insert_patient = insert_study = insert_series = insert_instance = None
         
-        # Create study directory in SOURCE_PATH
+        # Create study directory
         study_path = SOURCE_PATH / study_uid
         study_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"📁 Using SOURCE_PATH structure: {study_path}")
         
-        # Get study info
-        logger.info(f"🔍 Getting study info for: {study_uid}")
-        study_info = self.get_study_info(study_uid)
-        if not study_info:
-            logger.error(f"❌ Failed to get study info for: {study_uid}")
-            return False
-        logger.info(f"✅ Study info retrieved successfully")
+        # Use provided patient_info or create minimal fallback
+        # IMPORTANT: Prefer passed patient_info to avoid "Unknown Patient" entries
+        if patient_info and patient_info.get('patient_id') and patient_info.get('patient_name'):
+            study_info = {
+                "patient_id": patient_info.get('patient_id', ''),
+                "patient_name": patient_info.get('patient_name', ''),
+                "study_date": patient_info.get('study_date', ''),
+                "study_description": patient_info.get('study_description', patient_info.get('description', '')),
+                "modality": patient_info.get('modality', ''),
+                "total_instances": patient_info.get('images_count', 0),
+                "total_series": patient_info.get('series_count', 0),
+                "study_instance_uid": study_uid
+            }
+            logger.info(f"📋 Using provided patient info: {study_info.get('patient_name', 'N/A')}")
+        else:
+            # Fallback to minimal info - will be updated from DICOM headers during download
+            # Log a warning so we can track when this fallback is used
+            logger.warning(f"⚠️ No patient_info provided for {study_uid[:40]}... - will extract from DICOM headers")
+            study_info = {
+                "patient_id": "",  # Empty instead of "Unknown" - will be filled from DICOM
+                "patient_name": "",  # Empty instead of "Unknown Patient" - will be filled from DICOM
+                "study_date": "",
+                "study_description": "",
+                "modality": "",
+                "total_instances": 0,
+                "total_series": 0,
+                "study_instance_uid": study_uid
+            }
         
-        logger.info(f"✅ Study info retrieved:")
-        logger.info(f"   Patient: {study_info.get('patient_name', 'Unknown')}")
-        logger.info(f"   Study Date: {study_info.get('study_date', 'Unknown')}")
-        logger.info(f"   Total Instances: {study_info.get('total_instances', 0)}")
-        logger.info(f"   Total Series: {study_info.get('total_series', 0)}")
-        
-        # Save patient and study to database
+        # Save to database if available AND we have valid patient info
+        # CRITICAL: Skip database insert if patient info is missing to avoid "Unknown" entries
         study_pk = None
-        if insert_patient and insert_study and insert_series and insert_instance:
+        patient_id = study_info.get('patient_id', '')
+        patient_name = study_info.get('patient_name', '')
+        
+        if insert_patient and insert_study and patient_id and patient_name:
             try:
-                # Initialize database first
-                logger.info(f"🔄 Initializing database...")
                 from PacsClient.utils.database import init_database
                 init_database()
-                logger.info(f"✅ Database initialized successfully")
-                patient_id = study_info.get('patient_id', 'Unknown')
-                patient_name = study_info.get('patient_name', 'Unknown')
-                study_date = study_info.get('study_date', '')
-                study_description = study_info.get('study_description', '')
-                modality = study_info.get('modality', '')
                 
-                # Insert patient (will return existing if already exists)
                 patient_pk = insert_patient(
                     patient_id=patient_id,
                     name=patient_name,
@@ -1290,492 +1449,239 @@ class ResumableDicomSocketClient:
                     sex=study_info.get('patient_sex'),
                     age=study_info.get('patient_age')
                 )
-                logger.info(f"💾 Patient saved to database: {patient_name} (PK: {patient_pk})")
                 
-                # Insert study (will return existing if already exists)
                 study_pk = insert_study(
                     study_uid=study_uid,
                     patient_fk=patient_pk,
-                    study_date=study_date,
-                    study_description=study_description,
-                    modality=modality,
-                    number_of_series=study_info.get('total_series', 0),
-                    number_of_instances=study_info.get('total_instances', 0),
-                    study_path=str(study_path)  # Save study path to database
+                    study_date=study_info.get('study_date', ''),
+                    study_description=study_info.get('study_description', ''),
+                    modality=study_info.get('modality', ''),
+                    number_of_series=0,
+                    number_of_instances=0,
+                    study_path=str(study_path)
                 )
-                logger.info(f"💾 Study saved to database: {study_uid} (PK: {study_pk})")
-                logger.info(f"💾 Study path: {study_path}")
-                logger.info(f"🔍 Final study_pk value: {study_pk}")
+                logger.debug(f"Database records created: patient_pk={patient_pk}, study_pk={study_pk}")
                 
             except Exception as e:
-                logger.warning(f"⚠️ Database initialization failed (continuing download): {e}")
+                logger.warning(f"Database initialization failed (continuing): {e}")
                 study_pk = None
-        else:
-            logger.info("📝 Database functions not available, skipping database operations")
+        elif insert_patient and insert_study:
+            logger.info(f"📋 Skipping database insert - patient info will be extracted from DICOM files")
         
-        # Collect all instance numbers from series (simple logic like resumable_simple_downloader.py)
-        all_instances = []
-        
-        if "series" in study_info:
-            for series in study_info["series"]:
-                if "instances" in series:
-                    for instance in series["instances"]:
-                        instance_num = int(instance["instance_number"]) if str(instance["instance_number"]).isdigit() else 0
-                        instance_uid = instance.get("instance_uid", "")
-                        series_uid = series.get("series_uid", "")
-                        
-                        # Add all instances without duplicate checking (like resumable_simple_downloader.py)
-                        all_instances.append({
-                            "instance_number": instance_num,
-                            "instance_uid": instance_uid if instance_uid else f"{series_uid}_{instance_num}",
-                            "series_uid": series_uid,
-                            "series_number": series.get("series_number", 0),
-                            "series_description": series.get("series_description", ""),
-                            "modality": series.get("modality", "")
-                        })
-        
-        if not all_instances:
-            logger.error(f"❌ No instances found in study info")
-            return False
-        
-        logger.info(f"📊 Total unique instances to download: {len(all_instances)}")
-        
-        # Resume logic: Filter out already downloaded instances (like resumable_simple_downloader.py)
-        downloaded_count = 0
-        downloaded_uids = set()  # Track downloaded instance UIDs to avoid re-downloading
-        
-        # Database progress tracking (no more .progress file)
-        
-        # Filter instances that haven't been downloaded yet (check by UID-based naming)
-        remaining_instances = []
-        for instance_data in all_instances:
-            instance_number = instance_data["instance_number"]
-            series_number = instance_data["series_number"]
-            series_uid = instance_data.get("series_uid", "unknown")
+        try:
+            # Step 1: Get series list via gRPC WITH TIMEOUT
+            # This is critical for slow networks - prevents indefinite hanging
+            from PacsClient.components.grpc_client import DicomGrpcClient
             
-            # Create expected filename (simple approach)
-            instance_num_int = int(instance_number) if str(instance_number).isdigit() else instance_number
-            expected_filename = f"Instance_{instance_num_int:04d}.dcm"
+            # Check cache first to avoid repeated gRPC calls
+            series_list = self._get_cached_series_info(study_uid)
             
-            # Check if file exists in the series directory (simple approach)
-            try:
-                from PacsClient.pacs.patient_tab.utils.utils import check_series_study_exist
-                series_path = check_series_study_exist(study_uid, f"{series_number}")
-            except Exception as e:
-                # Fallback to simple path creation
-                series_path = study_path / f"{series_number}"
-                series_path.mkdir(parents=True, exist_ok=True)
-            
-            filepath = Path(series_path) / expected_filename
-            file_exists = filepath.exists()
-            
-            if file_exists:
-                downloaded_count += 1
-                downloaded_uids.add(f"{series_uid}_{instance_number}")
-                logger.debug(f"✅ Found existing file: {expected_filename} in series {series_number}")
+            if not series_list:
+                logger.info(f"📡 Fetching series info for {study_uid[:40]}... (30s timeout)")
+                
+                # Use timeout-enabled method - critical for slow networks
+                grpc_client = DicomGrpcClient(host=self.host, port=50051, timeout=30.0)
+                result = grpc_client.get_study_thumbnails_with_timeout(study_uid, timeout=30.0)
+                grpc_client.close()
+                
+                if result and result.get('series_list'):
+                    series_list = result['series_list']
+                    # Cache for future use (e.g., if download is paused and resumed)
+                    self._cache_series_info(study_uid, series_list)
+                    logger.info(f"✅ Cached series info: {len(series_list)} series")
+                else:
+                    logger.error(f"No series found or timeout for study {study_uid}")
+                    return False
             else:
-                logger.debug(f"❌ Missing file: {expected_filename} in series {series_number}")
-                remaining_instances.append(instance_data)
-                logger.debug(f"📝 Added to remaining: Series {series_number}, Instance {instance_number}")
-        
-        logger.info(f"📊 Total instances: {len(all_instances)}")
-        logger.info(f"📊 Already downloaded: {downloaded_count}")
-        logger.info(f"📊 Remaining to download: {len(remaining_instances)}")
-        
-        if len(remaining_instances) == 0:
-            logger.info("✅ All files already downloaded!")
-            # Mark as completed in database
-            if complete_download_progress:
-                try:
-                    complete_download_progress(study_uid)
-                    logger.info(f"💾 Marked as completed in database")
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to mark completed in database: {e}")
-            return True
-        
-        if not resume:
-            # Clear progress from database if not resuming
-            if delete_download_progress:
-                try:
-                    delete_download_progress(study_uid)
-                    logger.info(f"🗑️ Cleared progress from database (resume=False)")
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to clear progress from database: {e}")
-        
-        total_batches = (len(remaining_instances) + batch_size - 1) // batch_size
-        logger.info(f"📊 Total batches to process: {total_batches}")
-        
-        # Process batches sequentially (simpler approach)
-        logger.info(f"🔄 Starting sequential batch processing...")
-        
-        # Process batches by series to avoid server confusion
-        # Group remaining instances by series UID
-        series_groups = {}
-        for inst in remaining_instances:
-            series_uid = inst.get("series_uid", "unknown")
-            if series_uid not in series_groups:
-                series_groups[series_uid] = []
-            series_groups[series_uid].append(inst)
-        
-        logger.info(f"📊 Grouped instances into {len(series_groups)} series")
-        for series_uid, instances in series_groups.items():
-            series_num = instances[0].get("series_number", "unknown")
-            logger.info(f"   Series {series_num} ({series_uid[:30]}...): {len(instances)} instances")
-        
-        batch_number = 0
-        total_batches = sum((len(instances) + batch_size - 1) // batch_size for instances in series_groups.values())
-        logger.info(f"📊 Total batches to process: {total_batches}")
-        
-        # Process each series separately
-        for series_uid, series_instances in series_groups.items():
-            series_num = series_instances[0].get("series_number", "unknown")
-            logger.info(f"🔄 Processing Series {series_num} ({len(series_instances)} instances)")
+                logger.info(f"📋 Using cached series info: {len(series_list)} series")
             
-            # Process this series in batches
-            for i in range(0, len(series_instances), batch_size):
-                batch = series_instances[i:i + batch_size]
-                batch_number += 1
-                
-                logger.info(f"📦 Processing batch {batch_number}/{total_batches} - Series {series_num} ({len(batch)} instances)")
-                
-                # Extract instance numbers for this batch
-                instance_numbers = [inst["instance_number"] for inst in batch]
-                
-                # Log detailed batch info for debugging
-                logger.info(f"🔄 Downloading batch {batch_number} with instances: {instance_numbers} from Series {series_num}")
-                for j, inst in enumerate(batch):
-                    logger.debug(f"   Batch item {j+1}: Instance {inst['instance_number']} from Series {inst['series_number']}")
-                
-                # Download batch using series UID to avoid confusion
-                batch_data = self.download_batch_by_instance_numbers(study_uid, instance_numbers, compression, series_uid)
-                
-                if not batch_data or "instances" not in batch_data:
-                    logger.error(f"❌ Batch {batch_number} failed - no instances returned")
-                    
-                    # Handle potential connection issues
-                    if not self.check_connection_health():
-                        logger.warning("⚠️ Connection health check failed after batch failure")
-                        self.handle_connection_loss()
-                        
-                        # Try to reconnect for next batch
-                        if not self.connect_with_retry():
-                            logger.error("❌ Failed to reconnect after connection loss")
-                            break
-                    
-                    continue
-                
-                batch_instances = batch_data["instances"]
-                logger.info(f"✅ Batch {batch_number} received {len(batch_instances)} instances")
-                
-                # Process instances in batch
-                for j, instance_data in enumerate(batch_instances):
-                    try:
-                        if not instance_data.get("dicom_data"):
-                            logger.warning(f"⚠️ No data for instance {j+1}")
-                            continue
-                        
-                        # Use requested instance number for naming
-                        requested_instance_num = instance_numbers[j] if j < len(instance_numbers) else j + 1
-                        
-                        # اعتبارسنجی و پردازش داده‌های DICOM
-                        dicom_data = self.validate_and_process_dicom_data(
-                            instance_data.get("dicom_data"), 
-                            requested_instance_num, 
-                            compression
-                        )
-                        if dicom_data is None:
-                            logger.error(f"❌ Invalid DICOM data for instance {requested_instance_num}")
-                            continue
-                        
-                        # Decompress if needed
-                        if instance_data.get("is_compressed", False) and compression == "gzip":
-                            try:
-                                dicom_data = gzip.decompress(dicom_data)
-                            except Exception as e:
-                                logger.warning(f"⚠️ Gzip decompression failed: {e}")
-                                pass
-                        
-                        # Extract series info from DICOM data first
-                        series_info = None
-                        
-                        if PYDICOM_AVAILABLE:
-                            try:
-                                # Read DICOM header to get series information
-                                dicom_stream = BytesIO(dicom_data)
-                                ds = _safe_dcmread(dicom_stream, stop_before_pixels=True)
-                                
-                                actual_instance_num = getattr(ds, 'InstanceNumber', requested_instance_num)
-                                
-                                # Extract comprehensive series metadata
-                                series_info = {
-                                    "series_number": getattr(ds, 'SeriesNumber', 0),
-                                    "series_uid": getattr(ds, 'SeriesInstanceUID', ''),
-                                    "series_description": getattr(ds, 'SeriesDescription', ''),
-                                    "modality": getattr(ds, 'Modality', ''),
-                                    "instance_number": actual_instance_num,
-                                    "protocol_name": getattr(ds, 'ProtocolName', ''),
-                                    "body_part_examined": getattr(ds, 'BodyPartExamined', ''),
-                                    "manufacturer": getattr(ds, 'Manufacturer', ''),
-                                    "institution_name": getattr(ds, 'InstitutionName', ''),
-                                    "slice_thickness": getattr(ds, 'SliceThickness', None)
-                                }
-                                
-                                logger.debug(f"✅ Extracted complete series info from DICOM:")
-                                logger.debug(f"   Series: {series_info['series_number']} - {series_info['series_description']}")
-                                logger.debug(f"   Modality: {series_info['modality']}")
-                                logger.debug(f"   Protocol: {series_info['protocol_name']}")
-                                logger.debug(f"   Body Part: {series_info['body_part_examined']}")
-                                
-                            except Exception as e:
-                                logger.warning(f"⚠️ Could not read DICOM header for instance {requested_instance_num}: {e}")
-                                series_info = None  # Only reset if reading failed
-                        
-                        # Fallback to batch data if DICOM reading failed or pydicom not available
-                        if not series_info:
-                            logger.debug(f"🔄 Falling back to batch data for instance {requested_instance_num}")
-                            for inst in batch:
-                                if inst["instance_number"] == requested_instance_num:
-                                    series_info = inst
-                                    logger.debug(f"✅ Found series info in unique batch data for instance {requested_instance_num}")
-                                    break
-                        
-                        if not series_info:
-                            # Last resort: use default values
-                            series_info = {
-                                "series_number": 1,  # Default to series 1
-                                "series_uid": f"unknown_series_{requested_instance_num}",
-                                "series_description": "",
-                                "modality": "",
-                                "instance_number": requested_instance_num
-                            }
-                            logger.warning(f"⚠️ Using default series info for instance {requested_instance_num}")
-                        
-                        if not series_info:
-                            logger.error(f"❌ Could not determine series info for instance {requested_instance_num}")
-                            continue
-                        
-                        # Simple filename generation (like working code)
-                        actual_instance_num = series_info.get("instance_number", requested_instance_num)
-                        filename = f"Instance_{actual_instance_num:04d}.dcm"
-                        logger.debug(f"📝 Generated filename: {filename} (Instance: {actual_instance_num})")
-                        
-                        # Simple series directory structure (like working code)
-                        series_num = int(series_info["series_number"]) if series_info["series_number"] else 0
-                        
-                        # Create simple series directory (just the number)
-                        try:
-                            from PacsClient.pacs.patient_tab.utils.utils import check_series_study_exist
-                            series_path = check_series_study_exist(study_uid, f"{series_num}")
-                            logger.debug(f"✅ Series path for {series_num}: {series_path}")
-                        except Exception as e:
-                            logger.error(f"❌ Error with check_series_study_exist for series {series_num}: {e}")
-                            # Fallback to simple path creation
-                            series_path = study_path / f"{series_num}"
-                            series_path.mkdir(parents=True, exist_ok=True)
-                            logger.debug(f"📁 Created simple series directory: {series_path}")
-                        
-                        filepath = Path(series_path) / filename
-                        
-                        # Save DICOM file
-                        if self.safe_save_dicom_file(filepath, dicom_data, requested_instance_num):
-                            # Update counters
-                            downloaded_uids.add(f"{series_info['series_uid']}_{requested_instance_num}")
-                            downloaded_count += 1
-                            
-                            logger.info(f"✅ Saved: {filename} ({len(dicom_data)} bytes)")
-                            
-                            # Call progress callback
-                            if progress_callback:
-                                try:
-                                    progress_percent = (downloaded_count / len(all_instances)) * 100
-                                    progress_callback(downloaded_count, len(all_instances), progress_percent)
-                                except Exception as e:
-                                    logger.warning(f"⚠️ Progress callback error: {e}")
-                            
-                            # # Save series and instance to database
-                            # if study_pk and insert_series and insert_instance:
-                            #     try:
-                            #         # Extract ALL series metadata from series_info (extracted from DICOM)
-                            #         series_description = series_info.get('series_description', '') if series_info else ''
-                            #         series_modality = series_info.get('modality', '') if series_info else ''
-                            #         protocol_name = series_info.get('protocol_name', '') if series_info else ''
-                            #         body_part_examined = series_info.get('body_part_examined', '') if series_info else ''
-                            #         manufacturer = series_info.get('manufacturer', '') if series_info else ''
-                            #         institution_name = series_info.get('institution_name', '') if series_info else ''
-                            #         slice_thickness = series_info.get('slice_thickness', None) if series_info else None
-                            #
-                            #         # Convert slice_thickness to string if it exists
-                            #         series_thk = str(slice_thickness) if slice_thickness is not None else None
-                            #
-                            #         # Insert series with COMPLETE metadata (will return existing if already exists)
-                            #         series_pk = insert_series(
-                            #             series_uid=series_info['series_uid'],
-                            #             study_fk=study_pk,
-                            #             series_number=str(series_num),
-                            #             series_description=series_description,
-                            #             modality=series_modality,
-                            #             protocol_name=protocol_name,
-                            #             body_part_examined=body_part_examined,
-                            #             manufacturer=manufacturer,
-                            #             institution_name=institution_name,
-                            #             series_thk=series_thk,
-                            #             image_count=1,
-                            #             series_path=str(series_path)  # Save series path
-                            #         )
-                            #         logger.debug(f"💾 Series saved with complete metadata:")
-                            #         logger.debug(f"   UID: {series_info['series_uid']}")
-                            #         logger.debug(f"   Description: {series_description}")
-                            #         logger.debug(f"   Modality: {series_modality}")
-                            #         logger.debug(f"   Protocol: {protocol_name}")
-                            #
-                            #         # Extract COMPLETE DICOM metadata from saved file
-                            #         rows, columns = None, None
-                            #         window_width, window_center = 127.5, 255.0
-                            #         image_position_patient = None
-                            #         image_orientation_patient = None
-                            #         pixel_spacing = None
-                            #
-                            #         try:
-                            #             import pydicom
-                            #             dcm = pydicom.dcmread(filepath, stop_before_pixels=True)
-                            #
-                            #             # ✅ Extract image dimensions
-                            #             if hasattr(dcm, 'Rows'):
-                            #                 rows = int(dcm.Rows)
-                            #             if hasattr(dcm, 'Columns'):
-                            #                 columns = int(dcm.Columns)
-                            #
-                            #             # ✅ Extract window level settings (WW/WL)
-                            #             if hasattr(dcm, 'WindowWidth'):
-                            #                 ww = dcm.WindowWidth
-                            #                 window_width = float(ww[0]) if isinstance(ww, (list, tuple)) else float(ww)
-                            #
-                            #             if hasattr(dcm, 'WindowCenter'):
-                            #                 wc = dcm.WindowCenter
-                            #                 window_center = float(wc[0]) if isinstance(wc, (list, tuple)) else float(wc)
-                            #
-                            #             # ✅ Extract Image Orientation Patient (CRITICAL for 3D reconstruction)
-                            #             if hasattr(dcm, 'ImageOrientationPatient'):
-                            #                 # This is a list of 6 values: [row_x, row_y, row_z, col_x, col_y, col_z]
-                            #                 image_orientation_patient = list(dcm.ImageOrientationPatient)
-                            #                 logger.debug(f"📐 Image Orientation: {image_orientation_patient}")
-                            #
-                            #             # ✅ Extract Image Position Patient (for slice location)
-                            #             if hasattr(dcm, 'ImagePositionPatient'):
-                            #                 # This is a list of 3 values: [x, y, z]
-                            #                 image_position_patient = list(dcm.ImagePositionPatient)
-                            #
-                            #             # ✅ Extract Pixel Spacing (for real-world measurements)
-                            #             if hasattr(dcm, 'PixelSpacing'):
-                            #                 # This is a list of 2 values: [row_spacing, col_spacing]
-                            #                 pixel_spacing = list(dcm.PixelSpacing)
-                            #
-                            #             logger.debug(f"📊 Complete metadata extracted:")
-                            #             logger.debug(f"   Size: {rows}x{columns}")
-                            #             logger.debug(f"   WW/WL: {window_width}/{window_center}")
-                            #             logger.debug(f"   Orientation: {image_orientation_patient}")
-                            #             logger.debug(f"   Position: {image_position_patient}")
-                            #             logger.debug(f"   Spacing: {pixel_spacing}")
-                            #
-                            #         except Exception as e:
-                            #             logger.warning(f"⚠️ Could not extract complete DICOM metadata: {e}")
-                            #             import traceback
-                            #             logger.debug(traceback.format_exc())
-                            #
-                            #         # ✅ Insert instance with COMPLETE metadata
-                            #         insert_instance(
-                            #             sop_uid=f"{series_info['series_uid']}_{requested_instance_num}",
-                            #             series_fk=series_pk,
-                            #             instance_path=str(filepath),
-                            #             instance_number=requested_instance_num,
-                            #             rows=rows,
-                            #             columns=columns,
-                            #             window_width=window_width,
-                            #             window_center=window_center,
-                            #             image_position_patient=image_position_patient,
-                            #             image_orientation_patient=image_orientation_patient,
-                            #             pixel_spacing=pixel_spacing
-                            #         )
-                            #
-                            #     except Exception as e:
-                            #         logger.warning(f"⚠️ Database save failed for instance {requested_instance_num}: {e}")
-                        else:
-                            logger.error(f"❌ Failed to save: {filename}")
-                            continue
-                    
-                    except Exception as e:
-                        logger.error(f"❌ Error processing instance {j+1}: {e}")
-                        continue
-                
-                logger.info(f"📦 Batch {batch_number} completed")
-                
-                # Debug: Check what files were actually saved after this batch
-                logger.info(f"🔍 Checking files saved after batch {batch_number}:")
-                try:
-                    for series_dir in sorted(study_path.iterdir()):
-                        if series_dir.is_dir():
-                            dcm_files = list(series_dir.glob('*.dcm'))
-                            if dcm_files:
-                                logger.info(f"   📁 {series_dir.name}: {len(dcm_files)} files")
-                                # Show first few files in each directory
-                                for dcm_file in sorted(dcm_files)[:3]:
-                                    try:
-                                        import pydicom
-                                        ds = _safe_dcmread(dcm_file, stop_before_pixels=True)
-                                        actual_instance = getattr(ds, 'InstanceNumber', 'N/A')
-                                        actual_series = getattr(ds, 'SeriesNumber', 'N/A')
-                                        logger.info(f"      {dcm_file.name}: Instance={actual_instance}, Series={actual_series}")
-                                    except Exception as e:
-                                        logger.warning(f"      {dcm_file.name}: Error reading - {e}")
-                                if len(dcm_files) > 3:
-                                    logger.info(f"      ... and {len(dcm_files) - 3} more files")
-                except Exception as e:
-                    logger.warning(f"⚠️ Error checking saved files: {e}")
-        
-        logger.info(f"✅ All batches processed successfully")
-        
-        # Final count of downloaded files
-        final_downloaded = downloaded_count  # This is the actual count of downloaded files
-        logger.info(f"✅ Download completed: {final_downloaded}/{len(all_instances)} files")
-        
-        # Save final progress to database
-        if insert_download_progress:
+            if not series_list:
+                logger.error(f"No series found in study {study_uid}")
+                return False
+            
+            logger.info(f"Found {len(series_list)} series, starting download...")
+            
+            # Register series with priority manager
             try:
-                progress_percent = (final_downloaded / len(all_instances)) * 100
-                status = 'completed' if final_downloaded >= len(all_instances) else 'in_progress'
-                insert_download_progress(
+                from PacsClient.components.download_priority_manager import get_download_priority_manager
+                priority_manager = get_download_priority_manager()
+                priority_manager.register_patient_download(
                     study_uid=study_uid,
-                    downloaded_count=final_downloaded,
-                    total_instances=len(all_instances),
-                    progress_percent=progress_percent,
-                    current_batch=total_batches,
-                    total_batches=total_batches,
-                    status=status
+                    patient_id=study_info.get('patient_id', 'Unknown'),
+                    patient_name=study_info.get('patient_name', 'Unknown'),
+                    series_list=series_list
                 )
-                logger.info(f"💾 Final progress saved to database: {final_downloaded}/{len(all_instances)} ({status})")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to save final progress to database: {e}")
-        
-        # Mark as completed in database if download is complete
-        if final_downloaded >= len(all_instances):
-            if complete_download_progress:
-                try:
-                    complete_download_progress(study_uid)
-                    logger.info(f"💾 Marked as completed in database (download complete)")
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to mark completed in database: {e}")
+            except Exception:
+                pass  # Priority manager is optional
             
-            # Generate thumbnails after download completion
+            # Step 2: Download using RobustSeriesDownloader
+            from PacsClient.components.robust_series_downloader import RobustSeriesDownloader
+            
+            robust_downloader = RobustSeriesDownloader(
+                host=self.host,
+                port=50052,
+                max_retries=3,
+                retry_delay=2.0,
+                connection_timeout=30.0,
+                reconnect_delay=1.0
+            )
+            
+            # Progress callback wrapper - tracks overall download progress across ALL series
+            # Pre-calculate total_count from all series upfront
+            total_images_in_study = sum(s.get('image_count', 0) for s in series_list)
+            
+            download_state = {
+                'downloaded_count': 0,  # Total images downloaded across all series
+                'total_count': total_images_in_study,  # Pre-calculated total images in all series combined
+                'series_completed': 0,  # Number of completed series
+                'total_series': len(series_list),
+                'series_progress': {},  # Track progress per series: {series_number: downloaded_count}
+                'series_totals': {},  # Track total images per series: {series_number: total_count}
+            }
+            
+            logger.info(f"📊 [DIAG-STUDY-INIT] Download initialized: {len(series_list)} series, {total_images_in_study} total images")
+            logger.info(f"   Series breakdown: {[(s.get('series_number'), s.get('image_count', 0)) for s in series_list]}")
+            
+            def robust_progress_callback(event_type, series_number, progress_percent, current_count=0, total_count=0, **kwargs):
+                """Unified progress callback that aggregates progress across ALL series for overall study progress"""
+                series_key = str(series_number)
+                
+                if event_type == 'series_started':
+                    logger.info(f"📥 Starting series {series_number}")
+                    # Initialize tracking for this series ONLY if it doesn't exist
+                    # This prevents progress reset on retries, ensuring monotonic progress
+                    if series_key not in download_state['series_progress']:
+                        download_state['series_progress'][series_key] = 0
+                    if total_count > 0:
+                        download_state['series_totals'][series_key] = total_count
+                        # Note: total_count is already pre-calculated, no need to increment here
+                    
+                    # DEBUG: Log download state
+                    logger.debug(f"🔍 [series_started] Series {series_number}: series_total={total_count}, overall_total={download_state['total_count']}, downloaded={download_state['downloaded_count']}")
+                    
+                    if progress_callback:
+                        # Forward aggregated progress
+                        overall_percent = (download_state['downloaded_count'] / download_state['total_count'] * 100) if download_state['total_count'] > 0 else 0
+                        progress_callback(
+                            download_state['downloaded_count'], 
+                            download_state['total_count'] or 1, 
+                            overall_percent,
+                            event_type='series_started',
+                            series_number=series_number,
+                            series_uid=kwargs.get('series_uid', str(series_number)),
+                            series_description=kwargs.get('series_description', '')
+                        )
+                        
+                elif event_type == 'series_progress':
+                    # Update this series' downloaded count
+                    old_count = download_state['series_progress'].get(series_key, 0)
+                    download_state['series_progress'][series_key] = current_count
+                    
+                    # Calculate cumulative downloaded count across ALL series
+                    download_state['downloaded_count'] = sum(download_state['series_progress'].values())
+                    
+                    # DEBUG: Log aggregation
+                    logger.debug(f"🔍 [series_progress] Series {series_number}: current={current_count}, series_total={total_count}, overall_downloaded={download_state['downloaded_count']}, overall_total={download_state['total_count']}")
+                    
+                    if progress_callback:
+                        # Calculate overall progress across all series
+                        overall_total = download_state['total_count'] or 1
+                        overall_percent = (download_state['downloaded_count'] / overall_total * 100) if overall_total > 0 else 0
+                        
+                        progress_callback(
+                            download_state['downloaded_count'],  # Total images downloaded so far
+                            overall_total,  # Total images in all series
+                            overall_percent,  # Overall percentage
+                            event_type='series_progress',
+                            series_number=series_number,
+                            series_uid=kwargs.get('series_uid', str(series_number)),
+                            series_current=current_count,  # Current series progress
+                            series_total=total_count  # Current series total
+                        )
+                        
+                elif event_type == 'series_complete':
+                    # Mark series as complete - ensure its full count is in downloaded
+                    series_total = download_state['series_totals'].get(series_key, total_count)
+                    download_state['series_progress'][series_key] = series_total
+                    download_state['downloaded_count'] = sum(download_state['series_progress'].values())
+                    download_state['series_completed'] += 1
+                    
+                    logger.info(f"✅ Series {series_number} completed ({download_state['series_completed']}/{download_state['total_series']})")
+                    # DEBUG: Log aggregation at series completion
+                    logger.debug(f"🔍 [series_complete] Series {series_number}: overall_downloaded={download_state['downloaded_count']}, overall_total={download_state['total_count']}, percent={download_state['downloaded_count']/download_state['total_count']*100:.1f}%")
+                    
+                    if progress_callback:
+                        # Report overall progress after this series completion
+                        overall_total = download_state['total_count'] or 1
+                        overall_percent = (download_state['downloaded_count'] / overall_total * 100) if overall_total > 0 else 0
+                        
+                        progress_callback(
+                            download_state['downloaded_count'], 
+                            overall_total, 
+                            overall_percent,
+                            event_type='series_complete',
+                            series_number=series_number,
+                            series_uid=kwargs.get('series_uid', str(series_number))
+                        )
+                        
+                elif event_type == 'series_failed':
+                    logger.warning(f"❌ Series {series_number} failed")
+                    
+            # Check if this is a high priority patient (from priority manager)
+            is_high_priority = False
             try:
-                logger.info(f"🎨 Starting thumbnail generation for study: {study_uid}")
-                self._generate_thumbnails_for_study(study_uid, study_path)
-                logger.info(f"✅ Thumbnail generation completed for study: {study_uid}")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to generate thumbnails: {e}")
-                import traceback
-                logger.debug(traceback.format_exc())
-        
-        return final_downloaded > 0
+                from PacsClient.components.download_priority_manager import get_download_priority_manager
+                priority_manager = get_download_priority_manager()
+                if priority_manager.is_tab_open(study_uid):
+                    is_high_priority = True  # Patient tab is open = HIGH/CRITICAL priority
+                    logger.info(f"🎯 High priority patient detected - may use parallel series download")
+            except:
+                pass
+            
+            # Store reference for cancellation support
+            self._active_robust_downloader = robust_downloader
+            
+            # ENHANCED: Pass cancellation callback to check before each series
+            results = robust_downloader.download_all_series_with_priority(
+                series_list=series_list,
+                base_output_dir=str(study_path),
+                priority_series=None,
+                progress_callback=robust_progress_callback,
+                widget_ref=None,
+                is_high_priority_patient=is_high_priority,
+                cancellation_callback=cancellation_callback
+            )
+            
+            # Cleanup
+            robust_downloader.disconnect()
+            
+            # Check results
+            completed_series = len(results.get('completed', []))
+            total_series = results.get('total', len(series_list))
+            
+            if completed_series == 0:
+                logger.error(f"No series downloaded for study {study_uid}")
+                return False
+            
+            logger.info(f"Download completed: {completed_series}/{total_series} series")
+            
+            # Send final progress callback with completed state
+            if progress_callback:
+                try:
+                    final_count = download_state.get('downloaded_count', 0)
+                    final_total = download_state.get('total_count', 0) or final_count or 1
+                    logger.debug(f"📊 Final progress: {final_count}/{final_total} (100%)")
+                    progress_callback(final_count, final_total, 100)
+                except Exception as cb_error:
+                    logger.warning(f"⚠️ Final progress callback error (non-fatal): {cb_error}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Download error for study {study_uid}: {e}")
+            import traceback
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            return False
     
     def _generate_thumbnails_for_study(self, study_uid: str, study_path: Path):
         """
@@ -1945,7 +1851,9 @@ class ResumableDicomSocketClient:
     
     def download_study_resumable(self, study_uid: str, batch_size: int = 10,
                                compression: str = "gzip", resume: bool = True,
-                               progress_callback: Optional[Callable] = None) -> bool:
+                               progress_callback: Optional[Callable] = None,
+                               patient_info: Optional[Dict[str, Any]] = None,
+                               cancellation_callback: Optional[Callable] = None) -> bool:
         """
         Download study with resumable capability (wrapper for UI compatibility)
         
@@ -1955,11 +1863,15 @@ class ResumableDicomSocketClient:
             compression (str): Compression type
             resume (bool): Whether to resume existing download
             progress_callback (callable): Progress callback function
+            patient_info (dict): Optional patient info to avoid "Unknown Patient" entries
+            cancellation_callback (callable): Callback that returns True if download should stop
             
         Returns:
             bool: True if download successful, False otherwise
         """
         logger.info(f"🔄 Starting resumable download for study: {study_uid}")
+        if patient_info:
+            logger.info(f"   Patient info provided: {patient_info.get('patient_name', 'N/A')}")
         
         # Use the working batch download method
         return self.download_study_batch_like_working_code(
@@ -1968,7 +1880,9 @@ class ResumableDicomSocketClient:
             batch_size=batch_size,
             compression=compression,
             resume=resume,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            patient_info=patient_info,
+            cancellation_callback=cancellation_callback
         )
     
     def resume_download(self, study_uid: str, output_dir: str, 

@@ -9,6 +9,7 @@ This module provides a robust download manager that:
 - Reconnects automatically if connection is lost
 - Tracks download progress and status
 - Provides fallback mechanisms
+- Supports dynamic priority levels (Critical/High/Normal/Low)
 """
 
 import asyncio
@@ -18,12 +19,32 @@ import gzip
 import os
 import time
 import threading
+import logging
+import random  # For retry jitter to prevent thundering herd
 from pathlib import Path
 from typing import Optional, Callable, List, Dict, Any
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, IntEnum
 from queue import Queue, Empty
 import traceback
+
+logger = logging.getLogger(__name__)
+
+# Import priority manager for coordination
+try:
+    from PacsClient.components.download_priority_manager import (
+        get_download_priority_manager, 
+        DownloadPriority
+    )
+    PRIORITY_MANAGER_AVAILABLE = True
+except ImportError:
+    PRIORITY_MANAGER_AVAILABLE = False
+    # Define fallback enum if manager not available
+    class DownloadPriority(IntEnum):
+        LOW = 0
+        NORMAL = 1
+        HIGH = 2
+        CRITICAL = 3
 
 
 class DownloadStatus(Enum):
@@ -49,7 +70,9 @@ class SeriesDownloadTask:
     error_message: str = ""
     downloaded_count: int = 0
     last_attempt_time: float = 0
-    is_high_priority: bool = False  # New field for priority
+    is_high_priority: bool = False  # Legacy field for backward compatibility
+    priority: int = 1  # DownloadPriority level (0=LOW, 1=NORMAL, 2=HIGH, 3=CRITICAL)
+    study_uid: str = ""  # For priority manager tracking
     
     def should_retry(self) -> bool:
         """Check if task should be retried"""
@@ -57,6 +80,14 @@ class SeriesDownloadTask:
             self.status == DownloadStatus.FAILED and 
             self.retry_count < self.max_retries
         )
+    
+    @property
+    def priority_level(self) -> DownloadPriority:
+        """Get priority as enum"""
+        try:
+            return DownloadPriority(self.priority)
+        except ValueError:
+            return DownloadPriority.NORMAL
 
 
 class RobustSeriesDownloader:
@@ -100,6 +131,67 @@ class RobustSeriesDownloader:
         # Priority control
         self._current_priority_series: Optional[str] = None
         self._priority_callback: Optional[Callable] = None
+        
+        # === PRIORITY INTERRUPT MECHANISM ===
+        # Allows higher-priority downloads to interrupt current lower-priority ones
+        self._priority_interrupt_requested = False
+        self._interrupt_for_study_uid: Optional[str] = None
+        
+        # === SEQUENTIAL DOWNLOAD ENFORCEMENT ===
+        # Track which series is currently being downloaded (ONLY ONE at a time)
+        self._currently_downloading_series_uid: Optional[str] = None
+        self._currently_downloading_series_number: Optional[str] = None
+        self._download_start_time: Optional[float] = None
+        
+        # === SERIES PARALLELISM CONFIGURATION ===
+        # NOTE: Parallel downloads are only for SERIES within ONE patient
+        # Multiple patients are ALWAYS downloaded sequentially (one at a time)
+        # This is enforced at the Download Manager level, not here
+        try:
+            from PacsClient.utils.socket_config import get_socket_config
+            config = get_socket_config()
+            self._parallel_series_enabled = config.is_parallel_downloads_enabled()
+            self._max_parallel_series = min(3, config.get_max_parallel_batches())  # Max 3 series parallel
+        except:
+            self._parallel_series_enabled = False
+            self._max_parallel_series = 1
+        
+        # Thread pool for parallel series downloads (only used if enabled)
+        self._thread_pool = None
+    
+    def request_priority_interrupt(self, for_study_uid: str = None) -> bool:
+        """
+        Request an interrupt of the current download for a higher-priority item.
+        
+        This is a NON-BLOCKING call that sets a flag. The download loop checks this
+        flag between batches and will yield to higher-priority downloads.
+        
+        Args:
+            for_study_uid: Optional study UID that is requesting the interrupt
+            
+        Returns:
+            True if interrupt was requested, False if nothing to interrupt
+        """
+        with self._lock:
+            if self._currently_downloading_series_uid:
+                self._priority_interrupt_requested = True
+                self._interrupt_for_study_uid = for_study_uid
+                print(f"⚡ [PRIORITY-INTERRUPT] Requested interrupt for current download")
+                print(f"   Current: {self._currently_downloading_series_number}")
+                print(f"   Requested by: {for_study_uid[:40] if for_study_uid else 'unknown'}...")
+                return True
+            return False
+    
+    def clear_priority_interrupt(self):
+        """Clear the priority interrupt flag (called after yielding)"""
+        with self._lock:
+            self._priority_interrupt_requested = False
+            self._interrupt_for_study_uid = None
+    
+    def is_interrupt_requested(self) -> bool:
+        """Check if a priority interrupt has been requested"""
+        with self._lock:
+            return self._priority_interrupt_requested
     
     def prioritize_series(self, series_number: str):
         """
@@ -126,27 +218,50 @@ class RobustSeriesDownloader:
         series_number: str,
         output_dir: str,
         expected_count: int = 0,
-        is_high_priority: bool = False
+        is_high_priority: bool = False,
+        study_uid: str = "",
+        priority_level: DownloadPriority = None
     ) -> SeriesDownloadTask:
         """Add a series to download queue with priority"""
+        # === CHECK FOR DUPLICATES ===
+        if series_uid in self._active_tasks:
+            print(f"⚠️ [DIAG-DUPLICATE] Series {series_number} (UID: {series_uid[:40]}...) is ALREADY in queue!")
+            print(f"   Existing task status: {self._active_tasks[series_uid].status}")
+            return self._active_tasks[series_uid]  # Return existing task instead of creating duplicate
+        
+        # Determine priority level
+        if priority_level is None:
+            priority_level = DownloadPriority.HIGH if is_high_priority else DownloadPriority.NORMAL
+        
         task = SeriesDownloadTask(
             series_uid=series_uid,
             series_number=series_number,
             output_dir=output_dir,
             expected_count=expected_count,
             max_retries=self.max_retries,
-            is_high_priority=is_high_priority
+            is_high_priority=is_high_priority or priority_level >= DownloadPriority.HIGH,
+            priority=priority_level,
+            study_uid=study_uid
         )
         self._active_tasks[series_uid] = task
         
-        if is_high_priority:
-            # درج در ابتدای صف اولویت‌دار
-            self._high_priority_queue.insert(0, task)
-            print(f"🎯 Added series {series_number} to HIGH priority queue (position 0)")
+        print(f"✅ [DIAG-ADD] Added series {series_number} to queue (priority: {priority_level.name})")
+        
+        if task.is_high_priority:
+            # Insert at position based on priority level
+            # CRITICAL at front, HIGH after CRITICAL
+            insert_pos = 0
+            for i, existing_task in enumerate(self._high_priority_queue):
+                if existing_task.priority >= priority_level:
+                    insert_pos = i + 1
+                else:
+                    break
+            self._high_priority_queue.insert(insert_pos, task)
+            logger.debug(f"Added series {series_number} to priority queue (level: {priority_level.name})")
         else:
-            # اضافه به صف معمولی
+            # Add to normal queue
             self._download_queue.put(task)
-            print(f"📋 Added series {series_number} to normal priority queue")
+            logger.debug(f"Added series {series_number} to normal queue")
         
         return task
         
@@ -156,6 +271,12 @@ class RobustSeriesDownloader:
         Add multiple series to download queue with priority support
         افزودن چندین سری به صف دانلود با پشتیبانی اولویت
         """
+        # === DIAGNOSTIC LOGGING ===
+        print(f"🔍 [DIAG-ADD-SERIES] Adding {len(series_list)} series to queue")
+        print(f"   Priority series: {priority_series}")
+        print(f"   Series numbers: {[s.get('series_number') for s in series_list]}")
+        # === END DIAGNOSTIC ===
+        
         for series_info in series_list:
             series_uid = series_info.get('series_uid')
             series_number = str(series_info.get('series_number', ''))
@@ -175,19 +296,89 @@ class RobustSeriesDownloader:
     
     def get_next_task(self) -> Optional[SeriesDownloadTask]:
         """
-        Get next task to process (high priority first)
-        دریافت تسک بعدی برای پردازش (اولویت بالا اول)
+        Get next task to process based on priority levels.
+        Priority order: CRITICAL (3) > HIGH (2) > NORMAL (1) > LOW (0)
+        
+        دریافت تسک بعدی برای پردازش بر اساس سطوح اولویت
+        
+        CRITICAL FIX: This method now properly dequeues tasks to ensure
+        ONE series downloads at a time (strict sequential processing).
         """
         with self._lock:
             # First check high priority queue
             if self._high_priority_queue:
-                return self._high_priority_queue.pop(0)
+                # Sort by priority level (highest first)
+                self._high_priority_queue.sort(key=lambda t: -t.priority)
+                task = self._high_priority_queue.pop(0)
+                return task
             
             # Then check normal queue
             try:
-                return self._download_queue.get_nowait()
+                task = self._download_queue.get_nowait()
+                return task
             except Empty:
                 return None
+    
+    def update_task_priority(self, series_uid: str, new_priority: DownloadPriority) -> bool:
+        """
+        Update the priority of a task dynamically.
+        Used when user actions change priority (e.g., opening a tab, loading in viewer).
+        
+        Returns True if task was found and updated.
+        """
+        with self._lock:
+            task = self._active_tasks.get(series_uid)
+            if task:
+                old_priority = task.priority
+                task.priority = new_priority
+                task.is_high_priority = new_priority >= DownloadPriority.HIGH
+                
+                # Move to high priority queue if upgraded
+                if new_priority >= DownloadPriority.HIGH and task not in self._high_priority_queue:
+                    self._high_priority_queue.insert(0, task)
+                
+                logger.debug(f"Task {task.series_number} priority updated: {old_priority} -> {new_priority}")
+                return True
+            return False
+    
+    def get_current_download_status(self) -> dict:
+        """
+        Get the current download status for UI display.
+        
+        Returns dict with:
+        - currently_downloading: series_number or None
+        - pending_count: number of series waiting
+        - completed_count: number of series completed
+        - failed_count: number of series failed
+        - is_running: whether the worker is running
+        """
+        with self._lock:
+            return {
+                'currently_downloading': self._currently_downloading_series_number,
+                'currently_downloading_uid': self._currently_downloading_series_uid,
+                'pending_high_priority': len(self._high_priority_queue),
+                'pending_normal': self._download_queue.qsize(),
+                'pending_total': len(self._high_priority_queue) + self._download_queue.qsize(),
+                'completed_count': len(self._completed_tasks),
+                'failed_count': len(self._failed_tasks),
+                'is_running': self._is_running,
+                'elapsed_seconds': time.time() - self._download_start_time if self._download_start_time else 0
+            }
+    
+    def is_series_downloading(self, series_uid: str) -> bool:
+        """Check if a specific series is currently being downloaded."""
+        with self._lock:
+            return self._currently_downloading_series_uid == series_uid
+    
+    def is_series_pending(self, series_uid: str) -> bool:
+        """Check if a specific series is pending in the queue."""
+        with self._lock:
+            # Check high priority queue
+            for task in self._high_priority_queue:
+                if task.series_uid == series_uid:
+                    return True
+            # Check normal queue (can't iterate directly, so check active_tasks)
+            return series_uid in self._active_tasks and self._active_tasks[series_uid].status == DownloadStatus.PENDING
     
     def download_all_series_with_priority(
         self,
@@ -195,12 +386,29 @@ class RobustSeriesDownloader:
         base_output_dir: str,
         priority_series: str = None,
         progress_callback: Callable = None,
-        widget_ref: Any = None
+        widget_ref: Any = None,
+        is_high_priority_patient: bool = False,
+        cancellation_callback: Callable = None
     ) -> Dict[str, Any]:
         """
         Download all series with priority support
+        
+        For HIGH/CRITICAL priority patients with parallel_downloads enabled:
+        - Downloads up to 3 series in parallel for faster access
+        - This is ONLY for series within ONE patient
+        - Multiple patients are ALWAYS downloaded sequentially
+        
+        For NORMAL/LOW priority or parallel disabled:
+        - Sequential series download (one at a time)
+        - Less resource intensive, better for background downloads
+        
+        ENHANCED: Added cancellation_callback for preemption support.
+        If cancellation_callback() returns True, download stops after current series.
+        
         دانلود همه سری‌ها با پشتیبانی اولویت
         """
+        # Store cancellation callback for the worker to check
+        self._cancellation_callback = cancellation_callback
         results = {
             'completed': [],
             'failed': [],
@@ -210,6 +418,25 @@ class RobustSeriesDownloader:
         
         if not series_list:
             return results
+        
+        # Decide whether to use parallel series download
+        # ONLY enable parallel for HIGH/CRITICAL priority patients when configured
+        use_parallel = (
+            self._parallel_series_enabled and 
+            is_high_priority_patient and 
+            len(series_list) > 1 and
+            self._max_parallel_series > 1
+        )
+        
+        if use_parallel:
+            print(f"🚀 [PARALLEL] Enabled for {len(series_list)} series (max {self._max_parallel_series} parallel)")
+            return self._download_series_parallel(
+                series_list, base_output_dir, priority_series, 
+                progress_callback, widget_ref
+            )
+        
+        # Standard sequential download
+        print(f"📥 [SEQUENTIAL] Downloading {len(series_list)} series one at a time")
         
         # Set priority series if specified
         if priority_series:
@@ -243,6 +470,172 @@ class RobustSeriesDownloader:
                     print(f"⚠️ Error in priority callback: {e}")
         
         return results
+    
+    def _download_series_parallel(
+        self,
+        series_list: List[Dict],
+        base_output_dir: str,
+        priority_series: str = None,
+        progress_callback: Callable = None,
+        widget_ref: Any = None
+    ) -> Dict[str, Any]:
+        """
+        Download multiple series in parallel for HIGH/CRITICAL priority patients.
+        
+        IMPORTANT CONSTRAINTS:
+        - This is ONLY for series within ONE patient
+        - Maximum 3 series in parallel to avoid overwhelming the system
+        - Each series still downloads completely before moving to next batch
+        - Priority series (if specified) downloads first before parallel batch
+        
+        This improves speed for urgent patients while maintaining clinical usability
+        (complete series are more useful than partial downloads across many series).
+        """
+        import concurrent.futures
+        
+        results = {
+            'completed': [],
+            'failed': [],
+            'total': len(series_list),
+            'priority_completed': False
+        }
+        
+        # Sort series: priority series first, then by series number
+        sorted_series = sorted(series_list, key=lambda s: (
+            0 if str(s.get('series_number', '')) == str(priority_series) else 1,
+            int(s.get('series_number', 999999)) if str(s.get('series_number', '')).isdigit() else 999999
+        ))
+        
+        # If priority series specified, download it first (sequential, for immediate access)
+        if priority_series:
+            priority_idx = next((i for i, s in enumerate(sorted_series) 
+                               if str(s.get('series_number', '')) == str(priority_series)), None)
+            if priority_idx is not None:
+                priority_s = sorted_series.pop(priority_idx)
+                print(f"🎯 [PARALLEL] Downloading priority series {priority_series} first")
+                
+                success = self._download_single_series_sync(
+                    priority_s, base_output_dir, progress_callback
+                )
+                if success:
+                    results['completed'].append(str(priority_s.get('series_number', '')))
+                    results['priority_completed'] = True
+                else:
+                    results['failed'].append(str(priority_s.get('series_number', '')))
+        
+        # Download remaining series in parallel batches
+        if sorted_series:
+            print(f"🚀 [PARALLEL] Downloading {len(sorted_series)} remaining series in parallel batches")
+            
+            # Process in batches to limit concurrency
+            batch_size = self._max_parallel_series
+            
+            for batch_start in range(0, len(sorted_series), batch_size):
+                batch = sorted_series[batch_start:batch_start + batch_size]
+                print(f"📦 [PARALLEL] Processing batch of {len(batch)} series")
+                
+                # Use ThreadPoolExecutor for parallel downloads
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as executor:
+                    # Submit all series in batch
+                    future_to_series = {
+                        executor.submit(
+                            self._download_single_series_sync, 
+                            series_info, 
+                            base_output_dir, 
+                            progress_callback
+                        ): series_info 
+                        for series_info in batch
+                    }
+                    
+                    # Wait for all to complete
+                    for future in concurrent.futures.as_completed(future_to_series):
+                        series_info = future_to_series[future]
+                        series_number = str(series_info.get('series_number', ''))
+                        try:
+                            success = future.result()
+                            if success:
+                                results['completed'].append(series_number)
+                                print(f"✅ [PARALLEL] Series {series_number} completed")
+                            else:
+                                results['failed'].append(series_number)
+                                print(f"❌ [PARALLEL] Series {series_number} failed")
+                        except Exception as e:
+                            results['failed'].append(series_number)
+                            print(f"❌ [PARALLEL] Series {series_number} exception: {e}")
+        
+        return results
+    
+    def _download_single_series_sync(
+        self,
+        series_info: Dict,
+        base_output_dir: str,
+        progress_callback: Callable = None
+    ) -> bool:
+        """
+        Download a single series synchronously (used by parallel download).
+        Creates its own connection to avoid conflicts.
+        """
+        series_uid = series_info.get('series_uid')
+        series_number = str(series_info.get('series_number', ''))
+        expected_count = series_info.get('image_count', 0)
+        
+        if not series_uid:
+            return False
+        
+        output_dir = os.path.join(base_output_dir, series_number)
+        
+        # Create a task for this series
+        task = SeriesDownloadTask(
+            series_uid=series_uid,
+            series_number=series_number,
+            output_dir=output_dir,
+            expected_count=expected_count,
+            max_retries=self.max_retries,
+            priority=DownloadPriority.HIGH  # Parallel downloads are for high priority
+        )
+        
+        # Store callback for this download
+        self._progress_callback = progress_callback
+        
+        # Notify start
+        if progress_callback:
+            try:
+                progress_callback('series_started', series_number, 0, 
+                                current_count=0, total_count=expected_count,
+                                series_uid=series_uid)
+            except:
+                pass
+        
+        # Connect and download
+        success = False
+        for attempt in range(self.max_retries + 1):
+            try:
+                if not self.ensure_connection():
+                    jitter = random.uniform(0, 0.3)
+                    time.sleep(self.reconnect_delay + jitter)
+                    continue
+                
+                success = self._download_series(task)
+                if success:
+                    break
+                    
+            except Exception as e:
+                print(f"⚠️ [PARALLEL] Series {series_number} attempt {attempt + 1} failed: {e}")
+                self.disconnect()
+                if attempt < self.max_retries:
+                    jitter = random.uniform(0, 0.3)
+                    time.sleep(self.retry_delay + jitter)
+        
+        # Notify completion
+        if progress_callback:
+            try:
+                status = 'series_complete' if success else 'series_failed'
+                progress_callback(status, series_number, 100 if success else 0,
+                                series_uid=series_uid)
+            except:
+                pass
+        
+        return success
     
     def __del__(self):
         """Cleanup on destruction"""
@@ -278,7 +671,9 @@ class RobustSeriesDownloader:
                 except Exception as e:
                     print(f"⚠️ Connection attempt {attempt + 1}/{self.max_retries} failed: {e}")
                     if attempt < self.max_retries - 1:
-                        time.sleep(self.reconnect_delay)
+                        # Add jitter to prevent thundering herd
+                        jitter = random.uniform(0, 0.3)
+                        time.sleep(self.reconnect_delay + jitter)
             
             self._is_connected = False
             print(f"❌ Failed to connect after {self.max_retries} attempts")
@@ -324,6 +719,7 @@ class RobustSeriesDownloader:
         شروع thread کارگر دانلود
         """
         if self._is_running:
+            print(f"⚠️ [DIAG-START] Worker already running! Ignoring duplicate start.")
             return
         
         self._progress_callback = progress_callback
@@ -333,7 +729,7 @@ class RobustSeriesDownloader:
         self._worker_thread = threading.Thread(target=self._download_worker, daemon=True)
         self._worker_thread.start()
         
-        print("🚀 Download worker started")
+        print(f"🚀 [DIAG-START] Download worker started (thread: {self._worker_thread.name})")
     
     def stop(self):
         """Stop the download worker"""
@@ -346,8 +742,20 @@ class RobustSeriesDownloader:
         Worker thread that processes the download queue
         Thread کارگر که صف دانلود را پردازش می‌کند
         """
+        print(f"🔍 [SERIES-WORKER] Started - SEQUENTIAL mode (ONE series at a time)")
+        
         while self._is_running:
             try:
+                # ENHANCED: Check cancellation callback before getting next task
+                if hasattr(self, '_cancellation_callback') and self._cancellation_callback:
+                    try:
+                        if self._cancellation_callback():
+                            print(f"⏹️ [SERIES-WORKER] Cancellation requested - stopping")
+                            self._is_running = False
+                            break
+                    except Exception:
+                        pass
+                
                 # Get next task (high priority first)
                 task = self.get_next_task()
                 
@@ -356,7 +764,11 @@ class RobustSeriesDownloader:
                     time.sleep(0.1)
                     continue
                 
-                # Process the task
+                # Log series start (this replaces verbose per-iteration logging)
+                print(f"📥 [SEQUENTIAL] Next series: {task.series_number} (priority: {task.priority.name})")
+                print(f"   Remaining in queue: high={len(self._high_priority_queue)}, normal={self._download_queue.qsize()}")
+                
+                # Process the task (BLOCKS until series is fully downloaded)
                 self._process_task(task)
                 
                 # Check for tasks that need retry
@@ -367,24 +779,64 @@ class RobustSeriesDownloader:
                 traceback.print_exc()
                 time.sleep(1)
         
-        print("⏹️ Download worker stopped")
+        print("⏹️ [SERIES-WORKER] Stopped")
     
     def _process_task(self, task: SeriesDownloadTask):
         """
-        Process a single download task with error handling
+        Process a single download task with error handling.
+        
+        CRITICAL: This method is BLOCKING - it downloads the entire series before returning.
+        Only ONE series can be downloaded at a time (sequential processing enforced).
+        
         پردازش یک task دانلود با مدیریت خطا
         """
+        # === SEQUENTIAL ENFORCEMENT: Mark this series as currently downloading ===
+        with self._lock:
+            # Check if another series is already downloading (should never happen with single worker)
+            if self._currently_downloading_series_uid is not None:
+                print(f"⚠️ [SEQUENTIAL-ERROR] Another series is already downloading!")
+                print(f"   Current: {self._currently_downloading_series_number}")
+                print(f"   Attempted: {task.series_number}")
+                # Don't process - put back in queue
+                self._download_queue.put(task)
+                return
+            
+            # Mark this series as currently downloading
+            self._currently_downloading_series_uid = task.series_uid
+            self._currently_downloading_series_number = task.series_number
+            self._download_start_time = time.time()
+        
         task.status = DownloadStatus.DOWNLOADING
         task.last_attempt_time = time.time()
         
         priority_marker = "🎯 " if task.is_high_priority else ""
-        print(f"{priority_marker}📥 Starting download: Series {task.series_number} (attempt {task.retry_count + 1})")
         
-        # Notify progress callback
+        # Calculate remaining series count
+        remaining_in_high = len(self._high_priority_queue)
+        remaining_in_normal = self._download_queue.qsize()
+        total_remaining = remaining_in_high + remaining_in_normal
+        
+        print(f"\n{'='*60}")
+        print(f"{priority_marker}📥 [SERIES START] Series {task.series_number}")
+        print(f"   Status: DOWNLOADING (attempt {task.retry_count + 1}/{task.max_retries})")
+        print(f"   Expected images: {task.expected_count}")
+        print(f"   Remaining series in queue: {total_remaining}")
+        print(f"   All other series: PAUSED (waiting)")
+        print(f"{'='*60}\n")
+        
+        # Notify progress callback with series_uid for UI tracking
         if self._progress_callback:
             try:
                 status = 'priority_started' if task.is_high_priority else 'series_started'
-                self._progress_callback(status, task.series_number, 0)
+                self._progress_callback(
+                    status, 
+                    task.series_number, 
+                    0,
+                    current_count=0,
+                    total_count=task.expected_count,
+                    series_uid=task.series_uid,
+                    series_description=f"Series {task.series_number}"
+                )
             except:
                 pass
         
@@ -393,8 +845,12 @@ class RobustSeriesDownloader:
             if not self.ensure_connection():
                 raise ConnectionError("Could not establish connection")
             
-            # Download the series
+            # Download the series (THIS BLOCKS UNTIL COMPLETE - enforces sequential)
+            print(f"📥 [SEQUENTIAL] Downloading series {task.series_number} (blocking until complete)...")
             success = self._download_series(task)
+            
+            elapsed = time.time() - self._download_start_time if self._download_start_time else 0
+            print(f"📥 [SEQUENTIAL] Series {task.series_number} finished in {elapsed:.1f}s, success={success}")
             
             if success:
                 task.status = DownloadStatus.COMPLETED
@@ -402,7 +858,16 @@ class RobustSeriesDownloader:
                 if task.series_uid in self._active_tasks:
                     del self._active_tasks[task.series_uid]
                 
-                print(f"{priority_marker}✅ Download completed: Series {task.series_number}")
+                print(f"✅ [DIAG-PROCESS] Series {task.series_number} completed successfully")
+                logger.debug(f"Download completed: Series {task.series_number}")
+                
+                # Notify priority manager
+                if PRIORITY_MANAGER_AVAILABLE:
+                    try:
+                        priority_manager = get_download_priority_manager()
+                        priority_manager.mark_series_completed(task.series_uid)
+                    except Exception:
+                        pass
                 
                 # Notify completion
                 if self._progress_callback:
@@ -426,7 +891,9 @@ class RobustSeriesDownloader:
                 
                 # Add back to appropriate queue
                 def delayed_retry():
-                    time.sleep(self.retry_delay)
+                    # Add jitter to prevent thundering herd
+                    jitter = random.uniform(0, 0.5)
+                    time.sleep(self.retry_delay + jitter)
                     if self._is_running:
                         if task.is_high_priority:
                             self._high_priority_queue.insert(0, task)
@@ -449,6 +916,30 @@ class RobustSeriesDownloader:
                         self._progress_callback(status, task.series_number, 0)
                     except:
                         pass
+        finally:
+            # === CRITICAL: Clear the currently downloading series marker ===
+            # This allows the next series to start downloading
+            with self._lock:
+                elapsed = time.time() - self._download_start_time if self._download_start_time else 0
+                print(f"\n{'='*60}")
+                print(f"📥 [SERIES END] Series {task.series_number} finished ({elapsed:.1f}s)")
+                print(f"   Status: {task.status.name}")
+                print(f"   Downloaded: {task.downloaded_count}/{task.expected_count} images")
+                
+                # Calculate next series info
+                remaining_in_high = len(self._high_priority_queue)
+                remaining_in_normal = self._download_queue.qsize()
+                total_remaining = remaining_in_high + remaining_in_normal
+                
+                if total_remaining > 0:
+                    print(f"   Next: Starting next series ({total_remaining} remaining)")
+                else:
+                    print(f"   Next: All series completed!")
+                print(f"{'='*60}\n")
+                
+                self._currently_downloading_series_uid = None
+                self._currently_downloading_series_number = None
+                self._download_start_time = None
     
     def _download_series(self, task: SeriesDownloadTask) -> bool:
         """
@@ -466,6 +957,19 @@ class RobustSeriesDownloader:
             batch_size = 10
             
             while has_more:
+                # CRITICAL: Check cancellation before each batch
+                if not self._is_running:
+                    print(f"⏹️ [SERIES-CANCEL] Download stopped mid-series (batch {batch_index})")
+                    return False
+                if hasattr(self, '_cancellation_callback') and self._cancellation_callback:
+                    try:
+                        if self._cancellation_callback():
+                            print(f"⏹️ [SERIES-CANCEL] Cancellation requested mid-series")
+                            self._is_running = False
+                            return False
+                    except Exception:
+                        pass
+                
                 # Create request
                 request = {
                     "endpoint": "GetSeriesImages",
@@ -538,8 +1042,9 @@ class RobustSeriesDownloader:
                         total_downloaded += 1
                         task.downloaded_count = total_downloaded
                         
-                        # Update progress
-                        if total_instances > 0:
+                        # Update progress (with series_uid for UI tracking)
+                        # OPTIMIZED: Only call progress callback every 10 images to reduce overhead
+                        if total_instances > 0 and (total_downloaded % 10 == 0 or total_downloaded == total_instances):
                             percent = (total_downloaded / total_instances) * 100
                             if self._progress_callback:
                                 try:
@@ -548,13 +1053,53 @@ class RobustSeriesDownloader:
                                         task.series_number, 
                                         percent,
                                         total_downloaded,
-                                        total_instances
+                                        total_instances,
+                                        series_uid=task.series_uid  # Added for UI tracking
                                     )
                                 except:
                                     pass
                     except Exception as e:
                         print(f"⚠️ Error saving instance {instance_number}: {e}")
                         continue
+                
+                # === CANCELLATION CHECK (after each batch) ===
+                if not self._is_running:
+                    print(f"⏹️ [SERIES-CANCEL] Stopped after batch {batch_index}")
+                    return False
+                if hasattr(self, '_cancellation_callback') and self._cancellation_callback:
+                    try:
+                        if self._cancellation_callback():
+                            print(f"⏹️ [SERIES-CANCEL] Cancellation requested after batch")
+                            self._is_running = False
+                            return False
+                    except Exception:
+                        pass
+                
+                # === PRIORITY INTERRUPT CHECK ===
+                # Check if a higher-priority download is waiting
+                if self._priority_interrupt_requested:
+                    print(f"⚡ [PRIORITY-INTERRUPT] Yielding series {task.series_number} at batch {batch_index}")
+                    print(f"   Downloaded so far: {total_downloaded}/{total_instances}")
+                    # Put task back in queue with current progress
+                    task.status = DownloadStatus.PENDING
+                    task.downloaded_count = total_downloaded
+                    # Add to front of normal queue (it will be resumed after high-priority)
+                    self._download_queue.put(task)
+                    # Clear interrupt flag
+                    self.clear_priority_interrupt()
+                    return False  # Indicate incomplete (will resume later)
+                
+                # === BACKGROUND THROTTLING ===
+                # For LOW priority downloads, add small delay between batches
+                # to reduce system load and protect app responsiveness
+                # HIGH/CRITICAL downloads run at full speed
+                if task.priority <= DownloadPriority.LOW:
+                    # LOW priority: 100ms delay between batches
+                    time.sleep(0.1)
+                elif task.priority == DownloadPriority.NORMAL:
+                    # NORMAL priority: 20ms delay (minimal throttling)
+                    time.sleep(0.02)
+                # HIGH and CRITICAL: no throttling, maximum speed
                 
                 # Check for more batches
                 has_more = data.get('has_more', False)
@@ -593,12 +1138,14 @@ class RobustSeriesDownloader:
                 self.disconnect()
                 
                 if attempt < max_attempts - 1:
-                    time.sleep(self.reconnect_delay)
+                    jitter = random.uniform(0, 0.3)
+                    time.sleep(self.reconnect_delay + jitter)
                     
             except Exception as e:
                 print(f"⚠️ Request error on attempt {attempt + 1}: {e}")
                 if attempt < max_attempts - 1:
-                    time.sleep(self.retry_delay)
+                    jitter = random.uniform(0, 0.3)
+                    time.sleep(self.retry_delay + jitter)
         
         return None
     

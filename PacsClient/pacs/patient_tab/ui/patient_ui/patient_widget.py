@@ -39,6 +39,13 @@ import threading
 import logging
 logger = logging.getLogger(__name__)
 
+# Import priority manager for download coordination
+try:
+    from PacsClient.components.download_priority_manager import get_download_priority_manager, DownloadPriority
+    PRIORITY_MANAGER_AVAILABLE = True
+except ImportError:
+    PRIORITY_MANAGER_AVAILABLE = False
+
 
 class PatientWidget(QWidget):
     # Signal for progressive series loading
@@ -1268,6 +1275,11 @@ class PatientWidget(QWidget):
     def _trigger_priority_display(self, series_key):
         """تحریک نمایش سری اولویت‌دار که قبلاً لود شده"""
         try:
+            # Check if lst_thumbnails_data exists
+            if not hasattr(self, 'lst_thumbnails_data') or not self.lst_thumbnails_data:
+                print(f"⚠️ No thumbnails data available for priority display")
+                return
+            
             # پیدا کردن داده‌های سری
             vtk_image_data = None
             metadata = None
@@ -3188,6 +3200,37 @@ class PatientWidget(QWidget):
             traceback.print_exc()
             return False
 
+    def update_download_progress(self, current: int, total: int, percent: int):
+        """
+        Update download progress for this patient's study.
+        
+        This is called by the Download Manager to provide real-time progress updates.
+        
+        Args:
+            current: Number of images downloaded so far
+            total: Total number of images in the study
+            percent: Progress percentage (0-100)
+        """
+        try:
+            # Store progress info for display
+            self._download_progress = {
+                'current': current,
+                'total': total,
+                'percent': percent
+            }
+            
+            # Update toolbar if available
+            if hasattr(self, 'toolbar') and self.toolbar:
+                if hasattr(self.toolbar, 'update_download_progress'):
+                    self.toolbar.update_download_progress(current, total, percent)
+            
+            # Log major milestones
+            if percent % 25 == 0 or percent == 100:
+                self.logger.debug(f"Download progress: {current}/{total} ({percent}%)")
+                
+        except Exception as e:
+            self.logger.debug(f"Error updating download progress: {e}")
+    
     def load_series_on_demand(self, series_number: str):
         """
         Public method to load a series on demand (thread-safe, can be called from background tasks)
@@ -3651,6 +3694,29 @@ class PatientWidget(QWidget):
                 # Check if image_viewer exists before updating
                 if vtk_widget.image_viewer is not None:
                     vtk_widget.image_viewer.update_corners_actors()
+                
+                # Notify priority manager that this series is now in the viewer
+                # This promotes the series to CRITICAL priority
+                if PRIORITY_MANAGER_AVAILABLE and self.study_uid:
+                    try:
+                        series_uid = metadata.get('series', {}).get('series_uid', '')
+                        # Determine layout position (0 for primary viewer)
+                        layout_position = 0
+                        if vtk_widget and self.lst_nodes_viewer:
+                            for i, node in enumerate(self.lst_nodes_viewer):
+                                if hasattr(node, 'vtk_widget') and node.vtk_widget == vtk_widget:
+                                    layout_position = i
+                                    break
+                        
+                        priority_manager = get_download_priority_manager()
+                        priority_manager.on_series_loaded_in_viewer(
+                            study_uid=self.study_uid,
+                            series_uid=series_uid,
+                            layout_position=layout_position
+                        )
+                        logger.debug(f"Series {series_number} promoted to CRITICAL (layout: {layout_position})")
+                    except Exception as pm_error:
+                        logger.debug(f"Could not notify priority manager: {pm_error}")
 
         except Exception as e:
             print('error on display loaded series:', e)

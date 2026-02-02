@@ -4,6 +4,16 @@ from PySide6.QtGui import QFont
 from .patient_tab_widget import PatientTabWidget
 from .service_tab_widget import ServiceTabWidget
 import os
+import logging
+
+# Import priority manager for download coordination
+try:
+    from PacsClient.components.download_priority_manager import get_download_priority_manager
+    PRIORITY_MANAGER_AVAILABLE = True
+except ImportError:
+    PRIORITY_MANAGER_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 
 class CustomTabManager:
@@ -362,6 +372,16 @@ class CustomTabManager:
             # Remove study_uid mapping
             tab_data = self.patient_tabs[tab_index]
             study_uid = tab_data.get('study_uid')
+            
+            # Notify priority manager about tab closure (demotes downloads to LOW)
+            if study_uid and PRIORITY_MANAGER_AVAILABLE:
+                try:
+                    priority_manager = get_download_priority_manager()
+                    priority_manager.on_patient_tab_closed(study_uid)
+                    logger.debug(f"Priority manager notified: tab closed for {study_uid[:20]}...")
+                except Exception as e:
+                    logger.debug(f"Could not notify priority manager: {e}")
+            
             if study_uid and study_uid in self.study_uid_to_tab:
                 del self.study_uid_to_tab[study_uid]
             
@@ -467,6 +487,16 @@ class CustomTabManager:
                 tab_data['custom_tab'].set_active(True)
                 # Set logo button as inactive when patient tab is selected
                 self.set_logo_active(False)
+            
+            # Notify priority manager about tab activation
+            study_uid = tab_data.get('study_uid')
+            if study_uid and PRIORITY_MANAGER_AVAILABLE:
+                try:
+                    priority_manager = get_download_priority_manager()
+                    priority_manager.on_patient_tab_activated(study_uid)
+                    logger.debug(f"Priority manager notified: tab activated for {study_uid[:20]}...")
+                except Exception as e:
+                    logger.debug(f"Could not notify priority manager: {e}")
         else:
             # If switching to patient list tab (index 0), set logo as active
             if index == 0:

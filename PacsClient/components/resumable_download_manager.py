@@ -63,6 +63,10 @@ class ResumableDownloadManager(QObject):
         self.progress_callbacks = {}  # study_uid -> callback
         self._is_connected = False  # Track connection status
         
+        # Performance optimization: Cache downloaded instances to avoid filesystem scans
+        self._downloaded_instances_cache = {}  # study_uid -> set of instance numbers
+        self._cache_dirty = {}  # study_uid -> bool (needs refresh from disk)
+        
         # Initialize socket service
         self._init_socket_service()
     
@@ -183,8 +187,25 @@ class ResumableDownloadManager(QObject):
             except Exception as e:
                 logger.error(f"⚠️ Failed to clear progress: {e}")
     
-    def get_downloaded_instances(self, study_uid: str) -> set:
-        """دریافت لیست instance های دانلود شده"""
+    def get_downloaded_instances(self, study_uid: str, use_cache: bool = True) -> set:
+        """
+        Get list of downloaded instances (OPTIMIZED with caching)
+        
+        Args:
+            study_uid: Study UID
+            use_cache: Use cached result if available (default: True)
+        
+        Returns:
+            Set of downloaded instance numbers
+        """
+        # Check cache first if enabled
+        if use_cache and study_uid in self._downloaded_instances_cache:
+            if not self._cache_dirty.get(study_uid, False):
+                logger.debug(f"📦 Using cached downloaded instances for {study_uid}")
+                return self._downloaded_instances_cache[study_uid].copy()
+        
+        # Scan filesystem (expensive operation)
+        logger.debug(f"🔍 Scanning filesystem for downloaded instances: {study_uid}")
         downloaded_instances = set()
         study_dir = SOURCE_PATH / study_uid
         
@@ -200,13 +221,27 @@ class ResumableDownloadManager(QObject):
                                 downloaded_instances.add(instance_num)
                             except ValueError:
                                 continue
+        
+        # Update cache
+        self._downloaded_instances_cache[study_uid] = downloaded_instances.copy()
+        self._cache_dirty[study_uid] = False
+        
         return downloaded_instances
     
     def download_study_resumable(self, study_uid: str, batch_size: int = 5, 
                                compression: str = "gzip", resume: bool = True,
-                               progress_callback: Optional[Callable] = None) -> bool:
+                               progress_callback: Optional[Callable] = None,
+                               patient_info: Optional[Dict[str, Any]] = None) -> bool:
         """
         دانلود study با قابلیت resume و ادغام کامل با دیتابیس
+        
+        Args:
+            study_uid: Study instance UID
+            batch_size: Number of instances per batch
+            compression: Compression type
+            resume: Whether to resume from previous progress
+            progress_callback: Callback for progress updates
+            patient_info: Optional dict with patient info to avoid "Unknown Patient" entries
         """
         # Check if already connected, if not try to connect
         if not self.is_connected():
@@ -222,6 +257,7 @@ class ResumableDownloadManager(QObject):
         logger.info(f"   Compression: {compression}")
         logger.info(f"   Resume: {resume}")
         logger.info(f"   Progress callback: {progress_callback is not None}")
+        logger.info(f"   Patient info: {patient_info.get('patient_name', 'N/A') if patient_info else 'None'}")
         self.download_started.emit(study_uid)
         
         try:
@@ -239,7 +275,8 @@ class ResumableDownloadManager(QObject):
                     batch_size=batch_size,
                     compression=compression,
                     resume=resume,
-                    progress_callback=progress_callback
+                    progress_callback=progress_callback,
+                    patient_info=patient_info  # Pass patient info through
                 )
                 
                 logger.info(f"🔍 Socket service download result: {success}")
@@ -369,6 +406,10 @@ class ResumableDownloadManager(QObject):
                         batch_downloaded += 1
                         downloaded_instances.add(instance_number)
                         
+                        # Update cache (performance optimization)
+                        if study_uid in self._downloaded_instances_cache:
+                            self._downloaded_instances_cache[study_uid].add(instance_number)
+                        
                         logger.info(f"   ✅ Saved: {filename} ({len(dicom_data)} bytes)")
                         
                     except Exception as e:
@@ -433,50 +474,6 @@ class ResumableDownloadManager(QObject):
             logger.error(f"❌ Download error: {e}")
             self.download_error.emit(study_uid, str(e))
             return False
-    
-    def cleanup(self):
-        """Cleanup resources"""
-        try:
-            # Clear active downloads
-            self.active_downloads.clear()
-            self.progress_callbacks.clear()
-            
-            # Disconnect from server
-            self.disconnect_from_server()
-            
-            logger.info("🧹 Download manager cleaned up")
-        except Exception as e:
-            logger.error(f"❌ Cleanup error: {e}")
-
-
-# Global download manager instance
-_download_manager = None
-
-
-def get_download_manager() -> ResumableDownloadManager:
-    """
-    Get global download manager instance with socket service integration
-    
-    Returns:
-        ResumableDownloadManager: Global download manager instance
-    """
-    global _download_manager
-    if _download_manager is None:
-        # Get socket configuration for connection
-        try:
-            logger.info("🔧 Creating new ResumableDownloadManager")
-            from ..utils.socket_config import get_socket_config
-            config = get_socket_config()
-            host = config.get_socket_host()
-            port = config.get_socket_port()
-            logger.info(f"   Host: {host}, Port: {port}")
-            _download_manager = ResumableDownloadManager(host=host, port=port)
-            logger.info("✅ ResumableDownloadManager created successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to get socket config, using defaults: {e}")
-            _download_manager = ResumableDownloadManager()
-    
-    return _download_manager
     
     def _process_dicom_data(self, instance_data: Dict[str, Any], compression: str) -> Optional[bytes]:
         """پردازش داده DICOM (decode و decompress)"""
@@ -659,3 +656,47 @@ def get_download_manager() -> ResumableDownloadManager:
                     "last_update": None,
                     "failed_count": 0
                 }
+    
+    def cleanup(self):
+        """Cleanup resources"""
+        try:
+            # Clear active downloads
+            self.active_downloads.clear()
+            self.progress_callbacks.clear()
+            
+            # Disconnect from server
+            self.disconnect_from_server()
+            
+            logger.info("🧹 Download manager cleaned up")
+        except Exception as e:
+            logger.error(f"❌ Cleanup error: {e}")
+
+
+# Global download manager instance
+_download_manager = None
+
+
+def get_download_manager() -> ResumableDownloadManager:
+    """
+    Get global download manager instance with socket service integration
+    
+    Returns:
+        ResumableDownloadManager: Global download manager instance
+    """
+    global _download_manager
+    if _download_manager is None:
+        # Get socket configuration for connection
+        try:
+            logger.info("🔧 Creating new ResumableDownloadManager")
+            from ..utils.socket_config import get_socket_config
+            config = get_socket_config()
+            host = config.get_socket_host()
+            port = config.get_socket_port()
+            logger.info(f"   Host: {host}, Port: {port}")
+            _download_manager = ResumableDownloadManager(host=host, port=port)
+            logger.info("✅ ResumableDownloadManager created successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to get socket config, using defaults: {e}")
+            _download_manager = ResumableDownloadManager()
+    
+    return _download_manager
