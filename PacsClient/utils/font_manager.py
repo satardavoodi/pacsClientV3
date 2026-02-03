@@ -7,11 +7,68 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 
 class FontManager:
-    """Manages loading and registration of custom fonts"""  
+    """Manages loading and registration of custom fonts including Roboto and IranYekan"""  
     
     def __init__(self):
         self.fonts_loaded = False
+        self.iranyekan_loaded = False
         self.font_ids = {}
+        
+    def load_iranyekan_fonts(self):
+        """Load all IranYekan font variants from the Fonts/iranyekan folder"""
+        if self.iranyekan_loaded:
+            return True
+            
+        try:
+            # Get the path to the Fonts folder
+            if getattr(sys, 'frozen', False):
+                base_path = Path(sys._MEIPASS)
+            else:
+                base_path = Path(__file__).parent.parent.parent
+            
+            iranyekan_dir = base_path / "Fonts" / "iranyekan"
+            
+            if not iranyekan_dir.exists():
+                print(f"IranYekan fonts directory not found: {iranyekan_dir}")
+                return False
+            
+            # IranYekan font file mappings (TTF files)
+            iranyekan_files = {
+                'IRANYekan-Regular': 'iranyekanwebregular.ttf',
+                'IRANYekan-Bold': 'iranyekanwebbold.ttf',
+                'IRANYekan-Light': 'iranyekanweblight.ttf',
+                'IRANYekan-Regular-FaNum': 'iranyekanwebregular(fanum).ttf',
+                'IRANYekan-Bold-FaNum': 'iranyekanwebbold(fanum).ttf',
+                'IRANYekan-Light-FaNum': 'iranyekanweblight(fanum).ttf',
+            }
+            
+            # Load each font file
+            loaded_count = 0
+            for font_name, font_file in iranyekan_files.items():
+                font_path = iranyekan_dir / font_file
+                if font_path.exists():
+                    font_id = QFontDatabase.addApplicationFont(str(font_path))
+                    if font_id != -1:
+                        self.font_ids[font_name] = font_id
+                        loaded_count += 1
+                    else:
+                        print(f"Failed to load IranYekan font: {font_path}")
+                else:
+                    print(f"IranYekan font file not found: {font_path}")
+            
+            self.iranyekan_loaded = loaded_count > 0
+            print(f"Loaded {loaded_count} IranYekan font variants")
+            return self.iranyekan_loaded
+            
+        except Exception as e:
+            print(f"Error loading IranYekan fonts: {str(e)}")
+            return False
+    
+    def load_all_fonts(self):
+        """Load all available fonts (Roboto and IranYekan)"""
+        roboto_ok = self.load_roboto_fonts()
+        iranyekan_ok = self.load_iranyekan_fonts()
+        return roboto_ok or iranyekan_ok
         
     def load_roboto_fonts(self):
         """Load all Roboto font variants from the Fonts folder"""
@@ -71,12 +128,16 @@ class FontManager:
             return False
     
     def get_font(self, font_name, size=12, weight=QFont.Normal, italic=False):
-        """Get a QFont object with the specified Roboto font"""
+        """Get a QFont object with the specified font (Roboto or IranYekan)"""
+        # Load all fonts if not loaded
         if not self.fonts_loaded:
             self.load_roboto_fonts()
+        if not self.iranyekan_loaded:
+            self.load_iranyekan_fonts()
         
-        # Map common font names to Roboto variants
+        # Map common font names to actual variants
         font_mapping = {
+            # Roboto mappings
             'Roboto': 'Roboto-Regular',
             'Roboto-Bold': 'Roboto-Bold',
             'Roboto-Medium': 'Roboto-Medium',
@@ -84,7 +145,12 @@ class FontManager:
             'Roboto-Thin': 'Roboto-Thin',
             'Roboto-Black': 'Roboto-Black',
             'Roboto-Condensed': 'Roboto-Condensed',
-            'Roboto-BoldCondensed': 'Roboto-BoldCondensed'
+            'Roboto-BoldCondensed': 'Roboto-BoldCondensed',
+            # IranYekan mappings
+            'IRANYekan': 'IRANYekan-Regular',
+            'IranYekan': 'IRANYekan-Regular',
+            'iranyekan': 'IRANYekan-Regular',
+            'IRANYekan-FaNum': 'IRANYekan-Regular-FaNum',
         }
         
         # Use mapped name or original name
@@ -113,11 +179,46 @@ class FontManager:
             font.setPixelSize(size)
             return font
     
+    def get_iranyekan_font(self, weight='regular', size=12, use_persian_numerals=False):
+        """
+        Get an IranYekan font with specified parameters.
+        
+        Args:
+            weight: 'light', 'regular', or 'bold'
+            size: Font size in pixels
+            use_persian_numerals: If True, use FaNum variant with Persian numbers
+        
+        Returns:
+            QFont: Configured IranYekan font
+        """
+        if not self.iranyekan_loaded:
+            self.load_iranyekan_fonts()
+        
+        # Build font name
+        weight_map = {
+            'light': 'Light',
+            'regular': 'Regular',
+            'bold': 'Bold'
+        }
+        weight_suffix = weight_map.get(weight.lower(), 'Regular')
+        fanum_suffix = '-FaNum' if use_persian_numerals else ''
+        font_name = f'IRANYekan-{weight_suffix}{fanum_suffix}'
+        
+        return self.get_font(font_name, size)
+    
     def get_available_fonts(self):
-        """Get list of available Roboto fonts"""
+        """Get list of all available fonts (Roboto and IranYekan)"""
         if not self.fonts_loaded:
             self.load_roboto_fonts()
+        if not self.iranyekan_loaded:
+            self.load_iranyekan_fonts()
         return list(self.font_ids.keys())
+    
+    def get_available_iranyekan_fonts(self):
+        """Get list of available IranYekan fonts"""
+        if not self.iranyekan_loaded:
+            self.load_iranyekan_fonts()
+        return [name for name in self.font_ids.keys() if 'IRANYekan' in name]
 
 
 # Global font manager instance
@@ -137,6 +238,36 @@ def get_roboto_font(font_name='Roboto-Regular', size=12, weight=QFont.Normal, it
 def get_available_roboto_fonts():
     """Get list of available Roboto fonts"""
     return font_manager.get_available_fonts()
+
+
+def load_iranyekan_fonts():
+    """Load all IranYekan fonts"""
+    return font_manager.load_iranyekan_fonts()
+
+
+def get_iranyekan_font(weight='regular', size=12, use_persian_numerals=False):
+    """
+    Get an IranYekan font with specified parameters.
+    
+    Args:
+        weight: 'light', 'regular', or 'bold'
+        size: Font size in pixels
+        use_persian_numerals: If True, use FaNum variant with Persian numbers
+    
+    Returns:
+        QFont: Configured IranYekan font
+    """
+    return font_manager.get_iranyekan_font(weight, size, use_persian_numerals)
+
+
+def get_available_iranyekan_fonts():
+    """Get list of available IranYekan fonts"""
+    return font_manager.get_available_iranyekan_fonts()
+
+
+def load_all_fonts():
+    """Load all available fonts (Roboto and IranYekan)"""
+    return font_manager.load_all_fonts()
 
 
 def setup_font_rendering():

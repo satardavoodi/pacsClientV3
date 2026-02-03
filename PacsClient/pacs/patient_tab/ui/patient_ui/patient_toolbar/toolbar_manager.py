@@ -239,6 +239,13 @@ class ToolbarManager:
             method_update_audio_counter=self.update_audio_counter,
             method_check_status_mic_btn=self.turn_on_off_mic_btn
         )
+        
+        # ✅ تایمر برای به‌روزرسانی موقعیت پنل ضبط هنگام حرکت پنجره
+        self._position_update_timer = QTimer()
+        self._position_update_timer.setInterval(100)  # هر 100 میلی‌ثانیه
+        self._position_update_timer.timeout.connect(self._update_soundbox_position)
+        self._mic_button_ref = None  # رفرنس به دکمه میکروفون
+
     def _show_curved_mpr_panel(self):
         """Show Curved MPR control panel"""
         try:
@@ -483,6 +490,108 @@ class ToolbarManager:
                 
         except Exception as e:
             print(f"[CURVED MPR] Close error: {e}")
+    
+    def _show_orthogonal_mpr_viewer(self):
+        """Show the new Orthogonal MPR Viewer with three synchronized views"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
+        from PySide6.QtCore import Qt
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        logger.info("Opening Orthogonal MPR Viewer...")
+        
+        try:
+            selected_widget = self.patient_widget.selected_widget
+            
+            # Check if we have a valid widget with image data
+            if not self.is_vtk_widget(selected_widget):
+                QMessageBox.warning(
+                    self.patient_widget, 
+                    "Error", 
+                    "Please select a valid viewer first."
+                )
+                return
+            
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                QMessageBox.warning(
+                    self.patient_widget, 
+                    "Error", 
+                    "No image loaded in viewer. Please load a DICOM series first."
+                )
+                return
+            
+            # Try to get VTK image data
+            vtk_image_data = None
+            if hasattr(selected_widget, 'vtk_image_data') and selected_widget.vtk_image_data is not None:
+                vtk_image_data = selected_widget.vtk_image_data
+            elif hasattr(selected_widget.image_viewer, 'GetInput'):
+                vtk_image_data = selected_widget.image_viewer.GetInput()
+            
+            if vtk_image_data is None:
+                QMessageBox.warning(
+                    self.patient_widget, 
+                    "Error", 
+                    "Could not get image data from viewer."
+                )
+                return
+            
+            # Import the Orthogonal MPR Widget
+            from PacsClient.pacs.patient_tab.orthogonal_mpr import OrthogonalMPRWidget
+            
+            # Create dialog to host the MPR viewer
+            dialog = QDialog(self.patient_widget)
+            dialog.setWindowTitle("Orthogonal MPR Viewer - Axial / Sagittal / Coronal")
+            dialog.setWindowFlags(Qt.Window)
+            dialog.resize(1400, 600)
+            dialog.setStyleSheet("""
+                QDialog {
+                    background-color: #0d0d0d;
+                }
+            """)
+            
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(0, 0, 0, 0)
+            
+            # Create and add the MPR widget
+            mpr_widget = OrthogonalMPRWidget()
+            layout.addWidget(mpr_widget)
+            
+            # Load the VTK image data
+            if mpr_widget.load_vtk_image(vtk_image_data):
+                logger.info("Orthogonal MPR Viewer loaded successfully")
+                
+                # Apply default window/level if available
+                if hasattr(selected_widget, 'window_width') and hasattr(selected_widget, 'window_center'):
+                    mpr_widget.set_window_level(
+                        selected_widget.window_width,
+                        selected_widget.window_center
+                    )
+                
+                dialog.show()
+            else:
+                QMessageBox.warning(
+                    self.patient_widget, 
+                    "Error", 
+                    "Failed to load image into MPR viewer."
+                )
+                dialog.close()
+                
+        except ImportError as e:
+            logger.error(f"Failed to import OrthogonalMPRWidget: {e}")
+            QMessageBox.critical(
+                self.patient_widget, 
+                "Import Error", 
+                f"Failed to import Orthogonal MPR module:\n{e}"
+            )
+        except Exception as e:
+            logger.error(f"Error showing Orthogonal MPR Viewer: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self.patient_widget, 
+                "Error", 
+                f"Error opening Orthogonal MPR Viewer:\n{e}"
+            )
     
     def _generate_curved_mpr_from_points(self, points, image_data):
         """Generate curved MPR from points and display it"""
@@ -1314,6 +1423,47 @@ class ToolbarManager:
         capture_btn: BadgeButton = self.tools_button[self.tool_access.CAPTURE]
         capture_btn.setCount(len(lst_images))
 
+    def _update_soundbox_position(self):
+        try:
+            # Check if button reference exists and is valid
+            if not hasattr(self, '_mic_button_ref') or not self._mic_button_ref:
+                return
+                
+            # Check if soundbox exists and is visible
+            # Note: Accessing isVisible() can raise RuntimeError if C++ object is deleted
+            if not hasattr(self, '_ToolbarManager__soundbox'):
+                return
+                
+            if not self.__soundbox.isVisible():
+                return
+            
+            # محاسبه موقعیت دقیق دکمه به صورت گلوبال
+            button_global_pos = self._mic_button_ref.mapToGlobal(QPoint(0, 0))
+            button_height = self._mic_button_ref.height()
+            button_width = self._mic_button_ref.width()
+            
+            # محاسبه موقعیت جدید پنل (زیر دکمه، با راست‌چین)
+            panel_x = button_global_pos.x() + button_width - self.__soundbox.width()
+            panel_y = button_global_pos.y() + button_height + 2  # 2 پیکسل فاصله
+            
+            # تنظیم موقعیت مستقیم
+            self.__soundbox.move(panel_x, panel_y)
+            
+        except RuntimeError as e:
+            # Handle C++ object deletion specifically
+            if "already deleted" in str(e):
+                print(f"[Voice Panel] VoiceWidget deleted, stopping position timer")
+                self._position_update_timer.stop()
+                # Optionally reset the reference so it gets recreated on next use
+                if hasattr(self, '_ToolbarManager__soundbox'):
+                    delattr(self, '_ToolbarManager__soundbox')
+            else:
+                raise  # Re-raise if it's a different RuntimeError
+        except Exception as e:
+            # در صورت خطا، تایمر را متوقف کن
+            print(f"[Voice Panel] Error updating position: {e}")
+            self._position_update_timer.stop()
+    
     def _on_mic_clicked(self, mic_btn):
         selected_widget = self.patient_widget.selected_widget
 
@@ -1324,6 +1474,10 @@ class ToolbarManager:
         if soundbox.isVisible():
             soundbox.hide()
             self.turn_on_off_mic_btn(False)
+            # تغییر آیکون به حالت عادی
+            mic_btn.setIcon(QIcon(f"{ICON_PATH}/mic.png"))
+            # توقف تایمر به‌روزرسانی موقعیت
+            self._position_update_timer.stop()
             return
 
         # 2. چک میکروفون
@@ -1334,18 +1488,38 @@ class ToolbarManager:
                                 "No microphone device found. Please connect a microphone and try again.")
             return
 
-        # 3. محاسبه موقعیت دقیق
-        btn_global_pos = mic_btn.mapToGlobal(QPoint(0, mic_btn.height()))
+        # 3. نمایش دیالوگ تأیید
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self.patient_widget,
+            'Start Voice Recording',
+            'Do you want to start recording audio?',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
         
-        # تنظیم موقعیت فریم و نمایش
-        soundbox.show_under(mic_btn)
-        soundbox.activateWindow()  # 🔹 فعال‌سازی مجدد برای جلوگیری از پرش
-        soundbox.raise_()  # 🔹 بالا آوردن پنجره
+        if reply == QMessageBox.No:
+            mic_btn.setChecked(False)
+            return
 
-        # 4. شروع/توقف ضبط
+        # 4. ذخیره رفرنس دکمه برای به‌روزرسانی موقعیت
+        self._mic_button_ref = mic_btn
+        
+        # 5. تنظیم موقعیت فریم و نمایش
+        soundbox.show_under(mic_btn)
+        soundbox.activateWindow()
+        soundbox.raise_()
+        
+        # تغییر آیکون به حالت ضبط (قرمز)
+        mic_btn.setIcon(qta.icon('fa5s.microphone', color='#ef4444'))
+        
+        # شروع تایمر به‌روزرسانی موقعیت
+        self._position_update_timer.start()
+
+        # 6. شروع/توقف ضبط
         soundbox.toggle_recording(selected_widget)
 
-        # 5. وضعیت دکمه
+        # 7. وضعیت دکمه
         if self.tool_selected == self.tool_access.MICROPHONE:
             self.tool_selected = None
             self.update_audio_counter()
@@ -1394,13 +1568,21 @@ class ToolbarManager:
 
     def get_soundbox(self):
         """Get the VoiceWidget instance"""
-        if not hasattr(self, '__soundbox'):
-            # Initialize if not exists
-            self.__soundbox = VoiceWidget(
-                patient_widget=self.patient_widget,
-                method_update_audio_counter=self.update_audio_counter,
-                method_check_status_mic_btn=self.turn_on_off_mic_btn
-            )
+        try:
+            if hasattr(self, '_ToolbarManager__soundbox'):
+                # Verify C++ object still exists by calling a harmless method
+                self._ToolbarManager__soundbox.objectName()
+                return self._ToolbarManager__soundbox
+        except RuntimeError:
+            # C++ object was deleted, will recreate below
+            pass
+        
+        # Initialize if not exists or was deleted
+        self.__soundbox = VoiceWidget(
+            patient_widget=self.patient_widget,
+            method_update_audio_counter=self.update_audio_counter,
+            method_check_status_mic_btn=self.turn_on_off_mic_btn
+        )
         return self.__soundbox
 
     def turn_on_off_mic_btn(self, status=None):
@@ -2620,42 +2802,52 @@ class ToolbarManager:
                 )
                 return
             
-            # Get the active series number
-            active_series_number = selected_widget.last_series_show
-            logger.info(f"Active series number: {active_series_number}")
+            # ✅ FIX: last_series_show stores the LIST INDEX (0-based), not the series number
+            active_series_index = selected_widget.last_series_show
+            total_thumbnails = len(self.patient_widget.lst_thumbnails_data)
             
-            # Find the series data by searching for matching series_number
-            series_data = None
-            vtk_image_data = None
+            logger.info(f"Active series index: {active_series_index} (total thumbnails: {total_thumbnails})")
             
-            for i in range(len(self.patient_widget.lst_thumbnails_data)):
-                try:
-                    thumbnail_data = self.patient_widget.lst_thumbnails_data[i]
-                    thumb_metadata = thumbnail_data.get('metadata', {})
-                    series_metadata = thumb_metadata.get('series', {})
-                    series_num = int(series_metadata.get('series_number', -1))
-                    
-                    logger.info(f"   [{i}] series_number={series_num}, looking for {active_series_number}")
-                    
-                    if series_num == int(active_series_number):
-                        series_data = thumbnail_data
-                        vtk_image_data = thumbnail_data.get('vtk_image_data')
-                        logger.info(f"   ✅ MATCH! Found series at index {i}")
-                        break
-                except (KeyError, ValueError, TypeError) as e:
-                    logger.debug(f"   [ERROR] checking thumbnail data at index {i}: {e}")
-                    continue
-            
-            if series_data is None or vtk_image_data is None:
-                logger.error(f"Series number {active_series_number} not found or no VTK data")
+            # Validate index bounds
+            if not isinstance(active_series_index, int) or active_series_index < 0 or active_series_index >= total_thumbnails:
+                logger.error(f"Invalid series index: {active_series_index}")
                 QMessageBox.warning(
                     self.patient_widget,
                     "Invalid Series",
-                    "Could not find VTK image data for the active series."
+                    f"Series index {active_series_index} is out of range.\nAvailable indices: 0 to {total_thumbnails-1}"
                 )
                 return
             
-            logger.info("Replacing viewport with Zeta MPR viewer...")
+            # ✅ FIX: Get data directly by index instead of searching by series number
+            try:
+                series_data = self.patient_widget.lst_thumbnails_data[active_series_index]
+                vtk_image_data = series_data.get('vtk_image_data')
+                thumb_metadata = series_data.get('metadata', {})
+                series_metadata = thumb_metadata.get('series', {})
+                series_number = series_metadata.get('series_number', 'Unknown')
+                
+                if vtk_image_data is None:
+                    logger.error(f"No VTK image data at index {active_series_index}")
+                    QMessageBox.warning(
+                        self.patient_widget,
+                        "No Image Data",
+                        "No VTK image data available for the selected series."
+                    )
+                    return
+                    
+                logger.info(f"   ✅ Found series at index {active_series_index}, series_number={series_number}")
+                logger.info(f"   vtk_image_data dimensions: {vtk_image_data.GetDimensions()}")
+                
+            except Exception as e:
+                logger.error(f"Error accessing series data at index {active_series_index}: {e}")
+                import traceback
+                traceback.print_exc()
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Data Error",
+                    f"Error accessing series data: {str(e)}"
+                )
+                return
             
             # Get parent widget and layout
             parent_widget = selected_widget.parent()
@@ -2666,50 +2858,64 @@ class ToolbarManager:
             if parent_layout:
                 from PySide6.QtWidgets import QGridLayout
                 if isinstance(parent_layout, QGridLayout):
-                    # Find the widget's position in the grid
                     for i in range(parent_layout.count()):
                         item = parent_layout.itemAt(i)
                         if item and item.widget() == selected_widget:
-                            grid_position = parent_layout.getItemPosition(i)  # Returns (row, col, rowSpan, colSpan)
+                            grid_position = parent_layout.getItemPosition(i)
                             break
             
             # Hide the original widget
             selected_widget.setVisible(False)
             
-            # Create Zeta MPR widget WITH PARENT to keep it embedded
+            # ✅ NOTE: If "zeta mpr" folder has space in name, consider renaming to "zeta_mpr"
+            # The following import logic is preserved but path handling improved
             print("Creating Zeta MPR viewer...", file=sys.stderr, flush=True)
             
-            # Import Zeta MPR viewer from zeta mpr folder (folder name has space)
             import os
             import shutil
             import importlib.util
             
-            # Get path to patient_tab directory (4 levels up from toolbar_manager.py)
             patient_tab_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
             zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta mpr")
+            
+            # Fallback if folder doesn't exist with space, try with underscore
+            if not os.path.exists(zeta_mpr_dir):
+                zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta_mpr")
+            
+            if not os.path.exists(zeta_mpr_dir):
+                logger.error(f"Zeta MPR directory not found: {zeta_mpr_dir}")
+                QMessageBox.critical(
+                    self.patient_widget,
+                    "Error",
+                    "Zeta MPR module not found.\n\nPlease ensure 'zeta_mpr' folder exists in patient_tab directory."
+                )
+                selected_widget.setVisible(True)
+                return
+            
             viewers_dir = os.path.join(patient_tab_dir, "viewers")
             
-            # Temporarily copy vtk_3d_presets.py to zeta mpr folder to fix imports
+            # Temporarily copy vtk_3d_presets.py if needed
             vtk_presets_src = os.path.join(viewers_dir, "vtk_3d_presets.py")
             vtk_presets_dst = os.path.join(zeta_mpr_dir, "vtk_3d_presets.py")
             copied_file = False
             
             try:
-                # Copy the file if it doesn't exist in zeta mpr
                 if os.path.exists(vtk_presets_src) and not os.path.exists(vtk_presets_dst):
                     shutil.copy2(vtk_presets_src, vtk_presets_dst)
                     copied_file = True
-                    print(f"Copied vtk_3d_presets.py to zeta mpr folder", file=sys.stderr, flush=True)
                 
-                # Import the zeta mpr package properly using importlib
-                # This allows the package's __init__.py to run and set up relative imports
+                # Import using importlib to handle spaces in path
                 init_path = os.path.join(zeta_mpr_dir, "__init__.py")
+                if not os.path.exists(init_path):
+                    logger.error(f"__init__.py not found in {zeta_mpr_dir}")
+                    QMessageBox.critical(self.patient_widget, "Error", "Zeta MPR module is missing __init__.py")
+                    return
+                    
                 spec = importlib.util.spec_from_file_location("zeta_mpr_pkg", init_path)
                 zeta_mpr_pkg = importlib.util.module_from_spec(spec)
                 sys.modules["zeta_mpr_pkg"] = zeta_mpr_pkg
                 spec.loader.exec_module(zeta_mpr_pkg)
                 
-                # Now we can access StandardMPRViewer from the package
                 zeta_widget = zeta_mpr_pkg.StandardMPRViewer(
                     vtk_image_data=vtk_image_data,
                     parent=parent_widget
@@ -2723,11 +2929,9 @@ class ToolbarManager:
                         parent_layout.addWidget(zeta_widget, row, col, rowSpan, colSpan)
                         logger.info(f"Zeta MPR added to grid at position ({row}, {col})")
                 elif parent_layout:
-                    # Fallback: just add to layout
                     parent_layout.addWidget(zeta_widget)
-                    logger.info("Zeta MPR added to layout (non-grid)")
                 
-                # Store reference to restore later
+                # Store reference
                 selected_widget._zeta_mpr_widget = zeta_widget
                 selected_widget._original_visible = True
                 
@@ -2738,20 +2942,15 @@ class ToolbarManager:
                 logger.info("✓ Zeta MPR viewer replaced viewport successfully")
                 logger.info("✓ MPR button is now active (green)")
             finally:
-                # Clean up sys.modules
+                # Cleanup
                 if "zeta_mpr_pkg" in sys.modules:
                     del sys.modules["zeta_mpr_pkg"]
-                
-                # Remove copied file if we created it
                 if copied_file and os.path.exists(vtk_presets_dst):
                     try:
                         os.remove(vtk_presets_dst)
-                        print(f"Cleaned up temporary vtk_3d_presets.py", file=sys.stderr, flush=True)
                     except:
-                        pass  # Ignore cleanup errors
-            
-            logger.info("=" * 60)
-            
+                        pass
+                        
         except Exception as e:
             logger.error(f"ERROR launching Zeta MPR: {e}", exc_info=True)
             import traceback
@@ -2761,6 +2960,9 @@ class ToolbarManager:
                 "Error",
                 f"Error launching Zeta MPR:\n{str(e)}"
             )
+            # Restore original widget visibility on error
+            if selected_widget:
+                selected_widget.setVisible(True)
 
     def toggle_mpr_DEPRECATED_OLD_MPRVIEWER(self, selected_widget=None):
         """
@@ -2785,56 +2987,97 @@ class ToolbarManager:
         """
         import logging
         import sys
+        import os
         logger = logging.getLogger(__name__)
         
         print("=" * 80, file=sys.stderr, flush=True)
         print("TOGGLE MPR FUNCTION STARTED", file=sys.stderr, flush=True)
         
-        # Get selected_widget from patient_widget if not provided
         if selected_widget is None:
             selected_widget = self.patient_widget.selected_widget
-            print(f"Got selected_widget from patient_widget: {selected_widget}", file=sys.stderr, flush=True)
         
-        print(f"selected_widget: {selected_widget}", file=sys.stderr, flush=True)
-        print(f"selected_widget type: {type(selected_widget)}", file=sys.stderr, flush=True)
-        print(f"tool_selected: {self.tool_selected}", file=sys.stderr, flush=True)
-        print(f"tool_access.MPR: {self.tool_access.MPR}", file=sys.stderr, flush=True)
-        
-        logger.info("=" * 80)
-        logger.info("TOGGLE MPR CALLED")
         logger.info(f"selected_widget: {selected_widget}")
         logger.info(f"selected_widget type: {type(selected_widget)}")
-        logger.info(f"tool_selected: {self.tool_selected}")
-        logger.info(f"tool_access.MPR: {self.tool_access.MPR}")
-
-        # if self.tool_selected == self.tool_access.MPR:  # deactivate tool
-        # if self.tool_selected in [self.tool_access.MPR, self.tool_access.RULER]:  # deactivate tool
-        if self.tool_selected is not None and self.tool_access.MPR in self.tool_selected:
-            logger.info("Deactivating MPR (closing - toggle off)")
+        
+        # Check if MPR is currently active on this widget
+        mpr_active = False
+        mpr_widget = None
+        
+        if hasattr(selected_widget, '_mpr_widget') and selected_widget._mpr_widget:
+            mpr_active = True
+            mpr_widget = selected_widget._mpr_widget
+            logger.info("Found _mpr_widget on selected_widget")
+        elif hasattr(selected_widget, '_zeta_mpr_widget') and selected_widget._zeta_mpr_widget:
+            mpr_active = True
+            mpr_widget = selected_widget._zeta_mpr_widget
+            logger.info("Found _zeta_mpr_widget on selected_widget")
+        elif hasattr(selected_widget, '_new_mpr_zeta_widget') and selected_widget._new_mpr_zeta_widget:
+            mpr_active = True
+            mpr_widget = selected_widget._new_mpr_zeta_widget
+            logger.info("Found _new_mpr_zeta_widget on selected_widget")
+        elif hasattr(selected_widget, '_original_widget'):
+            # selected_widget itself IS the MPR widget (back-reference exists)
+            mpr_active = True
+            mpr_widget = selected_widget
+            logger.info("selected_widget has _original_widget - it IS the MPR widget")
+        
+        # Also check tool_selected state
+        tool_is_mpr = (self.tool_selected is not None and 
+                    (self.tool_access.MPR in str(self.tool_selected) or 
+                        getattr(self, '_new_mpr_zeta_active', False)))
+        
+        if mpr_active or tool_is_mpr:
+            logger.info("Deactivating MPR (already active)")
+            print("[DEACTIVATE] Closing MPR and restoring original viewer...", file=sys.stderr, flush=True)
+            
             self.tool_selected = None
-            # Restore original viewer
+            if hasattr(self, '_new_mpr_zeta_active'):
+                self._new_mpr_zeta_active = False
+            
             try:
-                self._restore_selected_viewer(selected_widget)
+                # Determine the original widget to restore
+                original_widget = selected_widget
+                
+                if hasattr(selected_widget, '_original_widget'):
+                    # Case: selected_widget is the MPR widget itself
+                    original_widget = selected_widget._original_widget
+                    logger.info(f"Restoring from MPR widget back-reference: {original_widget}")
+                elif mpr_widget and mpr_widget != selected_widget:
+                    # Case: selected_widget is the original, mpr_widget is the MPR
+                    original_widget = selected_widget
+                    logger.info(f"Restoring using selected_widget as original: {original_widget}")
+                
+                # Call the restoration method
+                self._restore_selected_viewer(original_widget)
+                print("[DEACTIVATE] Original viewer restored successfully", file=sys.stderr, flush=True)
+                
             except Exception as e:
                 logger.error(f"Error restoring viewer: {e}", exc_info=True)
+                print(f"[DEACTIVATE] ERROR restoring viewer: {e}", file=sys.stderr, flush=True)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+                
             self.handle_buttons_checked()
-            logger.info("✓ MPR closed via toggle")
-        else:
-            logger.info("Activating MPR (opening - toggle on)")
-            self.check_and_deactivate_tools()
+            print("MPR deactivated successfully", file=sys.stderr, flush=True)
+            logger.info("MPR deactivated successfully")
+            logger.info("=" * 80)
+            return
 
-            # Check if selected_widget is None
-            if selected_widget is None:
-                import sys
-                print("ERROR: selected_widget is None!", file=sys.stderr, flush=True)
-                logger.error("selected_widget is None! Cannot open MPR viewer.")
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(self.patient_widget, "MPR Viewer", "Please select a viewer first.")
-                return
+        # ==================== ACTIVATION CODE ====================
+        logger.info("Activating MPR")
+        print("[ACTIVATE] Opening MPR viewer...", file=sys.stderr, flush=True)
+        self.check_and_deactivate_tools()
 
-            # Get VTK image data - reuse last MPR series if available
-            try:
-                # PRIORITY 1: Check if we have a previous MPR series to reopen
+        if selected_widget is None:
+            print("ERROR: selected_widget is None!", file=sys.stderr, flush=True)
+            logger.error("selected_widget is None! Cannot open MPR viewer.")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self.patient_widget, "MPR Viewer", "Please select a viewer first.")
+            return
+
+        # Get VTK image data - reuse last MPR series if available
+        try:
+            # PRIORITY 1: Check if we have a previous MPR series to reopen
                 if self.last_mpr_series_index is not None and self.last_mpr_vtk_data is not None:
                     logger.info(f"🔄 Reopening MPR with last series: {self.last_mpr_series_index}")
                     series_index = self.last_mpr_series_index
@@ -2956,6 +3199,82 @@ class ToolbarManager:
             logger.info("=" * 80)
         """
 
+        try:
+            if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
+                logger.warning("No series loaded in selected viewport")
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.patient_widget, "MPR Viewer", "No series loaded in selected viewport.")
+                return
+
+            # ✅ FIX: Use last_series_show as INDEX (not series number)
+            active_series_index = selected_widget.last_series_show
+            logger.info(f"Active series index: {active_series_index}")
+            
+            # Validate index
+            total_thumbnails = len(self.patient_widget.lst_thumbnails_data)
+            if active_series_index < 0 or active_series_index >= total_thumbnails:
+                logger.error(f"Invalid index: {active_series_index}")
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.patient_widget, "Error", f"Invalid series index: {active_series_index}")
+                return
+            
+            # Get data directly by index
+            thumbnail_data = self.patient_widget.lst_thumbnails_data[active_series_index]
+            vtk_image_data = thumbnail_data.get('vtk_image_data')
+            metadata = thumbnail_data.get('metadata', {})
+            series_metadata = metadata.get('series', {})
+            
+            series_number = series_metadata.get('series_number', 'Unknown')
+            logger.info(f"   ✅ Found series at index {active_series_index}, series_number={series_number}")
+
+            if vtk_image_data is None:
+                logger.warning(f"No image data available at index {active_series_index}")
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.patient_widget, "MPR Viewer", f"No image data available.")
+                return
+
+            logger.info(f"vtk_image_data found: {vtk_image_data}")
+            
+            # Get DICOM directory and window/level from this specific series
+            dicom_directory = series_metadata.get('series_path')
+            window_width = None
+            window_center = None
+            
+            instances = metadata.get('instances', [])
+            if instances and len(instances) > 0:
+                first_instance = instances[0]
+                if not dicom_directory:
+                    first_instance_path = first_instance.get('instance_path')
+                    if first_instance_path:
+                        dicom_directory = os.path.dirname(first_instance_path)
+                window_width = first_instance.get('window_width')
+                window_center = first_instance.get('window_center')
+                logger.info(f"   DICOM directory: {dicom_directory}")
+                logger.info(f"   Window/Level: {window_width}/{window_center}")
+
+            print("Calling _replace_selected_viewport_with_mpr...", file=sys.stderr, flush=True)
+            self._replace_selected_viewport_with_mpr(
+                selected_widget, 
+                vtk_image_data, 
+                dicom_directory, 
+                window_width, 
+                window_center
+            )
+            print("_replace_selected_viewport_with_mpr completed successfully", file=sys.stderr, flush=True)
+
+        except Exception as e:
+            logger.error(f"Error opening MPR viewer: {e}", exc_info=True)
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self.patient_widget, "MPR Viewer Error", f"Error opening MPR viewer:\n{str(e)}")
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            return
+
+        self.tool_selected = self.tool_access.MPR
+        self.handle_buttons_checked()
+        logger.info("MPR toggle completed successfully")
+        logger.info("=" * 80)
+
     def _replace_selected_viewport_with_mpr_DEPRECATED(self, selected_widget, vtk_image_data, dicom_directory=None, window_width=None, window_center=None):
         """
         DEPRECATED: This method used the old MprViewer module which has been removed.
@@ -3017,14 +3336,19 @@ class ToolbarManager:
         # Create MPR widget WITH PARENT to avoid popup window
         print("Creating MprViewerWrapper...", file=sys.stderr, flush=True)
         try:
+            # Define callback to restore original viewer when MPR is closed
+            def restore_original_viewer_callback():
+                self._restore_selected_viewer(selected_widget)
+
             # Pass dicom_directory (preferred) AND vtk_image_data (fallback)
-            # Also pass window/level if available
+            # Also pass window/level if available and the close callback
             mpr_widget = MprViewerWrapper(
                 vtk_image_data=vtk_image_data,
                 dicom_directory=dicom_directory,
                 parent=parent_widget,
                 window_width=window_width,
-                window_center=window_center
+                window_center=window_center,
+                close_callback=restore_original_viewer_callback
             )
             print("MprViewerWrapper created successfully", file=sys.stderr, flush=True)
         except Exception as e:
@@ -3207,14 +3531,27 @@ class ToolbarManager:
         import logging
         logger = logging.getLogger(__name__)
         
-        # Remove MPR widget if exists
-        print('flag:', hasattr(selected_widget, '_mpr_widget'))
+        # Find MPR widget (handle different MPR implementations)
+        mpr_widget = None
+        original_widget = selected_widget
+        
+        # Case 1: selected_widget has _mpr_widget attribute (MprViewerWrapper)
         if hasattr(selected_widget, '_mpr_widget'):
             mpr_widget = selected_widget._mpr_widget
             
-            # CRITICAL: Must cleanup VTK resources BEFORE deleteLater()
-            # This prevents crashes in frozen (exe) builds where VTK OpenGL
-            # resources must be properly released before Qt destroys the widget
+        # Case 2: selected_widget has _zeta_mpr_widget attribute (StandardMPRViewer/Zeta)
+        elif hasattr(selected_widget, '_zeta_mpr_widget'):
+            mpr_widget = selected_widget._zeta_mpr_widget
+            
+        # Case 3: selected_widget itself is the MPR widget (toolbar_integration pattern)
+        elif hasattr(selected_widget, '_original_widget'):
+            mpr_widget = selected_widget
+            original_widget = selected_widget._original_widget
+        
+        if mpr_widget:
+            logger.info(f"Restoring viewer: MPR widget found {type(mpr_widget).__name__}")
+            
+            # CRITICAL: Cleanup VTK resources BEFORE deleteLater()
             try:
                 if hasattr(mpr_widget, 'cleanup'):
                     logger.info("Calling mpr_widget.cleanup() before deleteLater...")
@@ -3223,17 +3560,72 @@ class ToolbarManager:
             except Exception as e:
                 logger.error(f"Error during MPR cleanup: {e}", exc_info=True)
             
+            # CRITICAL: Remove MPR from layout before deleteLater
+            try:
+                parent = mpr_widget.parent()
+                if parent:
+                    parent_layout = parent.layout()
+                    if parent_layout:
+                        parent_layout.removeWidget(mpr_widget)
+                        logger.info("MPR widget removed from layout")
+            except Exception as e:
+                logger.error(f"Error removing MPR from layout: {e}", exc_info=True)
+            
+            # Hide and schedule deletion
             mpr_widget.hide()
+            mpr_widget.setParent(None)  # Remove parent to ensure complete cleanup
             mpr_widget.deleteLater()
-            delattr(selected_widget, '_mpr_widget')
+            
+            # Clean up references
+            if hasattr(original_widget, '_mpr_widget'):
+                delattr(original_widget, '_mpr_widget')
+            if hasattr(original_widget, '_zeta_mpr_widget'):
+                delattr(original_widget, '_zeta_mpr_widget')
+            if hasattr(original_widget, '_new_mpr_zeta_widget'):
+                delattr(original_widget, '_new_mpr_zeta_widget')
+            if hasattr(mpr_widget, '_original_widget'):
+                delattr(mpr_widget, '_original_widget')
+
+        # CRITICAL: Re-add original widget to layout at (0,0)
+        # When MPR was added, it displaced the original widget from layout
+        try:
+            parent = original_widget.parent()
+            if parent:
+                parent_layout = parent.layout()
+                if parent_layout:
+                    # Remove from layout first (in case it's still there)
+                    parent_layout.removeWidget(original_widget)
+                    # Re-add at (0,0) 
+                    parent_layout.addWidget(original_widget, 0, 0)
+                    logger.info("Original widget re-added to layout at (0,0)")
+        except Exception as e:
+            logger.error(f"Error re-adding original widget to layout: {e}", exc_info=True)
 
         # Show original widget
-        selected_widget.show()
+        original_widget.show()
+        original_widget.setVisible(True)
+        original_widget.setEnabled(True)
+        
+        # Force update
+        try:
+            original_widget.update()
+            if original_widget.parent():
+                original_widget.parent().update()
+        except:
+            pass
 
-        # Clean up backup reference
-        print('flag cleanup:', hasattr(selected_widget, '_mpr_backup_widget'))
-        if hasattr(selected_widget, '_mpr_backup_widget'):
-            delattr(selected_widget, '_mpr_backup_widget')
+        # Clean up other references
+        if hasattr(original_widget, '_mpr_backup_widget'):
+            delattr(original_widget, '_mpr_backup_widget')
+        if hasattr(original_widget, '_original_visible'):
+            delattr(original_widget, '_original_visible')
+            
+        # Reset tool state if needed
+        if hasattr(self, '_new_mpr_zeta_active'):
+            self._new_mpr_zeta_active = False
+            
+        logger.info("Original viewer restored successfully")
+
 
     def handle_buttons_checked(self):
         for tool_name, tool_btn in self.tools_button.items():
@@ -3988,8 +4380,9 @@ class ToolbarManager:
             }
             QPushButton:checked {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #059669, stop:1 #047857);
-                border-color: #10b981;
+                    stop:0 #dc2626, stop:1 #b91c1c);
+                border: 1px solid #ef4444;
+                border-left: none;
                 color: #ffffff;
             }
         """)
@@ -5061,33 +5454,36 @@ class ToolbarManager:
             }
             indicator_text = status_indicator_map.get(current_status, '?')
             
-            # Check if report_status_badge exists before updating
-            if not hasattr(self, 'report_status_badge') or self.report_status_badge is None:
-                return
-            
-            # Update badge with colored background
-            self.report_status_badge.setText(indicator_text)
-            self.report_status_badge.setStyleSheet(f"""
-                QLabel {{
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 {status_color}, stop:1 {status_color});
-                    color: #ffffff;
-                    border: 1px solid rgba(255, 255, 255, 0.3);
-                    border-radius: 8px;
-                    padding: 1px 4px;
-                    font-weight: 600;
-                    font-family: 'Roboto', sans-serif;
-                    font-size: 8px;
-                }}
-            """)
-            self.report_status_badge.show()
-            
-            # Update tooltip on button
-            button = self.report_status_badge.parent()
-            if button:
-                button.setToolTip(f"Report Status: {status_label}\n(Click to change)")
-            
-            print(f"📋 [Toolbar] Updated status badge: {current_status} -> {indicator_text} ({status_label})")
+            # Update badge with colored background - with safety check
+            if hasattr(self, 'report_status_badge') and self.report_status_badge:
+                try:
+                    self.report_status_badge.setText(indicator_text)
+                    self.report_status_badge.setStyleSheet(f"""
+                        QLabel {{
+                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 {status_color}, stop:1 {status_color});
+                            color: #ffffff;
+                            border: 1px solid rgba(255, 255, 255, 0.3);
+                            border-radius: 8px;
+                            padding: 1px 4px;
+                            font-weight: 600;
+                            font-family: 'Roboto', sans-serif;
+                            font-size: 8px;
+                        }}
+                    """)
+                    self.report_status_badge.show()
+                    
+                    # Update tooltip on button
+                    button = self.report_status_badge.parent()
+                    if button:
+                        button.setToolTip(f"Report Status: {status_label}\n(Click to change)")
+                    
+                    print(f"📋 [Toolbar] Updated status badge: {current_status} -> {indicator_text} ({status_label})")
+                except RuntimeError:
+                    # Badge was deleted
+                    pass
+            else:
+                print(f"⚠️ [Toolbar] report_status_badge not available, skipping display update")
             
         except Exception as e:
             print(f"[ERROR] Failed to update report status display: {e}")

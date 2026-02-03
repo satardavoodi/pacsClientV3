@@ -2002,7 +2002,7 @@ def complete_download_progress(study_uid: str):
                 UPDATE download_progress 
                 SET status = ?, completed_at = ?, last_update = ?
                 WHERE study_uid = ?
-            """, ('completed', now, now, study_uid))
+            """, ('Completed', now, now, study_uid))
             
             conn.commit()
             
@@ -2010,7 +2010,8 @@ def complete_download_progress(study_uid: str):
             cur.execute("SELECT status FROM download_progress WHERE study_uid = ?", (study_uid,))
             result = cur.fetchone()
             if result:
-                print(f"✅ Download progress marked as completed for {study_uid}: {result[0]}")
+                print(f"✅ Download marked as '{result[0]}' in database for {study_uid[:40]}...")
+                print(f"   This download will be remembered after app restart")
             else:
                 print(f"⚠️ No download progress record found for {study_uid}")
         
@@ -2069,7 +2070,7 @@ def get_all_download_progress() -> list:
             
             cur.execute("""
                 SELECT dp.study_uid, dp.downloaded_count, dp.total_instances, dp.progress_percent,
-                       dp.status, dp.last_update, s.study_description, p.patient_name, p.patient_id
+                       dp.status, dp.last_update, dp.created_at, s.study_description, p.patient_name, p.patient_id
                 FROM download_progress dp
                 LEFT JOIN studies s ON dp.study_uid = s.study_uid
                 LEFT JOIN patients p ON s.patient_fk = p.patient_pk
@@ -2086,9 +2087,10 @@ def get_all_download_progress() -> list:
                     'progress_percent': row[3],
                     'status': row[4],
                     'last_update': row[5],
-                    'study_description': row[6],
-                    'patient_name': row[7],
-                    'patient_id': row[8]
+                    'created_at': row[6],  # Added created_at for cleanup logic
+                    'study_description': row[7],
+                    'patient_name': row[8],
+                    'patient_id': row[9]
                 }
                 for row in results
             ]
@@ -2278,6 +2280,272 @@ def bulk_update_instances(instances_data: list):
     cur.executemany(update_sql, values)
     conn.commit()
     conn.close()
+
+
+# =============================
+# STORAGE CLEANUP FUNCTIONS
+# =============================
+
+def get_patients_ordered_by_date(limit: int = None, oldest_first: bool = True) -> list:
+    """
+    Get patients ordered by earliest study date for cleanup selection.
+    
+    Args:
+        limit: Maximum number of patients to return (None for all)
+        oldest_first: If True, order by oldest first (default), else newest first
+        
+    Returns:
+        List of dicts with patient info and study count
+    """
+    order = "ASC" if oldest_first else "DESC"
+    limit_clause = f"LIMIT {limit}" if limit else ""
+    
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(f"""
+                SELECT 
+                    p.patient_pk,
+                    p.patient_id,
+                    p.patient_name,
+                    p.sex,
+                    p.age,
+                    MIN(s.study_date) as earliest_study,
+                    MAX(s.study_date) as latest_study,
+                    COUNT(DISTINCT s.study_pk) as study_count
+                FROM patients p
+                LEFT JOIN studies s ON p.patient_pk = s.patient_fk
+                GROUP BY p.patient_pk
+                HAVING study_count > 0
+                ORDER BY earliest_study {order}
+                {limit_clause}
+            """)
+            
+            results = cur.fetchall()
+            
+            return [
+                {
+                    'patient_pk': row[0],
+                    'patient_id': row[1],
+                    'patient_name': row[2],
+                    'sex': row[3],
+                    'age': row[4],
+                    'earliest_study': row[5],
+                    'latest_study': row[6],
+                    'study_count': row[7]
+                }
+                for row in results
+            ]
+    
+    except Exception as e:
+        print(f"[WARNING] Database error in get_patients_ordered_by_date: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+def get_patient_storage_info(patient_pk: int) -> dict:
+    """
+    Get comprehensive storage information for a patient including all file references.
+    
+    Args:
+        patient_pk: Patient primary key
+        
+    Returns:
+        Dict with patient_id, patient_name, study_uids, and file path lists
+    """
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Get patient basic info
+            cur.execute("""
+                SELECT patient_id, patient_name
+                FROM patients
+                WHERE patient_pk = ?
+            """, (patient_pk,))
+            
+            patient_row = cur.fetchone()
+            if not patient_row:
+                return {
+                    'patient_id': None,
+                    'patient_name': None,
+                    'study_uids': [],
+                    'study_paths': [],
+                    'series_paths': [],
+                    'instance_paths': [],
+                    'attachment_paths': []
+                }
+            
+            patient_id, patient_name = patient_row
+            
+            # Get all study UIDs
+            cur.execute("""
+                SELECT study_uid, study_path, attachments_uploaded
+                FROM studies
+                WHERE patient_fk = ?
+            """, (patient_pk,))
+            
+            studies = cur.fetchall()
+            study_uids = [row[0] for row in studies if row[0]]
+            study_paths = [row[1] for row in studies if row[1]]
+            
+            # Parse attachment paths
+            attachment_paths = []
+            for row in studies:
+                if row[2]:  # attachments_uploaded field
+                    paths = [p.strip() for p in row[2].split(',') if p.strip()]
+                    attachment_paths.extend(paths)
+            
+            # Get all series paths
+            cur.execute("""
+                SELECT DISTINCT se.series_path
+                FROM series se
+                JOIN studies s ON se.study_fk = s.study_pk
+                WHERE s.patient_fk = ?
+                AND se.series_path IS NOT NULL
+            """, (patient_pk,))
+            
+            series_paths = [row[0] for row in cur.fetchall()]
+            
+            # Get all instance paths
+            cur.execute("""
+                SELECT DISTINCT i.instance_path
+                FROM instances i
+                JOIN series se ON i.series_fk = se.series_pk
+                JOIN studies s ON se.study_fk = s.study_pk
+                WHERE s.patient_fk = ?
+                AND i.instance_path IS NOT NULL
+            """, (patient_pk,))
+            
+            instance_paths = [row[0] for row in cur.fetchall()]
+            
+            return {
+                'patient_id': patient_id,
+                'patient_name': patient_name,
+                'study_uids': study_uids,
+                'study_paths': study_paths,
+                'series_paths': series_paths,
+                'instance_paths': instance_paths,
+                'attachment_paths': attachment_paths
+            }
+    
+    except Exception as e:
+        print(f"[WARNING] Database error in get_patient_storage_info: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'patient_id': None,
+            'patient_name': None,
+            'study_uids': [],
+            'study_paths': [],
+            'series_paths': [],
+            'instance_paths': [],
+            'attachment_paths': []
+        }
+
+
+def delete_patient_cascade(patient_pk: int) -> bool:
+    """
+    Delete patient and all related records from database using CASCADE.
+    This will automatically delete:
+    - All studies (via CASCADE)
+    - All series (via CASCADE from studies)
+    - All instances (via CASCADE from series)
+    
+    Args:
+        patient_pk: Patient primary key
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Delete patient (CASCADE handles the rest)
+            cur.execute("DELETE FROM patients WHERE patient_pk = ?", (patient_pk,))
+            deleted = cur.rowcount
+            
+            conn.commit()
+            
+            if deleted > 0:
+                print(f"[OK] Deleted patient {patient_pk} from database (CASCADE)")
+                return True
+            else:
+                print(f"[WARNING] Patient {patient_pk} not found in database")
+                return False
+    
+    except Exception as e:
+        print(f"[WARNING] Database error in delete_patient_cascade: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def get_patients_by_date_range(start_date: str = None, end_date: str = None) -> list:
+    """
+    Get patients with studies within a specific date range.
+    
+    Args:
+        start_date: Start date in YYYYMMDD format (inclusive, None for no start limit)
+        end_date: End date in YYYYMMDD format (inclusive, None for no end limit)
+        
+    Returns:
+        List of dicts with patient info
+    """
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Build WHERE clause
+            where_clauses = []
+            params = []
+            
+            if start_date:
+                where_clauses.append("s.study_date >= ?")
+                params.append(start_date)
+            
+            if end_date:
+                where_clauses.append("s.study_date <= ?")
+                params.append(end_date)
+            
+            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+            
+            cur.execute(f"""
+                SELECT 
+                    p.patient_pk,
+                    p.patient_id,
+                    p.patient_name,
+                    MIN(s.study_date) as earliest_study,
+                    MAX(s.study_date) as latest_study,
+                    COUNT(DISTINCT s.study_pk) as study_count
+                FROM patients p
+                JOIN studies s ON p.patient_pk = s.patient_fk
+                {where_sql}
+                GROUP BY p.patient_pk
+                ORDER BY earliest_study DESC
+            """, params)
+            
+            results = cur.fetchall()
+            
+            return [
+                {
+                    'patient_pk': row[0],
+                    'patient_id': row[1],
+                    'patient_name': row[2],
+                    'earliest_study': row[3],
+                    'latest_study': row[4],
+                    'study_count': row[5]
+                }
+                for row in results
+            ]
+    
+    except Exception as e:
+        print(f"[WARNING] Database error in get_patients_by_date_range: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 
 #

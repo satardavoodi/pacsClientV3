@@ -585,11 +585,45 @@ class HomePanelWidget(QWidget):
         self.patient_table_widget.thumbnailRequested.connect(self._on_thumbnail_requested)
         self.patient_table_widget.patientClicked.connect(self._on_patient_single_clicked)
         self.patient_table_widget.downloadRequested.connect(self._on_download_requested)
+        self.patient_table_widget.cdBurnRequested.connect(self._on_cd_burn_requested)
+
+        # ★★★ تنظیمات وسط‌چین کردن هدر جدول ★★★
+        if hasattr(self.patient_table_widget, 'results_table'):
+            table = self.patient_table_widget.results_table
+            
+            # وسط‌چین کردن تمام هدرها
+            table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+            
+            # تنظیم رفتار resize برای وسط‌چین بهتر
+            table.horizontalHeader().setHighlightSections(True)
+            
+            # استایل‌دهی CSS به هدر (اختیاری - برای زیباتر شدن)
+            table.horizontalHeader().setStyleSheet("""
+                QHeaderView::section {
+                    background-color: #1a202c;
+                    color: #e2e8f0;
+                    padding: 8px;
+                    border: 1px solid #2d3748;
+                    font-weight: 600;
+                    font-family: 'Roboto', sans-serif;
+                    text-align: center;
+                    qproperty-alignment: AlignCenter;
+                }
+            """)
+
+            # اطمینان از وسط چین بودن تمام هدرهای فرعی
+            for i in range(table.columnCount()):
+                header_item = table.horizontalHeaderItem(i)
+                if header_item:
+                    header_item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+            
+            # تنظیم stretch برای ستون‌های خاص (اختیاری)
+            # table.horizontalHeader().setStretchLastSection(True)
+        # ★★★ پایان تنظیمات هدر ★★★
 
         # Add to main layout
         self.main_layout.addWidget(self.patient_table_widget)
 
-    # --- helpers for "thumbnails are ready" barrier ---
     def _reset_thumbnails_event(self):
         import asyncio
         self._thumbs_event = asyncio.Event()
@@ -712,10 +746,12 @@ class HomePanelWidget(QWidget):
             except RuntimeError as e:
                 if "Cannot enter into task" in str(e) or "already deleted" in str(e).lower():
                     # Ignore task re-entry errors - this is a known qasync issue
-                    pass
+                    print(f"⚠️ [TASK:{name}] Ignoring task re-entry error: {e}")
+                    return None
                 else:
                     print(f"⚠️ [TASK:{name}] RuntimeError: {e}")
             except asyncio.CancelledError:
+                print(f"⚠️ [TASK:{name}] Task was cancelled")
                 pass  # Task was cancelled, ignore
             except Exception as e:
                 print(f"⚠️ [TASK:{name}] Error: {e}")
@@ -1294,12 +1330,20 @@ class HomePanelWidget(QWidget):
                         print(f"⚠️ Could not fetch series info for {study.get('study_uid', 'Unknown')}: {e}")
 
             # Add studies to download manager
+            print(f"[HomePanelWidget] Adding {len(selected_studies)} studies to download manager")
+            # Debug: print study data to understand format
+            for i, study in enumerate(selected_studies[:3]):  # Print first 3
+                print(f"[HomePanelWidget] Study {i}: study_uid={study.get('study_uid', 'MISSING')}, patient_name={study.get('patient_name', 'MISSING')}")
+            
             added_count = download_manager.add_study_downloads(selected_studies, server)
+            print(f"[HomePanelWidget] Added count: {added_count}, existing queue size: {len(download_manager.study_downloads)}")
 
+            # Always try to start downloads (even if added_count is 0, there might be pending ones)
+            print('home_ui - start all download.!! - 1106')
+            download_manager.start_all_downloads()
+            
             if added_count > 0:
-                print('home_ui - start all download.!! - 1106')
-                # Start downloads automatically (no dialog)
-                download_manager.start_all_downloads()
+                print(f"[HomePanelWidget] Added {added_count} new studies to download queue")
             else:
                 QMessageBox.warning(self, "Error Adding Studies",
                                     "Error adding studies to download list.")
@@ -1308,7 +1352,33 @@ class HomePanelWidget(QWidget):
             print(f"Error in _on_download_requested: {str(e)}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "خطا", f"خطا در درخواست دانلود: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error in download request: {str(e)}")
+
+    def _on_cd_burn_requested(self, selected_studies):
+        """Handle CD burn request from patient table"""
+        print('💿 CD burn requested')
+        try:
+            if not selected_studies:
+                QMessageBox.warning(self, "No Studies Selected",
+                                    "Please select at least one study for CD burning.")
+                return
+            
+            # Import and show CD burn dialog
+            from PacsClient.components.cd_burner.cd_burn_dialog import CDBurnDialog
+            
+            dialog = CDBurnDialog(selected_studies, self)
+            dialog.exec()
+            
+        except ImportError as e:
+            print(f"Error importing CD burn dialog: {str(e)}")
+            QMessageBox.critical(self, "Error", 
+                               "CD burn module is not available.\n\n"
+                               "Please make sure pydicom and comtypes libraries are installed.")
+        except Exception as e:
+            print(f"Error in _on_cd_burn_requested: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Error in CD burn request: {str(e)}")
 
     def _get_or_create_download_manager_tab(self):
         """Get existing download manager tab or create new one"""
@@ -2441,6 +2511,63 @@ class HomePanelWidget(QWidget):
         kwargs.setdefault('is_reported', False)
 
         self.patient_table_widget.add_patient_data(**kwargs)
+        
+
+        # Center align the checkbox column (handled by patient_table_widget now)
+        # The patient_table_widget handles this internally in its add_patient_data method
+
+    def center_align_table_column(self, table_widget, column_index):
+        """
+        تنظیم وسط‌چین برای تمام سلول‌های یک ستون خاص
+
+        Args:
+            table_widget: جدول مورد نظر (QTableWidget)
+            column_index: ایندکس ستون (از 0 شروع می‌شود)
+        """
+        if not table_widget or column_index < 0:
+            return
+
+        row_count = table_widget.rowCount()
+
+        for row in range(row_count):
+            item = table_widget.item(row, column_index)
+            if item:
+                item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+
+            # اگر ویجت داخل سلول است (مثل چک‌باکس)
+            widget = table_widget.cellWidget(row, column_index)
+            if widget:
+                from PySide6.QtWidgets import QHBoxLayout, QWidget, QCheckBox
+                from PacsClient.utils.custom_checkbox import CustomCheckbox
+
+                # اگر QCheckBox یا CustomCheckbox است
+                if isinstance(widget, (QCheckBox, CustomCheckbox)):
+                    # استفاده از استایل برای وسط‌چین کردن indicator چک‌باکس
+                    widget.setStyleSheet("""
+                        QCheckBox {
+                            spacing: 0px;
+                            margin: 0px;
+                            padding: 0px;
+                        }
+                        QCheckBox::indicator {
+                            subcontrol-position: center center;
+                            subcontrol-origin: padding;
+                            margin: 0px;
+                            padding: 0px;
+                        }
+                    """)
+                    # تنظیم alignment خود ویجت
+                    widget.setAlignment(Qt.AlignCenter)
+                else:
+                    # برای سایر ویجت‌ها، استفاده از layout
+                    parent = widget.parentWidget()
+                    if not isinstance(parent, QWidget) or parent.layout() is None:
+                        container = QWidget()
+                        layout = QHBoxLayout(container)
+                        layout.addWidget(widget)
+                        layout.setAlignment(Qt.AlignCenter)
+                        layout.setContentsMargins(0, 0, 0, 0)
+                        table_widget.setCellWidget(row, column_index, container)
 
     def _update_results_count(self):
         """Update the results count label"""

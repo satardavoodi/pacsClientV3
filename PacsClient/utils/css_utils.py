@@ -23,6 +23,41 @@ def get_roboto_font_family(weight='regular'):
     return font_mapping.get(weight.lower(), "'Roboto-Regular', 'Roboto', sans-serif")
 
 
+def get_iranyekan_font_family(weight='regular', use_persian_numerals=False):
+    """
+    Get the appropriate font-family CSS declaration for IranYekan fonts
+    
+    Args:
+        weight (str): Font weight - 'light', 'regular', 'bold'
+        use_persian_numerals (bool): If True, use FaNum variant with Persian numbers
+    
+    Returns:
+        str: CSS font-family declaration
+    """
+    fanum_suffix = '(fanum)' if use_persian_numerals else ''
+    
+    font_mapping = {
+        'light': f"'IRANYekan-Light{fanum_suffix}', 'IRANYekan', 'Tahoma', 'B Nazanin', sans-serif",
+        'regular': f"'IRANYekan-Regular{fanum_suffix}', 'IRANYekan', 'Tahoma', 'B Nazanin', sans-serif",
+        'bold': f"'IRANYekan-Bold{fanum_suffix}', 'IRANYekan', 'Tahoma', 'B Nazanin', sans-serif",
+    }
+    
+    return font_mapping.get(weight.lower(), font_mapping['regular'])
+
+
+def get_persian_font_family(weight='regular'):
+    """
+    Get the appropriate font-family CSS declaration for Persian/RTL text
+    
+    Args:
+        weight (str): Font weight - 'light', 'regular', 'bold'
+    
+    Returns:
+        str: CSS font-family declaration optimized for Persian text
+    """
+    return get_iranyekan_font_family(weight, use_persian_numerals=True)
+
+
 def get_roboto_css_style(weight='regular', size=12, color='#000000'):
     """
     Get a complete CSS style string for Roboto fonts

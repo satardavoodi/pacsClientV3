@@ -359,15 +359,18 @@ if __name__ == "__main__":
     def cleanup_on_quit():
         """Clean up all download state when application is about to quit"""
         try:
-            print("🧹 Application shutting down - cleaning up download state...")
+            print("🧹 Application shutting down - preserving download history...")
             
-            # Clear database download progress records
-            from PacsClient.utils.database import clear_all_download_progress
-            cleared = clear_all_download_progress()
-            if cleared > 0:
-                print(f"   ✅ Cleared {cleared} database progress records")
+            # IMPORTANT: DO NOT clear database download progress records!
+            # They need to persist across app restarts so users don't re-download completed studies
+            # from PacsClient.utils.database import clear_all_download_progress
+            # cleared = clear_all_download_progress()
+            # if cleared > 0:
+            #     print(f"   ✅ Cleared {cleared} database progress records")
+            print("   ℹ️  Database history preserved (for 'Already Downloaded' checks)")
             
-            # Clear persistence files
+            # Clear UI persistence file so Download Manager list is empty on restart
+            # (Database still remembers what was downloaded for checking)
             import sys
             from pathlib import Path
             
@@ -388,23 +391,26 @@ if __name__ == "__main__":
             
             if persistence_file.exists():
                 persistence_file.unlink()
-                print(f"   ✅ Deleted persistence file: {persistence_file}")
+                print(f"   ✅ Cleared UI list (Download Manager will be empty on restart)")
             
-            # Clear progress files from SOURCE_PATH
-            try:
-                from PacsClient.utils.config import SOURCE_PATH
-                progress_dir = SOURCE_PATH / '.progress'
-                if progress_dir.exists():
-                    for progress_file in progress_dir.glob('*.json'):
-                        try:
-                            progress_file.unlink()
-                        except:
-                            pass
-                    print(f"   ✅ Cleared progress files from {progress_dir}")
-            except Exception as e:
-                print(f"   ⚠️ Could not clear progress files: {e}")
+            # Note: We also preserve progress files for resumable downloads
+            # These allow incomplete downloads to resume from where they left off
+            # try:
+            #     from PacsClient.utils.config import SOURCE_PATH
+            #     progress_dir = SOURCE_PATH / '.progress'
+            #     if progress_dir.exists():
+            #         for progress_file in progress_dir.glob('*.json'):
+            #             try:
+            #                 progress_file.unlink()
+            #             except:
+            #                 pass
+            #         print(f"   ✅ Cleared progress files from {progress_dir}")
+            # except Exception as e:
+            #     print(f"   ⚠️ Could not clear progress files: {e}")
             
-            print("✅ Download cleanup complete - next startup will have clean state")
+            print("✅ Shutdown complete:")
+            print("   - Database history preserved (for 'Already Downloaded' checks)")
+            print("   - UI list cleared (Download Manager will be empty on restart)")
             
         except Exception as e:
             print(f"⚠️ Error during shutdown cleanup: {e}")
