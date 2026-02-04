@@ -42,6 +42,16 @@ from .db_manager import (
     ai_reassign_sid,
 )
 
+# Reception reports (from database.py)
+from .database import (
+    ai_save_reception_report,
+    ai_get_reception_reports,
+    ai_mark_reception_report_read,
+    ai_update_reception_report_status,
+    ai_delete_reception_report,
+    ai_get_pending_reception_reports_count,
+)
+
 
 
 

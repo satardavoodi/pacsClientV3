@@ -97,6 +97,10 @@ class PatientWidget(QWidget):
         # This prevents "Cannot enter into task while another task is being executed" RuntimeError
         self._async_operation_lock = None  # Will be initialized as asyncio.Lock when needed
 
+        self._task_semaphore = None  # Will be initialized as asyncio.Semaphore when needed
+        self._concurrent_tasks_limit = 1  # Only allow one async task at a time
+
+
         # Progressive display support
         self._progressive_display_enabled = enable_progressive_mode
         
@@ -324,126 +328,6 @@ class PatientWidget(QWidget):
                 self._global_async_lock = threading.Lock()
         return self._global_async_lock
 
-    def _display_existing_series(self, series_number: str):
-        """
-        نمایش سری‌ای که قبلاً لود شده
-        """
-        try:
-            print(f"🔄 [DISPLAY EXISTING] Displaying already loaded series {series_number}")
-
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data = []
-                print(f"❌ lst_thumbnails_data not initialized")
-                return
-
-            # پیدا کردن داده‌های سری
-            vtk_image_data = None
-            metadata = None
-            series_idx = -1
-
-            for i in range(len(self.lst_thumbnails_data)):
-                if int(self.lst_thumbnails_data[i]['metadata']['series']['series_number']) == int(series_number):
-                    vtk_image_data = self.lst_thumbnails_data[i]['vtk_image_data']
-                    metadata = self.lst_thumbnails_data[i]['metadata']
-                    series_idx = i
-                    break
-
-            if metadata is None:
-                print(f"❌ Series {series_number} not found in loaded data")
-                return
-
-            # نمایش سری
-            self._display_loaded_series_immediate(series_number, vtk_image_data, metadata, series_idx)
-
-        except Exception as e:
-            print(f"❌ Error displaying existing series: {e}")
-
-
-
-    def _display_loaded_series_immediate(self, series_number, vtk_image_data, metadata, series_idx):
-        try:
-            if not self.lst_nodes_viewer:
-                print(f"❌ No viewers available")
-                return
-            
-            viewer = self.lst_nodes_viewer[0]
-            
-            # روش اول: استفاده از switch_series (روش اصلی)
-            if hasattr(viewer, 'switch_series'):
-                print(f"🎯 Switching to series {series_number} at index {series_idx}")
-                flag_switch = viewer.switch_series(
-                    vtk_image_data,
-                    metadata,
-                    series_idx,
-                    metadata_fixed=self.metadata_fixed
-                )
-                
-                if flag_switch:
-                    self.set_viewer_to_main_viewer(viewer)
-                    if hasattr(viewer, 'slider') and viewer.slider:
-                        self.reset_slider(viewer.vtk_widget, viewer.slider)
-                    print(f"✅ Series {series_number} displayed successfully (via switch_series)")
-                else:
-                    # روش دوم: اگر switch_series شکست خورد، مستقیماً از display_image استفاده کن
-                    print(f"⚠️ switch_series failed, trying direct display_image...")
-                    if hasattr(viewer, 'vtk_widget') and hasattr(viewer.vtk_widget, 'display_image'):
-                        try:
-                            viewer.vtk_widget.display_image(vtk_image_data, metadata)
-                            self.set_viewer_to_main_viewer(viewer)
-                            if hasattr(viewer, 'slider') and viewer.slider:
-                                self.reset_slider(viewer.vtk_widget, viewer.slider)
-                            print(f"✅ Series {series_number} displayed successfully (via display_image)")
-                        except Exception as display_error:
-                            print(f"❌ display_image also failed: {display_error}")
-                            # روش سوم: ایجاد ویوور جدید
-                            print(f"🔄 Creating new viewer for series {series_number}...")
-                            self._create_and_display_in_new_viewer(series_number, vtk_image_data, metadata)
-                    else:
-                        print(f"❌ vtk_widget doesn't have display_image method")
-            else:
-                print(f"❌ Viewer doesn't have switch_series method")
-                
-        except Exception as e:
-            print(f"❌ Error in immediate display: {e}")
-            import traceback
-            traceback.print_exc()
-
-    def _create_and_display_in_new_viewer(self, series_number, vtk_image_data, metadata):
-        """ایجاد ویوور جدید و نمایش سری در آن"""
-        try:
-            print(f"🔄 Creating new viewer for series {series_number}")
-            
-            # پاک کردن ویوورهای موجود
-            self.cleanup_all_viewers()
-            self.lst_nodes_viewer.clear()
-            
-            # ایجاد ویوور جدید
-            node_viewer = self.new_viewer(0)
-            
-            # مستقیماً از display_image استفاده کن
-            if hasattr(node_viewer.vtk_widget, 'display_image'):
-                node_viewer.vtk_widget.display_image(vtk_image_data, metadata)
-                
-                # تنظیم به عنوان ویوور اصلی
-                self.set_viewer_to_main_viewer(node_viewer)
-                
-                # تنظیم اسلایدر
-                if hasattr(node_viewer, 'slider') and node_viewer.slider:
-                    self.reset_slider(node_viewer.vtk_widget, node_viewer.slider)
-                
-                # افزودن به layout
-                self.vtk_layout.addWidget(node_viewer.widget, 0, 0)
-                self.change_container_border(0)
-                
-                print(f"✅ Series {series_number} displayed in new viewer")
-            else:
-                print(f"❌ New viewer doesn't have display_image method")
-                
-        except Exception as e:
-            print(f"❌ Error creating new viewer: {e}")
-            import traceback
-            traceback.print_exc()
 
     def _create_init_overlay(self):
         """Create a full-screen loading overlay to prevent seeing desktop"""
@@ -524,21 +408,57 @@ class PatientWidget(QWidget):
             return
             
         try:
-            # Ensure overlay is visible and on top
-            if hasattr(self, '_init_overlay'):
-                self._init_overlay.raise_()
-                QApplication.processEvents()
-            
             self._pipeline_running = True
             print("✅ Pipeline flag set to True")
             
-            # ✅ Run pipeline using asyncio properly
-            async def _run_async():
+            # ✅ Use QTimer to schedule pipeline in the main thread
+            QTimer.singleShot(0, lambda: self._run_pipeline_safely())
+            
+        except Exception as e:
+            print(f"❌ _start_pipeline error: {e}")
+            import traceback
+            traceback.print_exc()
+            self._pipeline_running = False
+            self._hide_init_overlay()
+
+    def _run_pipeline_safely(self):
+        """Run pipeline safely, handling async context properly"""
+        try:
+            # Try to run async pipeline if event loop exists
+            loop = None
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = None
+            
+            if loop and loop.is_running():
+                # Run in async context
+                async def _run_async():
+                    try:
+                        print("🔄 Running pipeline_manager in async context...")
+                        if self._progressive_display_enabled:
+                            print("⚠️ Progressive mode not supported in sync mode, using regular pipeline")
+                        
+                        self.pipeline_manager(
+                            self._deferred_caller,
+                            self._deferred_size
+                        )
+                        print("✅ Pipeline completed successfully")
+                    except Exception as e:
+                        print(f"❌ Pipeline error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                    finally:
+                        self._pipeline_running = False
+                        print("✅ Pipeline flag reset to False")
+                        # Hide overlay after pipeline is ready
+                        QTimer.singleShot(300, self._hide_init_overlay)
+                
+                asyncio.create_task(_run_async())
+            else:
+                # Run synchronously
+                print("🔄 Running pipeline synchronously...")
                 try:
-                    print("🔄 Running pipeline_manager...")
-                    if self._progressive_display_enabled:
-                        print("⚠️ Progressive mode not supported in sync mode, using regular pipeline")
-                    
                     self.pipeline_manager(
                         self._deferred_caller,
                         self._deferred_size
@@ -553,36 +473,15 @@ class PatientWidget(QWidget):
                     print("✅ Pipeline flag reset to False")
                     # Hide overlay after pipeline is ready
                     QTimer.singleShot(300, self._hide_init_overlay)
-            
-            # Schedule async task properly
-            try:
-                loop = asyncio.get_event_loop()
-                if loop and loop.is_running():
-                    asyncio.create_task(_run_async())
-                else:
-                    # Fallback: just show existing thumbnails synchronously
-                    print("⚠️ No running event loop, showing existing thumbnails only")
-                    self._pipeline_running = False
-                    QTimer.singleShot(100, self._hide_init_overlay)
-                    # Show any cached thumbnails
-                    self.show_exist_thumbnails()
-            except RuntimeError:
-                print("⚠️ Event loop error, showing existing thumbnails only")
-                self._pipeline_running = False
-                QTimer.singleShot(100, self._hide_init_overlay)
-                # Show any cached thumbnails
-                self.show_exist_thumbnails()
-            
-            if hasattr(self, 'toolbar_manager') and self.toolbar_manager:
-                QTimer.singleShot(1000, self.toolbar_manager._update_report_status_display)
-            
+                    
         except Exception as e:
-            print(f"❌ _start_pipeline error: {e}")
+            print(f"❌ _run_pipeline_safely error: {e}")
             import traceback
             traceback.print_exc()
             self._pipeline_running = False
             self._hide_init_overlay()
-    
+            
+
     def _hide_init_overlay(self):
         """Hide and delete the loading overlay"""
         if hasattr(self, '_init_overlay') and self._init_overlay:
@@ -750,27 +649,6 @@ class PatientWidget(QWidget):
             import traceback
             traceback.print_exc()
 
-    def _display_first_series_in_viewer(self):
-        """Display first series in the viewer"""
-        try:
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data = []
-
-            if not self.lst_thumbnails_data:
-                return
-
-            first_data = self.lst_thumbnails_data[0]
-            vtk_image_data = first_data.get('vtk_image_data')
-            metadata = first_data.get('metadata')
-
-            if vtk_image_data and hasattr(self, 'lst_nodes_viewer') and self.lst_nodes_viewer:
-                first_viewer = self.lst_nodes_viewer[0]
-                if hasattr(first_viewer, 'vtk_widget'):
-                    first_viewer.vtk_widget.display_image(vtk_image_data, metadata)
-                    print("✅ [SYNC] First series displayed in viewer")
-        except Exception as e:
-            print(f"⚠️ Error displaying first series: {e}")
 
     def load_first_series_only(self, folder_path, series_number):
         """
@@ -1057,134 +935,66 @@ class PatientWidget(QWidget):
             # Ensure spinner is hidden even on error
             self._hide_loading_spinner()
 
-    def _on_series_ready_for_display(self, series_number):
-        """Handle display of a series that is now ready"""
-        try:
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data = []
-
-            # Find the series data
-            vtk_image_data = None
-            metadata = None
-            for i in range(len(self.lst_thumbnails_data)):
-                if int(self.lst_thumbnails_data[i]['metadata']['series']['series_number']) == int(series_number):
-                    vtk_image_data = self.lst_thumbnails_data[i]['vtk_image_data']
-                    metadata = self.lst_thumbnails_data[i]['metadata']
-                    break
-            if metadata is None:
-                return
-
-            # Display in the first viewer
-            if hasattr(self, 'lst_nodes_viewer') and self.lst_nodes_viewer:
-                first_viewer = self.lst_nodes_viewer[0]
-                if hasattr(first_viewer, 'switch_series'):
-                    # Find index of this series in thumbnails data
-                    series_idx = 0
-                    for i, data in enumerate(self.lst_thumbnails_data):
-                        if str(data['metadata']['series']['series_number']) == str(series_number):
-                            series_idx = i
-                            break
-                    flag_switch = first_viewer.switch_series(
-                        vtk_image_data,
-                        metadata,
-                        series_idx,
-                        metadata_fixed=self.metadata_fixed
-                    )
-                    if flag_switch:
-                        # Set as main viewer
-                        self.set_viewer_to_main_viewer(first_viewer)
-                        # Reset slider
-                        if hasattr(first_viewer, 'slider') and first_viewer.slider:
-                            self.reset_slider(first_viewer.vtk_widget, first_viewer.slider)
-                        print(f"✅ Series {series_number} displayed in viewer")
-        except Exception as e:
-            print(f"❌ Error displaying series: {e}")
-
-
-    def _display_loaded_series_after_load(self, series_number):
-        """
-        Display the loaded series in the viewer after successful loading.
-        """
-        try:
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data = []
-
-            # Find the loaded data
-            vtk_image_data = None
-            metadata = None
-            for i in range(len(self.lst_thumbnails_data)):
-                if int(self.lst_thumbnails_data[i]['metadata']['series']['series_number']) == int(series_number):
-                    vtk_image_data = self.lst_thumbnails_data[i]['vtk_image_data']
-                    metadata = self.lst_thumbnails_data[i]['metadata']
-                    break
-
-            if metadata is None:
-                print(f"❌ Series data not found after loading")
-                return
-                
-            # Mark as ready in thumbnail manager
-            if hasattr(self, 'thumbnail_manager'):
-                self.thumbnail_manager.set_series_ready(str(series_number))
-                self.thumbnail_manager.apply_border_states_new()
-                print(f"✅ Marked series {series_number} as ready in thumbnail manager")
-                
-            # Display the series in the first viewer if not already set
-            if self.lst_nodes_viewer:
-                first_viewer = self.lst_nodes_viewer[0]
-                if hasattr(first_viewer, 'switch_series'):
-                    # Find index of this series in thumbnails data
-                    series_idx = 0
-                    for i, data in enumerate(self.lst_thumbnails_data):
-                        if str(data['metadata']['series']['series_number']) == str(series_number):
-                            series_idx = i
-                            break
-                            
-                    flag_switch = first_viewer.switch_series(
-                        vtk_image_data,
-                        metadata,
-                        series_idx,
-                        metadata_fixed=self.metadata_fixed
-                    )
-                    if flag_switch:
-                        # Set as main viewer
-                        self.set_viewer_to_main_viewer(first_viewer)
-                        # Reset slider
-                        if hasattr(first_viewer, 'slider') and first_viewer.slider:
-                            self.reset_slider(first_viewer.vtk_widget, first_viewer.slider)
-                        print(f"✅ Series {series_number} displayed in viewer")
-                    else:
-                        print(f"⚠️ Viewer doesn't support switch_series method")
-                else:
-                    print(f"⚠️ No viewers available to display the series")
-                    
-            print(f"🎉 SUCCESS: Series {series_number} loaded immediately!")
-            
-        except Exception as e:
-            print(f"❌ Error displaying series: {e}")
-            import traceback
-            traceback.print_exc()            
 
     async def lazy_load_first_series_progressive(self, size_init_viewers):
         """Wait for first series to download, then load it - OR load immediately if already exists"""
         print(f"🔍 [PROGRESSIVE] Starting lazy_load_first_series_progressive")
         
-        # Initialize lock lazily if needed
-        if self._async_operation_lock is None:
+        # ✅ Use a semaphore to limit concurrent tasks
+        if self._task_semaphore is None:
             try:
-                self._async_operation_lock = asyncio.Lock()
+                self._task_semaphore = asyncio.Semaphore(self._concurrent_tasks_limit)
             except RuntimeError:
                 import threading
-                self._async_operation_lock = threading.Lock()
+                self._task_semaphore = threading.Semaphore(self._concurrent_tasks_limit)
         
-        # Use lock to prevent race condition with _async_load_and_display_series
-        if isinstance(self._async_operation_lock, asyncio.Lock):
-            async with self._async_operation_lock:
+        # ✅ Use semaphore to prevent multiple tasks from running simultaneously
+        if isinstance(self._task_semaphore, asyncio.Semaphore):
+            async with self._task_semaphore:
                 await self._do_lazy_load_first_series(size_init_viewers)
         else:
-            # Fallback for threading.Lock - this should not happen in async context
-            await self._do_lazy_load_first_series(size_init_viewers)
+            # Fallback for threading.Semaphore
+            with self._task_semaphore:
+                # Run in executor for thread safety
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: self._load_first_series_sync(size_init_viewers)
+                )
+
+    # In the load_series_on_demand method, modify the task creation:
+    async def _safe_load():
+        try:
+            # ✅ Use the same semaphore for all series loading tasks
+            if self._task_semaphore is None:
+                try:
+                    self._task_semaphore = asyncio.Semaphore(self._concurrent_tasks_limit)
+                except RuntimeError:
+                    import threading
+                    self._task_semaphore = threading.Semaphore(self._concurrent_tasks_limit)
+            
+            if isinstance(self._task_semaphore, asyncio.Semaphore):
+                async with self._task_semaphore:
+                    await self._async_load_and_display_series(series_number)
+            else:
+                with self._task_semaphore:
+                    # Run in executor for thread safety
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(
+                        None,
+                        lambda: self._load_single_series_on_demand(int(series_number))
+                    )
+                    # After loading, mark as ready
+                    self._display_series_after_load(series_number)
+                    
+        except asyncio.CancelledError:
+            pass  # Task was cancelled
+        except RuntimeError as e:
+            if "deleted" not in str(e).lower():
+                print(f"⚠️ load_series error: {e}")
+        except Exception as e:
+            print(f"❌ Error in _safe_load: {e}")
+
 
     async def _do_lazy_load_first_series(self, size_init_viewers):
         from pathlib import Path
@@ -1223,8 +1033,13 @@ class PatientWidget(QWidget):
             if not result:
                 return
 
+            # Convert result to list to check if it's empty and safely get the last item
+            result_list = list(result)
+            if not result_list:
+                return
+
             # Process last valid item from generator
-            *_, last_item = result
+            last_item = result_list[-1]
             vtk_image_data, metadata, (patient_pk, study_pk) = last_item
 
             self.check_and_add_meta_fixed((patient_pk, study_pk))
@@ -1330,50 +1145,6 @@ class PatientWidget(QWidget):
 
 
 
-    def _display_loaded_series_immediate_enhanced(self, series_number, vtk_image_data, metadata, series_idx):
-        """نسخه بهبود یافته برای نمایش سری"""
-        try:
-            # Check if lst_nodes_viewer exists
-            if not hasattr(self, 'lst_nodes_viewer') or not self.lst_nodes_viewer:
-                print(f"❌ No viewers available")
-                return
-
-            viewer = self.lst_nodes_viewer[0]
-
-            # ابتدا سعی کن از display_image مستقیم استفاده کنی
-            if hasattr(viewer, 'vtk_widget') and hasattr(viewer.vtk_widget, 'display_image'):
-                try:
-                    viewer.vtk_widget.display_image(vtk_image_data, metadata)
-                    self.set_viewer_to_main_viewer(viewer)
-                    if hasattr(viewer, 'slider') and viewer.slider:
-                        self.reset_slider(viewer.vtk_widget, viewer.slider)
-                    print(f"✅ Series {series_number} displayed successfully (direct display_image)")
-                    return
-                except Exception as e:
-                    print(f"⚠️ Direct display_image failed: {e}")
-
-            # اگر نشد، از switch_series استفاده کن
-            if hasattr(viewer, 'switch_series'):
-                print(f"🎯 Trying switch_series for series {series_number}")
-                flag_switch = viewer.switch_series(
-                    vtk_image_data,
-                    metadata,
-                    series_idx,
-                    metadata_fixed=self.metadata_fixed
-                )
-
-                if flag_switch:
-                    self.set_viewer_to_main_viewer(viewer)
-                    if hasattr(viewer, 'slider') and viewer.slider:
-                        self.reset_slider(viewer.vtk_widget, viewer.slider)
-                    print(f"✅ Series {series_number} displayed successfully (via switch_series)")
-                else:
-                    print(f"❌ All display methods failed for series {series_number}")
-
-        except Exception as e:
-            print(f"❌ Error in enhanced display: {e}")
-            import traceback
-            traceback.print_exc()
 
     def show_priority_status(self, message):
         """Show special status for priority download"""
@@ -2668,6 +2439,40 @@ class PatientWidget(QWidget):
             self._report_status_service = get_report_status_service()
         return self._report_status_service
     
+    def _load_first_series_sync_fallback(self, size_init_viewers):
+        """Synchronous fallback for when async is not available"""
+        try:
+            from pathlib import Path
+            study_path = Path(self.import_folder_path)
+            
+            # Find first existing series
+            existing_series = sorted(
+                int(d.name) for d in study_path.iterdir()
+                if d.is_dir() and d.name.isdigit() and (
+                    next(d.glob("*.dcm"), None) or next(d.glob("*.DCM"), None)
+                )
+            )
+            
+            if existing_series:
+                series_number = existing_series[0]
+                print(f"📥 [SYNC_FALLBACK] Loading series {series_number}...")
+                success = self._load_single_series_on_demand(series_number)
+                
+                if success:
+                    print(f"✅ [SYNC_FALLBACK] Series {series_number} loaded")
+                    # Create viewers
+                    self._create_viewers_sync(size_init_viewers)
+                    # Display first series if available
+                    if self.lst_thumbnails_data:
+                        self._distribute_series_to_viewers()
+            else:
+                print("⚠️ [SYNC_FALLBACK] No series found")
+                
+        except Exception as e:
+            print(f"❌ [SYNC_FALLBACK] Error: {e}")
+            import traceback
+            traceback.print_exc()
+
     def _change_report_status(self, study_uid: str, old_status: str, new_status: str, comment: str = ""):
         """Change report status for a study"""
         print(f"\n{'='*60}")

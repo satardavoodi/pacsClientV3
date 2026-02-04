@@ -125,6 +125,31 @@ class ReceptionPanelWidget(QWidget):
             }
         """)
         self.btn_open_folder_attachments.setEnabled(False)
+        
+        # Add View Reports button
+        self.btn_view_reports = QPushButton('📋 View Reports')
+        self.btn_view_reports.setFixedHeight(50)
+        self.btn_view_reports.setStyleSheet("""
+            QPushButton {
+                background-color: #4caf50;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+            QPushButton:disabled {
+                background-color: #666;
+                color: #999;
+            }
+        """)
+        self.btn_view_reports.setEnabled(False)
     
     def _add_widgets_to_layout(self):
         """Add widgets to the main layout with separators."""
@@ -142,6 +167,9 @@ class ReceptionPanelWidget(QWidget):
         
         # Add attachment button
         self.main_layout.addWidget(self.btn_open_folder_attachments)
+        
+        # Add view reports button
+        self.main_layout.addWidget(self.btn_view_reports)
     
     def _create_separator_line(self):
         """
@@ -159,6 +187,7 @@ class ReceptionPanelWidget(QWidget):
     def _connect_signals(self):
         """Connect internal signals."""
         self.btn_open_folder_attachments.clicked.connect(self._on_open_folder_clicked)
+        self.btn_view_reports.clicked.connect(self._on_view_reports_clicked)
     
     def _on_open_folder_clicked(self):
         """Handle attachment folder button click."""
@@ -168,6 +197,51 @@ class ReceptionPanelWidget(QWidget):
                 self.folder_opened.emit(self.current_folder_path)
             except Exception as e:
                 print(f"Error opening folder: {e}")
+    
+    def _on_view_reports_clicked(self):
+        """Handle view reports button click."""
+        try:
+            from .reception_reports_viewer import ReceptionReportsViewer
+            
+            # Extract ALL possible patient identifiers
+            patient_ids = []
+            
+            # Try to get patient sub-object if it exists
+            patient = self.patient_data.get('patient', {})
+            
+            # Collect all possible identifiers from patient_data
+            for field_value in [
+                self.patient_data.get('receptionId'),           # Reception ID
+                self.patient_data.get('nationalCode'),          # National Code
+                self.patient_data.get('patient_id'),            # Direct patient_id
+                patient.get('NationalID'),                      # Patient National ID
+                patient.get('_id'),                             # MongoDB Patient ID
+                self.patient_data.get('_id'),                   # MongoDB Reception ID
+            ]:
+                if field_value and str(field_value) not in [str(x) for x in patient_ids]:
+                    patient_ids.append(str(field_value))
+            
+            # Create and show reports viewer
+            if not hasattr(self, 'reports_viewer') or self.reports_viewer is None:
+                self.reports_viewer = ReceptionReportsViewer()
+                self.reports_viewer.setWindowTitle("Reception Reports Viewer")
+                self.reports_viewer.resize(1200, 800)
+            
+            # Load reports with all patient identifiers
+            if patient_ids:
+                self.reports_viewer.load_reports_multi_id(patient_ids)
+            else:
+                # Load all reports if no specific patient IDs
+                self.reports_viewer.load_reports()
+            
+            self.reports_viewer.show()
+            self.reports_viewer.raise_()
+            self.reports_viewer.activateWindow()
+            
+        except Exception as e:
+            print(f"Error opening reports viewer: {e}")
+            import traceback
+            traceback.print_exc()
     
     def update_patient_data(self, patient_data: dict, folder_path: str = None):
         """
@@ -199,6 +273,43 @@ class ReceptionPanelWidget(QWidget):
                 print(f"Error creating attachment folder: {e}")
         else:
             self.btn_open_folder_attachments.setEnabled(False)
+        
+        # Enable View Reports button if patient_id exists
+        # Try to extract any patient identifier
+        patient = patient_data.get('patient', {})
+        has_patient_id = any([
+            patient_data.get('receptionId'),
+            patient_data.get('nationalCode'),
+            patient_data.get('patient_id'),
+            patient.get('NationalID'),
+            patient.get('_id'),
+            patient_data.get('_id'),
+        ])
+        
+        if has_patient_id:
+            self.btn_view_reports.setEnabled(True)
+            # Update reports count badge
+            try:
+                from PacsClient.utils.database import ai_get_pending_reception_reports_count
+                # Try with first available ID
+                search_id = (
+                    patient_data.get('receptionId') or
+                    patient_data.get('nationalCode') or
+                    patient_data.get('patient_id') or
+                    patient.get('NationalID') or
+                    patient.get('_id') or
+                    patient_data.get('_id')
+                )
+                count = ai_get_pending_reception_reports_count(str(search_id))
+                if count > 0:
+                    self.btn_view_reports.setText(f'📋 View Reports ({count})')
+                else:
+                    self.btn_view_reports.setText('📋 View Reports')
+            except Exception as e:
+                print(f"Error getting reports count: {e}")
+                self.btn_view_reports.setText('📋 View Reports')
+        else:
+            self.btn_view_reports.setEnabled(False)
         
         # Emit data updated signal
         self.data_updated.emit(patient_data)
@@ -450,3 +561,31 @@ class ReceptionPanelWidget(QWidget):
                 self.update_patient_data(data)
         except Exception as e:
             print(f"Error importing patient data: {e}")
+    
+    def refresh_reports_count(self):
+        """Refresh the reports count badge on the View Reports button."""
+        # Try to extract any patient identifier
+        patient = self.patient_data.get('patient', {})
+        search_id = (
+            self.patient_data.get('receptionId') or
+            self.patient_data.get('nationalCode') or
+            self.patient_data.get('patient_id') or
+            patient.get('NationalID') or
+            patient.get('_id') or
+            self.patient_data.get('_id')
+        )
+        
+        if not search_id:
+            self.btn_view_reports.setText('📋 View Reports')
+            return
+        
+        try:
+            from PacsClient.utils.database import ai_get_pending_reception_reports_count
+            count = ai_get_pending_reception_reports_count(str(search_id))
+            if count > 0:
+                self.btn_view_reports.setText(f'📋 View Reports ({count})')
+            else:
+                self.btn_view_reports.setText('📋 View Reports')
+        except Exception as e:
+            print(f"Error refreshing reports count: {e}")
+            self.btn_view_reports.setText('📋 View Reports')

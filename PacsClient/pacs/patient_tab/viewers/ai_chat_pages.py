@@ -3,7 +3,8 @@ from __future__ import annotations
 import typing as t
 import os, json, tempfile, time
 import requests
-import uuid  
+import uuid
+from datetime import datetime
 from PySide6.QtCore import Qt, QSize, QTimer, QEvent, Signal
 from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QFont, QTextCursor, QColor, QPen, QTextDocument,QFontMetrics, QGuiApplication, QTextOption, QCursor, QTextBlockFormat
 from PySide6.QtWidgets import (
@@ -19,6 +20,7 @@ from PacsClient.utils.database import (
     add_transcript_usage_delta,
     add_api_transcript_usage_delta,
     load_api_transcript_usage_for_key,
+    ai_save_reception_report,
 )
 
 from .openai_reporter import reporter, translate_report, standardize, standard_assist_search, correction,translate_text_to_persian
@@ -2901,8 +2903,9 @@ class OneChatPage(QWidget):
                 is_user = who.strip().lower().startswith("you")
                 on_edit = self._edit_bubble if (origin in ("report", "assistant") and not is_user) else None
                 on_persian = self._persian_bubble if (origin in ("report", "assistant") and not is_user) else None
+                on_send_reception = self._send_to_reception if (origin == "report" and not is_user) else None
 
-                b = self.history.add_bubble(who, html, on_edit=on_edit, on_persian=on_persian)
+                b = self.history.add_bubble(who, html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception)
                 b._origin = origin 
                 try:
                     b._msg_id = int(msg_id)
@@ -2922,6 +2925,162 @@ class OneChatPage(QWidget):
 
         except Exception:
             return loaded_any
+
+    def _send_to_reception(self, bubble: "MessageBubble"):
+        """Send report to reception with Patient ID input and detailed logging."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info("=" * 80)
+        logger.info("SEND TO RECEPTION - START")
+        logger.info("=" * 80)
+        
+        # Get the report HTML content
+        html_content = ""
+        try:
+            html_content = (bubble.get_html() or "").strip()
+            logger.info(f"✓ HTML content extracted: {len(html_content)} characters")
+        except Exception as e:
+            logger.warning(f"⚠ Failed to get HTML from bubble.get_html(): {e}")
+            try:
+                html_content = (getattr(bubble, "_raw_text", "") or "").strip()
+                logger.info(f"✓ Fallback to _raw_text: {len(html_content)} characters")
+            except Exception as e2:
+                logger.error(f"✗ Failed to get content from bubble: {e2}")
+        
+        if not html_content:
+            logger.error("✗ FAILED: HTML content is empty!")
+            QMessageBox.warning(self, "Error", "Report content is empty!")
+            return
+        
+        # Get patient ID from study data in database
+        logger.info("→ Fetching patient ID from database using study_uid...")
+        patient_id = None
+        
+        if self.study_uid:
+            try:
+                from PacsClient.utils import db_manager as db
+                
+                # Get study data from local database
+                study_data = db.get_study_by_study_uid(self.study_uid)
+                
+                if study_data:
+                    # Get patient_fk from study
+                    patient_fk = study_data.get('patient_fk')
+                    logger.info(f"  ✓ Found study, patient_fk: {patient_fk}")
+                    
+                    if patient_fk:
+                        # Get patient data
+                        patient_data = db.get_patient_by_patient_pk(patient_fk)
+                        
+                        if patient_data:
+                            # Try to get patient_id (NationalCode or ID)
+                            patient_id = patient_data.get('patient_id') or patient_data.get('patient_pk')
+                            logger.info(f"  ✓ Found patient_id from database: {patient_id}")
+                        else:
+                            logger.warning(f"  ⚠ No patient data found for patient_fk: {patient_fk}")
+                    else:
+                        logger.warning("  ⚠ No patient_fk in study data")
+                else:
+                    logger.warning(f"  ⚠ No study data found for study_uid: {self.study_uid}")
+                    
+            except Exception as e:
+                logger.error(f"  ✗ Failed to get patient ID from database: {e}")
+        
+        # Fallback: Use study_uid if patient_id not found
+        if not patient_id:
+            logger.warning("  ⚠ Using study_uid as fallback patient_id")
+            patient_id = self.study_uid
+        
+        if not patient_id:
+            logger.error("✗ FAILED: Patient ID is invalid (empty)!")
+            QMessageBox.warning(self, "Error", "Patient ID is invalid!")
+            return
+        
+        logger.info(f"→ Using Patient ID: {patient_id}")
+        
+        # Save report to database
+        try:
+            # Get message metadata
+            session_id = self.controller.session_id if hasattr(self, 'controller') else None
+            msg_id = getattr(bubble, '_msg_id', None)
+            
+            # Get modality and sender info
+            modality = getattr(self, '_current_modality', 'Unknown')
+            sender_info = f"Modality: {modality}, Mode: {getattr(self, 'page_mode', 'Report')}"
+            
+            logger.info("→ Preparing report metadata:")
+            logger.info(f"  • Patient ID: {patient_id}")
+            logger.info(f"  • Study UID: {self.study_uid or patient_id}")
+            logger.info(f"  • Session ID: {session_id}")
+            logger.info(f"  • Message ID: {msg_id}")
+            logger.info(f"  • Modality: {modality}")
+            logger.info(f"  • Sender Info: {sender_info}")
+            logger.info(f"  • Content Length: {len(html_content)} chars")
+            
+            # Save to database
+            logger.info("→ Calling ai_save_reception_report()...")
+            report_id = ai_save_reception_report(
+                patient_id=patient_id,
+                html_content=html_content,
+                study_uid=self.study_uid or patient_id,
+                session_id=session_id,
+                msg_id=msg_id,
+                sender_info=sender_info
+            )
+            
+            if report_id:
+                logger.info("=" * 80)
+                logger.info("✓✓✓ SUCCESS! Report saved to reception")
+                logger.info(f"  • Report ID: {report_id}")
+                logger.info(f"  • Patient ID: {patient_id}")
+                logger.info(f"  • Study UID: {self.study_uid or patient_id}")
+                logger.info(f"  • Timestamp: {datetime.now().isoformat()}")
+                logger.info("=" * 80)
+                
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Report successfully sent to reception.\n\n"
+                    f"📋 Report ID: {report_id}\n"
+                    f"👤 Patient ID: {patient_id}\n"
+                    f"🔬 Modality: {modality}\n\n"
+                    f"The report is now available in the Reception panel."
+                )
+                
+                # Emit signal to refresh reception panel (if exists)
+                try:
+                    if hasattr(self, 'parent') and self.parent():
+                        parent = self.parent()
+                        # Try to find PatientWidget or similar parent with reception refresh capability
+                        while parent:
+                            if hasattr(parent, 'refresh_reception_reports'):
+                                logger.info("→ Triggering reception panel refresh...")
+                                parent.refresh_reception_reports()
+                                break
+                            parent = parent.parent() if hasattr(parent, 'parent') else None
+                except Exception as e:
+                    logger.warning(f"⚠ Could not refresh reception panel: {e}")
+                    
+            else:
+                logger.error("✗ FAILED: ai_save_reception_report returned None/False!")
+                QMessageBox.warning(self, "Error", "Failed to save report!")
+                
+        except Exception as e:
+            logger.error("=" * 80)
+            logger.error("✗✗✗ EXCEPTION OCCURRED!")
+            logger.error(f"Error: {e}")
+            logger.error(f"Type: {type(e).__name__}")
+            import traceback
+            logger.error("Traceback:")
+            logger.error(traceback.format_exc())
+            logger.error("=" * 80)
+            
+            QMessageBox.critical(
+                self, 
+                "Error", 
+                f"Error sending report:\n\n{str(e)}\n\nDetails have been logged."
+            )
 
     def _persian_bubble(self, bubble: "MessageBubble"):
         print("[DEBUG] Persian button clicked.")
@@ -3211,12 +3370,14 @@ class OneChatPage(QWidget):
         # --- 5) نمایش UI ---
         on_edit = self._edit_bubble if (origin in ("report", "assistant") and not is_user) else None
         on_persian = self._persian_bubble if (origin in ("report", "assistant") and not is_user) else None
+        on_send_reception = self._send_to_reception if (origin == "report" and not is_user) else None
 
         b = self.history.add_bubble(
             who,
             text,
             on_edit=on_edit,
             on_persian=on_persian,
+            on_send_reception=on_send_reception,
         )
 
         # 🔹 If this is a freshly generated report bubble, attach the raw EN JSON
@@ -3516,12 +3677,14 @@ class OneChatPage(QWidget):
             is_user = who.strip().lower().startswith("you")
             on_edit = self._edit_bubble if (origin in ("report", "assistant") and not is_user) else None
             on_persian = self._persian_bubble if (origin in ("report", "assistant") and not is_user) else None
+            on_send_reception = self._send_to_reception if (origin == "report" and not is_user) else None
 
             b = self.history.add_bubble(
                 who,
                 html,
                 on_edit=on_edit,
                 on_persian=on_persian,
+                on_send_reception=on_send_reception,
             )
             try:
                 b._msg_id = int(msg_id)
@@ -5923,8 +6086,9 @@ class ChatGPTPage(OneChatPage):
 
                     on_edit = getattr(self, "_edit_bubble", None)
                     on_persian = getattr(self, "_persian_bubble", None)
+                    on_send_reception = getattr(self, "_send_to_reception", None)
 
-                    bub = self.history.add_bubble("ChatGPT", html, on_edit=on_edit, on_persian=on_persian)
+                    bub = self.history.add_bubble("ChatGPT", html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception)
                     try:
                         bub.raw_report_json = rep_raw_clean
                     except Exception:

@@ -22,6 +22,7 @@ from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 import qtawesome as qta
 
 from PacsClient.utils.socket_token_manager import get_socket_token_manager
+from PacsClient.pacs.patient_tab.ui.patient_ui.reception_reports_viewer import ReceptionReportsViewer
 
 from ..reception_data_styles import (
     COLORS, FONTS, FONT_SIZES, BORDER_RADIUS, SPACING,
@@ -60,9 +61,18 @@ class ReportEditorDialog(QDialog):
         """
         super().__init__(parent)
         
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("[REPORT_EDITOR] Initializing ReportEditorDialog")
+        logger.info(f"[REPORT_EDITOR] Report ID: {report.get('_id', 'N/A')}")
+        logger.info(f"[REPORT_EDITOR] Patient: {patient_data.get('patient', {}).get('Name', 'N/A')}")
+        
         self.report = report
         self.patient_data = patient_data
         self.original_content = report.get("content", "") or report.get("findings", "")
+        
+        logger.info(f"[REPORT_EDITOR] Original content length: {len(self.original_content)} characters")
+        
         self.is_rtl = is_rtl_content(self.original_content)
         self.is_maximized = False
         self.normal_geometry = None
@@ -70,6 +80,8 @@ class ReportEditorDialog(QDialog):
         # Check login status
         self.token_manager = get_socket_token_manager()
         self.is_logged_in = self.token_manager.has_token()
+        
+        logger.info(f"[REPORT_EDITOR] Is logged in: {self.is_logged_in}")
         
         # Store current status
         self.current_status = report.get("status", "pending")
@@ -86,10 +98,12 @@ class ReportEditorDialog(QDialog):
             "archived": "آرشیو شده",
         }
         
+        logger.info("[REPORT_EDITOR] Setting up UI components")
         self._setup_ui()
         self._setup_shortcuts()
         self._setup_connections()
         self._apply_initial_content()
+        logger.info("[REPORT_EDITOR] Initialization complete")
     
     def _setup_ui(self):
         """Set up the dialog UI."""
@@ -219,6 +233,17 @@ class ReportEditorDialog(QDialog):
         layout.addWidget(self.btn_print)
         layout.addWidget(self.btn_copy)
         layout.addWidget(self.btn_paste)
+        
+        layout.addWidget(self._create_separator())
+        
+        # View Reception Reports button
+        self.btn_view_reception_reports = self._create_action_button(
+            'fa5s.file-medical', 
+            "Reception Reports", 
+            '#4caf50'  # Green
+        )
+        self.btn_view_reception_reports.setToolTip("View all reception reports for this patient")
+        layout.addWidget(self.btn_view_reception_reports)
         
         layout.addWidget(self._create_separator())
         
@@ -698,6 +723,7 @@ class ReportEditorDialog(QDialog):
         self.btn_print.clicked.connect(self._print_report)
         self.btn_copy.clicked.connect(self._copy_html)
         self.btn_paste.clicked.connect(self._paste_text)
+        self.btn_view_reception_reports.clicked.connect(self._show_reception_reports_viewer)
         self.btn_undo.clicked.connect(self.text_edit.undo)
         self.btn_redo.clicked.connect(self.text_edit.redo)
         self.btn_find.clicked.connect(self._show_find_dialog)
@@ -753,9 +779,22 @@ class ReportEditorDialog(QDialog):
     
     def _apply_initial_content(self):
         """Apply the initial report content."""
-        self.text_edit.setHtml(self.original_content)
-        self.text_edit.document().setModified(False)
-        self._update_counts()
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info("[REPORT_EDITOR] Applying initial content to editor")
+        logger.info(f"[REPORT_EDITOR] Content length: {len(self.original_content)} characters")
+        logger.info(f"[REPORT_EDITOR] Is RTL: {self.is_rtl}")
+        
+        try:
+            self.text_edit.setHtml(self.original_content)
+            self.text_edit.document().setModified(False)
+            self._update_counts()
+            logger.info("[REPORT_EDITOR] ✅ Content applied successfully")
+        except Exception as e:
+            logger.error(f"[REPORT_EDITOR] ❌ Error applying content: {e}")
+            import traceback
+            logger.error(f"[REPORT_EDITOR] Traceback: {traceback.format_exc()}")
     
     # ═══════════════════════════════════════════════════════════════════════
     # WINDOW CONTROLS
@@ -1046,6 +1085,48 @@ class ReportEditorDialog(QDialog):
                 self.text_edit.setTextCursor(cursor)
                 if not self.text_edit.find(text):
                     QMessageBox.information(self, "Find", f"'{text}' not found.")
+    
+    def _show_reception_reports_viewer(self):
+        """Show reception reports viewer for this patient."""
+        # Extract ALL possible patient identifiers from patient data
+        patient_ids = []
+        
+        if self.patient_data:
+            # Collect all possible identifiers
+            patient = self.patient_data.get('patient', {})
+            
+            # Try all possible ID fields
+            for field_value in [
+                self.patient_data.get('receptionId'),           # Reception ID (28383)
+                self.patient_data.get('nationalCode'),          # National Code (0046922229)
+                patient.get('NationalID'),                      # Patient National ID
+                patient.get('_id'),                             # MongoDB Patient ID
+                self.patient_data.get('_id'),                   # MongoDB Reception ID
+                self.patient_data.get('studyUID'),              # Study UID (if available)
+            ]:
+                if field_value and str(field_value) not in [str(x) for x in patient_ids]:
+                    patient_ids.append(str(field_value))
+        
+        if not patient_ids:
+            QMessageBox.warning(
+                self,
+                "No Patient Selected",
+                "Cannot show reception reports: No patient identifiers found."
+            )
+            return
+        
+        # Create and show viewer
+        viewer = ReceptionReportsViewer(parent=self)
+        
+        # Display first identifier as title
+        display_id = patient_ids[0]
+        viewer.setWindowTitle(f"Reception Reports - Patient: {display_id}")
+        
+        # Load reports searching with ALL patient identifiers
+        viewer.load_reports_multi_id(patient_ids)
+        
+        # Show as modal dialog
+        viewer.exec()
     
     def _reset_content(self):
         """Reset to original content."""

@@ -1,0 +1,9 @@
+{
+    "github.copilot.advanced": {},
+    "chat.tools.terminal.autoApprove": {
+        "/^python \"d:\\\\New folder\\\\PacsClientV2\\\\main\\.py\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

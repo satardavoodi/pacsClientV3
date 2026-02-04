@@ -136,6 +136,10 @@ hiddenimports = [
     # 'pydicom.encoders.base',  # Removed - not found, may not exist in this version
     'pydicom.pixel_data_handlers',
     'pydicom.pixel_data_handlers.numpy_handler',
+    'pydicom.fileset',  # Required for DICOMDIR creation (CD writing)
+    'pydicom.uid',  # Required for UID generation
+    'pydicom.dataset',  # Required for DICOM dataset handling
+    'pydicom.charset',  # Required for character encoding
     'pynetdicom',
     'pynetdicom.sop_class',
     

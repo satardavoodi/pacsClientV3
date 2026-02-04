@@ -24,11 +24,15 @@ from PacsClient.components.socket_service import SocketService
 from PacsClient.utils.socket_config import get_socket_config
 from PacsClient.utils.socket_token_manager import get_socket_token_manager
 from PacsClient.utils.license_manager import LicenseManager
+from PacsClient.utils.database import ai_ensure_schema
 
 
 class AppHandler(QDialog):
     def __init__(self):
         super(AppHandler, self).__init__()
+        
+        # Ensure AI reception reports schema is initialized
+        ai_ensure_schema()
 
         # self.setWindowTitle("AIPacs - Professional Medical Imaging Suite")
         self.setWindowTitle("")

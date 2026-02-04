@@ -11,6 +11,12 @@ from PacsClient.pacs.patient_tab.utils import read_segment_nifti
 import vtkmodules.all as vtk
 from PySide6.QtWidgets import QApplication
 
+# =====================================================
+# ANTI-FLICKERING CONSTANTS
+# =====================================================
+_RENDER_THROTTLE_MS = 16  # ~60fps max render rate
+_SPINNER_HIDE_DELAY_MS = 50  # Delay before hiding spinner to allow final render
+
 
 def grow_vtk_inplace(old_input, new_vtk_image_data):
     # ابعاد قدیم/جدید
@@ -69,18 +75,34 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.image_viewer = None
         self.height_viewer = height_viewer
         self.apply_default_filter = True
+        
+        # =====================================================
+        # ANTI-FLICKERING: Render throttling state
+        # =====================================================
+        self._render_pending = False
+        self._last_render_time = 0
+        self._render_timer = None
 
         self.render_window = self.GetRenderWindow()
         self.interactor = self.render_window.GetInteractor()
         
-        # Initialize interactor (heavy operation - let UI breathe)
-        from PySide6.QtWidgets import QApplication
-        QApplication.processEvents()
+        # =====================================================
+        # ANTI-FLICKERING: Enable double buffering on render window
+        # =====================================================
+        self.render_window.SetDoubleBuffer(True)
+        self.render_window.SetSwapBuffers(True)
+        
+        # Initialize interactor without processEvents (causes flickering)
         self.interactor.Initialize()
-        QApplication.processEvents()
 
         # Initialize viewport spinner
         self.viewport_spinner = ViewportSpinner(self)
+        
+        # =====================================================
+        # ANTI-FLICKERING: Disable widget updates during init
+        # =====================================================
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)  # Prevent transparent flicker
+        self.setAutoFillBackground(True)
         
         # Set default style for VTKWidget itself (not container)
         self.setStyleSheet("""
@@ -90,25 +112,63 @@ class VTKWidget(QVTKRenderWindowInteractor):
             }
         """)
 
-    def _schedule_render(self, delay_ms=33):
-        if getattr(self, "_render_pending", False):
+    def _schedule_render(self, delay_ms=None):
+        """
+        ANTI-FLICKERING: Throttled render scheduling
+        Prevents multiple renders within the same frame
+        """
+        if delay_ms is None:
+            delay_ms = _RENDER_THROTTLE_MS
+            
+        if self._render_pending:
             return
+            
+        # Check if we're rendering too fast
+        current_time = time.time() * 1000
+        time_since_last = current_time - self._last_render_time
+        
+        if time_since_last < _RENDER_THROTTLE_MS:
+            # Too soon - schedule for later
+            actual_delay = max(1, int(_RENDER_THROTTLE_MS - time_since_last))
+        else:
+            actual_delay = max(1, delay_ms)
+        
         self._render_pending = True
-        QTimer.singleShot(delay_ms, self._do_render)
+        
+        # Cancel existing timer if any
+        if self._render_timer is not None:
+            self._render_timer.stop()
+            
+        self._render_timer = QTimer()
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self._do_render)
+        self._render_timer.start(actual_delay)
 
     def _do_render(self):
+        """
+        ANTI-FLICKERING: Execute actual render with safety checks
+        """
         try:
             # Check if image_viewer exists before rendering
             if self.image_viewer is None:
                 return
-                
+            
+            # Update last render time
+            self._last_render_time = time.time() * 1000
+            
+            # Batch all updates together before single render
             self.image_viewer.image_reslice.Update()
             self.image_viewer.UpdateDisplayExtent()
-            self.image_viewer.Render()
             self.image_viewer.update_corners_actors()
-            self.slider.setMaximum(self.image_viewer.get_count_of_slices())
-
-
+            
+            # Update slider without triggering signals
+            if hasattr(self, 'slider') and self.slider is not None:
+                self.slider.blockSignals(True)
+                self.slider.setMaximum(self.image_viewer.get_count_of_slices())
+                self.slider.blockSignals(False)
+            
+            # Single render call at the end
+            self.image_viewer.Render()
 
         finally:
             self._render_pending = False
@@ -213,13 +273,20 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.save_status_camera(self.image_viewer)
 
     def start_process_series(self, vtk_image_data, metadata, series_index, id_vtk_widget, metadata_fixed):
+        """
+        ANTI-FLICKERING: Initialize series without processEvents calls
+        """
+        # Show spinner (non-blocking)
         self.viewport_spinner.show_loading("Loading...")
-        QApplication.processEvents()
 
         try:
+            # =====================================================
+            # ANTI-FLICKERING: Disable updates during heavy operation
+            # =====================================================
+            self.setUpdatesEnabled(False)
+            
             self.image_viewer = ImageViewer2D(self.render_window, self.interactor, self.height_viewer, vtk_image_data,
                                               metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
-            QApplication.processEvents()
             
             self.style = AbstractInteractorStyle(self.image_viewer)
             self.current_style = self.style
@@ -231,7 +298,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self.save_status_camera(self.image_viewer)
 
         finally:
-            QTimer.singleShot(100, self.viewport_spinner.hide_loading)
+            # Re-enable updates
+            self.setUpdatesEnabled(True)
+            # Hide spinner with small delay to allow final render
+            QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
 
     def reset_image(self, vtk_image_data, metadata):  # reload image
         # Show reset spinner
@@ -298,14 +368,20 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
     def switch_series_backup(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
                       metadata_fixed=None):
-        # # check this series has showed
+        """
+        ANTI-FLICKERING: Series switch without processEvents
+        """
+        # Check this series has showed
         if self.last_series_show == series_index:
             return False
 
-        # Show loading spinner for series switch
-        self.viewport_spinner.show_loading("\t\tSwitching series...")
-        # Force repaint to show spinner right away
-        QApplication.processEvents()  # Very important!
+        # Show loading spinner (non-blocking)
+        self.viewport_spinner.show_loading("Switching series...")
+        
+        # =====================================================
+        # ANTI-FLICKERING: Disable updates during switch
+        # =====================================================
+        self.setUpdatesEnabled(False)
 
         self.cleanup_image_viewer()
 
@@ -332,129 +408,111 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
         self.image_viewer.UpdateDisplayExtent()
-        self.image_viewer.Render()
+        # Single render call (not both viewer and window)
         self.render_window.Render()
 
-        # # reset slider to default
-        # self.reset_slider_method()
         self.last_series_show = series_index
         self.save_status_camera(self.image_viewer)
-
-        # QTimer.singleShot(400, self.viewport_spinner.hide_loading)
-        # Hide spinner AFTER everything is rendered
-        # Use singleShot(0) to let Qt finish current event loop and show the rendered image
-        QTimer.singleShot(0, self.viewport_spinner.hide_loading)
+        
+        # =====================================================
+        # ANTI-FLICKERING: Re-enable updates and hide spinner
+        # =====================================================
+        self.setUpdatesEnabled(True)
+        QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
         return True
 
     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
                       metadata_fixed=None):
-        import time
-        _switch_start = time.time()
-        
-        # # check this series has showed
+        """
+        ANTI-FLICKERING: Optimized series switch without flickering
+        Removed all processEvents() calls and excessive print statements
+        """
+        # Check this series has showed
         if self.last_series_show == series_index:
             return False
 
-        # Show loading spinner for series switch
+        # Show loading spinner (non-blocking - no processEvents!)
         self.viewport_spinner.show_loading("Switching series...")
-        # Force repaint to show spinner right away
-        QApplication.processEvents()  # Very important!
         
-        _prep_time = time.time() - _switch_start
-        print(f"   🔄 [SWITCH] Preparing: {_prep_time:.3f}s")
+        # =====================================================
+        # ANTI-FLICKERING: Disable widget updates during switch
+        # =====================================================
+        self.setUpdatesEnabled(False)
+        
+        try:
+            # OPTIMIZATION: Reuse existing viewer instead of recreating it!
+            if self.image_viewer is not None:
+                # Viewer already exists - just update the image data
+                try:
+                    # Check if switching between single/combined viewer types
+                    is_combined_new = (vtk_image_data_2 is not None) and (metadata_2 is not None)
+                    is_combined_current = isinstance(self.image_viewer, CustomCombineImageViewers)
+                    
+                    # Clear widgets if current_style exists
+                    if hasattr(self, 'current_style') and self.current_style is not None:
+                        self.current_style.delete_all_widgets()
 
-        # OPTIMIZATION: Reuse existing viewer instead of recreating it!
-        if self.image_viewer is not None:
-            # Viewer already exists - just update the image data
-            try:
-                # Check if switching between single/combined viewer types
-                is_combined_new = (vtk_image_data_2 is not None) and (metadata_2 is not None)
-                is_combined_current = isinstance(self.image_viewer, CustomCombineImageViewers)
-                
-                # ✅ FIX: Check if current_style exists before calling delete_all_widgets
-                _cleanup_start = time.time()
-                if hasattr(self, 'current_style') and self.current_style is not None:
-                    self.current_style.delete_all_widgets()  # clear widgets
-                _cleanup_time = time.time() - _cleanup_start
-                print(f"   🔄 [SWITCH] Cleanup widgets: {_cleanup_time:.3f}s")
-
-                # If viewer type doesn't match, we need to recreate
-                if is_combined_new != is_combined_current:
-                    print(f"   ⚠️  [SWITCH] Viewer type mismatch, recreating...")
-                    self.cleanup_image_viewer()
-                    # Create new viewer of appropriate type (code below)
-                else:
-                    # Same viewer type - just reset the image data (FAST!)
-                    if is_combined_new:
-                        # Combined viewer - need to handle both images
-                        # For now, recreate (combined viewer is rare)
-                        print(f"   ⚠️  [SWITCH] Combined viewer, recreating...")
+                    # If viewer type doesn't match, we need to recreate
+                    if is_combined_new != is_combined_current:
                         self.cleanup_image_viewer()
                     else:
-                        # Single viewer - use fast reset
-                        _reset_start = time.time()
-                        self.image_viewer.reset_image_viewer(vtk_image_data, metadata)
-                        self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
-                        _reset_time = time.time() - _reset_start
-                        print(f"   ✅ [SWITCH] Fast reset: {_reset_time:.3f}s")
-                        
-                        self.last_series_show = series_index
-                        self.save_status_camera(self.image_viewer)
-                        
-                        _total_fast = time.time() - _switch_start
-                        print(f"   ✅ [SWITCH] TOTAL (fast path): {_total_fast:.3f}s\n")
-                        
-                        QTimer.singleShot(0, self.viewport_spinner.hide_loading)
-                        return True
-                        
-            except Exception as e:
-                print(f"[WARNING] Fast series switch failed: {e}, falling back to full recreation")
-                self.cleanup_image_viewer()
+                        # Same viewer type - just reset the image data (FAST!)
+                        if is_combined_new:
+                            # Combined viewer - recreate
+                            self.cleanup_image_viewer()
+                        else:
+                            # Single viewer - use fast reset
+                            self.image_viewer.reset_image_viewer(vtk_image_data, metadata)
+                            self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
+                            
+                            self.last_series_show = series_index
+                            self.save_status_camera(self.image_viewer)
+                            
+                            # Re-enable updates and hide spinner
+                            self.setUpdatesEnabled(True)
+                            QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
+                            return True
+                            
+                except Exception as e:
+                    self.cleanup_image_viewer()
 
-        # Create new viewer (first time or fallback)
-        _create_start = time.time()
-        if (vtk_image_data_2 is not None) and (metadata_2 is not None):
-            self.image_viewer = CustomCombineImageViewers(
-                self.render_window, self.interactor, self.height_viewer, vtk_image_data1=vtk_image_data,
-                metadata1=metadata,
-                vtk_image_data2=vtk_image_data_2, metadata2=metadata_2, metadata_fixed=metadata_fixed,
-                apply_default_filter=self.apply_default_filter, vtk_widget=self)
-        else:
-            self.image_viewer = ImageViewer2D(self.render_window, self.interactor, self.height_viewer, vtk_image_data,
-                                              metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
-        _create_time = time.time() - _create_start
-        print(f"   🔨 [SWITCH] Create viewer: {_create_time:.3f}s")
+            # Create new viewer (first time or fallback)
+            if (vtk_image_data_2 is not None) and (metadata_2 is not None):
+                self.image_viewer = CustomCombineImageViewers(
+                    self.render_window, self.interactor, self.height_viewer, vtk_image_data1=vtk_image_data,
+                    metadata1=metadata,
+                    vtk_image_data2=vtk_image_data_2, metadata2=metadata_2, metadata_fixed=metadata_fixed,
+                    apply_default_filter=self.apply_default_filter, vtk_widget=self)
+            else:
+                self.image_viewer = ImageViewer2D(self.render_window, self.interactor, self.height_viewer, vtk_image_data,
+                                                  metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
 
-        _render_start = time.time()
-        self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
-        # add new renderer
-        new_renderer = self.image_viewer.GetRenderer()
-        self.render_window.AddRenderer(new_renderer)
+            self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
+            
+            # Add new renderer
+            new_renderer = self.image_viewer.GetRenderer()
+            self.render_window.AddRenderer(new_renderer)
 
-        # set interactor style again
-        self.style = AbstractInteractorStyle(self.image_viewer)
-        self.interactor.SetInteractorStyle(self.style)
-        # self.style.interactionOccurred.connect(self.change_container_border)
-        self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
+            # Set interactor style again
+            self.style = AbstractInteractorStyle(self.image_viewer)
+            self.interactor.SetInteractorStyle(self.style)
+            self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
-        self.image_viewer.UpdateDisplayExtent()
-        self.image_viewer.Render()
-        self.render_window.Render()
-        _render_time = time.time() - _render_start
-        print(f"   🎨 [SWITCH] Render: {_render_time:.3f}s")
+            # Single batched render at the end
+            self.image_viewer.UpdateDisplayExtent()
+            self.render_window.Render()
 
-        # # reset slider to default
-        # self.reset_slider_method()
-        self.last_series_show = series_index
-        self.save_status_camera(self.image_viewer)
-
-        _total = time.time() - _switch_start
-        print(f"   ✅ [SWITCH] TOTAL (recreation): {_total:.3f}s\n")
-
-        # QTimer.singleShot(400, self.viewport_spinner.hide_loading)
-        # Hide spinner AFTER everything is rendered
-        # Use singleShot(0) to let Qt finish current event loop and show the rendered image
-        QTimer.singleShot(0, self.viewport_spinner.hide_loading)
+            self.last_series_show = series_index
+            self.save_status_camera(self.image_viewer)
+            
+        finally:
+            # =====================================================
+            # ANTI-FLICKERING: Re-enable updates in finally block
+            # =====================================================
+            self.setUpdatesEnabled(True)
+            
+        # Hide spinner with delay to allow render to complete
+        QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
         return True
 
     def get_count_of_slices(self):
