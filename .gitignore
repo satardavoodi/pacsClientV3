@@ -19,6 +19,7 @@ cbct-sample/
 **/*.db-shm
 **/*.db-wal
 *.md
+!.github/copilot-instructions.md
 data/
 Segments/
 dicom.*
