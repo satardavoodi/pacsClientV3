@@ -1010,25 +1010,7 @@ class PatientWidget(QWidget):
             
             print(f"\n✅ [SYNC_LOAD] Sync load completed - {series_count} series processed")
             print("📂 [SYNC_LOAD] ===========================================\n")
-                    
-                    QApplication.processEvents()
-                    # Use synchronous viewer creation
-                    self._apply_multi_viewer_sync(optimal_layout) # این تابع ویوورها را تنظیم می کند
-                    QApplication.processEvents()
-                    
-                    first_series_loaded = True
-                    self._hide_loading_spinner()
-                    
-                    series_no = metadata['series']['series_number']
-                    self.thumbnail_manager.set_series_ready(str(series_no))
-                    
-                    if file_path and not self.logo_patient:
-                        self.logo_patient = file_path
-                        self.update_tab_manager()
-                    
-                    print(f"✅ [SYNC_LOAD] First series loaded: {series_no}. Breaking loop.") # لاگ اضافه شده
-                    break  # فقط اولین سری را بارگذاری کن
-                    
+
         except Exception as e:
             print(f"❌ [SYNC_LOAD] Error loading first series sync: {e}") # لاگ اضافه شده
             import traceback
@@ -4249,7 +4231,7 @@ class PatientWidget(QWidget):
                 sx = float(sp[0])  # pixel size along displayed columns
                 sy = float(sp[1])  # pixel size along displayed rows
 
-                # جهت‌ها و IPP همچنان از متادیتا (LPS) برداشته می‌شود
+                # جهت‌ها و IPP همچنان از متادیتا (LPS) برداش��ه می‌شود
                 row2 = np.asarray(target_image_orientation_patient[3:6], dtype=float)
                 col2 = np.asarray(target_image_orientation_patient[0:3], dtype=float)
                 pos2 = np.asarray(target_image_position_patient, dtype=float)
