@@ -2536,25 +2536,47 @@ class PatientWidget(QWidget):
         return center_widget
 
     def new_viewer(self, default_thumb_index=0):
+        print(f"\n{'='*80}")
+        print(f"🔨 [new_viewer] START - thumb_index={default_thumb_index}")
         self.logger.info(f"Creating new viewer with thumb index {default_thumb_index}")
-        # Let UI breathe before heavy VTK initialization
-        QApplication.processEvents()
+        
+        try:
+            # Let UI breathe before heavy VTK initialization
+            print("   ⏳ Processing events before VTK initialization...")
+            QApplication.processEvents()
+            print("   ✅ Events processed")
+        except Exception as e:
+            print(f"   ❌ ERROR processing events: {e}")
+            import traceback
+            traceback.print_exc()
 
+        print("   📐 Creating grid layout...")
         layout = QGridLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        print("   ✅ Grid layout created")
 
         # Check if we have thumbnail data
+        print("   🔍 Checking thumbnail data...")
         if not hasattr(self, 'lst_thumbnails_data') or not self.lst_thumbnails_data or len(self.lst_thumbnails_data) == 0:
+            print("   ⚠️ No thumbnail data, creating dummy widget")
             vtk_widget = self.create_dummy_vtk_widget()
+            print("   ✅ Dummy widget created")
         else:
+            print(f"   ✅ Thumbnail data exists ({len(self.lst_thumbnails_data)} items)")
+            print("   🎨 Creating new VTK widget...")
             vtk_widget = self.create_new_vtk_widget(default_thumb_index)
+            print("   ✅ VTK widget created")
         
         # Let UI breathe after VTK creation
+        print("   ⏳ Processing events after VTK creation...")
         QApplication.processEvents()
+        print("   ✅ Events processed")
 
+        print("   📊 Creating slider...")
         slider = QSlider(Qt.Vertical, vtk_widget)
         slider.setInvertedAppearance(True)
+        print("   ✅ Slider created")
 
         # slider.setStyleSheet("""
         #     QSlider {
@@ -2604,8 +2626,10 @@ class PatientWidget(QWidget):
         layout.addWidget(vtk_widget, 0, 0)
         # layout.addWidget(slider, 0, 0, alignment=Qt.AlignRight | Qt.AlignVCenter)
         layout.addWidget(slider, 0, 0, alignment=Qt.AlignRight)
+        print("   ✅ Widgets added to layout")
 
         # Use QFrame instead of QWidget - QFrame is designed for borders!
+        print("   🖼️ Creating container frame...")
         container = QFrame()
         container.setObjectName("ViewportContainer")
         container.setLayout(layout)
@@ -2621,15 +2645,24 @@ class PatientWidget(QWidget):
                 background-color: transparent;
             }
         """)
+        print("   ✅ Container created")
 
         ##############################################################
+        print("   🔗 Creating NodeViewer...")
         new_node = NodeViewer(container, vtk_widget, slider)
+        print("   ✅ NodeViewer created")
 
         # Set the viewer ID (important for change_container_border to work!)
+        print("   🆔 Setting viewer ID...")
         viewer_index = len(self.lst_nodes_viewer)
         vtk_widget.id_vtk_widget = viewer_index
+        print(f"   ✅ Viewer ID set to {viewer_index}")
 
+        print("   📝 Appending to lst_nodes_viewer...")
         self.lst_nodes_viewer.append(new_node)
+        print("   ✅ Appended")
+        
+        print("   🎚️ Configuring slider...")
         vtk_widget.set_slider(slider)
         count_slices = vtk_widget.get_count_of_slices()
         # mid_slices = count_slices // 2
@@ -2640,12 +2673,20 @@ class PatientWidget(QWidget):
         slider.setMaximum(last_slices)
 
         slider.setValue(mid_slices)
+        print(f"   ✅ Slider configured (slices: {count_slices}, current: {mid_slices})")
 
+        print("   🔗 Connecting slider signal...")
         self.on_slider_value_changed(vtk_widget, mid_slices)  # set middle slice to show
         slider.valueChanged.connect(lambda: self.on_slider_value_changed(vtk_widget, slider.value()))
+        print("   ✅ Slider connected")
 
+        print("   🔧 Setting VTK widget methods...")
         vtk_widget.set_method_change_series_on_drop(self.change_series_on_viewer)
         vtk_widget.set_method_change_container_border(self.change_container_border)
+        print("   ✅ Methods set")
+        
+        print(f"🔨 [new_viewer] END - Successfully created viewer")
+        print(f"{'='*80}\n")
         return new_node
         # return widget
 
