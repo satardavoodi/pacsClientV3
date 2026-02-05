@@ -41,12 +41,10 @@ import threading
 import logging
 logger = logging.getLogger(__name__)
 
-# Import priority manager for download coordination
-try:
-    from PacsClient.components.download_priority_manager import get_download_priority_manager, DownloadPriority
-    PRIORITY_MANAGER_AVAILABLE = True
-except ImportError:
-    PRIORITY_MANAGER_AVAILABLE = False
+# Priority management is now handled by Zeta Download Manager
+# Zeta uses its own internal priority system via DownloadPriority enum
+from PacsClient.zeta_download_manager.core.enums import DownloadPriority
+PRIORITY_MANAGER_AVAILABLE = False  # Legacy priority manager removed
 
 
 class PatientWidget(QWidget):
@@ -3858,13 +3856,10 @@ class PatientWidget(QWidget):
                                     layout_position = i
                                     break
                         
-                        priority_manager = get_download_priority_manager()
-                        priority_manager.on_series_loaded_in_viewer(
-                            study_uid=self.study_uid,
-                            series_uid=series_uid,
-                            layout_position=layout_position
-                        )
-                        logger.debug(f"Series {series_number} promoted to CRITICAL (layout: {layout_position})")
+                        # Legacy priority manager removed - Zeta handles priority internally
+                        # priority_manager = get_download_priority_manager()
+                        # priority_manager.on_series_loaded_in_viewer(...)
+                        logger.debug(f"Series {series_number} loaded in viewer (layout: {layout_position})")
                     except Exception as pm_error:
                         logger.debug(f"Could not notify priority manager: {pm_error}")
 

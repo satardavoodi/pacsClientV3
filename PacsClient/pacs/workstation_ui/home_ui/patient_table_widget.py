@@ -544,6 +544,7 @@ class PatientTableWidget(QWidget):
     patientClicked = Signal(str, str, str)  # patient_id, patient_name, study_uid - for thumbnail display
     checkboxStateChanged = Signal(int, bool)  # row index, checked state
     downloadRequested = Signal(list)  # list of patient data dictionaries for download
+    zetaNprRequested = Signal(list)  # list of patient data dictionaries for Zeta Download download
     cdBurnRequested = Signal(list)  # list of patient data dictionaries for CD burning
     statusUpdateResult = Signal(str, str, object)  # study_uid, new_status, response
 
@@ -963,6 +964,43 @@ class PatientTableWidget(QWidget):
         """)
         self.download_btn.setCursor(Qt.PointingHandCursor)
         self.download_btn.setEnabled(False)
+        
+        # Zeta Download button for selected patients - NEW MODERN DOWNLOAD MANAGER
+        self.zeta_npr_btn = QPushButton(qta.icon('fa5s.rocket', color='white'), "")
+        self.zeta_npr_btn.setToolTip("Download with Zeta Download (Modern Download Manager)")
+        self.zeta_npr_btn.clicked.connect(self._on_zeta_npr_clicked)
+        self.zeta_npr_btn.setFixedSize(36, 36)
+        self.zeta_npr_btn.setStyleSheet("""
+        QPushButton {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #3b82f6, stop:1 #2563eb);
+            color: white;
+            border: 1px solid #3b82f6;
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 12px;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 600;
+            margin: 4px 0px;
+            qproperty-iconSize: 16px;
+        }
+        QPushButton:hover {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #2563eb, stop:1 #1d4ed8);
+            border-color: #2563eb;
+        }
+        QPushButton:pressed {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #1d4ed8, stop:1 #1e40af);
+        }
+        QPushButton:disabled {
+            background: #374151;
+            border-color: #4b5563;
+            color: #6b7280;
+        }
+        """)
+        self.zeta_npr_btn.setCursor(Qt.PointingHandCursor)
+        self.zeta_npr_btn.setEnabled(False)
                 
         # برای نمایش متن هنگام hover
         def on_download_btn_hover(event):
@@ -1226,6 +1264,7 @@ class PatientTableWidget(QWidget):
         header_layout.addWidget(self.delete_btn)
         header_layout.addWidget(self.cd_burn_btn)
         header_layout.addWidget(self.download_btn)
+        header_layout.addWidget(self.zeta_npr_btn)
         layout.addWidget(header_widget)
         
         # Add table to layout
@@ -1389,6 +1428,28 @@ class PatientTableWidget(QWidget):
             print(f"Error in download studies: {str(e)}")
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Error in download studies: {str(e)}")
+    
+    def _on_zeta_npr_clicked(self):
+        """Handle Zeta Download button click - uses modern Zeta Download Manager"""
+        try:
+            # Get selected patient data
+            selected_data = self.get_selected_patient_data_list()
+
+            if not selected_data:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "No Studies Selected", 
+                                   "Please select at least one study for Zeta Download.")
+                return
+            
+            # Emit signal with selected data for Zeta Download
+            self.zetaNprRequested.emit(selected_data)
+            
+            print(f"🚀 Zeta Download requested for {len(selected_data)} studies")
+            
+        except Exception as e:
+            print(f"Error in Zeta Download: {str(e)}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"Error in Zeta Download: {str(e)}")
     
     def _on_cd_burn_clicked(self):
         """Handle CD burn button click"""
@@ -1626,10 +1687,12 @@ class PatientTableWidget(QWidget):
         
         if selected_count > 0:
             self.download_btn.setEnabled(True)
+            self.zeta_npr_btn.setEnabled(True)  # Enable Zeta Download button
             self.cd_burn_btn.setEnabled(True)  # CD burn فعال برای همه انتخاب شده‌ها
             # متن فقط هنگام hover نشان داده می‌شود
         else:
             self.download_btn.setEnabled(False)
+            self.zeta_npr_btn.setEnabled(False)  # Disable Zeta Download button
             self.cd_burn_btn.setEnabled(False)
             # متن پاک می‌شود
         

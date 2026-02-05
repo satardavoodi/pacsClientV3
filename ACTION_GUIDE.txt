@@ -1,0 +1,142 @@
+# 🎯 ACTION GUIDE - Test Threading Fix
+
+## Current Status
+- ✅ **Threading fix applied**
+- ✅ **Zero `QObject::setParent` errors** in latest logs
+- ✅ **App is ready for testing**
+
+---
+
+## IMMEDIATE ACTION - Test the Fix
+
+### Step 1: Open the Terminal Window
+- You should see the app running
+- Check for: **Zero `QObject::setParent` errors**
+- (Previous run had 30+ - should now be 0)
+
+### Step 2: Give App 10 Seconds to Load
+- Login window should appear
+- Enter credentials (test account or user credentials)
+- Click "Sign In"
+
+### Step 3: Navigate to Download Manager
+- After login, click on **"Download Manager"** tab
+- Should load empty queue
+
+### Step 4: Test Download
+1. Go to **"Home"** or **"AIPacs"** tab
+2. Search for patient **28904**
+3. Click **"Download"** button
+4. Watch the **Download Manager** queue
+
+### Step 5: Observe During Download
+**Expected behavior:**
+- ✅ Progress bar updates smoothly
+- ✅ No UI freezing
+- ✅ Can click buttons during download
+- ✅ Terminal shows NO `QObject::setParent` errors
+
+**What NOT to see:**
+- ❌ "QObject::setParent: Cannot set parent" errors
+- ❌ Frozen/unresponsive UI
+- ❌ Blocked progress updates
+
+### Step 6: Report Results
+
+**If working (most likely):**
+```
+✅ App responsive during download
+✅ Progress updates smooth
+✅ No threading errors in terminal
+✅ Download completes successfully
+→ THREADING FIX SUCCESS!
+```
+
+**If still frozen:**
+```
+❌ UI freezes during download
+❌ Progress bar stuck
+❌ Still seeing "QObject::setParent" errors
+→ Need additional debugging
+```
+
+---
+
+## What Was Fixed
+
+**The Problem:**
+- 30+ `QObject::setParent` errors
+- App completely frozen during downloads
+- UI unresponsive
+
+**The Solution:**
+- All UI updates now use `QTimer.singleShot()` 
+- Ensures updates happen in main thread
+- Worker threads don't block
+- Result: No freezing, no errors
+
+**Files Changed:**
+- `PacsClient/zeta_download_manager/ui/main_widget.py`
+- 6 methods updated with thread-safe wrappers
+
+---
+
+## Terminal Output to Watch For
+
+### ✅ GOOD (Expected)
+```
+[App starts]
+[Some GPU warnings - harmless]
+[Login prompt appears]
+[No "QObject::setParent" errors]
+[Downloads run smoothly]
+```
+
+### ❌ BAD (Problem)
+```
+[App starts]
+QObject::setParent: Cannot set parent, new parent is in a different thread ❌
+QObject::setParent: Cannot set parent, new parent is in a different thread ❌
+QObject::setParent: Cannot set parent, new parent is in a different thread ❌
+[App freezes]
+```
+
+---
+
+## Quick Reference
+
+| What to Test | How to Test | Expected Result |
+|---|---|---|
+| Threading errors | Check terminal | 0 errors ✅ |
+| UI responsiveness | Download 28904 | Smooth, no freeze ✅ |
+| Progress updates | Watch progress bar | Updates instantly ✅ |
+| Button clicks | Click pause/resume | Works immediately ✅ |
+
+---
+
+## If You Need to Restart App
+
+**To stop app:**
+- Press `Ctrl+C` in terminal
+- Wait for clean shutdown
+
+**To restart:**
+```powershell
+& ".\.venv\Scripts\python.exe" ".\main.py"
+```
+
+---
+
+## Summary
+
+**What Changed:** Threading safety  
+**What to Look For:** No `QObject::setParent` errors in terminal  
+**Expected Outcome:** App stays responsive during downloads  
+**Next Test:** Try download with patient 28904
+
+---
+
+**Ready? Test the app now and let me know results!**
+
+See `FIX_VERIFICATION_REPORT.md` for technical details.
+

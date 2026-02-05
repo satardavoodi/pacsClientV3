@@ -31,11 +31,15 @@ from pynetdicom.sop_class import (
 # # واردکردن کلاینت gRPC
 from PacsClient.components import DicomGrpcClient, DicomDownloader
 from PacsClient.components import dicom_service_pb2, dicom_service_pb2_grpc
-# Robust series downloader with retry and error handling
-from PacsClient.components.robust_series_downloader import (
-    RobustSeriesDownloader, 
-    download_series_robust_async
+# Zeta Download Manager - Primary download system
+from PacsClient.components.zeta_adapter import (
+    get_zeta_download_manager_widget, get_zeta_executor, get_zeta_worker_pool,
+    start_zeta_download, create_download_task_from_study
 )
+# Zeta provides all download functionality
+from PacsClient.zeta_download_manager.download.executor import DownloadExecutor
+from PacsClient.zeta_download_manager.core.models import DownloadTask
+from PacsClient.zeta_download_manager.core.enums import DownloadPriority
 # Import Socket service for patient list retrieval
 from PacsClient.components.socket_patient_service import get_socket_patient_service
 from concurrent.futures import ThreadPoolExecutor
@@ -43,18 +47,15 @@ from .data_access_panel import DataAccessPanelWidget
 from .patient_search_widget import PatientSearchWidget
 from .patient_table_widget import PatientTableWidget
 from .right_panel_widget import RightPanelWidget
-from ..download_manager_ui import DownloadManagerWidget
+# UPDATED: Now using Zeta Download Manager with v1.0.6 UI design
+from PacsClient.zeta_download_manager.ui.main_widget import DownloadManagerWidget
 from PacsClient.utils import get_connection_database, get_all_patients, search_patients_local, find_patient_pk, \
     find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 
 from PacsClient.pacs.patient_tab import PatientWidget, AiMainWindow
 
-# Import priority manager for download coordination
-try:
-    from PacsClient.components.download_priority_manager import get_download_priority_manager
-    PRIORITY_MANAGER_AVAILABLE = True
-except ImportError:
-    PRIORITY_MANAGER_AVAILABLE = False
+# Zeta Download Manager handles priority internally
+PRIORITY_MANAGER_AVAILABLE = False  # Legacy priority manager removed
 from PacsClient.pacs.patient_tab.ui.patient_ui.custom_tab_manager import CustomTabManager
 import warnings
 from PacsClient.utils.config import SOURCE_PATH
@@ -585,6 +586,7 @@ class HomePanelWidget(QWidget):
         self.patient_table_widget.thumbnailRequested.connect(self._on_thumbnail_requested)
         self.patient_table_widget.patientClicked.connect(self._on_patient_single_clicked)
         self.patient_table_widget.downloadRequested.connect(self._on_download_requested)
+        self.patient_table_widget.zetaNprRequested.connect(self._on_zeta_npr_requested)
         self.patient_table_widget.cdBurnRequested.connect(self._on_cd_burn_requested)
 
         # ★★★ تنظیمات وسط‌چین کردن هدر جدول ★★★
@@ -685,6 +687,10 @@ class HomePanelWidget(QWidget):
         # 2. This patient is added with CRITICAL priority
         # 3. Download starts IMMEDIATELY (no delay)
         # 4. Queue is reorganized in the background AFTER download starts
+        # 
+        # Note: Enhanced R17 (duplicate check) now prevents re-download of completed studies
+        # by checking both StateStore AND Database. If study is complete, R17 returns
+        # allowed=False and the caller (Download Manager) handles loading from local files.
         if not is_local:
             try:
                 download_manager = self._get_or_create_download_manager_tab()
@@ -814,279 +820,40 @@ class HomePanelWidget(QWidget):
     
     async def _download_series_on_demand(self, widget, study_uid, series_list, base_output_dir, server, clicked_series=None):
         """
-        Download series with priority - clicked series downloads first
+        DEPRECATED: This function used legacy RobustSeriesDownloader.
+        Use Zeta Download Manager instead via start_zeta_download() or the Download Manager UI.
+        
+        Legacy download series with priority - clicked series downloads first
         """
         print(f"\n{'='*60}")
-        print(f"🚀 PRIORITY SERIES DOWNLOAD - Study: {study_uid}")
-        print(f"🎯 HIGH PRIORITY: Series {clicked_series} will download FIRST" if clicked_series else "📡 NORMAL: No priority series")
-        print(f"📋 Total series to download: {len(series_list)}")
+        print(f"⚠️ LEGACY FUNCTION CALLED: _download_series_on_demand")
+        print(f"🔄 This function has been deprecated. Use Zeta Download Manager instead.")
+        print(f"📋 Study: {study_uid}, Series count: {len(series_list)}")
         print(f"{'='*60}\n")
         
+        # Delegate to Zeta Download Manager
         try:
             from pathlib import Path
             
-            # Create robust downloader with priority support
-            robust_downloader = RobustSeriesDownloader(
-                host=server['host'],
-                port=50052,
-                max_retries=3,
-                retry_delay=2.0,
-                connection_timeout=30.0,
-                reconnect_delay=1.0
-            )
+            # Use Zeta Download Manager instead of legacy downloader
+            print("🚀 Using Zeta Download Manager for priority download...")
             
-            # Set priority complete callback
-            def on_priority_complete(series_number, output_dir):
-                """Called when high priority series completes"""
-                print(f"[PRIORITY CALLBACK] Series {series_number} completed - loading into viewer")
-                
-                # Load this series immediately into the widget
-                if widget and hasattr(widget, 'load_series_immediately'):
-                    QTimer.singleShot(100, lambda sn=series_number, od=output_dir: 
-                        widget.load_series_immediately(sn, od))
+            # TODO: Implement priority download via Zeta Download Manager
+            # For now, just log that this needs to be implemented
+            print("⚠️ Priority download via Zeta not yet implemented")
+            print("💡 Please use the Download Manager UI to download studies")
+            return
             
-            robust_downloader.set_priority_callback(on_priority_complete)
-            
-            # ========== THREAD-SAFE SIGNAL HANDLER ==========
-            def on_download_progress(event_type, series_number, progress_percent, current_count=0, total_count=0):
-                """Handle download progress in main Qt thread"""
-                try:
-                    if widget is None:
-                        return
-                    
-                    # Check if this is the priority series
-                    is_priority = (event_type in ['priority_started', 'priority_progress', 'priority_complete', 'priority_failed'])
-                    
-                    if is_priority:
-                        print(f"🎯 [PRIORITY] {event_type}: series={series_number}, progress={progress_percent:.1f}%")
-                        
-                        # Update priority-specific UI
-                        if hasattr(widget, 'show_priority_status'):
-                            if event_type == 'priority_started':
-                                widget.show_priority_status(f"Downloading priority series {series_number}...")
-                            elif event_type == 'priority_complete':
-                                widget.hide_priority_status()
-                    else:
-                        print(f"📡 [NORMAL] {event_type}: series={series_number}, progress={progress_percent:.1f}%")
-                    
-                    # Map priority events to normal events for thumbnail manager
-                    if event_type == 'priority_started':
-                        event_type = 'series_started'
-                    elif event_type == 'priority_progress':
-                        event_type = 'series_progress'
-                    elif event_type == 'priority_complete':
-                        event_type = 'series_complete'
-                    elif event_type == 'priority_failed':
-                        event_type = 'series_failed'
-                    
-                    if event_type == 'series_started':
-                        if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.start_series_download(str(series_number))
-                    
-                    elif event_type == 'series_progress':
-                        if hasattr(widget, 'thumbnail_manager'):
-                            status_text = f"{current_count}/{total_count}" if total_count > 0 else ""
-                            if is_priority:
-                                status_text = f"🎯 {status_text}"
-                            widget.thumbnail_manager.update_series_progress(
-                                series_number=str(series_number),
-                                progress_percent=progress_percent,
-                                status_text=status_text
-                            )
-                                        
-                    elif event_type == 'series_complete':
-                        if hasattr(widget, 'thumbnail_manager'):
-                            # ✅ این خط جدید است — تنظیم وضعیت "آماده" برای UI
-                            from PySide6.QtCore import QTimer
-                            QTimer.singleShot(0, lambda sn=str(series_number): widget.thumbnail_manager.set_series_ready(sn))                            
-                            widget.thumbnail_manager.complete_series_download(str(series_number))
-                        # Emit signal to load the series
-                        if hasattr(widget, 'series_downloaded'):
-                            QTimer.singleShot(500, lambda sn=series_number, wr=weakref.ref(widget):
-                                self._safe_emit_series_downloaded(wr, sn))
-                except Exception as e:
-                    print(f"⚠️ Signal handler error: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
-            # Connect signal
-            try:
-                self._download_progress_signal.disconnect()
-            except:
-                pass
-            self._download_progress_signal.connect(on_download_progress)
-            
-            # Progress callback
-            def progress_callback(event_type, series_number, progress_percent, current_count=0, total_count=0):
-                """Emit signal from background thread"""
-                try:
-                    self._download_progress_signal.emit(
-                        str(event_type), str(series_number), 
-                        float(progress_percent), int(current_count), int(total_count)
-                    )
-                except Exception as e:
-                    print(f"⚠️ Progress callback emit error: {e}")
-            
-            # Download with priority if clicked_series is specified
-            results = await asyncio.to_thread(
-                robust_downloader.download_all_series_with_priority,
-                series_list,
-                base_output_dir,
-                clicked_series,  # Priority series
-                progress_callback,
-                widget
-            )
-            
-            # Get results
-            completed_series = len(results.get('completed', []))
-            failed_series = len(results.get('failed', []))
-            total_series = results.get('total', len(series_list))
-            priority_completed = results.get('priority_completed', False)
-            
-            print(f"\n{'='*60}")
-            print(f"✅ DOWNLOAD COMPLETE: {completed_series}/{total_series} successful")
-            if priority_completed and clicked_series:
-                print(f"🎯 PRIORITY SERIES COMPLETED: Series {clicked_series}")
-            if failed_series > 0:
-                print(f"❌ Failed series: {results.get('failed', [])}")
-            print(f"{'='*60}\n")
-            
-            # Load all downloaded series in parallel
-            if completed_series > 0 and widget is not None:
-                try:
-                    # Collect all downloaded series numbers
-                    downloaded_series_numbers = []
-                    for series_number in results.get('completed', []):
-                        series_dir = Path(base_output_dir) / str(series_number)
-                        if series_dir.exists() and list(series_dir.glob("*.dcm")):
-                            downloaded_series_numbers.append(str(series_number))
-                    
-                    if downloaded_series_numbers:
-                        print(f"🚀 Loading {len(downloaded_series_numbers)} downloaded series...")
-                        if hasattr(widget, 'load_multiple_series_parallel'):
-                            asyncio.create_task(widget.load_multiple_series_parallel(
-                                downloaded_series_numbers, 
-                                max_concurrent=3
-                            ))
-                except Exception as load_err:
-                    print(f"⚠️ Error starting parallel load: {load_err}")
-            
-            # Update table download status
-            try:
-                current_study_uid = str(base_output_dir).split('\\')[-1].split('/')[-1]
-                if completed_series >= total_series:
-                    QTimer.singleShot(100, lambda uid=current_study_uid: 
-                        self.patient_table_widget.update_study_download_status(uid, status='complete'))
-                elif completed_series > 0:
-                    QTimer.singleShot(100, lambda uid=current_study_uid: 
-                        self.patient_table_widget.update_study_download_status(uid, status='partial'))
-            except Exception as e:
-                print(f"⚠️ Error updating table status: {e}")
-            
-            # Cleanup
-            robust_downloader.disconnect()
-            
-        except asyncio.CancelledError:
-            print(f"⚠️ Download cancelled by user")
-            raise
         except Exception as e:
-            print(f"❌ Critical error in robust series download: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            # Fallback: Try with basic downloader if robust fails
-            print("🔄 Attempting fallback download with basic downloader...")
-            await self._download_series_fallback(widget, study_uid, series_list, base_output_dir, server, clicked_series)
+            print(f"⚠️ Error in _download_series_on_demand: {e}")
     
     async def _download_series_fallback(self, widget, study_uid, series_list, base_output_dir, server):
         """
-        Fallback download method using basic SeriesDownloader
-        متد جایگزین دانلود با استفاده از دانلودر پایه
-        
-        This is used if the robust downloader fails completely.
+        DEPRECATED: Legacy fallback download method.
+        Use Zeta Download Manager instead.
         """
-        try:
-            from PacsClient.components.series_downloader import SeriesDownloader
-            from pathlib import Path
-            
-            widget_ref = widget
-            
-            print(f"\n🔄 FALLBACK DOWNLOAD - Using basic downloader")
-            
-            # Sort series
-            try:
-                series_list_sorted = sorted(series_list, key=lambda x: int(x.get('series_number', 999999)))
-            except:
-                series_list_sorted = series_list
-            
-            completed = 0
-            failed = 0
-            
-            for idx, series_info in enumerate(series_list_sorted, 1):
-                series_uid = series_info.get('series_uid')
-                series_number = series_info.get('series_number')
-                
-                if not series_uid or not series_number:
-                    continue
-                
-                series_dir = Path(base_output_dir) / str(series_number)
-                
-                # Check if already downloaded
-                if series_dir.exists():
-                    dicom_files = list(series_dir.glob('*.dcm'))
-                    expected_count = series_info.get('image_count', 0)
-                    if dicom_files and (expected_count == 0 or len(dicom_files) >= expected_count):
-                        completed += 1
-                        # Emit signal
-                        if widget_ref and hasattr(widget_ref, 'series_downloaded'):
-                            QTimer.singleShot(100 * idx, lambda sn=str(series_number): 
-                                widget_ref.series_downloaded.emit(sn))
-                        continue
-                
-                # Try to download with multiple attempts
-                success = False
-                for attempt in range(3):  # 3 attempts
-                    try:
-                        downloader = SeriesDownloader(host=server['host'], port=50052)
-                        if not downloader.connect():
-                            await asyncio.sleep(1)
-                            continue
-                        
-                        success = await asyncio.to_thread(
-                            downloader.download_series,
-                            series_uid,
-                            str(series_dir),
-                            None  # No progress callback in fallback
-                        )
-                        
-                        downloader.disconnect()
-                        
-                        if success:
-                            break
-                            
-                    except Exception as e:
-                        print(f"⚠️ Fallback attempt {attempt + 1} failed: {e}")
-                        await asyncio.sleep(1)
-                
-                if success:
-                    completed += 1
-                    print(f"✅ [{idx}/{len(series_list)}] Fallback: Series {series_number} downloaded")
-                    
-                    if widget_ref and hasattr(widget_ref, 'series_downloaded'):
-                        QTimer.singleShot(500, lambda sn=str(series_number), wr=weakref.ref(widget_ref): 
-                            self._safe_emit_series_downloaded(wr, sn))
-                else:
-                    failed += 1
-                    print(f"❌ [{idx}/{len(series_list)}] Fallback: Series {series_number} failed")
-                
-                await asyncio.sleep(0.1)
-            
-            print(f"\n✅ Fallback download complete: {completed}/{len(series_list)} successful\n")
-            
-        except Exception as e:
-            print(f"❌ Fallback download also failed: {e}")
-            import traceback
-            traceback.print_exc()
+        print("⚠️ DEPRECATED: _download_series_fallback called")
+        print("💡 Use Zeta Download Manager for all download operations")
 
     def close_tab(self, index):
         """Safely close a tab and clean up references"""
@@ -1263,8 +1030,8 @@ class HomePanelWidget(QWidget):
             self.hide_loading()
 
     def _on_download_requested(self, selected_studies, set_current_tab=True):
-        """Handle download request from patient table - uses existing tab if available"""
-        print('on download requested.!! 1')
+        """Handle download request from patient table - NOW USES ZETA DOWNLOAD MANAGER"""
+        print('[Zeta Download] Download button clicked!')
         try:
             # Check if server is selected
             server = self.data_access_panel_widget.get_server_selected()
@@ -1272,48 +1039,87 @@ class HomePanelWidget(QWidget):
                 QMessageBox.warning(self, "Server Not Selected",
                                     "Please select a PACS server first.")
                 return
-            print('on download requested.!! 2')
-
-            # Check if download manager tab already exists
-            download_manager = None
-            for i in range(self.tab_widget.count()):
-                widget = self.tab_widget.widget(i)
-                if isinstance(widget, DownloadManagerWidget):
-                    download_manager = widget
-                    if set_current_tab:
-                        self.tab_widget.setCurrentIndex(i)
-                    print(f"[HomePanelWidget] Using existing Download Manager tab at index {i}")
-                    break
-
-            print('on download requested.!! 3')
-            # If no existing tab, create a new one
-            if download_manager is None:
-                print("[HomePanelWidget] Creating new Download Manager tab")
-                download_manager = DownloadManagerWidget()
-                print('on download requested.!! 4')
-
-                # Use custom tab manager if available
-                if self.custom_tab_manager:
-                    print("[HomePanelWidget] Using custom tab manager for download request")
-                    tab_index = self.custom_tab_manager.add_download_manager_tab(widget=download_manager)
-                    print(f"[HomePanelWidget] Download Manager tab added at index: {tab_index}")
-                else:
-                    print("[HomePanelWidget] Using default tab widget for download request")
-                    # Fallback to normal tab
-                    self.tab_widget.addTab(download_manager, "Download Manager")
-                    if set_current_tab:
-                        self.tab_widget.setCurrentWidget(download_manager)
-
-                # Connect download completion signal to update patient list (only for new tabs)
-                download_manager.studyDownloadCompleted.connect(self._on_study_download_completed)
             
-            # Set server connection for resumable downloads
-            download_manager.set_server_connection(server)
+            print(f"[Zeta Download] Server selected - {server}")
+            
+            # Get or create Zeta Download Manager
+            zeta_manager = self._get_or_create_download_manager_tab()
+            
+            if not zeta_manager:
+                QMessageBox.critical(self, "Error", "Failed to create Zeta Download Manager")
+                return
+            
+            # Switch to tab if requested
+            if set_current_tab:
+                for i in range(self.tab_widget.count()):
+                    if self.tab_widget.widget(i) is zeta_manager:
+                        self.tab_widget.setCurrentIndex(i)
+                        break
+            
+            # Enhance studies with series information before adding
+            for study in selected_studies:
+                if 'series' not in study or not study.get('series'):
+                    try:
+                        study_uid = study.get('study_uid')
+                        patient_id = study.get('patient_id')
+                        if study_uid:
+                            print(f"[Old Download] Fetching series info for {study.get('patient_name')}...")
+                            study_info = self.get_series_info_from_server(study_uid, patient_id)
+                            if study_info:
+                                study['series'] = study_info.get('series', [])
+                                study['series_count'] = study_info.get('count_of_series', len(study.get('series', [])))
+                                if study.get('series'):
+                                    study['images_count'] = sum(s.get('image_count', 0) for s in study['series'])
+                                print(f"[Old Download] ✅ Fetched {len(study.get('series', []))} series")
+                    except Exception as e:
+                        print(f"⚠️ [Old Download] Could not fetch series info: {e}")
+            
+            print(f"[Old Download] Adding {len(selected_studies)} studies to manager")
+            
+            # Add downloads to Zeta
+            zeta_manager.add_downloads(selected_studies, start_immediately=True)
+            
+            print(f"✅ {len(selected_studies)} studies added to Download Manager")
 
+        except Exception as e:
+            print(f"❌ Error in _on_download_requested: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Error in download request: {str(e)}")
+    
+    def _on_zeta_npr_requested(self, selected_studies, set_current_tab=True):
+        """
+        Handle Zeta Download button click - uses main Download Manager tab
+        Updated to use the same Download Manager tab as the sidebar button
+        """
+        print('🚀 [Zeta NPR] Button clicked - opening in Download Manager tab')
+        try:
+            # Check if server is selected
+            server = self.data_access_panel_widget.get_server_selected()
+            if not server:
+                QMessageBox.warning(self, "Server Not Selected",
+                                    "Please select a PACS server first.")
+                return
+            
+            print(f"🚀 [Zeta NPR] Server selected - {server}")
+            
+            # Get or create the main Download Manager tab (same as sidebar button)
+            download_manager = self._get_or_create_download_manager_tab()
+            
+            if not download_manager:
+                QMessageBox.critical(self, "Error", "Failed to open Download Manager")
+                return
+            
+            # Switch to download manager tab if requested
+            if set_current_tab:
+                for i in range(self.tab_widget.count()):
+                    if self.tab_widget.widget(i) == download_manager:
+                        self.tab_widget.setCurrentIndex(i)
+                        break
+            
             # Enhance selected_studies with series information if not present
             for study in selected_studies:
                 if 'series' not in study or not study.get('series'):
-                    # Try to fetch series info from server
                     try:
                         study_uid = study.get('study_uid')
                         patient_id = study.get('patient_id')
@@ -1322,37 +1128,28 @@ class HomePanelWidget(QWidget):
                             if study_info:
                                 study['series'] = study_info.get('series', [])
                                 study['series_count'] = study_info.get('count_of_series', len(study.get('series', [])))
-                                # Calculate total images
                                 if study.get('series'):
                                     study['images_count'] = sum(s.get('image_count', 0) for s in study['series'])
-                                print(f"📋 Fetched {len(study.get('series', []))} series for {study.get('patient_name', 'Unknown')}")
+                                print(f"🚀 [Zeta NPR] Fetched {len(study.get('series', []))} series")
                     except Exception as e:
-                        print(f"⚠️ Could not fetch series info for {study.get('study_uid', 'Unknown')}: {e}")
-
+                        print(f"⚠️ [Zeta NPR] Could not fetch series info: {e}")
+            
             # Add studies to download manager
-            print(f"[HomePanelWidget] Adding {len(selected_studies)} studies to download manager")
-            # Debug: print study data to understand format
-            for i, study in enumerate(selected_studies[:3]):  # Print first 3
-                print(f"[HomePanelWidget] Study {i}: study_uid={study.get('study_uid', 'MISSING')}, patient_name={study.get('patient_name', 'MISSING')}")
+            print(f"[Zeta NPR] Adding {len(selected_studies)} studies to manager")
+            download_manager.add_downloads(selected_studies, start_immediately=True)
+            print(f"[Zeta NPR] Studies added and downloads started automatically")
             
-            added_count = download_manager.add_study_downloads(selected_studies, server)
-            print(f"[HomePanelWidget] Added count: {added_count}, existing queue size: {len(download_manager.study_downloads)}")
-
-            # Always try to start downloads (even if added_count is 0, there might be pending ones)
-            print('home_ui - start all download.!! - 1106')
-            download_manager.start_all_downloads()
-            
-            if added_count > 0:
-                print(f"[HomePanelWidget] Added {added_count} new studies to download queue")
+            if len(selected_studies) > 0:
+                print(f"[Zeta NPR] ✅ Added {len(selected_studies)} studies to queue")
+                # UI feedback - downloads will appear in Download Manager tab
             else:
-                QMessageBox.warning(self, "Error Adding Studies",
-                                    "Error adding studies to download list.")
+                print(f"[Zeta NPR] ⚠️ No new studies added (may already be in queue)")
 
         except Exception as e:
-            print(f"Error in _on_download_requested: {str(e)}")
+            print(f"❌ Error in Zeta Download: {str(e)}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Error in download request: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error in Zeta Download: {str(e)}")
 
     def _on_cd_burn_requested(self, selected_studies):
         """Handle CD burn request from patient table"""
@@ -1363,7 +1160,7 @@ class HomePanelWidget(QWidget):
                                     "Please select at least one study for CD burning.")
                 return
             
-            # Import and show CD burn dialog
+            # Import CD burn dialog
             from PacsClient.components.cd_burner.cd_burn_dialog import CDBurnDialog
             
             dialog = CDBurnDialog(selected_studies, self)
@@ -1381,25 +1178,42 @@ class HomePanelWidget(QWidget):
             QMessageBox.critical(self, "Error", f"Error in CD burn request: {str(e)}")
 
     def _get_or_create_download_manager_tab(self):
-        """Get existing download manager tab or create new one"""
+        """Get existing Download Manager tab or create new one - unified for all download buttons"""
         try:
+            from PacsClient.utils.config import SOURCE_PATH
+            
             # Check if download manager tab already exists
             for i in range(self.tab_widget.count()):
                 widget = self.tab_widget.widget(i)
                 if isinstance(widget, DownloadManagerWidget):
+                    print(f"[Download Manager] Using existing tab at index {i}")
                     return widget
 
-            # Create new download manager tab
-            download_manager = DownloadManagerWidget()
-            self.tab_widget.addTab(download_manager, "دانلود منیجر")
+            # Create new Download Manager tab (Zeta with v1.0.6 UI)
+            print("[Download Manager] Creating new Download Manager tab (Zeta with v1.0.6 UI)")
             
-            # Connect download completion signal to update patient list
-            download_manager.studyDownloadCompleted.connect(self._on_study_download_completed)
+            download_manager = DownloadManagerWidget(base_output_dir=Path(SOURCE_PATH))
+            
+            # Add to tab widget with standard name "Download Manager"
+            if self.custom_tab_manager:
+                tab_index = self.custom_tab_manager.add_download_manager_tab(widget=download_manager)
+                print(f"[Download Manager] Tab added at index: {tab_index}")
+            else:
+                self.tab_widget.addTab(download_manager, "Download Manager")
+            
+            # Connect download completion signals
+            try:
+                download_manager.download_completed.connect(self._on_study_download_completed)
+                download_manager.download_failed.connect(self._on_study_download_failed)
+            except Exception as e:
+                print(f"⚠️ Could not connect download signals: {e}")
             
             return download_manager
 
         except Exception as e:
-            print(f"Error creating download manager tab: {str(e)}")
+            print(f"❌ Error creating download manager tab: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def _connect_download_manager_to_widget(self, download_manager, widget, study_uid: str):
@@ -1519,6 +1333,22 @@ class HomePanelWidget(QWidget):
             import traceback
             traceback.print_exc()
     
+    def _on_study_download_failed(self, study_uid: str, error_message: str):
+        """Handle study download failure"""
+        try:
+            print(f"❌ Study download failed: {study_uid}")
+            print(f"   Error: {error_message}")
+            
+            # Update patient table widget to show error status
+            if hasattr(self, 'patient_table_widget'):
+                self.patient_table_widget.update_study_download_status(study_uid, 'error')
+                print(f"✓ Updated patient table for {study_uid}: error")
+            
+        except Exception as e:
+            print(f"Error handling study download failure: {e}")
+            import traceback
+            traceback.print_exc()
+    
     def _auto_open_downloaded_study(self, study_uid: str):
         """Automatically open a study after it's downloaded"""
         try:
@@ -1555,10 +1385,11 @@ class HomePanelWidget(QWidget):
             print(f"Error auto-opening study: {e}")
 
     def _on_resumable_download_clicked(self):
-        """Handle resumable download manager button click"""
+        """Handle resumable download manager button click - Uses Zeta Download Manager"""
         try:
-            # Import resumable download manager widget
-            from PacsClient.components.resumable_download_widget import ResumableDownloadManagerWidget
+            # Import Zeta download manager widget (replaces resumable_download_widget)
+            from PacsClient.zeta_download_manager.ui.main_widget import DownloadManagerWidget as ResumableDownloadManagerWidget
+            from PacsClient.utils.config import SOURCE_PATH
 
             # Check if resumable download manager tab already exists
             for i in range(self.tab_widget.count()):
@@ -1566,11 +1397,13 @@ class HomePanelWidget(QWidget):
                 if isinstance(widget, ResumableDownloadManagerWidget):
                     # Tab already exists, just switch to it
                     self.tab_widget.setCurrentIndex(i)
+                    print("[Zeta Download] Switched to existing Resumable Downloads tab")
                     return
 
-            # Create new resumable download manager tab
-            resumable_download_manager = ResumableDownloadManagerWidget()
-            self.tab_widget.addTab(resumable_download_manager, "Resumable Downloads")
+            # Create new Zeta download manager tab
+            print("[Zeta Download] Creating new Resumable Downloads tab")
+            resumable_download_manager = ResumableDownloadManagerWidget(base_output_dir=Path(SOURCE_PATH))
+            self.tab_widget.addTab(resumable_download_manager, "🚀 Zeta Downloads")
 
             # Switch to the new tab
             self.tab_widget.setCurrentIndex(self.tab_widget.count() - 1)
@@ -3341,11 +3174,11 @@ class HomePanelWidget(QWidget):
                             pass
                 print(f"   Cancelled {cancelled} background download tasks")
                 
-            # Also try to stop any robust downloader for this series
+            # Cancel any Zeta downloads for this series
             try:
-                from PacsClient.components.robust_series_downloader import reset_robust_downloader
-                reset_robust_downloader()
-                print(f"   Reset robust downloader")
+                from PacsClient.components.zeta_adapter import cancel_zeta_download
+                cancel_zeta_download(study_uid)
+                print(f"   Cancelled Zeta download")
             except:
                 pass
                 
@@ -3481,11 +3314,15 @@ class HomePanelWidget(QWidget):
         Fallback to robust downloader if fast downloader fails
         """
         try:
-            print(f"🔄 Using robust downloader fallback for series {target_series}...")
+            print(f"🔄 Using Zeta download for series {target_series}...")
             
+            # Use Zeta download manager instead of RobustSeriesDownloader
+            from PacsClient.components.zeta_adapter import start_zeta_download
+            
+            # TODO: Convert this to use Zeta's task-based download system
+            # For now, keep legacy RobustSeriesDownloader as fallback
             from PacsClient.components.robust_series_downloader import RobustSeriesDownloader
             
-            # Create robust downloader
             robust_downloader = RobustSeriesDownloader(
                 host=server['host'],
                 port=50052,
@@ -3553,110 +3390,26 @@ class HomePanelWidget(QWidget):
 
     async def _download_single_series_with_priority(self, widget, study_uid, series_list, base_output_dir, server, clicked_series):
         """
-        Download ONLY the clicked series immediately with highest priority
-        فقط سری کلیک‌شده را با بالاترین اولویت دانلود و نمایش بده
+        DEPRECATED: Legacy priority download for single series.
+        Use Zeta Download Manager with priority system instead.
         """
+        print(f"⚠️ DEPRECATED: _download_single_series_with_priority called for series {clicked_series}")
+        print("💡 Use Zeta Download Manager for priority-based downloads")
+        
+        # Check if already downloaded
         try:
-            print(f"\n{'='*60}")
-            print(f"🚀 IMMEDIATE PRIORITY DOWNLOAD - Series: {clicked_series}")
-            print(f"📋 Found {len(series_list)} total series")
-            print(f"{'='*60}\n")
-
-            # Find target series info
-            target_series_info = None
-            for series in series_list:
-                if str(series.get('series_number')) == str(clicked_series):
-                    target_series_info = series
-                    break
-            if not target_series_info:
-                print(f"❌ Series {clicked_series} not found in series list")
-                return
-
-            series_uid = target_series_info.get('series_uid')
-            series_number = str(target_series_info.get('series_number', clicked_series))
-            print(f"🎯 Found target series: {series_number} (UID: {series_uid[:20]}...)")
-
             from pathlib import Path
-            series_dir = Path(base_output_dir) / series_number
-
-            # Check if already downloaded
+            series_dir = Path(base_output_dir) / str(clicked_series)
             if series_dir.exists():
                 dicom_files = list(series_dir.glob("*.dcm"))
-                expected_count = target_series_info.get('image_count', 0)
-                if dicom_files and (expected_count == 0 or len(dicom_files) >= expected_count):
-                    print(f"✅ Series {series_number} already downloaded - loading immediately")
+                if dicom_files:
+                    print(f"✅ Series {clicked_series} already downloaded")
                     if hasattr(widget, 'load_series_immediately'):
-                        QTimer.singleShot(100, lambda sn=series_number, od=str(series_dir):
+                        QTimer.singleShot(100, lambda sn=clicked_series, od=str(series_dir):
                             widget.load_series_immediately(sn, od))
                     return
-
-            # Create robust downloader
-            from PacsClient.components.robust_series_downloader import RobustSeriesDownloader
-            robust_downloader = RobustSeriesDownloader(
-                host=server['host'],
-                port=50052,
-                max_retries=3,
-                retry_delay=2.0,
-                connection_timeout=30.0,
-                reconnect_delay=1.0
-            )
-
-            # ✅ CRITICAL: Set priority callback BEFORE download
-            def on_priority_complete(series_num, output_dir):
-                print(f"✅ [PRIORITY CALLBACK] Series {series_num} completed - loading into viewer")
-                if widget and hasattr(widget, 'load_series_immediately'):
-                    QTimer.singleShot(100, lambda sn=str(series_num), od=str(output_dir):
-                        widget.load_series_immediately(sn, od))
-
-            robust_downloader.set_priority_callback(on_priority_complete)
-
-            # Progress callback
-            def progress_callback(event_type, series_num, progress_percent, current_count=0, total_count=0):
-                try:
-                    if event_type == 'series_started':
-                        if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.start_series_download(str(series_num))
-                    elif event_type == 'series_progress':
-                        if hasattr(widget, 'thumbnail_manager'):
-                            status_text = f"{current_count}/{total_count}" if total_count > 0 else ""
-                            status_text = f"🎯 {status_text}"
-                            widget.thumbnail_manager.update_series_progress(
-                                series_number=str(series_num),
-                                progress_percent=progress_percent,
-                                status_text=status_text
-                            )
-                    elif event_type == 'series_complete':
-                        if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.complete_series_download(str(series_num))
-                except Exception as e:
-                    print(f"⚠️ Priority progress callback error: {e}")
-
-            # Download only this series
-            single_series_list = [target_series_info]
-            print(f"📥 Starting priority download for series {series_number}...")
-
-            results = await asyncio.to_thread(
-                robust_downloader.download_all_series_sync,
-                single_series_list,
-                base_output_dir,
-                progress_callback,
-                widget
-            )
-
-            # Cleanup
-            robust_downloader.disconnect()
-
-            # Optional: fallback if callback wasn't called
-            if results.get('completed') and series_number in results.get('completed', []):
-                if not (hasattr(widget, 'lst_series_name') and f"series_{series_number}" in widget.lst_series_name):
-                    if hasattr(widget, 'load_series_immediately'):
-                        QTimer.singleShot(500, lambda sn=series_number, od=str(series_dir):
-                            widget.load_series_immediately(sn, od))
-
         except Exception as e:
-            print(f"❌ Critical error in priority download: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"⚠️ Error checking series status: {e}")
             
 
     def _load_and_display_series_immediately(self, widget, series_number, series_dir):
@@ -3745,7 +3498,7 @@ class HomePanelWidget(QWidget):
         return self.patient_table_widget.get_row_count()
 
     def download_study(self, row):
-        """Download study from the selected row using resumable download"""
+        """Download study from the selected row using Zeta Download Manager"""
         try:
             patient_data = self.patient_table_widget.get_patient_data_by_row(row)
             if not patient_data:
@@ -3755,8 +3508,8 @@ class HomePanelWidget(QWidget):
             patient_name = patient_data['patient_name']
             study_uid = patient_data['study_uid']
 
-            # Import resumable download service
-            from PacsClient.components.resumable_dicom_service import get_resumable_dicom_service
+            # Use Zeta download adapter
+            from PacsClient.components.zeta_adapter import start_zeta_download, create_download_task_from_study
 
             # Get service instance
             service = get_resumable_dicom_service()
@@ -3915,8 +3668,14 @@ class HomePanelWidget(QWidget):
             QMessageBox.critical(self, "Error", f"Error resuming download: {str(e)}")
 
     def show_download_progress_dialog(self, patient_data, service):
-        """Show download progress dialog"""
-        from PacsClient.components.resumable_download_widget import DownloadProgressWidget
+        """Show Zeta download progress widget"""
+        # Use Zeta download manager widget
+        widget = get_zeta_download_manager_widget()
+        widget.show()
+        return
+        
+        # Legacy code kept for reference:
+        # from PacsClient.components.resumable_download_widget import DownloadProgressWidget
 
         # Create progress widget
         progress_widget = DownloadProgressWidget(
@@ -3990,9 +3749,11 @@ Study UID: {study_uid}
         self.mainwindow = MainWindow
 
     def open_download_manager(self):
-        """Open download manager - switches to existing tab if available, otherwise creates new one"""
-        print("[HomePanelWidget] open_download_manager called")
+        """Open download manager - switches to existing tab if available, otherwise creates new one - Uses Zeta with v1.0.6 UI"""
+        print("[HomePanelWidget] open_download_manager called (Zeta Download Manager with v1.0.6 UI)")
         try:
+            from PacsClient.utils.config import SOURCE_PATH
+            
             # Check if download manager tab already exists
             for i in range(self.tab_widget.count()):
                 widget = self.tab_widget.widget(i)
@@ -4003,8 +3764,13 @@ Study UID: {study_uid}
                     return
             
             # No existing tab found, create a new one
-            print("[HomePanelWidget] Creating new Download Manager tab")
-            download_manager = DownloadManagerWidget()
+            print("[HomePanelWidget] Creating new Download Manager tab (Zeta with v1.0.6 UI)")
+            print(f"[HomePanelWidget] DownloadManagerWidget module: {DownloadManagerWidget.__module__}")
+            print(f"[HomePanelWidget] DownloadManagerWidget file: {DownloadManagerWidget.__module__.replace('.', '/')}.py")
+            
+            # Create Zeta Download Manager with base_output_dir parameter
+            download_manager = DownloadManagerWidget(base_output_dir=Path(SOURCE_PATH))
+            print(f"[HomePanelWidget] Widget created - type: {type(download_manager).__name__}")
             
             # Use custom tab manager if available
             if self.custom_tab_manager:
@@ -4017,7 +3783,7 @@ Study UID: {study_uid}
                 self.tab_widget.addTab(download_manager, "Download Manager")
                 self.tab_widget.setCurrentWidget(download_manager)
             
-            print("[HomePanelWidget] Download Manager opened successfully")
+            print("[HomePanelWidget] Download Manager opened successfully (Zeta with v1.0.6 UI)")
         except Exception as e:
             print(f"[HomePanelWidget] Error opening download manager: {str(e)}")
             import traceback
@@ -4175,7 +3941,8 @@ Study UID: {study_uid}
             if study_uid:
                 download_manager = self._get_or_create_download_manager_tab()
                 if download_manager:
-                    download_manager.studyDownloadCompleted.connect(
+                    # Zeta uses 'download_completed' signal (not 'studyDownloadCompleted')
+                    download_manager.download_completed.connect(
                         lambda completed_study_uid: widget.refresh_after_download(completed_study_uid)
                         if completed_study_uid == study_uid else None
                     )

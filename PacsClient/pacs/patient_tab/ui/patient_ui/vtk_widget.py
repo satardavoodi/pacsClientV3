@@ -1,4 +1,5 @@
 import time
+import logging
 
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
@@ -11,6 +12,7 @@ from PacsClient.pacs.patient_tab.utils import read_segment_nifti
 import vtkmodules.all as vtk
 from PySide6.QtWidgets import QApplication
 
+logger = logging.getLogger(__name__)
 
 def grow_vtk_inplace(old_input, new_vtk_image_data):
     # ابعاد قدیم/جدید
@@ -437,11 +439,24 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # self.style.interactionOccurred.connect(self.change_container_border)
         self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
-        self.image_viewer.UpdateDisplayExtent()
-        self.image_viewer.Render()
-        self.render_window.Render()
-        _render_time = time.time() - _render_start
-        print(f"   🎨 [SWITCH] Render: {_render_time:.3f}s")
+        # ⚡ CRITICAL FIX: Defer rendering to prevent UI freeze
+        # Instead of blocking with immediate Render() calls, schedule renders asynchronously
+        # This allows worker threads to finish and prevents event loop deadlock
+        def deferred_render():
+            try:
+                if self.image_viewer is None:
+                    return
+                _render_vtk_start = time.time()
+                self.image_viewer.UpdateDisplayExtent()
+                self.image_viewer.Render()
+                self.render_window.Render()
+                _render_vtk_time = time.time() - _render_vtk_start
+                print(f"   🎨 [SWITCH] Deferred render: {_render_vtk_time:.3f}s")
+            except Exception as e:
+                logger.error(f"Error in deferred render: {e}")
+        
+        # Schedule render on next event loop iteration (non-blocking)
+        QTimer.singleShot(1, deferred_render)
 
         # # reset slider to default
         # self.reset_slider_method()
@@ -449,12 +464,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.save_status_camera(self.image_viewer)
 
         _total = time.time() - _switch_start
-        print(f"   ✅ [SWITCH] TOTAL (recreation): {_total:.3f}s\n")
+        print(f"   ✅ [SWITCH] TOTAL (recreation - deferred render): {_total:.3f}s\n")
 
         # QTimer.singleShot(400, self.viewport_spinner.hide_loading)
-        # Hide spinner AFTER everything is rendered
-        # Use singleShot(0) to let Qt finish current event loop and show the rendered image
-        QTimer.singleShot(0, self.viewport_spinner.hide_loading)
+        # Hide spinner AFTER rendering starts (but not blocking)
+        # Schedule after deferred render to show complete image
+        QTimer.singleShot(50, self.viewport_spinner.hide_loading)
         return True
 
     def get_count_of_slices(self):
