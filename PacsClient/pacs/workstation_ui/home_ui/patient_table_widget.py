@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
                                 QPushButton, QLabel, QHeaderView, QAbstractItemView, QCheckBox,
                                 QSizePolicy, QStyledItemDelegate, QDialog, QListWidget, QListWidgetItem,
-                                QDialogButtonBox, QMessageBox, QProgressDialog)
-from PySide6.QtCore import Signal, Qt, QTimer, QRect, QPersistentModelIndex
+                                QDialogButtonBox, QMessageBox, QProgressDialog, QApplication)
+from PySide6.QtCore import Signal, Qt, QTimer, QRect, QPersistentModelIndex, QItemSelectionModel
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont,QIcon
 import threading
 import logging
@@ -672,6 +672,7 @@ class PatientTableWidget(QWidget):
         # Table settings
         self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.results_table.setSelectionMode(QAbstractItemView.ExtendedSelection)  # Allow multiple selections with Ctrl+click
         self.results_table.setAlternatingRowColors(True)
         
         # Enable double-click and mouse tracking
@@ -1246,12 +1247,24 @@ class PatientTableWidget(QWidget):
         try:
             if item.column() == COL['select']:
                 return
+
+            # Check if Ctrl key is pressed for multi-selection
+            modifiers = QApplication.keyboardModifiers()
+            ctrl_pressed = modifiers & Qt.ControlModifier
+
             self.pending_click_item = item
             self.click_timer.start(300)
 
             # Highlight the clicked row with neon effect
             selected_row = item.row()
-            self.highlight_selected_row(selected_row)
+
+            # Handle multi-selection with Ctrl key
+            if ctrl_pressed:
+                # Toggle selection of the current row without clearing other selections
+                self.toggle_row_selection(selected_row)
+            else:
+                # Normal single selection (clear others and select this one)
+                self.highlight_selected_row(selected_row)
 
         except Exception as e:
             print(f"Error in patient click: {str(e)}")
@@ -1273,6 +1286,35 @@ class PatientTableWidget(QWidget):
 
         except Exception as e:
             print(f"Error highlighting row: {str(e)}")
+
+    def toggle_row_selection(self, row_index):
+        """Toggle selection of a specific row without affecting other selections"""
+        try:
+            # Get the selection model
+            selection_model = self.results_table.selectionModel()
+
+            # Check if the row is currently selected
+            current_selections = selection_model.selectedRows()
+            is_currently_selected = any(index.row() == row_index for index in current_selections)
+
+            if is_currently_selected:
+                # Deselect the row
+                selection_model.select(
+                    self.results_table.model().index(row_index, 0),
+                    QItemSelectionModel.Deselect | QItemSelectionModel.Rows
+                )
+            else:
+                # Select the row (add to existing selection)
+                selection_model.select(
+                    self.results_table.model().index(row_index, 0),
+                    QItemSelectionModel.Select | QItemSelectionModel.Rows
+                )
+
+            # Refresh the table to apply the changes
+            self.results_table.viewport().update()
+
+        except Exception as e:
+            print(f"Error toggling row selection: {str(e)}")
 
     def remove_row_highlight(self, row_index):
         """Remove row highlight by deselecting the row"""

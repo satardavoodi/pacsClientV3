@@ -279,15 +279,13 @@ class PatientWidget(QWidget):
             if len(series_data) == 0:
                 print("⏳ No series with files found, waiting for DICOM files to be written...")
 
-                # Try multiple times with increasing delays
+                # Try multiple times without blocking delays
                 for retry_count in range(5):  # Try 5 times
-                    wait_time = 1 + retry_count  # 1, 2, 3, 4, 5 seconds
-                    print(f"🔄 Retry {retry_count + 1}/5: Waiting {wait_time} seconds...")
-                    time.sleep(wait_time)
+                    print(f"🔄 Retry {retry_count + 1}/5: Rechecking immediately...")
 
-                    # Check again
+                    # Check again (no sleep)
                     all_items = os.listdir(folder_path)
-                    print(f"🔍 DEBUG: Items after {wait_time}s wait: {all_items}")
+                    print(f"🔍 DEBUG: Items after immediate recheck: {all_items}")
 
                     temp_series_data = []
                     for item in all_items:
