@@ -28,7 +28,7 @@ from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget, grow
 from PacsClient.pacs.patient_tab.utils import load_images, save_image_as_png, delete_widgets_in_layout, NodeViewer, \
     get_count_dicom_files_exist, load_images_from_server, VerticalButton
 from PacsClient.pacs.workstation_ui.settings_ui.filter_config import FilterConfigWidget
-from PacsClient.pacs.patient_tab.viewers.advanced_tools_panel import AdvancedToolsPanel
+# from PacsClient.pacs.patient_tab.viewers.advanced_tools_panel import AdvancedToolsPanel  # REMOVED: File deleted during merge
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import ToolbarManager, reference_line
 import asyncio
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, CallerTypes
@@ -40,6 +40,11 @@ from PySide6.QtCore import QTimer
 import threading
 import logging
 logger = logging.getLogger(__name__)
+
+# Priority management is now handled by Zeta Download Manager
+# Zeta uses its own internal priority system via DownloadPriority enum
+from PacsClient.zeta_download_manager.core.enums import DownloadPriority
+PRIORITY_MANAGER_AVAILABLE = False  # Legacy priority manager removed
 
 
 class PatientWidget(QWidget):
@@ -2040,23 +2045,25 @@ class PatientWidget(QWidget):
             print("[PatientWidget] Switching to Advanced Tools panel (index 3)")
             
             # ✅ Lazy load AdvancedToolsPanel if not already created
+            # NOTE: AdvancedToolsPanel was removed during merge - this feature is currently disabled
             if self.advanced_tools_panel is None:
-                print("[PatientWidget] Creating AdvancedToolsPanel for the first time...")
-                try:
-                    
-                    # Create AdvancedToolsPanel
-                    self.advanced_tools_panel = AdvancedToolsPanel()
-                    
-                    # Replace placeholder widget with actual AdvancedToolsPanel
-                    self.right_panel.removeWidget(self._lazy_placeholder_3)
-                    self._lazy_placeholder_3.deleteLater()
-                    self.right_panel.insertWidget(3, self.advanced_tools_panel)
-                    
-                    print("[PatientWidget] AdvancedToolsPanel created and inserted successfully")
-                except Exception as e:
-                    print(f"[PatientWidget] ERROR creating AdvancedToolsPanel: {e}")
-                    import traceback
-                    traceback.print_exc()
+                print("[PatientWidget] AdvancedToolsPanel is not available (module removed)")
+                # Show a placeholder message instead
+                from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+                placeholder = QWidget()
+                layout = QVBoxLayout(placeholder)
+                label = QLabel("Advanced Tools Panel\n\n(Currently unavailable)")
+                label.setAlignment(Qt.AlignCenter)
+                label.setStyleSheet("color: #94a3b8; font-size: 14px;")
+                layout.addWidget(label)
+                self.advanced_tools_panel = placeholder
+                
+                # Replace placeholder widget with message
+                self.right_panel.removeWidget(self._lazy_placeholder_3)
+                self._lazy_placeholder_3.deleteLater()
+                self.right_panel.insertWidget(3, self.advanced_tools_panel)
+                
+                print("[PatientWidget] Placeholder created for unavailable AdvancedToolsPanel")
             
             self.right_panel.setCurrentIndex(3)  # index 3 for Advanced Tools
             self.right_panel.setFixedWidth(550)  # Wider for tools
@@ -3140,6 +3147,37 @@ class PatientWidget(QWidget):
             return False
         
 
+    def update_download_progress(self, current: int, total: int, percent: int):
+        """
+        Update download progress for this patient's study.
+        
+        This is called by the Download Manager to provide real-time progress updates.
+        
+        Args:
+            current: Number of images downloaded so far
+            total: Total number of images in the study
+            percent: Progress percentage (0-100)
+        """
+        try:
+            # Store progress info for display
+            self._download_progress = {
+                'current': current,
+                'total': total,
+                'percent': percent
+            }
+            
+            # Update toolbar if available
+            if hasattr(self, 'toolbar') and self.toolbar:
+                if hasattr(self.toolbar, 'update_download_progress'):
+                    self.toolbar.update_download_progress(current, total, percent)
+            
+            # Log major milestones
+            if percent % 25 == 0 or percent == 100:
+                self.logger.debug(f"Download progress: {current}/{total} ({percent}%)")
+                
+        except Exception as e:
+            self.logger.debug(f"Error updating download progress: {e}")
+    
     def load_series_on_demand(self, series_number: str):
         """
         Public method to load a series on demand (thread-safe, can be called from background tasks)
@@ -3609,6 +3647,26 @@ class PatientWidget(QWidget):
                 # Check if image_viewer exists before updating
                 if vtk_widget.image_viewer is not None:
                     vtk_widget.image_viewer.update_corners_actors()
+                
+                # Notify priority manager that this series is now in the viewer
+                # This promotes the series to CRITICAL priority
+                if PRIORITY_MANAGER_AVAILABLE and self.study_uid:
+                    try:
+                        series_uid = metadata.get('series', {}).get('series_uid', '')
+                        # Determine layout position (0 for primary viewer)
+                        layout_position = 0
+                        if vtk_widget and self.lst_nodes_viewer:
+                            for i, node in enumerate(self.lst_nodes_viewer):
+                                if hasattr(node, 'vtk_widget') and node.vtk_widget == vtk_widget:
+                                    layout_position = i
+                                    break
+                        
+                        # Legacy priority manager removed - Zeta handles priority internally
+                        # priority_manager = get_download_priority_manager()
+                        # priority_manager.on_series_loaded_in_viewer(...)
+                        logger.debug(f"Series {series_number} loaded in viewer (layout: {layout_position})")
+                    except Exception as pm_error:
+                        logger.debug(f"Could not notify priority manager: {pm_error}")
 
         except Exception as e:
             print('error on display loaded series:', e)

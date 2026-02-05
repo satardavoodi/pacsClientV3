@@ -50,14 +50,26 @@ class SocketConfig:
             "connection_timeout": 30,
             "max_retries": 3,
             "retry_delay": 2,
-            "buffer_size": 8192,
+            "buffer_size": 262144,  # OPTIMIZED: 256KB for DICOM files (was 8KB)
             "enable_compression": True,
             "log_level": "INFO",
             "auto_reconnect": True,
             "connection_pool_size": 5,
             "request_timeout": 60,
             "keep_alive": True,
-            "keep_alive_interval": 30
+            "keep_alive_interval": 30,
+            # === PERFORMANCE OPTIMIZATIONS ===
+            # NOTE: parallel_downloads is for SERIES-LEVEL parallelism within ONE patient
+            # Multiple patients are ALWAYS downloaded sequentially (one at a time)
+            "parallel_downloads": False,  # Series-level parallelism (disabled by default for safety)
+            "high_bandwidth_mode": False,  # DISABLED: Conservative buffer settings for stability
+            "tcp_nodelay": True,           # Low latency mode
+            "tcp_window_size": 1048576,    # 1MB TCP window (conservative)
+            "chunk_size": 65536,           # 64KB chunks (standard)
+            "adaptive_batch_size": True,   # Adjust batch size based on network conditions
+            "max_parallel_batches": 3,     # Max 3 series in parallel (within same patient)
+            "prefetch_batches": 2,         # Prefetch 2 batches ahead
+            "batch_timeout": 120           # 2 min batch timeout (was 10 min)
         }
     
     def _load_config(self):

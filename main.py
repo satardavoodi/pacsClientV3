@@ -68,7 +68,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("1.04")
+    app.setApplicationVersion("1.0.7")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -352,6 +352,72 @@ if __name__ == "__main__":
     # Integrate asyncio with Qt event loop
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
+
+    # === CRITICAL: Application-level cleanup handler ===
+    # Ensures all download state is cleared on app shutdown
+    # This runs even if individual widget closeEvents aren't called
+    def cleanup_on_quit():
+        """Clean up all download state when application is about to quit"""
+        try:
+            print("🧹 Application shutting down - preserving download history...")
+            
+            # IMPORTANT: DO NOT clear database download progress records!
+            # They need to persist across app restarts so users don't re-download completed studies
+            # from PacsClient.utils.database import clear_all_download_progress
+            # cleared = clear_all_download_progress()
+            # if cleared > 0:
+            #     print(f"   ✅ Cleared {cleared} database progress records")
+            print("   ℹ️  Database history preserved (for 'Already Downloaded' checks)")
+            
+            # Clear UI persistence file so Download Manager list is empty on restart
+            # (Database still remembers what was downloaded for checking)
+            import sys
+            from pathlib import Path
+            
+            # Get persistence file path (same logic as in download_manager_ui.py)
+            if sys.platform == "win32":
+                import os
+                appdata_path = os.getenv('LOCALAPPDATA')
+                if appdata_path:
+                    persistence_file = Path(appdata_path) / 'AIPACS' / 'DownloadManager' / 'download_manager_state.json'
+                else:
+                    persistence_file = Path.home() / 'AppData' / 'Local' / 'AIPACS' / 'DownloadManager' / 'download_manager_state.json'
+            elif sys.platform == "darwin":
+                persistence_file = Path.home() / 'Library' / 'Application Support' / 'AIPACS' / 'DownloadManager' / 'download_manager_state.json'
+            else:
+                import os
+                config_dir = os.getenv('XDG_CONFIG_HOME', Path.home() / '.config')
+                persistence_file = Path(config_dir) / 'aipacs' / 'download_manager' / 'download_manager_state.json'
+            
+            if persistence_file.exists():
+                persistence_file.unlink()
+                print(f"   ✅ Cleared UI list (Download Manager will be empty on restart)")
+            
+            # Note: We also preserve progress files for resumable downloads
+            # These allow incomplete downloads to resume from where they left off
+            # try:
+            #     from PacsClient.utils.config import SOURCE_PATH
+            #     progress_dir = SOURCE_PATH / '.progress'
+            #     if progress_dir.exists():
+            #         for progress_file in progress_dir.glob('*.json'):
+            #             try:
+            #                 progress_file.unlink()
+            #             except:
+            #                 pass
+            #         print(f"   ✅ Cleared progress files from {progress_dir}")
+            # except Exception as e:
+            #     print(f"   ⚠️ Could not clear progress files: {e}")
+            
+            print("✅ Shutdown complete:")
+            print("   - Database history preserved (for 'Already Downloaded' checks)")
+            print("   - UI list cleared (Download Manager will be empty on restart)")
+            
+        except Exception as e:
+            print(f"⚠️ Error during shutdown cleanup: {e}")
+    
+    # Connect cleanup handler to aboutToQuit signal
+    app.aboutToQuit.connect(cleanup_on_quit)
+    # === END cleanup handler ===
 
     window = AppHandler()
     window.show()

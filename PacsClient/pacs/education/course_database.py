@@ -7,7 +7,10 @@ from PacsClient.utils.database import get_db_connection
 
 
 def insert_course(name: str, description: str = "", author: str = "", 
-                  outline: str = "", thumbnail_path: str = None) -> int:
+                  outline: str = "", thumbnail_path: str = None,
+                  tags: list = None, modality: str = "", body_regions: list = None,
+                  level: str = "Intermediate", is_my_course: bool = True,
+                  is_downloaded: bool = False) -> int:
     """
     Insert a new course into the database.
     
@@ -17,17 +20,29 @@ def insert_course(name: str, description: str = "", author: str = "",
         author: Author name
         outline: Course outline/template
         thumbnail_path: Path to thumbnail image
+        tags: List of tags
+        modality: CT/MRI/US/XRay, etc.
+        body_regions: List of body regions
+        level: Basic/Intermediate/Advanced
+        is_my_course: If True, course is in "My Courses"
+        is_downloaded: If True, course is downloaded
         
     Returns:
         course_pk: Primary key of inserted course
     """
+    tags_json = json.dumps(tags or [])
+    regions_json = json.dumps(body_regions or [])
+    
     with get_db_connection() as conn:
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO courses (course_name, course_description, author_name, 
-                               outline, thumbnail_path, updated_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        """, (name, description, author, outline, thumbnail_path))
+                               outline, thumbnail_path, tags, modality, body_regions,
+                               level, is_my_course, is_downloaded, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (name, description, author, outline, thumbnail_path,
+              tags_json, modality, regions_json, level, 
+              1 if is_my_course else 0, 1 if is_downloaded else 0))
         return cur.lastrowid
 
 
@@ -77,7 +92,79 @@ def get_all_courses() -> List[Dict[str, Any]]:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         cur.execute("SELECT * FROM courses ORDER BY updated_at DESC")
-        return [dict(row) for row in cur.fetchall()]
+        courses = [dict(row) for row in cur.fetchall()]
+        
+        # Parse JSON fields
+        for course in courses:
+            try:
+                course['tags'] = json.loads(course.get('tags', '[]'))
+                course['body_regions'] = json.loads(course.get('body_regions', '[]'))
+            except:
+                course['tags'] = []
+                course['body_regions'] = []
+        
+        return courses
+
+
+def search_and_filter_courses(query: str = "", modality: List[str] = None,
+                              body_regions: List[str] = None, level: str = None,
+                              tags: List[str] = None, is_my_course: bool = None) -> List[Dict[str, Any]]:
+    """
+    Search and filter courses.
+    
+    Args:
+        query: Search string (matches title, description, author, tags)
+        modality: List of modalities to filter
+        body_regions: List of body regions to filter
+        level: Difficulty level to filter
+        tags: List of tags to filter
+        is_my_course: Filter by my courses (True/False/None for all)
+        
+    Returns:
+        List of matching courses
+    """
+    courses = get_all_courses()
+    
+    # Apply filters
+    filtered = []
+    for course in courses:
+        # My courses filter
+        if is_my_course is not None and course.get('is_my_course') != is_my_course:
+            continue
+            
+        # Query filter (case-insensitive search)
+        if query:
+            query_lower = query.lower()
+            search_text = f"{course.get('course_name', '')} {course.get('course_description', '')} {course.get('author_name', '')}".lower()
+            course_tags = ' '.join(course.get('tags', [])).lower()
+            
+            if query_lower not in search_text and query_lower not in course_tags:
+                continue
+        
+        # Modality filter
+        if modality and course.get('modality'):
+            if course['modality'] not in modality:
+                continue
+        
+        # Body regions filter
+        if body_regions:
+            course_regions = course.get('body_regions', [])
+            if not any(region in course_regions for region in body_regions):
+                continue
+        
+        # Level filter
+        if level and course.get('level') != level:
+            continue
+        
+        # Tags filter
+        if tags:
+            course_tags = course.get('tags', [])
+            if not any(tag in course_tags for tag in tags):
+                continue
+        
+        filtered.append(course)
+    
+    return filtered
 
 
 def get_course_by_pk(course_pk: int) -> Optional[Dict[str, Any]]:

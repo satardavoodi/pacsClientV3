@@ -13,7 +13,7 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-from PacsClient.components.resumable_dicom_socket_client import ResumableDicomSocketClient
+from PacsClient.zeta_download_manager.network.socket_client import SocketDicomClient
 
 def main():
     """Generate thumbnails for all completed studies that don't have them."""
@@ -30,7 +30,7 @@ def main():
     print(f"[INFO] Found {len(study_dirs)} study directories")
     
     # Create client instance for thumbnail generation
-    client = ResumableDicomSocketClient()
+    client = SocketDicomClient()
     
     generated_count = 0
     skipped_count = 0

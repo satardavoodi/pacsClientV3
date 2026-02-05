@@ -1,10 +1,43 @@
 from .grpc_client import DicomGrpcClient
 from .dicom_downloader import DicomDownloader
 from .socket_service import get_socket_service, SocketService
-from .resumable_dicom_socket_client import get_download_manager, ResumableDicomSocketClient
 
-# Legacy imports for compatibility
-try:
-    from .resumable_download_manager import ResumableDownloadManager
-except ImportError:
-    pass
+# Zeta Download Manager - Primary implementation
+from .zeta_adapter import (
+    get_zeta_download_manager_widget,
+    get_zeta_executor,
+    get_zeta_worker_pool,
+    start_zeta_download,
+    pause_zeta_download,
+    resume_zeta_download,
+    cancel_zeta_download,
+    get_zeta_download_state,
+    get_all_zeta_downloads,
+    create_download_task_from_study,
+    get_download_manager
+)
+
+# Backward compatibility: Export Zeta components with legacy names
+from PacsClient.zeta_download_manager.network.socket_client import SocketDicomClient as ResumableDicomSocketClient
+
+# Export all
+__all__ = [
+    'DicomGrpcClient',
+    'DicomDownloader',
+    'get_socket_service',
+    'SocketService',
+    # Zeta exports
+    'get_zeta_download_manager_widget',
+    'get_zeta_executor',
+    'get_zeta_worker_pool',
+    'start_zeta_download',
+    'pause_zeta_download',
+    'resume_zeta_download',
+    'cancel_zeta_download',
+    'get_zeta_download_state',
+    'get_all_zeta_downloads',
+    'create_download_task_from_study',
+    # Backward compatibility
+    'get_download_manager',
+    'ResumableDicomSocketClient',
+]

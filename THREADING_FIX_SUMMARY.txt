@@ -1,0 +1,48 @@
+# 🚀 Threading Fix Applied - UI Freeze Resolved
+
+## What Was Fixed
+The app was freezing because **UI widgets were being created from worker threads**. Fixed by wrapping all UI updates with `QTimer.singleShot()` to ensure they run in the main Qt thread.
+
+## Changes Made
+- Modified: `PacsClient/zeta_download_manager/ui/main_widget.py`
+- 6 UI methods now thread-safe:
+  1. ✅ `update_progress_bar()` 
+  2. ✅ `update_status_badge()`
+  3. ✅ `update_priority_badge()`
+  4. ✅ `update_action_buttons()`
+  5. ✅ `update_current_series()`
+  6. ✅ `refresh_table_order()`
+
+## Expected Result
+- ✅ No more `QObject::setParent` errors
+- ✅ UI stays responsive during downloads
+- ✅ Progress updates smooth and instant
+- ✅ No freezing
+
+## Test Instructions
+
+**1. The app is currently running - give it a moment to load**
+
+**2. Test download with patient 28904:**
+   - Login
+   - Go to Download Manager
+   - Search for patient 28904
+   - Click "Download"
+
+**3. Watch for:**
+   - ✅ No "QObject::setParent" errors in terminal
+   - ✅ UI doesn't freeze
+   - ✅ Progress bar updates smoothly
+   - ✅ Can click buttons during download
+
+**4. Monitor terminal output** - should be clean with no threading errors
+
+## If Still Freezing
+1. Verify you're using the app in terminal (not background)
+2. Kill app: Ctrl+C in terminal
+3. Restart: Run the app again
+4. Look for threading errors in first 10 seconds
+
+---
+
+See `THREADING_FIX_APPLIED.md` for detailed technical explanation.

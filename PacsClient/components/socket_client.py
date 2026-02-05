@@ -85,6 +85,14 @@ class PatientListSocketClient:
             # Check if socket exists and is connected, if not try to connect
             if not self.connected or self.socket is None:
                 logger.info(f"🔌 [Socket] Not connected, attempting to connect...")
+                # Force close any existing socket first
+                if self.socket:
+                    try:
+                        self.socket.close()
+                    except:
+                        pass
+                    self.socket = None
+                
                 if not self.connect():
                     logger.error(f"❌ [Socket] Connection failed")
                     return None
@@ -118,10 +126,29 @@ class PatientListSocketClient:
                 
                 logger.info(f"✅ [Socket] Request sent, waiting for response...")
                 
-                # Receive response length
+                # Receive response length (4 bytes header)
                 response_length_bytes = self.socket.recv(4)
+                
+                # Check if we got valid header
+                if len(response_length_bytes) == 0:
+                    # Connection closed by server
+                    logger.error(f"❌ [Socket] Server closed connection (received 0 bytes)")
+                    self.connected = False
+                    self.socket = None
+                    raise Exception("Server closed connection - no response received")
+                
                 if len(response_length_bytes) != 4:
-                    raise Exception("Invalid response length header")
+                    # Incomplete header received
+                    logger.error(f"❌ [Socket] Invalid response header: received {len(response_length_bytes)} bytes instead of 4")
+                    logger.error(f"❌ [Socket] Header bytes: {response_length_bytes.hex() if response_length_bytes else 'empty'}")
+                    # Reset connection on next request
+                    self.connected = False
+                    try:
+                        self.socket.close()
+                    except:
+                        pass
+                    self.socket = None
+                    raise Exception(f"Invalid response length header (got {len(response_length_bytes)} bytes, expected 4)")
                 
                 response_length = int.from_bytes(response_length_bytes, byteorder='big')
                 logger.info(f"📥 [Socket] Response length: {response_length} bytes")
