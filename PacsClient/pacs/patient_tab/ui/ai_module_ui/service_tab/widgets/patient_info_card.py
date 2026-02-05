@@ -24,6 +24,8 @@ class CopyableLabel(QLabel):
     copied = Signal(str)
     
     def __init__(self, text="", parent=None):
+        # Convert to string if not already
+        text = str(text) if text is not None else ""
         super().__init__(text, parent)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.setToolTip("Click to copy")
@@ -66,6 +68,9 @@ class InfoRow(QWidget):
     
     def _setup_ui(self, icon_name: str, label: str, value: str, 
                    icon_color: str, copyable: bool):
+        # Ensure value is string
+        value = str(value) if value is not None else ""
+        
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(10)

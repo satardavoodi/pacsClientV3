@@ -1000,7 +1000,7 @@ def apply_filters(
     min_slices = modality_settings.get("min_slices", 4)
 
     if nz < min_slices:
-        print(f"   ⚠️ Not enough slices ({nz} < {min_slices}), skipping filters")
+        #print(f"   ⚠️ Not enough slices ({nz} < {min_slices}), skipping filters")
         return itk_image
 
     spacing = itk_image.GetSpacing()
@@ -1008,9 +1008,9 @@ def apply_filters(
     mild_mode = max_spacing > 1.5
 
     if mild_mode:
-        print(f"   ⚠️ Large spacing detected ({max_spacing:.2f} mm) → mild mode")
+        #print(f"   ⚠️ Large spacing detected ({max_spacing:.2f} mm) → mild mode")
 
-    print(f"   🔧 Applying filters to {modality} ({nx}×{ny}×{nz})")
+    #print(f"   🔧 Applying filters to {modality} ({nx}×{ny}×{nz})")
 
     original_image = itk_image
     filter_steps = []

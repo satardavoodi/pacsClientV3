@@ -240,8 +240,12 @@ class ModalityGridConfigWidget(QWidget):
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     saved_config = json.load(f)
-                    # مقادیر ذخیره شده را به config_data اضافه/بروزرسانی می‌کنیم
-                    self.config_data.update(saved_config)
+                    # Extract modality_layouts if it exists, otherwise use the whole config
+                    if "modality_layouts" in saved_config:
+                        self.config_data.update(saved_config["modality_layouts"])
+                    else:
+                        # مقادیر ذخیره شده را به config_data اضافه/بروزرسانی می‌کنیم
+                        self.config_data.update(saved_config)
             except Exception as e:
                 print(f"Error loading config: {e}")
         

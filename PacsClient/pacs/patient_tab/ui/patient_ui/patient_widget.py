@@ -206,7 +206,7 @@ class PatientWidget(QWidget):
             traceback.print_exc()
 
     def _try_display_priority_series(self, series_key):
-        """تلاش برای نمایش فوری سری اولویت‌دار"""
+        """تلاش برای نمایش فوری سری اولویت‌دار - استفاده از متد جامع"""
         try:
             if series_key not in self._priority_series_data:
                 print(f"⚠️ Series {series_key} not in priority data")
@@ -221,65 +221,27 @@ class PatientWidget(QWidget):
             vtk_image_data = data['vtk_image_data']
             metadata = data['metadata']
 
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data = []
-                print(f"⚠️ lst_thumbnails_data not initialized")
-                return False
-
-            # پیدا کردن ایندکس سری در lst_thumbnails_data
-            series_idx = -1
-            for i in range(len(self.lst_thumbnails_data)):
-                if str(self.lst_thumbnails_data[i]['metadata']['series']['series_number']) == series_key:
-                    series_idx = i
-                    break
-
-            if series_idx == -1:
-                print(f"⚠️ Series {series_key} not found in thumbnails data")
-                return False
-
             print(f"🎬 [PRIORITY DISPLAY] Attempting immediate display of series {series_key}")
 
-            # استفاده از اولین ویوور
-            viewer = self.lst_nodes_viewer[0]
+            # استفاده از متد جامع برای نمایش
+            success = self.display_series_in_viewer(
+                series_number=series_key,
+                vtk_image_data=vtk_image_data,
+                metadata=metadata
+            )
 
-            # روش اصلی: استفاده از switch_series
-            if hasattr(viewer, 'switch_series'):
-                print(f"   🔄 Using switch_series for series {series_key}")
-                flag_switch = viewer.switch_series(
-                    vtk_image_data,
-                    metadata,
-                    series_idx,
-                    metadata_fixed=self.metadata_fixed
-                )
+            if success:
+                # حذف از صف و دیکشنری
+                if series_key in self._priority_series_queue:
+                    self._priority_series_queue.remove(series_key)
+                if series_key in self._priority_series_data:
+                    del self._priority_series_data[series_key]
 
-                if flag_switch:
-                    print(f"   ✅ switch_series succeeded for series {series_key}")
-
-                    # تنظیم به عنوان ویوور اصلی
-                    self.set_viewer_to_main_viewer(viewer)
-
-                    # تنظیم اسلایدر
-                    if hasattr(viewer, 'slider') and viewer.slider:
-                        self.reset_slider(viewer.vtk_widget, viewer.slider)
-
-                    # حذف از صف و دیکشنری
-                    if series_key in self._priority_series_queue:
-                        self._priority_series_queue.remove(series_key)
-                    if series_key in self._priority_series_data:
-                        del self._priority_series_data[series_key]
-
-                    # رندر فوری
-                    if hasattr(viewer.vtk_widget, 'GetRenderWindow'):
-                        viewer.vtk_widget.GetRenderWindow().Render()
-
-                    print(f"🎉 [PRIORITY DISPLAY] Series {series_key} displayed successfully!")
-                    return True
-                else:
-                    print(f"   ❌ switch_series failed for series {series_key}")
-                    return False
-
-            return False
+                print(f"🎉 [PRIORITY DISPLAY] Series {series_key} displayed successfully!")
+                return True
+            else:
+                print(f"   ❌ Display failed for series {series_key}")
+                return False
 
         except Exception as e:
             print(f"❌ Error in priority display attempt: {e}")
@@ -324,126 +286,127 @@ class PatientWidget(QWidget):
                 self._global_async_lock = threading.Lock()
         return self._global_async_lock
 
-    def _display_existing_series(self, series_number: str):
+    def display_series_in_viewer(self, series_number: str, vtk_image_data=None, metadata=None, 
+                                 vtk_widget: VTKWidget = None, slider: QSlider = None):
         """
-        نمایش سری‌ای که قبلاً لود شده
+        متد جامع برای نمایش سری در ویوور - بدون فلیکر و تمیز
+        
+        این متد تمام حالات مختلف نمایش سری را پوشش می‌دهد:
+        - نمایش در ویوور فعلی یا ویوور مشخص شده
+        - نمایش سری از cache یا با داده‌های جدید
+        - مدیریت اسلایدر و وضعیت thumbnail
+        
+        Args:
+            series_number: شماره سری برای نمایش
+            vtk_image_data: داده تصویر VTK (اختیاری - اگر None باشد از cache می‌خواند)
+            metadata: متادیتا سری (اختیاری)
+            vtk_widget: ویجت VTK هدف (اختیاری - اگر None باشد از selected_widget استفاده می‌شود)
+            slider: اسلایدر مربوط به ویجت (اختیاری)
+        
+        Returns:
+            bool: True اگر موفق، False در غیر این صورت
         """
         try:
-            print(f"🔄 [DISPLAY EXISTING] Displaying already loaded series {series_number}")
-
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data = []
-                print(f"❌ lst_thumbnails_data not initialized")
-                return
-
-            # پیدا کردن داده‌های سری
-            vtk_image_data = None
-            metadata = None
-            series_idx = -1
-
-            for i in range(len(self.lst_thumbnails_data)):
-                if int(self.lst_thumbnails_data[i]['metadata']['series']['series_number']) == int(series_number):
-                    vtk_image_data = self.lst_thumbnails_data[i]['vtk_image_data']
-                    metadata = self.lst_thumbnails_data[i]['metadata']
-                    series_idx = i
-                    break
-
-            if metadata is None:
-                print(f"❌ Series {series_number} not found in loaded data")
-                return
-
-            # نمایش سری
-            self._display_loaded_series_immediate(series_number, vtk_image_data, metadata, series_idx)
-
-        except Exception as e:
-            print(f"❌ Error displaying existing series: {e}")
-
-
-
-    def _display_loaded_series_immediate(self, series_number, vtk_image_data, metadata, series_idx):
-        try:
-            if not self.lst_nodes_viewer:
-                print(f"❌ No viewers available")
-                return
+            series_key = str(series_number)
+            print(f"🎯 [DISPLAY_SERIES] Starting display for series {series_number}")
             
-            viewer = self.lst_nodes_viewer[0]
+            # 1. بارگذاری یا استفاده از داده‌های موجود
+            series_idx = None
+            if vtk_image_data is None or metadata is None:
+                print(f"   🔍 Loading from cache...")
+                found = False
+                for idx, thumb_data in enumerate(self.lst_thumbnails_data):
+                    thumb_series = str(thumb_data['metadata']['series']['series_number'])
+                    if thumb_series == series_key:
+                        vtk_image_data = thumb_data['vtk_image_data']
+                        metadata = thumb_data['metadata']
+                        series_idx = idx
+                        found = True
+                        print(f"   ✅ Found in cache at index {idx}")
+                        break
+                
+                if not found:
+                    print(f"   ❌ Series {series_number} not found in cache")
+                    return False
+            else:
+                # پیدا کردن index برای سری جدید
+                for idx, thumb_data in enumerate(self.lst_thumbnails_data):
+                    thumb_series = str(thumb_data['metadata']['series']['series_number'])
+                    if thumb_series == series_key:
+                        series_idx = idx
+                        break
             
-            # روش اول: استفاده از switch_series (روش اصلی)
-            if hasattr(viewer, 'switch_series'):
-                print(f"🎯 Switching to series {series_number} at index {series_idx}")
-                flag_switch = viewer.switch_series(
+            # 2. بررسی معتبر بودن داده‌ها
+            if vtk_image_data is None:
+                print(f"   ❌ vtk_image_data is None")
+                return False
+            
+            # 3. تعیین ویوور هدف (NodeViewer)
+            target_node = None
+            if vtk_widget is not None:
+                # پیدا کردن node مربوط به این widget
+                for node in self.lst_nodes_viewer:
+                    if node.vtk_widget == vtk_widget:
+                        target_node = node
+                        break
+                if not target_node:
+                    print(f"   ⚠️ Could not find node for provided widget")
+                    return False
+                print(f"   Using provided widget")
+            else:
+                if not hasattr(self, 'lst_nodes_viewer') or not self.lst_nodes_viewer:
+                    print(f"   ❌ No viewers available")
+                    return False
+                target_node = self.lst_nodes_viewer[0]
+                print(f"   Using first viewer")
+            
+            # 4. نمایش بدون فلیکر - استفاده از switch_series
+            try:
+                print(f"   🔄 Switching to series {series_number}...")
+                
+                # استفاده از switch_series که متد استاندارد VTKWidget است
+                flag_switch = target_node.vtk_widget.switch_series(
                     vtk_image_data,
                     metadata,
-                    series_idx,
+                    series_idx if series_idx is not None else 0,
                     metadata_fixed=self.metadata_fixed
                 )
                 
                 if flag_switch:
-                    self.set_viewer_to_main_viewer(viewer)
-                    if hasattr(viewer, 'slider') and viewer.slider:
-                        self.reset_slider(viewer.vtk_widget, viewer.slider)
-                    print(f"✅ Series {series_number} displayed successfully (via switch_series)")
+                    # تنظیم به عنوان ویوور اصلی
+                    self.set_viewer_to_main_viewer(target_node)
+                    
+                    # بهروزرسانی اسلایدر
+                    if target_node.slider:
+                        self.reset_slider(target_node.vtk_widget, target_node.slider)
+                    
+                    # بهروزرسانی وضعیت thumbnail
+                    if hasattr(self, 'thumbnail_manager'):
+                        self.thumbnail_manager.update_progress_bar(series_key, 100, "loaded")
+                    
+                    print(f"   ✅ Successfully displayed series {series_number}")
+                    return True
                 else:
-                    # روش دوم: اگر switch_series شکست خورد، مستقیماً از display_image استفاده کن
-                    print(f"⚠️ switch_series failed, trying direct display_image...")
-                    if hasattr(viewer, 'vtk_widget') and hasattr(viewer.vtk_widget, 'display_image'):
-                        try:
-                            viewer.vtk_widget.display_image(vtk_image_data, metadata)
-                            self.set_viewer_to_main_viewer(viewer)
-                            if hasattr(viewer, 'slider') and viewer.slider:
-                                self.reset_slider(viewer.vtk_widget, viewer.slider)
-                            print(f"✅ Series {series_number} displayed successfully (via display_image)")
-                        except Exception as display_error:
-                            print(f"❌ display_image also failed: {display_error}")
-                            # روش سوم: ایجاد ویوور جدید
-                            print(f"🔄 Creating new viewer for series {series_number}...")
-                            self._create_and_display_in_new_viewer(series_number, vtk_image_data, metadata)
-                    else:
-                        print(f"❌ vtk_widget doesn't have display_image method")
-            else:
-                print(f"❌ Viewer doesn't have switch_series method")
+                    print(f"   ❌ switch_series returned False")
+                    return False
+                
+            except Exception as display_error:
+                print(f"   ❌ Display error: {display_error}")
+                import traceback
+                traceback.print_exc()
+                return False
                 
         except Exception as e:
-            print(f"❌ Error in immediate display: {e}")
+            print(f"❌ [DISPLAY_SERIES] Failed to display series {series_number}: {e}")
             import traceback
             traceback.print_exc()
+            return False
+            return False
 
-    def _create_and_display_in_new_viewer(self, series_number, vtk_image_data, metadata):
-        """ایجاد ویوور جدید و نمایش سری در آن"""
-        try:
-            print(f"🔄 Creating new viewer for series {series_number}")
-            
-            # پاک کردن ویوورهای موجود
-            self.cleanup_all_viewers()
-            self.lst_nodes_viewer.clear()
-            
-            # ایجاد ویوور جدید
-            node_viewer = self.new_viewer(0)
-            
-            # مستقیماً از display_image استفاده کن
-            if hasattr(node_viewer.vtk_widget, 'display_image'):
-                node_viewer.vtk_widget.display_image(vtk_image_data, metadata)
-                
-                # تنظیم به عنوان ویوور اصلی
-                self.set_viewer_to_main_viewer(node_viewer)
-                
-                # تنظیم اسلایدر
-                if hasattr(node_viewer, 'slider') and node_viewer.slider:
-                    self.reset_slider(node_viewer.vtk_widget, node_viewer.slider)
-                
-                # افزودن به layout
-                self.vtk_layout.addWidget(node_viewer.widget, 0, 0)
-                self.change_container_border(0)
-                
-                print(f"✅ Series {series_number} displayed in new viewer")
-            else:
-                print(f"❌ New viewer doesn't have display_image method")
-                
-        except Exception as e:
-            print(f"❌ Error creating new viewer: {e}")
-            import traceback
-            traceback.print_exc()
+    def _display_existing_series(self, series_number: str):
+        """نمایش سری‌ای که قبلاً لود شده - استفاده از متد جامع"""
+        return self.display_series_in_viewer(series_number)
+
 
     def _create_init_overlay(self):
         """Create a full-screen loading overlay to prevent seeing desktop"""
@@ -751,26 +714,23 @@ class PatientWidget(QWidget):
             traceback.print_exc()
 
     def _display_first_series_in_viewer(self):
-        """Display first series in the viewer"""
+        """Display first series in the viewer - استفاده از متد جامع"""
         try:
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data = []
-
-            if not self.lst_thumbnails_data:
+            if not hasattr(self, 'lst_thumbnails_data') or not self.lst_thumbnails_data:
+                print(f"⚠️ [DISPLAY_FIRST] No thumbnail data available")
                 return
-
+            
             first_data = self.lst_thumbnails_data[0]
-            vtk_image_data = first_data.get('vtk_image_data')
-            metadata = first_data.get('metadata')
-
-            if vtk_image_data and hasattr(self, 'lst_nodes_viewer') and self.lst_nodes_viewer:
-                first_viewer = self.lst_nodes_viewer[0]
-                if hasattr(first_viewer, 'vtk_widget'):
-                    first_viewer.vtk_widget.display_image(vtk_image_data, metadata)
-                    print("✅ [SYNC] First series displayed in viewer")
+            metadata = first_data['metadata']
+            series_number = metadata['series']['series_number']
+            
+            print(f"🎬 [DISPLAY_FIRST] Displaying first series: {series_number}")
+            return self.display_series_in_viewer(series_number)
+            
         except Exception as e:
-            print(f"⚠️ Error displaying first series: {e}")
+            print(f"❌ [DISPLAY_FIRST] Error: {e}")
+            import traceback
+            traceback.print_exc()
 
     def load_first_series_only(self, folder_path, series_number):
         """
@@ -1103,63 +1063,16 @@ class PatientWidget(QWidget):
 
 
     def _display_loaded_series_after_load(self, series_number):
-        """
-        Display the loaded series in the viewer after successful loading.
-        """
+        """Display the loaded series in the viewer after successful loading - استفاده از متد جامع"""
         try:
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data = []
-
-            # Find the loaded data
-            vtk_image_data = None
-            metadata = None
-            for i in range(len(self.lst_thumbnails_data)):
-                if int(self.lst_thumbnails_data[i]['metadata']['series']['series_number']) == int(series_number):
-                    vtk_image_data = self.lst_thumbnails_data[i]['vtk_image_data']
-                    metadata = self.lst_thumbnails_data[i]['metadata']
-                    break
-
-            if metadata is None:
-                print(f"❌ Series data not found after loading")
-                return
-                
             # Mark as ready in thumbnail manager
             if hasattr(self, 'thumbnail_manager'):
                 self.thumbnail_manager.set_series_ready(str(series_number))
                 self.thumbnail_manager.apply_border_states_new()
                 print(f"✅ Marked series {series_number} as ready in thumbnail manager")
-                
-            # Display the series in the first viewer if not already set
-            if self.lst_nodes_viewer:
-                first_viewer = self.lst_nodes_viewer[0]
-                if hasattr(first_viewer, 'switch_series'):
-                    # Find index of this series in thumbnails data
-                    series_idx = 0
-                    for i, data in enumerate(self.lst_thumbnails_data):
-                        if str(data['metadata']['series']['series_number']) == str(series_number):
-                            series_idx = i
-                            break
-                            
-                    flag_switch = first_viewer.switch_series(
-                        vtk_image_data,
-                        metadata,
-                        series_idx,
-                        metadata_fixed=self.metadata_fixed
-                    )
-                    if flag_switch:
-                        # Set as main viewer
-                        self.set_viewer_to_main_viewer(first_viewer)
-                        # Reset slider
-                        if hasattr(first_viewer, 'slider') and first_viewer.slider:
-                            self.reset_slider(first_viewer.vtk_widget, first_viewer.slider)
-                        print(f"✅ Series {series_number} displayed in viewer")
-                    else:
-                        print(f"⚠️ Viewer doesn't support switch_series method")
-                else:
-                    print(f"⚠️ No viewers available to display the series")
-                    
-            print(f"🎉 SUCCESS: Series {series_number} loaded immediately!")
+            
+            # Use unified display method
+            return self.display_series_in_viewer(series_number)
             
         except Exception as e:
             print(f"❌ Error displaying series: {e}")
@@ -1330,50 +1243,6 @@ class PatientWidget(QWidget):
 
 
 
-    def _display_loaded_series_immediate_enhanced(self, series_number, vtk_image_data, metadata, series_idx):
-        """نسخه بهبود یافته برای نمایش سری"""
-        try:
-            # Check if lst_nodes_viewer exists
-            if not hasattr(self, 'lst_nodes_viewer') or not self.lst_nodes_viewer:
-                print(f"❌ No viewers available")
-                return
-
-            viewer = self.lst_nodes_viewer[0]
-
-            # ابتدا سعی کن از display_image مستقیم استفاده کنی
-            if hasattr(viewer, 'vtk_widget') and hasattr(viewer.vtk_widget, 'display_image'):
-                try:
-                    viewer.vtk_widget.display_image(vtk_image_data, metadata)
-                    self.set_viewer_to_main_viewer(viewer)
-                    if hasattr(viewer, 'slider') and viewer.slider:
-                        self.reset_slider(viewer.vtk_widget, viewer.slider)
-                    print(f"✅ Series {series_number} displayed successfully (direct display_image)")
-                    return
-                except Exception as e:
-                    print(f"⚠️ Direct display_image failed: {e}")
-
-            # اگر نشد، از switch_series استفاده کن
-            if hasattr(viewer, 'switch_series'):
-                print(f"🎯 Trying switch_series for series {series_number}")
-                flag_switch = viewer.switch_series(
-                    vtk_image_data,
-                    metadata,
-                    series_idx,
-                    metadata_fixed=self.metadata_fixed
-                )
-
-                if flag_switch:
-                    self.set_viewer_to_main_viewer(viewer)
-                    if hasattr(viewer, 'slider') and viewer.slider:
-                        self.reset_slider(viewer.vtk_widget, viewer.slider)
-                    print(f"✅ Series {series_number} displayed successfully (via switch_series)")
-                else:
-                    print(f"❌ All display methods failed for series {series_number}")
-
-        except Exception as e:
-            print(f"❌ Error in enhanced display: {e}")
-            import traceback
-            traceback.print_exc()
 
     def show_priority_status(self, message):
         """Show special status for priority download"""
@@ -3588,16 +3457,13 @@ class PatientWidget(QWidget):
             traceback.print_exc()
 
     def _display_series_after_load(self, series_number: str):
-        """
-        Only mark the series as ready in UI. Do NOT auto-display it.
-        Auto-display is reserved for user interaction only.
-        """
+        """Mark series as ready and display using unified method"""
         try:
             # Mark as ready in thumbnail manager
             if hasattr(self, 'thumbnail_manager'):
                 self.thumbnail_manager.set_series_ready(str(series_number))
                 self.thumbnail_manager.apply_border_states_new()
-            print(f"✅ Series {series_number} marked as ready (no auto-display).")
+            print(f"✅ Series {series_number} marked as ready")
         except Exception as e:
             print(f"❌ Error in _display_series_after_load: {e}")
             import traceback
@@ -3754,61 +3620,14 @@ class PatientWidget(QWidget):
 
     def _display_loaded_series(self, series_number, vtk_image_data, metadata,
                                flag_change_selected_widget, vtk_widget, slider):
-        """
-        نمایش سری که قبلاً لود شده است
-        این تابع فقط قسمت visualization را انجام می‌دهد
-        """
-        try:
-            # Check if we have a selected_widget set
-            if flag_change_selected_widget and self.selected_widget is None:
-                print(f"⚠️ [DISPLAY] selected_widget is None, trying to set from lst_nodes_viewer")
-                if hasattr(self, 'lst_nodes_viewer') and self.lst_nodes_viewer and len(self.lst_nodes_viewer) > 0:
-                    self.selected_widget = self.lst_nodes_viewer[0].vtk_widget
-                    self.slider = self.lst_nodes_viewer[0].slider
-                    print(f"   ✅ Set selected_widget from first viewer")
-                else:
-                    print(f"   ❌ No viewers available!")
-                    return
-
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data = []
-
-            # ادامه کد change_series_on_viewer از اینجا
-            vtk_widget_data_2 = None
-            metadata_2 = None
-
-            for i in range(len(self.lst_thumbnails_data)):
-                series_number_2 = self.lst_thumbnails_data[i]['metadata']['series']['series_number']
-                if (series_number_2 == series_number) and id(self.lst_thumbnails_data[i]['vtk_image_data']) != id(
-                        vtk_image_data):
-                    vtk_widget_data_2 = self.lst_thumbnails_data[i]['vtk_image_data']
-                    metadata_2 = self.lst_thumbnails_data[i]['metadata']
-                    break
-
-            if flag_change_selected_widget:  # change on first viewer
-                flag_switch = self.selected_widget.switch_series(vtk_image_data, metadata, series_number,
-                                                                 vtk_widget_data_2,
-                                                                 metadata_2, self.metadata_fixed)
-                vtk_widget = self.selected_widget
-                slider = self.slider
-
-            else:  # change on selected viewer
-                flag_switch = vtk_widget.switch_series(vtk_image_data, metadata, series_number, vtk_widget_data_2,
-                                                       metadata_2, self.metadata_fixed)
-
-            if flag_switch is True:
-                self.reset_slider(vtk_widget, slider)
-                self.toolbar_manager.turn_off_all_tools()
-                self.selected_widget.resizeEvent(None)
-                # Check if image_viewer exists before updating
-                if vtk_widget.image_viewer is not None:
-                    vtk_widget.image_viewer.update_corners_actors()
-
-        except Exception as e:
-            print('error on display loaded series:', e)
-            import traceback
-            traceback.print_exc()
+        """Display a loaded series - استفاده از متد جامع"""
+        return self.display_series_in_viewer(
+            series_number=series_number,
+            vtk_image_data=vtk_image_data,
+            metadata=metadata,
+            vtk_widget=vtk_widget,
+            slider=slider
+        )
 
     def reset_slider(self, vtk_widget: VTKWidget, slider: QSlider):
         vtk_widget.set_slider(slider)
