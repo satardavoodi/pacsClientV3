@@ -944,17 +944,17 @@ def apply_filters(
     min_slices = modality_settings.get("min_slices", 4)
 
     if nz < min_slices:
-        print(f"   ⚠️ Not enough slices ({nz} < {min_slices}), skipping filters")
+        #print(f"   ⚠️ Not enough slices ({nz} < {min_slices}), skipping filters")
         return itk_image
 
     spacing = itk_image.GetSpacing()
     max_spacing = max(spacing)
     mild_mode = max_spacing > 1.5
 
-    if mild_mode:
-        print(f"   ⚠️ Large spacing detected ({max_spacing:.2f} mm) → mild mode")
+    #if mild_mode:
+        #print(f"   ⚠️ Large spacing detected ({max_spacing:.2f} mm) → mild mode")
 
-    print(f"   🔧 Applying MR-grade filters to {modality} ({nx}×{ny}×{nz})")
+    #print(f"   🔧 Applying MR-grade filters to {modality} ({nx}×{ny}×{nz})")
 
     original_image = itk_image
     filter_steps = []
@@ -1063,8 +1063,8 @@ def apply_filters(
     # Timing end
     # ------------------------------------------------------------------
     dt = time.time() - t0
-    print(f"   ✅ {len(filter_steps)} filters applied successfully")
-    print(f"   ⏱️ Total filter time: {dt:.3f}s")
+    #print(f"   ✅ {len(filter_steps)} filters applied successfully")
+    #print(f"   ⏱️ Total filter time: {dt:.3f}s")
 
     return itk_image
 

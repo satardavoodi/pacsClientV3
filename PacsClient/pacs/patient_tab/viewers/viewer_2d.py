@@ -11,6 +11,12 @@ from PySide6.QtCore import Qt
 import time
 from PacsClient.pacs.patient_tab.curved_mpr_module import CurvedMPRModule
 
+# =====================================================
+# ANTI-FLICKERING CONSTANTS
+# =====================================================
+_VIEWER_RENDER_THROTTLE_MS = 16  # ~60fps max render rate
+_VIEWER_BATCH_DELAY_MS = 8  # Delay for batching multiple render requests
+
 
 class ViewerType(enum.Enum):
     AXIAL = "Axial"

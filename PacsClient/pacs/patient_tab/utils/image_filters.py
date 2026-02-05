@@ -807,11 +807,11 @@ def apply_filters(
     modality = metadata["series"]["modality"].upper()
     series_name = metadata["series"].get("series_name", "Unknown")
 
-    logger.info(
-        f"Applying filters to series: {series_name} | "
-        f"modality: {modality} | "
-        f"spacing: {itk_image.GetSpacing()}"
-    )
+    # logger.info(
+    #     f"Applying filters to series: {series_name} | "
+    #     f"modality: {modality} | "
+    #     f"spacing: {itk_image.GetSpacing()}"
+    # )
 
     # ------------------------------------------------------------------
     # Load external filter overrides (optional)
@@ -821,7 +821,7 @@ def apply_filters(
         if filter_settings_path.exists():
             with open(filter_settings_path, "r", encoding="utf-8") as f:
                 filter_settings = json.load(f)
-            logger.info(f"Loaded filter settings from {filter_settings_path}")
+            #logger.info(f"Loaded filter settings from {filter_settings_path}")
         else:
             logger.warning(f"Filter settings file does not exist: {filter_settings_path}")
     except Exception as e:
@@ -831,12 +831,12 @@ def apply_filters(
 
     modality_settings = DEFAULT_FILTERS.get(modality)
     if modality_settings is None:
-        logger.info(f"No filters defined for modality '{modality}'")
+        #logger.info(f"No filters defined for modality '{modality}'")
         return itk_image
 
     # merge external overrides
     if modality in filter_settings:
-        logger.info(f"Applying custom filter settings for {modality}")
+        #logger.info(f"Applying custom filter settings for {modality}")
         for k, v in filter_settings[modality].items():
             if isinstance(v, dict) and isinstance(modality_settings.get(k), dict):
                 logger.debug(f"Updating {k} with custom settings: {v}")
@@ -845,11 +845,12 @@ def apply_filters(
                 logger.debug(f"Setting {k} to custom value: {v}")
                 modality_settings[k] = v
     else:
-        logger.info(f"Using default filter settings for {modality}")
+        # logger.info(f"Using default filter settings for {modality}")
+        pass
 
     # بررسی می‌کنیم آیا فیلترها برای این مودالیته فعال هستند
     if not modality_settings.get("enabled", True):
-        logger.info(f"Filters disabled for {modality} - returning original image")
+        #logger.info(f"Filters disabled for {modality} - returning original image")
         return itk_image
 
     # ------------------------------------------------------------------
@@ -862,7 +863,7 @@ def apply_filters(
         logger.warning(f"Not enough slices ({nz} < {min_slices}), skipping filters")
         return itk_image
 
-    logger.info(f"Starting filter pipeline for {modality} ({nx}×{ny}×{nz})")
+    #logger.info(f"Starting filter pipeline for {modality} ({nx}×{ny}×{nz})")
 
     # ------------------------------------------------------------------
     # Noise reduction (برای هر دو مودالیته MR و CT)
@@ -877,7 +878,7 @@ def apply_filters(
             mild_mode = max_spacing > 1.5
 
             if mild_mode:
-                logger.info(f"Large spacing detected ({max_spacing:.2f} mm) → mild mode")
+                #logger.info(f"Large spacing detected ({max_spacing:.2f} mm) → mild mode")
                 sigma = noise_cfg.get("mild_sigma", noise_cfg.get("sigma", 0.4))
             else:
                 sigma = noise_cfg.get("sigma", 0.4)
@@ -885,9 +886,9 @@ def apply_filters(
             # برای CT و دیگر مودالیته‌ها از sigma استاندارد استفاده می‌کنیم
             sigma = noise_cfg.get("sigma", 0.4)
 
-        logger.info(f"Applying noise reduction with sigma={sigma} mm")
+        #logger.info(f"Applying noise reduction with sigma={sigma} mm")
         itk_image = sitk.SmoothingRecursiveGaussian(itk_image, sigma=sigma)
-        logger.info(f"Completed noise reduction (sigma={sigma} mm)")
+        #logger.info(f"Completed noise reduction (sigma={sigma} mm)")
     else:
         logger.warning(f"No noise reduction configuration for {modality}")
 
@@ -895,7 +896,7 @@ def apply_filters(
     # سایر فیلترها (فقط برای MR)
     # ------------------------------------------------------------------
     if modality == "MR":
-        logger.info(f"Applying advanced filters to {modality} ({nx}×{ny}×{nz})")
+        #logger.info(f"Applying advanced filters to {modality} ({nx}×{ny}×{nz})")
 
         spacing = itk_image.GetSpacing()
         max_spacing = max(spacing)
@@ -909,13 +910,13 @@ def apply_filters(
             sigmas = ms_cfg["mild_sigmas"] if mild_mode else ms_cfg["sigmas"]
             amounts = ms_cfg["mild_amounts"] if mild_mode else ms_cfg["amounts"]
 
-            logger.info(f"Applying multiscale sharpening with sigmas={sigmas}, amounts={amounts}")
+            #logger.info(f"Applying multiscale sharpening with sigmas={sigmas}, amounts={amounts}")
             itk_image = apply_multiscale_sharpening(
                 itk_image,
                 sigmas=sigmas,
                 amounts=amounts
             )
-            logger.info(f"Completed multiscale sharpening ({len(sigmas)} scales)")
+            #logger.info(f"Completed multiscale sharpening ({len(sigmas)} scales)")
 
         # ------------------------------------------------------------------
         # Laplacian sharpening (فقط برای MR)
@@ -923,9 +924,9 @@ def apply_filters(
         lap_cfg = modality_settings.get("laplacian_sharpening", {})
         if lap_cfg.get("enabled", True):
             alpha = lap_cfg["mild_alpha"] if mild_mode else lap_cfg["alpha"]
-            logger.info(f"Applying laplacian sharpening with alpha={alpha}")
+            #logger.info(f"Applying laplacian sharpening with alpha={alpha}")
             itk_image = apply_laplacian_sharpening(itk_image, alpha=alpha)
-            logger.info(f"Completed laplacian sharpening (alpha={alpha})")
+            #logger.info(f"Completed laplacian sharpening (alpha={alpha})")
 
         # ------------------------------------------------------------------
         # Adaptive sharpening (فقط برای MR)
@@ -936,35 +937,35 @@ def apply_filters(
             edge_boost = ad_cfg["mild_edge_boost"] if mild_mode else ad_cfg["edge_boost"]
             sigma_val = ad_cfg["mild_sigma"] if mild_mode else ad_cfg["sigma"]
 
-            logger.info(f"Applying adaptive sharpening with base={base_amount}, boost={edge_boost}, sigma={sigma_val}")
+            #logger.info(f"Applying adaptive sharpening with base={base_amount}, boost={edge_boost}, sigma={sigma_val}")
             itk_image = apply_adaptive_sharpening(
                 itk_image,
                 base_amount=base_amount,
                 edge_boost=edge_boost,
                 sigma=sigma_val
             )
-            logger.info(
-                f"Completed adaptive sharpening "
-                f"(base={base_amount}, boost={edge_boost}, sigma={sigma_val})"
-            )
+            #logger.info(
+            #    f"Completed adaptive sharpening "
+            #    f"(base={base_amount}, boost={edge_boost}, sigma={sigma_val})"
+            #)
 
         # ------------------------------------------------------------------
         # Timing end برای MR
         # ------------------------------------------------------------------
         dt = time.time() - t0
-        logger.info(f"All filters applied successfully to MR")
-        logger.info(f"Total filter time: {dt:.3f}s")
+        #logger.info(f"All filters applied successfully to MR")
+        #logger.info(f"Total filter time: {dt:.3f}s")
 
     elif modality == "CT":
         # فقط noise reduction برای CT اعمال شده است
         dt = time.time() - t0
-        logger.info(f"Only noise reduction applied to CT (no other filters)")
-        logger.info(f"Total filter time: {dt:.3f}s")
+        #logger.info(f"Only noise reduction applied to CT (no other filters)")
+        #logger.info(f"Total filter time: {dt:.3f}s")
 
-    else:
-        logger.info(f"Basic noise reduction applied to {modality} - no additional filters")
+    # else:
+    #     logger.info(f"Basic noise reduction applied to {modality} - no additional filters")
 
-    logger.info(f"Filtering completed for {series_name}")
+    #logger.info(f"Filtering completed for {series_name}")
     return itk_image
 
 def enhance_resolution(itk_image: sitk.Image, scale_factor: float = 1.5) -> sitk.Image:
@@ -1144,7 +1145,7 @@ def save_filter_settings_to_json(settings: Dict):
         with open(FILTER_CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(settings, f, indent=4)
 
-        logger.info(f"Filter settings saved to {FILTER_CONFIG_PATH}")
+        #logger.info(f"Filter settings saved to {FILTER_CONFIG_PATH}")
     except Exception as e:
         logger.error(f"Error saving filter settings: {e}")
         import traceback
@@ -1160,7 +1161,7 @@ def load_filter_settings_from_json() -> Dict:
         if FILTER_CONFIG_PATH.exists():
             with open(FILTER_CONFIG_PATH, "r", encoding="utf-8") as f:
                 settings = json.load(f)
-            logger.info(f"Filter settings loaded from {FILTER_CONFIG_PATH}")
+            #logger.info(f"Filter settings loaded from {FILTER_CONFIG_PATH}")
             return settings
         else:
             logger.warning(f"Filter settings file not found at {FILTER_CONFIG_PATH}, using defaults")

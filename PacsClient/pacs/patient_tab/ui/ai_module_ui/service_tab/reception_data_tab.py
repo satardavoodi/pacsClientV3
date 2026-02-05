@@ -1211,18 +1211,203 @@ class ReceptionDataTab(QWidget):
         Show professional dialog for viewing and editing report HTML content.
         
         Uses the new ReportEditorDialog widget with full RTL support and editing tools.
+        Also checks for AI-generated reports and loads them if available.
         
         Args:
             report: The report dictionary containing content/findings
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info("[AI_REPORT_LOAD] Starting report editor initialization")
+        logger.info(f"[AI_REPORT_LOAD] Current report: {report.get('_id', 'N/A')}")
+        
+        # Check for AI-generated report from database
+        ai_report_content = self._load_ai_report_if_exists()
+        
+        if ai_report_content:
+            logger.info("[AI_REPORT_LOAD] ✅ AI report found and loaded successfully")
+            logger.info(f"[AI_REPORT_LOAD] AI report length: {len(ai_report_content)} characters")
+            
+            # Merge AI report with existing report
+            existing_content = report.get("content", "") or report.get("findings", "")
+            
+            if existing_content:
+                logger.info("[AI_REPORT_LOAD] Merging AI report with existing report")
+                # Add AI report before existing content
+                merged_content = f"{ai_report_content}<hr><h3>Previous Report:</h3>{existing_content}"
+                report["content"] = merged_content
+                logger.info(f"[AI_REPORT_LOAD] Merged report length: {len(merged_content)} characters")
+            else:
+                logger.info("[AI_REPORT_LOAD] No existing report, using AI report only")
+                report["content"] = ai_report_content
+        else:
+            logger.info("[AI_REPORT_LOAD] ❌ No AI report found for this patient")
+        
         # Create the new ReportEditorDialog
+        logger.info("[AI_REPORT_LOAD] Creating ReportEditorDialog")
         dialog = ReportEditorDialog(report, self.current_data, self)
         
         # Connect the save signal (now with content and status)
         dialog.report_saved.connect(lambda content, status: self._on_report_saved(content, status, dialog))
         
         # Show the dialog
+        logger.info("[AI_REPORT_LOAD] Showing dialog")
         dialog.exec()
+        logger.info("[AI_REPORT_LOAD] Dialog closed")
+    
+    def _load_ai_report_if_exists(self) -> str | None:
+        """
+        Load AI-generated report from database if exists for current patient.
+        
+        Returns:
+            HTML content of AI report if found, None otherwise
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            from PacsClient import utils as U
+            
+            # Debug: Log the full structure
+            logger.info(f"[AI_REPORT_LOAD] ====== DEBUG: Current Data Structure ======")
+            logger.info(f"[AI_REPORT_LOAD] Current data keys: {list(self.current_data.keys()) if self.current_data else 'None'}")
+            
+            # Get patient ID from current data - try multiple sources
+            patient = self.current_data.get("patient", {})
+            logger.info(f"[AI_REPORT_LOAD] Patient object keys: {list(patient.keys()) if patient else 'None'}")
+            
+            # Try different patient ID fields in order of preference
+            # Note: Field names are CASE-SENSITIVE and some are lowercase in current_data
+            patient_id = (
+                # Check lowercase nationalCode at top level (this is common in reception data)
+                self.current_data.get("nationalCode") or
+                # Check patient object fields
+                patient.get("NationalID") or  # Note: It's NationalID, not NationalCode!
+                patient.get("_id") or  # MongoDB patient ID
+                # Check other top-level fields
+                self.current_data.get("receptionId") or
+                self.current_data.get("_id") or
+                # Study UID fields (if present)
+                self.current_data.get("studyUID") or
+                self.current_data.get("study_uid") or
+                # Fallback fields
+                self.current_data.get("patientId") or
+                self.current_data.get("patient_id")
+            )
+            
+            logger.info(f"[AI_REPORT_LOAD] Patient ID resolution:")
+            logger.info(f"  - current_data.nationalCode: {self.current_data.get('nationalCode', 'N/A')}")
+            logger.info(f"  - patient.NationalID: {patient.get('NationalID', 'N/A')}")
+            logger.info(f"  - patient._id: {patient.get('_id', 'N/A')}")
+            logger.info(f"  - current_data.receptionId: {self.current_data.get('receptionId', 'N/A')}")
+            logger.info(f"  - current_data._id: {self.current_data.get('_id', 'N/A')}")
+            logger.info(f"  ➜ Selected patient_id: {patient_id}")
+            
+            # IMPORTANT: Build a list of ALL possible patient IDs to search with
+            # This is because AI Chat might use Study UID, but Medical Report Editor has different IDs
+            possible_patient_ids = []
+            
+            # Collect all non-None identifiers
+            for field_value in [
+                self.current_data.get("nationalCode"),
+                patient.get("NationalID"),
+                patient.get("_id"),
+                self.current_data.get("receptionId"),
+                self.current_data.get("_id"),
+                self.current_data.get("studyUID"),
+                self.current_data.get("study_uid"),
+            ]:
+                if field_value and str(field_value) not in possible_patient_ids:
+                    possible_patient_ids.append(str(field_value))
+            
+            if not possible_patient_ids:
+                logger.warning("[AI_REPORT_LOAD] No patient identifiers found in current data")
+                logger.debug(f"[AI_REPORT_LOAD] Full current_data: {self.current_data}")
+                return None
+            
+            logger.info(f"[AI_REPORT_LOAD] Searching for AI reports with {len(possible_patient_ids)} possible patient IDs:")
+            for idx, pid in enumerate(possible_patient_ids, 1):
+                logger.info(f"  {idx}. {pid}")
+            
+            # Try searching with each patient ID until we find a report
+            all_reports = []
+            for search_id in possible_patient_ids:
+                logger.info(f"[AI_REPORT_LOAD] → Searching with patient_id: {search_id}")
+                
+                reports = U.ai_get_reception_reports(
+                    patient_id=str(search_id),
+                    status=None,  # Get all statuses
+                    limit=10  # Get up to 10 most recent
+                )
+                
+                if reports:
+                    logger.info(f"[AI_REPORT_LOAD]   ✓ Found {len(reports)} report(s) with this ID")
+                    all_reports.extend(reports)
+                else:
+                    logger.info(f"[AI_REPORT_LOAD]   ✗ No reports found with this ID")
+            
+            # Remove duplicates (same report ID)
+            seen_ids = set()
+            unique_reports = []
+            for report in all_reports:
+                report_id = report.get('id')
+                if report_id not in seen_ids:
+                    seen_ids.add(report_id)
+                    unique_reports.append(report)
+            
+            # Remove duplicates (same report ID)
+            seen_ids = set()
+            unique_reports = []
+            for report in all_reports:
+                report_id = report.get('id')
+                if report_id not in seen_ids:
+                    seen_ids.add(report_id)
+                    unique_reports.append(report)
+            
+            if not unique_reports:
+                logger.info(f"[AI_REPORT_LOAD] ❌ No AI reports found for any of the patient IDs")
+                return None
+            
+            # Sort by created_at descending to get most recent first
+            unique_reports = sorted(unique_reports, key=lambda r: r.get('created_at', 0), reverse=True)
+            
+            logger.info(f"[AI_REPORT_LOAD] ✅ Found {len(unique_reports)} unique AI report(s) across all patient IDs")
+            
+            # Get the most recent report
+            report = unique_reports[0]
+            logger.info(f"[AI_REPORT_LOAD] Using most recent AI report:")
+            logger.info(f"  • Report ID: {report.get('id', 'N/A')}")
+            logger.info(f"  • Report status: {report.get('status', 'N/A')}")
+            logger.info(f"  • Created at: {report.get('created_at', 'N/A')}")
+            logger.info(f"  • Modality: {report.get('sender_info', 'N/A')}")
+            
+            html_content = report.get('html_content', '')
+            
+            if not html_content:
+                logger.warning("[AI_REPORT_LOAD] AI report found but content is empty")
+                return None
+            
+            logger.info(f"[AI_REPORT_LOAD] Successfully loaded AI report content ({len(html_content)} chars)")
+            
+            # Mark report as read (only if it's pending)
+            if report.get('status') == 'pending':
+                try:
+                    U.ai_mark_reception_report_read(report['id'])
+                    logger.info(f"[AI_REPORT_LOAD] Marked report #{report['id']} as read")
+                except Exception as e:
+                    logger.warning(f"[AI_REPORT_LOAD] Failed to mark report as read: {e}")
+            
+            return html_content
+            
+        except ImportError as e:
+            logger.error(f"[AI_REPORT_LOAD] Import error: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"[AI_REPORT_LOAD] Error loading AI report: {e}")
+            import traceback
+            logger.error(f"[AI_REPORT_LOAD] Traceback: {traceback.format_exc()}")
+            return None
     
     def _on_report_saved(self, new_content: str, new_status: str, dialog: ReportEditorDialog):
         """

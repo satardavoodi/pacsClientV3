@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
                                 QPushButton, QLabel, QHeaderView, QAbstractItemView, QCheckBox,
                                 QSizePolicy, QStyledItemDelegate, QDialog, QListWidget, QListWidgetItem,
-                                QDialogButtonBox, QMessageBox, QProgressDialog)
-from PySide6.QtCore import Signal, Qt, QTimer, QRect, QPersistentModelIndex
+                                QDialogButtonBox, QMessageBox, QProgressDialog, QApplication)
+from PySide6.QtCore import Signal, Qt, QTimer, QRect, QPersistentModelIndex, QItemSelectionModel
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont,QIcon
 import threading
 import logging
@@ -580,7 +580,7 @@ class PatientTableWidget(QWidget):
         # self.custom_header = CustomHeaderView(Qt.Horizontal, self.results_table)
         # self.results_table.setHorizontalHeader(self.custom_header)
         
-        # Set header items - only status columns with icons, rest with text
+        # Set header items - all headers are text only
         headers = [
             "Select",
             "Patient Name",
@@ -633,7 +633,7 @@ class PatientTableWidget(QWidget):
         # Setup Select All checkbox in header
         self._setup_select_all_header()
         
-        # Setup status column headers with qtawesome icons
+        # Setup status column headers (text only)
         self._setup_status_headers()
         
         # Setup custom delegate for patient name to show green border for visited
@@ -673,6 +673,7 @@ class PatientTableWidget(QWidget):
         # Table settings
         self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.results_table.setSelectionMode(QAbstractItemView.ExtendedSelection)  # Allow multiple selections with Ctrl+click
         self.results_table.setAlternatingRowColors(True)
         
         # Enable double-click and mouse tracking
@@ -692,9 +693,9 @@ class PatientTableWidget(QWidget):
         header.setSectionResizeMode(COL['patient_name'], QHeaderView.Interactive)
         header.setSectionResizeMode(COL['patient_id'], QHeaderView.Interactive)
         header.setSectionResizeMode(COL['body_part'], QHeaderView.Interactive)
-        header.setSectionResizeMode(COL['status'], QHeaderView.Fixed)
-        header.setSectionResizeMode(COL['report'], QHeaderView.Fixed)
-        header.setSectionResizeMode(COL['assign'], QHeaderView.Fixed)
+        header.setSectionResizeMode(COL['status'], QHeaderView.Interactive)
+        header.setSectionResizeMode(COL['report'], QHeaderView.Interactive)
+        header.setSectionResizeMode(COL['assign'], QHeaderView.Interactive)
         header.setSectionResizeMode(COL['time'], QHeaderView.Interactive)  # ←
         header.setSectionResizeMode(COL['date'], QHeaderView.Interactive)  # ←
         # header.setSectionResizeMode(COL['series'], ...)  # ← حذف
@@ -749,7 +750,7 @@ class PatientTableWidget(QWidget):
         try:
             select_header = QTableWidgetItem()
             # استفاده از ایموجی به جای آیکن برای وسط‌چین شدن بهتر
-            select_header.setText("⬜")  # Empty square emoji
+            select_header.setText("⬜")  # Empty square emoji (will be updated by the logic)
             select_header.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
             select_header.setData(Qt.TextAlignmentRole, Qt.AlignCenter | Qt.AlignVCenter)
             select_header.setToolTip("Select All")
@@ -790,17 +791,10 @@ class PatientTableWidget(QWidget):
                 for row in range(self.results_table.rowCount()):
                     checkbox_widget = self.results_table.cellWidget(row, COL['select'])
                     if checkbox_widget:
-                        # Find emoji label widget
-                        checkbox_label = checkbox_widget.findChild(QLabel, f"checkbox_{row}")
-                        if checkbox_label:
-                            # Update emoji based on state
-                            if self.select_all_state:
-                                checkbox_label.setText("✅")  # Check mark emoji
-                            else:
-                                checkbox_label.setText("⬜")  # Empty square emoji
-
-                            # Update the property
-                            checkbox_label.setProperty("checked", self.select_all_state)
+                        # Find CustomCheckbox widget
+                        custom_checkbox = checkbox_widget.findChild(CustomCheckbox, f"checkbox_{row}")
+                        if custom_checkbox:
+                            custom_checkbox.setChecked(self.select_all_state)
 
                 # Update header emoji to show checked/unchecked state
                 select_header = self.results_table.horizontalHeaderItem(COL['select'])
@@ -853,28 +847,25 @@ class PatientTableWidget(QWidget):
             print(f"Error in header clicked: {e}")
 
     def _setup_status_headers(self):
-        """Setup status column headers with icons - MINIMAL SIZE"""
+        """Setup status column headers with text only - MINIMAL SIZE"""
         try:
-            # Status (دانلود شده/نشده) -> download
+            # Status (دانلود شده/نشده) -> text only
             status_header = QTableWidgetItem()
-            status_icon = qta.icon('  fa5s.download', color='white', options=[{'scale_factor': 1.0}])
-            status_header.setIcon(status_icon)
+            status_header.setText("Status")
             status_header.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
             status_header.setData(Qt.TextAlignmentRole, Qt.AlignCenter | Qt.AlignVCenter)
             self.results_table.setHorizontalHeaderItem(COL['status'], status_header)
 
-            # Report (گزارش) -> file-alt
+            # Report (گزارش) -> text only
             report_header = QTableWidgetItem()
-            report_icon = qta.icon('  fa5s.file-alt', color='white', options=[{'scale_factor': 1.0}])
-            report_header.setIcon(report_icon)
+            report_header.setText("Report")
             report_header.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
             report_header.setData(Qt.TextAlignmentRole, Qt.AlignCenter | Qt.AlignVCenter)
             self.results_table.setHorizontalHeaderItem(COL['report'], report_header)
 
-            # Assign (ارجاع) -> user-check
+            # Assign (ارجاع) -> text only
             assign_header = QTableWidgetItem()
-            assign_icon = qta.icon('  fa5s.user-check', color='white', options=[{'scale_factor': 1.0}])
-            assign_header.setIcon(assign_icon)
+            assign_header.setText("Assign")
             assign_header.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
             assign_header.setData(Qt.TextAlignmentRole, Qt.AlignCenter | Qt.AlignVCenter)
             self.results_table.setHorizontalHeaderItem(COL['assign'], assign_header)
@@ -1295,12 +1286,24 @@ class PatientTableWidget(QWidget):
         try:
             if item.column() == COL['select']:
                 return
+
+            # Check if Ctrl key is pressed for multi-selection
+            modifiers = QApplication.keyboardModifiers()
+            ctrl_pressed = modifiers & Qt.ControlModifier
+
             self.pending_click_item = item
             self.click_timer.start(300)
 
             # Highlight the clicked row with neon effect
             selected_row = item.row()
-            self.highlight_selected_row(selected_row)
+
+            # Handle multi-selection with Ctrl key
+            if ctrl_pressed:
+                # Toggle selection of the current row without clearing other selections
+                self.toggle_row_selection(selected_row)
+            else:
+                # Normal single selection (clear others and select this one)
+                self.highlight_selected_row(selected_row)
 
         except Exception as e:
             print(f"Error in patient click: {str(e)}")
@@ -1322,6 +1325,35 @@ class PatientTableWidget(QWidget):
 
         except Exception as e:
             print(f"Error highlighting row: {str(e)}")
+
+    def toggle_row_selection(self, row_index):
+        """Toggle selection of a specific row without affecting other selections"""
+        try:
+            # Get the selection model
+            selection_model = self.results_table.selectionModel()
+
+            # Check if the row is currently selected
+            current_selections = selection_model.selectedRows()
+            is_currently_selected = any(index.row() == row_index for index in current_selections)
+
+            if is_currently_selected:
+                # Deselect the row
+                selection_model.select(
+                    self.results_table.model().index(row_index, 0),
+                    QItemSelectionModel.Deselect | QItemSelectionModel.Rows
+                )
+            else:
+                # Select the row (add to existing selection)
+                selection_model.select(
+                    self.results_table.model().index(row_index, 0),
+                    QItemSelectionModel.Select | QItemSelectionModel.Rows
+                )
+
+            # Refresh the table to apply the changes
+            self.results_table.viewport().update()
+
+        except Exception as e:
+            print(f"Error toggling row selection: {str(e)}")
 
     def remove_row_highlight(self, row_index):
         """Remove row highlight by deselecting the row"""
@@ -1888,10 +1920,10 @@ class PatientTableWidget(QWidget):
             if checkbox_container:
                 # The checkbox is already centered via the QHBoxLayout with AlignCenter
                 # But we can ensure the alignment is correct by re-setting it
-                checkbox_label = checkbox_container.findChild(QLabel, f"checkbox_{row}")
-                if checkbox_label:
-                    # Make sure the emoji label is centered within its container
-                    checkbox_label.setAlignment(Qt.AlignCenter)
+                checkbox_widget = checkbox_container.findChild(CustomCheckbox, f"checkbox_{row}")
+                if checkbox_widget:
+                    # Make sure the CustomCheckbox is centered within its container
+                    pass  # Alignment is handled by the layout
         except Exception as e:
             print(f"Error centering checkbox in cell: {e}")
 
@@ -1920,32 +1952,27 @@ class PatientTableWidget(QWidget):
         patient_id = kwargs.get('patient_id', '') or ''
         visited_patient = self.check_patient_visited(patient_id)
 
-        # --- Select checkbox with emoji ---
+        # --- Select checkbox with CustomCheckbox ---
         checkbox_container = QWidget()
         checkbox_layout = QHBoxLayout(checkbox_container)
         checkbox_layout.setContentsMargins(0, 0, 0, 0)
         checkbox_layout.setAlignment(Qt.AlignCenter)
 
-        # Use emoji instead of checkbox - initially show empty square
-        checkbox_label = QLabel("⬜")  # Empty square emoji
-        checkbox_label.setAlignment(Qt.AlignCenter)
-        checkbox_label.setObjectName(f"checkbox_{row}")  # Set object name for identification
-        checkbox_label.setStyleSheet("""
-            QLabel {
-                font-size: 16px;
-                qproperty-alignment: AlignCenter;
+        # Use CustomCheckbox instead of emoji - initially unchecked
+        checkbox_widget = CustomCheckbox("")  # Empty text for just the checkbox
+        checkbox_widget.setObjectName(f"checkbox_{row}")  # Set object name for identification
+        checkbox_widget.setStyleSheet("""
+            QPushButton {
                 background: transparent;
                 border: none;
+                padding: 0px;
             }
         """)
 
-        # Store checkbox state in the label's property
-        checkbox_label.setProperty("checked", False)
+        # Connect the checkbox state change to the toggle method
+        checkbox_widget.toggled.connect(lambda checked, r=row: self._on_checkbox_changed(r, checked))
 
-        # Make the label clickable
-        checkbox_label.mousePressEvent = lambda event, r=row: self._toggle_checkbox_state(r)
-
-        checkbox_layout.addWidget(checkbox_label)
+        checkbox_layout.addWidget(checkbox_widget)
         self.results_table.setCellWidget(row, COL['select'], checkbox_container)
 
         # --- Values with safe defaults ---
@@ -2537,9 +2564,9 @@ class PatientTableWidget(QWidget):
         for row in range(self.results_table.rowCount()):
             checkbox_container = self.results_table.cellWidget(row, 0)
             if checkbox_container:
-                # Find the emoji label inside the container
-                checkbox_label = checkbox_container.findChild(QLabel, f"checkbox_{row}")
-                if checkbox_label and checkbox_label.property("checked"):
+                # Find the CustomCheckbox inside the container
+                checkbox_widget = checkbox_container.findChild(CustomCheckbox, f"checkbox_{row}")
+                if checkbox_widget and checkbox_widget.isChecked():
                     selected_rows.append(row)
         return selected_rows
     
@@ -2568,17 +2595,10 @@ class PatientTableWidget(QWidget):
         if 0 <= row < self.results_table.rowCount():
             checkbox_container = self.results_table.cellWidget(row, 0)
             if checkbox_container:
-                # Find the emoji label inside the container
-                checkbox_label = checkbox_container.findChild(QLabel, f"checkbox_{row}")
-                if checkbox_label:
-                    # Update emoji based on state
-                    if checked:
-                        checkbox_label.setText("✅")  # Check mark emoji
-                    else:
-                        checkbox_label.setText("⬜")  # Empty square emoji
-
-                    # Update the property
-                    checkbox_label.setProperty("checked", checked)
+                # Find the CustomCheckbox inside the container
+                checkbox_widget = checkbox_container.findChild(CustomCheckbox, f"checkbox_{row}")
+                if checkbox_widget:
+                    checkbox_widget.setChecked(checked)
     
     def set_all_rows_checked(self, checked=True):
         """
@@ -2603,10 +2623,10 @@ class PatientTableWidget(QWidget):
         if 0 <= row < self.results_table.rowCount():
             checkbox_container = self.results_table.cellWidget(row, 0)
             if checkbox_container:
-                # Find the emoji label inside the container
-                checkbox_label = checkbox_container.findChild(QLabel, f"checkbox_{row}")
-                if checkbox_label:
-                    return checkbox_label.property("checked")
+                # Find the CustomCheckbox inside the container
+                checkbox_widget = checkbox_container.findChild(CustomCheckbox, f"checkbox_{row}")
+                if checkbox_widget:
+                    return checkbox_widget.isChecked()
         return False
     
     def get_checked_count(self):
@@ -2634,32 +2654,20 @@ class PatientTableWidget(QWidget):
     
     def _toggle_checkbox_state(self, row):
         """
-        Toggle the checkbox state for a specific row using emoji
+        Toggle the checkbox state for a specific row using CustomCheckbox
 
         Args:
             row (int): Row index
         """
         checkbox_container = self.results_table.cellWidget(row, 0)
         if checkbox_container:
-            checkbox_label = checkbox_container.findChild(QLabel, f"checkbox_{row}")
-            if checkbox_label:
-                current_checked = checkbox_label.property("checked")
-                new_checked = not current_checked
+            checkbox_widget = checkbox_container.findChild(CustomCheckbox, f"checkbox_{row}")
+            if checkbox_widget:
+                # Toggle the checkbox state
+                current_state = checkbox_widget.isChecked()
+                checkbox_widget.setChecked(not current_state)
 
-                # Update emoji based on state
-                if new_checked:
-                    checkbox_label.setText("✅")  # Check mark emoji
-                else:
-                    checkbox_label.setText("⬜")  # Empty square emoji
-
-                # Update the property
-                checkbox_label.setProperty("checked", new_checked)
-
-                # Emit signal for checkbox state change
-                self.checkboxStateChanged.emit(row, new_checked)
-
-                # Update download button state
-                self._update_download_button_state()
+                # The signal will be emitted by the checkbox's toggled signal
 
     def _on_checkbox_changed(self, row, state):
         """
@@ -2667,10 +2675,10 @@ class PatientTableWidget(QWidget):
 
         Args:
             row (int): Row index
-            state (int): Checkbox state (Qt.Checked or Qt.Unchecked)
+            state (bool): Checkbox state (True for checked, False for unchecked)
         """
         # Emit signal for checkbox state change
-        self.checkboxStateChanged.emit(row, state == Qt.Checked)
+        self.checkboxStateChanged.emit(row, state)
 
         # Update download button state
         self._update_download_button_state()

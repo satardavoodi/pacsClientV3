@@ -227,9 +227,16 @@ class SlideContentWidget(QWidget):
                 study_path=str(study_path),
                 series_number=int(series_number)
             )
-            
+
             if result and dicom_widget.lst_nodes_viewer:
-                vtk_image_data, metadata, _ = result
+                # Convert generator to list to safely get the first item
+                result_list = list(result)
+                if result_list:
+                    vtk_image_data, metadata, _ = result_list[0]  # Use first item
+                else:
+                    # Handle case where no series data was loaded
+                    print(f"⚠️ No series data found for series {series_number}")
+                    return QLabel(f"No data found for series {series_number}")
                 viewer = dicom_widget.lst_nodes_viewer[0]
                 
                 # Display the series

@@ -113,12 +113,14 @@ class MessageBubble(QWidget):
         parent=None,
         on_edit: t.Callable[['MessageBubble'], None] | None = None,
         on_persian: t.Callable[['MessageBubble'], None] | None = None,
+        on_send_reception: t.Callable[['MessageBubble'], None] | None = None,
     ):
         super().__init__(parent)
         self.who = who
         self._raw_text = text or ""
         self._on_edit_cb = on_edit
         self._on_persian_cb = on_persian
+        self._on_send_reception_cb = on_send_reception
         self._msg_id: int | None = None
 
         self._is_user = who.strip().lower().startswith("you")
@@ -267,6 +269,26 @@ class MessageBubble(QWidget):
                 QToolButton:pressed { background: rgba(255,255,255,0.15); }
             """)
             footer.addWidget(self.btnPersian, 0, Qt.AlignRight)
+        
+        # Send to Reception button (only for AI responses with callback)
+        self.btnSendReception: QToolButton | None = None
+        if (not self._is_user) and (self._on_send_reception_cb is not None):
+            self.btnSendReception = QToolButton(box)
+            self.btnSendReception.setText("Send to Reception")
+            self.btnSendReception.setToolTip("Send report to reception")
+            self.btnSendReception.setCursor(Qt.PointingHandCursor)
+            self.btnSendReception.setAutoRaise(True)
+            self.btnSendReception.setStyleSheet("""
+                QToolButton {
+                    color: #b8f4e1; padding: 2px 8px;
+                    border: 1px solid #55957a;
+                    border-radius: 6px;
+                    background: rgba(255,255,255,0.05);
+                }
+                QToolButton:hover { background: rgba(255,255,255,0.10); }
+                QToolButton:pressed { background: rgba(255,255,255,0.15); }
+            """)
+            footer.addWidget(self.btnSendReception, 0, Qt.AlignRight)
 
         # Retry (hidden by default)
         self.btnRetry = QToolButton(box)
@@ -295,6 +317,9 @@ class MessageBubble(QWidget):
 
         if self.btnPersian is not None:
             self.btnPersian.clicked.connect(lambda: self._on_persian_cb(self))
+        
+        if self.btnSendReception is not None:
+            self.btnSendReception.clicked.connect(lambda: self._on_send_reception_cb(self))
 
         # Font size controls
         self.btnFontInc.clicked.connect(self.increase_font_size)
@@ -901,6 +926,7 @@ class ChatHistory(QWidget):
         text: str,
         on_edit=None,
         on_persian=None,
+        on_send_reception=None,
         force_right: bool | None = None,   # جدید: فقط برای موارد خاص مثل تصویر
     ) -> MessageBubble:
         """
@@ -913,6 +939,7 @@ class ChatHistory(QWidget):
             parent=self.container,
             on_edit=on_edit,
             on_persian=on_persian,
+            on_send_reception=on_send_reception,
         )
 
         wrap = QWidget(self.container)

@@ -1244,6 +1244,25 @@ def ai_ensure_schema():
         )
     """)
 
+    # Reception reports table (for AI-generated reports sent to reception)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ai_reception_reports(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            patient_id TEXT NOT NULL,
+            study_uid TEXT,
+            html_content TEXT NOT NULL,
+            session_id TEXT,
+            msg_id INTEGER,
+            status TEXT DEFAULT 'pending',
+            created_at INTEGER NOT NULL,
+            read_at INTEGER,
+            sender_info TEXT
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_patient ON ai_reception_reports(patient_id, status, created_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_study ON ai_reception_reports(study_uid, status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_status ON ai_reception_reports(status, created_at)")
+
     conn.commit()
 
 
@@ -1731,6 +1750,192 @@ def ai_get_last_session() -> str | None:
         cur.execute("SELECT v FROM ai_meta WHERE k='last_session'")
         row = cur.fetchone()
         return row[0] if row else None
+
+
+# -----------------------------------------------------------------------------
+# AI Reception Reports (for sending AI reports to Reception panel)
+# -----------------------------------------------------------------------------
+
+def ai_save_reception_report(
+    patient_id: str,
+    html_content: str,
+    study_uid: str | None = None,
+    session_id: str | None = None,
+    msg_id: int | None = None,
+    sender_info: str | None = None
+) -> int:
+    """
+    Save an AI-generated report to reception reports table.
+    
+    Args:
+        patient_id: Patient identifier
+        html_content: HTML formatted report content
+        study_uid: Study UID (optional)
+        session_id: AI chat session ID (optional)
+        msg_id: Message ID from ai_messages (optional)
+        sender_info: Additional sender information (optional)
+        
+    Returns:
+        int: Report ID
+    """
+    import time
+    
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        created_at = int(time.time())
+        
+        cur.execute("""
+            INSERT INTO ai_reception_reports 
+            (patient_id, study_uid, html_content, session_id, msg_id, status, created_at, sender_info)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+        """, (patient_id, study_uid, html_content, session_id, msg_id, created_at, sender_info))
+        
+        conn.commit()
+        return cur.lastrowid
+
+
+def ai_get_reception_reports(
+    patient_id: str | None = None,
+    study_uid: str | None = None,
+    status: str | None = None,
+    limit: int | None = None
+) -> list[dict]:
+    """
+    Get reception reports with optional filtering.
+    
+    Args:
+        patient_id: Filter by patient ID (optional)
+        study_uid: Filter by study UID (optional)
+        status: Filter by status ('pending', 'read', 'archived') (optional)
+        limit: Maximum number of results (optional)
+        
+    Returns:
+        List of report dictionaries
+    """
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        
+        query = "SELECT * FROM ai_reception_reports WHERE 1=1"
+        params = []
+        
+        if patient_id:
+            query += " AND patient_id = ?"
+            params.append(patient_id)
+        
+        if study_uid:
+            query += " AND study_uid = ?"
+            params.append(study_uid)
+        
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        
+        query += " ORDER BY created_at DESC"
+        
+        if limit:
+            query += f" LIMIT {int(limit)}"
+        
+        cur.execute(query, params)
+        rows = cur.fetchall()
+        
+        if not rows:
+            return []
+        
+        # Convert to dictionaries
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row)) for row in rows]
+
+
+def ai_mark_reception_report_read(report_id: int):
+    """
+    Mark a reception report as read.
+    
+    Args:
+        report_id: Report ID to mark as read
+    """
+    import time
+    
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        read_at = int(time.time())
+        
+        cur.execute("""
+            UPDATE ai_reception_reports 
+            SET status = 'read', read_at = ?
+            WHERE id = ?
+        """, (read_at, report_id))
+        
+        conn.commit()
+
+
+def ai_update_reception_report_status(report_id: int, status: str):
+    """
+    Update reception report status.
+    
+    Args:
+        report_id: Report ID
+        status: New status ('pending', 'read', 'archived')
+        
+    Returns:
+        bool: True if successful
+    """
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        
+        cur.execute("""
+            UPDATE ai_reception_reports 
+            SET status = ?
+            WHERE id = ?
+        """, (status, report_id))
+        
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def ai_delete_reception_report(report_id: int):
+    """
+    Delete a reception report.
+    
+    Args:
+        report_id: Report ID to delete
+        
+    Returns:
+        bool: True if successful
+    """
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        
+        cur.execute("DELETE FROM ai_reception_reports WHERE id = ?", (report_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def ai_get_pending_reception_reports_count(patient_id: str | None = None) -> int:
+    """
+    Get count of pending reception reports.
+    
+    Args:
+        patient_id: Filter by patient ID (optional)
+        
+    Returns:
+        Number of pending reports
+    """
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        
+        if patient_id:
+            cur.execute("""
+                SELECT COUNT(*) FROM ai_reception_reports 
+                WHERE patient_id = ? AND status = 'pending'
+            """, (patient_id,))
+        else:
+            cur.execute("""
+                SELECT COUNT(*) FROM ai_reception_reports 
+                WHERE status = 'pending'
+            """)
+        
+        row = cur.fetchone()
+        return row[0] if row else 0
 
 
 
