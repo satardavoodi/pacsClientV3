@@ -98,6 +98,9 @@ class HomePanelWidget(QWidget):
         # ✅ رفع خطای اصلی: ایجاد ویژگی _background_tasks
         self._background_tasks = set()  # مجموعه‌ای برای مدیریت تسک‌های پس‌زمینه
         
+        # Loading overlay for patient widget initialization
+        self._patient_loading_overlay = None
+        
         # Initialize custom tab manager with title bar integration
         self.custom_tab_manager = CustomTabManager(tab_widget, title_bar_tab_area) if tab_widget else None
         self.main_layout = QHBoxLayout(self)
@@ -635,6 +638,8 @@ class HomePanelWidget(QWidget):
             pass
 
     def _on_patient_double_clicked(self, patient_id, patient_name, study_uid, report_status='pending'):
+        # Show loading overlay immediately
+        self._show_patient_loading_overlay()
         # run the async flow without blocking UI
         import asyncio
         asyncio.create_task(self._on_patient_double_clicked_async(patient_id, patient_name, study_uid, report_status))
@@ -3638,6 +3643,77 @@ class HomePanelWidget(QWidget):
         """Validate the search data for common format issues"""
         return self.patient_search_widget.validate_search_data()
 
+    def _show_patient_loading_overlay(self):
+        """Show full-screen loading overlay when opening patient widget"""
+        if self._patient_loading_overlay is not None:
+            return  # Already showing
+        
+        # Create overlay widget
+        self._patient_loading_overlay = QWidget(self)
+        self._patient_loading_overlay.setObjectName("PatientLoadingOverlay")
+        self._patient_loading_overlay.setStyleSheet("""
+            QWidget#PatientLoadingOverlay {
+                background-color: rgba(15, 20, 25, 0.95);
+            }
+        """)
+        
+        # Create layout
+        overlay_layout = QVBoxLayout(self._patient_loading_overlay)
+        overlay_layout.setAlignment(Qt.AlignCenter)
+        
+        # Add loading message
+        loading_label = QLabel("Loading Medical Images...")
+        loading_label.setStyleSheet("""
+            QLabel {
+                color: #64b5f6;
+                font-size: 24px;
+                font-weight: bold;
+                background-color: transparent;
+            }
+        """)
+        loading_label.setAlignment(Qt.AlignCenter)
+        overlay_layout.addWidget(loading_label)
+        
+        # Add subtitle
+        subtitle_label = QLabel("Please wait while the viewer is being prepared")
+        subtitle_label.setStyleSheet("""
+            QLabel {
+                color: #a0aec0;
+                font-size: 14px;
+                background-color: transparent;
+                margin-top: 10px;
+            }
+        """)
+        subtitle_label.setAlignment(Qt.AlignCenter)
+        overlay_layout.addWidget(subtitle_label)
+        
+        # Position and show overlay
+        self._patient_loading_overlay.setGeometry(self.rect())
+        self._patient_loading_overlay.raise_()
+        self._patient_loading_overlay.show()
+        QApplication.processEvents()
+        
+        # Start timer to update overlay size in case of resize
+        self._overlay_resize_timer = QTimer()
+        self._overlay_resize_timer.timeout.connect(self._update_patient_overlay_size)
+        self._overlay_resize_timer.start(100)  # Update every 100ms
+    
+    def _update_patient_overlay_size(self):
+        """Update overlay size to match parent size"""
+        if self._patient_loading_overlay is not None and self._patient_loading_overlay.isVisible():
+            self._patient_loading_overlay.setGeometry(self.rect())
+    
+    def _hide_patient_loading_overlay(self):
+        """Hide the patient loading overlay"""
+        # Stop resize timer if exists
+        if hasattr(self, '_overlay_resize_timer') and self._overlay_resize_timer is not None:
+            self._overlay_resize_timer.stop()
+            self._overlay_resize_timer = None
+        
+        if self._patient_loading_overlay is not None:
+            self._patient_loading_overlay.deleteLater()
+            self._patient_loading_overlay = None
+
     # Patient Table Widget helper methods
     def clear_patient_table(self):
         """Clear all data from the patient table"""
@@ -4074,6 +4150,9 @@ Study UID: {study_uid}
             )
             widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             widget.set_method_open_ai_module_tab(self.add_new_tab_widget)
+            
+            # Connect loading_complete signal to hide overlay
+            widget.loading_complete.connect(self._hide_patient_loading_overlay)
 
             # 🔥 اتصال سیگنال priority_download_requested از thumbnail_manager
             if hasattr(widget, 'thumbnail_manager') and widget.thumbnail_manager is not None:

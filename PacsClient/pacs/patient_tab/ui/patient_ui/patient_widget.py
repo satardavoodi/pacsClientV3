@@ -45,6 +45,8 @@ logger = logging.getLogger(__name__)
 class PatientWidget(QWidget):
     # Signal for progressive series loading
     series_downloaded = Signal(str)  # series_number as string
+    # Signal emitted when widget is fully loaded and ready
+    loading_complete = Signal()
 
     def __init__(self, parent=None, import_folder_path: str = None, size_init_viewers=(1, 1),
                 caller: CallerTypes = None, study_uid=None, patient_id=None, enable_progressive_mode=False,
