@@ -111,16 +111,19 @@ class PatientWidget(QWidget):
         
         # ========== ASYNC TASK MANAGEMENT ==========
         # Proper async task coordination to prevent RuntimeError
-        self._global_async_lock = None
-        self._series_load_queue = None  # Will be initialized when needed
-        self._series_worker_task = None
+        # Use a queue-based system to avoid concurrent async operations
+        self._series_load_queue = None  # asyncio.Queue - initialized lazily
+        self._series_worker_task = None  # Worker task that processes queue
+        self._queue_worker_running = False  # Flag to prevent duplicate workers
         
         # Thread-safe lock for synchronous operations
         self._first_series_lock = threading.Lock()
         self._pipeline_running = False
         
-        # Async operation lock - initialized lazily when event loop is available
-        self._async_operation_lock = None
+        # Separate locks for different operations to avoid deadlock
+        # These are initialized lazily in event loop context
+        self._pipeline_lock = None  # Controls pipeline execution
+        self._series_load_lock = None  # Controls series loading
         
         # ========== MEMORY POOL ==========
         self._metadata_pool = {}  # Reuse metadata dictionaries
@@ -133,6 +136,7 @@ class PatientWidget(QWidget):
         # Task tracking for proper cleanup
         self._active_load_task = None  # Track currently running load task
         self._task_generation = 0  # Generation counter to invalidate old tasks
+        self._pending_series_loads = set()  # Track pending series number loads
 
 
         # Progressive display support
@@ -351,18 +355,6 @@ class PatientWidget(QWidget):
         except Exception as e:
             print(f"⚠️ Error processing priority queue: {e}")
 
-    def _ensure_global_async_lock(self):
-        """Ensure global async lock is initialized"""
-        if self._global_async_lock is None:
-            try:
-                self._global_async_lock = asyncio.Lock()
-            except RuntimeError:
-                # Fallback if no event loop
-                import threading
-                self._global_async_lock = threading.Lock()
-        return self._global_async_lock
-
-
     def _create_init_overlay(self):
         """Create a full-screen loading overlay to prevent seeing desktop"""
         self._init_overlay = QFrame(self)
@@ -458,55 +450,24 @@ class PatientWidget(QWidget):
     def _run_pipeline_safely(self):
         """Run pipeline safely, handling async context properly"""
         try:
-            # Try to run async pipeline if event loop exists
-            loop = None
+            # ✅ RUN PIPELINE SYNCHRONOUSLY - AVOID ASYNC LOCK CONFLICTS
+            # Pipeline is already synchronous at its core, so no need for async wrapper
+            print("🔄 Running pipeline_manager synchronously...")
             try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = None
-            
-            if loop and loop.is_running():
-                # Run in async context
-                async def _run_async():
-                    try:
-                        print("🔄 Running pipeline_manager in async context...")
-                        if self._progressive_display_enabled:
-                            print("⚠️ Progressive mode not supported in sync mode, using regular pipeline")
-                        
-                        self.pipeline_manager(
-                            self._deferred_caller,
-                            self._deferred_size
-                        )
-                        print("✅ Pipeline completed successfully")
-                    except Exception as e:
-                        print(f"❌ Pipeline error: {e}")
-                        import traceback
-                        traceback.print_exc()
-                    finally:
-                        self._pipeline_running = False
-                        print("✅ Pipeline flag reset to False")
-                        # Hide overlay after pipeline is ready
-                        QTimer.singleShot(300, self._hide_init_overlay)
-                
-                asyncio.create_task(_run_async())
-            else:
-                # Run synchronously
-                print("🔄 Running pipeline synchronously...")
-                try:
-                    self.pipeline_manager(
-                        self._deferred_caller,
-                        self._deferred_size
-                    )
-                    print("✅ Pipeline completed successfully")
-                except Exception as e:
-                    print(f"❌ Pipeline error: {e}")
-                    import traceback
-                    traceback.print_exc()
-                finally:
-                    self._pipeline_running = False
-                    print("✅ Pipeline flag reset to False")
-                    # Hide overlay after pipeline is ready
-                    QTimer.singleShot(300, self._hide_init_overlay)
+                self.pipeline_manager(
+                    self._deferred_caller,
+                    self._deferred_size
+                )
+                print("✅ Pipeline completed successfully")
+            except Exception as e:
+                print(f"❌ Pipeline error: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                self._pipeline_running = False
+                print("✅ Pipeline flag reset to False")
+                # Hide overlay after pipeline is ready
+                QTimer.singleShot(300, self._hide_init_overlay)
                     
         except Exception as e:
             print(f"❌ _run_pipeline_safely error: {e}")
@@ -579,41 +540,39 @@ class PatientWidget(QWidget):
         فعال‌سازی حالت نمایش تدریجی - نمایش سری‌ها به محض دانلود
         """
         try:
-            # Initialize async lock if needed
-            if self._async_operation_lock is None:
-                self._async_operation_lock = asyncio.Lock()
+            # Yield immediately to prevent blocking
+            await asyncio.sleep(0)
             
-            async with self._async_operation_lock:
-                self._progressive_display_enabled = True
+            self._progressive_display_enabled = True
 
-                # Set up folder path if not set
-                # تنظیم مسیر پوشه اگر تنظیم نشده است
-                if not self.import_folder_path or self.import_folder_path is None:
-                    from PacsClient.pacs.patient_tab.utils import get_study_source_path
-                    self.import_folder_path, _ = get_study_source_path(self.study_uid)
+            # Set up folder path if not set
+            # تنظیم مسیر پوشه اگر تنظیم نشده است
+            if not self.import_folder_path or self.import_folder_path is None:
+                from PacsClient.pacs.patient_tab.utils import get_study_source_path
+                self.import_folder_path, _ = get_study_source_path(self.study_uid)
 
-                # Show existing thumbnails first (if any)
-                # اول تامب‌نیل‌های موجود را نمایش بده (اگر وجود داشته باشند)
-                count_exist_thumbnails = self.show_exist_thumbnails()
+            # Show existing thumbnails first (if any)
+            # اول تامب‌نیل‌های موجود را نمایش بده (اگر وجود داشته باشند)
+            count_exist_thumbnails = self.show_exist_thumbnails()
 
-                # Create empty viewers synchronously but with processEvents to avoid blocking
-                # ساخت ویوورهای خالی به صورت همزمان اما با processEvents برای جلوگیری از سکته
+            # Create empty viewers synchronously but with processEvents to avoid blocking
+            # ساخت ویوورهای خالی به صورت همزمان اما با processEvents برای جلوگیری از سکته
 
-                # Clear any existing viewers
-                self.cleanup_all_viewers()
-                self.lst_nodes_viewer.clear()
+            # Clear any existing viewers
+            self.cleanup_all_viewers()
+            self.lst_nodes_viewer.clear()
 
-                # Create viewers synchronously (VTK widgets must be created in main thread)
-                # But use processEvents to keep UI responsive
-                QApplication.processEvents()
-                self._create_viewers_sync((1, 1))
-                QApplication.processEvents()
+            # Create viewers synchronously (VTK widgets must be created in main thread)
+            # But use processEvents to keep UI responsive
+            QApplication.processEvents()
+            self._create_viewers_sync((1, 1))
+            QApplication.processEvents()
 
-                if self.lst_nodes_viewer and len(self.lst_nodes_viewer) > 0:
-                    first_viewer = self.lst_nodes_viewer[0]
-                    if not self.selected_widget and hasattr(first_viewer, 'vtk_widget'):
-                        self.selected_widget = first_viewer.vtk_widget
-                        self.slider = first_viewer.slider
+            if self.lst_nodes_viewer and len(self.lst_nodes_viewer) > 0:
+                first_viewer = self.lst_nodes_viewer[0]
+                if not self.selected_widget and hasattr(first_viewer, 'vtk_widget'):
+                    self.selected_widget = first_viewer.vtk_widget
+                    self.slider = first_viewer.slider
 
                 # Load first series (either from disk or wait for download)
                 if count_exist_thumbnails > 0:
@@ -756,6 +715,17 @@ class PatientWidget(QWidget):
             has_running_loop = False
             print("⚠️ No running event loop detected")
 
+        # ✅ CRITICAL: CREATE VIEWERS FIRST (before loading any series)
+        # This ensures the UI is ready with loading indicators
+        print(f"🔨 [PIPELINE] Creating viewers upfront with layout {size_init_viewers}...")
+        try:
+            self.apply_multi_viewer(size_init_viewers, modify_by_user=False)
+            print(f"✅ [PIPELINE] Viewers created successfully")
+        except Exception as e:
+            print(f"❌ [PIPELINE] Error creating viewers: {e}")
+            import traceback
+            traceback.print_exc()
+
         if not has_running_loop:
             print("⚠️ Pipeline manager called without running event loop - using fallback")
             # Fallback: schedule thumbnails to load but don't create tasks
@@ -776,13 +746,6 @@ class PatientWidget(QWidget):
                 self._background_tasks.add(task)
                 # Safe cleanup
                 task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: self._background_tasks.discard(t)))
-            else:
-                print(f"⚠️ [PIPELINE] Progressive mode but no thumbnails yet - creating empty viewers")
-                # Create empty viewers for progressive loading
-                try:
-                    self._apply_multi_viewer_sync(size_init_viewers)
-                except Exception as e:
-                    print(f"❌ [PIPELINE] Error creating empty viewers: {e}")
             return
         elif count_exist_thumbnails > 0:
             print(f"🔍 [PIPELINE] Creating lazy_load_first_series task for {count_exist_thumbnails} thumbnails")
@@ -900,21 +863,8 @@ class PatientWidget(QWidget):
             if not self.isVisible():
                 return
             
-            # Initialize async lock if not exists
-            if self._async_operation_lock is None:
-                self._async_operation_lock = asyncio.Lock()
-            
-            # Try to acquire lock without blocking for too long
-            try:
-                # Use wait_for to prevent indefinite blocking
-                await asyncio.wait_for(
-                    self._locked_lazy_load(size_init_viewers),
-                    timeout=30.0
-                )
-            except asyncio.TimeoutError:
-                self.logger.warning("Timeout waiting for async lock in lazy_load_first_series_progressive")
-                # Continue without lock - less safe but better than blocking
-                await self._do_lazy_load_first_series(size_init_viewers)
+            # Perform the lazy load directly without locks to avoid deadlocks
+            await self._do_lazy_load_first_series(size_init_viewers)
             
         except asyncio.CancelledError:
             print(f"⚠️ [PROGRESSIVE] Task cancelled")
@@ -927,21 +877,16 @@ class PatientWidget(QWidget):
 
 
     async def _locked_lazy_load(self, size_init_viewers):
-        """Run the first-series lazy load under the async operation lock."""
-        # Ensure lock exists (caller should have set it, but be safe)
-        if self._async_operation_lock is None:
-            self._async_operation_lock = asyncio.Lock()
+        """Run the first-series lazy load without locks to avoid deadlocks."""
+        # Yield control to keep the loop responsive
+        await asyncio.sleep(0)
 
-        async with self._async_operation_lock:
-            # Yield after acquiring the lock to keep the loop responsive
-            await asyncio.sleep(0)
-
-            # Check widget validity before doing heavy work
-            try:
-                if not self.isVisible():
-                    return
-            except RuntimeError:
-                return  # Widget was deleted
+        # Check widget validity before doing heavy work
+        try:
+            if not self.isVisible():
+                return
+        except RuntimeError:
+            return  # Widget was deleted
 
             await self._do_lazy_load_first_series(size_init_viewers)
 
@@ -1029,6 +974,11 @@ class PatientWidget(QWidget):
         """
         Load a series immediately after download, but DO NOT display it automatically.
         Only mark it as ready for user interaction.
+        
+        Args:
+            series_number: Can be either a simple series number (e.g., "1", "2") 
+                          or a Series Instance UID (e.g., "1.3.12.2.1107...")
+            series_dir: Directory containing the series DICOM files
         """
         try:
             print(f"{'='*80}")
@@ -1054,10 +1004,23 @@ class PatientWidget(QWidget):
                 print(f"⏭️ Series {series_number} already loaded")
                 return
 
+            # ✅ FIX: Handle both series numbers and Series Instance UIDs
+            try:
+                series_int = int(series_number)
+            except ValueError:
+                # Not a simple number - extract series number from directory name
+                # Directory name should be the actual series number
+                try:
+                    series_int = int(series_path.name)
+                    print(f"   🔍 Extracted series number {series_int} from directory name")
+                except ValueError:
+                    print(f"❌ Cannot determine series number from UID {series_number} or directory {series_path.name}")
+                    return
+
             # Load the series
-            success = self._load_single_series_on_demand(int(series_number))
+            success = self._load_single_series_on_demand(series_int)
             if not success:
-                print(f"❌ Failed to load series {series_number}")
+                print(f"❌ Failed to load series {series_int}")
                 return
 
             # Mark as ready (do NOT display)
@@ -1065,7 +1028,7 @@ class PatientWidget(QWidget):
                 self.thumbnail_manager.set_series_ready(str(series_number))
                 self.thumbnail_manager.apply_border_states_new()
 
-            print(f"✅ Series {series_number} loaded and ready for manual selection.")
+            print(f"✅ Series {series_int} loaded and ready for manual selection.")
         except Exception as e:
             print(f"❌ CRITICAL ERROR in load_series_immediately: {e}")
             import traceback
@@ -2528,6 +2491,62 @@ class PatientWidget(QWidget):
         
         print(f"{'='*60}\n")
 
+    def on_download_completion(self, study_uid: str, success: bool, is_cancelled: bool = False):
+        """
+        ✅ GRACEFUL HANDLING: Called when download completes, fails, or is cancelled
+        
+        Args:
+            study_uid: Study UID that was downloading
+            success: Whether download succeeded
+            is_cancelled: Whether download was cancelled by user
+        """
+        print(f"\n{'='*60}")
+        print(f"📥 [Download Completion] study={study_uid}")
+        print(f"   success={success}, cancelled={is_cancelled}")
+        
+        try:
+            # Handle cancellation gracefully
+            if is_cancelled:
+                print(f"⏸️ Download was cancelled - updating UI gracefully")
+                
+                # Show subtle message (not popup)
+                if hasattr(self, 'status_label'):
+                    self.status_label.setText(f"Download cancelled for study {study_uid[:20]}...")
+                    self.status_label.setStyleSheet("color: #FFA500;")  # Orange
+                
+                # Still refresh UI if some data was downloaded
+                try:
+                    self.refresh_after_download(study_uid)
+                except Exception as e:
+                    print(f"⚠️ Error refreshing after cancellation: {e}")
+                
+                # Log cancellation without alarming user
+                self.logger.info(f"Download cancelled: {study_uid}")
+                return
+            
+            # Handle normal completion/failure
+            if success:
+                print(f"✅ Download completed successfully")
+                try:
+                    self.refresh_after_download(study_uid)
+                except Exception as e:
+                    print(f"⚠️ Error refreshing after download: {e}")
+            else:
+                print(f"❌ Download failed")
+                # Show error message to user
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "Download Failed",
+                    f"Failed to download study. Check your connection and try again."
+                )
+                
+        except Exception as e:
+            print(f"❌ Error in download completion handler: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        print(f"{'='*60}\n")
 
     def ai_chat_layout_ui(self):
         # مهم: رفرنس سراسری روی self نگه داریم
@@ -3062,6 +3081,8 @@ class PatientWidget(QWidget):
         """
         Switch series with robust handling for layout changes and missing data
         Uses caching to avoid redundant lookups
+        
+        ✅ Always ensures viewers exist before attempting to display series
         """
         try:
             series_number = str(series_index)
@@ -3074,6 +3095,16 @@ class PatientWidget(QWidget):
                 self.lst_thumbnails_data = []
 
             print(f"🔄 [CHANGE SERIES] Requested series {series_number}, available: {len(self.lst_thumbnails_data)}")
+
+            # ✅ CRITICAL FIX: Ensure viewers exist before displaying series
+            if not self.lst_nodes_viewer:
+                print(f"   🔨 No viewers found! Creating default viewers...")
+                try:
+                    self.apply_multi_viewer((1, 1), modify_by_user=False)
+                    print(f"   ✅ Default viewers created")
+                except Exception as e:
+                    print(f"   ❌ Failed to create viewers: {e}")
+                    return
 
             # 1. Check cache first (fast path)
             if series_number in self._series_cache:
@@ -3143,7 +3174,7 @@ class PatientWidget(QWidget):
                         self.slider = slider
 
             if vtk_widget is None:
-                print(f"   ❌ No viewer available!")
+                print(f"   ❌ No viewer available even after creation attempt!")
                 return
                 
             # Ensure slider is valid before proceeding
@@ -3436,10 +3467,8 @@ class PatientWidget(QWidget):
     
     def load_series_on_demand(self, series_number: str):
         """
-        Public method to load a series on demand (thread-safe, can be called from background tasks)
-        This is the entry point for progressive download to trigger UI refresh
-        Args:
-            series_number: Series number as string
+        Load a series on demand with simple queue-based coordination
+        Avoids async lock conflicts by using non-blocking async calls
         """
         try:
             # Check if widget is still valid
@@ -3449,85 +3478,75 @@ class PatientWidget(QWidget):
             except RuntimeError:
                 return  # Widget was deleted
 
-            # Check if series already loaded
-            series_key = f"series_{series_number}"
-            if series_key in self.lst_series_name:
-                self.logger.debug(f"Series {series_number} already loaded, skipping")
+            series_number_str = str(series_number)
+            
+            # Avoid duplicate loads
+            if series_number_str in self._pending_series_loads:
+                self.logger.debug(f"Series {series_number_str} already queued for loading")
                 return
 
-            # Safe async wrapper with proper lock coordination
-            async def _safe_load_with_lock():
-                # Yield immediately to allow other tasks
-                await asyncio.sleep(0)
-                
-                # Initialize async lock if needed
-                if self._async_operation_lock is None:
-                    self._async_operation_lock = asyncio.Lock()
-                
-                # Cancel any existing load task for this series
-                current_gen = self._task_generation
-                self._task_generation += 1
-                
-                try:
-                    # Try to acquire lock with timeout
-                    async def _locked_load():
-                        async with self._async_operation_lock:
-                            # Yield after acquiring lock
-                            await asyncio.sleep(0)
-                            
-                            # Check if task is still valid (not superseded)
-                            if current_gen != self._task_generation - 1:
-                                self.logger.debug(f"Task superseded for series {series_number}")
-                                return
-                            
-                            # Check widget validity
-                            if not self.isVisible():
-                                return
-                            
-                            # Perform the actual load
-                            await self._async_load_and_display_series(series_number)
-                    
-                    await asyncio.wait_for(_locked_load(), timeout=10.0)
-                    
-                except asyncio.TimeoutError:
-                    self.logger.warning(f"Timeout acquiring lock for series {series_number}, loading anyway")
-                    # Load without lock - less safe but prevents deadlock
-                    await self._async_load_and_display_series(series_number)
-                        
-                except asyncio.CancelledError:
-                    self.logger.debug(f"Load cancelled for series {series_number}")
-                except RuntimeError as e:
-                    if "deleted" not in str(e).lower():
-                        self.logger.warning(f"Runtime error loading series {series_number}: {e}")
-                except Exception as e:
-                    self.logger.error(f"Error loading series {series_number}: {e}", exc_info=True)
+            # Check if already loaded
+            series_key = f"series_{series_number_str}"
+            if series_key in self.lst_series_name:
+                self.logger.debug(f"Series {series_number_str} already loaded, skipping")
+                return
 
-            # Schedule task in event loop
+            # Mark as pending
+            self._pending_series_loads.add(series_number_str)
+
+            # Try async loading if event loop available
             try:
                 loop = asyncio.get_running_loop()
                 
-                # Cancel previous active load task if exists
-                if self._active_load_task and not self._active_load_task.done():
-                    self._active_load_task.cancel()
+                async def _safe_async_load():
+                    """Load series asynchronously without locks"""
+                    try:
+                        # Yield immediately to prevent blocking
+                        await asyncio.sleep(0)
+                        
+                        # Load and display the series
+                        await self._async_load_and_display_series(series_number_str)
+                        
+                    except asyncio.CancelledError:
+                        self.logger.debug(f"Load cancelled for series {series_number_str}")
+                    except RuntimeError as e:
+                        if "deleted" not in str(e).lower():
+                            self.logger.warning(f"Runtime error loading series {series_number_str}: {e}")
+                    except Exception as e:
+                        self.logger.error(f"Error loading series {series_number_str}: {e}", exc_info=True)
+                    finally:
+                        # Remove from pending set
+                        self._pending_series_loads.discard(series_number_str)
                 
-                # Create new task
-                self._active_load_task = asyncio.create_task(_safe_load_with_lock())
-                self._background_tasks.add(self._active_load_task)
+                # Create task - no locks, just schedule it
+                task = asyncio.create_task(_safe_async_load())
+                self._background_tasks.add(task)
                 
                 # Cleanup on completion
-                def cleanup_task(task):
-                    QTimer.singleShot(0, lambda: self._background_tasks.discard(task))
+                def cleanup_task(t):
+                    self._background_tasks.discard(t)
                 
-                self._active_load_task.add_done_callback(cleanup_task)
+                task.add_done_callback(cleanup_task)
                 
             except RuntimeError:
                 # No event loop - use thread-based loading
-                QTimer.singleShot(0, lambda: self._load_series_in_thread(series_number))
-            except Exception as e:
-                self.logger.error(f"Error scheduling series load: {e}")
-
+                self.logger.debug(f"No event loop, loading series {series_number_str} in thread")
+                
+                def _thread_load():
+                    try:
+                        # Load synchronously in thread
+                        self._load_single_series_on_demand(int(series_number_str))
+                    except Exception as e:
+                        self.logger.error(f"Error loading series in thread: {e}", exc_info=True)
+                    finally:
+                        self._pending_series_loads.discard(series_number_str)
+                
+                thread = threading.Thread(target=_thread_load, daemon=True, name=f"SeriesLoad-{series_number_str}")
+                thread.start()
+                
         except Exception as e:
-            print(f"❌ Error in load_series_on_demand: {e}")
+            self.logger.error(f"Error in load_series_on_demand: {e}", exc_info=True)
+            self._pending_series_loads.discard(series_number_str)
             
 
     async def load_multiple_series_parallel(self, series_numbers: list, max_concurrent=8):
@@ -3656,6 +3675,10 @@ class PatientWidget(QWidget):
         Async method to load and display a series without blocking UI.
         Uses asyncio lock to prevent race conditions with contextvars.
         After loading, it immediately displays the series in the first viewer.
+        
+        Args:
+            series_number: Can be either a simple series number (e.g., "1", "2") 
+                          or a Series Instance UID (e.g., "1.3.12.2.1107...")
         """
         try:
             # Yield control first
@@ -3665,6 +3688,28 @@ class PatientWidget(QWidget):
             if not self.isVisible():
                 return
             
+            # ✅ FIX: Handle both series numbers and Series Instance UIDs
+            # Try to convert to integer (simple series number)
+            try:
+                series_int = int(series_number)
+            except ValueError:
+                # Not a simple number - might be a Series Instance UID
+                # Try to find the series in loaded data by UID
+                self.logger.warning(f"Series identifier '{series_number}' is not a simple number - searching by UID")
+                
+                # Search for series by UID in loaded thumbnails
+                for idx, thumb_data in enumerate(self.lst_thumbnails_data):
+                    series_uid = thumb_data.get('metadata', {}).get('series', {}).get('series_uid', '')
+                    if series_uid == series_number:
+                        # Found it - use the index as series number
+                        series_int = idx + 1  # Series numbers are 1-based
+                        self.logger.info(f"Found series UID {series_number} at index {series_int}")
+                        break
+                else:
+                    # Not found in loaded data - series may not be downloaded yet
+                    self.logger.warning(f"Series UID {series_number} not found in loaded thumbnails - may need download")
+                    return
+            
             # Yield before heavy operation
             await asyncio.sleep(0)
             
@@ -3672,7 +3717,7 @@ class PatientWidget(QWidget):
             try:
                 success = await asyncio.to_thread(
                     self._load_single_series_on_demand,
-                    int(series_number)
+                    series_int
                 )
             except AttributeError:
                 # Fallback for Python < 3.9 - yield before and after
@@ -3683,7 +3728,7 @@ class PatientWidget(QWidget):
                 success = await loop.run_in_executor(
                     None,
                     self._load_single_series_on_demand,
-                    int(series_number)
+                    series_int
                 )
 
             if success:
