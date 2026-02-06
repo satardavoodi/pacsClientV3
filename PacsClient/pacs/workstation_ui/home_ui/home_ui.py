@@ -641,10 +641,22 @@ class HomePanelWidget(QWidget):
 
     async def _on_patient_double_clicked_async(self, patient_id, patient_name, study_uid, report_status='pending'):
         """
-        FAST patient opening - tab opens immediately, background loading for everything else
+        FAST patient opening - tab opens immediately with proper cleanup, background loading for everything else
         """
         from pathlib import Path
         from PacsClient.pacs.patient_tab.utils.utils import check_study_complete
+        
+        # --- STEP 0: CLEANUP PREVIOUS PATIENT (IF ANY) ---
+        # Get current widget before switching
+        current_widget = self.center_stacked_widget.currentWidget()
+        if current_widget and hasattr(current_widget, 'exit_patient_widget'):
+            try:
+                print(f"🧹 [HomeUI] Cleaning up previous patient widget...")
+                current_widget.exit_patient_widget()
+                # Small delay to allow cleanup to finish
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                print(f"⚠️ [HomeUI] Error cleaning previous widget: {e}")
         
         # --- STEP 1: Mark as opened immediately (UI feedback) ---
         self.patient_table_widget.update_visited_status(study_uid, status='opened')
@@ -4086,8 +4098,17 @@ Study UID: {study_uid}
 
             # ✅ FIRST: Add patient widget to stacked widget and show it
             # This ensures the previous screen is completely hidden
+            # The loading overlay will be shown automatically when PatientWidget is created
             self.center_stacked_widget.addWidget(widget)
-            self.center_stacked_widget.setCurrentWidget(widget)
+            
+            # Small delay to allow loading overlay to be visible before showing the widget
+            # This provides visual feedback to user during transition
+            def show_patient_widget():
+                self.center_stacked_widget.setCurrentWidget(widget)
+                print(f"✅ [HomeUI] Patient widget shown with loading overlay visible")
+            
+            # Delay of 50ms to allow loading overlay to render
+            QTimer.singleShot(50, show_patient_widget)
 
             if study_uid:
                 download_manager = self._get_or_create_download_manager_tab()

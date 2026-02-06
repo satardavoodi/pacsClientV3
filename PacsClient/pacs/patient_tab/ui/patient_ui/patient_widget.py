@@ -1266,7 +1266,6 @@ class PatientWidget(QWidget):
             
             # Give UI a chance to update
             await asyncio.sleep(0)
-            QApplication.processEvents()
             
             self.logger.info(f"Successfully created {layout[0]}x{layout[1]} viewer layout")
             

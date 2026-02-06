@@ -65,6 +65,7 @@ class PatientWidget(QWidget):
         self.selected_widget: VTKWidget = None
         self.lst_series_name = set()
         self.metadata_fixed = {}
+        self.server_series_info = []
         self._series_index = {}  # map: series_key -> index in lst_thumbnails_data
         self.unique_elements_index = 0
 
@@ -3626,3 +3627,11 @@ class PatientWidget(QWidget):
             print(f"❌ Error creating proper viewer: {e}")
             import traceback
             traceback.print_exc()
+
+    def set__server_series_info(self, series_list):
+        """Backward-compat alias for setting server series info"""
+        self.set_server_series_info(series_list)
+
+    def set_server_series_info(self, series_list):
+        """Store server series list for background downloads"""
+        self.server_series_info = series_list or []
