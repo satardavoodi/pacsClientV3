@@ -250,11 +250,44 @@ class DownloadExecutor:
             )
             
             # Execute download
-            download_result = await downloader.download_all_series(
-                study_uid=study_uid,
-                series_list=metadata.series_list,
-                patient_id=task.patient_id
-            )
+            try:
+                download_result = await downloader.download_all_series(
+                    study_uid=study_uid,
+                    series_list=metadata.series_list,
+                    patient_id=task.patient_id
+                )
+            except Exception as e:
+                # ✅ GRACEFUL HANDLING: Download cancellation or other errors
+                from PacsClient.zeta_download_manager.workers.download_worker import DownloadCancelled
+                
+                if isinstance(e, (InterruptedError, DownloadCancelled)):
+                    # User cancelled - log as info, not error
+                    logger.warning(f"⏸️ Download cancelled: {task.patient_name}")
+                    
+                    # Update state to cancelled (not failed)
+                    self.state.update(
+                        study_uid,
+                        status=DownloadStatus.CANCELLED,
+                        error_message="Download cancelled by user",
+                        end_time=datetime.now()
+                    )
+                    
+                    # Completion callback with success=False to indicate incomplete
+                    if completion_callback:
+                        completion_callback(study_uid, False)
+                    
+                    # Return gracefully without traceback
+                    from PacsClient.zeta_download_manager.core.models import DownloadResult
+                    return DownloadResult(
+                        success=False,
+                        error_message="Download cancelled by user",
+                        study_uid=study_uid,
+                        downloaded_series=0,
+                        downloaded_images=0
+                    )
+                else:
+                    # Other errors - handle normally with traceback
+                    raise
             
             # ═══════════════════════════════════════════════════════════
             # PHASE 6: Complete

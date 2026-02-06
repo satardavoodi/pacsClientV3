@@ -9,7 +9,7 @@ from PySide6.QtGui import QPixmap, QFont, QColor, QIcon
 from PySide6.QtWidgets import (QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QGridLayout, QLineEdit,
     QTableWidget, QAbstractItemView, QHeaderView, QCheckBox, QScrollArea, QToolButton, QTableWidgetItem, QMessageBox,
     QApplication, QProgressDialog, QTabWidget, QLabel, QFileDialog, QProgressBar, QStatusBar, QSplitter, QDialog,
-    QGraphicsDropShadowEffect, QSizePolicy, QWidget)
+    QGraphicsDropShadowEffect, QSizePolicy, QWidget, QStackedWidget)
 import qtawesome as qta
 import weakref  # Add at the top
 
@@ -105,6 +105,9 @@ class HomePanelWidget(QWidget):
         
         # ✅ رفع خطای اصلی: ایجاد ویژگی _background_tasks
         self._background_tasks = set()  # مجموعه‌ای برای مدیریت تسک‌های پس‌زمینه
+        
+        # Loading overlay for patient widget initialization
+        self._patient_loading_overlay = None
         
         # Initialize custom tab manager with title bar integration
         self.custom_tab_manager = CustomTabManager(tab_widget, title_bar_tab_area) if tab_widget else None
@@ -565,13 +568,13 @@ class HomePanelWidget(QWidget):
         # ★★★ تنظیمات وسط‌چین کردن هدر جدول ★★★
         if hasattr(self.patient_table_widget, 'results_table'):
             table = self.patient_table_widget.results_table
-            
+
             # وسط‌چین کردن تمام هدرها
             table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-            
+
             # تنظیم رفتار resize برای وسط‌چین بهتر
             table.horizontalHeader().setHighlightSections(True)
-            
+
             # استایل‌دهی CSS به هدر (اختیاری - برای زیباتر شدن)
             table.horizontalHeader().setStyleSheet("""
                 QHeaderView::section {
@@ -591,13 +594,18 @@ class HomePanelWidget(QWidget):
                 header_item = table.horizontalHeaderItem(i)
                 if header_item:
                     header_item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-            
+
             # تنظیم stretch برای ستون‌های خاص (اختیاری)
             # table.horizontalHeader().setStretchLastSection(True)
         # ★★★ پایان تنظیمات هدر ★★★
 
-        # Add to main layout
-        self.main_layout.addWidget(self.patient_table_widget)
+        # Create a stacked widget to manage patient table and patient widgets
+        self.center_stacked_widget = QStackedWidget()
+        self.center_stacked_widget.addWidget(self.patient_table_widget)  # Index 0: Patient table
+        # Additional widgets will be added dynamically as needed
+
+        # Add stacked widget to main layout
+        self.main_layout.addWidget(self.center_stacked_widget)
 
     def _reset_thumbnails_event(self):
         import asyncio
@@ -612,16 +620,30 @@ class HomePanelWidget(QWidget):
             pass
 
     def _on_patient_double_clicked(self, patient_id, patient_name, study_uid, report_status='pending'):
+        # Show loading overlay immediately
+        self._show_patient_loading_overlay()
         # run the async flow without blocking UI
         import asyncio
         asyncio.create_task(self._on_patient_double_clicked_async(patient_id, patient_name, study_uid, report_status))
 
     async def _on_patient_double_clicked_async(self, patient_id, patient_name, study_uid, report_status='pending'):
         """
-        FAST patient opening - tab opens immediately, background loading for everything else
+        FAST patient opening - tab opens immediately with proper cleanup, background loading for everything else
         """
         from pathlib import Path
         from PacsClient.pacs.patient_tab.utils.utils import check_study_complete
+        
+        # --- STEP 0: CLEANUP PREVIOUS PATIENT (IF ANY) ---
+        # Get current widget before switching
+        current_widget = self.center_stacked_widget.currentWidget()
+        if current_widget and hasattr(current_widget, 'exit_patient_widget'):
+            try:
+                print(f"🧹 [HomeUI] Cleaning up previous patient widget...")
+                current_widget.exit_patient_widget()
+                # Small delay to allow cleanup to finish
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                print(f"⚠️ [HomeUI] Error cleaning previous widget: {e}")
         
         # --- STEP 1: Mark as opened immediately (UI feedback) ---
         self.patient_table_widget.update_visited_status(study_uid, status='opened')
@@ -832,7 +854,7 @@ class HomePanelWidget(QWidget):
         """Safely close a tab and clean up references"""
         try:
             widget = self.tab_widget.widget(index)
-            
+
             # Clean up download tasks if this is a patient widget
             if widget and hasattr(widget, 'study_uid'):
                 study_uid = widget.study_uid
@@ -841,18 +863,31 @@ class HomePanelWidget(QWidget):
                     for task in list(self._download_tasks):
                         if task and not task.done():
                             task.cancel()
-            
+
             # Remove from dict_tabs_widget
             if hasattr(widget, 'study_uid') and widget.study_uid in self.dict_tabs_widget:
                 del self.dict_tabs_widget[widget.study_uid]
-            
+
             # Close the tab
             self.tab_widget.removeTab(index)
-            
+
             # Force cleanup
             if widget:
                 widget.deleteLater()
-                
+
+            # ✅ Show patient table again if no more patient tabs are open
+            # Check if any patient tabs remain
+            has_patient_tabs = False
+            for i in range(self.tab_widget.count()):
+                tab_widget = self.tab_widget.widget(i)
+                if tab_widget and hasattr(tab_widget, 'study_uid'):
+                    has_patient_tabs = True
+                    break
+
+            # If no patient tabs remain, show the patient table in the stacked widget
+            if not has_patient_tabs and hasattr(self, 'center_stacked_widget') and hasattr(self, 'patient_table_widget'):
+                self.center_stacked_widget.setCurrentWidget(self.patient_table_widget)
+
         except Exception as e:
             print(f"⚠️ Error closing tab: {e}")
 
@@ -3441,6 +3476,77 @@ class HomePanelWidget(QWidget):
         """Validate the search data for common format issues"""
         return self.patient_search_widget.validate_search_data()
 
+    def _show_patient_loading_overlay(self):
+        """Show full-screen loading overlay when opening patient widget"""
+        if self._patient_loading_overlay is not None:
+            return  # Already showing
+        
+        # Create overlay widget
+        self._patient_loading_overlay = QWidget(self)
+        self._patient_loading_overlay.setObjectName("PatientLoadingOverlay")
+        self._patient_loading_overlay.setStyleSheet("""
+            QWidget#PatientLoadingOverlay {
+                background-color: rgba(15, 20, 25, 0.95);
+            }
+        """)
+        
+        # Create layout
+        overlay_layout = QVBoxLayout(self._patient_loading_overlay)
+        overlay_layout.setAlignment(Qt.AlignCenter)
+        
+        # Add loading message
+        loading_label = QLabel("Loading Medical Images...")
+        loading_label.setStyleSheet("""
+            QLabel {
+                color: #64b5f6;
+                font-size: 24px;
+                font-weight: bold;
+                background-color: transparent;
+            }
+        """)
+        loading_label.setAlignment(Qt.AlignCenter)
+        overlay_layout.addWidget(loading_label)
+        
+        # Add subtitle
+        subtitle_label = QLabel("Please wait while the viewer is being prepared")
+        subtitle_label.setStyleSheet("""
+            QLabel {
+                color: #a0aec0;
+                font-size: 14px;
+                background-color: transparent;
+                margin-top: 10px;
+            }
+        """)
+        subtitle_label.setAlignment(Qt.AlignCenter)
+        overlay_layout.addWidget(subtitle_label)
+        
+        # Position and show overlay
+        self._patient_loading_overlay.setGeometry(self.rect())
+        self._patient_loading_overlay.raise_()
+        self._patient_loading_overlay.show()
+        QApplication.processEvents()
+        
+        # Start timer to update overlay size in case of resize
+        self._overlay_resize_timer = QTimer()
+        self._overlay_resize_timer.timeout.connect(self._update_patient_overlay_size)
+        self._overlay_resize_timer.start(100)  # Update every 100ms
+    
+    def _update_patient_overlay_size(self):
+        """Update overlay size to match parent size"""
+        if self._patient_loading_overlay is not None and self._patient_loading_overlay.isVisible():
+            self._patient_loading_overlay.setGeometry(self.rect())
+    
+    def _hide_patient_loading_overlay(self):
+        """Hide the patient loading overlay"""
+        # Stop resize timer if exists
+        if hasattr(self, '_overlay_resize_timer') and self._overlay_resize_timer is not None:
+            self._overlay_resize_timer.stop()
+            self._overlay_resize_timer = None
+        
+        if self._patient_loading_overlay is not None:
+            self._patient_loading_overlay.deleteLater()
+            self._patient_loading_overlay = None
+
     # Patient Table Widget helper methods
     def clear_patient_table(self):
         """Clear all data from the patient table"""
@@ -3881,36 +3987,54 @@ Study UID: {study_uid}
                 enable_progressive_mode = not is_complete
             
             widget = PatientWidget(
-                import_folder_path=folder_path, 
-                caller=caller, 
-                study_uid=study_uid, 
+                import_folder_path=folder_path,
+                caller=caller,
+                study_uid=study_uid,
                 patient_id=patient_id,
                 enable_progressive_mode=enable_progressive_mode,
                 report_status=report_status
             )
+            widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             widget.set_method_open_ai_module_tab(self.add_new_tab_widget)
             
+            # Connect loading_complete signal to hide overlay
+            widget.loading_complete.connect(self._hide_patient_loading_overlay)
+
             # 🔥 اتصال سیگنال priority_download_requested از thumbnail_manager
             if hasattr(widget, 'thumbnail_manager') and widget.thumbnail_manager is not None:
                 widget.thumbnail_manager.set_current_study_uid(study_uid)
-                
+
                 # اصلاح سیگنال برای داشتن widget
                 def on_priority_download_requested(series_number, study_uid):
                     print(f"🎯 [HomeUI] Priority download requested: series={series_number}, study={study_uid}")
                     # widget را مستقیماً به تابع ارسال می‌کنیم
                     self._handle_priority_download_from_thumbnail(series_number, study_uid, widget)
-                
+
                 widget.thumbnail_manager.priority_download_requested.connect(on_priority_download_requested)
-                            
+
                 # ایجاد یک تابع wrapper برای اتصال سیگنال
                 def on_priority_download_requested(series_number, study_uid_param):
                     print(f"🎯 [HomeUI] Priority download requested: series={series_number}, study={study_uid_param}")
                     self._handle_priority_download_from_thumbnail(series_number, study_uid_param, widget)
-                
+
                 # اتصال سیگنال
                 widget.thumbnail_manager.priority_download_requested.connect(on_priority_download_requested)
                 print(f"✅ Connected priority download signal for study {study_uid}")
-                        
+
+            # ✅ FIRST: Add patient widget to stacked widget and show it
+            # This ensures the previous screen is completely hidden
+            # The loading overlay will be shown automatically when PatientWidget is created
+            self.center_stacked_widget.addWidget(widget)
+            
+            # Small delay to allow loading overlay to be visible before showing the widget
+            # This provides visual feedback to user during transition
+            def show_patient_widget():
+                self.center_stacked_widget.setCurrentWidget(widget)
+                print(f"✅ [HomeUI] Patient widget shown with loading overlay visible")
+            
+            # Delay of 50ms to allow loading overlay to render
+            QTimer.singleShot(50, show_patient_widget)
+
             if study_uid:
                 download_manager = self._get_or_create_download_manager_tab()
                 if download_manager:

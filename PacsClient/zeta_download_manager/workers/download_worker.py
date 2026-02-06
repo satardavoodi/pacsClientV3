@@ -8,6 +8,11 @@ import logging
 import asyncio
 import threading
 from typing import Optional, Callable
+
+# ✅ Custom exception for graceful cancellation (no traceback)
+class DownloadCancelled(Exception):
+    """Raised when download is cancelled by user - handled gracefully"""
+    pass
 from PySide6.QtCore import QThread, Signal
 
 from ..core.models import DownloadTask, DownloadResult
@@ -149,10 +154,10 @@ class DownloadWorker(QThread):
         """
         logger.info(f"📊 [WORKER-PROGRESS] Progress callback called: {event_type}, series={series_number}, {progress_percent:.1f}% ({downloaded}/{total})")
         
-        # Check if cancelled (R39)
+        # Check if cancelled (R39) - use custom exception for graceful handling
         if self.is_cancelled():
             logger.info(f"⏸️ Cancellation detected in progress callback")
-            raise InterruptedError("Download cancelled by user")
+            raise DownloadCancelled("Download cancelled by user")
         
         # Emit progress signal
         logger.info(f"📊 [WORKER-PROGRESS] Emitting progress signal...")
