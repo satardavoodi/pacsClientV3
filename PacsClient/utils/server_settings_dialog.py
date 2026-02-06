@@ -229,7 +229,7 @@ class ServerSettingsDialog(QDialog):
     
     def test_connection(self):
         """Test connection to server"""
-        from PacsClient.components.resumable_dicom_socket_client import ResumableDicomSocketClient
+        from PacsClient.zeta_download_manager.network.socket_client import SocketDicomClient
         
         host = self.host_input.text().strip()
         port = self.port_input.value()
@@ -245,7 +245,7 @@ class ServerSettingsDialog(QDialog):
         
         # Test connection
         try:
-            client = ResumableDicomSocketClient(host=host, port=port, timeout=timeout, disable_pool=True)
+            client = SocketDicomClient(host=host, port=port, timeout=timeout)
             if client.connect():
                 client.disconnect()
                 QMessageBox.information(

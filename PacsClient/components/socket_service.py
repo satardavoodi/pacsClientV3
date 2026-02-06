@@ -4,7 +4,8 @@ import logging
 from typing import Optional, Dict, Any
 
 from ..utils.socket_config import get_socket_config
-from .resumable_dicom_socket_client import ResumableDicomSocketClient
+# Use Zeta SocketDicomClient (new implementation)
+from PacsClient.zeta_download_manager.network.socket_client import SocketDicomClient
 
 
 logger = logging.getLogger(__name__)
@@ -14,25 +15,27 @@ class SocketService:
     """
     Reusable app-wide Socket service.
     Provides a single place to manage connection and simple requests.
+    
+    Now uses Zeta SocketDicomClient for improved performance and reliability.
     """
 
     def __init__(self):
         self.config = get_socket_config()
-        self.client: Optional[ResumableDicomSocketClient] = None
+        self.client: Optional[SocketDicomClient] = None
 
-    def _ensure_client(self) -> Optional[ResumableDicomSocketClient]:
+    def _ensure_client(self) -> Optional[SocketDicomClient]:
         try:
             if self.client is None:
-                logger.info(f"🔧 Creating new ResumableDicomSocketClient")
+                logger.info(f"🔧 Creating new Zeta SocketDicomClient")
                 logger.info(f"   Host: {self.config.get_socket_host()}")
                 logger.info(f"   Port: {self.config.get_socket_port()}")
                 logger.info(f"   Timeout: {self.config.get_connection_timeout()}")
-                self.client = ResumableDicomSocketClient(
+                self.client = SocketDicomClient(
                     host=self.config.get_socket_host(),
                     port=int(self.config.get_socket_port()),
-                    timeout=int(self.config.get_connection_timeout()),
+                    timeout=float(self.config.get_connection_timeout()),
                 )
-                logger.info(f"✅ Client created successfully")
+                logger.info(f"✅ Zeta client created successfully")
             return self.client
         except Exception as e:
             logger.error(f"❌ Failed to ensure client: {e}")
@@ -74,10 +77,8 @@ class SocketService:
         try:
             if not self.connect():
                 return False
-            # lightweight ping: try a small request path if available
-            # Using get_connection_info as a proxy here
-            _ = self.client.get_connection_info() if self.client else None
-            return True
+            # Test connection - Zeta client uses connected attribute
+            return self.client.connected if self.client else False
         except Exception as e:
             logger.error(f"❌ SocketService test_connection error: {e}")
             return False
@@ -96,7 +97,10 @@ class SocketService:
         except Exception as e:
             logger.error(f"❌ SocketService update_server error: {e}")
 
-    # Convenience methods for DICOM flows using the resumable client
+    # NOTE: The following methods use legacy API patterns
+    # TODO: Refactor to use Zeta DownloadExecutor for full downloads
+    # For now, these provide compatibility shims for existing code
+    
     def get_study_info(self, study_uid: str) -> Optional[Dict[str, Any]]:
         client = self._ensure_client()
         if not client:
@@ -105,8 +109,9 @@ class SocketService:
         if not self.is_connected() and not self.connect_with_retry():
             logger.error("❌ Failed to connect for get_study_info")
             return None
-        logger.info(f"🔍 Calling client.get_study_info for: {study_uid}")
-        result = client.get_study_info(study_uid)
+        logger.info(f"🔍 Calling client send_request for GetStudyInfo: {study_uid}")
+        # Use Zeta's send_request method
+        result = client.send_request("GetStudyInfo", {"study_uid": study_uid})
         logger.info(f"🔍 get_study_info result: {result is not None}")
         return result
 
@@ -118,6 +123,7 @@ class SocketService:
         compression: str = "gzip",
         resume: bool = True,
         progress_callback=None,
+        patient_info: dict = None,
     ) -> bool:
         logger.info(f"🔄 SocketService.download_study_resumable called")
         logger.info(f"   Study UID: {study_uid}")
@@ -126,6 +132,7 @@ class SocketService:
         logger.info(f"   Compression: {compression}")
         logger.info(f"   Resume: {resume}")
         logger.info(f"   Progress callback: {progress_callback is not None}")
+        logger.info(f"   Patient info: {patient_info.get('patient_name', 'N/A') if patient_info else 'None'}")
         
         client = self._ensure_client()
         if not client:
@@ -137,47 +144,33 @@ class SocketService:
             logger.error("❌ Failed to connect to server")
             return False
         
-        logger.info("✅ Client connected, starting download")
+        logger.info("✅ Client connected, starting download via Zeta adapter")
         
-        # Try the working code approach first
+        # Use Zeta adapter for downloads
+        from .zeta_adapter import start_zeta_download
+        
+        study_info = {
+            'study_uid': study_uid,
+            'patient_id': patient_info.get('patient_id', '') if patient_info else '',
+            'patient_name': patient_info.get('patient_name', '') if patient_info else '',
+            'study_date': patient_info.get('study_date', '') if patient_info else '',
+            'modality': patient_info.get('modality', '') if patient_info else '',
+            'description': patient_info.get('description', '') if patient_info else '',
+        }
+        
         try:
-            logger.info("🔄 Trying download_study_batch_like_working_code")
-            logger.info(f"   Calling client.download_study_batch_like_working_code")
-            logger.info(f"   Parameters: study_uid={study_uid}, output_dir={output_dir}, batch_size={batch_size}, compression={compression}, resume={resume}")
-            result = client.download_study_batch_like_working_code(
-                study_uid,
-                output_dir,
-                batch_size,
-                compression,
-                resume,
-                progress_callback
+            result = start_zeta_download(
+                study_info=study_info,
+                progress_callback=progress_callback,
+                completion_callback=None
             )
-            logger.info(f"🔍 download_study_batch_like_working_code result: {result}")
+            logger.info(f"🔍 Zeta download started: {result}")
             return result
         except Exception as e:
-            logger.error(f"❌ Working code approach failed: {e}")
+            logger.error(f"❌ Zeta download failed: {e}")
             import traceback
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-            # Fallback to original method
-            try:
-                logger.info("🔄 Trying fallback method: get_study_dicom_files_resumable")
-                logger.info(f"   Calling client.get_study_dicom_files_resumable")
-                logger.info(f"   Parameters: study_uid={study_uid}, output_dir={output_dir}, batch_size={batch_size}, compression={compression}, resume={resume}")
-                result = client.get_study_dicom_files_resumable(
-                    study_uid,
-                    output_dir,
-                    batch_size,
-                    compression,
-                    resume,
-                    progress_callback,
-                )
-                logger.info(f"🔍 get_study_dicom_files_resumable result: {result}")
-                return result
-            except Exception as e2:
-                logger.error(f"❌ Fallback method also failed: {e2}")
-                import traceback
-                logger.error(f"❌ Fallback traceback: {traceback.format_exc()}")
-                return False
+            return False
     
     def cleanup(self):
         """Cleanup resources"""

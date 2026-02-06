@@ -1,0 +1,310 @@
+2026-02-04 22:07:36,997 - INFO - ✅ Database functions imported from v1.06
+2026-02-04 22:07:37,310 - INFO - ✅ pydicom available for DICOM header reading
+2026-02-04 22:07:40,437 - INFO - ✅ Database functions imported from v1.06
+2026-02-04 22:07:40,640 - INFO - [OK] Zeta enums imported
+2026-02-04 22:07:40,642 - INFO - 
+2026-02-04 22:07:40,642 - INFO - ================================================================================
+2026-02-04 22:07:40,645 - INFO - ZETA DOWNLOAD MANAGER - EXECUTABLE SCENARIO TESTS
+2026-02-04 22:07:40,646 - INFO - ================================================================================
+2026-02-04 22:07:40,647 - INFO - Start time: 2026-02-04 22:07:40
+2026-02-04 22:07:40,648 - INFO - Log file: test_zeta_scenarios.log
+2026-02-04 22:07:40,648 - INFO - ================================================================================
+2026-02-04 22:07:40,648 - INFO - 
+2026-02-04 22:07:40,649 - INFO - ================================================================================
+2026-02-04 22:07:40,649 - INFO - ZETA DOWNLOAD MANAGER - SCENARIO TEST SUITE
+2026-02-04 22:07:40,649 - INFO - Testing all 4 critical scenarios
+2026-02-04 22:07:40,649 - INFO - ================================================================================
+2026-02-04 22:07:40,650 - INFO - 
+2026-02-04 22:07:40,650 - INFO - ================================================================================
+2026-02-04 22:07:40,651 - INFO - SETUP: Initializing test environment
+2026-02-04 22:07:40,651 - INFO - ================================================================================
+2026-02-04 22:07:40,651 - INFO - [SETUP] MockStateStore initialized
+2026-02-04 22:07:40,651 - INFO - [OK] Test environment ready
+2026-02-04 22:07:40,652 - INFO - 
+2026-02-04 22:07:40,652 - INFO - 
+2026-02-04 22:07:40,652 - INFO - ================================================================================
+2026-02-04 22:07:40,652 - INFO - TEST SCENARIO 1: Bulk Normal + One Critical
+2026-02-04 22:07:40,652 - INFO - ================================================================================
+2026-02-04 22:07:40,652 - INFO - 
+2026-02-04 22:07:40,652 - INFO - [STEP 1] Adding 30 patients (NORMAL priority)
+2026-02-04 22:07:40,653 - INFO - [CREATE] State created: Patient 1
+2026-02-04 22:07:40,653 - INFO - [CREATE] State created: Patient 2
+2026-02-04 22:07:40,654 - INFO - [CREATE] State created: Patient 3
+2026-02-04 22:07:40,654 - INFO - [CREATE] State created: Patient 4
+2026-02-04 22:07:40,655 - INFO - [CREATE] State created: Patient 5
+2026-02-04 22:07:40,655 - INFO - [CREATE] State created: Patient 6
+2026-02-04 22:07:40,656 - INFO - [CREATE] State created: Patient 7
+2026-02-04 22:07:40,656 - INFO - [CREATE] State created: Patient 8
+2026-02-04 22:07:40,657 - INFO - [CREATE] State created: Patient 9
+2026-02-04 22:07:40,657 - INFO - [CREATE] State created: Patient 10
+2026-02-04 22:07:40,657 - INFO - [CREATE] State created: Patient 11
+2026-02-04 22:07:40,659 - INFO - [CREATE] State created: Patient 12
+2026-02-04 22:07:40,659 - INFO - [CREATE] State created: Patient 13
+2026-02-04 22:07:40,660 - INFO - [CREATE] State created: Patient 14
+2026-02-04 22:07:40,660 - INFO - [CREATE] State created: Patient 15
+2026-02-04 22:07:40,661 - INFO - [CREATE] State created: Patient 16
+2026-02-04 22:07:40,661 - INFO - [CREATE] State created: Patient 17
+2026-02-04 22:07:40,662 - INFO - [CREATE] State created: Patient 18
+2026-02-04 22:07:40,662 - INFO - [CREATE] State created: Patient 19
+2026-02-04 22:07:40,662 - INFO - [CREATE] State created: Patient 20
+2026-02-04 22:07:40,663 - INFO - [CREATE] State created: Patient 21
+2026-02-04 22:07:40,663 - INFO - [CREATE] State created: Patient 22
+2026-02-04 22:07:40,663 - INFO - [CREATE] State created: Patient 23
+2026-02-04 22:07:40,664 - INFO - [CREATE] State created: Patient 24
+2026-02-04 22:07:40,664 - INFO - [CREATE] State created: Patient 25
+2026-02-04 22:07:40,665 - INFO - [CREATE] State created: Patient 26
+2026-02-04 22:07:40,665 - INFO - [CREATE] State created: Patient 27
+2026-02-04 22:07:40,665 - INFO - [CREATE] State created: Patient 28
+2026-02-04 22:07:40,666 - INFO - [CREATE] State created: Patient 29
+2026-02-04 22:07:40,666 - INFO - [CREATE] State created: Patient 30
+2026-02-04 22:07:40,666 - INFO - [OK] Added 30 patients
+2026-02-04 22:07:40,666 - INFO - [VERIFY] 30 patients pending
+2026-02-04 22:07:40,668 - INFO - 
+2026-02-04 22:07:40,668 - INFO - [STEP 2] Starting Patient 1 download
+2026-02-04 22:07:40,668 - INFO - [VERIFY] 1 downloading, 29 pending
+2026-02-04 22:07:40,669 - INFO - 
+2026-02-04 22:07:40,669 - INFO - [STEP 3] User double-clicks Patient 15 (CRITICAL)
+2026-02-04 22:07:40,669 - INFO - [ACTION] Preempting Patient 1 (auto-pause)
+2026-02-04 22:07:40,669 - INFO - [ACTION] Starting Patient 15 (CRITICAL)
+2026-02-04 22:07:40,670 - INFO - [VERIFY] Patient 1 paused (auto-pause)
+2026-02-04 22:07:40,670 - INFO - [VERIFY] Patient 15 downloading (CRITICAL)
+2026-02-04 22:07:40,670 - INFO - 
+2026-02-04 22:07:40,670 - INFO - [STEP 4] Patient 15 completes
+2026-02-04 22:07:40,671 - INFO - [CHECK] Checking auto-resume condition (Rule R5)
+2026-02-04 22:07:40,671 - INFO - [INFO] Auto-paused downloads: 1
+2026-02-04 22:07:40,672 - INFO - [INFO] Critical running: 0
+2026-02-04 22:07:40,672 - INFO - [ACTION] Auto-resuming Patient 1
+2026-02-04 22:07:40,672 - INFO - [VERIFY] Patient 1 auto-resumed
+2026-02-04 22:07:40,672 - INFO - [VERIFY] Patient 15 completed
+2026-02-04 22:07:40,673 - INFO - 
+2026-02-04 22:07:40,673 - INFO - [SUMMARY]
+2026-02-04 22:07:40,673 - INFO -   [OK] Patient 15 (CRITICAL) completed
+2026-02-04 22:07:40,674 - INFO -   [OK] Patient 1 (NORMAL) auto-resumed
+2026-02-04 22:07:40,675 - INFO -   [OK] Remaining 28 patients still pending
+2026-02-04 22:07:40,675 - INFO - 
+2026-02-04 22:07:40,676 - INFO - ================================================================================
+2026-02-04 22:07:40,676 - INFO - [PASS] SCENARIO 1: All verifications successful!
+2026-02-04 22:07:40,676 - INFO - ================================================================================
+2026-02-04 22:07:40,677 - INFO - 
+2026-02-04 22:07:40,677 - INFO - ================================================================================
+2026-02-04 22:07:40,677 - INFO - TEARDOWN: Cleaning up
+2026-02-04 22:07:40,678 - INFO - ================================================================================
+2026-02-04 22:07:40,678 - INFO - [INFO] Total downloads: 30
+2026-02-04 22:07:40,679 - INFO - [INFO] Pending: 28
+2026-02-04 22:07:40,679 - INFO - [INFO] Downloading: 1
+2026-02-04 22:07:40,680 - INFO - [INFO] Completed: 1
+2026-02-04 22:07:40,682 - INFO - [CLEAR] Cleared 30 states
+2026-02-04 22:07:40,683 - INFO - [OK] Cleanup complete
+2026-02-04 22:07:40,684 - INFO - 
+2026-02-04 22:07:40,684 - INFO - 
+2026-02-04 22:07:40,691 - INFO - ================================================================================
+2026-02-04 22:07:40,691 - INFO - SETUP: Initializing test environment
+2026-02-04 22:07:40,692 - INFO - ================================================================================
+2026-02-04 22:07:40,692 - INFO - [SETUP] MockStateStore initialized
+2026-02-04 22:07:40,692 - INFO - [OK] Test environment ready
+2026-02-04 22:07:40,693 - INFO - 
+2026-02-04 22:07:40,694 - INFO - 
+2026-02-04 22:07:40,694 - INFO - ================================================================================
+2026-02-04 22:07:40,695 - INFO - TEST SCENARIO 2: Multiple High Priority (LIFO)
+2026-02-04 22:07:40,695 - INFO - ================================================================================
+2026-02-04 22:07:40,695 - INFO - 
+2026-02-04 22:07:40,696 - INFO - [STEP 1] User opens Patient A (CRITICAL)
+2026-02-04 22:07:40,746 - INFO - [CREATE] State created: Patient A
+2026-02-04 22:07:40,748 - INFO - [OK] Patient A downloading (CRITICAL)
+2026-02-04 22:07:40,749 - INFO - 
+2026-02-04 22:07:40,750 - INFO - [STEP 2] User opens Patient B (CRITICAL)
+2026-02-04 22:07:40,800 - INFO - [CREATE] State created: Patient B
+2026-02-04 22:07:40,801 - INFO - [ACTION] Preempting Patient A
+2026-02-04 22:07:40,801 - INFO - [VERIFY] Patient A paused, Patient B downloading
+2026-02-04 22:07:40,802 - INFO - 
+2026-02-04 22:07:40,803 - INFO - [STEP 3] User opens Patient C (CRITICAL)
+2026-02-04 22:07:40,854 - INFO - [CREATE] State created: Patient C
+2026-02-04 22:07:40,855 - INFO - [ACTION] Preempting Patient B
+2026-02-04 22:07:40,856 - INFO - [VERIFY] Patient B paused, Patient C downloading
+2026-02-04 22:07:40,857 - INFO - 
+2026-02-04 22:07:40,858 - INFO - [CHECK] Verifying LIFO timestamps:
+2026-02-04 22:07:40,859 - INFO -   Patient A: 22:07:40.746938
+2026-02-04 22:07:40,860 - INFO -   Patient B: 22:07:40.800622
+2026-02-04 22:07:40,861 - INFO -   Patient C: 22:07:40.854521
+2026-02-04 22:07:40,862 - INFO - [VERIFY] Timestamps confirm order: C > B > A
+2026-02-04 22:07:40,863 - INFO - 
+2026-02-04 22:07:40,863 - INFO - [STEP 4] Patient C completes
+2026-02-04 22:07:40,863 - INFO - [VERIFY] LIFO order: Next to resume is Patient B
+2026-02-04 22:07:40,864 - INFO - [ACTION] Patient B resumed
+2026-02-04 22:07:40,864 - INFO - 
+2026-02-04 22:07:40,864 - INFO - [STEP 5] Patient B completes
+2026-02-04 22:07:40,864 - INFO - [ACTION] Patient A resumed
+2026-02-04 22:07:40,865 - INFO - 
+2026-02-04 22:07:40,865 - INFO - [SUMMARY] Final Order: C -> B -> A (LIFO verified)
+2026-02-04 22:07:40,865 - INFO - 
+2026-02-04 22:07:40,866 - INFO - ================================================================================
+2026-02-04 22:07:40,866 - INFO - [PASS] SCENARIO 2: LIFO order verified!
+2026-02-04 22:07:40,866 - INFO - ================================================================================
+2026-02-04 22:07:40,867 - INFO - 
+2026-02-04 22:07:40,867 - INFO - ================================================================================
+2026-02-04 22:07:40,867 - INFO - TEARDOWN: Cleaning up
+2026-02-04 22:07:40,867 - INFO - ================================================================================
+2026-02-04 22:07:40,868 - INFO - [INFO] Total downloads: 3
+2026-02-04 22:07:40,869 - INFO - [INFO] Downloading: 1
+2026-02-04 22:07:40,869 - INFO - [INFO] Completed: 2
+2026-02-04 22:07:40,870 - INFO - [CLEAR] Cleared 3 states
+2026-02-04 22:07:40,870 - INFO - [OK] Cleanup complete
+2026-02-04 22:07:40,870 - INFO - 
+2026-02-04 22:07:40,870 - INFO - 
+2026-02-04 22:07:40,871 - INFO - ================================================================================
+2026-02-04 22:07:40,871 - INFO - SETUP: Initializing test environment
+2026-02-04 22:07:40,872 - INFO - ================================================================================
+2026-02-04 22:07:40,872 - INFO - [SETUP] MockStateStore initialized
+2026-02-04 22:07:40,872 - INFO - [OK] Test environment ready
+2026-02-04 22:07:40,873 - INFO - 
+2026-02-04 22:07:40,873 - INFO - 
+2026-02-04 22:07:40,873 - INFO - ================================================================================
+2026-02-04 22:07:40,874 - INFO - TEST SCENARIO 3: Sequential Normal Downloads
+2026-02-04 22:07:40,874 - INFO - ================================================================================
+2026-02-04 22:07:40,875 - INFO - 
+2026-02-04 22:07:40,875 - INFO - [STEP 1] Adding 10 patients (NORMAL priority)
+2026-02-04 22:07:40,876 - INFO - [CREATE] State created: Patient 1
+2026-02-04 22:07:40,877 - INFO - [CREATE] State created: Patient 2
+2026-02-04 22:07:40,877 - INFO - [CREATE] State created: Patient 3
+2026-02-04 22:07:40,878 - INFO - [CREATE] State created: Patient 4
+2026-02-04 22:07:40,878 - INFO - [CREATE] State created: Patient 5
+2026-02-04 22:07:40,878 - INFO - [CREATE] State created: Patient 6
+2026-02-04 22:07:40,879 - INFO - [CREATE] State created: Patient 7
+2026-02-04 22:07:40,880 - INFO - [CREATE] State created: Patient 8
+2026-02-04 22:07:40,880 - INFO - [CREATE] State created: Patient 9
+2026-02-04 22:07:40,881 - INFO - [CREATE] State created: Patient 10
+2026-02-04 22:07:40,881 - INFO - [OK] Added 10 patients
+2026-02-04 22:07:40,881 - INFO - [VERIFY] 10 patients pending
+2026-02-04 22:07:40,881 - INFO - 
+2026-02-04 22:07:40,882 - INFO - [STEP 2] Simulating sequential downloads
+2026-02-04 22:07:40,882 - INFO -   [1/10] Starting Patient 1
+2026-02-04 22:07:40,882 - INFO -   [1/10] Patient 1 completed
+2026-02-04 22:07:40,883 - INFO -   [2/10] Starting Patient 2
+2026-02-04 22:07:40,883 - INFO -   [2/10] Patient 2 completed
+2026-02-04 22:07:40,883 - INFO -   [3/10] Starting Patient 3
+2026-02-04 22:07:40,883 - INFO -   [3/10] Patient 3 completed
+2026-02-04 22:07:40,884 - INFO -   [4/10] Starting Patient 4
+2026-02-04 22:07:40,884 - INFO -   [4/10] Patient 4 completed
+2026-02-04 22:07:40,885 - INFO -   [5/10] Starting Patient 5
+2026-02-04 22:07:40,885 - INFO -   [5/10] Patient 5 completed
+2026-02-04 22:07:40,886 - INFO -   [6/10] Starting Patient 6
+2026-02-04 22:07:40,886 - INFO -   [6/10] Patient 6 completed
+2026-02-04 22:07:40,886 - INFO -   [7/10] Starting Patient 7
+2026-02-04 22:07:40,887 - INFO -   [7/10] Patient 7 completed
+2026-02-04 22:07:40,887 - INFO -   [8/10] Starting Patient 8
+2026-02-04 22:07:40,888 - INFO -   [8/10] Patient 8 completed
+2026-02-04 22:07:40,890 - INFO -   [9/10] Starting Patient 9
+2026-02-04 22:07:40,891 - INFO -   [9/10] Patient 9 completed
+2026-02-04 22:07:40,891 - INFO -   [10/10] Starting Patient 10
+2026-02-04 22:07:40,891 - INFO -   [10/10] Patient 10 completed
+2026-02-04 22:07:40,893 - INFO - 
+2026-02-04 22:07:40,893 - INFO - [SUMMARY]
+2026-02-04 22:07:40,893 - INFO -   [OK] All 10 patients completed sequentially
+2026-02-04 22:07:40,894 - INFO -   [OK] Order: 1 -> 2 -> 3 -> ... -> 10
+2026-02-04 22:07:40,894 - INFO -   [OK] Never more than 1 downloading at a time
+2026-02-04 22:07:40,894 - INFO - 
+2026-02-04 22:07:40,895 - INFO - ================================================================================
+2026-02-04 22:07:40,895 - INFO - [PASS] SCENARIO 3: Sequential execution verified!
+2026-02-04 22:07:40,895 - INFO - ================================================================================
+2026-02-04 22:07:40,896 - INFO - 
+2026-02-04 22:07:40,896 - INFO - ================================================================================
+2026-02-04 22:07:40,897 - INFO - TEARDOWN: Cleaning up
+2026-02-04 22:07:40,897 - INFO - ================================================================================
+2026-02-04 22:07:40,898 - INFO - [INFO] Total downloads: 10
+2026-02-04 22:07:40,898 - INFO - [INFO] Completed: 10
+2026-02-04 22:07:40,898 - INFO - [CLEAR] Cleared 10 states
+2026-02-04 22:07:40,899 - INFO - [OK] Cleanup complete
+2026-02-04 22:07:40,899 - INFO - 
+2026-02-04 22:07:40,899 - INFO - 
+2026-02-04 22:07:40,900 - INFO - ================================================================================
+2026-02-04 22:07:40,900 - INFO - SETUP: Initializing test environment
+2026-02-04 22:07:40,900 - INFO - ================================================================================
+2026-02-04 22:07:40,900 - INFO - [SETUP] MockStateStore initialized
+2026-02-04 22:07:40,901 - INFO - [OK] Test environment ready
+2026-02-04 22:07:40,901 - INFO - 
+2026-02-04 22:07:40,901 - INFO - 
+2026-02-04 22:07:40,902 - INFO - ================================================================================
+2026-02-04 22:07:40,902 - INFO - TEST SCENARIO 4: Network Interruption Resume
+2026-02-04 22:07:40,903 - INFO - ================================================================================
+2026-02-04 22:07:40,904 - INFO - 
+2026-02-04 22:07:40,904 - INFO - [STEP 1] Adding 10 patients
+2026-02-04 22:07:40,905 - INFO - [CREATE] State created: Patient 1
+2026-02-04 22:07:40,906 - INFO - [CREATE] State created: Patient 2
+2026-02-04 22:07:40,906 - INFO - [CREATE] State created: Patient 3
+2026-02-04 22:07:40,906 - INFO - [CREATE] State created: Patient 4
+2026-02-04 22:07:40,906 - INFO - [CREATE] State created: Patient 5
+2026-02-04 22:07:40,908 - INFO - [CREATE] State created: Patient 6
+2026-02-04 22:07:40,908 - INFO - [CREATE] State created: Patient 7
+2026-02-04 22:07:40,909 - INFO - [CREATE] State created: Patient 8
+2026-02-04 22:07:40,909 - INFO - [CREATE] State created: Patient 9
+2026-02-04 22:07:40,910 - INFO - [CREATE] State created: Patient 10
+2026-02-04 22:07:40,910 - INFO - [SETUP] Setting up initial state
+2026-02-04 22:07:40,911 - INFO -   Patient 1: Completed
+2026-02-04 22:07:40,911 - INFO -   Patient 2: Completed
+2026-02-04 22:07:40,911 - INFO -   Patient 3: Completed
+2026-02-04 22:07:40,913 - INFO -   Patient 4: Completed
+2026-02-04 22:07:40,914 - INFO -   Patient 5: Downloading (50% - 150/300 images)
+2026-02-04 22:07:40,915 - INFO -   Patient 6: Pending
+2026-02-04 22:07:40,915 - INFO -   Patient 7: Pending
+2026-02-04 22:07:40,916 - INFO -   Patient 8: Pending
+2026-02-04 22:07:40,916 - INFO -   Patient 9: Pending
+2026-02-04 22:07:40,916 - INFO -   Patient 10: Pending
+2026-02-04 22:07:40,918 - INFO - 
+2026-02-04 22:07:40,920 - INFO - [STEP 2] Network disconnection occurs
+2026-02-04 22:07:40,921 - INFO - [VERIFY] Patient 5 paused at 50%
+2026-02-04 22:07:40,921 - INFO - [INFO] Downloaded: 150/300
+2026-02-04 22:07:40,926 - INFO - [INFO] Remaining: 150 images
+2026-02-04 22:07:40,927 - INFO - [INFO] Error: Network error: Connection timeout
+2026-02-04 22:07:40,928 - INFO - 
+2026-02-04 22:07:40,928 - INFO - [STEP 3] Network reconnects, user clicks Resume
+2026-02-04 22:07:40,929 - INFO - [VERIFY] Patient 5 resumed from 50% (not restarted)
+2026-02-04 22:07:40,929 - INFO - [INFO] Will download remaining 150 images
+2026-02-04 22:07:40,929 - INFO - 
+2026-02-04 22:07:40,929 - INFO - [STEP 4] Patient 5 completes (remaining 150 images)
+2026-02-04 22:07:40,931 - INFO - 
+2026-02-04 22:07:40,931 - INFO - [STEP 5] Queue continues (6-10)
+2026-02-04 22:07:40,931 - INFO -   Patient 6 completed
+2026-02-04 22:07:40,932 - INFO -   Patient 7 completed
+2026-02-04 22:07:40,932 - INFO -   Patient 8 completed
+2026-02-04 22:07:40,933 - INFO -   Patient 9 completed
+2026-02-04 22:07:40,933 - INFO -   Patient 10 completed
+2026-02-04 22:07:40,933 - INFO - 
+2026-02-04 22:07:40,934 - INFO - [SUMMARY]
+2026-02-04 22:07:40,934 - INFO -   [OK] All 10 patients completed
+2026-02-04 22:07:40,934 - INFO -   [OK] Patient 5 resumed from 50% (not restarted)
+2026-02-04 22:07:40,935 - INFO -   [OK] Downloaded only remaining 150 images
+2026-02-04 22:07:40,935 - INFO -   [OK] Queue order maintained
+2026-02-04 22:07:40,935 - INFO - 
+2026-02-04 22:07:40,935 - INFO - ================================================================================
+2026-02-04 22:07:40,937 - INFO - [PASS] SCENARIO 4: Network resume verified!
+2026-02-04 22:07:40,938 - INFO - ================================================================================
+2026-02-04 22:07:40,938 - INFO - 
+2026-02-04 22:07:40,939 - INFO - ================================================================================
+2026-02-04 22:07:40,939 - INFO - TEARDOWN: Cleaning up
+2026-02-04 22:07:40,939 - INFO - ================================================================================
+2026-02-04 22:07:40,939 - INFO - [INFO] Total downloads: 10
+2026-02-04 22:07:40,940 - INFO - [INFO] Completed: 10
+2026-02-04 22:07:40,940 - INFO - [CLEAR] Cleared 10 states
+2026-02-04 22:07:40,940 - INFO - [OK] Cleanup complete
+2026-02-04 22:07:40,941 - INFO - 
+2026-02-04 22:07:40,941 - INFO - 
+2026-02-04 22:07:40,941 - INFO - ================================================================================
+2026-02-04 22:07:40,942 - INFO - TEST SUMMARY
+2026-02-04 22:07:40,943 - INFO - ================================================================================
+2026-02-04 22:07:40,943 - INFO - [PASS] Scenario 1: Bulk Normal + One Critical
+2026-02-04 22:07:40,944 - INFO - [PASS] Scenario 2: Multiple High Priority (LIFO)
+2026-02-04 22:07:40,944 - INFO - [PASS] Scenario 3: Sequential Normal
+2026-02-04 22:07:40,945 - INFO - [PASS] Scenario 4: Network Resume
+2026-02-04 22:07:40,947 - INFO - 
+2026-02-04 22:07:40,948 - INFO - Results:
+2026-02-04 22:07:40,949 - INFO -   [OK] Passed: 4
+2026-02-04 22:07:40,949 - INFO -   [ERROR] Failed: 0
+2026-02-04 22:07:40,950 - INFO -   Total:  4
+2026-02-04 22:07:40,951 - INFO - 
+2026-02-04 22:07:40,951 - INFO - ================================================================================
+2026-02-04 22:07:40,952 - INFO - ALL TESTS PASSED!
+2026-02-04 22:07:40,952 - INFO - ================================================================================
+2026-02-04 22:07:40,952 - INFO - ================================================================================
+2026-02-04 22:07:40,953 - INFO - 
+2026-02-04 22:07:40,953 - INFO - End time: 2026-02-04 22:07:40
+2026-02-04 22:07:40,957 - INFO - ================================================================================

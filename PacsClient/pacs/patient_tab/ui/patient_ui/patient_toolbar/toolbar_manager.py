@@ -9,7 +9,8 @@ import os
 import random
 from PacsClient.pacs.patient_tab.interactor_styles import (
     RulerInteractorStyle, EraserInteractorStyle, AngleInteractorStyle, TwoLineAngleInteractorStyle, ArrowInteractorStyle,
-    TextInteractorStyle, DefaultInteractionInteractorStyle, RotateInteractorStyle, RoiInteractorStyle, ToolAccess)
+    TextInteractorStyle, DefaultInteractionInteractorStyle, RotateInteractorStyle, RoiInteractorStyle,
+    CircleRoiInteractorStyle, ToolAccess)
 from PacsClient.pacs.patient_tab.interactor_styles.ai_chat_interactorstyle import AIChatInteractorStyle
 
 from PacsClient.pacs.patient_tab.utils import NodeViewer, MatrixSelector
@@ -33,6 +34,7 @@ def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa'):
         icon_color: رنگ آیکون fontawesome (پیش‌فرض: آبی)
     """
     btn = QPushButton(f"  {text}")  # فاصله برای آیکون
+    btn.setCheckable(True)
     
     if icon_name is not None:
         if icon_name.startswith('fa'):  # fontawesome icon
@@ -66,6 +68,12 @@ def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa'):
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                 stop:0 #1f2937, stop:1 #111827);
             border-color: #3b82f6;
+        }
+        QPushButton:checked {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #059669, stop:1 #047857);
+            border-color: #10b981;
+            color: #ffffff;
         }
     """)
     
@@ -224,6 +232,21 @@ class ToolbarManager:
         self.tool_access = ToolAccess()
         self.tool_selected = None
         self.tools_button = {}
+        self.measurement_tools = {
+            self.tool_access.ANGLE,
+            self.tool_access.TWO_LINE_ANGLE,
+            self.tool_access.ARROW,
+            self.tool_access.TEXT,
+            self.tool_access.ROI,
+            self.tool_access.CIRCLE_ROI,
+        }
+        
+        # Track last MPR series for reopen
+        self.last_mpr_series_index = None
+        self.last_mpr_vtk_data = None
+        self.last_mpr_dicom_directory = None
+        self.last_mpr_window_width = None
+        self.last_mpr_window_center = None
 
         # ✅ Initialize soundbox here
         # Pass the correct parent and methods
@@ -590,7 +613,21 @@ class ToolbarManager:
         """Generate curved MPR from points and display it"""
         from PySide6.QtWidgets import QMessageBox, QApplication
         from PySide6.QtCore import Qt
-        from PacsClient.pacs.patient_tab.viewers.curved_mpr import CurvedMPRGenerator
+        # Import from zeta mpr (primary MPR implementation)
+        import sys
+        import os
+        import importlib.util
+        
+        # Get path to zeta mpr directory
+        patient_tab_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta mpr")
+        curved_mpr_path = os.path.join(zeta_mpr_dir, "curved_mpr.py")
+        
+        # Import CurvedMPRGenerator from zeta mpr
+        spec = importlib.util.spec_from_file_location("zeta_curved_mpr", curved_mpr_path)
+        zeta_curved_mpr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(zeta_curved_mpr)
+        CurvedMPRGenerator = zeta_curved_mpr.CurvedMPRGenerator
         
         print(f"[CURVED MPR] Starting generation with {len(points)} points...")
         
@@ -890,28 +927,24 @@ class ToolbarManager:
 
     def is_mpr_viewer(self, widget):
         """Check if widget is an MPR viewer"""
-        try:
-            # Check for MprViewerWrapper (new MPR)
-            from PacsClient.pacs.patient_tab.MprViewer.MprViewerWrapper import MprViewerWrapper
-            if hasattr(widget, '_mpr_widget') and isinstance(widget._mpr_widget, MprViewerWrapper):
-                return True
-        except:
-            pass
+        # OLD MprViewerWrapper check removed - deprecated and unused
+        # The old MprViewer module has been removed in favor of Zeta MPR
         
-        try:
-            # Check for Zeta MPR viewer
-            from PacsClient.pacs.patient_tab.viewers.standard_mpr_viewer import StandardMPRViewer
-            if hasattr(widget, '_mpr_widget') and isinstance(widget._mpr_widget, StandardMPRViewer):
-                return True
-        except:
-            pass
+        # Check for Zeta MPR viewer
+        # Note: Zeta MPR now uses _zeta_mpr_widget attribute, not _mpr_widget
+        if hasattr(widget, '_zeta_mpr_widget'):
+            return True
         
         return False
     
     def get_mpr_widget(self, widget):
         """Get the MPR widget from a VTKWidget that has MPR active"""
+        if hasattr(widget, '_zeta_mpr_widget') and widget._zeta_mpr_widget is not None:
+            return widget._zeta_mpr_widget
         if hasattr(widget, '_mpr_widget') and widget._mpr_widget is not None:
             return widget._mpr_widget
+        if hasattr(widget, '_original_widget'):
+            return widget
         return None
 
     def can_use_tool(self, widget):
@@ -1756,6 +1789,13 @@ class ToolbarManager:
             layout.addWidget(roi_btn)
             self.tools_button[self.tool_access.ROI] = roi_btn
 
+            # Circle ROI button
+            circle_roi_btn = create_dropdown_tool('Circle ROI', 'fa5s.circle', '#f472b6')
+            circle_roi_btn.clicked.connect(lambda: [
+                self.toggle_circle_roi(self.patient_widget.selected_widget), dropdown.close()])
+            layout.addWidget(circle_roi_btn)
+            self.tools_button[self.tool_access.CIRCLE_ROI] = circle_roi_btn
+
             # Position dropdown below the button
             button_pos = button.mapToGlobal(QPoint(0, button.height()))
             dropdown.move(button_pos)
@@ -1870,6 +1910,32 @@ class ToolbarManager:
             self.tool_selected = self.tool_access.ROI
             self.handle_buttons_checked()
 
+    def toggle_circle_roi(self, selected_widget):
+        if self.tool_selected == self.tool_access.CIRCLE_ROI:  # deactivate tool
+            selected_widget.current_style.deactivate()
+            self.tool_selected = None
+            selected_widget.restore_default_interactorstyle()
+
+        else:
+            self.check_and_deactivate_tools()
+
+            # Create new circle roi style and set it as the current interactor style
+            try:
+                selected_widget.set_new_interactorstyle(CircleRoiInteractorStyle)
+            except Exception as e:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Circle ROI Unavailable",
+                    f"Circle ROI tool could not be initialized:\n{str(e)}"
+                )
+                selected_widget.restore_default_interactorstyle()
+                return
+
+            selected_widget.current_style.activate()
+            self.tool_selected = self.tool_access.CIRCLE_ROI
+            self.handle_buttons_checked()
+
     def toggle_ai_chat(self, selected_widget):
         if selected_widget is None:
             print("No widget selected.") #Debugging statement
@@ -1902,6 +1968,12 @@ class ToolbarManager:
         logger = logging.getLogger(__name__)
 
         try:
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget and hasattr(mpr_widget, '_apply_mip'):
+                logger.info("Applying MIP in Zeta MPR viewer")
+                mpr_widget._apply_mip()
+                return
+
             logger.info("=" * 60)
             logger.info("2D MIP - Pure NumPy approach")
             logger.info("=" * 60)
@@ -2095,6 +2167,12 @@ class ToolbarManager:
         logger = logging.getLogger(__name__)
 
         try:
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget and hasattr(mpr_widget, '_apply_minip'):
+                logger.info("Applying MinIP in Zeta MPR viewer")
+                mpr_widget._apply_minip()
+                return
+
             logger.info("=" * 60)
             logger.info("2D SCROLLABLE MinIP BUTTON CLICKED")
             logger.info("=" * 60)
@@ -2269,6 +2347,24 @@ class ToolbarManager:
         logger = logging.getLogger(__name__)
 
         try:
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget and hasattr(mpr_widget, '_apply_thick_slab'):
+                thickness_mm, ok = QInputDialog.getDouble(
+                    self.patient_widget,
+                    "Thick Slab Thickness",
+                    "Enter slab thickness (mm):",
+                    10.0,
+                    0.1,
+                    200.0,
+                    1
+                )
+                if not ok:
+                    return
+
+                logger.info(f"Applying Thick Slab in Zeta MPR viewer (thickness={thickness_mm} mm)")
+                mpr_widget._apply_thick_slab(thickness_mm)
+                return
+
             logger.info("=" * 60)
             logger.info("2D THICK SLAB BUTTON CLICKED")
             logger.info("=" * 60)
@@ -2526,17 +2622,24 @@ class ToolbarManager:
             
             logger.info(f"Series Number: {series_number}, Description: {series_description}")
             
-            # Call newmpr4 module to launch ITK MPR for active series
-            from PacsClient.pacs.patient_tab.newmpr4 import launch_itk_mpr_for_active_series
-            
-            launch_itk_mpr_for_active_series(
-                vtk_image_data=vtk_image_data,
-                metadata=metadata,
-                series_index=active_series_number,
-                parent_widget=self.patient_widget
+            # NOTE: newmpr4 (ITK-SNAP integration) module has been removed
+            # Use Advanced MPR (3D Slicer) instead, which provides similar functionality
+            logger.warning("ITK-SNAP integration (newmpr4) has been deprecated and removed.")
+            QMessageBox.information(
+                self.patient_widget,
+                "Feature Removed",
+                "The ITK-SNAP MPR integration has been removed.\n\n"
+                "Please use:\n"
+                "• Zeta MPR (main MPR button)\n"
+                "• Advanced MPR (3D Slicer) from the dropdown menu\n\n"
+                "These provide comprehensive MPR functionality."
             )
+            return
             
-            logger.info("ITK MPR launch request completed")
+            # OLD CODE - newmpr4 integration removed
+            # from PacsClient.pacs.patient_tab.newmpr4 import launch_itk_mpr_for_active_series
+            # launch_itk_mpr_for_active_series(...)
+            
             logger.info("=" * 60)
             
         except Exception as e:
@@ -2696,19 +2799,68 @@ class ToolbarManager:
                 f"Error launching Advanced MPR Slicer:\n{str(e)}"
             )
 
-    def launch_zeta_mpr(self):
+    def toggle_zeta_mpr(self):
         """
-        Launch Zeta MPR viewer in place of the selected viewport.
+        Toggle Zeta MPR viewer ON/OFF for the selected viewport.
+        
+        When ON: Replaces the current viewport with Zeta MPR viewer, button turns green.
+        When OFF: Restores the original viewport, button returns to normal state.
         """
         import logging
         import sys
         from PySide6.QtWidgets import QMessageBox
         logger = logging.getLogger(__name__)
         
+        # Check if MPR is already active - if so, close it
+        if self.tool_selected == self.tool_access.MPR:
+            logger.info("=" * 60)
+            logger.info("Closing Zeta MPR (toggle OFF)")
+            logger.info("=" * 60)
+            
+            # Find and restore the original viewer
+            selected_widget = self.patient_widget.selected_widget
+            
+            # Find the widget that has the Zeta MPR (might not be the currently selected one)
+            for node in self.patient_widget.lst_nodes_viewer:
+                if hasattr(node.vtk_widget, '_zeta_mpr_widget'):
+                    original_widget = node.vtk_widget
+                    zeta_widget = original_widget._zeta_mpr_widget
+                    
+                    # Cleanup Zeta MPR
+                    try:
+                        if hasattr(zeta_widget, 'cleanup'):
+                            logger.info("Calling Zeta MPR cleanup()...")
+                            zeta_widget.cleanup()
+                    except Exception as e:
+                        logger.error(f"Error during Zeta MPR cleanup: {e}")
+                    
+                    # Remove from layout and delete
+                    zeta_widget.hide()
+                    zeta_widget.deleteLater()
+                    
+                    # Restore original widget
+                    original_widget.setVisible(True)
+                    delattr(original_widget, '_zeta_mpr_widget')
+                    if hasattr(original_widget, '_original_visible'):
+                        delattr(original_widget, '_original_visible')
+                    
+                    logger.info("✓ Zeta MPR closed, original viewer restored")
+                    break
+            
+            # Clear tool selection and update button state
+            self.tool_selected = None
+            self.handle_buttons_checked()
+            logger.info("=" * 60)
+            return
+        
+        # Otherwise, open Zeta MPR (toggle ON)
         try:
             logger.info("=" * 60)
-            logger.info("Zeta MPR requested from dropdown")
+            logger.info("Opening Zeta MPR (toggle ON)")
             logger.info("=" * 60)
+            
+            # Deactivate any other active tools
+            self.check_and_deactivate_tools()
             
             # Get the selected widget (active viewer)
             selected_widget = self.patient_widget.selected_widget
@@ -2847,9 +2999,27 @@ class ToolbarManager:
                 sys.modules["zeta_mpr_pkg"] = zeta_mpr_pkg
                 spec.loader.exec_module(zeta_mpr_pkg)
                 
+                window_width = None
+                window_center = None
+                try:
+                    if hasattr(selected_widget, 'image_viewer') and selected_widget.image_viewer:
+                        image_viewer = selected_widget.image_viewer
+                        if hasattr(image_viewer, 'get_window_level'):
+                            window_width, window_center = image_viewer.get_window_level()
+                        elif hasattr(image_viewer, 'color_mapper'):
+                            window_width = image_viewer.color_mapper.GetWindow()
+                            window_center = image_viewer.color_mapper.GetLevel()
+                    elif hasattr(selected_widget, 'window_width') and hasattr(selected_widget, 'window_center'):
+                        window_width = selected_widget.window_width
+                        window_center = selected_widget.window_center
+                except Exception as wl_err:
+                    logger.warning(f"Could not read window/level from main viewer: {wl_err}")
+
                 zeta_widget = zeta_mpr_pkg.StandardMPRViewer(
                     vtk_image_data=vtk_image_data,
-                    parent=parent_widget
+                    parent=parent_widget,
+                    window_width=window_width,
+                    window_center=window_center
                 )
                 
                 # Add to layout at the same position
@@ -2866,8 +3036,12 @@ class ToolbarManager:
                 selected_widget._zeta_mpr_widget = zeta_widget
                 selected_widget._original_visible = True
                 
-                logger.info("Zeta MPR viewer replaced viewport successfully")
+                # Set tool as active and update button state (turns green)
+                self.tool_selected = self.tool_access.MPR
+                self.handle_buttons_checked()
                 
+                logger.info("✓ Zeta MPR viewer replaced viewport successfully")
+                logger.info("✓ MPR button is now active (green)")
             finally:
                 # Cleanup
                 if "zeta_mpr_pkg" in sys.modules:
@@ -2891,8 +3065,27 @@ class ToolbarManager:
             if selected_widget:
                 selected_widget.setVisible(True)
 
-    def toggle_mpr(self, selected_widget=None):
-        """Toggle MPR viewer for selected viewport only"""
+    def toggle_mpr_DEPRECATED_OLD_MPRVIEWER(self, selected_widget=None):
+        """
+        DEPRECATED: This method used the old MprViewer module which has been removed.
+        Use toggle_zeta_mpr() instead for Zeta MPR functionality.
+        
+        This method is kept for reference only and will be removed in a future version.
+        """
+        import logging
+        from PySide6.QtWidgets import QMessageBox
+        logger = logging.getLogger(__name__)
+        logger.warning("toggle_mpr called but this is deprecated. Use toggle_zeta_mpr() instead.")
+        QMessageBox.warning(
+            self.patient_widget,
+            "Deprecated Feature",
+            "The old MPR Viewer has been replaced by Zeta MPR.\n\nPlease use the MPR button in the toolbar."
+        )
+        return
+        
+        # ===== OLD CODE BELOW - COMMENTED OUT FOR REFERENCE =====
+        # This entire method body used MprViewerWrapper which has been removed
+        """
         import logging
         import sys
         import os
@@ -2983,6 +3176,130 @@ class ToolbarManager:
             QMessageBox.warning(self.patient_widget, "MPR Viewer", "Please select a viewer first.")
             return
 
+        # Get VTK image data - reuse last MPR series if available
+        try:
+            # PRIORITY 1: Check if we have a previous MPR series to reopen
+                if self.last_mpr_series_index is not None and self.last_mpr_vtk_data is not None:
+                    logger.info(f"🔄 Reopening MPR with last series: {self.last_mpr_series_index}")
+                    series_index = self.last_mpr_series_index
+                    vtk_image_data = self.last_mpr_vtk_data
+                    dicom_directory = self.last_mpr_dicom_directory
+                    window_width = self.last_mpr_window_width
+                    window_center = self.last_mpr_window_center
+                    
+                    # Jump to creating MPR (skip series lookup)
+                    logger.info(f"✓ Using cached MPR data: dir={dicom_directory}, W={window_width}, C={window_center}")
+                    self._replace_selected_viewport_with_mpr(selected_widget, vtk_image_data, dicom_directory, window_width, window_center)
+                    self.tool_selected = self.tool_access.MPR
+                    self.handle_buttons_checked()
+                    logger.info("✓ MPR reopened with last series successfully")
+                    return
+                
+                # PRIORITY 2: No previous MPR series, use current viewport's series
+                # Check if widget has image data
+                logger.info(f"Checking selected_widget attributes...")
+                logger.info(f"hasattr(selected_widget, 'last_series_show'): {hasattr(selected_widget, 'last_series_show')}")
+                
+                if not hasattr(selected_widget, 'last_series_show'):
+                    logger.warning("No series loaded in selected viewport")
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self.patient_widget, "MPR Viewer", "No series loaded in selected viewport.")
+                    return
+
+                series_index = selected_widget.last_series_show
+                logger.info(f"Series index from viewport: {series_index}")
+
+                # Find the VTK image data AND series path for this series
+                vtk_image_data = None
+                dicom_directory = None
+                window_width = None
+                window_center = None
+                logger.info(f"🔍 Searching in {len(self.patient_widget.lst_thumbnails_data)} thumbnail data entries...")
+                
+                for i in range(len(self.patient_widget.lst_thumbnails_data)):
+                    try:
+                        thumbnail_data = self.patient_widget.lst_thumbnails_data[i]
+                        metadata = thumbnail_data.get('metadata', {})
+                        series_metadata = metadata.get('series', {})
+                        series_num = int(series_metadata.get('series_number', -1))
+                        
+                        logger.info(f"   [{i}] series_number={series_num}, looking for {series_index}")
+                        
+                        if series_num == int(series_index):
+                            vtk_image_data = thumbnail_data.get('vtk_image_data')
+                            
+                            # Method 1: Try to get series_path directly
+                            dicom_directory = series_metadata.get('series_path')
+                            logger.info(f"   ✅ MATCH! series_path from metadata: {dicom_directory}")
+                            
+                            # Method 2: If series_path is None, get it from first instance path
+                            instances = metadata.get('instances', [])
+                            if instances and len(instances) > 0:
+                                first_instance = instances[0]
+                                if not dicom_directory:
+                                    first_instance_path = first_instance.get('instance_path')
+                                    if first_instance_path:
+                                        dicom_directory = os.path.dirname(first_instance_path)
+                                        logger.info(f"   ✅ Got directory from instance_path: {dicom_directory}")
+                                
+                                # Get window/level from first instance
+                                window_width = first_instance.get('window_width')
+                                window_center = first_instance.get('window_center')
+                                logger.info(f"   ✅ Got W/L from instance: W={window_width}, C={window_center}")
+                            
+                            logger.info(f"   🎯 Final DICOM directory: {dicom_directory}")
+                            break
+                    except (KeyError, ValueError, TypeError) as e:
+                        logger.debug(f"   [ERROR] checking thumbnail data at index {i}: {e}")
+                        continue
+
+                if vtk_image_data is None:
+                    logger.warning(f"No image data available for MPR viewer (series_index: {series_index})")
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self.patient_widget, "MPR Viewer", f"No image data available for series {series_index}.")
+                    return
+
+                logger.info(f"vtk_image_data found: {vtk_image_data}")
+                logger.info(f"vtk_image_data type: {type(vtk_image_data)}")
+                if hasattr(vtk_image_data, 'GetDimensions'):
+                    logger.info(f"vtk_image_data dimensions: {vtk_image_data.GetDimensions()}")
+
+                # Store this series data for future reopen
+                self.last_mpr_series_index = series_index
+                self.last_mpr_vtk_data = vtk_image_data
+                self.last_mpr_dicom_directory = dicom_directory
+                self.last_mpr_window_width = window_width
+                self.last_mpr_window_center = window_center
+                logger.info(f"✓ Stored MPR series for reopen: {series_index}")
+
+                # Replace ONLY the selected viewport with MPR
+                import sys
+                print("Calling _replace_selected_viewport_with_mpr...", file=sys.stderr, flush=True)
+                logger.info("Calling _replace_selected_viewport_with_mpr...")
+                logger.info(f"Passing dicom_directory: {dicom_directory}")
+                logger.info(f"Passing W/L: W={window_width}, C={window_center}")
+                try:
+                    self._replace_selected_viewport_with_mpr(selected_widget, vtk_image_data, dicom_directory, window_width, window_center)
+                    print("_replace_selected_viewport_with_mpr completed successfully", file=sys.stderr, flush=True)
+                    logger.info("_replace_selected_viewport_with_mpr completed")
+                except Exception as e:
+                    print(f"ERROR in _replace_selected_viewport_with_mpr: {e}", file=sys.stderr, flush=True)
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
+                    raise
+
+            except Exception as e:
+                logger.error(f"Error opening MPR viewer: {e}", exc_info=True)
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.critical(self.patient_widget, "MPR Viewer Error", f"Error opening MPR viewer:\n{str(e)}")
+                return
+
+            self.tool_selected = self.tool_access.MPR
+            self.handle_buttons_checked()
+            logger.info("✓ MPR opened with toggle - data cached for reopen")
+            logger.info("=" * 80)
+        """
+
         try:
             if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
                 logger.warning("No series loaded in selected viewport")
@@ -3059,9 +3376,19 @@ class ToolbarManager:
         logger.info("MPR toggle completed successfully")
         logger.info("=" * 80)
 
-
-    def _replace_selected_viewport_with_mpr(self, selected_widget, vtk_image_data, dicom_directory=None, window_width=None, window_center=None):
-        """Replace the selected viewport with MPR viewer
+    def _replace_selected_viewport_with_mpr_DEPRECATED(self, selected_widget, vtk_image_data, dicom_directory=None, window_width=None, window_center=None):
+        """
+        DEPRECATED: This method used the old MprViewer module which has been removed.
+        This method is kept for reference only and will be removed in a future version.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("_replace_selected_viewport_with_mpr called but this is deprecated and does nothing.")
+        return
+        
+        # OLD CODE COMMENTED OUT - KEPT FOR REFERENCE
+        """
+        Replace the selected viewport with MPR viewer
         
         Args:
             selected_widget: The VTK widget to replace with MPR viewer
@@ -3069,7 +3396,7 @@ class ToolbarManager:
             dicom_directory: Path to DICOM series directory (preferred method for correct orientation)
             window_width: Window width for display
             window_center: Window center for display
-        """
+        
         import logging
         import sys
         import os
@@ -3156,6 +3483,7 @@ class ToolbarManager:
         logger.info(f"MPR viewer replaced viewport at grid position (0, 0)")
         print(f"MPR viewer replaced viewport at grid position (0, 0)", file=sys.stderr, flush=True)
         print("_replace_selected_viewport_with_mpr completed successfully", file=sys.stderr, flush=True)
+        """
 
     def toggle_curved_mpr(self, selected_widget):
         """Toggle Curved MPR mode for vessel/airway visualization"""
@@ -3401,23 +3729,36 @@ class ToolbarManager:
 
 
     def handle_buttons_checked(self):
+        def _is_tool_active(tool_name: str) -> bool:
+            if self.tool_selected == tool_name:
+                return True
+            if isinstance(self.tool_selected, str):
+                parts = [part.strip() for part in self.tool_selected.split(',') if part.strip()]
+                return tool_name in parts
+            return False
+
         for tool_name, tool_btn in self.tools_button.items():
             try:
                 tool_btn: QPushButton
-
-                if self.tool_selected == tool_name:
-                    tool_btn.setChecked(True)
-
-                else:
-                    tool_btn.setChecked(False)
-            except:
+                tool_btn.setChecked(_is_tool_active(tool_name))
+            except Exception:
                 pass
+
+        try:
+            if hasattr(self, '_measurement_menu_btn'):
+                is_measurement_active = any(_is_tool_active(tool) for tool in self.measurement_tools)
+                self._measurement_menu_btn.setChecked(is_measurement_active)
+        except Exception:
+            pass
 
     def check_and_deactivate_tools(self):
         if self.tool_selected is None:  # it's mean we haven't selected tool before
             return
 
         # when we switch between two tools and hasn't deactivated first tool
+        elif self.tool_selected == self.tool_access.MPR:
+            self.toggle_zeta_mpr()  # deactivate Zeta MPR
+
         elif self.tool_selected == self.tool_access.RULER:
             # self.toggle_ruler()  # deactivate ruler
             self.toggle_ruler(self.patient_widget.selected_widget)  # deactivate ruler
@@ -3477,6 +3818,9 @@ class ToolbarManager:
 
         elif self.tool_selected == self.tool_access.ROI:
             self.toggle_roi(self.patient_widget.selected_widget)  # deactivate Flip Vertical
+
+        elif self.tool_selected == self.tool_access.CIRCLE_ROI:
+            self.toggle_circle_roi(self.patient_widget.selected_widget)
 
         elif self.tool_selected == self.tool_access.AI_CHAT:
             self.toggle_ai_chat(self.patient_widget.selected_widget)  # deactivate AI Chat
@@ -3540,6 +3884,9 @@ class ToolbarManager:
 
         elif self.tool_selected == self.tool_access.ROI:
             return self.toggle_roi
+
+        elif self.tool_selected == self.tool_access.CIRCLE_ROI:
+            return self.toggle_circle_roi
 
         # elif self.tool_selected == self.tool_access.AI_CHAT:
         #     return self.toggle_ai_chat
@@ -3822,6 +4169,7 @@ class ToolbarManager:
         measurements_layout.setAlignment(Qt.AlignVCenter)
 
         measurements_menu_btn = QPushButton()
+        measurements_menu_btn.setCheckable(True)
         measurements_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
         measurements_menu_btn.setIconSize(QSize(14, 14))
         measurements_menu_btn.setToolTip('View Angle/Arrow/Text/ROI')
@@ -3854,9 +4202,16 @@ class ToolbarManager:
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #1f2937, stop:1 #111827);
             }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #059669, stop:1 #047857);
+                border-color: #10b981;
+                color: #ffffff;
+            }
         """)
         measurements_menu_btn.setCursor(Qt.PointingHandCursor)
         measurements_menu_btn.clicked.connect(lambda: self._show_measurements_dropdown(measurements_menu_btn))
+        self._measurement_menu_btn = measurements_menu_btn
 
         # Ruler button
         ruler_btn = create_tool_btn(self.patient_widget, 'Ruler', 'ruler.png')
@@ -4258,7 +4613,7 @@ class ToolbarManager:
             }
         """)
         
-        mpr_btn.clicked.connect(lambda: self.launch_zeta_mpr())
+        mpr_btn.clicked.connect(lambda: self.toggle_zeta_mpr())
         
         mpr_layout.addWidget(mpr_menu_btn)
         mpr_layout.addWidget(mpr_btn)

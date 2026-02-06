@@ -4,6 +4,13 @@ from PySide6.QtGui import QFont
 from .patient_tab_widget import PatientTabWidget
 from .service_tab_widget import ServiceTabWidget
 import os
+import logging
+
+# Priority management is now handled by Zeta Download Manager
+# Legacy priority manager has been removed
+PRIORITY_MANAGER_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 
 class CustomTabManager:
@@ -362,6 +369,14 @@ class CustomTabManager:
             # Remove study_uid mapping
             tab_data = self.patient_tabs[tab_index]
             study_uid = tab_data.get('study_uid')
+            
+            # Legacy priority manager removed - Zeta handles priority internally
+            # if study_uid and PRIORITY_MANAGER_AVAILABLE:
+            #     priority_manager = get_download_priority_manager()
+            #     priority_manager.on_patient_tab_closed(study_uid)
+            if study_uid:
+                logger.debug(f"Tab closed for study {study_uid[:20]}...")
+            
             if study_uid and study_uid in self.study_uid_to_tab:
                 del self.study_uid_to_tab[study_uid]
             
@@ -467,6 +482,14 @@ class CustomTabManager:
                 tab_data['custom_tab'].set_active(True)
                 # Set logo button as inactive when patient tab is selected
                 self.set_logo_active(False)
+            
+            # Legacy priority manager removed - Zeta handles priority internally
+            # if study_uid and PRIORITY_MANAGER_AVAILABLE:
+            #     priority_manager = get_download_priority_manager()
+            #     priority_manager.on_patient_tab_activated(study_uid)
+            study_uid = tab_data.get('study_uid')
+            if study_uid:
+                logger.debug(f"Tab activated for study {study_uid[:20]}...")
         else:
             # If switching to patient list tab (index 0), set logo as active
             if index == 0:

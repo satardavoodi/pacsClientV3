@@ -1,4 +1,5 @@
 import time
+import logging
 
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 

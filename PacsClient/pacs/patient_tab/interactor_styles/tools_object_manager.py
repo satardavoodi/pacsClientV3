@@ -19,6 +19,7 @@ class ToolAccess:
     # Category 3: Annotation Tools
     TEXT = 'text'
     ROI = 'roi'
+    CIRCLE_ROI = 'circle_roi'
     ERASER = 'eraser'
 
     # Category 4: View Manipulation Tools
@@ -340,6 +341,39 @@ class TextObject(ToolObjectAbstract):
         del text_actor
 
 
+class TextActor2DObject(ToolObjectAbstract):
+    def __init__(self, text_actor, default_color):
+        self.text_actor = text_actor
+        self.default_color = default_color
+
+    def On(self):
+        self.text_actor.SetVisibility(True)
+
+    def Off(self):
+        self.text_actor.SetVisibility(False)
+
+    def get_widget(self):
+        return self.text_actor
+
+    def change_color(self, color):
+        if hasattr(self.text_actor, 'GetTextProperty'):
+            self.text_actor.GetTextProperty().SetColor(color)
+        elif hasattr(self.text_actor, 'GetProperty'):
+            self.text_actor.GetProperty().SetColor(color)
+
+    def get_position_world(self):
+        return self.text_actor.GetPosition()
+
+    def delete_widget(self, image_viewer):
+        self.Off()
+        text_actor = self.get_widget()
+        try:
+            image_viewer.renderer.RemoveActor2D(text_actor)
+        except Exception:
+            image_viewer.renderer.RemoveActor(text_actor)
+        del text_actor
+
+
 class RoiObject(ToolObjectAbstract):
     def __init__(self, roi_widget, text_object: TextObject, default_color):
         self.roi_widget = roi_widget
@@ -394,6 +428,82 @@ class RoiObject(ToolObjectAbstract):
         # arrow_actor = self.get_widget()
         # image_viewer.renderer.RemoveActor(arrow_actor)
         # del arrow_actor
+
+
+class CircleRoiObject(ToolObjectAbstract):
+    def __init__(self, circle_widget, text_object: TextObject, default_color):
+        self.circle_widget = circle_widget
+        self.text_object = text_object
+        self.default_color = default_color
+
+    def On(self):
+        if self.circle_widget:
+            self.circle_widget.On()
+        self.text_object.On()
+
+    def Off(self):
+        if self.circle_widget:
+            self.circle_widget.Off()
+        self.text_object.Off()
+
+    def get_widget(self):
+        return self.circle_widget, self.text_object
+
+    def change_color(self, color):
+        try:
+            if hasattr(self.circle_widget, 'set_color'):
+                self.circle_widget.set_color(color)
+            else:
+                repr_obj = self.circle_widget.GetRepresentation()
+                if hasattr(repr_obj, 'GetEllipseProperty'):
+                    repr_obj.GetEllipseProperty().SetColor(color)
+                elif hasattr(repr_obj, 'GetProperty'):
+                    repr_obj.GetProperty().SetColor(color)
+        except Exception:
+            pass
+        self.text_object.change_color(color)
+
+    def _get_polydata(self):
+        try:
+            if self.circle_widget and hasattr(self.circle_widget, 'get_polydata'):
+                return self.circle_widget.get_polydata()
+            repr_obj = self.circle_widget.GetRepresentation() if self.circle_widget else None
+            poly = vtk.vtkPolyData()
+            if repr_obj and hasattr(repr_obj, 'GetPolyData'):
+                repr_obj.GetPolyData(poly)
+                return poly
+            if self.circle_widget and hasattr(self.circle_widget, 'GetPolyData'):
+                self.circle_widget.GetPolyData(poly)
+                return poly
+        except Exception:
+            return None
+        return None
+
+    def get_position_world(self):
+        """
+        Return circle edges as line segment pairs, similar to ROI polygon.
+        """
+        poly = self._get_polydata()
+        if poly is None or poly.GetNumberOfPoints() < 2:
+            return []
+
+        points = [poly.GetPoint(i) for i in range(poly.GetNumberOfPoints())]
+        line_pairs = []
+        for i in range(len(points)):
+            start = points[i]
+            end = points[(i + 1) % len(points)]
+            line_pairs.append((start, end))
+        return line_pairs
+
+    def delete_widget(self, image_viewer):
+        self.Off()
+        circle_widget, text_object = self.get_widget()
+        text_object.delete_widget(image_viewer)
+        del text_object
+        if circle_widget is not None:
+            if hasattr(circle_widget, 'cleanup'):
+                circle_widget.cleanup()
+            del circle_widget
 
 
 class PolygonSegmentationObject(ToolObjectAbstract):

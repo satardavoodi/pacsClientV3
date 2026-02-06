@@ -19,6 +19,9 @@ cbct-sample/
 **/*.db-shm
 **/*.db-wal
 *.md
+!.github/copilot-instructions.md
+!PacsClient/pacs/patient_tab/zeta mpr/ZETA_MPR_PIPELINE_REFERENCE.md
+backups/
 data/
 Segments/
 dicom.*

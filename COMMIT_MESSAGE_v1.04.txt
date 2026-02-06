@@ -1,0 +1,102 @@
+Release v1.04 - Zeta MPR Stable with UI Unification
+
+🎯 MAJOR RELEASE - Production Ready Baseline
+
+This version represents a stable, production-ready release of AI-PACS
+with fully functional Zeta MPR and unified UI/naming throughout.
+
+═══════════════════════════════════════════════════════════════
+MAJOR FEATURES
+═══════════════════════════════════════════════════════════════
+
+1. Zeta MPR - Production Ready ✅
+   - Three-view orthogonal MPR (Axial, Sagittal, Coronal)
+   - Synchronized crosshairs across all views
+   - Input-level left-right flip correction (v1.01)
+   - Proper anatomical orientation for CT and MRI
+   - Reset button functionality
+   - Measurement tools integration
+
+2. UI Improvements ✅
+   - MPR button now directly launches Zeta MPR
+   - Removed redundant Zeta MPR from dropdown menu
+   - Streamlined user experience
+
+3. Naming Unification ✅
+   - All references unified to "Zeta MPR"
+   - Consistent branding throughout application
+   - No more "Standard MPR" confusion
+
+4. Experimental Oblique MPR (v1.03-dev) ⚠️
+   - Simple VTK approach using SetResliceTransform()
+   - Tested successfully at 15° rotation
+   - Stable v1.02 backup available for rollback
+
+═══════════════════════════════════════════════════════════════
+FILES MODIFIED
+═══════════════════════════════════════════════════════════════
+
+Core Application:
+- main.py: Updated version to 1.04
+
+Zeta MPR Module:
+- zeta mpr/standard_mpr_viewer.py: Version update, oblique method
+- zeta mpr/__init__.py: Updated to v1.04
+- zeta mpr/toolbar_integration.py: Naming consistency
+- zeta mpr/mpr_measurement_tools.py: Documentation updates
+
+UI Components:
+- ui/patient_ui/patient_toolbar/toolbar_manager.py: MPR button redirect
+- ui/patient_ui/custom_tab_manager.py: UI improvements
+- ui/patient_ui/patient_widget.py: Integration updates
+
+Documentation:
+- VERSION_1.04_RELEASE.md: Comprehensive release documentation
+- INCREMENTAL_TESTING_PLAN.md: Testing strategy
+- NAMING_UPDATE_SUMMARY.md: Naming changes
+- UI_CHANGES_MPR_BUTTON.md: UI updates
+- SIMPLE_OBLIQUE_PLAN.md: Oblique MPR approach
+
+Backups (Included):
+- zeta mpr_BACKUP_v1.02/: Stable fallback version
+- zeta mpr_BACKUP_v1.03_FAILED/: Failed attempt for reference
+
+New Features:
+- education/: Education module added
+
+═══════════════════════════════════════════════════════════════
+VERSION HISTORY
+═══════════════════════════════════════════════════════════════
+
+v1.04 (Current): UI Enhancement & Naming Unification
+v1.03-dev: Experimental oblique MPR (Simple VTK approach)
+v1.03: FAILED - 3D Slicer approach (rolled back)
+v1.02: Stable baseline with crosshair rotation disabled
+v1.01: Major breakthrough - Input-level flip correction
+
+═══════════════════════════════════════════════════════════════
+TESTING STATUS
+═══════════════════════════════════════════════════════════════
+
+Fully Tested ✅:
+- All view orientations (CT & MRI)
+- Crosshair synchronization
+- Reset functionality
+- Measurement tools
+- UI button behavior
+
+Experimental ⚠️:
+- Oblique MPR (tested at 15° only)
+
+═══════════════════════════════════════════════════════════════
+DEPLOYMENT
+═══════════════════════════════════════════════════════════════
+
+✅ Production Ready
+✅ Local Backup: c:\AI-Pacs codes\BACKUP_v1.04_20260131_033958
+✅ GitHub Backup: This commit to dr.vahid branch
+✅ Rollback Available: v1.02 backup included
+
+═══════════════════════════════════════════════════════════════
+
+Signed-off-by: Dr. Vahid <vahid@ai-pacs.com>
