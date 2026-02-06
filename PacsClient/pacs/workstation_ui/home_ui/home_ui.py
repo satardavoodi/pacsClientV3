@@ -3520,6 +3520,20 @@ class HomePanelWidget(QWidget):
         subtitle_label.setAlignment(Qt.AlignCenter)
         overlay_layout.addWidget(subtitle_label)
         
+        # Add progress info
+        progress_label = QLabel("Initializing viewer...")
+        progress_label.setStyleSheet("""
+            QLabel {
+                color: #64b5f6;
+                font-size: 12px;
+                background-color: transparent;
+                margin-top: 20px;
+            }
+        """)
+        progress_label.setAlignment(Qt.AlignCenter)
+        overlay_layout.addWidget(progress_label)
+        self._loading_progress_label = progress_label
+        
         # Position and show overlay
         self._patient_loading_overlay.setGeometry(self.rect())
         self._patient_loading_overlay.raise_()
@@ -3536,8 +3550,19 @@ class HomePanelWidget(QWidget):
         if self._patient_loading_overlay is not None and self._patient_loading_overlay.isVisible():
             self._patient_loading_overlay.setGeometry(self.rect())
     
+    def update_loading_overlay_message(self, message: str):
+        """Update the loading progress message"""
+        if hasattr(self, '_loading_progress_label') and self._loading_progress_label is not None:
+            self._loading_progress_label.setText(message)
+            QApplication.processEvents()
+    
     def _hide_patient_loading_overlay(self):
-        """Hide the patient loading overlay"""
+        """Hide the patient loading overlay with minimum delay to ensure everything is ready"""
+        # Schedule overlay hiding after a minimum delay to ensure all initialization is complete
+        QTimer.singleShot(8000, self._actually_hide_patient_loading_overlay)  # 5 second minimum
+    
+    def _actually_hide_patient_loading_overlay(self):
+        """Actually hide the overlay after delay"""
         # Stop resize timer if exists
         if hasattr(self, '_overlay_resize_timer') and self._overlay_resize_timer is not None:
             self._overlay_resize_timer.stop()
@@ -3997,8 +4022,12 @@ Study UID: {study_uid}
             widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             widget.set_method_open_ai_module_tab(self.add_new_tab_widget)
             
-            # Connect loading_complete signal to hide overlay
-            widget.loading_complete.connect(self._hide_patient_loading_overlay)
+            # Connect loading_complete signal to hide overlay with enhanced delay
+            if hasattr(widget, 'loading_complete'):
+                widget.loading_complete.connect(self._hide_patient_loading_overlay)
+            
+            # Also set a maximum display time for overlay (15 seconds) as fallback to ensure it eventually closes
+            QTimer.singleShot(15000, self._hide_patient_loading_overlay)
 
             # 🔥 اتصال سیگنال priority_download_requested از thumbnail_manager
             if hasattr(widget, 'thumbnail_manager') and widget.thumbnail_manager is not None:
