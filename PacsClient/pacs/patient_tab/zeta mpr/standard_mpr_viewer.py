@@ -100,7 +100,7 @@ from PySide6.QtWidgets import (
     QFrame, QPushButton, QSpinBox, QTabWidget, QCheckBox, QMenu, QColorDialog,
     QScrollArea
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import QColor, QCursor
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
@@ -110,6 +110,7 @@ from .segmentation_tools import LungSegmenter, AirwaySegmenter, VesselSegmenter,
 from .surface_reconstruction import SurfaceReconstructor
 from .curved_mpr import CurvedMPRGenerator, InteractiveCurvedMPR
 from .mpr_measurement_tools import MPRMeasurementTools
+from PacsClient.pacs.patient_tab.interactor_styles.tools_object_manager import ToolAccess
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,316 @@ WL_PRESETS = {
     'Liver': {'window': 150, 'level': 80},
     'Soft Tissue': {'window': 400, 'level': 50},
 }
+
+
+class MPRToolbarInteractorStyle(vtk.vtkInteractorStyleImage):
+    """
+    Interactor style for Zeta MPR that mirrors the 2D toolbar behaviors
+    (zoom, window/level, pan, stack) using left-drag.
+    """
+    def __init__(self, mpr_viewer, view_name):
+        super().__init__()
+        self.parent = mpr_viewer
+        self.view_name = view_name
+        self.tool_access = ToolAccess()
+        self.active_tool = None
+        self.left_button_down = False
+        self.pan_active = False
+        self.last_pos = None
+
+        self.AddObserver("LeftButtonPressEvent", self.on_left_button_press)
+        self.AddObserver("LeftButtonReleaseEvent", self.on_left_button_release)
+        self.AddObserver("MouseMoveEvent", self.on_mouse_move)
+        self.AddObserver("MouseWheelForwardEvent", self.on_mouse_wheel_forward)
+        self.AddObserver("MouseWheelBackwardEvent", self.on_mouse_wheel_backward)
+
+    def set_active_tool(self, tool_name):
+        # Reset transient states when tool changes
+        if self.pan_active:
+            try:
+                super().OnMiddleButtonUp()
+            except Exception:
+                pass
+        self.pan_active = False
+        self.left_button_down = False
+        self.last_pos = None
+        self.active_tool = tool_name
+
+    def _get_axis_index(self):
+        if self.view_name == 'axial':
+            return 2
+        if self.view_name == 'sagittal':
+            return 0
+        return 1  # coronal
+
+    def _get_basic_slice_change(self, max_slice):
+        if max_slice <= 25:
+            return 10
+        if max_slice <= 50:
+            return 8
+        if max_slice <= 75:
+            return 7
+        return 5
+
+    def _move_along_stack(self, delta_mm):
+        scroll_dir = self.parent._get_scroll_direction(self.view_name)
+        self.parent.current_position[0] += scroll_dir[0] * delta_mm
+        self.parent.current_position[1] += scroll_dir[1] * delta_mm
+        self.parent.current_position[2] += scroll_dir[2] * delta_mm
+
+        self.parent._clamp_current_position()
+        self.parent._update_all_crosshairs()
+        self.parent._update_slice_positions()
+        self.parent._update_slice_info_texts()
+        self.parent._update_coordinates_label()
+        self.parent._render_immediately(self.view_name)
+
+    def on_left_button_press(self, obj, event):
+        self.parent._set_active_view(self.view_name)
+        if self.active_tool == self.tool_access.ERASER:
+            self.parent.delete_measurement_at(self.view_name, self.GetInteractor().GetEventPosition())
+            return
+
+        self.left_button_down = True
+        self.last_pos = self.GetInteractor().GetEventPosition()
+
+        if self.active_tool == self.tool_access.PAN:
+            self.pan_active = True
+            super().OnMiddleButtonDown()
+
+    def on_left_button_release(self, obj, event):
+        self.left_button_down = False
+        self.last_pos = None
+
+        if self.pan_active:
+            self.pan_active = False
+            try:
+                super().OnMiddleButtonUp()
+            except Exception:
+                pass
+
+    def on_mouse_move(self, obj, event):
+        if not self.left_button_down or self.last_pos is None:
+            return
+
+        if self.active_tool == self.tool_access.ZOOM:
+            self._change_zoom()
+        elif self.active_tool == self.tool_access.WINDOW_LEVEL:
+            self._change_window_level()
+        elif self.active_tool == self.tool_access.PAN:
+            if self.pan_active:
+                super().OnMouseMove()
+        elif self.active_tool == self.tool_access.STACKED:
+            self._change_stack()
+
+    def on_mouse_wheel_forward(self, obj, event):
+        # Keep wheel scrolling consistent with crosshair style
+        self.parent._set_active_view(self.view_name)
+        self._move_along_stack(delta_mm=2.0)
+
+    def on_mouse_wheel_backward(self, obj, event):
+        self.parent._set_active_view(self.view_name)
+        self._move_along_stack(delta_mm=-2.0)
+
+    def _change_zoom(self):
+        current_pos = self.GetInteractor().GetEventPosition()
+        dy = current_pos[1] - self.last_pos[1]
+
+        renderer = self.parent.viewers[self.view_name]['renderer']
+        camera = renderer.GetActiveCamera()
+
+        zoom_factor = 1.0
+        zoom_sensitivity = 0.005
+
+        if dy > 0:
+            zoom_factor = 1 + abs(dy) * zoom_sensitivity
+        elif dy < 0:
+            zoom_factor = 1 / (1 + abs(dy) * zoom_sensitivity)
+
+        camera.Zoom(zoom_factor)
+        self.parent._request_render(self.view_name)
+        self.last_pos = current_pos
+
+    def _change_window_level(self):
+        current_pos = self.GetInteractor().GetEventPosition()
+        dx = current_pos[0] - self.last_pos[0]
+        dy = current_pos[1] - self.last_pos[1]
+
+        actor = self.parent.viewers[self.view_name]['actor']
+        window = actor.GetProperty().GetColorWindow()
+        level = actor.GetProperty().GetColorLevel()
+
+        dy = -dy  # invert dy for window width
+        new_window_center = level + (dy * 1.3)
+        new_window_width = window + (dx * 1.5)
+
+        self.parent._apply_window_level(new_window_width, new_window_center)
+        self.last_pos = current_pos
+
+    def _change_stack(self):
+        current_pos = self.GetInteractor().GetEventPosition()
+        dy = current_pos[1] - self.last_pos[1]
+
+        axis_index = self._get_axis_index()
+        max_slice = self.parent.dims[axis_index]
+        if max_slice <= 1:
+            return
+
+        basic_slice_change = self._get_basic_slice_change(max_slice)
+        if abs(dy) < basic_slice_change:
+            return
+
+        step_slices = round(dy / basic_slice_change)
+        if step_slices == 0:
+            return
+
+        # Match 2D behavior: dragging down goes "backward"
+        spacing_mm = self.parent.spacing[axis_index]
+        delta_mm = -step_slices * spacing_mm
+        self._move_along_stack(delta_mm)
+        self.last_pos = current_pos
+
+
+class VRTInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
+    """
+    Custom interactor style for VRT (3D) viewport.
+    LMB drag = rotate
+    RMB click = context menu
+    RMB drag = adjust appearance
+    LMB + RMB drag = pan
+    MMB drag = zoom (dolly)
+    """
+    def __init__(self, mpr_viewer, vtk_widget):
+        super().__init__()
+        self.parent = mpr_viewer
+        self.widget = vtk_widget
+        self.lmb_down = False
+        self.rmb_down = False
+        self.mmb_down = False
+        self.pan_active = False
+        self.rmb_dragging = False
+        self.rmb_start_pos = None
+        self.drag_threshold = 6
+
+    def reset_interaction_state(self):
+        self.lmb_down = False
+        self.rmb_down = False
+        self.mmb_down = False
+        self.pan_active = False
+        self.rmb_dragging = False
+        self.rmb_start_pos = None
+        try:
+            state = self.GetState()
+            if state == self.VTKIS_ROTATE:
+                self.EndRotate()
+            elif state == self.VTKIS_PAN:
+                self.EndPan()
+            elif state == self.VTKIS_DOLLY:
+                self.EndDolly()
+        except Exception:
+            pass
+
+    def _start_pan(self):
+        if self.pan_active:
+            return
+        self.pan_active = True
+        self.rmb_dragging = True
+        try:
+            if self.GetState() == self.VTKIS_ROTATE:
+                self.EndRotate()
+        except Exception:
+            pass
+        self.StartPan()
+
+    def _end_pan(self):
+        if not self.pan_active:
+            return
+        self.pan_active = False
+        self.EndPan()
+
+    def OnLeftButtonDown(self):
+        self.parent._set_active_view('3d')
+        self.lmb_down = True
+        if self.rmb_down:
+            self._start_pan()
+            return
+        super().OnLeftButtonDown()
+
+    def OnLeftButtonUp(self):
+        self.lmb_down = False
+        if self.pan_active and self.rmb_down:
+            self._end_pan()
+            # After pan, remain ready for RMB drag
+            self.rmb_start_pos = self.GetInteractor().GetEventPosition()
+            self.rmb_dragging = False
+            return
+        if self.pan_active:
+            self._end_pan()
+            return
+        super().OnLeftButtonUp()
+
+    def OnRightButtonDown(self):
+        self.parent._set_active_view('3d')
+        self.rmb_down = True
+        self.rmb_dragging = False
+        self.rmb_start_pos = self.GetInteractor().GetEventPosition()
+        self.parent._capture_vrt_baseline()
+
+        if self.lmb_down:
+            self._start_pan()
+        # Do not call super - we fully override RMB
+
+    def OnRightButtonUp(self):
+        if self.pan_active:
+            self._end_pan()
+            if self.lmb_down:
+                self.StartRotate()
+
+        if not self.rmb_dragging and not self.pan_active and not self.lmb_down:
+            self.parent._show_vrt_preset_menu_from_interactor(self.widget)
+
+        self.rmb_down = False
+        self.rmb_dragging = False
+        self.rmb_start_pos = None
+        self.parent._reset_vrt_rmb_state()
+
+    def OnMiddleButtonDown(self):
+        self.parent._set_active_view('3d')
+        self.mmb_down = True
+        self.StartDolly()
+
+    def OnMiddleButtonUp(self):
+        self.mmb_down = False
+        self.EndDolly()
+
+    def OnMouseMove(self):
+        if self.pan_active:
+            super().OnMouseMove()
+            return
+
+        if self.mmb_down:
+            super().OnMouseMove()
+            return
+
+        if self.rmb_down and not self.pan_active:
+            if self.rmb_start_pos is None:
+                self.rmb_start_pos = self.GetInteractor().GetEventPosition()
+                return
+            pos = self.GetInteractor().GetEventPosition()
+            dx = pos[0] - self.rmb_start_pos[0]
+            dy = pos[1] - self.rmb_start_pos[1]
+            if not self.rmb_dragging:
+                if abs(dx) >= self.drag_threshold or abs(dy) >= self.drag_threshold:
+                    self.rmb_dragging = True
+            if self.rmb_dragging:
+                self.parent._apply_vrt_appearance_delta(dx, dy)
+            return
+
+        if self.lmb_down:
+            super().OnMouseMove()
+            return
+
+        super().OnMouseMove()
 
 
 class StandardMPRViewer(QWidget):
@@ -248,6 +559,9 @@ class StandardMPRViewer(QWidget):
         self._vtk_widget_to_view = {}
         self._expanded_view = None
         self._size_lock = None
+        self._active_view_name = 'axial'
+        self._inactive_view_style = "background: #000; border: 2px solid #333;"
+        self._active_view_style = "background: #000; border: 2px solid #22d3ee;"
         
         # Oblique reslicing support
         self.reslice_filters = {}  # vtkImageReslice for each view
@@ -257,10 +571,28 @@ class StandardMPRViewer(QWidget):
         # Auto-rotation state
         self.auto_rotation_active = False
         self.auto_rotation_timer = None
+
+        # VRT (3D) interaction state
+        self._vrt_mouse_state = {
+            'lmb_down': False,
+            'rmb_down': False,
+            'mmb_down': False,
+            'pan_active': False,
+            'rmb_dragging': False,
+            'rmb_start_pos': None,
+            'last_pos': None,
+            'opacity_points': None,
+            'lighting': None,
+        }
         
         # Performance optimization: batch rendering
         self._render_pending = set()  # Track views that need rendering
         self._render_timer = None  # Timer for batched renders
+
+        # Toolbar tool routing (Zeta MPR <-> 2D toolbar)
+        self.tool_access = ToolAccess()
+        self._toolbar_styles = {}
+        self._toolbar_active_tool = None
         
         # Preset manager
         self.preset_manager = get_preset_manager()
@@ -334,11 +666,128 @@ class StandardMPRViewer(QWidget):
                 self.viewers[view_name]['renderer'].GetRenderWindow().Render()
         
         self._render_pending.clear()
-    
+
     def _render_immediately(self, view_name):
         """Force immediate render (use sparingly)"""
         if view_name in self.viewers:
             self.viewers[view_name]['renderer'].GetRenderWindow().Render()
+
+    def _clamp_current_position(self):
+        """Clamp crosshair position to volume bounds."""
+        bounds = self.image_data.GetBounds()
+        self.current_position[0] = min(max(self.current_position[0], bounds[0]), bounds[1])
+        self.current_position[1] = min(max(self.current_position[1], bounds[2]), bounds[3])
+        self.current_position[2] = min(max(self.current_position[2], bounds[4]), bounds[5])
+
+    # ------------------------------------------------------------------
+    # Toolbar integration helpers (2D toolbar -> Zeta MPR)
+    # ------------------------------------------------------------------
+    def activate_ruler(self):
+        return self.measurement_tools.activate_ruler_tool('all')
+
+    def activate_angle(self):
+        return self.measurement_tools.activate_angle_tool('all')
+
+    def activate_caption(self):
+        return self.measurement_tools.activate_caption_tool('all')
+
+    def deactivate_tool(self):
+        self.measurement_tools.deactivate_tool()
+
+    def activate_toolbar_tool(self, tool_name):
+        """Activate a 2D toolbar interaction tool inside MPR (zoom/WL/pan/stack/eraser)."""
+        self._toolbar_active_tool = tool_name
+        for view_name in ['axial', 'sagittal', 'coronal']:
+            if view_name not in self.viewers:
+                continue
+            style = self._toolbar_styles.get(view_name)
+            if style is None:
+                style = MPRToolbarInteractorStyle(self, view_name)
+                self._toolbar_styles[view_name] = style
+            style.set_active_tool(tool_name)
+            interactor = self.viewers[view_name]['widget'].GetRenderWindow().GetInteractor()
+            interactor.SetInteractorStyle(style)
+        return True
+
+    def deactivate_toolbar_tool(self):
+        """Restore default crosshair interaction after a toolbar tool is turned off."""
+        self._toolbar_active_tool = None
+        for view_name in ['axial', 'sagittal', 'coronal']:
+            if view_name not in self.viewers:
+                continue
+            if self.crosshair_interaction_enabled and self.crosshairs_enabled:
+                self._enable_crosshair_interaction(view_name)
+            else:
+                self._disable_crosshair_interaction(view_name)
+
+    def zoom_to_fit(self):
+        """Reset zoom for all 2D MPR views."""
+        for view_name in ['axial', 'sagittal', 'coronal']:
+            if view_name not in self.viewers:
+                continue
+            renderer = self.viewers[view_name]['renderer']
+            renderer.ResetCamera()
+            renderer.ResetCameraClippingRange()
+            self._request_render(view_name)
+
+    def delete_measurement_at(self, view_name, display_pos):
+        if view_name not in self.viewers:
+            return False
+        renderer = self.viewers[view_name]['renderer']
+        deleted = self.measurement_tools.delete_measurement_at(view_name, display_pos, renderer)
+        if deleted:
+            self._request_render(view_name)
+        return deleted
+
+    def reset_to_initial_state(self):
+        """Reset MPR views to initial state and clear annotations."""
+        try:
+            self.deactivate_toolbar_tool()
+            self.measurement_tools.deactivate_tool()
+            self.measurement_tools.clear_measurements()
+        except Exception:
+            pass
+        self._reset_rendering()
+        self._set_active_view('axial')
+
+    def apply_view_transform(self, action, view_name=None):
+        """Apply rotation/flip to a single MPR view."""
+        target_view = view_name or self._active_view_name
+        if target_view not in self.viewers or target_view == '3d':
+            return False
+        renderer = self.viewers[target_view]['renderer']
+        camera = renderer.GetActiveCamera()
+
+        if action == self.tool_access.ROTATION_LEFT:
+            camera.Roll(90)
+        elif action == self.tool_access.ROTATION_RIGHT:
+            camera.Roll(-90)
+        elif action == self.tool_access.FLIP_HORIZONTAL:
+            camera.Azimuth(180)
+        elif action == self.tool_access.FLIP_VERTICAL:
+            camera.Roll(180)
+        else:
+            return False
+
+        renderer.ResetCameraClippingRange()
+        self._request_render(target_view)
+        return True
+
+    def _set_active_view(self, view_name):
+        """Set the active view for toolbar actions and show selection highlight."""
+        if view_name not in self._view_containers:
+            return
+        self._active_view_name = view_name
+        if view_name in ['axial', 'sagittal', 'coronal']:
+            self.active_measurement_viewport = view_name
+        self._update_view_highlights()
+
+    def _update_view_highlights(self):
+        for name, container in self._view_containers.items():
+            if name == self._active_view_name:
+                container.setStyleSheet(self._active_view_style)
+            else:
+                container.setStyleSheet(self._inactive_view_style)
     
     def _detect_series_type(self):
         """Detect modality (CT/MR) and anatomy from image data"""
@@ -766,6 +1215,12 @@ class StandardMPRViewer(QWidget):
             window = self.scalar_range[1] - self.scalar_range[0]
             level = (self.scalar_range[0] + self.scalar_range[1]) / 2
             return window, level
+
+    def _get_initial_window_level(self):
+        """Get initial window/level from source image (fallback to defaults)."""
+        if self._initial_window_level is not None:
+            return self._initial_window_level
+        return self._get_default_window_level()
     
     def _setup_ui(self):
         """Setup clean, professional UI inspired by RadiAnt/Horos"""
@@ -1305,7 +1760,7 @@ class StandardMPRViewer(QWidget):
         image_slice.SetMapper(slice_mapper)
         
         # Set initial window/level
-        window, level = self._get_default_window_level()
+        window, level = self._get_initial_window_level()
         image_slice.GetProperty().SetColorWindow(window)
         image_slice.GetProperty().SetColorLevel(level)
         # NEAREST interpolation - shows original slices without creating interpolated data
@@ -1370,6 +1825,10 @@ class StandardMPRViewer(QWidget):
                 background: black;
             }
         """)
+        vtk_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        vtk_widget.customContextMenuRequested.connect(
+            lambda pos, w=vtk_widget: self._show_vrt_preset_menu(w, pos)
+        )
         container_layout.addWidget(vtk_widget)
         
         # Renderer
@@ -1388,7 +1847,7 @@ class StandardMPRViewer(QWidget):
         image_slice.SetMapper(slice_mapper)
         
         # Set initial window/level
-        window, level = self._get_default_window_level()
+        window, level = self._get_initial_window_level()
         image_slice.GetProperty().SetColorWindow(window)
         image_slice.GetProperty().SetColorLevel(level)
         # Linear interpolation for smooth MPR reconstruction
@@ -1476,7 +1935,7 @@ class StandardMPRViewer(QWidget):
         image_slice.SetMapper(slice_mapper)
         
         # Set initial window/level
-        window, level = self._get_default_window_level()
+        window, level = self._get_initial_window_level()
         image_slice.GetProperty().SetColorWindow(window)
         image_slice.GetProperty().SetColorLevel(level)
         # Linear interpolation for smooth MPR reconstruction
@@ -1649,9 +2108,10 @@ class StandardMPRViewer(QWidget):
         light2.SetIntensity(0.4)
         renderer.AddLight(light2)
         
-        # Setup 3D interactor style for rotation
-        style = vtk.vtkInteractorStyleTrackballCamera()
-        vtk_widget.GetRenderWindow().GetInteractor().SetInteractorStyle(style)
+        # Setup 3D interactor style (custom mapping)
+        interactor = vtk_widget.GetRenderWindow().GetInteractor()
+        style = VRTInteractorStyle(self, vtk_widget)
+        interactor.SetInteractorStyle(style)
         
         # Initialize
         vtk_widget.Initialize()
@@ -1664,7 +2124,8 @@ class StandardMPRViewer(QWidget):
             'volume': volume,
             'property': volume_property,
             'mapper': volume_mapper,
-            'camera': camera
+            'camera': camera,
+            'style': style
         }
 
         self._register_view('3d', container, vtk_widget, row, col)
@@ -1787,13 +2248,16 @@ class StandardMPRViewer(QWidget):
     
     def eventFilter(self, obj, event):
         """Event filter to detect user interaction with VTK widget"""
+        view_name = self._vtk_widget_to_view.get(obj)
         if event.type() == event.Type.MouseButtonDblClick:
-            view_name = self._vtk_widget_to_view.get(obj)
             if view_name:
+                self._set_active_view(view_name)
                 self._toggle_expand_view(view_name)
                 return True
         # Stop auto-rotation on mouse press or wheel event
         if event.type() in [event.Type.MouseButtonPress, event.Type.Wheel]:
+            if view_name:
+                self._set_active_view(view_name)
             self.stop_auto_rotation()
         return super().eventFilter(obj, event)
 
@@ -1803,6 +2267,7 @@ class StandardMPRViewer(QWidget):
         self._view_positions[view_name] = (row, col, row_span, col_span)
         self._vtk_widget_to_view[vtk_widget] = view_name
         vtk_widget.installEventFilter(self)
+        self._update_view_highlights()
 
     def _toggle_expand_view(self, view_name):
         """Toggle expand/collapse for a specific view."""
@@ -2200,11 +2665,21 @@ class StandardMPRViewer(QWidget):
                 self.dragging_line = False  # Track if dragging from line
                 self.drag_axis = None  # 'h' or 'v' when dragging from line
                 self.drag_offset = [0, 0, 0]  # Offset from center when dragging line
+                self.left_button_down = False
+                self.right_button_down = False
+                self.middle_button_down = False
+                self.pan_active = False
+                self.stack_dragging = False
+                self.last_pos = None
                 
                 # Add observers for mouse events
                 self.AddObserver("LeftButtonPressEvent", self.on_left_button_press)
+                self.AddObserver("RightButtonPressEvent", self.on_right_button_press)
+                self.AddObserver("MiddleButtonPressEvent", self.on_middle_button_press)
                 self.AddObserver("MouseMoveEvent", self.on_mouse_move)
                 self.AddObserver("LeftButtonReleaseEvent", self.on_left_button_release)
+                self.AddObserver("RightButtonReleaseEvent", self.on_right_button_release)
+                self.AddObserver("MiddleButtonReleaseEvent", self.on_middle_button_release)
                 self.AddObserver("MouseWheelForwardEvent", self.on_mouse_wheel_forward)
                 self.AddObserver("MouseWheelBackwardEvent", self.on_mouse_wheel_backward)
             
@@ -2239,6 +2714,118 @@ class StandardMPRViewer(QWidget):
                 coord_converter.SetCoordinateSystemToWorld()
                 coord_converter.SetValue(world_pos[0], world_pos[1], world_pos[2])
                 return coord_converter.GetComputedDisplayValue(self.renderer)
+
+            def _get_axis_index(self):
+                if self.view_name == 'axial':
+                    return 2
+                if self.view_name == 'sagittal':
+                    return 0
+                return 1  # coronal
+
+            def _get_basic_slice_change(self, max_slice):
+                if max_slice <= 25:
+                    return 10
+                if max_slice <= 50:
+                    return 8
+                if max_slice <= 75:
+                    return 7
+                return 5
+
+            def _move_along_stack(self, delta_mm):
+                scroll_dir = self.parent._get_scroll_direction(self.view_name)
+                self.parent.current_position[0] += scroll_dir[0] * delta_mm
+                self.parent.current_position[1] += scroll_dir[1] * delta_mm
+                self.parent.current_position[2] += scroll_dir[2] * delta_mm
+
+                self.parent._clamp_current_position()
+                self.parent._update_all_crosshairs()
+                self.parent._update_slice_positions()
+                self.parent._update_slice_info_texts()
+                self.parent._update_coordinates_label()
+                self.parent._render_immediately(self.view_name)
+
+            def _change_stack(self):
+                if self.last_pos is None:
+                    return
+                current_pos = self.GetInteractor().GetEventPosition()
+                dy = current_pos[1] - self.last_pos[1]
+
+                axis_index = self._get_axis_index()
+                max_slice = self.parent.dims[axis_index]
+                if max_slice <= 1:
+                    return
+
+                basic_slice_change = self._get_basic_slice_change(max_slice)
+                if abs(dy) < basic_slice_change:
+                    return
+
+                step_slices = round(dy / basic_slice_change)
+                if step_slices == 0:
+                    return
+
+                spacing_mm = self.parent.spacing[axis_index]
+                delta_mm = -step_slices * spacing_mm
+                self._move_along_stack(delta_mm)
+                self.last_pos = current_pos
+
+            def _change_window_level(self):
+                if self.last_pos is None:
+                    return
+                current_pos = self.GetInteractor().GetEventPosition()
+                dx = current_pos[0] - self.last_pos[0]
+                dy = current_pos[1] - self.last_pos[1]
+
+                actor = self.parent.viewers[self.view_name]['actor']
+                window = actor.GetProperty().GetColorWindow()
+                level = actor.GetProperty().GetColorLevel()
+
+                dy = -dy  # invert dy for window width
+                new_window_center = level + (dy * 1.3)
+                new_window_width = window + (dx * 1.5)
+
+                self.parent._apply_window_level(new_window_width, new_window_center)
+                self.last_pos = current_pos
+
+            def _change_zoom(self):
+                if self.last_pos is None:
+                    return
+                current_pos = self.GetInteractor().GetEventPosition()
+                dy = current_pos[1] - self.last_pos[1]
+
+                camera = self.renderer.GetActiveCamera()
+                zoom_factor = 1.0
+                zoom_sensitivity = 0.005
+
+                if dy > 0:
+                    zoom_factor = 1 + abs(dy) * zoom_sensitivity
+                elif dy < 0:
+                    zoom_factor = 1 / (1 + abs(dy) * zoom_sensitivity)
+
+                camera.Zoom(zoom_factor)
+                self.parent._request_render(self.view_name)
+                self.last_pos = current_pos
+
+            def _start_pan(self):
+                if self.pan_active:
+                    return
+                self.pan_active = True
+                self.dragging_handle = False
+                self.dragging_line = False
+                self.parent.dragging_center = False
+                self.stack_dragging = False
+                try:
+                    super().OnMiddleButtonDown()
+                except Exception:
+                    pass
+
+            def _end_pan(self):
+                if not self.pan_active:
+                    return
+                self.pan_active = False
+                try:
+                    super().OnMiddleButtonUp()
+                except Exception:
+                    pass
             
             def _is_in_rotation_zone(self, point, line_start, line_end, threshold=15):
                 """Check if point is in the last 10% of a line (rotation zone)"""
@@ -2378,11 +2965,21 @@ class StandardMPRViewer(QWidget):
             
             def on_left_button_press(self, obj, event):
                 """Handle left mouse button press - rotation zones, center, or lines"""
+                self.parent._set_active_view(self.view_name)
+                self.left_button_down = True
+                self.stack_dragging = False
                 click_pos = self.GetInteractor().GetEventPosition()
                 import math
-                
+
+                # Left + Right = Pan
+                if self.right_button_down:
+                    self._start_pan()
+                    return
+
                 # Get crosshair line endpoints for all checks
                 if self.view_name not in self.parent.crosshair_actors:
+                    self.stack_dragging = True
+                    self.last_pos = click_pos
                     self.OnLeftButtonDown()
                     return
                 
@@ -2475,13 +3072,26 @@ class StandardMPRViewer(QWidget):
                     logger.debug(f"Grabbed {which_line} line at offset {self.drag_offset}")
                     self.OnLeftButtonDown()
                     return
-                
-                # Click is far from crosshair - ignore (no click-to-move behavior)
-                logger.debug(f"Click ignored - not near crosshair")
+
+                # Click is far from crosshair - default to stack drag
+                self.stack_dragging = True
+                self.last_pos = click_pos
                 self.OnLeftButtonDown()
             
             def on_mouse_move(self, obj, event):
                 """Handle mouse move - drag handle to rotate or drag to move"""
+                if self.pan_active:
+                    self.OnMouseMove()
+                    return
+
+                if self.middle_button_down:
+                    self._change_zoom()
+                    return
+
+                if self.right_button_down:
+                    self._change_window_level()
+                    return
+
                 click_pos = self.GetInteractor().GetEventPosition()
                 
                 # Handle rotation by dragging handle
@@ -2587,6 +3197,10 @@ class StandardMPRViewer(QWidget):
                     self.parent._update_slice_positions()
                     self.parent._update_slice_info_texts()
                     return
+
+                if self.stack_dragging and self.left_button_down:
+                    self._change_stack()
+                    return
                 
                 # Check hover for cursor change (only when not dragging)
                 if not self.dragging_handle and not self.parent.dragging_center and not self.dragging_line:
@@ -2597,6 +3211,8 @@ class StandardMPRViewer(QWidget):
             
             def on_left_button_release(self, obj, event):
                 """Handle mouse button release"""
+                self.left_button_down = False
+                self.stack_dragging = False
                 if self.dragging_handle:
                     logger.info("Stopped rotating")
                     self.dragging_handle = False
@@ -2612,10 +3228,53 @@ class StandardMPRViewer(QWidget):
                     self.parent.dragging_center = False
                 
                 self.parent.drag_start_pos = None
+                if self.pan_active and not self.right_button_down:
+                    self._end_pan()
+                elif self.pan_active and self.right_button_down:
+                    self._end_pan()
+                    self.last_pos = self.GetInteractor().GetEventPosition()
+                if not self.right_button_down and not self.middle_button_down:
+                    self.last_pos = None
                 self.OnLeftButtonUp()
+
+            def on_right_button_press(self, obj, event):
+                self.parent._set_active_view(self.view_name)
+                self.right_button_down = True
+
+                if self.left_button_down:
+                    self._start_pan()
+                    return
+
+                self.last_pos = self.GetInteractor().GetEventPosition()
+
+            def on_right_button_release(self, obj, event):
+                self.right_button_down = False
+
+                if self.pan_active and not self.left_button_down:
+                    self._end_pan()
+                    self.last_pos = None
+                    return
+
+                if self.pan_active and self.left_button_down:
+                    self._end_pan()
+                    self.stack_dragging = True
+                    self.last_pos = self.GetInteractor().GetEventPosition()
+                    return
+
+                self.last_pos = None
+
+            def on_middle_button_press(self, obj, event):
+                self.parent._set_active_view(self.view_name)
+                self.middle_button_down = True
+                self.last_pos = self.GetInteractor().GetEventPosition()
+
+            def on_middle_button_release(self, obj, event):
+                self.middle_button_down = False
+                self.last_pos = None
             
             def on_mouse_wheel_forward(self, obj, event):
                 """Scroll forward through slices - direction depends on image orientation"""
+                self.parent._set_active_view(self.view_name)
                 # Get current focal point
                 camera = self.renderer.GetActiveCamera()
                 focal = list(camera.GetFocalPoint())
@@ -2644,6 +3303,7 @@ class StandardMPRViewer(QWidget):
             
             def on_mouse_wheel_backward(self, obj, event):
                 """Scroll backward through slices - direction depends on image orientation"""
+                self.parent._set_active_view(self.view_name)
                 # Get current focal point
                 camera = self.renderer.GetActiveCamera()
                 focal = list(camera.GetFocalPoint())
@@ -3399,6 +4059,7 @@ class StandardMPRViewer(QWidget):
                     logger.error(f"Error resetting 3D view: {e3d}")
             
             # Reset 2D views - recreate them with original mappers
+            reset_window, reset_level = self._get_initial_window_level()
             for view_name in ['axial', 'sagittal', 'coronal']:
                 if view_name not in self.viewers:
                     continue
@@ -3417,10 +4078,9 @@ class StandardMPRViewer(QWidget):
                     image_slice = vtk.vtkImageSlice()
                     image_slice.SetMapper(slice_mapper)
                     
-                    # Set window/level
-                    window, level = self._get_default_window_level()
-                    image_slice.GetProperty().SetColorWindow(window)
-                    image_slice.GetProperty().SetColorLevel(level)
+                    # Set window/level to initial source-derived defaults
+                    image_slice.GetProperty().SetColorWindow(reset_window)
+                    image_slice.GetProperty().SetColorLevel(reset_level)
                     
                     # Remove old actors and add new one
                     renderer.RemoveAllViewProps()
@@ -3506,6 +4166,321 @@ class StandardMPRViewer(QWidget):
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Error resetting rendering: {str(e)}")
     
+    def _show_vrt_preset_menu(self, widget, pos):
+        """Show right-click preset menu for VRT (3D) viewport."""
+        try:
+            view_name = self._vtk_widget_to_view.get(widget)
+            if view_name != '3d':
+                return
+
+            self.stop_auto_rotation()
+
+            from PySide6.QtWidgets import QMenu, QWidgetAction, QListWidget, QListWidgetItem, QAbstractItemView
+            menu = QMenu(self)
+            menu.setStyleSheet("""
+                QMenu {
+                    background: #2a2a2a;
+                    color: white;
+                    border: 1px solid #555;
+                    padding: 4px;
+                }
+            """)
+
+            preset_names = self.preset_manager.get_all_preset_names()
+            if not preset_names:
+                return
+
+            list_widget = QListWidget()
+            list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
+            list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            list_widget.setStyleSheet("""
+                QListWidget {
+                    background: #2a2a2a;
+                    color: white;
+                    border: none;
+                }
+                QListWidget::item {
+                    padding: 6px 12px;
+                }
+                QListWidget::item:selected {
+                    background: #3b82f6;
+                }
+            """)
+
+            for preset_name in preset_names:
+                item = QListWidgetItem(preset_name)
+                if preset_name == self.current_3d_preset:
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                    item.setSelected(True)
+                list_widget.addItem(item)
+
+            list_widget.itemClicked.connect(
+                lambda item: (self._apply_vrt_preset(item.text()), menu.close())
+            )
+
+            max_height = min(self.height(), 420)
+            list_widget.setMaximumHeight(max_height)
+
+            action = QWidgetAction(menu)
+            action.setDefaultWidget(list_widget)
+            menu.addAction(action)
+
+            global_pos = widget.mapToGlobal(pos)
+            menu.exec(global_pos)
+        except Exception as e:
+            logger.error(f"Error showing VRT preset menu: {e}", exc_info=True)
+
+    def _show_vrt_preset_menu_from_interactor(self, widget):
+        """Show VRT preset menu from VTK right-click event."""
+        try:
+            interactor = widget.GetRenderWindow().GetInteractor()
+            x, y = interactor.GetEventPosition()
+            # VTK display coords origin is bottom-left; Qt is top-left
+            qt_pos = QPoint(int(x), int(widget.height() - y))
+            self._show_vrt_preset_menu(widget, qt_pos)
+        except Exception as e:
+            logger.error(f"Error handling VRT right-click: {e}", exc_info=True)
+
+    def _apply_vrt_preset(self, preset_name):
+        """Apply a volume rendering preset to the 3D view."""
+        if '3d' not in self.viewers:
+            return
+
+        volume_property = self.viewers['3d']['property']
+        self._apply_volume_preset(volume_property, preset_name)
+        self.current_3d_preset = preset_name
+
+        if hasattr(self, 'vol_combo'):
+            try:
+                self.vol_combo.setCurrentText(preset_name)
+            except Exception:
+                pass
+
+        renderer = self.viewers['3d']['renderer']
+        renderer.GetRenderWindow().Render()
+        self._reset_vrt_rmb_state()
+
+    def _reset_vrt_rmb_state(self):
+        state = self._vrt_mouse_state
+        state['rmb_down'] = False
+        state['rmb_dragging'] = False
+        state['rmb_start_pos'] = None
+        state['opacity_points'] = None
+        state['lighting'] = None
+        if not state.get('lmb_down') and not state.get('mmb_down'):
+            state['last_pos'] = None
+        try:
+            if '3d' in self.viewers:
+                style = self.viewers['3d'].get('style')
+                if style and hasattr(style, 'reset_interaction_state'):
+                    style.reset_interaction_state()
+        except Exception:
+            pass
+
+    def _capture_vrt_baseline(self):
+        if '3d' not in self.viewers:
+            return
+        volume_property = self.viewers['3d']['property']
+        opacity = volume_property.GetScalarOpacity()
+        points = []
+        size = opacity.GetSize()
+        for i in range(size):
+            vals = [0.0, 0.0, 0.0, 0.0]
+            opacity.GetNodeValue(i, vals)
+            points.append(tuple(vals))
+        self._vrt_mouse_state['opacity_points'] = points
+        self._vrt_mouse_state['lighting'] = (
+            volume_property.GetAmbient(),
+            volume_property.GetDiffuse(),
+            volume_property.GetSpecular()
+        )
+
+    def _apply_vrt_appearance_delta(self, dx, dy):
+        if '3d' not in self.viewers:
+            return
+        state = self._vrt_mouse_state
+        if not state.get('opacity_points'):
+            self._capture_vrt_baseline()
+
+        points = state.get('opacity_points') or []
+        if not points:
+            return
+
+        volume_property = self.viewers['3d']['property']
+        opacity = volume_property.GetScalarOpacity()
+        opacity.RemoveAllPoints()
+
+        scale = max(0.1, min(3.0, 1.0 + dx * 0.005))
+        for x, y, mid, sharp in points:
+            new_y = max(0.0, min(1.0, y * scale))
+            opacity.AddPoint(x, new_y, mid, sharp)
+
+        ambient, diffuse, specular = state.get('lighting', (0.2, 0.7, 0.3))
+        delta = -dy * 0.002
+        volume_property.SetAmbient(max(0.0, min(1.0, ambient + delta)))
+        volume_property.SetDiffuse(max(0.0, min(1.0, diffuse + delta)))
+        volume_property.SetSpecular(max(0.0, min(1.0, specular + delta)))
+
+        renderer = self.viewers['3d']['renderer']
+        renderer.GetRenderWindow().Render()
+
+    def _on_vrt_left_press(self, widget):
+        if '3d' not in self.viewers:
+            return
+        state = self._vrt_mouse_state
+        interactor = widget.GetRenderWindow().GetInteractor()
+        style = self.viewers['3d'].get('style')
+
+        state['lmb_down'] = True
+        if state['rmb_down']:
+            if style and not state['pan_active']:
+                style.OnLeftButtonUp()
+                style.OnMiddleButtonDown()
+                state['pan_active'] = True
+            interactor.AbortFlagOn()
+            return
+
+        if style:
+            style.OnLeftButtonDown()
+
+    def _on_vrt_left_release(self, widget):
+        if '3d' not in self.viewers:
+            return
+        state = self._vrt_mouse_state
+        interactor = widget.GetRenderWindow().GetInteractor()
+        style = self.viewers['3d'].get('style')
+
+        state['lmb_down'] = False
+        if state['pan_active']:
+            if style:
+                style.OnMiddleButtonUp()
+            state['pan_active'] = False
+            if state['rmb_down'] and style:
+                state['rmb_start_pos'] = interactor.GetEventPosition()
+                state['last_pos'] = state['rmb_start_pos']
+                state['rmb_dragging'] = False
+                self._capture_vrt_baseline()
+            return
+
+        if style:
+            style.OnLeftButtonUp()
+
+    def _on_vrt_right_press(self, widget):
+        if '3d' not in self.viewers:
+            return
+        state = self._vrt_mouse_state
+        interactor = widget.GetRenderWindow().GetInteractor()
+        style = self.viewers['3d'].get('style')
+
+        state['rmb_down'] = True
+        state['rmb_dragging'] = False
+        pos = interactor.GetEventPosition()
+        state['rmb_start_pos'] = pos
+        state['last_pos'] = pos
+        self._capture_vrt_baseline()
+
+        if state['lmb_down'] and style and not state['pan_active']:
+            style.OnLeftButtonUp()
+            style.OnMiddleButtonDown()
+            state['pan_active'] = True
+        interactor.AbortFlagOn()
+
+    def _on_vrt_right_release(self, widget):
+        if '3d' not in self.viewers:
+            return
+        state = self._vrt_mouse_state
+        interactor = widget.GetRenderWindow().GetInteractor()
+        style = self.viewers['3d'].get('style')
+
+        if state['pan_active']:
+            if style:
+                style.OnMiddleButtonUp()
+            state['pan_active'] = False
+            if state['lmb_down'] and style:
+                style.OnLeftButtonDown()
+
+        rmb_dragging = state.get('rmb_dragging', False)
+        state['rmb_down'] = False
+        state['rmb_dragging'] = False
+        state['rmb_start_pos'] = None
+        state['opacity_points'] = None
+        state['lighting'] = None
+
+        if not rmb_dragging:
+            self._show_vrt_preset_menu_from_interactor(widget)
+
+        interactor.AbortFlagOn()
+
+    def _on_vrt_middle_press(self, widget):
+        if '3d' not in self.viewers:
+            return
+        state = self._vrt_mouse_state
+        interactor = widget.GetRenderWindow().GetInteractor()
+        state['mmb_down'] = True
+        state['last_pos'] = interactor.GetEventPosition()
+        interactor.AbortFlagOn()
+
+    def _on_vrt_middle_release(self, widget):
+        if '3d' not in self.viewers:
+            return
+        state = self._vrt_mouse_state
+        interactor = widget.GetRenderWindow().GetInteractor()
+        state['mmb_down'] = False
+        if not state.get('lmb_down') and not state.get('rmb_down'):
+            state['last_pos'] = None
+        interactor.AbortFlagOn()
+
+    def _on_vrt_mouse_move(self, widget):
+        if '3d' not in self.viewers:
+            return
+        state = self._vrt_mouse_state
+        interactor = widget.GetRenderWindow().GetInteractor()
+        style = self.viewers['3d'].get('style')
+        pos = interactor.GetEventPosition()
+
+        if state['pan_active']:
+            if style:
+                style.OnMouseMove()
+            return
+
+        if state['mmb_down']:
+            if state['last_pos'] is None:
+                state['last_pos'] = pos
+                return
+            dy = pos[1] - state['last_pos'][1]
+            camera = self.viewers['3d']['renderer'].GetActiveCamera()
+            zoom_factor = 1.0
+            zoom_sensitivity = 0.005
+            if dy > 0:
+                zoom_factor = 1 / (1 + abs(dy) * zoom_sensitivity)
+            elif dy < 0:
+                zoom_factor = 1 + abs(dy) * zoom_sensitivity
+            camera.Dolly(zoom_factor)
+            self.viewers['3d']['renderer'].ResetCameraClippingRange()
+            self.viewers['3d']['renderer'].GetRenderWindow().Render()
+            state['last_pos'] = pos
+            return
+
+        if state['rmb_down'] and not state['pan_active']:
+            if state['rmb_start_pos'] is None:
+                state['rmb_start_pos'] = pos
+                state['last_pos'] = pos
+                return
+            dx = pos[0] - state['rmb_start_pos'][0]
+            dy = pos[1] - state['rmb_start_pos'][1]
+            if not state['rmb_dragging']:
+                if abs(dx) >= 4 or abs(dy) >= 4:
+                    state['rmb_dragging'] = True
+            if state['rmb_dragging']:
+                self._apply_vrt_appearance_delta(dx, dy)
+            return
+
+        if state['lmb_down'] and style:
+            style.OnMouseMove()
+
     def _show_segment_menu(self):
         """Show segmentation menu"""
         from PySide6.QtWidgets import QMenu, QMessageBox

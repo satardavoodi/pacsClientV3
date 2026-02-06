@@ -7,6 +7,7 @@ from PacsClient.pacs.patient_tab.interactor_styles import AbstractInteractorStyl
 from PacsClient.pacs.patient_tab.viewers.viewer_2d import ImageViewer2D, CustomCombineImageViewers
 from PacsClient.pacs.patient_tab.ui.widgets import ViewportSpinner
 from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QCursor, QPainter, QPixmap, QColor
 import gc  # برای garbage collection دستی
 from PacsClient.pacs.patient_tab.utils import read_segment_nifti
 import vtkmodules.all as vtk
@@ -113,6 +114,16 @@ class VTKWidget(QVTKRenderWindowInteractor):
             }
         """)
 
+        # Sync point interaction state
+        self._sync_enabled = False
+        self._sync_manager = None
+        self._sync_viewer_id = None
+        self._sync_dragging = False
+        self._sync_observer_ids = []
+        self._sync_prev_style = None
+        self._sync_style = None
+        self._target_cursor = None
+
     def _schedule_render(self, delay_ms=None):
         """
         ANTI-FLICKERING: Throttled render scheduling
@@ -173,6 +184,174 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         finally:
             self._render_pending = False
+
+    def get_sync_viewer_id(self):
+        if self._sync_viewer_id:
+            return self._sync_viewer_id
+        if self.id_vtk_widget is not None:
+            return f"viewer_{self.id_vtk_widget}"
+        return f"viewer_{id(self)}"
+
+    def enable_sync_point(self, sync_manager, viewer_id=None):
+        if self.image_viewer is None:
+            return
+
+        self._sync_manager = sync_manager
+        self._sync_viewer_id = viewer_id or self.get_sync_viewer_id()
+        self._sync_enabled = True
+
+        if self._sync_prev_style is None:
+            self._sync_prev_style = self.interactor.GetInteractorStyle()
+
+        if self._sync_style is None:
+            self._sync_style = self._create_sync_interactor_style()
+
+        self.interactor.SetInteractorStyle(self._sync_style)
+        self._set_target_cursor(True)
+
+        if self._sync_observer_ids:
+            return
+
+        self._sync_observer_ids.append(
+            self.interactor.AddObserver('LeftButtonPressEvent', self._on_sync_left_press)
+        )
+        self._sync_observer_ids.append(
+            self.interactor.AddObserver('MouseMoveEvent', self._on_sync_mouse_move)
+        )
+        self._sync_observer_ids.append(
+            self.interactor.AddObserver('LeftButtonReleaseEvent', self._on_sync_left_release)
+        )
+
+    def disable_sync_point(self):
+        self._sync_enabled = False
+        self._sync_dragging = False
+
+        for obs_id in self._sync_observer_ids:
+            try:
+                self.interactor.RemoveObserver(obs_id)
+            except Exception:
+                pass
+        self._sync_observer_ids = []
+
+        if self.image_viewer is not None:
+            self.image_viewer.hide_sync_point()
+
+        self._set_target_cursor(False)
+
+        if self._sync_prev_style is not None:
+            try:
+                self.interactor.SetInteractorStyle(self._sync_prev_style)
+            except Exception:
+                pass
+            self._sync_prev_style = None
+
+        self._sync_manager = None
+
+    def _set_target_cursor(self, enabled: bool):
+        try:
+            if not enabled:
+                self.unsetCursor()
+                return
+
+            if self._target_cursor is None:
+                size = 16
+                pixmap = QPixmap(size, size)
+                pixmap.fill(Qt.transparent)
+                painter = QPainter(pixmap)
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setBrush(QColor(220, 38, 38))
+                painter.setPen(QColor(220, 38, 38))
+                radius = 4
+                center = size // 2
+                painter.drawEllipse(center - radius, center - radius, radius * 2, radius * 2)
+                painter.end()
+                self._target_cursor = QCursor(pixmap, center, center)
+
+            self.setCursor(self._target_cursor)
+        except Exception:
+            pass
+
+    def _create_sync_interactor_style(self):
+        widget = self
+
+        class SyncPointInteractorStyle(vtk.vtkInteractorStyleUser):
+            def OnLeftButtonDown(self):
+                widget._on_sync_left_press(self, None)
+
+            def OnMouseMove(self):
+                widget._on_sync_mouse_move(self, None)
+
+            def OnLeftButtonUp(self):
+                widget._on_sync_left_release(self, None)
+
+        style = SyncPointInteractorStyle()
+        try:
+            style.SetInteractor(self.interactor)
+        except Exception:
+            pass
+        return style
+
+    def _on_sync_left_press(self, obj, event):
+        if not self._sync_enabled or self.image_viewer is None:
+            return
+
+        display_x, display_y = self.interactor.GetEventPosition()
+        world_pos = self.image_viewer.pick_world_point(display_x, display_y)
+        if world_pos is None:
+            return
+
+        self._sync_dragging = True
+        self._apply_sync_point(world_pos)
+        try:
+            self.interactor.SetAbortFlag(1)
+        except Exception:
+            pass
+
+    def _on_sync_mouse_move(self, obj, event):
+        if not self._sync_enabled or not self._sync_dragging or self.image_viewer is None:
+            return
+
+        display_x, display_y = self.interactor.GetEventPosition()
+        world_pos = self.image_viewer.pick_world_point(display_x, display_y)
+        if world_pos is None:
+            return
+
+        self._apply_sync_point(world_pos)
+        try:
+            self.interactor.SetAbortFlag(1)
+        except Exception:
+            pass
+
+    def _on_sync_left_release(self, obj, event):
+        if not self._sync_enabled:
+            return
+        self._sync_dragging = False
+        try:
+            self.interactor.SetAbortFlag(1)
+        except Exception:
+            pass
+
+    def _apply_sync_point(self, world_pos):
+        if self.image_viewer is None:
+            return
+
+        orient = self.image_viewer.GetSliceOrientation()
+        cur_slice = self.image_viewer.GetSlice()
+        print(
+            f"[SYNC SOURCE] viewer={self._sync_viewer_id} orient={orient} slice={cur_slice} "
+            f"→ world_pos=({world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f})"
+        )
+
+        self.image_viewer.set_sync_point(world_pos, adjust_slice=False)
+
+        if self._sync_manager is not None:
+            self._sync_manager.set_active_point(world_pos)
+            self._sync_manager.notify_cursor_moved(self._sync_viewer_id, world_pos)
+
+    def apply_sync_point_from_manager(self, world_pos, adjust_slice=True):
+        if self.image_viewer is None:
+            return
+        self.image_viewer.set_sync_point(world_pos, adjust_slice=adjust_slice)
 
     def grow_current_series_inplace(self, new_vtk_image_data, new_metadata=None):
         """افزایش نرم تعداد اسلایس‌های سری فعلی، بدون ریست/سوییچ."""
@@ -251,6 +430,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # set slider form before interactorstyle
             if hasattr(self.current_style, 'slider'):
                 new_interactorstyle.set_slider_from_ui(self.current_style.slider)
+            elif hasattr(self, 'slider') and self.slider is not None:
+                new_interactorstyle.set_slider_from_ui(self.slider)
         
         return new_interactorstyle
 

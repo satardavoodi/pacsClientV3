@@ -46,6 +46,7 @@ class ToolAccess:
     THICK_SLAB = "thick_slab"  # 2D Thick Slab MIP
     MPR = "mpr"  # Multi-planar reconstruction
     CURVED_MPR = "curved_mpr"  # Curved MPR
+    TARGET = "target"  # Sync point/cursor mode
 
     # Category 8: Segmentation Tools
     SEGMENTATION = "segmentation"

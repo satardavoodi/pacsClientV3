@@ -1,5 +1,6 @@
 import gc
 import time
+import os
 from pathlib import Path
 import numpy as np
 import vtk
@@ -20,7 +21,7 @@ from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachmen
 
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import QHBoxLayout, QSlider, QLabel, QScrollArea, QGridLayout, QToolBar, QPushButton, \
-    QButtonGroup, QStackedWidget, QSizePolicy, QFrame, QGroupBox
+    QButtonGroup, QStackedWidget, QSizePolicy, QFrame, QGroupBox, QMessageBox, QListWidget, QListWidgetItem, QSplitter
 from PySide6.QtGui import QPainter
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
@@ -30,6 +31,18 @@ from PacsClient.pacs.patient_tab.utils import load_images, save_image_as_png, de
 from PacsClient.pacs.workstation_ui.settings_ui.filter_config import FilterConfigWidget
 # from PacsClient.pacs.patient_tab.viewers.advanced_tools_panel import AdvancedToolsPanel  # REMOVED: File deleted during merge
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import ToolbarManager, reference_line
+from PacsClient.pacs.patient_tab.zeta_sync import (
+    SyncManager,
+    SyncContext,
+    SyncMode,
+    SyncTarget,
+    map_ijk_between_vtk_images,
+    build_ijk_to_world_matrix,
+    world_to_ijk,
+    ijk_to_world,
+    is_ijk_in_bounds,
+    log_image_orientation,
+)
 import asyncio
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, CallerTypes
 import threading
@@ -87,6 +100,17 @@ class PatientWidget(QWidget):
         self.method_add_new_tab = None
         self.logo_patient = None
         self.ordering_by_instances_number = True
+
+        # Zeta Sync manager (2D viewer sync point)
+        self.sync_manager = SyncManager()
+        self.sync_manager.set_apply_cursor_callback(self._apply_sync_cursor)
+        self.sync_manager.set_map_cursor_callback(self._map_sync_cursor)
+        self._sync_viewer_map = {}
+        self._sync_enabled = False
+        self.target_mode_enabled = False
+        self._sync_apply_delay_ms = 60
+        self._sync_update_token = 0
+        self._sync_orientation_logged = set()
         
         self._global_async_lock = None 
 
@@ -154,6 +178,7 @@ class PatientWidget(QWidget):
         # Lazy load heavy panels (created when needed)
         self.reception_data_tab = None
         self.advanced_tools_panel = None
+        self.advanced_analysis_series_list = None
         self._patient_id_for_lazy = patient_id
 
         self.right_panel.addWidget(self.thumb_panel)  # index 0
@@ -1868,6 +1893,315 @@ class PatientWidget(QWidget):
         self.main_layout.addLayout(header_layout)
         return header_layout
 
+    def toggle_sync_point(self, enabled: bool):
+        """Enable/disable the synced red target point across 2D viewers."""
+        self._sync_enabled = bool(enabled)
+        self.target_mode_enabled = self._sync_enabled
+
+        if not self._sync_enabled:
+            self.sync_manager.set_mode(SyncMode.DISABLED)
+            for vtk_widget in list(self._sync_viewer_map.values()):
+                try:
+                    vtk_widget.disable_sync_point()
+                except Exception:
+                    pass
+            self._sync_viewer_map.clear()
+            self.sync_manager.clear_viewers()
+            return
+
+        self.sync_manager.set_mode(SyncMode.CURSOR)
+        self._register_sync_viewers()
+
+    def _register_sync_viewers(self):
+        self._sync_viewer_map.clear()
+        self.sync_manager.clear_viewers()
+
+        for node in self.lst_nodes_viewer:
+            vtk_widget = getattr(node, 'vtk_widget', None)
+            if vtk_widget is None or getattr(vtk_widget, 'image_viewer', None) is None:
+                continue
+
+            viewer_id = vtk_widget.get_sync_viewer_id()
+            self._sync_viewer_map[viewer_id] = vtk_widget
+
+            series_uid = None
+            try:
+                series_uid = vtk_widget.image_viewer.metadata.get('series', {}).get('series_uid')
+            except Exception:
+                pass
+
+            context = SyncContext(
+                viewer_id=viewer_id,
+                target_type=SyncTarget.VIEWER_2D,
+                series_uid=series_uid,
+                study_uid=self.study_uid
+            )
+            self.sync_manager.register_viewer(context)
+            vtk_widget.enable_sync_point(self.sync_manager, viewer_id=viewer_id)
+
+    def _apply_sync_cursor(self, viewer_id, world_pos):
+        vtk_widget = self._sync_viewer_map.get(viewer_id)
+        if vtk_widget is None:
+            return
+        if not self._sync_enabled:
+            return
+
+        self._sync_update_token += 1
+        token = self._sync_update_token
+
+        viewer = getattr(vtk_widget, 'image_viewer', None)
+        orient = viewer.GetSliceOrientation() if viewer else -1
+        print(
+            f"[SYNC APPLY] viewer={viewer_id} orient={orient} "
+            f"world_pos=({world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f})"
+        )
+
+        def _apply():
+            if not self._sync_enabled:
+                return
+            if token != self._sync_update_token:
+                return
+            vtk_widget.apply_sync_point_from_manager(world_pos, adjust_slice=True)
+
+        QTimer.singleShot(self._sync_apply_delay_ms, _apply)
+
+    @staticmethod
+    def _read_direction_3x3(viewer):
+        """
+        Read the original ITK 3×3 direction matrix from the pre-reslice
+        image's "DirectionMatrix" field data.
+
+        The stored matrix has row-1 negated to compensate for the Y-flip
+        done in convert_itk2vtk().  We un-negate row 1 here so the
+        returned matrix is the *original* ITK direction.
+
+        Returns np.ndarray (3,3) or None.
+        """
+        reslice = getattr(viewer, 'image_reslice', None)
+        if reslice is None:
+            return None
+        original_img = getattr(reslice, 'vtk_image_data', None)
+        if original_img is None:
+            return None
+        fd = original_img.GetFieldData()
+        if fd is None:
+            return None
+        arr = fd.GetArray("DirectionMatrix")
+        if arr is None or arr.GetNumberOfTuples() < 16:
+            return None
+        D = np.zeros((3, 3))
+        for r in range(3):
+            for c in range(3):
+                D[r, c] = arr.GetValue(r * 4 + c)
+        # Un-negate row 1 → original ITK direction
+        D[1, :] = -D[1, :]
+        return D
+
+    @staticmethod
+    def _vtk_world_to_patient(world_pos, origin, spacing, dims, D_itk):
+        """
+        Convert VTK post-Y-flip world position to DICOM patient (LPS+) coordinates.
+        
+        Pipeline recap:
+          - convert_itk2vtk does: arr[:, ::-1, :] (Y-flip in numpy)
+          - VTK world = origin + (i, j, k) * spacing   (identity direction on reslice output)
+          - But voxel (i, j, k) in VTK was originally (i, y-1-j, k) in ITK
+          
+        So to get patient coordinates:
+          ijk_vtk = (world - origin) / spacing         ← VTK voxel indices
+          ijk_itk = (ijk_vtk[0], (dims_y-1) - ijk_vtk[1], ijk_vtk[2])
+          patient = origin + D_itk @ (ijk_itk * spacing)
+          
+        Returns patient position as np.ndarray(3).
+        """
+        o = np.array(origin, dtype=float)
+        s = np.array(spacing, dtype=float)
+        
+        # VTK world → VTK voxel (continuous)
+        ijk_vtk = (np.array(world_pos, dtype=float) - o) / s
+        
+        # VTK voxel → ITK voxel (undo Y-flip)
+        ijk_itk = np.array([ijk_vtk[0], (dims[1] - 1) - ijk_vtk[1], ijk_vtk[2]], dtype=float)
+        
+        # ITK voxel → patient (LPS+)
+        patient = o + D_itk @ (ijk_itk * s)
+        return patient
+
+    @staticmethod
+    def _patient_to_vtk_world(patient_pos, origin, spacing, dims, D_itk):
+        """
+        Convert DICOM patient (LPS+) coordinates to VTK post-Y-flip world position.
+        
+        Inverse of _vtk_world_to_patient:
+          ijk_itk = D_itk_inv @ (patient - origin) / spacing... 
+                  (actually: ijk_itk * spacing = D_itk_inv @ (patient - origin))
+          ijk_vtk = (ijk_itk[0], (dims_y-1) - ijk_itk[1], ijk_itk[2])
+          vtk_world = origin + ijk_vtk * spacing
+          
+        Returns VTK world position as tuple(3).
+        """
+        o = np.array(origin, dtype=float)
+        s = np.array(spacing, dtype=float)
+        
+        # Patient → ITK voxel
+        D_inv = np.linalg.inv(D_itk)
+        ijk_itk_scaled = D_inv @ (np.array(patient_pos, dtype=float) - o)
+        ijk_itk = ijk_itk_scaled / s
+        
+        # ITK voxel → VTK voxel (apply Y-flip)
+        ijk_vtk = np.array([ijk_itk[0], (dims[1] - 1) - ijk_itk[1], ijk_itk[2]], dtype=float)
+        
+        # VTK voxel → VTK world
+        vtk_world = o + ijk_vtk * s
+        return (float(vtk_world[0]), float(vtk_world[1]), float(vtk_world[2]))
+
+    def _map_sync_cursor(self, source_viewer_id, target_viewer_id, world_pos):
+        """
+        Map a world position from source viewer to target viewer.
+        
+        Strategy: Convert through DICOM patient coordinate space (LPS+).
+        
+        VTK world A  →  patient (LPS+)  →  VTK world B
+        
+        This correctly handles:
+        - Same volume: identity (same D, same origin)
+        - Same orientation, different spacing: proportional mapping through patient space
+        - Different orientations (Axial ↔ Sagittal): direction matrices rotate correctly
+        """
+        if not self._sync_enabled:
+            return None
+
+        source_widget = self._sync_viewer_map.get(source_viewer_id)
+        target_widget = self._sync_viewer_map.get(target_viewer_id)
+        if source_widget is None or target_widget is None:
+            return None
+
+        source_viewer = getattr(source_widget, 'image_viewer', None)
+        target_viewer = getattr(target_widget, 'image_viewer', None)
+        if source_viewer is None or target_viewer is None:
+            return None
+
+        imageA = getattr(source_viewer, 'vtk_image_data', None)
+        imageB = getattr(target_viewer, 'vtk_image_data', None)
+        if imageA is None or imageB is None:
+            return None
+
+        try:
+            orientA = source_viewer.GetSliceOrientation()  # 0=YZ, 1=XZ, 2=XY
+            orientB = target_viewer.GetSliceOrientation()
+
+            originA = imageA.GetOrigin()
+            spacingA = imageA.GetSpacing()
+            dimsA = imageA.GetDimensions()
+            originB = imageB.GetOrigin()
+            spacingB = imageB.GetSpacing()
+            dimsB = imageB.GetDimensions()
+
+            # Read original ITK direction matrices
+            D_A = self._read_direction_3x3(source_viewer)
+            D_B = self._read_direction_3x3(target_viewer)
+
+            # Log geometry once per viewer pair
+            log_key = (source_viewer_id, target_viewer_id)
+            if log_key not in self._sync_orientation_logged:
+                print(
+                    f"[SYNC MAP] Pair: {source_viewer_id}(orient={orientA}) → {target_viewer_id}(orient={orientB})\n"
+                    f"  imageA: id={id(imageA)} origin=({originA[0]:.2f},{originA[1]:.2f},{originA[2]:.2f}) "
+                    f"spacing=({spacingA[0]:.3f},{spacingA[1]:.3f},{spacingA[2]:.3f}) dims={dimsA}\n"
+                    f"  imageB: id={id(imageB)} origin=({originB[0]:.2f},{originB[1]:.2f},{originB[2]:.2f}) "
+                    f"spacing=({spacingB[0]:.3f},{spacingB[1]:.3f},{spacingB[2]:.3f}) dims={dimsB}\n"
+                    f"  same_object={imageA is imageB}\n"
+                    f"  D_A (ITK original) =\n{D_A}\n"
+                    f"  D_B (ITK original) =\n{D_B}"
+                )
+                self._sync_orientation_logged.add(log_key)
+
+            # ---------------------------------------------------------------
+            # Same VTK object → pass through (same coordinate space)
+            # ---------------------------------------------------------------
+            if imageA is imageB:
+                print(
+                    f"[SYNC MAP] {source_viewer_id}→{target_viewer_id}: "
+                    f"world=({world_pos[0]:.2f},{world_pos[1]:.2f},{world_pos[2]:.2f}) → SAME IMAGE"
+                )
+                return world_pos
+
+            # ---------------------------------------------------------------
+            # Patient-space mapping (direction-aware, handles all cases)
+            # ---------------------------------------------------------------
+            if D_A is not None and D_B is not None:
+                # Step 1: VTK world A → patient LPS+
+                patient = self._vtk_world_to_patient(
+                    world_pos, originA, spacingA, dimsA, D_A
+                )
+                
+                # Step 2: patient LPS+ → VTK world B
+                mapped = self._patient_to_vtk_world(
+                    patient, originB, spacingB, dimsB, D_B
+                )
+                
+                # Step 3: Clamp to valid range of volume B
+                mapped_clamped = list(mapped)
+                for axis in range(3):
+                    lo = originB[axis]
+                    hi = originB[axis] + (dimsB[axis] - 1) * spacingB[axis]
+                    if lo > hi:
+                        lo, hi = hi, lo
+                    mapped_clamped[axis] = max(lo, min(mapped_clamped[axis], hi))
+                
+                print(
+                    f"[SYNC MAP] {source_viewer_id}→{target_viewer_id}: "
+                    f"vtk_world=({world_pos[0]:.2f},{world_pos[1]:.2f},{world_pos[2]:.2f}) "
+                    f"→ patient=({patient[0]:.2f},{patient[1]:.2f},{patient[2]:.2f}) "
+                    f"→ mapped=({mapped_clamped[0]:.2f},{mapped_clamped[1]:.2f},{mapped_clamped[2]:.2f})"
+                )
+                return tuple(mapped_clamped)
+
+            # ---------------------------------------------------------------
+            # Fallback: fractional mapping (no direction data available)
+            # ---------------------------------------------------------------
+            mapped = list(world_pos)
+            fracs = [0.0, 0.0, 0.0]
+            for axis in range(3):
+                extentA = (dimsA[axis] - 1) * spacingA[axis]
+                extentB = (dimsB[axis] - 1) * spacingB[axis]
+                if extentA > 1e-9:
+                    frac = (world_pos[axis] - originA[axis]) / extentA
+                else:
+                    frac = 0.0
+                fracs[axis] = frac
+                mapped[axis] = originB[axis] + frac * extentB
+
+            print(
+                f"[SYNC MAP] {source_viewer_id}→{target_viewer_id}: "
+                f"world=({world_pos[0]:.2f},{world_pos[1]:.2f},{world_pos[2]:.2f}) "
+                f"frac=({fracs[0]:.4f},{fracs[1]:.4f},{fracs[2]:.4f}) "
+                f"→ mapped=({mapped[0]:.2f},{mapped[1]:.2f},{mapped[2]:.2f}) [FRACTIONAL FALLBACK]"
+            )
+            return tuple(mapped)
+
+        except Exception as e:
+            print(f"[SYNC MAP] Mapping failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+
+    def _get_selected_world_center(self):
+        selected_widget = self.selected_widget
+        if selected_widget is None or getattr(selected_widget, 'image_viewer', None) is None:
+            return None
+
+        viewer = selected_widget.image_viewer
+        dims = viewer.vtk_image_data.GetDimensions()
+        i = (dims[0] - 1) / 2.0
+        j = (dims[1] - 1) / 2.0
+        k = viewer.GetSlice()
+        try:
+            return viewer.ijk_to_world(i, j, k, y_flip=True)
+        except Exception:
+            return None
+
     ##############################################################################################
     # --- helper: thin divider line between buttons ---
     def make_divider(self):
@@ -1911,7 +2245,7 @@ class PatientWidget(QWidget):
         self.btn_ai_module.setCheckable(True)
         self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
 
-        self.btn_advanced_tools = VerticalButton("🛠️ Tools")
+        self.btn_advanced_tools = VerticalButton("Advanced Analysis")
         self.btn_advanced_tools.setCheckable(True)
         self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
 
@@ -2042,60 +2376,330 @@ class PatientWidget(QWidget):
                 self.method_add_new_tab(open_ai_client_tab=True, study_uid=self.study_uid)
 
         elif option == 'advanced_tools':
-            print("[PatientWidget] Switching to Advanced Tools panel (index 3)")
-            
-            # ✅ Lazy load AdvancedToolsPanel if not already created
-            # NOTE: AdvancedToolsPanel was removed during merge - this feature is currently disabled
+            print("[PatientWidget] Advanced Analysis requested")
+
             if self.advanced_tools_panel is None:
-                print("[PatientWidget] AdvancedToolsPanel is not available (module removed)")
-                # Show a placeholder message instead
-                from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
-                placeholder = QWidget()
-                layout = QVBoxLayout(placeholder)
-                label = QLabel("Advanced Tools Panel\n\n(Currently unavailable)")
-                label.setAlignment(Qt.AlignCenter)
-                label.setStyleSheet("color: #94a3b8; font-size: 14px;")
-                layout.addWidget(label)
-                self.advanced_tools_panel = placeholder
-                
-                # Replace placeholder widget with message
+                self.advanced_tools_panel = self._build_advanced_analysis_panel()
+
                 self.right_panel.removeWidget(self._lazy_placeholder_3)
                 self._lazy_placeholder_3.deleteLater()
                 self.right_panel.insertWidget(3, self.advanced_tools_panel)
-                
-                print("[PatientWidget] Placeholder created for unavailable AdvancedToolsPanel")
-            
-            self.right_panel.setCurrentIndex(3)  # index 3 for Advanced Tools
-            self.right_panel.setFixedWidth(550)  # Wider for tools
+
+            self.right_panel.setCurrentIndex(3)
+            self.right_panel.setFixedWidth(self.default_panel_width)
             self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(True))
 
-            # Update tools panel with current image data
-            if self.advanced_tools_panel is not None and self.selected_widget and hasattr(self.selected_widget, 'image_viewer'):
-                viewer = self.selected_widget.image_viewer
-                if hasattr(viewer, 'vtk_image_data') and viewer.vtk_image_data:
-                    self.advanced_tools_panel.set_image_data(viewer.vtk_image_data)
-                if hasattr(viewer, 'renderer') and viewer.renderer:
-                    self.advanced_tools_panel.set_renderer(viewer.renderer)
+            self._refresh_advanced_analysis_series_list()
 
-            # Connect the new signal for applying filters to all images of same modality
-            if self.advanced_tools_panel is not None:
-                try:
-                    # Disconnect previous connections to avoid duplicates
-                    self.advanced_tools_panel.filter_applied_to_modality.disconnect()
-                except:
-                    pass  # Signal was not connected before
-                self.advanced_tools_panel.filter_applied_to_modality.connect(self.apply_filters_to_all_series_of_modality)
+            # Default behavior: open advanced viewer with current active series
+            self.launch_advanced_analysis_for_active_series()
 
-                # Also connect to the general tool_applied signal for other tools
-                try:
-                    self.advanced_tools_panel.tool_applied.disconnect()
-                except:
-                    pass  # Signal was not connected before
-                self.advanced_tools_panel.tool_applied.connect(self._on_advanced_tool_applied)
+    def launch_advanced_analysis_for_active_series(self) -> bool:
+        """
+        Launch Advanced MPR (3D Slicer) with the currently active series.
+
+        Returns:
+            bool: True if launch initiated, False otherwise.
+        """
+        try:
+            selected_widget = self.selected_widget
+            if selected_widget is None or not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                QMessageBox.warning(
+                    self,
+                    "No Image Available",
+                    "No active DICOM series available.\n\nPlease load an image first."
+                )
+                return False
+
+            # Prefer metadata directly from the active viewer
+            metadata = getattr(selected_widget.image_viewer, 'metadata', None)
+
+            # Fallback: resolve metadata from thumbnails using last_series_show
+            if not metadata:
+                series_data = None
+                last_series_show = getattr(selected_widget, 'last_series_show', None)
+                if last_series_show is not None:
+                    if isinstance(last_series_show, int) and 0 <= last_series_show < len(self.lst_thumbnails_data):
+                        series_data = self.lst_thumbnails_data[last_series_show]
+                    else:
+                        try:
+                            last_series_int = int(last_series_show)
+                        except (TypeError, ValueError):
+                            last_series_int = None
+                        if last_series_int is not None:
+                            for data in self.lst_thumbnails_data:
+                                series_num = data.get('metadata', {}).get('series', {}).get('series_number')
+                                try:
+                                    if series_num is not None and int(series_num) == last_series_int:
+                                        series_data = data
+                                        break
+                                except (TypeError, ValueError):
+                                    continue
+
+                if series_data:
+                    metadata = series_data.get('metadata', {})
+
+            if not metadata:
+                QMessageBox.warning(
+                    self,
+                    "No Series Available",
+                    "No active DICOM series available.\n\nPlease select a series first."
+                )
+                return False
+
+            series_metadata = metadata.get('series', {})
+            dicom_directory = series_metadata.get('series_path')
+            series_uid = series_metadata.get('series_uid')
+            window_width = None
+            window_level = None
+
+            instances = metadata.get('instances', [])
+            if instances:
+                first_instance = instances[0]
+                if not dicom_directory:
+                    first_instance_path = first_instance.get('instance_path')
+                    if first_instance_path:
+                        dicom_directory = os.path.dirname(first_instance_path)
+
+                window_width = first_instance.get('window_width')
+                window_level = first_instance.get('window_center')
+
+            if not dicom_directory:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Series",
+                    "Could not find DICOM directory for the active series."
+                )
+                return False
+
+            if not os.path.exists(dicom_directory):
+                QMessageBox.warning(
+                    self,
+                    "Directory Not Found",
+                    f"DICOM directory not found:\n{dicom_directory}"
+                )
+                return False
+
+            return self._launch_advanced_analysis_with_params(
+                dicom_dir=dicom_directory,
+                series_uid=series_uid,
+                window_width=window_width,
+                window_level=window_level
+            )
+
+        except Exception as e:
+            print(f"[PatientWidget] Error launching Advanced Analysis: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Error launching Advanced Analysis:\n{str(e)}"
+            )
+            return False
+
+    def _build_advanced_analysis_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setStyleSheet("""
+            QWidget {
+                background: #0f1419;
+                border: none;
+                border-radius: 8px;
+                margin: 0px;
+                padding: 0px;
+            }
+        """)
+
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        splitter = QSplitter(Qt.Vertical)
+        splitter.setChildrenCollapsible(False)
+
+        top_widget = QWidget()
+        top_layout = QVBoxLayout(top_widget)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(6)
+
+        title_label = QLabel("Advanced Analysis - Series")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 11px;
+                font-family: 'Roboto', sans-serif;
+                color: #f7fafc;
+                padding: 6px 8px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #7c3aed, stop:1 #5b21b6);
+                border: 1px solid #7c3aed;
+                border-radius: 8px;
+            }
+        """)
+        top_layout.addWidget(title_label)
+
+        series_list = QListWidget()
+        series_list.setObjectName("AdvancedAnalysisSeriesList")
+        series_list.setStyleSheet("""
+            QListWidget#AdvancedAnalysisSeriesList {
+                background: #0b1016;
+                border: 1px solid #2d3748;
+                border-radius: 8px;
+                padding: 4px;
+                color: #e2e8f0;
+                font-size: 12px;
+            }
+            QListWidget#AdvancedAnalysisSeriesList::item {
+                padding: 6px 8px;
+                border-radius: 6px;
+            }
+            QListWidget#AdvancedAnalysisSeriesList::item:selected {
+                background: #2563eb;
+                color: #ffffff;
+            }
+        """)
+        series_list.itemClicked.connect(self._on_advanced_analysis_series_clicked)
+        self.advanced_analysis_series_list = series_list
+        top_layout.addWidget(series_list)
+
+        bottom_widget = QWidget()
+        bottom_widget.setStyleSheet("""
+            QWidget {
+                background: #0b1016;
+                border: 1px dashed #2d3748;
+                border-radius: 8px;
+            }
+        """)
+
+        splitter.addWidget(top_widget)
+        splitter.addWidget(bottom_widget)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+
+        layout.addWidget(splitter)
+        return panel
+
+    def _refresh_advanced_analysis_series_list(self) -> None:
+        if self.advanced_analysis_series_list is None:
+            return
+
+        series_entries = self._collect_advanced_analysis_series_entries()
+
+        self.advanced_analysis_series_list.clear()
+        for entry in series_entries:
+            series_number = entry.get('series_number', 'N/A')
+            series_description = entry.get('series_description')
+            if series_description:
+                label = f"{series_number} - {series_description}"
+            else:
+                label = f"{series_number}"
+
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, entry)
+            self.advanced_analysis_series_list.addItem(item)
+
+    def _collect_advanced_analysis_series_entries(self) -> list:
+        entries = {}
+
+        for data in getattr(self, 'lst_thumbnails_data', []) or []:
+            metadata = data.get('metadata', {})
+            series_meta = metadata.get('series', {})
+            series_number = series_meta.get('series_number')
+            if series_number is None:
+                continue
+            key = str(series_number)
+
+            entry = entries.get(key, {})
+            entry['series_number'] = key
+            entry.setdefault('series_description', series_meta.get('series_description') or series_meta.get('series_name'))
+            entry.setdefault('series_uid', series_meta.get('series_uid'))
+            entry.setdefault('series_path', series_meta.get('series_path'))
+
+            instances = metadata.get('instances', [])
+            if instances:
+                first_instance = instances[0]
+                entry.setdefault('window_width', first_instance.get('window_width'))
+                entry.setdefault('window_level', first_instance.get('window_center'))
+
+            entries[key] = entry
+
+        for series_number, info in getattr(self, '_server_series_info', {}).items():
+            key = str(series_number)
+            entry = entries.get(key, {'series_number': key})
+            entry.setdefault('series_description', info.get('series_description') or info.get('series_name'))
+            entry.setdefault('series_uid', info.get('series_uid'))
+            entry.setdefault('series_path', info.get('series_path'))
+            entries[key] = entry
+
+        def _sort_key(item):
+            try:
+                return int(item.get('series_number', 0))
+            except (TypeError, ValueError):
+                return 0
+
+        return sorted(entries.values(), key=_sort_key)
+
+    def _on_advanced_analysis_series_clicked(self, item: QListWidgetItem) -> None:
+        entry = item.data(Qt.UserRole) if item else None
+        if not entry:
+            return
+
+        series_number = entry.get('series_number')
+        series_uid = entry.get('series_uid')
+        window_width = entry.get('window_width')
+        window_level = entry.get('window_level')
+
+        dicom_directory = entry.get('series_path')
+        if not dicom_directory and series_number and self.import_folder_path:
+            candidate_path = Path(self.import_folder_path) / str(series_number)
+            if candidate_path.exists():
+                dicom_directory = str(candidate_path)
+
+        if not dicom_directory:
+            QMessageBox.warning(
+                self,
+                "Invalid Series",
+                "Could not find DICOM directory for the selected series."
+            )
+            return
+
+        if not os.path.exists(dicom_directory):
+            QMessageBox.warning(
+                self,
+                "Directory Not Found",
+                f"DICOM directory not found:\n{dicom_directory}"
+            )
+            return
+
+        self._launch_advanced_analysis_with_params(
+            dicom_dir=dicom_directory,
+            series_uid=series_uid,
+            window_width=window_width,
+            window_level=window_level
+        )
+
+    def _launch_advanced_analysis_with_params(
+        self,
+        dicom_dir: str,
+        series_uid: str | None = None,
+        window_width: float | None = None,
+        window_level: float | None = None
+    ) -> bool:
+        from PacsClient.pacs.patient_tab.advance_mpr_3d_slicer.slicer_launcher import get_slicer_launcher
+
+        launcher = get_slicer_launcher(parent_widget=self)
+        return bool(launcher.launch_with_dicom(
+            dicom_dir=dicom_dir,
+            layout='mpr',
+            patient_id=getattr(self, 'patient_id', None),
+            study_id=getattr(self, 'study_uid', None),
+            window_width=window_width,
+            window_level=window_level,
+            series_uid=series_uid
+        ))
 
     ########################################################
     def thumbnail_layout_ui(self):

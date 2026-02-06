@@ -29,6 +29,9 @@ Usage:
 
 import os
 import sys
+import json
+import socket
+import threading
 from pathlib import Path
 
 # ============================================================
@@ -383,6 +386,108 @@ if RUNNING_IN_SLICER:
         pass  # Use hardcoded IDs as fallback
 
 DEFAULT_LAYOUT = "mpr"
+
+# ============================================================
+# Remote Command Server (Advanced Analysis series switching)
+# ============================================================
+
+REMOTE_HOST = "127.0.0.1"
+REMOTE_PORT = int(os.environ.get("NEWMPR2_REMOTE_PORT", "47891"))
+_REMOTE_SERVER_STARTED = False
+
+
+def _handle_remote_load(payload: dict) -> None:
+    try:
+        dicom_dir = payload.get("dicom_dir")
+        layout = payload.get("layout") or DEFAULT_LAYOUT
+        series_uid = payload.get("series_uid")
+        window_width = payload.get("window_width")
+        window_level = payload.get("window_level")
+        patient_id = payload.get("patient_id")
+        study_id = payload.get("study_id")
+
+        args = {
+            "dicom_dir": dicom_dir,
+            "layout": layout,
+            "series_uid": series_uid,
+            "window_width": window_width,
+            "window_level": window_level,
+            "patient_id": patient_id,
+            "study_id": study_id,
+            "auto_center": True
+        }
+
+        primary_volume = None
+        if dicom_dir:
+            primary_volume = load_dicom_folder(dicom_dir, series_uid=series_uid)
+
+        configure_views(layout, primary_volume, args)
+        apply_window_level_if_present(primary_volume, args)
+        store_patient_info(patient_id, study_id, window_width, window_level, series_uid)
+        set_window_title(patient_id, study_id)
+        print("[AIPACS_REMOTE] Remote series load completed")
+    except Exception as e:
+        print(f"[AIPACS_REMOTE] Error handling remote load: {e}")
+
+
+def _schedule_remote_load(payload: dict) -> None:
+    try:
+        import qt
+        qt.QTimer.singleShot(0, lambda: _handle_remote_load(payload))
+    except Exception as e:
+        print(f"[AIPACS_REMOTE] Failed to schedule remote load: {e}")
+
+
+def _remote_server_loop() -> None:
+    try:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((REMOTE_HOST, REMOTE_PORT))
+        server.listen(5)
+        print(f"[AIPACS_REMOTE] Listening on {REMOTE_HOST}:{REMOTE_PORT}")
+    except Exception as e:
+        print(f"[AIPACS_REMOTE] Failed to start server: {e}")
+        return
+
+    while True:
+        try:
+            conn, _addr = server.accept()
+            with conn:
+                data = b""
+                while True:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                    if b"\n" in data:
+                        break
+
+                response = {"ok": False, "message": "invalid"}
+                if data:
+                    try:
+                        payload = json.loads(data.split(b"\n")[0].decode("utf-8"))
+                        command = payload.get("command")
+                        if command in ("load_dicom", "load_series"):
+                            _schedule_remote_load(payload)
+                            response = {"ok": True, "message": "scheduled"}
+                        else:
+                            response = {"ok": False, "message": "unknown_command"}
+                    except Exception as parse_error:
+                        response = {"ok": False, "message": f"parse_error: {parse_error}"}
+
+                conn.sendall((json.dumps(response) + "\n").encode("utf-8"))
+        except Exception as loop_error:
+            print(f"[AIPACS_REMOTE] Server loop error: {loop_error}")
+
+
+def start_remote_command_server() -> None:
+    global _REMOTE_SERVER_STARTED
+    if _REMOTE_SERVER_STARTED:
+        return
+
+    _REMOTE_SERVER_STARTED = True
+    thread = threading.Thread(target=_remote_server_loop, daemon=True)
+    thread.start()
 
 
 # ============================================================
@@ -1689,6 +1794,11 @@ def main():
     # Reduced delay since no UI styling is needed anymore
     try:
         import qt
+        try:
+            start_remote_command_server()
+        except Exception as server_error:
+            print(f"[AIPACS_REMOTE] Warning: Could not start remote server: {server_error}")
+
         print("[AIPACS_UI_PY] Scheduling run_startup() in 300ms via QTimer...")
         sys.stdout.flush()
         sys.stderr.flush()

@@ -131,6 +131,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.curved_mpr_overlay_actor = None  # Text overlay for mode indication
         self.curved_mpr_centerline_actor = None  # Single polyline actor for the centerline
 
+        # Sync point (red target) support
+        self._sync_point_source = None
+        self._sync_point_actor = None
+        self._sync_point_visible = False
+
         self.dicom_tags_actors = DicomTagsActors()
         # self.last_index_slice_saved = None
 
@@ -141,6 +146,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.vtk_image_data = vtk_image_data
 
         self.vtk_image_data = self._preprocess_vtk_image_data(self.vtk_image_data)
+        self._apply_direction_matrix_from_field_data()
         # vtk_image_data = flip_image_y(vtk_image_data)
         # self.vtk_image_data = _display_upsample_xy(self.vtk_image_data)
 
@@ -164,6 +170,29 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.image_reslice = ImageReslice(self.vtk_image_data, self.metadata)
         self.SetInputData(self.image_reslice.GetOutput())  # without color map (window level)
         self.vtk_image_data = self.image_reslice.GetOutput()
+        
+        # --- PIPELINE LOG: Viewer init summary ---
+        _pre_img = self.image_reslice.vtk_image_data  # original (has field data)
+        _post_img = self.vtk_image_data                # reslice output
+        _pre_o = _pre_img.GetOrigin()
+        _pre_s = _pre_img.GetSpacing()
+        _pre_d = _pre_img.GetDimensions()
+        _post_o = _post_img.GetOrigin()
+        _post_s = _post_img.GetSpacing()
+        _post_d = _post_img.GetDimensions()
+        _has_fd = False
+        if _pre_img.GetFieldData():
+            _has_fd = _pre_img.GetFieldData().GetArray("DirectionMatrix") is not None
+        _has_fd_post = False
+        if _post_img.GetFieldData():
+            _has_fd_post = _post_img.GetFieldData().GetArray("DirectionMatrix") is not None
+        print(
+            f"[PIPELINE VIEWER] Viewer initialized:\n"
+            f"  Pre-reslice:  origin=({_pre_o[0]:.2f},{_pre_o[1]:.2f},{_pre_o[2]:.2f}) "
+            f"spacing=({_pre_s[0]:.3f},{_pre_s[1]:.3f},{_pre_s[2]:.3f}) dims={_pre_d} has_dir_field={_has_fd}\n"
+            f"  Post-reslice: origin=({_post_o[0]:.2f},{_post_o[1]:.2f},{_post_o[2]:.2f}) "
+            f"spacing=({_post_s[0]:.3f},{_post_s[1]:.3f},{_post_s[2]:.3f}) dims={_post_d} has_dir_field={_has_fd_post}"
+        )
 
         self.set_color_mapper()
         # self.apply_window_level()
@@ -255,6 +284,22 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 vtk_image_data = display_upsample_xy(vtk_image_data, factor=factor)
 
         return vtk_image_data
+
+    def _apply_direction_matrix_from_field_data(self):
+        try:
+            if not hasattr(self.vtk_image_data, "SetDirectionMatrix"):
+                return
+            direction = self._get_direction_matrix()
+            if direction is None:
+                return
+            matrix = vtk.vtkMatrix4x4()
+            matrix.Identity()
+            for row in range(3):
+                for col in range(3):
+                    matrix.SetElement(row, col, float(direction[row, col]))
+            self.vtk_image_data.SetDirectionMatrix(matrix)
+        except Exception:
+            pass
 
     def _sync_all_overlays_extent(self):
         """
@@ -1455,6 +1500,197 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self.curved_mpr_overlay_actor = None
             self.Render()
             print("[CURVED MPR] Overlay text hidden")
+
+    def pick_world_point(self, display_x: int, display_y: int):
+        """
+        Pick a world-space point from display coordinates.
+        
+        Returns the 3D world-space position (x, y, z) in VTK/DICOM coordinates.
+        The vtkResliceImageViewer renders slices along XY, XZ, or YZ planes,
+        so the picker returns coordinates already in VTK world space.
+        We just need to fill in the correct out-of-plane coordinate from the
+        current slice index.
+        """
+        import logging
+        _log = logging.getLogger(__name__)
+        
+        try:
+            orientation = self.GetSliceOrientation()
+            current_slice = self.GetSlice()
+            origin = self.vtk_image_data.GetOrigin()
+            spacing = self.vtk_image_data.GetSpacing()
+            
+            # METHOD 1: vtkCellPicker on image actor (most reliable)
+            cell_picker = vtk.vtkCellPicker()
+            cell_picker.SetTolerance(0.005)
+            if cell_picker.Pick(display_x, display_y, 0, self.renderer):
+                if cell_picker.GetCellId() >= 0:
+                    picked = cell_picker.GetPickPosition()
+                    if picked != (0.0, 0.0, 0.0):
+                        print(
+                            f"[SYNC PICK] CellPicker: display=({display_x},{display_y}) → "
+                            f"world=({picked[0]:.2f}, {picked[1]:.2f}, {picked[2]:.2f})  "
+                            f"orient={orientation} slice={current_slice}"
+                        )
+                        return tuple(picked)
+
+            # METHOD 2: vtkWorldPointPicker
+            world_picker = vtk.vtkWorldPointPicker()
+            if world_picker.Pick(display_x, display_y, 0, self.renderer):
+                picked = world_picker.GetPickPosition()
+                if picked != (0.0, 0.0, 0.0):
+                    print(
+                        f"[SYNC PICK] WorldPicker: display=({display_x},{display_y}) → "
+                        f"world=({picked[0]:.2f}, {picked[1]:.2f}, {picked[2]:.2f})  "
+                        f"orient={orientation} slice={current_slice}"
+                    )
+                    return tuple(picked)
+
+            # METHOD 3: Manual coordinate conversion — simple origin+spacing
+            # Since vtkResliceImageViewer uses identity reslice axes, the image is
+            # rendered directly in VTK world space = origin + ijk * spacing
+            coord = vtk.vtkCoordinate()
+            coord.SetCoordinateSystemToDisplay()
+            coord.SetValue(display_x, display_y, 0)
+            world_2d = coord.GetComputedWorldValue(self.renderer)
+
+            # Build the 3D point: two coords come from the 2D pick,
+            # the third (out-of-plane) comes from the current slice
+            if orientation == 2:    # Axial (XY plane) — Z is the slice axis
+                result = (world_2d[0], world_2d[1], origin[2] + current_slice * spacing[2])
+            elif orientation == 1:  # Coronal (XZ plane) — Y is the slice axis
+                result = (world_2d[0], origin[1] + current_slice * spacing[1], world_2d[1])
+            else:                   # Sagittal (YZ plane) — X is the slice axis
+                result = (origin[0] + current_slice * spacing[0], world_2d[0], world_2d[1])
+
+            print(
+                f"[SYNC PICK] Fallback: display=({display_x},{display_y}) "
+                f"world_2d=({world_2d[0]:.2f},{world_2d[1]:.2f},{world_2d[2]:.2f}) → "
+                f"result=({result[0]:.2f}, {result[1]:.2f}, {result[2]:.2f})  "
+                f"orient={orientation} slice={current_slice}"
+            )
+            return result
+
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("[SYNC PICK] Exception: %s", e)
+            return None
+
+    def _slice_index_from_world(self, world_pos, return_delta=False):
+        """Compute slice index for current orientation from world position."""
+        import logging
+        _log = logging.getLogger(__name__)
+        try:
+            # Use simple origin+spacing for IJK since the reslice output 
+            # is in VTK world space WITHOUT direction rotation
+            img = self.vtk_image_data
+            ox, oy, oz = img.GetOrigin()
+            sx, sy, sz = img.GetSpacing()
+            
+            i = (world_pos[0] - ox) / sx if sx != 0 else 0.0
+            j = (world_pos[1] - oy) / sy if sy != 0 else 0.0
+            k = (world_pos[2] - oz) / sz if sz != 0 else 0.0
+            
+            # Clamp
+            dims = img.GetDimensions()
+            i = max(0.0, min(i, dims[0] - 1))
+            j = max(0.0, min(j, dims[1] - 1))
+            k = max(0.0, min(k, dims[2] - 1))
+
+            orientation = self.GetSliceOrientation()
+            print(
+                f"[SLICE FROM WORLD] world=({world_pos[0]:.2f},{world_pos[1]:.2f},{world_pos[2]:.2f}) "
+                f"→ ijk=({i:.2f},{j:.2f},{k:.2f}) orient={orientation} "
+                f"origin=({ox:.2f},{oy:.2f},{oz:.2f}) spacing=({sx:.3f},{sy:.3f},{sz:.3f})"
+            )
+            
+            if orientation == 2:  # Axial (XY) — slice along Z (k)
+                spacing_axis = float(sz)
+                nearest = int(round(k))
+                delta_world = abs(k - nearest) * spacing_axis
+                return (nearest, delta_world, spacing_axis) if return_delta else nearest
+            if orientation == 1:  # Coronal (XZ) — slice along Y (j)
+                spacing_axis = float(sy)
+                nearest = int(round(j))
+                delta_world = abs(j - nearest) * spacing_axis
+                return (nearest, delta_world, spacing_axis) if return_delta else nearest
+            # Sagittal (YZ) — slice along X (i)
+            spacing_axis = float(sx)
+            nearest = int(round(i))
+            delta_world = abs(i - nearest) * spacing_axis
+            return (nearest, delta_world, spacing_axis) if return_delta else nearest
+        except Exception:
+            return (None, None, None) if return_delta else None
+
+    def _ensure_sync_point_actor(self):
+        if self._sync_point_actor is not None and self._sync_point_source is not None:
+            return
+
+        radius = max(min(self.spacing) * 2.0, 1.5)
+        source = vtk.vtkSphereSource()
+        source.SetRadius(radius)
+        source.SetPhiResolution(16)
+        source.SetThetaResolution(16)
+
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(source.GetOutputPort())
+
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(1.0, 0.0, 0.0)
+        actor.GetProperty().SetOpacity(0.95)
+        actor.GetProperty().SetAmbient(0.6)
+        actor.GetProperty().SetDiffuse(0.4)
+        actor.PickableOff()
+
+        self.renderer.AddActor(actor)
+        self._sync_point_source = source
+        self._sync_point_actor = actor
+
+    def set_sync_point(self, world_pos, adjust_slice=True):
+        """Show/update the sync point; optionally move slice to match the point."""
+        import logging
+        _log = logging.getLogger(__name__)
+        
+        if world_pos is None:
+            self.hide_sync_point()
+            return
+
+        self._ensure_sync_point_actor()
+
+        if self._sync_point_source is not None:
+            self._sync_point_source.SetCenter(world_pos)
+            self._sync_point_source.Update()
+
+        orientation = self.GetSliceOrientation()
+        
+        if adjust_slice:
+            slice_index, delta_world, spacing_axis = self._slice_index_from_world(world_pos, return_delta=True)
+            print(
+                f"[SYNC POINT] orient={orientation}  world_pos=({world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f})  "
+                f"→ slice_index={slice_index}  delta_world={delta_world}  spacing_axis={spacing_axis}  cur_slice={self.GetSlice()}"
+            )
+            if slice_index is not None:
+                max_slice = max(0, self.get_count_of_slices() - 1)
+                slice_index = max(0, min(slice_index, max_slice))
+                if delta_world is None or spacing_axis is None or delta_world <= spacing_axis:
+                    self.set_slice(slice_index)
+                    print(f"[SYNC POINT] Navigated to slice {slice_index}")
+                else:
+                    print(
+                        f"[SYNC POINT] NOT navigating: delta_world={delta_world:.4f} > spacing_axis={spacing_axis:.4f}"
+                    )
+
+        if self._sync_point_actor is not None:
+            self._sync_point_actor.VisibilityOn()
+        self._sync_point_visible = True
+        self.Render()
+
+    def hide_sync_point(self):
+        if self._sync_point_actor is not None:
+            self._sync_point_actor.VisibilityOff()
+            self._sync_point_visible = False
+            self.Render()
     
     def get_curved_mpr_points(self):
         """Get all curved MPR points"""
@@ -1612,6 +1848,119 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             zw = oz + sz * float(k)
 
         return xw, yw, zw
+
+    def _is_identity_matrix(self, mat, tol=1e-6):
+        try:
+            return np.allclose(mat, np.eye(3, dtype=float), atol=tol)
+        except Exception:
+            return False
+
+    def _get_direction_matrix(self):
+        mat_vtk = None
+        try:
+            if hasattr(self.vtk_image_data, "GetDirectionMatrix"):
+                m = self.vtk_image_data.GetDirectionMatrix()
+                if isinstance(m, vtk.vtkMatrix4x4):
+                    mat_vtk = np.array([[m.GetElement(r, c) for c in range(3)] for r in range(3)], dtype=float)
+                elif isinstance(m, vtk.vtkMatrix3x3):
+                    mat_vtk = np.array([[m.GetElement(r, c) for c in range(3)] for r in range(3)], dtype=float)
+        except Exception:
+            mat_vtk = None
+
+        mat_field = None
+        try:
+            field_data = self.vtk_image_data.GetFieldData()
+            if field_data is not None:
+                direction_array = field_data.GetArray("DirectionMatrix")
+                if direction_array is not None and direction_array.GetNumberOfTuples() >= 16:
+                    mat_field = np.zeros((3, 3), dtype=float)
+                    for row in range(3):
+                        for col in range(3):
+                            mat_field[row, col] = direction_array.GetValue(row * 4 + col)
+        except Exception:
+            mat_field = None
+
+        if mat_vtk is None:
+            return mat_field
+
+        if mat_field is not None:
+            if self._is_identity_matrix(mat_vtk) and not self._is_identity_matrix(mat_field):
+                return mat_field
+
+        return mat_vtk
+
+    def ijk_to_world_physical(self, i: float, j: float, k: float | None = None):
+        """Direction-aware IJK→World mapping in physical space."""
+        if k is None:
+            k = float(self.GetSlice())
+
+        ox, oy, oz = self.vtk_image_data.GetOrigin()
+        sx, sy, sz = self.vtk_image_data.GetSpacing()
+        direction = self._get_direction_matrix()
+
+        if direction is None:
+            return (ox + i * sx, oy + j * sy, oz + k * sz)
+
+        idx = np.array([i * sx, j * sy, k * sz], dtype=float)
+        phys = np.array([ox, oy, oz], dtype=float) + direction.dot(idx)
+        return float(phys[0]), float(phys[1]), float(phys[2])
+
+    def world_to_ijk_physical(self, xw: float, yw: float, zw: float, clamp: bool = True, as_int: bool = False):
+        """Direction-aware World→IJK mapping in physical space."""
+        img = self.vtk_image_data
+        ox, oy, oz = img.GetOrigin()
+        sx, sy, sz = img.GetSpacing()
+        dims = img.GetDimensions()
+
+        try:
+            direction = self._get_direction_matrix()
+            use_vtk = False
+            if hasattr(img, "TransformPhysicalPointToContinuousIndex"):
+                if direction is None:
+                    use_vtk = True
+                else:
+                    try:
+                        if hasattr(img, "GetDirectionMatrix"):
+                            m = img.GetDirectionMatrix()
+                            if isinstance(m, vtk.vtkMatrix4x4):
+                                mat_vtk = np.array([[m.GetElement(r, c) for c in range(3)] for r in range(3)], dtype=float)
+                            elif isinstance(m, vtk.vtkMatrix3x3):
+                                mat_vtk = np.array([[m.GetElement(r, c) for c in range(3)] for r in range(3)], dtype=float)
+                            else:
+                                mat_vtk = None
+                            if mat_vtk is None or np.allclose(mat_vtk, direction, atol=1e-6):
+                                use_vtk = True
+                        else:
+                            use_vtk = True
+                    except Exception:
+                        use_vtk = True
+
+            if use_vtk:
+                ijk = img.TransformPhysicalPointToContinuousIndex((xw, yw, zw))
+                i, j, k = ijk[0], ijk[1], ijk[2]
+            else:
+                if direction is None:
+                    i = (xw - ox) / sx
+                    j = (yw - oy) / sy
+                    k = (zw - oz) / sz
+                else:
+                    inv_dir = np.linalg.inv(direction)
+                    delta = np.array([xw - ox, yw - oy, zw - oz], dtype=float)
+                    idx = inv_dir.dot(delta)
+                    i, j, k = idx[0] / sx, idx[1] / sy, idx[2] / sz
+        except Exception:
+            i = (xw - ox) / sx
+            j = (yw - oy) / sy
+            k = (zw - oz) / sz
+
+        if clamp:
+            i = max(0.0, min(i, dims[0] - 1))
+            j = max(0.0, min(j, dims[1] - 1))
+            k = max(0.0, min(k, dims[2] - 1))
+
+        if as_int:
+            return int(round(i)), int(round(j)), int(round(k))
+        return float(i), float(j), float(k)
 
     def draw_boxes_ijk(self, boxes_scores: list, color=(0.0, 1.0, 0.0), line_width=2.0):
         """
