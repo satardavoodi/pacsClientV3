@@ -9,7 +9,7 @@ from PySide6.QtGui import QPixmap, QFont, QColor, QIcon
 from PySide6.QtWidgets import (QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QGridLayout, QLineEdit,
     QTableWidget, QAbstractItemView, QHeaderView, QCheckBox, QScrollArea, QToolButton, QTableWidgetItem, QMessageBox,
     QApplication, QProgressDialog, QTabWidget, QLabel, QFileDialog, QProgressBar, QStatusBar, QSplitter, QDialog,
-    QGraphicsDropShadowEffect, QSizePolicy, QWidget)
+    QGraphicsDropShadowEffect, QSizePolicy, QWidget, QStackedWidget)
 import qtawesome as qta
 import weakref  # Add at the top
 
@@ -583,13 +583,13 @@ class HomePanelWidget(QWidget):
         # ★★★ تنظیمات وسط‌چین کردن هدر جدول ★★★
         if hasattr(self.patient_table_widget, 'results_table'):
             table = self.patient_table_widget.results_table
-            
+
             # وسط‌چین کردن تمام هدرها
             table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-            
+
             # تنظیم رفتار resize برای وسط‌چین بهتر
             table.horizontalHeader().setHighlightSections(True)
-            
+
             # استایل‌دهی CSS به هدر (اختیاری - برای زیباتر شدن)
             table.horizontalHeader().setStyleSheet("""
                 QHeaderView::section {
@@ -609,13 +609,18 @@ class HomePanelWidget(QWidget):
                 header_item = table.horizontalHeaderItem(i)
                 if header_item:
                     header_item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-            
+
             # تنظیم stretch برای ستون‌های خاص (اختیاری)
             # table.horizontalHeader().setStretchLastSection(True)
         # ★★★ پایان تنظیمات هدر ★★★
 
-        # Add to main layout
-        self.main_layout.addWidget(self.patient_table_widget)
+        # Create a stacked widget to manage patient table and patient widgets
+        self.center_stacked_widget = QStackedWidget()
+        self.center_stacked_widget.addWidget(self.patient_table_widget)  # Index 0: Patient table
+        # Additional widgets will be added dynamically as needed
+
+        # Add stacked widget to main layout
+        self.main_layout.addWidget(self.center_stacked_widget)
 
     def _reset_thumbnails_event(self):
         import asyncio
@@ -1080,7 +1085,7 @@ class HomePanelWidget(QWidget):
         """Safely close a tab and clean up references"""
         try:
             widget = self.tab_widget.widget(index)
-            
+
             # Clean up download tasks if this is a patient widget
             if widget and hasattr(widget, 'study_uid'):
                 study_uid = widget.study_uid
@@ -1089,18 +1094,31 @@ class HomePanelWidget(QWidget):
                     for task in list(self._download_tasks):
                         if task and not task.done():
                             task.cancel()
-            
+
             # Remove from dict_tabs_widget
             if hasattr(widget, 'study_uid') and widget.study_uid in self.dict_tabs_widget:
                 del self.dict_tabs_widget[widget.study_uid]
-            
+
             # Close the tab
             self.tab_widget.removeTab(index)
-            
+
             # Force cleanup
             if widget:
                 widget.deleteLater()
-                
+
+            # ✅ Show patient table again if no more patient tabs are open
+            # Check if any patient tabs remain
+            has_patient_tabs = False
+            for i in range(self.tab_widget.count()):
+                tab_widget = self.tab_widget.widget(i)
+                if tab_widget and hasattr(tab_widget, 'study_uid'):
+                    has_patient_tabs = True
+                    break
+
+            # If no patient tabs remain, show the patient table in the stacked widget
+            if not has_patient_tabs and hasattr(self, 'center_stacked_widget') and hasattr(self, 'patient_table_widget'):
+                self.center_stacked_widget.setCurrentWidget(self.patient_table_widget)
+
         except Exception as e:
             print(f"⚠️ Error closing tab: {e}")
 
@@ -4035,36 +4053,42 @@ Study UID: {study_uid}
                 enable_progressive_mode = not is_complete
             
             widget = PatientWidget(
-                import_folder_path=folder_path, 
-                caller=caller, 
-                study_uid=study_uid, 
+                import_folder_path=folder_path,
+                caller=caller,
+                study_uid=study_uid,
                 patient_id=patient_id,
                 enable_progressive_mode=enable_progressive_mode,
                 report_status=report_status
             )
+            widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             widget.set_method_open_ai_module_tab(self.add_new_tab_widget)
-            
+
             # 🔥 اتصال سیگنال priority_download_requested از thumbnail_manager
             if hasattr(widget, 'thumbnail_manager') and widget.thumbnail_manager is not None:
                 widget.thumbnail_manager.set_current_study_uid(study_uid)
-                
+
                 # اصلاح سیگنال برای داشتن widget
                 def on_priority_download_requested(series_number, study_uid):
                     print(f"🎯 [HomeUI] Priority download requested: series={series_number}, study={study_uid}")
                     # widget را مستقیماً به تابع ارسال می‌کنیم
                     self._handle_priority_download_from_thumbnail(series_number, study_uid, widget)
-                
+
                 widget.thumbnail_manager.priority_download_requested.connect(on_priority_download_requested)
-                            
+
                 # ایجاد یک تابع wrapper برای اتصال سیگنال
                 def on_priority_download_requested(series_number, study_uid_param):
                     print(f"🎯 [HomeUI] Priority download requested: series={series_number}, study={study_uid_param}")
                     self._handle_priority_download_from_thumbnail(series_number, study_uid_param, widget)
-                
+
                 # اتصال سیگنال
                 widget.thumbnail_manager.priority_download_requested.connect(on_priority_download_requested)
                 print(f"✅ Connected priority download signal for study {study_uid}")
-                        
+
+            # ✅ FIRST: Add patient widget to stacked widget and show it
+            # This ensures the previous screen is completely hidden
+            self.center_stacked_widget.addWidget(widget)
+            self.center_stacked_widget.setCurrentWidget(widget)
+
             if study_uid:
                 download_manager = self._get_or_create_download_manager_tab()
                 if download_manager:
