@@ -101,7 +101,7 @@ from PySide6.QtWidgets import (
     QScrollArea
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QCursor
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
 from .preset_manager import get_preset_manager, PresetCategory
@@ -132,7 +132,7 @@ class StandardMPRViewer(QWidget):
     Standard MPR Viewer using VTK best practices
     """
     
-    def __init__(self, vtk_image_data, parent=None):
+    def __init__(self, vtk_image_data, parent=None, window_width=None, window_center=None):
         super().__init__(parent)
         
         logger.info("=" * 80)
@@ -223,18 +223,36 @@ class StandardMPRViewer(QWidget):
         self.crosshair_styles = {}  # Store interactor styles for each view
         
         # Crosshair appearance settings
-        self.crosshair_color = (0.0, 1.0, 0.0)  # Green by default
-        self.crosshair_width = 2
+        self.crosshair_color = (0.4, 0.9, 0.6)  # Softer green
+        self.crosshair_handle_color = self._get_handle_color(self.crosshair_color)
+        self.crosshair_width = 1.5
+        self._rotation_cursor = None
         
         # Crosshair rotation state
         self.crosshair_angles = {'axial': 0.0, 'sagittal': 0.0, 'coronal': 0.0}
         self.dragging_handle = None  # Track which handle is being dragged
         self.drag_start_pos = None
         self.dragging_center = False  # Track if dragging to move center
+
+        # Rotation lock (temporary) - disables crosshair rotation handles
+        self.rotation_enabled = False
+
+        # Slab projection state for 2D MPR views
+        self._mpr_slab_thickness_mm = 10.0
+        self._mpr_slab_mode = None
+
+        # 4-view layout management (expand/collapse)
+        self._views_layout = None
+        self._view_containers = {}
+        self._view_positions = {}
+        self._vtk_widget_to_view = {}
+        self._expanded_view = None
+        self._size_lock = None
         
         # Oblique reslicing support
         self.reslice_filters = {}  # vtkImageReslice for each view
         self.reslice_transforms = {}  # vtkTransform for each view
+        self.oblique_enabled = True
         
         # Auto-rotation state
         self.auto_rotation_active = False
@@ -248,6 +266,14 @@ class StandardMPRViewer(QWidget):
         self.preset_manager = get_preset_manager()
         self.current_3d_preset = "CT-Bone"
         self.volume_property = None
+
+        # Initial window/level (from main viewer)
+        self._initial_window_level = None
+        if window_width is not None and window_center is not None:
+            try:
+                self._initial_window_level = (float(window_width), float(window_center))
+            except (TypeError, ValueError):
+                self._initial_window_level = None
         
         # Advanced tools state
         self.curved_mpr_generator = None
@@ -267,12 +293,25 @@ class StandardMPRViewer(QWidget):
         
         logger.info("Calling _setup_ui()...")
         self._setup_ui()
+
+        # Apply initial window/level from main viewer (if provided)
+        if self._initial_window_level is not None:
+            self._apply_window_level(*self._initial_window_level)
         
         # Highlight current series in scroller
         self._highlight_current_series()
         
         logger.info("StandardMPRViewer created successfully!")
         logger.info("=" * 80)
+
+    def _apply_window_level(self, window, level):
+        """Apply window/level to all 2D MPR views (axial/sagittal/coronal)."""
+        for view_name in ['axial', 'sagittal', 'coronal']:
+            if view_name in self.viewers:
+                actor = self.viewers[view_name]['actor']
+                actor.GetProperty().SetColorWindow(window)
+                actor.GetProperty().SetColorLevel(level)
+                self._request_render(view_name)
     
     def _request_render(self, view_name):
         """Request a render for a specific view (batched for performance)"""
@@ -742,19 +781,11 @@ class StandardMPRViewer(QWidget):
             }
         """)
         
-        # Minimal top toolbar
-        toolbar = self._create_toolbar()
-        main_layout.addWidget(toolbar)
-        
-        # Content area with series scroller + views
+        # Content area with views (toolbars/sidebars removed)
         content_container = QWidget()
         content_layout = QHBoxLayout(content_container)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
-        
-        # Series scroller on the left
-        series_scroller = self._create_series_scroller()
-        content_layout.addWidget(series_scroller)
         
         # Views container - pure black background
         views_container = QWidget()
@@ -762,6 +793,7 @@ class StandardMPRViewer(QWidget):
         views_layout = QGridLayout(views_container)
         views_layout.setContentsMargins(2, 2, 2, 2)
         views_layout.setSpacing(2)
+        self._views_layout = views_layout
         
         # Create 4 clean views
         self._create_axial_view(views_layout, 0, 0)
@@ -1294,7 +1326,7 @@ class StandardMPRViewer(QWidget):
         renderer.ResetCamera()
         
         # Zoom in a bit for better view
-        camera.Zoom(1.5)
+        camera.Zoom(1.2)
         
         # Initialize
         vtk_widget.Initialize()
@@ -1310,6 +1342,8 @@ class StandardMPRViewer(QWidget):
             'actor': image_slice,
             'mapper': slice_mapper
         }
+
+        self._register_view('axial', container, vtk_widget, row, col)
         
         # Create crosshairs for this view
         self._create_crosshairs(renderer, 'axial')
@@ -1380,7 +1414,7 @@ class StandardMPRViewer(QWidget):
         renderer.ResetCamera()
         
         # Zoom in for better view
-        camera.Zoom(1.5)
+        camera.Zoom(1.2)
         
         # Initialize
         vtk_widget.Initialize()
@@ -1396,6 +1430,8 @@ class StandardMPRViewer(QWidget):
             'actor': image_slice,
             'mapper': slice_mapper
         }
+
+        self._register_view('sagittal', container, vtk_widget, row, col)
         
         # Create crosshairs for this view
         self._create_crosshairs(renderer, 'sagittal')
@@ -1467,7 +1503,7 @@ class StandardMPRViewer(QWidget):
         renderer.ResetCamera()
         
         # Zoom in for better view
-        camera.Zoom(1.5)
+        camera.Zoom(1.2)
         
         # Initialize
         vtk_widget.Initialize()
@@ -1483,6 +1519,8 @@ class StandardMPRViewer(QWidget):
             'actor': image_slice,
             'mapper': slice_mapper
         }
+
+        self._register_view('coronal', container, vtk_widget, row, col)
         
         # Create crosshairs for this view
         self._create_crosshairs(renderer, 'coronal')
@@ -1628,9 +1666,8 @@ class StandardMPRViewer(QWidget):
             'mapper': volume_mapper,
             'camera': camera
         }
-        
-        # Install event filter to detect user interaction
-        vtk_widget.installEventFilter(self)
+
+        self._register_view('3d', container, vtk_widget, row, col)
         
         # Setup auto-rotation
         self.setup_auto_rotation()
@@ -1750,10 +1787,67 @@ class StandardMPRViewer(QWidget):
     
     def eventFilter(self, obj, event):
         """Event filter to detect user interaction with VTK widget"""
+        if event.type() == event.Type.MouseButtonDblClick:
+            view_name = self._vtk_widget_to_view.get(obj)
+            if view_name:
+                self._toggle_expand_view(view_name)
+                return True
         # Stop auto-rotation on mouse press or wheel event
         if event.type() in [event.Type.MouseButtonPress, event.Type.Wheel]:
             self.stop_auto_rotation()
         return super().eventFilter(obj, event)
+
+    def _register_view(self, view_name, container, vtk_widget, row, col, row_span=1, col_span=1):
+        """Register a view container/widget for expand/collapse and event handling."""
+        self._view_containers[view_name] = container
+        self._view_positions[view_name] = (row, col, row_span, col_span)
+        self._vtk_widget_to_view[vtk_widget] = view_name
+        vtk_widget.installEventFilter(self)
+
+    def _toggle_expand_view(self, view_name):
+        """Toggle expand/collapse for a specific view."""
+        if not self._views_layout:
+            return
+
+        if self._expanded_view == view_name:
+            # Collapse back to 4-view layout
+            for name, container in self._view_containers.items():
+                container.setVisible(True)
+                row, col, row_span, col_span = self._view_positions.get(name, (0, 0, 1, 1))
+                self._views_layout.addWidget(container, row, col, row_span, col_span)
+            self._expanded_view = None
+            self._unlock_mpr_size()
+            return
+
+        # Expand requested view
+        self._lock_mpr_size()
+        for name, container in self._view_containers.items():
+            if name == view_name:
+                container.setVisible(True)
+                self._views_layout.addWidget(container, 0, 0, 2, 2)
+            else:
+                container.setVisible(False)
+        self._expanded_view = view_name
+
+    def _lock_mpr_size(self):
+        """Lock MPR widget size to avoid layout snapping when expanding a view."""
+        if self._size_lock is not None:
+            return
+        self._size_lock = {
+            'min': self.minimumSize(),
+            'max': self.maximumSize(),
+            'size': self.size()
+        }
+        self.setMinimumSize(self._size_lock['size'])
+        self.setMaximumSize(self._size_lock['size'])
+
+    def _unlock_mpr_size(self):
+        """Restore MPR widget size constraints after collapsing a view."""
+        if self._size_lock is None:
+            return
+        self.setMinimumSize(self._size_lock['min'])
+        self.setMaximumSize(self._size_lock['max'])
+        self._size_lock = None
     
     def _create_crosshairs(self, renderer, view_name):
         """Create crosshair lines with interactive handles for a view"""
@@ -1817,8 +1911,8 @@ class StandardMPRViewer(QWidget):
         cx, cy, cz = self.current_position
         angle = self.crosshair_angles.get(view_name, 0.0)
         
-        # 50% of view coverage
-        extend = 0.5
+        # Shorter crosshair lines for less edge overlap
+        extend = 0.4
         
         if view_name == 'axial':
             # XY plane
@@ -1910,9 +2004,9 @@ class StandardMPRViewer(QWidget):
         return h_p1, h_p2, v_p1, v_p2
     
     def _create_crosshair_handles(self, renderer, h_p1, h_p2, v_p1, v_p2, view_name):
-        """Create square handles at crosshair endpoints (larger for easier selection)"""
+        """Create rounded handles at crosshair endpoints (modernized)"""
         handles = []
-        handle_size = 15.0  # Larger handles for easier grabbing
+        handle_radius = 5.5
         
         # 4 handles: at end of each line
         handle_positions = [
@@ -1923,22 +2017,26 @@ class StandardMPRViewer(QWidget):
         ]
         
         for handle_id, pos in handle_positions:
-            # Create small square using vtkCubeSource
-            cube = vtk.vtkCubeSource()
-            cube.SetXLength(handle_size)
-            cube.SetYLength(handle_size)
-            cube.SetZLength(0.1)  # Flat
-            cube.SetCenter(pos)
+            # Create small circular handle using vtkSphereSource
+            sphere = vtk.vtkSphereSource()
+            sphere.SetRadius(handle_radius)
+            sphere.SetThetaResolution(16)
+            sphere.SetPhiResolution(16)
+            sphere.SetCenter(pos)
             
             # Mapper
             mapper = vtk.vtkPolyDataMapper()
-            mapper.SetInputConnection(cube.GetOutputPort())
+            mapper.SetInputConnection(sphere.GetOutputPort())
             
             # Actor
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
-            actor.GetProperty().SetColor(0.0, 1.0, 0.0)  # Green like crosshairs
-            actor.GetProperty().SetOpacity(1.0)
+            actor.GetProperty().SetColor(*self.crosshair_handle_color)
+            actor.GetProperty().SetOpacity(0.95)
+            actor.GetProperty().SetAmbient(0.3)
+            actor.GetProperty().SetDiffuse(0.7)
+            actor.GetProperty().SetSpecular(0.4)
+            actor.GetProperty().SetSpecularPower(25)
             
             # Add to renderer
             renderer.AddActor(actor)
@@ -1947,11 +2045,27 @@ class StandardMPRViewer(QWidget):
             handles.append({
                 'id': handle_id,
                 'actor': actor,
-                'cube': cube,
+                'source': sphere,
                 'position': pos
             })
         
         return handles
+
+    def _get_rotation_cursor(self):
+        """Return a built-in cursor for rotation behavior."""
+        if self._rotation_cursor is not None:
+            return self._rotation_cursor
+        self._rotation_cursor = QCursor(Qt.CursorShape.SizeAllCursor)
+        return self._rotation_cursor
+
+    def _set_view_cursor(self, view_name, cursor):
+        """Set a Qt cursor on a specific view widget."""
+        if view_name in self.viewers:
+            widget = self.viewers[view_name]['widget']
+            if cursor is None:
+                widget.unsetCursor()
+            else:
+                widget.setCursor(cursor)
     
     def _create_slice_info_text(self, renderer, view_name):
         """Create text annotation showing slice information and orientation labels"""
@@ -1965,10 +2079,10 @@ class StandardMPRViewer(QWidget):
         
         # Text properties
         text_property = text_actor.GetTextProperty()
-        text_property.SetFontSize(14)
-        text_property.SetColor(0.0, 1.0, 0.0)  # Green
-        text_property.SetBold(True)
-        text_property.SetShadow(True)
+        text_property.SetFontSize(12)
+        text_property.SetColor(0.6, 0.9, 0.75)
+        text_property.SetBold(False)
+        text_property.SetShadow(False)
         text_property.SetFontFamilyToArial()
         
         # Add to renderer
@@ -1994,10 +2108,10 @@ class StandardMPRViewer(QWidget):
             left_actor.SetInput(view_labels.get('left', 'L'))
             left_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
             left_actor.SetPosition(0.02, 0.5)
-            left_actor.GetTextProperty().SetFontSize(16)
-            left_actor.GetTextProperty().SetColor(1.0, 1.0, 0.0)  # Yellow
-            left_actor.GetTextProperty().SetBold(True)
-            left_actor.GetTextProperty().SetShadow(True)
+            left_actor.GetTextProperty().SetFontSize(14)
+            left_actor.GetTextProperty().SetColor(0.8, 0.85, 0.9)
+            left_actor.GetTextProperty().SetBold(False)
+            left_actor.GetTextProperty().SetShadow(False)
             renderer.AddViewProp(left_actor)
             
             # Right label
@@ -2005,10 +2119,10 @@ class StandardMPRViewer(QWidget):
             right_actor.SetInput(view_labels.get('right', 'R'))
             right_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
             right_actor.SetPosition(0.95, 0.5)
-            right_actor.GetTextProperty().SetFontSize(16)
-            right_actor.GetTextProperty().SetColor(1.0, 1.0, 0.0)  # Yellow
-            right_actor.GetTextProperty().SetBold(True)
-            right_actor.GetTextProperty().SetShadow(True)
+            right_actor.GetTextProperty().SetFontSize(14)
+            right_actor.GetTextProperty().SetColor(0.8, 0.85, 0.9)
+            right_actor.GetTextProperty().SetBold(False)
+            right_actor.GetTextProperty().SetShadow(False)
             right_actor.GetTextProperty().SetJustificationToRight()
             renderer.AddViewProp(right_actor)
             
@@ -2017,10 +2131,10 @@ class StandardMPRViewer(QWidget):
             top_actor.SetInput(view_labels.get('top', 'A'))
             top_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
             top_actor.SetPosition(0.5, 0.95)
-            top_actor.GetTextProperty().SetFontSize(16)
-            top_actor.GetTextProperty().SetColor(1.0, 1.0, 0.0)  # Yellow
-            top_actor.GetTextProperty().SetBold(True)
-            top_actor.GetTextProperty().SetShadow(True)
+            top_actor.GetTextProperty().SetFontSize(14)
+            top_actor.GetTextProperty().SetColor(0.8, 0.85, 0.9)
+            top_actor.GetTextProperty().SetBold(False)
+            top_actor.GetTextProperty().SetShadow(False)
             top_actor.GetTextProperty().SetJustificationToCentered()
             renderer.AddViewProp(top_actor)
             
@@ -2029,10 +2143,10 @@ class StandardMPRViewer(QWidget):
             bottom_actor.SetInput(view_labels.get('bottom', 'P'))
             bottom_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
             bottom_actor.SetPosition(0.5, 0.02)
-            bottom_actor.GetTextProperty().SetFontSize(16)
-            bottom_actor.GetTextProperty().SetColor(1.0, 1.0, 0.0)  # Yellow
-            bottom_actor.GetTextProperty().SetBold(True)
-            bottom_actor.GetTextProperty().SetShadow(True)
+            bottom_actor.GetTextProperty().SetFontSize(14)
+            bottom_actor.GetTextProperty().SetColor(0.8, 0.85, 0.9)
+            bottom_actor.GetTextProperty().SetBold(False)
+            bottom_actor.GetTextProperty().SetShadow(False)
             bottom_actor.GetTextProperty().SetJustificationToCentered()
             renderer.AddViewProp(bottom_actor)
             
@@ -2084,6 +2198,7 @@ class StandardMPRViewer(QWidget):
                 self.dragging_handle = False
                 self.current_handle = None
                 self.dragging_line = False  # Track if dragging from line
+                self.drag_axis = None  # 'h' or 'v' when dragging from line
                 self.drag_offset = [0, 0, 0]  # Offset from center when dragging line
                 
                 # Add observers for mouse events
@@ -2185,13 +2300,13 @@ class StandardMPRViewer(QWidget):
                 h_rotation_zone = self._is_in_rotation_zone(click_pos, h_p1, h_p2, rotation_threshold)
                 if h_rotation_zone:
                     # In rotation zone of horizontal line
-                    self.GetInteractor().GetRenderWindow().SetCurrentCursor(9)  # Hand = grab to rotate
+                    self.parent._set_view_cursor(self.view_name, self.parent._get_rotation_cursor())
                     return 'h_rotation'
                 
                 v_rotation_zone = self._is_in_rotation_zone(click_pos, v_p1, v_p2, rotation_threshold)
                 if v_rotation_zone:
                     # In rotation zone of vertical line
-                    self.GetInteractor().GetRenderWindow().SetCurrentCursor(9)  # Hand = grab to rotate
+                    self.parent._set_view_cursor(self.view_name, self.parent._get_rotation_cursor())
                     return 'v_rotation'
                 
                 # PRIORITY 2: Check handles (visual handles at exact endpoints)
@@ -2202,8 +2317,8 @@ class StandardMPRViewer(QWidget):
                     handles = self.parent.crosshair_actors[self.view_name].get('handles', [])
                     for handle in handles:
                         if handle['actor'] == picked_actor:
-                            # Also show hand cursor for handles (consistent with rotation zones)
-                            self.GetInteractor().GetRenderWindow().SetCurrentCursor(9)  # Hand
+                            # Show rotation cursor for handles
+                            self.parent._set_view_cursor(self.view_name, self.parent._get_rotation_cursor())
                             return 'handle'
                 
                 # PRIORITY 3: Check if hovering over crosshair center (within 20 pixels)
@@ -2214,6 +2329,7 @@ class StandardMPRViewer(QWidget):
                                           (click_pos[1] - center_display[1])**2)
                 
                 if center_distance <= 20:
+                    self.parent._set_view_cursor(self.view_name, None)
                     # Change cursor to crosshair/move cursor (for grabbing and moving center)
                     self.GetInteractor().GetRenderWindow().SetCurrentCursor(10)  # SizeAll (crosshair)
                     return 'center'
@@ -2225,6 +2341,7 @@ class StandardMPRViewer(QWidget):
                 line_threshold = 15  # pixels
                 
                 if h_distance <= line_threshold:
+                    self.parent._set_view_cursor(self.view_name, None)
                     # Hovering over horizontal line middle section - show horizontal two-way arrow
                     # Determine if line is more horizontal or vertical
                     angle = math.atan2(h_p2[1] - h_p1[1], h_p2[0] - h_p1[0])
@@ -2240,6 +2357,7 @@ class StandardMPRViewer(QWidget):
                     return 'h_line'
                 
                 if v_distance <= line_threshold:
+                    self.parent._set_view_cursor(self.view_name, None)
                     # Hovering over vertical line middle section - show vertical two-way arrow
                     angle = math.atan2(v_p2[1] - v_p1[1], v_p2[0] - v_p1[0])
                     angle_deg = abs(math.degrees(angle))
@@ -2254,6 +2372,7 @@ class StandardMPRViewer(QWidget):
                     return 'v_line'
                 
                 # Reset cursor to default
+                self.parent._set_view_cursor(self.view_name, None)
                 self.GetInteractor().GetRenderWindow().SetCurrentCursor(0)
                 return None
             
@@ -2276,41 +2395,42 @@ class StandardMPRViewer(QWidget):
                 v_p1 = self._world_to_display(v_line_source.GetPoint1())
                 v_p2 = self._world_to_display(v_line_source.GetPoint2())
                 
-                # PRIORITY 1: Check rotation zones (last 10% of lines) - HIGHEST PRIORITY
-                rotation_threshold = 20
-                
-                h_rotation_zone = self._is_in_rotation_zone(click_pos, h_p1, h_p2, rotation_threshold)
-                if h_rotation_zone:
-                    # Start rotation - treat horizontal ends as rotation handles
-                    self.dragging_handle = True
-                    self.current_handle = 'h1' if h_rotation_zone == 'start' else 'h2'
-                    logger.info(f"Started rotating via horizontal line end ({self.current_handle})")
-                    self.OnLeftButtonDown()
-                    return
-                
-                v_rotation_zone = self._is_in_rotation_zone(click_pos, v_p1, v_p2, rotation_threshold)
-                if v_rotation_zone:
-                    # Start rotation - treat vertical ends as rotation handles
-                    self.dragging_handle = True
-                    self.current_handle = 'v1' if v_rotation_zone == 'start' else 'v2'
-                    logger.info(f"Started rotating via vertical line end ({self.current_handle})")
-                    self.OnLeftButtonDown()
-                    return
-                
-                # PRIORITY 2: Try to pick actual visual handles (for backward compatibility)
-                self.prop_picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
-                picked_actor = self.prop_picker.GetActor()
-                
-                if picked_actor:
-                    handles = self.parent.crosshair_actors[self.view_name].get('handles', [])
-                    for handle in handles:
-                        if handle['actor'] == picked_actor:
-                            # Start dragging visual handle for rotation
-                            self.dragging_handle = True
-                            self.current_handle = handle['id']
-                            logger.info(f"Started rotating via visual handle {handle['id']}")
-                            self.OnLeftButtonDown()
-                            return
+                # PRIORITY 1: Rotation (temporarily locked)
+                if self.parent.rotation_enabled:
+                    rotation_threshold = 20
+                    
+                    h_rotation_zone = self._is_in_rotation_zone(click_pos, h_p1, h_p2, rotation_threshold)
+                    if h_rotation_zone:
+                        # Start rotation - treat horizontal ends as rotation handles
+                        self.dragging_handle = True
+                        self.current_handle = 'h1' if h_rotation_zone == 'start' else 'h2'
+                        logger.info(f"Started rotating via horizontal line end ({self.current_handle})")
+                        self.OnLeftButtonDown()
+                        return
+                    
+                    v_rotation_zone = self._is_in_rotation_zone(click_pos, v_p1, v_p2, rotation_threshold)
+                    if v_rotation_zone:
+                        # Start rotation - treat vertical ends as rotation handles
+                        self.dragging_handle = True
+                        self.current_handle = 'v1' if v_rotation_zone == 'start' else 'v2'
+                        logger.info(f"Started rotating via vertical line end ({self.current_handle})")
+                        self.OnLeftButtonDown()
+                        return
+                    
+                    # PRIORITY 2: Try to pick actual visual handles (for backward compatibility)
+                    self.prop_picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
+                    picked_actor = self.prop_picker.GetActor()
+                    
+                    if picked_actor:
+                        handles = self.parent.crosshair_actors[self.view_name].get('handles', [])
+                        for handle in handles:
+                            if handle['actor'] == picked_actor:
+                                # Start dragging visual handle for rotation
+                                self.dragging_handle = True
+                                self.current_handle = handle['id']
+                                logger.info(f"Started rotating via visual handle {handle['id']}")
+                                self.OnLeftButtonDown()
+                                return
                 
                 # PRIORITY 3: Check if click is near crosshair center (within 20 pixels)
                 center_world = self.parent.current_position
@@ -2348,9 +2468,10 @@ class StandardMPRViewer(QWidget):
                     
                     # Mark that we're dragging from a line (not center)
                     self.dragging_line = True
+                    self.drag_axis = 'h' if h_distance <= v_distance else 'v'
                     self.parent.drag_start_pos = click_pos
                     
-                    which_line = 'horizontal' if h_distance < v_distance else 'vertical'
+                    which_line = 'horizontal' if self.drag_axis == 'h' else 'vertical'
                     logger.debug(f"Grabbed {which_line} line at offset {self.drag_offset}")
                     self.OnLeftButtonDown()
                     return
@@ -2376,18 +2497,30 @@ class StandardMPRViewer(QWidget):
                     if self.view_name == 'axial':
                         # XY plane
                         angle = math.atan2(picked_pos[1] - cy, picked_pos[0] - cx)
-                        if self.current_handle.startswith('v'):
-                            angle -= math.pi/2
                     elif self.view_name == 'sagittal':
                         # YZ plane
                         angle = math.atan2(picked_pos[2] - cz, picked_pos[1] - cy)
-                        if self.current_handle.startswith('v'):
-                            angle -= math.pi/2
                     elif self.view_name == 'coronal':
                         # XZ plane
                         angle = math.atan2(picked_pos[2] - cz, picked_pos[0] - cx)
-                        if self.current_handle.startswith('v'):
-                            angle -= math.pi/2
+
+                    # Opposite handle endpoints need a 180° phase shift
+                    if self.current_handle in ('h2', 'v2'):
+                        angle += math.pi
+
+                    # Vertical handle aligns with perpendicular axis
+                    if self.current_handle.startswith('v'):
+                        angle -= math.pi / 2
+
+                    # Normalize angle to [-pi, pi]
+                    angle = (angle + math.pi) % (2 * math.pi) - math.pi
+
+                    logger.debug(
+                        "Rotation handle=%s view=%s angle=%.2f°",
+                        self.current_handle,
+                        self.view_name,
+                        math.degrees(angle)
+                    )
                     
                     # Update angle
                     self.parent.crosshair_angles[self.view_name] = angle
@@ -2411,14 +2544,20 @@ class StandardMPRViewer(QWidget):
                     
                     # Update position based on view (only update axes relevant to this view)
                     if self.view_name == 'axial':
-                        self.parent.current_position[0] = new_center[0]
-                        self.parent.current_position[1] = new_center[1]
+                        if self.drag_axis == 'h':
+                            self.parent.current_position[1] = new_center[1]
+                        elif self.drag_axis == 'v':
+                            self.parent.current_position[0] = new_center[0]
                     elif self.view_name == 'sagittal':
-                        self.parent.current_position[1] = new_center[1]
-                        self.parent.current_position[2] = new_center[2]
+                        if self.drag_axis == 'h':
+                            self.parent.current_position[2] = new_center[2]
+                        elif self.drag_axis == 'v':
+                            self.parent.current_position[1] = new_center[1]
                     elif self.view_name == 'coronal':
-                        self.parent.current_position[0] = new_center[0]
-                        self.parent.current_position[2] = new_center[2]
+                        if self.drag_axis == 'h':
+                            self.parent.current_position[2] = new_center[2]
+                        elif self.drag_axis == 'v':
+                            self.parent.current_position[0] = new_center[0]
                     
                     # Update all views
                     self.parent._update_all_crosshairs()
@@ -2466,6 +2605,7 @@ class StandardMPRViewer(QWidget):
                 if self.dragging_line:
                     logger.debug("Stopped dragging from line")
                     self.dragging_line = False
+                    self.drag_axis = None
                     self.drag_offset = [0, 0, 0]
                 
                 if self.parent.dragging_center:
@@ -2566,7 +2706,7 @@ class StandardMPRViewer(QWidget):
             
             for i, handle in enumerate(handles):
                 if i < len(handle_positions):
-                    handle['cube'].SetCenter(handle_positions[i])
+                    handle['source'].SetCenter(handle_positions[i])
                     handle['position'] = handle_positions[i]
             
             # Request batched render (optimization: batch all view renders)
@@ -2816,9 +2956,18 @@ class StandardMPRViewer(QWidget):
         elif action == reset_rotation_action:
             self._reset_crosshair_rotation()
     
+    def _get_handle_color(self, color):
+        """Slightly brighten the handle color for better visibility."""
+        return (
+            min(color[0] + 0.1, 1.0),
+            min(color[1] + 0.1, 1.0),
+            min(color[2] + 0.1, 1.0),
+        )
+
     def _set_crosshair_color(self, color):
         """Set crosshair color (optimized)"""
         self.crosshair_color = color
+        self.crosshair_handle_color = self._get_handle_color(color)
         
         # Update all crosshair actors and handles
         for view_name, actors in self.crosshair_actors.items():
@@ -2827,7 +2976,7 @@ class StandardMPRViewer(QWidget):
             
             # Update handle colors too
             for handle in actors.get('handles', []):
-                handle['actor'].GetProperty().SetColor(*color)
+                handle['actor'].GetProperty().SetColor(*self.crosshair_handle_color)
             
             # Request batched render (optimization)
             self._request_render(view_name)
@@ -2862,28 +3011,27 @@ class StandardMPRViewer(QWidget):
         """
         Update oblique reslicing when crosshairs rotate.
         Uses vtkTransform for proper 3D rotation.
-        
-        TEMPORARILY DISABLED in v1.01+:
-        Oblique reslicing was causing issues with flipped coordinate system.
-        Crosshair rotation is now VISUAL ONLY - the crosshair lines rotate
-        but the underlying slice extraction remains orthogonal.
         """
         import math
-        
-        # DISABLED: Just reset to orthogonal and return
-        # The crosshair lines will still rotate visually, but we won't
-        # actually reslice the volumes obliquely
-        logger.debug("Oblique reslicing disabled - crosshair rotation is visual only")
-        self._reset_all_to_orthogonal()
-        return
-        
-        # ORIGINAL CODE BELOW (disabled):
+
+        if not self.oblique_enabled:
+            logger.debug("Oblique reslicing disabled - crosshair rotation is visual only")
+            self._reset_all_to_orthogonal()
+            return
+
         # Check if any view has rotation
         has_rotation = any(abs(angle) > 0.01 for angle in self.crosshair_angles.values())
         
         if not has_rotation:
             self._reset_all_to_orthogonal()
             return
+
+        logger.info(
+            "Oblique reslice update: axial=%.2f°, sagittal=%.2f°, coronal=%.2f°",
+            math.degrees(self.crosshair_angles.get('axial', 0.0)),
+            math.degrees(self.crosshair_angles.get('sagittal', 0.0)),
+            math.degrees(self.crosshair_angles.get('coronal', 0.0))
+        )
         
         # Apply oblique slicing to perpendicular views
         for source_view, angle in self.crosshair_angles.items():
@@ -2989,6 +3137,21 @@ class StandardMPRViewer(QWidget):
         # Apply transform
         reslice.SetResliceTransform(transform)
         reslice.Update()
+
+        try:
+            matrix = transform.GetMatrix()
+            logger.debug(
+                "Oblique reslice matrix for %s (axis=%s, angle=%.2f°): [%.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f]",
+                target_view,
+                rotation_axis,
+                math.degrees(rotation_angle),
+                matrix.GetElement(0, 0), matrix.GetElement(0, 1), matrix.GetElement(0, 2), matrix.GetElement(0, 3),
+                matrix.GetElement(1, 0), matrix.GetElement(1, 1), matrix.GetElement(1, 2), matrix.GetElement(1, 3),
+                matrix.GetElement(2, 0), matrix.GetElement(2, 1), matrix.GetElement(2, 2), matrix.GetElement(2, 3),
+                matrix.GetElement(3, 0), matrix.GetElement(3, 1), matrix.GetElement(3, 2), matrix.GetElement(3, 3)
+            )
+        except Exception as log_err:
+            logger.debug(f"Failed to log oblique reslice matrix: {log_err}")
         
         # Get output
         oblique_volume = reslice.GetOutput()
@@ -3047,222 +3210,133 @@ class StandardMPRViewer(QWidget):
                 view_info['widget'].Finalize()
     
     def _apply_mip(self):
-        """Apply Maximum Intensity Projection to 3D view"""
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.information(self, "MIP", "MIP button clicked! Starting MIP...")
-        
+        """Apply Maximum Intensity Projection to 2D MPR views"""
         try:
             logger.info("=" * 60)
-            logger.info("APPLYING MIP")
+            logger.info("APPLYING MIP (2D MPR views)")
             logger.info("=" * 60)
-            print("=" * 60)
-            print("APPLYING MIP")
-            print("=" * 60)
-            
-            if '3d' not in self.viewers:
-                logger.error("No 3D view available for MIP")
-                print("ERROR: No 3D view available for MIP")
-                QMessageBox.warning(self, "Error", "No 3D view available for MIP")
+
+            from PySide6.QtWidgets import QInputDialog
+            thickness_mm, ok = QInputDialog.getDouble(
+                self,
+                "MIP Thickness",
+                "Enter slab thickness (mm):",
+                float(self._mpr_slab_thickness_mm),
+                0.1,
+                200.0,
+                1
+            )
+            if not ok:
                 return
-            
-            # Get renderer and mapper
-            renderer = self.viewers['3d']['renderer']
-            mapper = self.viewers['3d']['mapper']
-            volume_property = self.viewers['3d']['property']
-            
-            print(f"Renderer: {renderer}")
-            print(f"Mapper type: {type(mapper).__name__}")
-            print(f"Current blend mode: {mapper.GetBlendMode()}")
-            logger.info(f"Renderer: {renderer}")
-            logger.info(f"Mapper type: {type(mapper).__name__}")
-            logger.info(f"Current blend mode: {mapper.GetBlendMode()}")
-            
-            # Set blend mode to MIP
-            mapper.SetBlendModeToMaximumIntensity()
-            print(f"New blend mode: {mapper.GetBlendMode()}")
-            print("MIP blend mode set to Maximum Intensity")
-            logger.info(f"New blend mode: {mapper.GetBlendMode()}")
-            logger.info("MIP blend mode set to Maximum Intensity")
-            
-            # Disable shading for MIP
-            volume_property.ShadeOff()
-            print("Shading disabled for MIP")
-            logger.info("Shading disabled for MIP")
-            
-            # Adjust opacity for better MIP visualization
-            # For MIP, we want to see all intensities
-            opacity_func = volume_property.GetScalarOpacity()
-            opacity_func.RemoveAllPoints()
-            opacity_func.AddPoint(self.scalar_range[0], 0.0)
-            opacity_func.AddPoint(self.scalar_range[1], 1.0)
-            print(f"Opacity adjusted for MIP (range: {self.scalar_range})")
-            logger.info(f"Opacity adjusted for MIP (range: {self.scalar_range})")
-            
-            # Render
-            renderer.GetRenderWindow().Render()
-            print("MIP applied successfully - render complete")
-            print("=" * 60)
-            logger.info("MIP applied successfully - render complete")
-            logger.info("=" * 60)
-            
-            QMessageBox.information(self, "MIP Applied", "Maximum Intensity Projection applied to 3D view")
-            
+
+            self._apply_slab_projection(mode='max', thickness_mm=thickness_mm)
+
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "MIP Applied", "Maximum Intensity Projection applied to Axial/Sagittal/Coronal views")
+
         except Exception as e:
-            print(f"EXCEPTION in MIP: {e}")
-            import traceback
-            traceback.print_exc()
             logger.error(f"ERROR in MIP: {e}", exc_info=True)
+            from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Error applying MIP: {str(e)}")
     
     def _apply_minip(self):
-        """Apply Minimum Intensity Projection to 3D view"""
+        """Apply Minimum Intensity Projection to 2D MPR views"""
         try:
             logger.info("=" * 60)
-            logger.info("APPLYING MinIP")
+            logger.info("APPLYING MinIP (2D MPR views)")
             logger.info("=" * 60)
-            
-            if '3d' not in self.viewers:
-                logger.error("No 3D view available for MinIP")
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "Error", "No 3D view available for MinIP")
+
+            from PySide6.QtWidgets import QInputDialog
+            thickness_mm, ok = QInputDialog.getDouble(
+                self,
+                "MinIP Thickness",
+                "Enter slab thickness (mm):",
+                float(self._mpr_slab_thickness_mm),
+                0.1,
+                200.0,
+                1
+            )
+            if not ok:
                 return
-            
-            # Get renderer and mapper
-            renderer = self.viewers['3d']['renderer']
-            mapper = self.viewers['3d']['mapper']
-            volume_property = self.viewers['3d']['property']
-            
-            logger.info(f"Mapper type: {type(mapper).__name__}")
-            logger.info(f"Current blend mode: {mapper.GetBlendMode()}")
-            
-            # Set blend mode to MinIP
-            mapper.SetBlendModeToMinimumIntensity()
-            logger.info(f"New blend mode: {mapper.GetBlendMode()}")
-            logger.info("MinIP blend mode set to Minimum Intensity")
-            
-            # Disable shading for MinIP
-            volume_property.ShadeOff()
-            logger.info("Shading disabled for MinIP")
-            
-            # Adjust opacity for better MinIP visualization
-            opacity_func = volume_property.GetScalarOpacity()
-            opacity_func.RemoveAllPoints()
-            opacity_func.AddPoint(self.scalar_range[0], 1.0)
-            opacity_func.AddPoint(self.scalar_range[1], 0.0)
-            logger.info(f"Opacity adjusted for MinIP (range: {self.scalar_range})")
-            
-            # Render
-            renderer.GetRenderWindow().Render()
-            logger.info("MinIP applied successfully - render complete")
-            logger.info("=" * 60)
-            
+
+            self._apply_slab_projection(mode='min', thickness_mm=thickness_mm)
+
             from PySide6.QtWidgets import QMessageBox
-            QMessageBox.information(self, "MinIP Applied", "Minimum Intensity Projection applied to 3D view")
-            
+            QMessageBox.information(self, "MinIP Applied", "Minimum Intensity Projection applied to Axial/Sagittal/Coronal views")
+
         except Exception as e:
             logger.error(f"ERROR in MinIP: {e}", exc_info=True)
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Error applying MinIP: {str(e)}")
     
-    def _apply_thick_slab(self):
+    def _apply_thick_slab(self, thickness_mm=None):
         """Apply Thick Slab MPR"""
         try:
-            thickness = self.slab_thickness_spin.value()
+            if thickness_mm is None:
+                if hasattr(self, 'slab_thickness_spin'):
+                    thickness_mm = self.slab_thickness_spin.value()
+                else:
+                    from PySide6.QtWidgets import QInputDialog
+                    thickness_mm, ok = QInputDialog.getDouble(
+                        self,
+                        "Thick Slab Thickness",
+                        "Enter slab thickness (mm):",
+                        10.0,
+                        0.1,
+                        200.0,
+                        1
+                    )
+                    if not ok:
+                        return
+            elif hasattr(self, 'slab_thickness_spin'):
+                self.slab_thickness_spin.setValue(thickness_mm)
+
+            thickness = thickness_mm
             logger.info("=" * 60)
             logger.info(f"APPLYING THICK SLAB MPR - Thickness: {thickness} mm")
             logger.info("=" * 60)
-            
-            # Create vtkImageSlabReslice for thick slab
-            slab_reslice = vtk.vtkImageSlabReslice()
-            slab_reslice.SetInputData(self.image_data)
-            slab_reslice.SetSlabThickness(thickness)
-            slab_reslice.SetBlendModeToMax()  # MIP mode for slab
-            
-            logger.info("Thick slab reslice created")
-            
-            # Apply to each 2D view
-            views_updated = 0
-            for view_name in ['axial', 'sagittal', 'coronal']:
-                if view_name not in self.viewers:
-                    logger.warning(f"View {view_name} not found")
-                    continue
-                
-                try:
-                    logger.info(f"Updating {view_name} view with thick slab...")
-                    
-                    # Get the view components
-                    renderer = self.viewers[view_name]['renderer']
-                    
-                    # Set orientation based on view
-                    if view_name == 'axial':
-                        # XY plane (looking down Z axis)
-                        slab_reslice.SetResliceAxesDirectionCosines(
-                            1, 0, 0,  # X axis
-                            0, 1, 0,  # Y axis
-                            0, 0, 1   # Z axis (slice normal)
-                        )
-                    elif view_name == 'sagittal':
-                        # YZ plane (looking along X axis)
-                        slab_reslice.SetResliceAxesDirectionCosines(
-                            0, 0, 1,  # Z axis
-                            0, 1, 0,  # Y axis
-                            1, 0, 0   # X axis (slice normal)
-                        )
-                    elif view_name == 'coronal':
-                        # XZ plane (looking along Y axis)
-                        slab_reslice.SetResliceAxesDirectionCosines(
-                            1, 0, 0,  # X axis
-                            0, 0, 1,  # Z axis
-                            0, 1, 0   # Y axis (slice normal)
-                        )
-                    
-                    # Set slice position to center
-                    slab_reslice.SetResliceAxesOrigin(self.center)
-                    
-                    # Update the pipeline
-                    slab_reslice.Update()
-                    
-                    logger.info(f"{view_name} slab reslice updated")
-                    
-                    # Create new mapper for the slab
-                    mapper = vtk.vtkImageSliceMapper()
-                    mapper.SetInputConnection(slab_reslice.GetOutputPort())
-                    
-                    # Create new image slice
-                    image_slice = vtk.vtkImageSlice()
-                    image_slice.SetMapper(mapper)
-                    
-                    # Set window/level
-                    window, level = self._get_default_window_level()
-                    image_slice.GetProperty().SetColorWindow(window)
-                    image_slice.GetProperty().SetColorLevel(level)
-                    
-                    # Remove old actors and add new one
-                    renderer.RemoveAllViewProps()
-                    renderer.AddViewProp(image_slice)
-                    renderer.ResetCamera()
-                    renderer.GetRenderWindow().Render()
-                    
-                    views_updated += 1
-                    logger.info(f"{view_name} view updated successfully")
-                    
-                except Exception as view_error:
-                    logger.error(f"Error updating {view_name} view: {view_error}", exc_info=True)
-            
-            logger.info(f"Thick Slab applied to {views_updated} views")
-            logger.info("=" * 60)
-            
+
+            self._apply_slab_projection(mode='max', thickness_mm=thickness)
+
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(
-                self, 
-                "Thick Slab Applied", 
-                f"Thick Slab MPR ({thickness} mm) applied to {views_updated} views"
+                self,
+                "Thick Slab Applied",
+                f"Thick Slab MPR ({thickness} mm) applied to Axial/Sagittal/Coronal views"
             )
-            
+
         except Exception as e:
             logger.error(f"ERROR in Thick Slab: {e}", exc_info=True)
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Error applying Thick Slab: {str(e)}")
+
+    def _apply_slab_projection(self, mode, thickness_mm):
+        """Apply slab projection to 2D MPR views using vtkImageResliceMapper slab settings."""
+        self._mpr_slab_thickness_mm = thickness_mm
+        self._mpr_slab_mode = mode
+
+        for view_name in ['axial', 'sagittal', 'coronal']:
+            if view_name not in self.viewers:
+                continue
+
+            mapper = self.viewers[view_name]['mapper']
+
+            if not hasattr(mapper, 'SetSlabThickness'):
+                logger.warning(f"Slab projection not supported on mapper for view: {view_name}")
+                continue
+
+            mapper.SetSlabThickness(thickness_mm)
+
+            if mode == 'max' and hasattr(mapper, 'SetSlabTypeToMax'):
+                mapper.SetSlabTypeToMax()
+            elif mode == 'min' and hasattr(mapper, 'SetSlabTypeToMin'):
+                mapper.SetSlabTypeToMin()
+            elif mode == 'mean' and hasattr(mapper, 'SetSlabTypeToMean'):
+                mapper.SetSlabTypeToMean()
+            else:
+                logger.warning(f"Unsupported slab mode '{mode}' for view: {view_name}")
+
+            self._request_render(view_name)
     
     def _reset_rendering(self):
         """Reset to normal rendering"""
@@ -3371,7 +3445,7 @@ class StandardMPRViewer(QWidget):
                             camera.Roll(180)
                     
                     renderer.ResetCamera()
-                    camera.Zoom(1.5)
+                    camera.Zoom(1.2)
                     
                     # Recreate crosshairs for this view
                     if view_name in self.crosshair_actors:

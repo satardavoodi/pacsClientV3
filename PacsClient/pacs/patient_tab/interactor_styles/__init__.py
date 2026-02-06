@@ -7,6 +7,6 @@ from .arrow_interactorstyle import ArrowInteractorStyle
 from .text_interactorstyle import TextInteractorStyle
 from .default_interaction_interactorstyle import DefaultInteractionInteractorStyle
 from .rotate_interactorstyles import RotateInteractorStyle
-from .roi_interactorstyle import RoiInteractorStyle
+from .roi_interactorstyle import RoiInteractorStyle, CircleRoiInteractorStyle
 from .segmentation_styles import PolygonSegmentationInteractorStyle, RectangleSegmentationInteractorStyle
 from .tools_object_manager import ToolAccess

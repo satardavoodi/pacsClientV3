@@ -811,13 +811,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         scale_zoom = f'{scale_zoom:.2f}'
 
         self.dicom_tags_actors.im_series_window_level = make_corner_actor(f'WW:{window_width} WL:{window_center}', left,
-                                                                          bottom, 'left', 'bottom')
+                                          bottom, 'left', 'bottom')
         self.dicom_tags_actors.im_scale_zoom_actor = make_corner_actor(f'Scale:{scale_zoom}', left, bottom + (1 * gap),
-                                                                       'left', 'bottom')
+                                           'left', 'bottom')
         self.dicom_tags_actors.im_series_size_actor = make_corner_actor(series_size, left, bottom + (2 * gap), 'left',
-                                                                        'bottom')
+                                        'bottom')
         self.dicom_tags_actors.im_series_thk_actor = make_corner_actor(series_thk, left, bottom + (3 * gap), 'left',
-                                                                       'bottom')
+                                           'bottom')
 
         self.renderer.AddViewProp(self.dicom_tags_actors.im_series_window_level)
         self.renderer.AddViewProp(self.dicom_tags_actors.im_scale_zoom_actor)
@@ -845,13 +845,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         scale_zoom = f'{scale_zoom:.2f}'
 
         self.dicom_tags_actors.im_series_window_level = make_corner_actor(f'WW:{window_width} WL:{window_center}', left,
-                                                                          bottom, 'left', 'bottom')
+                                          bottom, 'left', 'bottom')
         self.dicom_tags_actors.im_scale_zoom_actor = make_corner_actor(f'Scale:{scale_zoom}', left, bottom + (1 * gap),
-                                                                       'left', 'bottom')
+                                           'left', 'bottom')
         self.dicom_tags_actors.im_series_size_actor = make_corner_actor(series_size, left, bottom + (2 * gap), 'left',
-                                                                        'bottom')
+                                        'bottom')
         self.dicom_tags_actors.im_series_thk_actor = make_corner_actor(series_thk, left, bottom + (3 * gap), 'left',
-                                                                       'bottom')
+                                           'bottom')
 
         self.renderer.AddViewProp(self.dicom_tags_actors.im_series_window_level)
         self.renderer.AddViewProp(self.dicom_tags_actors.im_scale_zoom_actor)

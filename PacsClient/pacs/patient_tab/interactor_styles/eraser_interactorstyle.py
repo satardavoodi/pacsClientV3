@@ -113,6 +113,20 @@ class EraserInteractorStyle(AbstractInteractorStyle):
                             closest_object = obj
                             break
 
+                elif hasattr(obj, self.tool_access.CIRCLE_ROI):
+                    line_pairs = obj.get_position_world()
+
+                    for start_point, end_point in line_pairs:
+                        start_point_display = self.world_to_display(start_point)
+                        end_point_display = self.world_to_display(end_point)
+
+                        distance = self.point_to_line_distance(mouse_pos, start_point_display, end_point_display)
+
+                        if distance < min_distance:
+                            min_distance = distance
+                            closest_object = obj
+                            break
+
             return closest_object
 
         except Exception as e:
