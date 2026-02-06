@@ -1606,6 +1606,98 @@ class DownloadManagerWidget(QWidget):
         details_content_layout = QVBoxLayout(details_content)
         details_content_layout.setSpacing(12)
         
+        # Patient information group (NEW)
+        patient_info_group = QGroupBox("Patient Information")
+        patient_info_layout = QVBoxLayout(patient_info_group)
+        
+        # Patient Name
+        patient_name_layout = QHBoxLayout()
+        patient_name_layout.addWidget(QLabel("Patient Name:"))
+        self.patient_name_label = QLabel("Not selected")
+        self.patient_name_label.setStyleSheet("""
+            QLabel {
+                color: #f7fafc;
+                font-weight: bold;
+                padding: 4px 0px;
+            }
+        """)
+        self.patient_name_label.setWordWrap(True)
+        patient_name_layout.addWidget(self.patient_name_label)
+        patient_info_layout.addLayout(patient_name_layout)
+        
+        # Patient ID
+        patient_id_layout = QHBoxLayout()
+        patient_id_layout.addWidget(QLabel("Patient ID:"))
+        self.patient_id_label = QLabel("Not selected")
+        self.patient_id_label.setStyleSheet("""
+            QLabel {
+                color: #a0aec0;
+                font-size: 12px;
+                padding: 2px 0px;
+            }
+        """)
+        patient_id_layout.addWidget(self.patient_id_label)
+        patient_info_layout.addLayout(patient_id_layout)
+        
+        # Study Date
+        study_date_layout = QHBoxLayout()
+        study_date_layout.addWidget(QLabel("Study Date:"))
+        self.study_date_label = QLabel("Not selected")
+        self.study_date_label.setStyleSheet("""
+            QLabel {
+                color: #a0aec0;
+                font-size: 12px;
+                padding: 2px 0px;
+            }
+        """)
+        study_date_layout.addWidget(self.study_date_label)
+        patient_info_layout.addLayout(study_date_layout)
+        
+        # Study Description
+        study_desc_layout = QHBoxLayout()
+        study_desc_layout.addWidget(QLabel("Description:"))
+        self.study_description_label = QLabel("Not selected")
+        self.study_description_label.setStyleSheet("""
+            QLabel {
+                color: #a0aec0;
+                font-size: 12px;
+                padding: 2px 0px;
+            }
+        """)
+        self.study_description_label.setWordWrap(True)
+        study_desc_layout.addWidget(self.study_description_label)
+        patient_info_layout.addLayout(study_desc_layout)
+        
+        # Modality
+        modality_layout = QHBoxLayout()
+        modality_layout.addWidget(QLabel("Modality:"))
+        self.modality_label = QLabel("Not selected")
+        self.modality_label.setStyleSheet("""
+            QLabel {
+                color: #a0aec0;
+                font-size: 12px;
+                padding: 2px 0px;
+            }
+        """)
+        modality_layout.addWidget(self.modality_label)
+        patient_info_layout.addLayout(modality_layout)
+        
+        # Study UID (hidden, for reference)
+        study_uid_layout = QHBoxLayout()
+        study_uid_layout.addWidget(QLabel("Study UID:"))
+        self.study_uid_label = QLabel("Not selected")
+        self.study_uid_label.setStyleSheet("""
+            QLabel {
+                color: #6b7280;
+                font-size: 11px;
+                padding: 2px 0px;
+                word-break: break-all;
+            }
+        """)
+        self.study_uid_label.setWordWrap(True)
+        study_uid_layout.addWidget(self.study_uid_label)
+        patient_info_layout.addLayout(study_uid_layout)
+        
         # File information group
         file_info_group = QGroupBox("File Information")
         file_info_layout = QVBoxLayout(file_info_group)
@@ -1766,6 +1858,7 @@ class DownloadManagerWidget(QWidget):
         log_layout.addWidget(self.log_text)
         
         # Add all groups to details layout
+        details_content_layout.addWidget(patient_info_group)
         details_content_layout.addWidget(file_info_group)
         details_content_layout.addWidget(progress_group)
         details_content_layout.addWidget(controls_group)
@@ -2165,7 +2258,11 @@ class DownloadManagerWidget(QWidget):
     def on_item_clicked(self, item):
         """Handle item click in the download table"""
         row = item.row()
-        if row < len(self.downloads):
+        # Check if it's a study download (new UI) or file download (legacy)
+        if row < len(self.study_downloads):
+            self.current_study_download_index = row
+            self.update_study_details_panel(row)
+        elif row < len(self.downloads):
             self.current_download_index = row
             self.update_details_panel(row)
     
@@ -2201,6 +2298,54 @@ class DownloadManagerWidget(QWidget):
             self.downloads[self.current_download_index].priority = priority
             self.update_details_panel(self.current_download_index)
             self.log_message(f"Priority changed to {priority} for {self.downloads[self.current_download_index].filename}")
+    
+    def update_study_details_panel(self, row):
+        """Update the study details panel with information from the selected study download"""
+        if row < len(self.study_downloads):
+            study_download = self.study_downloads[row]
+            
+            # Update patient information
+            self.patient_name_label.setText(study_download.patient_name or "Not available")
+            self.patient_id_label.setText(study_download.patient_id or "Not available")
+            
+            # Format study date for display
+            study_date_str = study_download.study_date or "Not available"
+            if len(study_date_str) == 8:  # YYYYMMDD format
+                try:
+                    from datetime import datetime
+                    study_date_obj = datetime.strptime(study_date_str, "%Y%m%d")
+                    study_date_str = study_date_obj.strftime("%Y-%m-%d")
+                except:
+                    pass
+            self.study_date_label.setText(study_date_str)
+            self.study_description_label.setText(study_download.description or "No description")
+            self.modality_label.setText(study_download.modality or "Not available")
+            self.study_uid_label.setText(study_download.study_uid or "Not available")
+            
+            # Update file information (study-related)
+            filename_text = f"{study_download.patient_name} - {study_download.modality}"
+            self.filename_label.setText(filename_text)
+            
+            # Show series and image count
+            size_text = f"{study_download.series_count} series, {study_download.image_count} images"
+            if study_download.downloaded_series > 0 or study_download.downloaded_images > 0:
+                size_text += f" ({study_download.downloaded_series} series, {study_download.downloaded_images} images downloaded)"
+            self.size_label.setText(size_text)
+            
+            # Update progress information
+            self.progress_bar.setValue(study_download.progress)
+            self.progress_label.setText(f"{study_download.progress}%")
+            self.speed_label.setText(f"Speed: {study_download.speed}")
+            self.eta_label.setText(f"ETA: {study_download.eta}")
+            
+            # Update priority if available
+            if hasattr(self, 'priority_combo') and study_download.priority in ["Low", "Normal", "High", "Critical"]:
+                self.priority_combo.setCurrentText(study_download.priority)
+            
+            # Update button states based on download status
+            self.update_control_buttons(study_download.status)
+            
+            self.log_message(f"📋 Showing details for: {study_download.patient_name}")
     
     def update_details_panel(self, row):
         """Update the details panel with information from the selected row"""
