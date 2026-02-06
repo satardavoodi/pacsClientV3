@@ -314,33 +314,6 @@ class HomePanelWidget(QWidget):
         )
         left_layout.addWidget(self.patient_search_widget)
 
-        # Resumable Download Manager Button
-        self.resumable_download_btn = QPushButton(qta.icon('fa5s.download', color='white'), "Resumable Downloads")
-        self.resumable_download_btn.setToolTip("Open Resumable Download Manager")
-        self.resumable_download_btn.clicked.connect(self._on_resumable_download_clicked)
-        self.resumable_download_btn.setStyleSheet("""
-            QPushButton {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 12px 16px;
-                font-size: 14px;
-                font-weight: bold;
-                font-family: 'Roboto', sans-serif;
-                text-align: center;
-            }
-            QPushButton:hover {
-                background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
-                transform: translateY(-1px);
-            }
-            QPushButton:pressed {
-                background: linear-gradient(135deg, #4e5bc6 0%, #5e377e 100%);
-                transform: translateY(0px);
-            }
-        """)
-        # left_layout.addWidget(self.resumable_download_btn)
-
         # Auto-search with today's date when page loads
         # from PySide6.QtCore import QTimer
         # QTimer.singleShot(1000, self.perform_default_search)

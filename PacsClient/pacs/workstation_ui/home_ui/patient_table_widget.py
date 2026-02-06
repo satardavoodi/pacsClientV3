@@ -919,49 +919,12 @@ class PatientTableWidget(QWidget):
             }
         """)
         
-        # Download button for selected patients with auto-sizing - ONLY ICON
+        # Unified Download button for selected patients using Zeta Download Manager
         self.download_btn = QPushButton(qta.icon('fa5s.download', color='white'), "")
-        self.download_btn.setToolTip("Download selected studies to download manager")
-        self.download_btn.clicked.connect(self._on_download_clicked)
+        self.download_btn.setToolTip("Download selected studies with Zeta Download Manager")
+        self.download_btn.clicked.connect(self._on_zeta_npr_clicked)
         self.download_btn.setFixedSize(36, 36)
         self.download_btn.setStyleSheet("""
-        QPushButton {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #059669, stop:1 #047857);
-            color: white;
-            border: 1px solid #059669;
-            border-radius: 8px;
-            padding: 8px;
-            font-size: 12px;
-            font-family: 'Roboto', sans-serif;
-            font-weight: 600;
-            margin: 4px 0px;
-            qproperty-iconSize: 16px;
-        }
-        QPushButton:hover {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #047857, stop:1 #065f46);
-            border-color: #047857;
-        }
-        QPushButton:pressed {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #065f46, stop:1 #064e3b);
-        }
-        QPushButton:disabled {
-            background: #374151;
-            border-color: #4b5563;
-            color: #6b7280;
-        }
-        """)
-        self.download_btn.setCursor(Qt.PointingHandCursor)
-        self.download_btn.setEnabled(False)
-        
-        # Zeta Download button for selected patients - NEW MODERN DOWNLOAD MANAGER
-        self.zeta_npr_btn = QPushButton(qta.icon('fa5s.rocket', color='white'), "")
-        self.zeta_npr_btn.setToolTip("Download with Zeta Download (Modern Download Manager)")
-        self.zeta_npr_btn.clicked.connect(self._on_zeta_npr_clicked)
-        self.zeta_npr_btn.setFixedSize(36, 36)
-        self.zeta_npr_btn.setStyleSheet("""
         QPushButton {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                 stop:0 #3b82f6, stop:1 #2563eb);
@@ -990,33 +953,11 @@ class PatientTableWidget(QWidget):
             color: #6b7280;
         }
         """)
-        self.zeta_npr_btn.setCursor(Qt.PointingHandCursor)
-        self.zeta_npr_btn.setEnabled(False)
-                
-        # برای نمایش متن هنگام hover
-        def on_download_btn_hover(event):
-            if self.download_btn.isEnabled():
-                selected_count = self.get_checked_count()
-                if selected_count > 0:
-                    self.download_btn.setText(f"Download {selected_count} Selected")
-                else:
-                    self.download_btn.setText("Download Selected")
-                self.download_btn.style().unpolish(self.download_btn)
-                self.download_btn.style().polish(self.download_btn)
-            return super(QPushButton, self.download_btn).enterEvent(event)
-        
-        def on_download_btn_leave(event):
-            self.download_btn.setText("")
-            self.download_btn.style().unpolish(self.download_btn)
-            self.download_btn.style().polish(self.download_btn)
-            return super(QPushButton, self.download_btn).leaveEvent(event)
-        
-    #    self.download_btn.enterEvent = on_download_btn_hover
-    #    self.download_btn.leaveEvent = on_download_btn_leave
-        
-        # Set cursor using Qt method instead of CSS
         self.download_btn.setCursor(Qt.PointingHandCursor)
-        self.download_btn.setEnabled(False)  # Initially disabled
+        self.download_btn.setEnabled(False)
+        
+        # Keep zeta_npr_btn as alias for backward compatibility
+        self.zeta_npr_btn = self.download_btn
         
         # Delete button for selected downloaded patients - ONLY ICON
         self.delete_btn = QPushButton(qta.icon('fa5s.trash-alt', color='white'), "")
@@ -1054,30 +995,6 @@ class PatientTableWidget(QWidget):
         """)
         self.delete_btn.setCursor(Qt.PointingHandCursor)
         self.delete_btn.setEnabled(False)
-            
-        # برای نمایش متن هنگام hover
-        def on_delete_btn_hover(event):
-            if self.delete_btn.isEnabled():
-                downloaded_count = self._get_downloaded_selected_count()
-                if downloaded_count > 0:
-                    self.delete_btn.setText(f"Delete {downloaded_count} Local")
-                else:
-                    self.delete_btn.setText("Delete Selected Local")
-                self.delete_btn.style().unpolish(self.delete_btn)
-                self.delete_btn.style().polish(self.delete_btn)
-            return super(QPushButton, self.delete_btn).enterEvent(event)
-        
-        def on_delete_btn_leave(event):
-            self.delete_btn.setText("")
-            self.delete_btn.style().unpolish(self.delete_btn)
-            self.delete_btn.style().polish(self.delete_btn)
-            return super(QPushButton, self.delete_btn).leaveEvent(event)
-        
-        #self.delete_btn.enterEvent = on_delete_btn_hover
-        #self.delete_btn.leaveEvent = on_delete_btn_leave
-        
-        self.delete_btn.setCursor(Qt.PointingHandCursor)
-        self.delete_btn.setEnabled(False)  # Initially disabled
         
         # CD Burn button for writing downloaded studies to CD/DVD - ONLY ICON
         cd_icon_path = Path(__file__).parent.parent.parent.parent / "components" / "cd_burner" / "assets" / "cd_icon.png"
@@ -1087,33 +1004,25 @@ class PatientTableWidget(QWidget):
             self.cd_burn_btn = QPushButton(qta.icon('fa5s.compact-disc', color='white'), "")
         self.cd_burn_btn.setToolTip("Write selected downloaded studies to CD/DVD with DICOMDIR")
         self.cd_burn_btn.clicked.connect(self._on_cd_burn_clicked)
-        self.cd_burn_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.cd_burn_btn.setMinimumWidth(36)
-        self.cd_burn_btn.setMaximumWidth(36)
+        self.cd_burn_btn.setFixedSize(36, 36)
         self.cd_burn_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #6366f1, stop:1 #4f46e5);
-                color: transparent;
+                color: white;
                 border: 1px solid #6366f1;
                 border-radius: 8px;
-                padding: 10px 8px;
-                font-size: 1px;
+                padding: 8px;
+                font-size: 12px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 600;
                 margin: 4px 0px;
-                min-width: 36px;
-                max-width: 36px;
                 qproperty-iconSize: 16px;
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #4f46e5, stop:1 #4338ca);
                 border-color: #4f46e5;
-                color: #ffffff;
-                font-size: 13px;
-                min-width: 180px;
-                max-width: 200px;
             }
             QPushButton:pressed {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -1126,74 +1035,54 @@ class PatientTableWidget(QWidget):
             }
         """)
         
-        # برای نمایش متن هنگام hover
-        def on_cd_burn_btn_hover(event):
-            if self.cd_burn_btn.isEnabled():
-                selected_count = self.get_checked_count()
-                if selected_count > 0:
-                    self.cd_burn_btn.setText(f"Write {selected_count} to CD")
-                else:
-                    self.cd_burn_btn.setText("Write to CD")
-                self.cd_burn_btn.style().unpolish(self.cd_burn_btn)
-                self.cd_burn_btn.style().polish(self.cd_burn_btn)
-            return super(QPushButton, self.cd_burn_btn).enterEvent(event)
-        
-        def on_cd_burn_btn_leave(event):
-            self.cd_burn_btn.setText("")
-            self.cd_burn_btn.style().unpolish(self.cd_burn_btn)
-            self.cd_burn_btn.style().polish(self.cd_burn_btn)
-            return super(QPushButton, self.cd_burn_btn).leaveEvent(event)
-        
-        self.cd_burn_btn.enterEvent = on_cd_burn_btn_hover
-        self.cd_burn_btn.leaveEvent = on_cd_burn_btn_leave
-        
         self.cd_burn_btn.setCursor(Qt.PointingHandCursor)
         self.cd_burn_btn.setEnabled(False)  # Initially disabled
 
+        # Unified button style for all utility buttons
+        utility_button_style = """
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #64748b, stop:1 #475569);
+                color: white;
+                border: 1px solid #64748b;
+                border-radius: 8px;
+                padding: 8px;
+                font-size: 12px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 600;
+                margin: 4px 0px;
+                qproperty-iconSize: 16px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #475569, stop:1 #334155);
+                border-color: #475569;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #334155, stop:1 #1e293b);
+            }
+            QPushButton:disabled {
+                background: #374151;
+                border-color: #4b5563;
+                color: #6b7280;
+            }
+        """
+
         # Settings button
-        self.settings_btn = QPushButton(qta.icon('fa5s.cog', color='#a0aec0'), "")
+        self.settings_btn = QPushButton(qta.icon('fa5s.cog', color='white'), "")
         self.settings_btn.setToolTip("Column Settings (Order and Visibility)")
         self.settings_btn.clicked.connect(self._open_column_settings)
         self.settings_btn.setFixedSize(36, 36)
-        self.settings_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(160, 174, 192, 0.1);
-                border: 1px solid rgba(160, 174, 192, 0.2);
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background: rgba(160, 174, 192, 0.2);
-                border-color: rgba(160, 174, 192, 0.4);
-            }
-            QPushButton:pressed {
-                background: rgba(160, 174, 192, 0.3);
-            }
-        """)
+        self.settings_btn.setStyleSheet(utility_button_style)
         self.settings_btn.setCursor(Qt.PointingHandCursor)
         
         # Refresh button for download statuses
-        self.refresh_btn = QPushButton(qta.icon('fa5s.sync-alt', color='#a0aec0'), "")
+        self.refresh_btn = QPushButton(qta.icon('fa5s.sync-alt', color='white'), "")
         self.refresh_btn.setToolTip("Refresh Download Statuses\n(Check which studies are downloaded)")
         self.refresh_btn.clicked.connect(self.refresh_download_statuses)
         self.refresh_btn.setFixedSize(36, 36)
-        self.refresh_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(160, 174, 192, 0.1);
-                border: 1px solid rgba(160, 174, 192, 0.2);
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background: rgba(160, 174, 192, 0.2);
-                border-color: rgba(160, 174, 192, 0.4);
-            }
-            QPushButton:pressed {
-                background: rgba(160, 174, 192, 0.3);
-            }
-            QPushButton:disabled {
-                background: rgba(100, 100, 100, 0.1);
-                border-color: rgba(100, 100, 100, 0.2);
-            }
-        """)
+        self.refresh_btn.setStyleSheet(utility_button_style)
         self.refresh_btn.setCursor(Qt.PointingHandCursor)
         
         # Font size buttons (A+ and A-)
@@ -1201,48 +1090,14 @@ class PatientTableWidget(QWidget):
         self.font_increase_btn.setToolTip("Increase Font Size")
         self.font_increase_btn.clicked.connect(lambda: self._change_font_size(1))
         self.font_increase_btn.setFixedSize(36, 36)
-        self.font_increase_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(160, 174, 192, 0.1);
-                border: 1px solid rgba(160, 174, 192, 0.2);
-                border-radius: 8px;
-                font-size: 14px;
-                font-weight: bold;
-                color: #a0aec0;
-            }
-            QPushButton:hover {
-                background: rgba(160, 174, 192, 0.2);
-                border-color: rgba(160, 174, 192, 0.4);
-                color: #ffffff;
-            }
-            QPushButton:pressed {
-                background: rgba(160, 174, 192, 0.3);
-            }
-        """)
+        self.font_increase_btn.setStyleSheet(utility_button_style)
         self.font_increase_btn.setCursor(Qt.PointingHandCursor)
         
         self.font_decrease_btn = QPushButton("A-")
         self.font_decrease_btn.setToolTip("Decrease Font Size")
         self.font_decrease_btn.clicked.connect(lambda: self._change_font_size(-1))
         self.font_decrease_btn.setFixedSize(36, 36)
-        self.font_decrease_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(160, 174, 192, 0.1);
-                border: 1px solid rgba(160, 174, 192, 0.2);
-                border-radius: 8px;
-                font-size: 14px;
-                font-weight: bold;
-                color: #a0aec0;
-            }
-            QPushButton:hover {
-                background: rgba(160, 174, 192, 0.2);
-                border-color: rgba(160, 174, 192, 0.4);
-                color: #ffffff;
-            }
-            QPushButton:pressed {
-                background: rgba(160, 174, 192, 0.3);
-            }
-        """)
+        self.font_decrease_btn.setStyleSheet(utility_button_style)
         self.font_decrease_btn.setCursor(Qt.PointingHandCursor)
         
         header_layout.addWidget(title_label)
@@ -1255,7 +1110,6 @@ class PatientTableWidget(QWidget):
         header_layout.addWidget(self.delete_btn)
         header_layout.addWidget(self.cd_burn_btn)
         header_layout.addWidget(self.download_btn)
-        header_layout.addWidget(self.zeta_npr_btn)
         layout.addWidget(header_widget)
         
         # Add table to layout
@@ -1440,26 +1294,11 @@ class PatientTableWidget(QWidget):
             pass
 
     def _on_download_clicked(self):
-        """Handle download button click"""
-        try:
-            # Get selected patient data
-            selected_data = self.get_selected_patient_data_list()
-
-            if not selected_data:
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "No Studies Selected", 
-                                   "Please select at least one study for download.")
-                return
-            
-            # Emit signal with selected data
-            self.downloadRequested.emit(selected_data)
-            
-            print(f"📥 Download requested for {len(selected_data)} studies")
-            
-        except Exception as e:
-            print(f"Error in download studies: {str(e)}")
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, "Error", f"Error in download studies: {str(e)}")
+        """
+        Handle download button click - Now unified with Zeta Download Manager
+        This method is kept for backward compatibility but delegates to _on_zeta_npr_clicked
+        """
+        self._on_zeta_npr_clicked()
     
     def _on_zeta_npr_clicked(self):
         """Handle Zeta Download button click - uses modern Zeta Download Manager"""
