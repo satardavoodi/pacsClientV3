@@ -262,6 +262,117 @@ class MPRMeasurementTools:
         
         logger.info(f"✓ Cleared {count} measurements")
         return count
+
+    def delete_measurement_at(self, view_name, display_pos, renderer, threshold=10):
+        """
+        Delete the closest measurement widget to a display position.
+        Args:
+            view_name: 'axial', 'sagittal', or 'coronal'
+            display_pos: (x, y) tuple in display coordinates
+            renderer: vtkRenderer for coordinate conversion
+            threshold: max pixel distance to consider a hit
+        Returns:
+            True if a widget was removed, False otherwise
+        """
+        if view_name not in self.active_tools:
+            return False
+
+        if renderer is None:
+            return False
+
+        closest = None  # (tool_type, widget, distance)
+        min_distance = float(threshold)
+
+        for tool_type in ['ruler', 'angle', 'caption']:
+            widgets = self.active_tools[view_name].get(tool_type, [])
+            for widget in widgets:
+                try:
+                    distance = self._get_widget_distance(tool_type, widget, display_pos, renderer)
+                except Exception:
+                    distance = None
+                if distance is None:
+                    continue
+                if distance <= min_distance:
+                    min_distance = distance
+                    closest = (tool_type, widget, distance)
+
+        if not closest:
+            return False
+
+        tool_type, widget, _ = closest
+        try:
+            widget.Off()
+        except Exception:
+            pass
+
+        try:
+            self.active_tools[view_name][tool_type].remove(widget)
+        except ValueError:
+            pass
+
+        logger.info(f"✓ Deleted {tool_type} measurement on {view_name}")
+        return True
+
+    def _get_widget_distance(self, tool_type, widget, display_pos, renderer):
+        if tool_type == 'ruler':
+            rep = widget.GetRepresentation()
+            p1 = [0, 0, 0]
+            p2 = [0, 0, 0]
+            rep.GetPoint1WorldPosition(p1)
+            rep.GetPoint2WorldPosition(p2)
+            d1 = self._world_to_display(renderer, p1)
+            d2 = self._world_to_display(renderer, p2)
+            return self._point_to_line_distance(display_pos, d1, d2)
+
+        if tool_type == 'angle':
+            rep = widget.GetRepresentation()
+            p1 = [0, 0, 0]
+            p2 = [0, 0, 0]
+            p3 = [0, 0, 0]
+            rep.GetPoint1WorldPosition(p1)
+            rep.GetCenterWorldPosition(p2)
+            rep.GetPoint2WorldPosition(p3)
+            d1 = self._world_to_display(renderer, p1)
+            d2 = self._world_to_display(renderer, p2)
+            d3 = self._world_to_display(renderer, p3)
+            dist1 = self._point_to_line_distance(display_pos, d1, d2)
+            dist2 = self._point_to_line_distance(display_pos, d2, d3)
+            return min(dist1, dist2)
+
+        if tool_type == 'caption':
+            rep = widget.GetRepresentation()
+            anchor = [0, 0, 0]
+            try:
+                rep.GetAnchorPosition(anchor)
+            except Exception:
+                return None
+            d1 = self._world_to_display(renderer, anchor)
+            return self._point_to_point_distance(display_pos, d1)
+
+        return None
+
+    def _world_to_display(self, renderer, world_pos):
+        coord = vtk.vtkCoordinate()
+        coord.SetCoordinateSystemToWorld()
+        coord.SetValue(world_pos[0], world_pos[1], world_pos[2])
+        return coord.GetComputedDisplayValue(renderer)
+
+    def _point_to_line_distance(self, point, line_start, line_end):
+        import math
+        dx = line_end[0] - line_start[0]
+        dy = line_end[1] - line_start[1]
+        length_sq = dx * dx + dy * dy
+        if length_sq == 0:
+            return math.sqrt((point[0] - line_start[0]) ** 2 + (point[1] - line_start[1]) ** 2)
+        t = ((point[0] - line_start[0]) * dx + (point[1] - line_start[1]) * dy) / length_sq
+        t = max(0.0, min(1.0, t))
+        closest_x = line_start[0] + t * dx
+        closest_y = line_start[1] + t * dy
+        return math.sqrt((point[0] - closest_x) ** 2 + (point[1] - closest_y) ** 2)
+
+    def _point_to_point_distance(self, p1, p2):
+        import math
+        return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
     
     def get_measurement_count(self, view_name=None):
         """

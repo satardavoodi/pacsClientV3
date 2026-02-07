@@ -36,6 +36,7 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
         self.middle_button_down = False
         self.pan_active = False
         self.last_pos = None
+        self.slider = None
         self.tool_access = ToolAccess()
         self.color = (1, 0, 1)
         self.interactor_name = self.tool_access.ABSTRACT
@@ -213,7 +214,13 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
             next_slice = self.image_viewer.GetSlice() + self.image_viewer.skip_slices - step
 
             if 0 <= next_slice < max_slice:  # if slice valid
-                self.slider.setValue(next_slice)
+                if hasattr(self, 'slider') and self.slider is not None:
+                    self.slider.setValue(next_slice)
+                else:
+                    try:
+                        self.image_viewer.set_slice(next_slice)
+                    except Exception:
+                        return
 
             self.image_viewer.Render()
             self.last_pos = current_pos

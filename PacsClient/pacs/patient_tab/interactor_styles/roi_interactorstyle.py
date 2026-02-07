@@ -163,9 +163,23 @@ class CircleRoiWidget:
         self.source.Update()
 
     def set_radius(self, radius):
-        self.radius = max(0.0, float(radius))
+        try:
+            spacing = self.image_viewer.vtk_image_data.GetSpacing()
+            collapse_threshold = max(0.0, float(min(spacing)) * 0.25)
+        except Exception:
+            collapse_threshold = 0.0
+
+        radius_val = max(0.0, float(radius))
+        if collapse_threshold > 0.0 and radius_val <= collapse_threshold:
+            radius_val = 0.0
+
+        self.radius = radius_val
         self.source.SetRadius(self.radius)
         self.source.Update()
+        if self.radius <= 0.0:
+            self.actor.SetVisibility(False)
+        else:
+            self.actor.SetVisibility(True)
         self._update_handles()
 
     def set_on_changed(self, callback):
@@ -518,13 +532,8 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
 
         slope, intercept = self._get_rescale_params()
         if slope is not None and intercept is not None:
-            try:
-                scalar_range = img.GetScalarRange()
-            except Exception:
-                scalar_range = None
-
             should_apply = (float(slope) != 1.0) or (float(intercept) != 0.0)
-            if should_apply and scalar_range and scalar_range[0] >= 0:
+            if should_apply:
                 region_vals = region_vals * float(slope) + float(intercept)
         pixel_area_mm2 = spacing[0] * spacing[1]
         area_mm2 = region_vals.size * pixel_area_mm2

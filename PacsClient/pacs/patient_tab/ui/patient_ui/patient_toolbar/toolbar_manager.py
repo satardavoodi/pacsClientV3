@@ -1,5 +1,5 @@
 from PySide6.QtCore import QSize, Qt, QPoint, QTimer
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QIcon, QPixmap, QTransform
 from PySide6.QtWidgets import QPushButton, QToolBar, QToolButton, QMenu, QWidgetAction, QHBoxLayout, QVBoxLayout, \
     QLabel, QWidget, \
     QGroupBox, QApplication, QProgressDialog,QScrollArea,QFrame
@@ -261,6 +261,14 @@ class ToolbarManager:
         self._position_update_timer.setInterval(100)  # هر 100 میلی‌ثانیه
         self._position_update_timer.timeout.connect(self._update_soundbox_position)
         self._mic_button_ref = None  # رفرنس به دکمه میکروفون
+
+        # Target debug (first-run tracing)
+        self._target_debug_count = 0
+
+    def _debug_target(self, message: str):
+        if self._target_debug_count < 20:
+            print(f"[TARGET DEBUG] {message}")
+            self._target_debug_count += 1
 
     def _show_curved_mpr_panel(self):
         """Show Curved MPR control panel"""
@@ -932,7 +940,14 @@ class ToolbarManager:
         
         # Check for Zeta MPR viewer
         # Note: Zeta MPR now uses _zeta_mpr_widget attribute, not _mpr_widget
-        if hasattr(widget, '_zeta_mpr_widget'):
+        if hasattr(widget, '_zeta_mpr_widget') and widget._zeta_mpr_widget is not None:
+            return True
+        if hasattr(widget, '_new_mpr_zeta_widget') and widget._new_mpr_zeta_widget is not None:
+            return True
+        if hasattr(widget, '_original_widget'):
+            return True
+        # If the selected widget itself is the MPR widget
+        if hasattr(widget, 'activate_toolbar_tool') and hasattr(widget, 'viewers'):
             return True
         
         return False
@@ -941,6 +956,8 @@ class ToolbarManager:
         """Get the MPR widget from a VTKWidget that has MPR active"""
         if hasattr(widget, '_zeta_mpr_widget') and widget._zeta_mpr_widget is not None:
             return widget._zeta_mpr_widget
+        if hasattr(widget, '_new_mpr_zeta_widget') and widget._new_mpr_zeta_widget is not None:
+            return widget._new_mpr_zeta_widget
         if hasattr(widget, '_mpr_widget') and widget._mpr_widget is not None:
             return widget._mpr_widget
         if hasattr(widget, '_original_widget'):
@@ -1019,6 +1036,29 @@ class ToolbarManager:
         print('reset!!')
         last_series_show=None
         """this method run for once. we don't need to hold active """
+        # MPR mode reset
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if not mpr_widget:
+                return
+
+            if self.tool_selected == self.tool_access.RESET:
+                self.tool_selected = None
+                self.handle_buttons_checked()
+                return
+
+            if self.tool_selected != self.tool_access.MPR:
+                self.check_and_deactivate_tools()
+
+            try:
+                mpr_widget.reset_to_initial_state()
+            except Exception as e:
+                print(f"[MPR] Reset failed: {e}")
+
+            self.tool_selected = self.tool_access.RESET
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+            return
         if self.tool_selected == self.tool_access.RESET:  # deactivate tool
             self.tool_selected = None
 
@@ -1085,7 +1125,8 @@ class ToolbarManager:
                     print("✓ Ruler tool deactivated in MPR")
                 else:
                     # Activate ruler
-                    self.check_and_deactivate_tools()
+                    if self.tool_selected != self.tool_access.MPR:
+                        self.check_and_deactivate_tools()
                     mpr_widget.activate_ruler()
                     self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.RULER}'
                     print("✓ Ruler tool activated in MPR on all 2D views")
@@ -1113,6 +1154,26 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_eraser(self, selected_widget):
+        # MPR mode
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if not mpr_widget:
+                return
+            if self.tool_selected == self.tool_access.ERASER:  # deactivate tool
+                mpr_widget.deactivate_toolbar_tool()
+                self.tool_selected = None
+            else:
+                if self.tool_selected != self.tool_access.MPR:
+                    self.check_and_deactivate_tools()
+                try:
+                    mpr_widget.deactivate_tool()
+                except Exception:
+                    pass
+                mpr_widget.activate_toolbar_tool(self.tool_access.ERASER)
+                self.tool_selected = self.tool_access.ERASER
+            self.handle_buttons_checked()
+            return
+
         # NO can_use_tool check - let it work
         if not self.is_vtk_widget(selected_widget):
             return
@@ -1147,7 +1208,8 @@ class ToolbarManager:
                     print("✓ Angle tool deactivated in MPR")
                 else:
                     # Activate angle
-                    self.check_and_deactivate_tools()
+                    if self.tool_selected != self.tool_access.MPR:
+                        self.check_and_deactivate_tools()
                     mpr_widget.activate_angle()
                     self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.ANGLE}'
                     print("✓ Angle tool activated in MPR on all 2D views")
@@ -1213,21 +1275,22 @@ class ToolbarManager:
         """Toggle arrow tool on/off for the selected viewer"""
         # Check if we're in MPR mode
         if self.is_mpr_viewer(selected_widget):
-            # MPR mode - use MPR measurement tools (caption)
-            # if self.tool_selected == self.tool_access.ARROW:
-            if self.tool_access.ARROW in self.tool_selected:
-                # Deactivate
-                self.tool_selected = self.tool_access.MPR
-                selected_widget._mpr_widget.measurement_tools.deactivate_tool()
-                # self.handle_buttons_checked()
-            else:
-                # Activate on ALL 2D viewports (axial, sagittal, coronal)
-                self.check_and_deactivate_tools()
-                success = selected_widget._mpr_widget.measurement_tools.activate_caption_tool('all')
-                if success:
-                    self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.ARROW}'
-                    # self.handle_buttons_checked()
-                    print(f"✓ Arrow tool activated in MPR on all 2D views")
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget:
+                # MPR mode - use MPR measurement tools (caption)
+                is_arrow_active = self.tool_selected and self.tool_access.ARROW in str(self.tool_selected)
+                if is_arrow_active:
+                    # Deactivate
+                    self.tool_selected = self.tool_access.MPR
+                    mpr_widget.deactivate_tool()
+                else:
+                    # Activate on ALL 2D viewports (axial, sagittal, coronal)
+                    if self.tool_selected != self.tool_access.MPR:
+                        self.check_and_deactivate_tools()
+                    success = mpr_widget.activate_caption()
+                    if success:
+                        self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.ARROW}'
+                        print("✓ Arrow tool activated in MPR on all 2D views")
             return
 
         # Normal VTKWidget mode - NO can_use_tool check
@@ -1271,6 +1334,24 @@ class ToolbarManager:
 
     def toggle_zoom_to_fit(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget:
+                if self.tool_selected == self.tool_access.ZOOM_TO_FIT:
+                    self.tool_selected = None
+                    mpr_widget.deactivate_toolbar_tool()
+                    self.handle_buttons_checked()
+                    return
+
+                if self.tool_selected != self.tool_access.MPR:
+                    self.check_and_deactivate_tools()
+
+                mpr_widget.zoom_to_fit()
+                self.tool_selected = self.tool_access.ZOOM_TO_FIT
+                self.handle_buttons_checked()
+                self.check_and_deactivate_tools()
+            return
+
         if self.tool_selected == self.tool_access.ZOOM_TO_FIT:
             self.tool_selected = None
 
@@ -1289,6 +1370,20 @@ class ToolbarManager:
             self.check_and_deactivate_tools()
 
     def toggle_zoom(self, selected_widget):
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget:
+                if self.tool_selected == self.tool_access.ZOOM:  # deactivate tool
+                    mpr_widget.deactivate_toolbar_tool()
+                    self.tool_selected = None
+                else:
+                    if self.tool_selected != self.tool_access.MPR:
+                        self.check_and_deactivate_tools()
+                    mpr_widget.activate_toolbar_tool(self.tool_access.ZOOM)
+                    self.tool_selected = self.tool_access.ZOOM
+                self.handle_buttons_checked()
+            return
+
         if self.tool_selected == self.tool_access.ZOOM:  # deactivate tool
             selected_widget.current_style.deactivate(self.tool_selected)
             self.tool_selected = None
@@ -1303,6 +1398,20 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_window_level(self, selected_widget):
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget:
+                if self.tool_selected == self.tool_access.WINDOW_LEVEL:
+                    mpr_widget.deactivate_toolbar_tool()
+                    self.tool_selected = None
+                else:
+                    if self.tool_selected != self.tool_access.MPR:
+                        self.check_and_deactivate_tools()
+                    mpr_widget.activate_toolbar_tool(self.tool_access.WINDOW_LEVEL)
+                    self.tool_selected = self.tool_access.WINDOW_LEVEL
+                self.handle_buttons_checked()
+            return
+
         if self.tool_selected == self.tool_access.WINDOW_LEVEL:
             selected_widget.current_style.deactivate(self.tool_selected)
             self.tool_selected = None
@@ -1317,6 +1426,20 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_pan(self, selected_widget):
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget:
+                if self.tool_selected == self.tool_access.PAN:
+                    mpr_widget.deactivate_toolbar_tool()
+                    self.tool_selected = None
+                else:
+                    if self.tool_selected != self.tool_access.MPR:
+                        self.check_and_deactivate_tools()
+                    mpr_widget.activate_toolbar_tool(self.tool_access.PAN)
+                    self.tool_selected = self.tool_access.PAN
+                self.handle_buttons_checked()
+            return
+
         if self.tool_selected == self.tool_access.PAN:
             selected_widget.current_style.deactivate(self.tool_selected)
             self.tool_selected = None
@@ -1331,6 +1454,20 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_stacked(self, selected_widget):
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget:
+                if self.tool_selected == self.tool_access.STACKED:
+                    mpr_widget.deactivate_toolbar_tool()
+                    self.tool_selected = None
+                else:
+                    if self.tool_selected != self.tool_access.MPR:
+                        self.check_and_deactivate_tools()
+                    mpr_widget.activate_toolbar_tool(self.tool_access.STACKED)
+                    self.tool_selected = self.tool_access.STACKED
+                self.handle_buttons_checked()
+            return
+
         if self.tool_selected == self.tool_access.STACKED:
             selected_widget.current_style.deactivate(self.tool_selected)
             self.tool_selected = None
@@ -1346,6 +1483,24 @@ class ToolbarManager:
 
     def toggle_rotation_left(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if not mpr_widget:
+                return
+
+            if self.tool_selected == self.tool_access.ROTATION_LEFT:
+                self.tool_selected = None
+                self.handle_buttons_checked()
+                return
+
+            if self.tool_selected != self.tool_access.MPR:
+                self.check_and_deactivate_tools()
+
+            mpr_widget.apply_view_transform(self.tool_access.ROTATION_LEFT)
+            self.tool_selected = self.tool_access.ROTATION_LEFT
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+            return
         if self.tool_selected == self.tool_access.ROTATION_LEFT:
             self.tool_selected = None
 
@@ -1363,6 +1518,24 @@ class ToolbarManager:
 
     def toggle_rotation_right(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if not mpr_widget:
+                return
+
+            if self.tool_selected == self.tool_access.ROTATION_RIGHT:
+                self.tool_selected = None
+                self.handle_buttons_checked()
+                return
+
+            if self.tool_selected != self.tool_access.MPR:
+                self.check_and_deactivate_tools()
+
+            mpr_widget.apply_view_transform(self.tool_access.ROTATION_RIGHT)
+            self.tool_selected = self.tool_access.ROTATION_RIGHT
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+            return
         if self.tool_selected == self.tool_access.ROTATION_RIGHT:
             self.tool_selected = None
 
@@ -1380,6 +1553,24 @@ class ToolbarManager:
 
     def toggle_flip_horizontal(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if not mpr_widget:
+                return
+
+            if self.tool_selected == self.tool_access.FLIP_HORIZONTAL:
+                self.tool_selected = None
+                self.handle_buttons_checked()
+                return
+
+            if self.tool_selected != self.tool_access.MPR:
+                self.check_and_deactivate_tools()
+
+            mpr_widget.apply_view_transform(self.tool_access.FLIP_HORIZONTAL)
+            self.tool_selected = self.tool_access.FLIP_HORIZONTAL
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+            return
         if self.tool_selected == self.tool_access.FLIP_HORIZONTAL:
             self.tool_selected = None
 
@@ -1397,6 +1588,24 @@ class ToolbarManager:
 
     def toggle_flip_vertical(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if not mpr_widget:
+                return
+
+            if self.tool_selected == self.tool_access.FLIP_VERTICAL:
+                self.tool_selected = None
+                self.handle_buttons_checked()
+                return
+
+            if self.tool_selected != self.tool_access.MPR:
+                self.check_and_deactivate_tools()
+
+            mpr_widget.apply_view_transform(self.tool_access.FLIP_VERTICAL)
+            self.tool_selected = self.tool_access.FLIP_VERTICAL
+            self.handle_buttons_checked()
+            self.check_and_deactivate_tools()
+            return
         if self.tool_selected == self.tool_access.FLIP_VERTICAL:
             self.tool_selected = None
 
@@ -1431,6 +1640,33 @@ class ToolbarManager:
             self.tool_selected = self.tool_access.CAPTURE
             self.handle_buttons_checked()
             self.check_and_deactivate_tools()
+
+    def toggle_sync_point(self, checked=None):
+        enabled = bool(checked) if checked is not None else not getattr(self, '_sync_point_enabled', False)
+
+        self._debug_target(
+            f"toggle_sync_point: enabled={enabled}, prev_selected={self.tool_selected}, "
+            f"prev_sync={getattr(self, '_sync_point_enabled', False)}"
+        )
+
+        if enabled:
+            self.check_and_deactivate_tools()
+            self._sync_point_enabled = True
+            self.tool_selected = self.tool_access.TARGET
+        else:
+            self._sync_point_enabled = False
+            if self.tool_selected == self.tool_access.TARGET:
+                self.tool_selected = None
+
+        self._debug_target(
+            f"toggle_sync_point: now_selected={self.tool_selected}, "
+            f"sync_enabled={self._sync_point_enabled}"
+        )
+
+        if hasattr(self.patient_widget, 'toggle_sync_point'):
+            self.patient_widget.toggle_sync_point(enabled)
+
+        self.handle_buttons_checked()
 
     def update_capture_counter(self):
         study_uid = self.patient_widget.study_uid
@@ -1891,6 +2127,80 @@ class ToolbarManager:
             dropdown.show()
         except Exception as e:
             print(f"[ERROR] Failed to show MPR dropdown: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _show_rotation_dropdown(self, button):
+        try:
+            dropdown = QWidget(self.patient_widget)
+            dropdown.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+            dropdown.setAttribute(Qt.WA_DeleteOnClose)
+            dropdown.setStyleSheet("""
+                QWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #1f2937, stop:1 #111827);
+                    border: 2px solid #374151;
+                    border-radius: 10px;
+                }
+            """)
+
+            layout = QVBoxLayout(dropdown)
+            layout.setContentsMargins(10, 10, 10, 10)
+            layout.setSpacing(8)
+
+            header = QLabel("🔄 Rotate / Flip")
+            header.setStyleSheet("""
+                QLabel {
+                    color: #f7fafc;
+                    font-size: 15px;
+                    font-weight: 700;
+                    font-family: 'Roboto', sans-serif;
+                    padding: 6px 8px;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #3b82f6, stop:1 #2563eb);
+                    border-radius: 6px;
+                    margin-bottom: 4px;
+                }
+            """)
+            layout.addWidget(header)
+
+            rotate_right_btn = create_dropdown_tool('Rotate Right', 'rotate-cw.png', '#60a5fa')
+            rotate_right_btn.clicked.connect(lambda: [
+                self.toggle_rotation_right(self.patient_widget.selected_widget), dropdown.close()])
+            layout.addWidget(rotate_right_btn)
+
+            rotate_left_btn = create_dropdown_tool('Rotate Left', 'rotate-ccw.png', '#f59e0b')
+            rotate_left_btn.clicked.connect(lambda: [
+                self.toggle_rotation_left(self.patient_widget.selected_widget), dropdown.close()])
+            layout.addWidget(rotate_left_btn)
+
+            flip_updown_btn = create_dropdown_tool('Flip Upside Down', 'flip_v.png', '#10b981')
+            flip_updown_btn.clicked.connect(lambda: [
+                self.toggle_flip_vertical(self.patient_widget.selected_widget), dropdown.close()])
+            layout.addWidget(flip_updown_btn)
+
+            flip_lr_btn = create_dropdown_tool('Flip Left to Right', 'flip_v.png', '#10b981')
+            try:
+                flip_pixmap = QPixmap(f"{ICON_PATH}/flip_v.png")
+                if not flip_pixmap.isNull():
+                    rotated = flip_pixmap.transformed(QTransform().rotate(-90))
+                    flip_lr_btn.setIcon(QIcon(rotated))
+                    flip_lr_btn.setIconSize(QSize(18, 18))
+            except Exception:
+                pass
+            flip_lr_btn.clicked.connect(lambda: [
+                self.toggle_flip_horizontal(self.patient_widget.selected_widget), dropdown.close()])
+            layout.addWidget(flip_lr_btn)
+
+            button_pos = button.mapToGlobal(QPoint(0, button.height()))
+            dropdown.move(button_pos)
+            dropdown.setFixedWidth(260)
+            dropdown.raise_()
+            dropdown.activateWindow()
+
+            dropdown.show()
+        except Exception as e:
+            print(f"[ERROR] Failed to show rotation dropdown: {e}")
             import traceback
             traceback.print_exc()
 
@@ -2812,40 +3122,55 @@ class ToolbarManager:
         logger = logging.getLogger(__name__)
         
         # Check if MPR is already active - if so, close it
-        if self.tool_selected == self.tool_access.MPR:
+        active_original_widget = None
+        active_mpr_widget = None
+
+        try:
+            for node in self.patient_widget.lst_nodes_viewer:
+                widget = getattr(node, 'vtk_widget', None)
+                if widget is None:
+                    continue
+                if hasattr(widget, '_zeta_mpr_widget') and widget._zeta_mpr_widget:
+                    active_original_widget = widget
+                    active_mpr_widget = widget._zeta_mpr_widget
+                    break
+                if hasattr(widget, '_new_mpr_zeta_widget') and widget._new_mpr_zeta_widget:
+                    active_original_widget = widget
+                    active_mpr_widget = widget._new_mpr_zeta_widget
+                    break
+        except Exception:
+            pass
+
+        selected_widget = self.patient_widget.selected_widget
+        if active_mpr_widget is None and self.is_mpr_viewer(selected_widget):
+            if hasattr(selected_widget, '_original_widget'):
+                active_original_widget = selected_widget._original_widget
+                active_mpr_widget = selected_widget
+
+        if active_mpr_widget is not None:
             logger.info("=" * 60)
             logger.info("Closing Zeta MPR (toggle OFF)")
             logger.info("=" * 60)
             
-            # Find and restore the original viewer
-            selected_widget = self.patient_widget.selected_widget
-            
-            # Find the widget that has the Zeta MPR (might not be the currently selected one)
-            for node in self.patient_widget.lst_nodes_viewer:
-                if hasattr(node.vtk_widget, '_zeta_mpr_widget'):
-                    original_widget = node.vtk_widget
-                    zeta_widget = original_widget._zeta_mpr_widget
-                    
-                    # Cleanup Zeta MPR
-                    try:
-                        if hasattr(zeta_widget, 'cleanup'):
-                            logger.info("Calling Zeta MPR cleanup()...")
-                            zeta_widget.cleanup()
-                    except Exception as e:
-                        logger.error(f"Error during Zeta MPR cleanup: {e}")
-                    
-                    # Remove from layout and delete
-                    zeta_widget.hide()
-                    zeta_widget.deleteLater()
-                    
-                    # Restore original widget
-                    original_widget.setVisible(True)
-                    delattr(original_widget, '_zeta_mpr_widget')
-                    if hasattr(original_widget, '_original_visible'):
-                        delattr(original_widget, '_original_visible')
-                    
-                    logger.info("✓ Zeta MPR closed, original viewer restored")
-                    break
+            # Restore the original viewer (handles cleanup/layout)
+            self._restore_selected_viewer(active_original_widget or selected_widget)
+
+            # Ensure the original series used for MPR is restored
+            try:
+                original_widget = active_original_widget or selected_widget
+                series_index = getattr(original_widget, '_mpr_source_series_index', None)
+                if series_index is not None:
+                    current_series = getattr(original_widget, 'last_series_show', None)
+                    if current_series != series_index:
+                        series_data = self.patient_widget.lst_thumbnails_data[series_index]
+                        vtk_image_data = series_data.get('vtk_image_data')
+                        metadata = series_data.get('metadata')
+                        if vtk_image_data is not None and metadata is not None:
+                            original_widget.reset_image(vtk_image_data, metadata)
+                if hasattr(original_widget, '_mpr_source_series_index'):
+                    delattr(original_widget, '_mpr_source_series_index')
+            except Exception as e:
+                logger.warning(f"Could not restore MPR source series: {e}")
             
             # Clear tool selection and update button state
             self.tool_selected = None
@@ -2920,6 +3245,9 @@ class ToolbarManager:
                     
                 logger.info(f"   ✅ Found series at index {active_series_index}, series_number={series_number}")
                 logger.info(f"   vtk_image_data dimensions: {vtk_image_data.GetDimensions()}")
+
+                # Remember which series spawned MPR so we can restore on close
+                selected_widget._mpr_source_series_index = active_series_index
                 
             except Exception as e:
                 logger.error(f"Error accessing series data at index {active_series_index}: {e}")
@@ -2946,6 +3274,9 @@ class ToolbarManager:
                         if item and item.widget() == selected_widget:
                             grid_position = parent_layout.getItemPosition(i)
                             break
+
+            if grid_position:
+                selected_widget._mpr_grid_position = grid_position
             
             # Hide the original widget
             selected_widget.setVisible(False)
@@ -3035,6 +3366,7 @@ class ToolbarManager:
                 # Store reference
                 selected_widget._zeta_mpr_widget = zeta_widget
                 selected_widget._original_visible = True
+                zeta_widget._original_widget = selected_widget
                 
                 # Set tool as active and update button state (turns green)
                 self.tool_selected = self.tool_access.MPR
@@ -3687,7 +4019,7 @@ class ToolbarManager:
             if hasattr(mpr_widget, '_original_widget'):
                 delattr(mpr_widget, '_original_widget')
 
-        # CRITICAL: Re-add original widget to layout at (0,0)
+        # CRITICAL: Re-add original widget to layout
         # When MPR was added, it displaced the original widget from layout
         try:
             parent = original_widget.parent()
@@ -3696,9 +4028,19 @@ class ToolbarManager:
                 if parent_layout:
                     # Remove from layout first (in case it's still there)
                     parent_layout.removeWidget(original_widget)
-                    # Re-add at (0,0) 
-                    parent_layout.addWidget(original_widget, 0, 0)
-                    logger.info("Original widget re-added to layout at (0,0)")
+                    # Re-add at saved grid position if available
+                    grid_position = getattr(original_widget, '_mpr_grid_position', None)
+                    if grid_position:
+                        row, col, row_span, col_span = grid_position
+                        parent_layout.addWidget(original_widget, row, col, row_span, col_span)
+                        logger.info(f"Original widget re-added to layout at ({row}, {col})")
+                        try:
+                            delattr(original_widget, '_mpr_grid_position')
+                        except Exception:
+                            pass
+                    else:
+                        parent_layout.addWidget(original_widget, 0, 0)
+                        logger.info("Original widget re-added to layout at (0,0)")
         except Exception as e:
             logger.error(f"Error re-adding original widget to layout: {e}", exc_info=True)
 
@@ -3751,7 +4093,39 @@ class ToolbarManager:
         except Exception:
             pass
 
+        # Keep MPR button green if any MPR viewer is active
+        try:
+            mpr_btn = self.tools_button.get(self.tool_access.MPR)
+            if mpr_btn:
+                mpr_btn.setChecked(_is_tool_active(self.tool_access.MPR) or self._is_any_mpr_open())
+        except Exception:
+            pass
+
+    def _is_any_mpr_open(self):
+        try:
+            for node in self.patient_widget.lst_nodes_viewer:
+                widget = getattr(node, 'vtk_widget', None)
+                if widget is None:
+                    continue
+                if hasattr(widget, '_zeta_mpr_widget') and widget._zeta_mpr_widget:
+                    return True
+                if hasattr(widget, '_new_mpr_zeta_widget') and widget._new_mpr_zeta_widget:
+                    return True
+            if self.is_mpr_viewer(getattr(self.patient_widget, 'selected_widget', None)):
+                return True
+        except Exception:
+            pass
+        return False
+
     def check_and_deactivate_tools(self):
+        self._debug_target(
+            f"check_and_deactivate_tools: tool_selected={self.tool_selected}, "
+            f"sync_enabled={getattr(self, '_sync_point_enabled', False)}"
+        )
+        if getattr(self, '_sync_point_enabled', False):
+            self.toggle_sync_point(False)
+            # continue to handle any other active tool states
+
         if self.tool_selected is None:  # it's mean we haven't selected tool before
             return
 
@@ -3815,6 +4189,9 @@ class ToolbarManager:
         elif self.tool_selected == self.tool_access.MICROPHONE:
             # (We don't add mic to check_and_deactivate_tools. because we won't turn off mic when viewer changed)
             pass
+
+        elif self.tool_selected == self.tool_access.TARGET:
+            self.toggle_sync_point(False)
 
         elif self.tool_selected == self.tool_access.ROI:
             self.toggle_roi(self.patient_widget.selected_widget)  # deactivate Flip Vertical
@@ -4306,23 +4683,134 @@ class ToolbarManager:
         # ============================================================
         # CATEGORY 5: IMAGE TRANSFORM TOOLS
         # ============================================================
-        # Rotate-left button
-        rotation_left_btn = create_tool_btn(self.patient_widget, 'Rotate Left', 'rotate-ccw.png')
-        rotation_left_btn.clicked.connect(lambda: self.toggle_rotation_left(self.patient_widget.selected_widget))
-        toolbar_layout.addWidget(rotation_left_btn)
-        self.tools_button[self.tool_access.ROTATION_LEFT] = rotation_left_btn
+        rotate_container = QWidget()
+        rotate_layout = QHBoxLayout(rotate_container)
+        rotate_layout.setContentsMargins(0, 0, 0, 0)
+        rotate_layout.setSpacing(0)
+        rotate_layout.setAlignment(Qt.AlignVCenter)
 
-        # Rotate-right button
+        rotate_menu_btn = QPushButton()
+        rotate_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+        rotate_menu_btn.setIconSize(QSize(14, 14))
+        rotate_menu_btn.setToolTip('Rotate / Flip')
+        rotate_menu_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                border-right: none;
+                padding: 4px 2px;
+                margin: 0px;
+                min-width: 11px;
+                min-height: 36px;
+                max-width: 11px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+        """)
+        rotate_menu_btn.setCursor(Qt.PointingHandCursor)
+        rotate_menu_btn.clicked.connect(lambda: self._show_rotation_dropdown(rotate_menu_btn))
+
         rotation_right_btn = create_tool_btn(self.patient_widget, 'Rotate Right', 'rotate-cw.png')
         rotation_right_btn.clicked.connect(lambda: self.toggle_rotation_right(self.patient_widget.selected_widget))
-        toolbar_layout.addWidget(rotation_right_btn)
+        rotation_right_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-left: none;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                padding: 4px 6px;
+                margin: 0px;
+                min-width: 36px;
+                min-height: 36px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #059669, stop:1 #047857);
+                border-color: #10b981;
+                color: #ffffff;
+            }
+        """)
+
+        rotate_layout.addWidget(rotate_menu_btn)
+        rotate_layout.addWidget(rotation_right_btn)
+        toolbar_layout.addWidget(rotate_container)
         self.tools_button[self.tool_access.ROTATION_RIGHT] = rotation_right_btn
 
-        # Flip-Vertical button
-        flip_vertical_btn = create_tool_btn(self.patient_widget, 'Flip Vertical', 'flip_v.png')
-        flip_vertical_btn.clicked.connect(lambda: self.toggle_flip_vertical(self.patient_widget.selected_widget))
-        toolbar_layout.addWidget(flip_vertical_btn)
-        self.tools_button[self.tool_access.FLIP_VERTICAL] = flip_vertical_btn
+        sync_btn = QPushButton(self.patient_widget)
+        sync_btn.setCheckable(True)
+        sync_btn.setToolTip('Sync Images')
+        sync_btn.setCursor(Qt.PointingHandCursor)
+        sync_btn.setIcon(qta.icon('fa5s.crosshairs', color='#e5e7eb'))
+        sync_btn.setIconSize(QSize(20, 20))
+        sync_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-radius: 6px;
+                padding: 4px 6px;
+                margin: 1px;
+                min-width: 36px;
+                min-height: 36px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #dc2626, stop:1 #b91c1c);
+                border-color: #ef4444;
+                color: #ffffff;
+            }
+        """)
+        sync_btn.clicked.connect(lambda checked=False: self.toggle_sync_point(checked))
+        self.sync_point_button = sync_btn
+        self.tools_button[self.tool_access.TARGET] = sync_btn
+        toolbar_layout.addWidget(sync_btn)
+
         toolbar_layout.addWidget(self._create_separator())
 
         # ============================================================

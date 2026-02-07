@@ -36,6 +36,41 @@ DEFAULT_LAYOUT = "mpr"
 DEFAULT_REMOTE_PORT = 47891
 
 
+def send_remote_command(payload: dict, host: str = "127.0.0.1", port: int = DEFAULT_REMOTE_PORT, timeout: float = 1.5) -> bool:
+    """
+    Send a JSON command to a running Advanced Viewer instance.
+
+    Returns:
+        True if the command was accepted, False otherwise.
+    """
+    try:
+        data = (json.dumps(payload) + "\n").encode("utf-8")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect((host, port))
+            sock.sendall(data)
+
+            response = b""
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+                if b"\n" in response:
+                    break
+
+        if not response:
+            return False
+
+        try:
+            response_json = json.loads(response.split(b"\n")[0].decode("utf-8"))
+            return bool(response_json.get("ok"))
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
 # =============================================================================
 # SlicerPrewarmManager - Singleton for managing background Slicer instance
 # =============================================================================
@@ -454,6 +489,25 @@ class SlicerLauncher(QObject):
             True if launch was initiated, False if already running
         """
         print(f"[AIPACS_LAUNCH] SlicerLauncher.launch_with_dicom() called, _is_running={self._is_running}")
+
+        payload = {
+            "command": "load_dicom",
+            "dicom_dir": dicom_dir,
+            "layout": layout,
+            "patient_id": patient_id,
+            "study_id": study_id,
+            "window_width": window_width,
+            "window_level": window_level,
+            "series_uid": series_uid,
+            "viewport_x": viewport_x,
+            "viewport_y": viewport_y,
+            "viewport_width": viewport_width,
+            "viewport_height": viewport_height
+        }
+
+        if send_remote_command(payload):
+            print("[AIPACS_LAUNCH] Remote command accepted by running viewer")
+            return True
         
         if self._is_running:
             print("[AIPACS_LAUNCH] BLOCKED - Already running, showing message")

@@ -185,6 +185,35 @@ def convert_itk2vtk(itk_image: sitk.Image):
     # Extract Direction Matrix for proper MPR orientation
     direction = itk_image.GetDirection()
     
+    # --- PIPELINE LOG: ITK input properties ---
+    _itk_origin = itk_image.GetOrigin()
+    _itk_spacing = itk_image.GetSpacing()
+    _itk_size = itk_image.GetSize()
+    _itk_dir = direction
+    print(
+        f"[PIPELINE ITK→VTK] ITK Input:\n"
+        f"  Size(x,y,z) = ({_itk_size[0]}, {_itk_size[1]}, {_itk_size[2]})\n"
+        f"  Origin      = ({_itk_origin[0]:.4f}, {_itk_origin[1]:.4f}, {_itk_origin[2]:.4f})\n"
+        f"  Spacing     = ({_itk_spacing[0]:.4f}, {_itk_spacing[1]:.4f}, {_itk_spacing[2]:.4f})\n"
+        f"  Direction   = [{_itk_dir[0]:.6f}, {_itk_dir[1]:.6f}, {_itk_dir[2]:.6f}]\n"
+        f"                [{_itk_dir[3]:.6f}, {_itk_dir[4]:.6f}, {_itk_dir[5]:.6f}]\n"
+        f"                [{_itk_dir[6]:.6f}, {_itk_dir[7]:.6f}, {_itk_dir[8]:.6f}]"
+    )
+    # Compute and log ITK patient-space corners for verification
+    import numpy as _np
+    _D_itk = _np.array(direction).reshape(3, 3)
+    _o = _np.array(_itk_origin)
+    _s = _np.array(_itk_spacing)
+    _sz = _np.array([_itk_size[0]-1, _itk_size[1]-1, _itk_size[2]-1], dtype=float)
+    _corner_000 = _o + _D_itk @ (_np.array([0, 0, 0]) * _s)
+    _corner_max = _o + _D_itk @ (_sz * _s)
+    _corner_mid = _o + _D_itk @ (_sz * 0.5 * _s)
+    print(
+        f"  Patient corner(0,0,0) = ({_corner_000[0]:.2f}, {_corner_000[1]:.2f}, {_corner_000[2]:.2f})\n"
+        f"  Patient corner(max)   = ({_corner_max[0]:.2f}, {_corner_max[1]:.2f}, {_corner_max[2]:.2f})\n"
+        f"  Patient center        = ({_corner_mid[0]:.2f}, {_corner_mid[1]:.2f}, {_corner_mid[2]:.2f})"
+    )
+    
     direction_matrix = vtk.vtkMatrix4x4()
     direction_matrix.Identity()
     
@@ -199,6 +228,18 @@ def convert_itk2vtk(itk_image: sitk.Image):
     for col in range(3):
         direction_matrix.SetElement(1, col, -direction_matrix.GetElement(1, col))
     
+    # --- PIPELINE LOG: Stored direction (Y-flip compensated) ---
+    _d_stored = []
+    for _r in range(3):
+        _row_vals = [direction_matrix.GetElement(_r, _c) for _c in range(3)]
+        _d_stored.append(_row_vals)
+    print(
+        f"[PIPELINE ITK→VTK] Y-flip applied. Stored Direction (row1 negated):\n"
+        f"  [{_d_stored[0][0]:.6f}, {_d_stored[0][1]:.6f}, {_d_stored[0][2]:.6f}]\n"
+        f"  [{_d_stored[1][0]:.6f}, {_d_stored[1][1]:.6f}, {_d_stored[1][2]:.6f}]\n"
+        f"  [{_d_stored[2][0]:.6f}, {_d_stored[2][1]:.6f}, {_d_stored[2][2]:.6f}]"
+    )
+    
     # Store direction matrix as field data
     direction_array = vtk.vtkDoubleArray()
     direction_array.SetName("DirectionMatrix")
@@ -207,6 +248,16 @@ def convert_itk2vtk(itk_image: sitk.Image):
         for j in range(4):
             direction_array.SetValue(i * 4 + j, direction_matrix.GetElement(i, j))
     vtk_image.GetFieldData().AddArray(direction_array)
+    
+    # Also store the ORIGINAL ITK origin as field data
+    # (needed for correct patient-space conversion after Y-flip)
+    origin_array = vtk.vtkDoubleArray()
+    origin_array.SetName("ITKOrigin")
+    origin_array.SetNumberOfTuples(3)
+    origin_array.SetValue(0, _itk_origin[0])
+    origin_array.SetValue(1, _itk_origin[1])
+    origin_array.SetValue(2, _itk_origin[2])
+    vtk_image.GetFieldData().AddArray(origin_array)
 
     # OPTIMIZATION: Only copy if contiguous is required
     if not arr.flags['C_CONTIGUOUS']:
