@@ -1,6 +1,7 @@
 import os
 import gc
 import time
+import warnings
 
 import SimpleITK as sitk
 import pydicom
@@ -18,6 +19,9 @@ from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_p
     update_study_counts_by_uid, get_connection_database, get_series_path_with_study_pk_and_series_number
 import gc
 from .utils import find_series_folder_by_series_number
+
+# Suppress noisy ResourceWarning from external libraries during GC
+warnings.filterwarnings("ignore", category=ResourceWarning)
 
 
 def get_orientation(itk_image):
@@ -883,8 +887,7 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             
             itk_image = None
             del itk_image
-            gc.collect()
-            
+
             _total_group = time.time() - _series_start
             print(f"         ✅ Group {i+1} completed in {_total_group:.3f}s\n")
             

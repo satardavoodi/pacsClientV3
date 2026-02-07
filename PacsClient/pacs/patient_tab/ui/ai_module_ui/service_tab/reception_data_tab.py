@@ -1426,7 +1426,7 @@ class ReceptionDataTab(QWidget):
             reception_id = self.current_data.get("_id") or self.current_data.get("id")
         
         if not reception_id:
-            QMessageBox.warning(dialog, "خطا", "شماره پذیرش یافت نشد.")
+            QMessageBox.warning(dialog, "Error", "Reception number not found.")
             return
         
         self._save_report_to_api(reception_id, new_content, new_status, dialog)
@@ -1448,7 +1448,7 @@ class ReceptionDataTab(QWidget):
         token = token_manager.get_token()
         
         if not token:
-            QMessageBox.critical(dialog, "خطای احراز هویت", "توکن احراز هویت یافت نشد. لطفاً مجدداً لاگین کنید.")
+            QMessageBox.critical(dialog, "Authentication Error", "Authentication token not found. Please log in again.")
             return
         
         # Prepare update data for the new API
@@ -1490,33 +1490,33 @@ class ReceptionDataTab(QWidget):
                             self.current_data["imagingWorkflow"]["report"]["findings"] = new_content
                             self.current_data["imagingWorkflow"]["report"]["status"] = new_status
                     
-                    success_msg = response_data.get("message", "گزارش با موفقیت ذخیره شد.")
-                    QMessageBox.information(dialog, "موفقیت", success_msg)
+                    success_msg = response_data.get("message", "Report saved successfully.")
+                    QMessageBox.information(dialog, "Success", success_msg)
                 else:
-                    error_msg = response_data.get("message", "خطا در ذخیره گزارش")
-                    QMessageBox.critical(dialog, "خطا", error_msg)
+                    error_msg = response_data.get("message", "Error saving report")
+                    QMessageBox.critical(dialog, "Error", error_msg)
             elif response.status_code == 401:
-                QMessageBox.critical(dialog, "خطای احراز هویت", "توکن نامعتبر یا منقضی شده است. لطفاً مجدداً لاگین کنید.")
+                QMessageBox.critical(dialog, "Authentication Error", "Invalid or expired token. Please log in again.")
             elif response.status_code == 403:
-                QMessageBox.critical(dialog, "خطای دسترسی", "شما دسترسی لازم برای این عملیات را ندارید.")
+                QMessageBox.critical(dialog, "Access Error", "You don't have permission for this operation.")
             elif response.status_code == 404:
-                QMessageBox.critical(dialog, "خطا", "پذیرش مورد نظر یافت نشد.")
+                QMessageBox.critical(dialog, "Error", "Requested reception not found.")
             else:
-                error_msg = f"خطا در ذخیره گزارش: {response.status_code}"
+                error_msg = f"Error saving report: {response.status_code}"
                 try:
                     error_data = response.json()
                     if "message" in error_data:
                         error_msg = error_data["message"]
                 except:
                     pass
-                QMessageBox.critical(dialog, "خطا", error_msg)
-                
+                QMessageBox.critical(dialog, "Error", error_msg)
+
         except requests.exceptions.Timeout:
-            QMessageBox.critical(dialog, "خطا", "زمان درخواست به پایان رسید. لطفاً دوباره تلاش کنید.")
+            QMessageBox.critical(dialog, "Error", "Request timed out. Please try again.")
         except requests.exceptions.ConnectionError:
-            QMessageBox.critical(dialog, "خطای اتصال", "خطا در برقراری ارتباط با سرور. لطفاً اتصال اینترنت را بررسی کنید.")
+            QMessageBox.critical(dialog, "Connection Error", "Error connecting to server. Please check your internet connection.")
         except Exception as e:
-            QMessageBox.critical(dialog, "خطا", f"خطای غیرمنتظره: {str(e)}")
+            QMessageBox.critical(dialog, "Error", f"Unexpected error: {str(e)}")
 
     def _create_reception_info_section(self):
         """Create reception information section using the modern ReceptionInfoCard widget."""

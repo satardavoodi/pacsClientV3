@@ -178,9 +178,10 @@ class SocketService:
             if self.client:
                 self.client.disconnect()
                 self.client = None
+                logger.info("✅ SocketService client cleaned up")
         except Exception as e:
             logger.error(f"❌ SocketService cleanup error: {e}")
-    
+
     def __del__(self):
         """Destructor to ensure cleanup"""
         try:

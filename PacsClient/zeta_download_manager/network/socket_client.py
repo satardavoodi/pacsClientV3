@@ -160,12 +160,19 @@ class SocketDicomClient:
         with self.lock:
             if self.socket:
                 try:
+                    # Shutdown the socket to prevent further sends/receives
+                    try:
+                        self.socket.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        # Socket may already be closed, ignore error
+                        pass
                     self.socket.close()
-                except:
-                    pass
-                self.socket = None
-                self.connected = False
-                logger.info("🔌 Disconnected from socket server")
+                except Exception as e:
+                    logger.warning(f"⚠️ Error closing socket: {e}")
+                finally:
+                    self.socket = None
+                    self.connected = False
+                    logger.info("🔌 Disconnected from socket server")
     
     def is_connected(self) -> bool:
         """Check if connected to server"""
@@ -821,3 +828,11 @@ class SocketDicomClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit"""
         self.disconnect()
+
+    def __del__(self):
+        """Destructor to ensure socket cleanup"""
+        try:
+            self.disconnect()
+        except:
+            # Don't raise exceptions in destructor
+            pass

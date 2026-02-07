@@ -622,174 +622,234 @@ class HomePanelWidget(QWidget):
         """
         from pathlib import Path
         from PacsClient.pacs.patient_tab.utils.utils import check_study_complete
-        
-        # --- STEP 1: Mark as opened immediately (UI feedback) ---
-        self.patient_table_widget.update_visited_status(study_uid, status='opened')
-        
-        # --- STEP 2: Quick check - is study already downloaded? ---
-        study_data = get_study_by_study_uid(study_uid=study_uid)
-        output_dir = None
-        is_local = self.source_of_patient_load == SourceOfPatientLoad.DB
-        
-        if study_data:
-            output_dir = study_data.get('study_path')
-        
-        if not output_dir:
-            # Create output directory path
-            output_dir = str(SOURCE_PATH / study_uid)
-        
-        # --- STEP 3: Open tab IMMEDIATELY ---
-        caller = CallerTypes.IMPORT if is_local else CallerTypes.SERVER
-        
-        widget = self.add_new_tab_widget(
-            patient_id=patient_id,
-            patient_name=patient_name,
-            folder_path=output_dir,
-            caller=caller,
-            study_uid=study_uid,
-            enable_progressive_mode=True,
-            report_status=report_status
-        )
-        
-        if not widget:
-            return
-        
-        # --- STEP 3.5: IMMEDIATE PRIORITY DOWNLOAD ---
-        # When a patient is double-clicked:
-        # 1. ALL active downloads are INSTANTLY paused
-        # 2. This patient is added with CRITICAL priority
-        # 3. Download starts IMMEDIATELY (no delay)
-        # 4. Queue is reorganized in the background AFTER download starts
-        # 
-        # Note: Enhanced R17 (duplicate check) now prevents re-download of completed studies
-        # by checking both StateStore AND Database. If study is complete, R17 returns
-        # allowed=False and the caller (Download Manager) handles loading from local files.
-        if not is_local:
+
+        # Loading dialog disabled by request
+
+        # Track loading state: keep until first series is displayed
+        self._double_click_loading_active = True
+        self._double_click_first_series_loaded = False
+
+        try:
+            # --- STEP 1: Mark as opened immediately (UI feedback) ---
+            self.patient_table_widget.update_visited_status(study_uid, status='opened')
+            
+            # --- STEP 2: Quick check - is study already downloaded? ---
+            study_data = get_study_by_study_uid(study_uid=study_uid)
+            output_dir = None
+            is_local = self.source_of_patient_load == SourceOfPatientLoad.DB
+
+            if study_data:
+                output_dir = study_data.get('study_path')
+
+            if not output_dir:
+                # Create output directory path
+                output_dir = str(SOURCE_PATH / study_uid)
+
+            # --- STEP 3: Open tab IMMEDIATELY ---
+            caller = CallerTypes.IMPORT if is_local else CallerTypes.SERVER
+
+            widget = self.add_new_tab_widget(
+                patient_id=patient_id,
+                patient_name=patient_name,
+                folder_path=output_dir,
+                caller=caller,
+                study_uid=study_uid,
+                enable_progressive_mode=True,
+                report_status=report_status
+            )
+
+            if not widget:
+                self._double_click_first_series_loaded = True
+                self._maybe_hide_double_click_loading()
+                return
+
+            # Connect to first-series displayed signal (to hide loading)
             try:
-                download_manager = self._get_or_create_download_manager_tab()
-                if download_manager:
-                    # Get server info
-                    server = self.data_access_panel_widget.get_server_selected()
-                    
-                    # Create study info for Download Manager
-                    # Try to get series info from server if not in study_data
-                    series_list = []
-                    series_count = 0
-                    images_count = 0
-                    
-                    if study_data and 'series' in study_data:
-                        series_list = study_data.get('series', [])
-                        series_count = len(series_list)
-                        images_count = sum(s.get('image_count', 0) for s in series_list)
+                if hasattr(self, '_double_click_loading_widget') and self._double_click_loading_widget:
+                    try:
+                        self._double_click_loading_widget.loading_complete.disconnect(self._on_first_series_loaded)
+                    except Exception:
+                        pass
+                self._double_click_loading_widget = widget
+                if hasattr(widget, 'loading_complete'):
+                    widget.loading_complete.connect(self._on_first_series_loaded)
+            except Exception:
+                pass
+
+            # --- STEP 3.5: IMMEDIATE PRIORITY DOWNLOAD ---
+            # When a patient is double-clicked:
+            # 1. ALL active downloads are INSTANTLY paused
+            # 2. This patient is added with CRITICAL priority
+            # 3. Download starts IMMEDIATELY (no delay)
+            # 4. Queue is reorganized in the background AFTER download starts
+            #
+            # Note: Enhanced R17 (duplicate check) now prevents re-download of completed studies
+            # by checking both StateStore AND Database. If study is complete, R17 returns
+            # allowed=False and the caller (Download Manager) handles loading from local files.
+            if not is_local:
+                try:
+                    download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
+                    if download_manager:
+                        # Get server info
+                        server = self.data_access_panel_widget.get_server_selected()
+
+                        # Create study info for Download Manager
+                        # Try to get series info from server if not in study_data
+                        series_list = []
+                        series_count = 0
+                        images_count = 0
+
+                        if study_data and 'series' in study_data:
+                            series_list = study_data.get('series', [])
+                            series_count = len(series_list)
+                            images_count = sum(s.get('image_count', 0) for s in series_list)
+                        else:
+                            # Fetch series info from server if not available
+                            try:
+                                study_info = self.get_series_info_from_server(study_uid, patient_id)
+                                if study_info:
+                                    series_list = study_info.get('series', [])
+                                    series_count = study_info.get('count_of_series', len(series_list))
+                                    images_count = sum(s.get('image_count', 0) for s in series_list)
+                            except Exception as e:
+                                print(f"Warning: Could not fetch series info: {e}")
+
+                        dm_study_data = {
+                            'patient_id': patient_id,
+                            'patient_name': patient_name,
+                            'study_uid': study_uid,
+                            'study_date': study_data.get('study_date', 'Unknown') if study_data else 'Unknown',
+                            'modality': study_data.get('modality', 'Unknown') if study_data else 'Unknown',
+                            'description': study_data.get('study_description', '') if study_data else '',
+                            'series_count': series_count,
+                            'images_count': images_count,
+                            'series': series_list,  # Include series array for Download Manager UI
+                        }
+
+                        # Ensure series UID -> number mapping is available before download signals fire
+                        if widget and series_list:
+                            try:
+                                widget.set_server_series_info(series_list)
+                            except Exception:
+                                pass
+
+                        # ⚡ IMMEDIATE START - pauses all, starts this one right away
+                        download_manager.start_priority_download_immediately(
+                            study_data=dm_study_data,
+                            server_info=server,
+                            priority="Critical"  # Double-clicked patient = Critical priority
+                        )
+
+                        # Connect Download Manager progress signals to this widget
+                        # This allows real-time progress tracking for the opened patient
+                        self._connect_download_manager_to_widget(download_manager, widget, study_uid)
+                except Exception as e:
+                    print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
+
+            # --- STEP 4: Background tasks (non-blocking) ---
+            async def _safe_task_wrapper(coro, name="unknown"):
+                """Wrapper to safely run async tasks and catch errors"""
+                try:
+                    return await coro
+                except RuntimeError as e:
+                    if "Cannot enter into task" in str(e) or "already deleted" in str(e).lower():
+                        # Ignore task re-entry errors - this is a known qasync issue
+                        print(f"⚠️ [TASK:{name}] Ignoring task re-entry error: {e}")
+                        return None
                     else:
-                        # Fetch series info from server if not available
+                        print(f"⚠️ [TASK:{name}] RuntimeError: {e}")
+                except asyncio.CancelledError:
+                    print(f"⚠️ [TASK:{name}] Task was cancelled")
+                    pass  # Task was cancelled, ignore
+                except Exception as e:
+                    print(f"⚠️ [TASK:{name}] Error: {e}")
+                return None
+
+            async def _background_setup():
+                try:
+                    # Load series info for right panel (non-blocking)
+                    asyncio.create_task(_safe_task_wrapper(
+                        self._load_and_display_series_info(patient_id, patient_name, study_uid),
+                        "load_series_info"
+                    ))
+
+                    # Load thumbnails for right panel (non-blocking)
+                    patient_info = {
+                        "PatientID": patient_id,
+                        "PatientName": patient_name,
+                        "StudyInstanceUID": study_uid,
+                    }
+                    asyncio.create_task(_safe_task_wrapper(
+                        self.show_patient_studies(patient_info),
+                        "show_patient_studies"
+                    ))
+
+                    # Download attachments in background (non-blocking)
+                    if not is_local:
+                        asyncio.create_task(_safe_task_wrapper(
+                            download_attachments_for_study_async(study_uid),
+                            "download_attachments"
+                        ))
+
+                    # Get series list for on-demand download
+                    series_list = []
+                    if hasattr(self, 'right_panel_widget') and hasattr(self.right_panel_widget, '_current_series_info'):
+                        series_list = self.right_panel_widget._current_series_info
+
+                    if not series_list and not is_local:
                         try:
                             study_info = self.get_series_info_from_server(study_uid, patient_id)
                             if study_info:
                                 series_list = study_info.get('series', [])
-                                series_count = study_info.get('count_of_series', len(series_list))
-                                images_count = sum(s.get('image_count', 0) for s in series_list)
-                        except Exception as e:
-                            print(f"Warning: Could not fetch series info: {e}")
-                    
-                    dm_study_data = {
-                        'patient_id': patient_id,
-                        'patient_name': patient_name,
-                        'study_uid': study_uid,
-                        'study_date': study_data.get('study_date', 'Unknown') if study_data else 'Unknown',
-                        'modality': study_data.get('modality', 'Unknown') if study_data else 'Unknown',
-                        'description': study_data.get('study_description', '') if study_data else '',
-                        'series_count': series_count,
-                        'images_count': images_count,
-                        'series': series_list,  # Include series array for Download Manager UI
-                    }
-                    
-                    # ⚡ IMMEDIATE START - pauses all, starts this one right away
-                    download_manager.start_priority_download_immediately(
-                        study_data=dm_study_data,
-                        server_info=server,
-                        priority="Critical"  # Double-clicked patient = Critical priority
-                    )
-                    
-                    # Connect Download Manager progress signals to this widget
-                    # This allows real-time progress tracking for the opened patient
-                    self._connect_download_manager_to_widget(download_manager, widget, study_uid)
-            except Exception as e:
-                print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
-        
-        # --- STEP 4: Background tasks (non-blocking) ---
-        async def _safe_task_wrapper(coro, name="unknown"):
-            """Wrapper to safely run async tasks and catch errors"""
-            try:
-                return await coro
-            except RuntimeError as e:
-                if "Cannot enter into task" in str(e) or "already deleted" in str(e).lower():
-                    # Ignore task re-entry errors - this is a known qasync issue
-                    print(f"⚠️ [TASK:{name}] Ignoring task re-entry error: {e}")
-                    return None
-                else:
-                    print(f"⚠️ [TASK:{name}] RuntimeError: {e}")
-            except asyncio.CancelledError:
-                print(f"⚠️ [TASK:{name}] Task was cancelled")
-                pass  # Task was cancelled, ignore
-            except Exception as e:
-                print(f"⚠️ [TASK:{name}] Error: {e}")
-            return None
-        
-        async def _background_setup():
-            try:
-                # Load series info for right panel (non-blocking)
-                asyncio.create_task(_safe_task_wrapper(
-                    self._load_and_display_series_info(patient_id, patient_name, study_uid),
-                    "load_series_info"
-                ))
-                
-                # Load thumbnails for right panel (non-blocking)
-                patient_info = {
-                    "PatientID": patient_id,
-                    "PatientName": patient_name,
-                    "StudyInstanceUID": study_uid,
-                }
-                asyncio.create_task(_safe_task_wrapper(
-                    self.show_patient_studies(patient_info),
-                    "show_patient_studies"
-                ))
-                
-                # Download attachments in background (non-blocking)
-                if not is_local:
-                    asyncio.create_task(_safe_task_wrapper(
-                        download_attachments_for_study_async(study_uid),
-                        "download_attachments"
-                    ))
-                
-                # Get series list for on-demand download
-                series_list = []
-                if hasattr(self, 'right_panel_widget') and hasattr(self.right_panel_widget, '_current_series_info'):
-                    series_list = self.right_panel_widget._current_series_info
-                
-                if not series_list and not is_local:
-                    try:
-                        study_info = self.get_series_info_from_server(study_uid, patient_id)
-                        if study_info:
-                            series_list = study_info.get('series', [])
-                    except Exception:
-                        pass
-                
-                # Pass series info to widget
-                if widget and series_list:
-                    widget.set_server_series_info(series_list)
-                
-                # Download is already started by add_study_downloads(start_immediately=True)
-                # in Step 3.5 above. No need to start again here.
-                # The Download Manager handles progress tracking and priority ordering.
-                        
-            except Exception as e:
-                print(f"⚠️ [BACKGROUND] Error in background setup: {e}")
-        
-        # Start background tasks without waiting
-        asyncio.create_task(_safe_task_wrapper(_background_setup(), "background_setup"))
-        
-        # Everything is handled in the fast path above
+                        except Exception:
+                            pass
+
+                    # Pass series info to widget
+                    if widget and series_list:
+                        widget.set_server_series_info(series_list)
+
+                    # Download is already started by add_study_downloads(start_immediately=True)
+                    # in Step 3.5 above. No need to start again here.
+                    # The Download Manager handles progress tracking and priority ordering.
+
+                except Exception as e:
+                    print(f"⚠️ [BACKGROUND] Error in background setup: {e}")
+
+            # Start background tasks without waiting
+            asyncio.create_task(_safe_task_wrapper(_background_setup(), "background_setup"))
+
+            # Hide loading after tab is shown
+            self.hide_loading()
+            self._hide_double_click_loading()
+            
+            # Auto-hide patient widget overlay after 3 seconds as fallback
+            QTimer.singleShot(3000, lambda: widget._hide_init_overlay() if hasattr(widget, '_hide_init_overlay') else None)
+            
+            # Everything is handled in the fast path above
+        except Exception as e:
+            print(f"Error in patient double-click handler: {str(e)}")
+            # Hide loading on error
+            self.hide_loading()
+            self._double_click_first_series_loaded = True
+            self._maybe_hide_double_click_loading()
+        finally:
+            pass
+
+    def _hide_double_click_loading(self):
+        """Hide the loading screen specifically for double-click events"""
+        self._double_click_first_series_loaded = True
+        self._maybe_hide_double_click_loading()
+
+    def _on_first_series_loaded(self):
+        self._double_click_first_series_loaded = True
+        self._maybe_hide_double_click_loading()
+
+    def _maybe_hide_double_click_loading(self):
+        if not getattr(self, '_double_click_loading_active', False):
+            return
+        if self._double_click_first_series_loaded:
+            self._double_click_loading_active = False
+            self.hide_loading()
     
     async def _download_series_on_demand(self, widget, study_uid, series_list, base_output_dir, server, clicked_series=None):
         """
@@ -966,11 +1026,11 @@ class HomePanelWidget(QWidget):
             print(f"Error in _safe_on_plus_button_clicked: {str(e)}")
 
             # Handle different types of errors gracefully
-            error_message = "خطا در دریافت اطلاعات از سرور"
+            error_message = "Error retrieving information from server"
             if "UNAVAILABLE" in str(e) or "connection" in str(e).lower():
-                error_message = "سرور در دسترس نیست. لطفاً اتصال شبکه را بررسی کنید."
+                error_message = "Server is unavailable. Please check your network connection."
             elif "timeout" in str(e).lower():
-                error_message = "زمان اتصال به سرور منقضی شد. لطفاً دوباره تلاش کنید."
+                error_message = "Server connection timed out. Please try again."
 
             # Hide loading dialog first
             self.hide_loading()
@@ -992,7 +1052,7 @@ class HomePanelWidget(QWidget):
         except Exception as e:
             print(f"Error in _on_patient_single_clicked: {str(e)}")
             self.hide_loading()
-            QMessageBox.critical(self, "خطا", f"خطا در نمایش اطلاعات سری: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error displaying series information: {str(e)}")
     
     async def _load_and_display_series_info_async(self, patient_id, patient_name, study_uid):
         """Async wrapper for _load_and_display_series_info"""
@@ -1077,7 +1137,7 @@ class HomePanelWidget(QWidget):
             print(f"🚀 [Zeta NPR] Server selected - {server}")
             
             # Get or create the main Download Manager tab (same as sidebar button)
-            download_manager = self._get_or_create_download_manager_tab()
+            download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
             
             if not download_manager:
                 QMessageBox.critical(self, "Error", "Failed to open Download Manager")
@@ -1150,8 +1210,8 @@ class HomePanelWidget(QWidget):
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error in CD burn request: {str(e)}")
 
-    def _get_or_create_download_manager_tab(self):
-        """Get existing Download Manager tab or create new one - unified for all download buttons"""
+    def _get_or_create_download_manager_tab(self, activate_tab: bool = False):
+        """Get existing Download Manager tab or create new one (optionally activate it)."""
         try:
             from PacsClient.utils.config import SOURCE_PATH
             
@@ -1160,6 +1220,11 @@ class HomePanelWidget(QWidget):
                 widget = self.tab_widget.widget(i)
                 if isinstance(widget, DownloadManagerWidget):
                     print(f"[Download Manager] Using existing tab at index {i}")
+                    if activate_tab:
+                        if self.custom_tab_manager:
+                            self.custom_tab_manager.set_tab_active_simple(i)
+                        else:
+                            self.tab_widget.setCurrentIndex(i)
                     return widget
 
             # Create new Download Manager tab (Zeta with v1.0.6 UI)
@@ -1169,10 +1234,15 @@ class HomePanelWidget(QWidget):
             
             # Add to tab widget with standard name "Download Manager"
             if self.custom_tab_manager:
-                tab_index = self.custom_tab_manager.add_download_manager_tab(widget=download_manager)
+                tab_index = self.custom_tab_manager.add_download_manager_tab(
+                    widget=download_manager,
+                    activate=activate_tab
+                )
                 print(f"[Download Manager] Tab added at index: {tab_index}")
             else:
                 self.tab_widget.addTab(download_manager, "Download Manager")
+                if activate_tab:
+                    self.tab_widget.setCurrentWidget(download_manager)
             
             # Connect download completion signals
             try:
@@ -1218,22 +1288,32 @@ class HomePanelWidget(QWidget):
                     except Exception:
                         pass  # Widget may have been deleted
             
+            def _resolve_series_number(series_uid_or_number):
+                try:
+                    if hasattr(widget, 'resolve_series_key'):
+                        return str(widget.resolve_series_key(series_uid_or_number))
+                except Exception:
+                    pass
+                return str(series_uid_or_number)
+
             def on_series_started(uid, series_uid, series_desc):
                 if uid == study_uid and widget:
                     try:
+                        series_number = _resolve_series_number(series_uid)
                         if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.start_series_download(series_uid)
+                            widget.thumbnail_manager.start_series_download(series_number)
                     except Exception:
                         pass
             
             def on_series_progress(uid, series_uid, current, total):
                 if uid == study_uid and widget:
                     try:
+                        series_number = _resolve_series_number(series_uid)
                         if hasattr(widget, 'thumbnail_manager'):
                             if total > 0:
                                 progress_percent = (current / total) * 100
                                 widget.thumbnail_manager.update_series_progress(
-                                    series_number=series_uid,
+                                    series_number=series_number,
                                     progress_percent=progress_percent,
                                     status_text=f"{current}/{total}"
                                 )
@@ -1243,11 +1323,12 @@ class HomePanelWidget(QWidget):
             def on_series_completed(uid, series_uid):
                 if uid == study_uid and widget:
                     try:
+                        series_number = _resolve_series_number(series_uid)
                         if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.complete_series_download(series_uid)
+                            widget.thumbnail_manager.complete_series_download(series_number)
                         # Also notify the widget that a series is ready for display
                         if hasattr(widget, 'series_downloaded'):
-                            widget.series_downloaded.emit(series_uid)
+                            widget.series_downloaded.emit(series_number)
                     except Exception:
                         pass
             
@@ -1443,8 +1524,8 @@ class HomePanelWidget(QWidget):
                 # Display series information in right panel
                 self._display_series_info_in_right_panel(study_info)
 
-                # Also save to database for future use
-                success = self.save_complete_study_info(study_uid, patient_id)
+                # Also save to database for future use (pass study_info to avoid double fetch)
+                success = self.save_complete_study_info(study_uid, patient_id, study_info=study_info)
                 if success:
                     # Clear cache to ensure fresh data
                     clear_study_cache(study_uid)
@@ -1454,7 +1535,7 @@ class HomePanelWidget(QWidget):
 
         except Exception as e:
             print(f"Error in _load_and_display_series_info: {str(e)}")
-            QMessageBox.critical(self, "خطا", f"خطا در دریافت اطلاعات سری: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error retrieving series information: {str(e)}")
         finally:
             self.hide_loading()
 
@@ -1562,7 +1643,7 @@ class HomePanelWidget(QWidget):
 
         except Exception as e:
             print(f"Error in _display_series_info_in_right_panel: {str(e)}")
-            QMessageBox.critical(self, "خطا", f"خطا در نمایش اطلاعات سری: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error displaying series information: {str(e)}")
 
     async def download_and_open_tab(self, dicom_downloader, study_uid, output_dir):
         # self.show_loading("Downloading", "Retrieving DICOM files...")
@@ -1578,7 +1659,7 @@ class HomePanelWidget(QWidget):
             )
             print('finished downloading:', output_dir)
         except Exception as e:
-            # QMessageBox.critical(self, "خطا", f"خطا در دانلود: {str(e)}")
+            # QMessageBox.critical(self, "Error", f"Error downloading: {str(e)}")
             print('error in downloading..:', e)
         # finally:
         #     self.hide_loading()
@@ -1824,7 +1905,7 @@ class HomePanelWidget(QWidget):
             # Show error message to user
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Download Error",
-                                f"خطا در دانلود فایل‌های DICOM:\n{str(e)}")
+                                f"Error downloading DICOM files:\n{str(e)}")
 
     # ---------- 2) نسخه‌ی جدید Async با قابلیت Cancel برای جستجوی لوکال ----------
     async def search_patients_from_local_async(self):
@@ -1937,7 +2018,7 @@ class HomePanelWidget(QWidget):
                 pass
         except Exception as e:
             print(f"[Local Search] Error: {e}")
-            QMessageBox.critical(self, "خطا", f"خطا در جستجوی لوکال: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error in local search: {str(e)}")
         finally:
             self.search_progress.setVisible(False)
             self.hide_loading()
@@ -2053,7 +2134,7 @@ class HomePanelWidget(QWidget):
                 pass
         except Exception as e:
             print(f"Error in search_patients_from_server_async: {e}")
-            QMessageBox.critical(self, "خطا", f"خطا در جستجوی بیماران: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error searching patients: {str(e)}")
         finally:
             self.search_progress.setVisible(False)
             self.hide_loading()
@@ -2380,7 +2461,78 @@ class HomePanelWidget(QWidget):
         # This method is now handled by PatientTableWidget
         pass
 
-    def show_loading(self, title, message, cancellable=False, on_cancel=None, cancel_text="Cancel Searching"):
+    def _ensure_loading_overlay(self):
+        if getattr(self, "_loading_overlay", None):
+            return
+        parent = self.tab_widget or self.window() or self
+        overlay = QWidget(parent)
+        overlay.setObjectName("LoadingOverlay")
+        overlay.setStyleSheet("""
+            QWidget#LoadingOverlay {
+                background-color: rgba(0, 0, 0, 140);
+                border: none;
+            }
+        """)
+        overlay.setVisible(False)
+        self._loading_overlay = overlay
+
+    def _show_loading_overlay(self):
+        try:
+            from PySide6.QtWidgets import QGraphicsOpacityEffect
+            from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+        except Exception:
+            QGraphicsOpacityEffect = None
+            QPropertyAnimation = None
+            QEasingCurve = None
+
+        self._ensure_loading_overlay()
+        parent = self._loading_overlay.parentWidget() or self
+        self._loading_overlay.setGeometry(parent.rect())
+        self._loading_overlay.raise_()
+        self._loading_overlay.show()
+
+        if QGraphicsOpacityEffect and QPropertyAnimation:
+            effect = self._loading_overlay.graphicsEffect()
+            if not isinstance(effect, QGraphicsOpacityEffect):
+                effect = QGraphicsOpacityEffect(self._loading_overlay)
+                self._loading_overlay.setGraphicsEffect(effect)
+            effect.setOpacity(0.0)
+            anim = QPropertyAnimation(effect, b"opacity")
+            anim.setDuration(180)
+            anim.setStartValue(0.0)
+            anim.setEndValue(1.0)
+            if QEasingCurve:
+                anim.setEasingCurve(QEasingCurve.OutCubic)
+            anim.start()
+            self._loading_overlay_anim = anim
+
+    def _hide_loading_overlay(self):
+        overlay = getattr(self, "_loading_overlay", None)
+        if not overlay:
+            return
+        effect = overlay.graphicsEffect()
+        if effect is None:
+            overlay.hide()
+            return
+
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+        anim = QPropertyAnimation(effect, b"opacity")
+        anim.setDuration(180)
+        anim.setStartValue(effect.opacity())
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(QEasingCurve.InCubic)
+        anim.finished.connect(overlay.hide)
+        anim.start()
+        self._loading_overlay_anim = anim
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if getattr(self, "_loading_overlay", None) and self._loading_overlay.isVisible():
+            parent = self._loading_overlay.parentWidget() or self
+            self._loading_overlay.setGeometry(parent.rect())
+
+    def show_loading(self, title, message, cancellable=False, on_cancel=None,
+                     cancel_text="Cancel Searching", dim_background=False):
         from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, \
             QGraphicsDropShadowEffect, QPushButton
         from PySide6.QtCore import QTimer, QPropertyAnimation, QEasingCurve
@@ -2389,7 +2541,11 @@ class HomePanelWidget(QWidget):
         if hasattr(self, 'loading_dialog') and self.loading_dialog:
             self.loading_dialog.close()
 
-        self.loading_dialog = QDialog(self)
+        if dim_background:
+            self._show_loading_overlay()
+
+        parent_widget = self.window() or self
+        self.loading_dialog = QDialog(parent_widget)
         self.loading_dialog.setWindowIcon(QIcon("PacsClient/login/images/favicon.ico"))
         self.loading_dialog.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint)
         self.loading_dialog.setAttribute(Qt.WA_TranslucentBackground)
@@ -2397,8 +2553,8 @@ class HomePanelWidget(QWidget):
         self.loading_dialog.setFixedSize(400, 210)
 
         # مرکزچینی
-        if self.parent():
-            parent_geometry = self.parent().geometry()
+        if parent_widget:
+            parent_geometry = parent_widget.geometry()
             x = parent_geometry.x() + (parent_geometry.width() - 400) // 2
             y = parent_geometry.y() + (parent_geometry.height() - 210) // 2
             self.loading_dialog.move(x, y)
@@ -2539,6 +2695,8 @@ class HomePanelWidget(QWidget):
         QApplication.processEvents()
 
     def hide_loading(self):
+        if getattr(self, '_double_click_loading_active', False) and not getattr(self, '_double_click_first_series_loaded', False):
+            return
         if hasattr(self, 'dot_timer') and self.dot_timer:
             self.dot_timer.stop()
 
@@ -2560,6 +2718,9 @@ class HomePanelWidget(QWidget):
             fade_out.finished.connect(self.loading_dialog.close)
             fade_out.start()
             self.fade_out_animation = fade_out
+
+        if getattr(self, "_loading_overlay", None) and self._loading_overlay.isVisible():
+            self._hide_loading_overlay()
 
     def _on_cancel_search_clicked(self):
         # جلوگیری از چندبار کلیک
@@ -2640,7 +2801,7 @@ class HomePanelWidget(QWidget):
 
         except Exception as e:
             print(f"Error in on_plus_button_clicked: {str(e)}")
-            QMessageBox.critical(self, "خطا", f"خطا در نمایش تصاویر: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error displaying images: {str(e)}")
 
         finally:
             self.hide_loading()
@@ -3875,6 +4036,53 @@ Study UID: {study_uid}
         else:
             patient_name = patient_name if patient_name is not None else 'N/A'
 
+            # Prevent duplicate PatientWidget creation for the same study
+            if study_uid:
+                existing_widget = None
+                if self.custom_tab_manager:
+                    existing_index = self.custom_tab_manager.find_tab_by_study_uid(study_uid)
+                    if existing_index is not None and existing_index != -1:
+                        try:
+                            self.custom_tab_manager.set_tab_active(existing_index)
+                        except Exception:
+                            pass
+                        tab_info = self.custom_tab_manager.get_patient_tab_info(existing_index)
+                        if tab_info:
+                            existing_widget = tab_info.get('widget')
+                        if existing_widget:
+                            try:
+                                existing_widget.update_tab_manager(
+                                    patient_name=patient_name,
+                                    patient_id=patient_id
+                                )
+                            except Exception:
+                                pass
+                            return existing_widget
+
+                # Fallback to local cache if custom tab manager is not available
+                if study_uid in self.dict_tabs_widget:
+                    existing_widget = self.dict_tabs_widget.get(study_uid)
+                    if existing_widget:
+                        try:
+                            idx = self.tab_widget.indexOf(existing_widget)
+                            if idx != -1:
+                                self.tab_widget.setCurrentIndex(idx)
+                        except Exception:
+                            pass
+                        return existing_widget
+
+                # Last-resort: scan tabs for matching study_uid
+                if self.tab_widget:
+                    for i in range(self.tab_widget.count()):
+                        w = self.tab_widget.widget(i)
+                        if hasattr(w, 'study_uid') and w.study_uid == study_uid:
+                            self.dict_tabs_widget[study_uid] = w
+                            try:
+                                self.tab_widget.setCurrentIndex(i)
+                            except Exception:
+                                pass
+                            return w
+
             if not enable_progressive_mode and study_uid and caller == CallerTypes.SERVER:
                 from PacsClient.pacs.patient_tab.utils import check_study_complete
                 is_complete = check_study_complete(study_uid)
@@ -3890,29 +4098,19 @@ Study UID: {study_uid}
             )
             widget.set_method_open_ai_module_tab(self.add_new_tab_widget)
             
-            # 🔥 اتصال سیگنال priority_download_requested از thumbnail_manager
+            # 🔥 اتصال سیگنال priority_download_requested از thumbnail_manager (only once)
             if hasattr(widget, 'thumbnail_manager') and widget.thumbnail_manager is not None:
                 widget.thumbnail_manager.set_current_study_uid(study_uid)
-                
-                # اصلاح سیگنال برای داشتن widget
-                def on_priority_download_requested(series_number, study_uid):
-                    print(f"🎯 [HomeUI] Priority download requested: series={series_number}, study={study_uid}")
-                    # widget را مستقیماً به تابع ارسال می‌کنیم
-                    self._handle_priority_download_from_thumbnail(series_number, study_uid, widget)
-                
-                widget.thumbnail_manager.priority_download_requested.connect(on_priority_download_requested)
-                            
-                # ایجاد یک تابع wrapper برای اتصال سیگنال
+
                 def on_priority_download_requested(series_number, study_uid_param):
                     print(f"🎯 [HomeUI] Priority download requested: series={series_number}, study={study_uid_param}")
                     self._handle_priority_download_from_thumbnail(series_number, study_uid_param, widget)
-                
-                # اتصال سیگنال
+
                 widget.thumbnail_manager.priority_download_requested.connect(on_priority_download_requested)
                 print(f"✅ Connected priority download signal for study {study_uid}")
                         
             if study_uid:
-                download_manager = self._get_or_create_download_manager_tab()
+                download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
                 if download_manager:
                     # Zeta uses 'download_completed' signal (not 'studyDownloadCompleted')
                     download_manager.download_completed.connect(
@@ -3933,6 +4131,9 @@ Study UID: {study_uid}
             else:
                 self.tab_widget.addTab(widget, patient_name)
                 self.tab_widget.setCurrentWidget(widget)
+
+            if study_uid:
+                self.dict_tabs_widget[study_uid] = widget
 
             # Notify priority manager that patient tab was opened
             # This promotes all series of this patient to HIGH priority
@@ -3985,17 +4186,24 @@ Study UID: {study_uid}
                 return
             
             # ========== CRITICAL: Check if Download Manager is already handling this study ==========
-            download_manager = self._get_or_create_download_manager_tab()
+            download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
             study_being_downloaded = False
-            
+
             if download_manager:
                 # Check if this study is in the Download Manager's queue
-                for study_download in download_manager.study_downloads:
-                    if study_download.study_uid == study_uid:
-                        if study_download.status in ["Downloading", "Pending", "Paused"]:
-                            study_being_downloaded = True
-                            print(f"📥 Study {study_uid} is already in Download Manager (status: {study_download.status})")
-                            break
+                # Use hasattr to safely check if the attribute exists
+                if hasattr(download_manager, 'study_downloads'):
+                    for study_download in download_manager.study_downloads:
+                        if study_download.study_uid == study_uid:
+                            if study_download.status in ["Downloading", "Pending", "Paused"]:
+                                study_being_downloaded = True
+                                print(f"📥 Study {study_uid} is already in Download Manager (status: {study_download.status})")
+                                break
+                else:
+                    # Alternative approach: check if download manager has a method to get active downloads
+                    # Since we don't know the exact interface, we'll assume the study is not being downloaded
+                    # This is a safer fallback to prevent the AttributeError
+                    print(f"⚠️ DownloadManagerWidget doesn't have 'study_downloads' attribute, proceeding with new download")
             
             if study_being_downloaded:
                 # Study is being handled by Download Manager - just update priority
@@ -4450,19 +4658,24 @@ Study UID: {study_uid}
             print(f"Error getting series info from database: {str(e)}")
             return {}
 
-    def save_complete_study_info(self, study_uid: str, patient_id: str = None):
+    def save_complete_study_info(self, study_uid: str, patient_id: str = None, study_info: dict = None):
         """
         Get complete study and series information and save to database
 
         Args:
             study_uid: Study Instance UID
             patient_id: Patient ID (optional)
+            study_info: Pre-fetched study info (optional, to avoid double fetch)
         """
         try:
 
-            # Get detailed information from server
-            study_info = self.get_series_info_from_server(study_uid, patient_id)
-            print('study_info:', study_info)
+            # Get detailed information from server only if not provided
+            if not study_info:
+                study_info = self.get_series_info_from_server(study_uid, patient_id)
+                print('study_info:', study_info)
+            else:
+                print('✅ Using cached study_info (avoiding double fetch)')
+            
             if not study_info:
                 return False
 

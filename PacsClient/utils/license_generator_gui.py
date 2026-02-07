@@ -28,8 +28,8 @@ class LicenseGeneratorWindow(QMainWindow):
         self.setup_ui()
         
     def setup_ui(self):
-        """راه‌اندازی رابط کاربری"""
-        self.setWindowTitle("تولید لایسنس AIPacs - ابزار مدیریت")
+        """Setup user interface"""
+        self.setWindowTitle("AIPacs License Generator - Management Tool")
         self.setMinimumWidth(700)
         self.setMinimumHeight(600)
         
@@ -275,8 +275,8 @@ class LicenseGeneratorWindow(QMainWindow):
         if not serial:
             QMessageBox.warning(
                 self,
-                "خطا",
-                "لطفاً سریال سیستم را وارد کنید.",
+                "Error",
+                "Please enter the system serial.",
                 QMessageBox.Ok
             )
             return
@@ -284,8 +284,8 @@ class LicenseGeneratorWindow(QMainWindow):
         if len(serial) != 32:
             QMessageBox.warning(
                 self,
-                "خطا",
-                f"سریال سیستم باید 32 کاراکتر باشد.\nطول فعلی: {len(serial)} کاراکتر",
+                "Error",
+                f"System serial must be 32 characters.\nCurrent length: {len(serial)} characters",
                 QMessageBox.Ok
             )
             return
@@ -306,22 +306,22 @@ class LicenseGeneratorWindow(QMainWindow):
                 
                 QMessageBox.information(
                     self,
-                    "موفقیت",
-                    f"کلید لایسنس با موفقیت تولید شد!\n\n{message}",
+                    "Success",
+                    f"License key generated successfully!\n\n{message}",
                     QMessageBox.Ok
                 )
             else:
                 QMessageBox.critical(
                     self,
-                    "خطا",
-                    f"خطا در اعتبارسنجی لایسنس:\n{message}",
+                    "Error",
+                    f"License validation error:\n{message}",
                     QMessageBox.Ok
                 )
         except Exception as e:
             QMessageBox.critical(
                 self,
-                "خطا",
-                f"خطا در تولید لایسنس:\n{str(e)}",
+                "Error",
+                f"License generation error:\n{str(e)}",
                 QMessageBox.Ok
             )
     
@@ -332,8 +332,8 @@ class LicenseGeneratorWindow(QMainWindow):
         if not license_text:
             QMessageBox.warning(
                 self,
-                "خطا",
-                "ابتدا باید کلید لایسنس را تولید کنید.",
+                "Error",
+                "You must generate a license key first.",
                 QMessageBox.Ok
             )
             return
@@ -343,8 +343,8 @@ class LicenseGeneratorWindow(QMainWindow):
         
         QMessageBox.information(
             self,
-            "کپی شد",
-            "کلید لایسنس با موفقیت کپی شد.\nمی‌توانید آن را برای مشتری ارسال کنید.",
+            "Copied",
+            "License key copied successfully.\nYou can send it to the customer.",
             QMessageBox.Ok
         )
 
