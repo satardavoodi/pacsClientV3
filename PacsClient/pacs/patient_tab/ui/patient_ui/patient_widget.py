@@ -246,6 +246,11 @@ class PatientWidget(QWidget):
         
         # دیکشنری برای ذخیره داده‌های سری‌های اولویت‌دار
         self._priority_series_data = {}
+        
+        # ✅ FLICKER FIX: Flag to track initialization state
+        self._is_initializing = True
+        # Prevent non-user reception auto-switch during load (can cause flicker)
+        self._block_reception_autoswitch = True
 
         # Defer VTK initialization to let the window paint first
         # Use longer delay to ensure window is fully painted
@@ -440,6 +445,9 @@ class PatientWidget(QWidget):
         try:
             self._pipeline_running = True
             print("✅ Pipeline flag set to True")
+            
+            # ✅ FLICKER FIX: Disable UI updates during entire initialization
+            self.setUpdatesEnabled(False)
 
             # ✅ Use QTimer to schedule pipeline in the main thread
             QTimer.singleShot(0, lambda: self._run_pipeline_safely())
@@ -449,6 +457,7 @@ class PatientWidget(QWidget):
             import traceback
             traceback.print_exc()
             self._pipeline_running = False
+            self.setUpdatesEnabled(True)  # Re-enable on error
             self._hide_init_overlay()
 
     def _run_pipeline_safely(self):
@@ -469,6 +478,10 @@ class PatientWidget(QWidget):
                 traceback.print_exc()
             finally:
                 self._pipeline_running = False
+                self._is_initializing = False  # ✅ FLICKER FIX: Mark initialization complete
+                # ✅ FLICKER FIX: Re-enable UI updates after pipeline completes
+                self.setUpdatesEnabled(True)
+                self.update()  # Single repaint
                 print("✅ Pipeline flag reset to False")
 
         except Exception as e:
@@ -476,6 +489,8 @@ class PatientWidget(QWidget):
             import traceback
             traceback.print_exc()
             self._pipeline_running = False
+            self._is_initializing = False
+            self.setUpdatesEnabled(True)  # Re-enable on error
             self._hide_init_overlay()
             
 
@@ -706,11 +721,13 @@ class PatientWidget(QWidget):
             self.lst_nodes_viewer.clear()
 
             # Create viewers synchronously (VTK widgets must be created in main thread)
-            # But use processEvents to keep UI responsive
-            QApplication.processEvents()
+            # ✅ FLICKER FIX: Only process events if not in initialization batch
+            if self.updatesEnabled():
+                QApplication.processEvents()
             default_layout = self._get_default_layout_from_config()
             self._create_viewers_sync(default_layout)
-            QApplication.processEvents()
+            if self.updatesEnabled():
+                QApplication.processEvents()
             self._show_viewer_loading_all()
 
             if self.lst_nodes_viewer and len(self.lst_nodes_viewer) > 0:
@@ -951,7 +968,9 @@ class PatientWidget(QWidget):
                     study_pk=self.metadata_fixed.get('study_pk', None),
                     ordering_by_instances_number=self.ordering_by_instances_number
             ):
-                QApplication.processEvents()
+                # ✅ FLICKER FIX: Only process events if not in initialization batch
+                if self.updatesEnabled():
+                    QApplication.processEvents()
                 
                 self.check_and_add_meta_fixed(patient_info)
                 
@@ -964,10 +983,13 @@ class PatientWidget(QWidget):
                     optimal_layout = self.get_optimal_layout_for_series(metadata)
                     print(f"✅ [SYNC_LOAD] Determined optimal layout: {optimal_layout}") # لاگ اضافه شده
                     
-                    QApplication.processEvents()
+                    # ✅ FLICKER FIX: Only process events if not in initialization batch
+                    if self.updatesEnabled():
+                        QApplication.processEvents()
                     # Use synchronous viewer creation
                     self._apply_multi_viewer_sync(optimal_layout) # این تابع ویوورها را تنظیم می کند
-                    QApplication.processEvents()
+                    if self.updatesEnabled():
+                        QApplication.processEvents()
                     
                     first_series_loaded = True
                     self._hide_loading_spinner()
@@ -1013,7 +1035,9 @@ class PatientWidget(QWidget):
                 self.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 0, 1)
                 self.change_container_border(0)
             
-            QApplication.processEvents()
+            # ✅ FLICKER FIX: Only process events if not in initialization batch
+            if self.updatesEnabled():
+                QApplication.processEvents()
             
         except Exception as e:
             print(f"❌ Error applying viewer layout sync: {e}")
@@ -1494,7 +1518,9 @@ class PatientWidget(QWidget):
                 except RuntimeError:
                     return  # Widget was deleted
                 
-                QApplication.processEvents()
+                # ✅ FLICKER FIX: Only process events if not in initialization batch
+                if self.updatesEnabled():
+                    QApplication.processEvents()
 
                 self.check_and_add_meta_fixed(patient_info)
 
@@ -1506,11 +1532,14 @@ class PatientWidget(QWidget):
                     optimal_layout = self.get_optimal_layout_for_series(metadata)
                     first_modality = metadata.get('series', {}).get('modality', 'N/A')
 
-                    QApplication.processEvents()
+                    # ✅ FLICKER FIX: Only process events if not in initialization batch
+                    if self.updatesEnabled():
+                        QApplication.processEvents()
 
                     # ✅ ساخت viewer مناسب برای هر مودالیتی
                     self._create_viewers_sync(optimal_layout)
-                    QApplication.processEvents()
+                    if self.updatesEnabled():
+                        QApplication.processEvents()
 
 
                     self._distribute_series_to_viewers()
@@ -2351,11 +2380,11 @@ class PatientWidget(QWidget):
         layout.addStretch(0)
 
         # اتصال‌ها
-        self.btn_series.clicked.connect(lambda: self.switch_right_panel("series"))
-        self.btn_reception.clicked.connect(lambda: self.switch_right_panel("reception"))
-        self.btn_ai_chat.clicked.connect(lambda: self.switch_right_panel("ai_chat"))
-        self.btn_ai_module.clicked.connect(lambda: self.switch_right_panel("ai_module"))
-        self.btn_advanced_tools.clicked.connect(lambda: self.switch_right_panel("advanced_tools"))
+        self.btn_series.clicked.connect(lambda: self.switch_right_panel("series", force=True))
+        self.btn_reception.clicked.connect(lambda: self.switch_right_panel("reception", force=True))
+        self.btn_ai_chat.clicked.connect(lambda: self.switch_right_panel("ai_chat", force=True))
+        self.btn_ai_module.clicked.connect(lambda: self.switch_right_panel("ai_module", force=True))
+        self.btn_advanced_tools.clicked.connect(lambda: self.switch_right_panel("advanced_tools", force=True))
 
         return sidebar
 
@@ -2382,10 +2411,12 @@ class PatientWidget(QWidget):
                 }
             """
 
-    def switch_right_panel(self, option):
+    def switch_right_panel(self, option, *, force: bool = False):
         if option == "series":
-            self.right_panel.setCurrentIndex(0)
-            self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
+            if self.right_panel.currentIndex() != 0:
+                self.right_panel.setCurrentIndex(0)
+            if self.right_panel.width() != self.default_panel_width:
+                self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
             self.btn_series.setStyleSheet(self.sidebar_btn_style(True))
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
@@ -2393,6 +2424,19 @@ class PatientWidget(QWidget):
             self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
 
         elif option == 'reception':
+            if self._block_reception_autoswitch and not force:
+                print("[PatientWidget] Skipping auto switch to Reception Data (blocked to prevent flicker)")
+                return
+
+            # If already on reception with correct width, avoid redundant work
+            if self.right_panel.currentIndex() == 2 and self.right_panel.width() == self.reception_panel_width:
+                self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
+                self.btn_reception.setStyleSheet(self.sidebar_btn_style(True))
+                self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
+                self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
+                self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+                return
+
             print("[PatientWidget] Switching to Reception Data tab (index 2)")
             
             # ✅ Lazy load ReceptionDataTab if not already created
@@ -2415,8 +2459,10 @@ class PatientWidget(QWidget):
                     import traceback
                     traceback.print_exc()
             
-            self.right_panel.setCurrentIndex(2)  # تغییر از 1 به 2 برای ReceptionDataTab جدید
-            self.right_panel.setFixedWidth(self.reception_panel_width)  # Make it 70% bigger
+            if self.right_panel.currentIndex() != 2:
+                self.right_panel.setCurrentIndex(2)  # تغییر از 1 به 2 برای ReceptionDataTab جدید
+            if self.right_panel.width() != self.reception_panel_width:
+                self.right_panel.setFixedWidth(self.reception_panel_width)  # Make it 70% bigger
             print(
                 f"[PatientWidget] Panel width changed from {self.default_panel_width} to {self.reception_panel_width}")
             self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
@@ -2432,7 +2478,8 @@ class PatientWidget(QWidget):
 
         elif option == 'ai_chat':
             # self.right_panel.setCurrentIndex(2)
-            self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
+            if self.right_panel.width() != self.default_panel_width:
+                self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
             self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(True))
@@ -2441,7 +2488,8 @@ class PatientWidget(QWidget):
             self.ai_chat_layout_ui()
 
         elif option == 'ai_module':
-            self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
+            if self.right_panel.width() != self.default_panel_width:
+                self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
             self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
             self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
@@ -3388,9 +3436,8 @@ class PatientWidget(QWidget):
         slider = None
         
         try:
-            # Skip process events when creating many viewers to avoid slowdown
-            if viewer_count < 15:
-                self._process_events_safe("before VTK initialization")
+            # ✅ FLICKER FIX: Removed processEvents - batching UI updates instead
+            # processEvents was causing thumbnail loading to interrupt viewer creation
             
             print("   📐 Creating grid layout...")
             try:
@@ -3639,15 +3686,25 @@ class PatientWidget(QWidget):
         return new_node
     
     def _process_events_safe(self, label: str):
-        """Process events only when safe, preventing nested calls and excessive processing"""
+        """Process events only when safe, preventing nested calls and excessive processing
+        
+        ✅ FLICKER FIX: Now checks if updates are disabled before processing events
+        """
+        # Skip if UI updates are disabled (batch operation in progress)
+        if not self.updatesEnabled():
+            print(f"   ⏭️ Skipping processEvents ({label}) - updates disabled for batch operation")
+            return
+            
         self._critical_sections_running += 1
-        if self._critical_sections_running <= 2:  # Only process if not deeply nested
+        if self._critical_sections_running <= 1:  # More conservative: only process if not nested at all
             try:
                 print(f"   ⏳ Processing events {label}...")
                 QApplication.processEvents()
                 print(f"   ✅ Events processed")
             except Exception as e:
                 print(f"   ❌ ERROR processing events: {e}")
+        else:
+            print(f"   ⏭️ Skipping processEvents ({label}) - nested call ({self._critical_sections_running})")
         self._critical_sections_running -= 1
 
     def create_dummy_vtk_widget(self):
@@ -4987,10 +5044,15 @@ class PatientWidget(QWidget):
             
             print(f"🔧 [LAYOUT] Applying {rows}x{cols} layout (need {required_count} viewers, have {current_count})")
             
+            # ✅ FLICKER FIX: Disable updates during batch viewer creation
+            self.setUpdatesEnabled(False)
+            if hasattr(self, 'center_widget') and self.center_widget:
+                self.center_widget.setUpdatesEnabled(False)
+            
             # 1. Cleanup existing viewers but preserve data
             self.cleanup_all_viewers()
             self.lst_nodes_viewer.clear()
-            self._process_events_safe("before creating new viewers")  # Optimized processing
+            print("   ✅ cleanup_all_viewers completed")  # No processEvents here
             
             # 2. Create viewers with existing data assignments
             displayed_series_indices = set()
@@ -5045,6 +5107,13 @@ class PatientWidget(QWidget):
             traceback.print_exc()
             if modify_by_user:
                 self._hide_loading_msg()
+        finally:
+            # ✅ FLICKER FIX: Re-enable updates after batch creation
+            if hasattr(self, 'center_widget') and self.center_widget:
+                self.center_widget.setUpdatesEnabled(True)
+            self.setUpdatesEnabled(True)
+            # Single repaint after all changes
+            self.update()
     
     def _distribute_series_to_viewers(self):
         """بهینه‌سازی توزیع سری‌ها به viewers"""
@@ -5136,23 +5205,28 @@ class PatientWidget(QWidget):
         """
         Create multiple viewers efficiently in batch
         بیشتر سریع از single creation
+        
+        ✅ FLICKER FIX: Removed processEvents during batch creation
         """
         created = []
         try:
+            # ✅ FLICKER FIX: Disable updates during batch
+            self.setUpdatesEnabled(False)
+            
             for i in range(count):
                 # Skip event processing for internal batch operations
                 viewer = self.new_viewer(i % max(1, len(self.lst_thumbnails_data)))
                 created.append(viewer)
-                
-                # Process events every N viewers to keep UI responsive
-                if (i + 1) % 4 == 0 and i > 0:
-                    self._process_events_safe(f"batch creation {i+1}/{count}")
+                # ✅ FLICKER FIX: No processEvents during batch - prevents flicker
             
             return created
         except Exception as e:
             print(f"❌ Error in batch viewer creation: {e}")
             traceback.print_exc()
             return created
+        finally:
+            # ✅ FLICKER FIX: Re-enable updates after batch
+            self.setUpdatesEnabled(True)
                     
     def create_some_viewers(self, count):
         last_viewer_index = 0

@@ -1040,6 +1040,18 @@ class DownloadManagerWidget(QWidget):
     def _do_update_progress_bar(self, study_uid: str, progress: float) -> None:
         """Actually update progress bar (runs in main thread)"""
         try:
+            # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+            if not self.download_table or not hasattr(self, 'download_table'):
+                logger.debug("⚠️ download_table not available (widget may be deleted)")
+                return
+            
+            # Additional check: verify widget is not deleted
+            try:
+                _ = self.download_table.rowCount()  # Try to access a property
+            except RuntimeError:
+                logger.debug("⚠️ download_table deleted, skipping progress update")
+                return
+            
             state = self.state_store.get(study_uid)
             if not state:
                 logger.warning(f"No state found for {study_uid}")
@@ -1097,6 +1109,18 @@ class DownloadManagerWidget(QWidget):
     def _do_update_status_badge(self, study_uid: str, status: DownloadStatus) -> None:
         """Actually update status (runs in main thread)"""
         try:
+            # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+            if not self.download_table or not hasattr(self, 'download_table'):
+                logger.debug("⚠️ download_table not available (widget may be deleted)")
+                return
+            
+            # Additional check: verify widget is not deleted
+            try:
+                _ = self.download_table.rowCount()  # Try to access a property
+            except RuntimeError:
+                logger.debug("⚠️ download_table deleted, skipping status update")
+                return
+            
             if study_uid not in self.download_rows:
                 logger.warning(f"study_uid {study_uid} not in download_rows during status update")
                 return
@@ -1186,6 +1210,18 @@ class DownloadManagerWidget(QWidget):
     def _do_update_action_buttons(self, study_uid: str, status: DownloadStatus) -> None:
         """Actually update action buttons (runs in main thread)"""
         try:
+            # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+            if not self.download_table or not hasattr(self, 'download_table'):
+                logger.debug("⚠️ download_table not available (widget may be deleted)")
+                return
+            
+            # Additional check: verify widget is not deleted
+            try:
+                _ = self.download_table.rowCount()  # Try to access a property
+            except RuntimeError:
+                logger.debug("⚠️ download_table deleted, skipping action buttons update")
+                return
+            
             if study_uid not in self.download_rows:
                 return
             
@@ -2180,6 +2216,18 @@ class DownloadManagerWidget(QWidget):
     
     def _on_selection_changed(self):
         """Handle table row selection - update details panel"""
+        # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+        if not self.download_table or not hasattr(self, 'download_table'):
+            logger.debug("⚠️ download_table not available (widget may be deleted)")
+            return
+        
+        # Additional check: verify widget is not deleted
+        try:
+            _ = self.download_table.rowCount()  # Try to access a property
+        except RuntimeError:
+            logger.debug("⚠️ download_table deleted, skipping selection change")
+            return
+        
         selected_items = self.download_table.selectedItems()
         if not selected_items:
             self._selected_study_uid = None
@@ -2208,6 +2256,18 @@ class DownloadManagerWidget(QWidget):
     def _select_study_row(self, study_uid: str, ensure_visible: bool = True) -> None:
         """Select a study row by study_uid and sync details panel."""
         try:
+            # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+            if not self.download_table or not hasattr(self, 'download_table'):
+                logger.debug("⚠️ download_table not available (widget may be deleted)")
+                return
+            
+            # Additional check: verify widget is not deleted
+            try:
+                _ = self.download_table.rowCount()  # Try to access a property
+            except RuntimeError:
+                logger.debug("⚠️ download_table deleted, skipping selection")
+                return
+            
             row = self.download_rows.get(study_uid)
             if row is None:
                 return
@@ -2227,6 +2287,18 @@ class DownloadManagerWidget(QWidget):
     def _on_table_cell_clicked(self, row: int, column: int) -> None:
         """Ensure row selection updates even when clicking cell widgets."""
         try:
+            # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+            if not self.download_table or not hasattr(self, 'download_table'):
+                logger.debug("⚠️ download_table not available (widget may be deleted)")
+                return
+            
+            # Additional check: verify widget is not deleted
+            try:
+                _ = self.download_table.rowCount()  # Try to access a property
+            except RuntimeError:
+                logger.debug("⚠️ download_table deleted, skipping cell click")
+                return
+            
             widget = self.download_table.cellWidget(row, 0)
             if isinstance(widget, (PriorityGroupHeader, QFrame)):
                 return
@@ -2605,6 +2677,18 @@ class DownloadManagerWidget(QWidget):
     def _refresh_table_order(self):
         """Refresh table with priority grouping - shows all 4 priority groups"""
         try:
+            # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+            if not self.download_table or not hasattr(self, 'download_table'):
+                logger.debug("⚠️ download_table not available (widget may be deleted)")
+                return
+            
+            # Additional check: verify widget is not deleted
+            try:
+                _ = self.download_table.rowCount()  # Try to access a property
+            except RuntimeError:
+                logger.debug("⚠️ download_table deleted, skipping refresh")
+                return
+            
             logger.info("🔄 Refreshing table order with priority groups...")
             
             # Get all downloads grouped by priority
@@ -2664,6 +2748,18 @@ class DownloadManagerWidget(QWidget):
     
     def _add_priority_group_header(self, priority_name: str, count: int):
         """Add priority group header to table"""
+        # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+        if not self.download_table or not hasattr(self, 'download_table'):
+            logger.debug("⚠️ download_table not available (widget may be deleted)")
+            return
+        
+        # Additional check: verify widget is not deleted
+        try:
+            _ = self.download_table.rowCount()  # Try to access a property
+        except RuntimeError:
+            logger.debug("⚠️ download_table deleted, skipping header add")
+            return
+        
         row = self.download_table.rowCount()
         self.download_table.insertRow(row)
         
@@ -2693,6 +2789,18 @@ class DownloadManagerWidget(QWidget):
     
     def _add_priority_group_spacer(self):
         """Add visual spacer after priority group"""
+        # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+        if not self.download_table or not hasattr(self, 'download_table'):
+            logger.debug("⚠️ download_table not available (widget may be deleted)")
+            return
+        
+        # Additional check: verify widget is not deleted
+        try:
+            _ = self.download_table.rowCount()  # Try to access a property
+        except RuntimeError:
+            logger.debug("⚠️ download_table deleted, skipping spacer add")
+            return
+        
         row = self.download_table.rowCount()
         self.download_table.insertRow(row)
         
@@ -2716,6 +2824,18 @@ class DownloadManagerWidget(QWidget):
     
     def _add_download_row_to_table(self, state: DownloadState):
         """Add a download row to the table"""
+        # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+        if not self.download_table or not hasattr(self, 'download_table'):
+            logger.debug("⚠️ download_table not available (widget may be deleted)")
+            return
+        
+        # Additional check: verify widget is not deleted
+        try:
+            _ = self.download_table.rowCount()  # Try to access a property
+        except RuntimeError:
+            logger.debug("⚠️ download_table deleted, skipping row add")
+            return
+        
         # Skip if group is collapsed
         priority_name = state.priority.display_name
         if priority_name in self._collapsed_groups:
