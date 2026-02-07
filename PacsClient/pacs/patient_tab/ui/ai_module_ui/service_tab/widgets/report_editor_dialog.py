@@ -1148,10 +1148,11 @@ class ReportEditorDialog(QDialog):
         if not self.is_logged_in:
             QMessageBox.warning(
                 self,
-                "خطای احراز هویت",
-                "برای ذخیره گزارش باید لاگین کنید."
+                "Authentication Error",
+                "You must be logged in to save the report."
             )
             return
+
         
         new_content = self.text_edit.toHtml()
         selected_status = self.status_combo.currentData()

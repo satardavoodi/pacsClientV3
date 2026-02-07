@@ -608,6 +608,7 @@ class ThumbnailManager(QObject):
         self.selected_series = None
         self.series_widgets = {}
         self.ready_series = set()
+        self._pending_series_updates = {}
         self.current_study_uid = None  # برای ذخیره study_uid فعلی
     
     def set_current_study_uid(self, study_uid):
@@ -1031,6 +1032,9 @@ class ThumbnailManager(QObject):
             # Store widget in series_widgets
             self.series_widgets[str(thumbnail_index)] = widget
 
+            # Apply any pending download state captured before the widget existed
+            self._apply_pending_series_update(str(thumbnail_index))
+
             return widget
             
         except Exception as e:
@@ -1150,6 +1154,14 @@ class ThumbnailManager(QObject):
                 print(f"⚡ [PRIORITY PROGRESS] Series {series_key}: {progress_percent:.1f}% - {status_text}")
             
             # Rest of the existing code...
+            if series_key not in self.series_widgets:
+                self._queue_pending_series_update(
+                    series_key,
+                    started=True,
+                    progress_percent=progress_percent,
+                    status_text=status_text
+                )
+                return
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
 
@@ -1221,32 +1233,36 @@ class ThumbnailManager(QObject):
                             progress_overlay.setVisible(True)
                             progress_overlay.raise_()
                             progress_overlay.update()
-                            
-                            # Hide after 2.5 seconds (both glass and progress)
-                            QTimer.singleShot(2500, lambda: self._hide_overlay(widget))
-                            
-                            # Mark as ready
-                            self.ready_series.add(series_key)
+
                         else:
                             progress_overlay.setVisible(False)
                             # Hide glass overlay when not in progress
                             if hasattr(widget, 'glass_overlay'):
                                 widget.glass_overlay.setVisible(False)
-                    
+                                
+                        # Hide after 2.5 seconds (both glass and progress)
+                        QTimer.singleShot(2500, lambda: self._hide_overlay(widget))
+
+                        # Mark as ready
+                        self.ready_series.add(series_key)
+
                     # Update border state (secondary visual indicator)
                     if hasattr(widget, 'progress_border'):
                         progress_border = widget.progress_border
-                        
+
                         if progress_percent >= 100:
                             progress_border.setDownloading(False)
                             progress_border.setReady(True)
                         elif progress_percent > 0:
                             progress_border.setDownloading(True)
-                        
+
                 finally:
                     # Re-enable updates and force single repaint
                     widget.setUpdatesEnabled(True)
                     widget.update()
+
+            if series_key not in self.series_widgets:
+                self._queue_pending_series_update(series_key, completed=True)
                     
         except Exception as e:
             print(f"⚠️ Error updating series progress: {e}")
@@ -1285,76 +1301,105 @@ class ThumbnailManager(QObject):
             print(f"⚠️ Error hiding overlay: {e}")
 
             
+    def _queue_pending_series_update(self, series_key, **updates):
+        state = self._pending_series_updates.get(series_key, {})
+        state.update(updates)
+        self._pending_series_updates[series_key] = state
+
+    def _apply_pending_series_update(self, series_key):
+        state = self._pending_series_updates.pop(series_key, None)
+        if not state:
+            return
+
+        # Apply the most recent known state to the new widget
+        if state.get('started'):
+            self.start_series_download(series_key)
+        if 'progress_percent' in state:
+            self.update_series_progress(
+                series_key,
+                state.get('progress_percent', 0),
+                state.get('status_text', '')
+            )
+        if state.get('completed'):
+            self.complete_series_download(series_key)
+
     def start_series_download(self, series_number):
         """
         Mark series as starting download - THREAD SAFE
-        علامت‌گذاری شروع دانلود سری - thread safe
+        ??????????????????????? ???????? ???????????? ?????? - thread safe
         """
         try:
             series_key = str(series_number)
-            
+
             # DEBUG: Print available keys
-            print(f"🔍 [ThumbnailManager] start_series_download called for series: {series_key}")
-            print(f"   📋 Available series_widgets keys: {list(self.series_widgets.keys())}")
-            
+            print(f"???? [ThumbnailManager] start_series_download called for series: {series_key}")
+            print(f"   ???? Available series_widgets keys: {list(self.series_widgets.keys())}")
+
             # Find widget in series_widgets dictionary
-            if series_key in self.series_widgets:
-                widget = self.series_widgets[series_key]
-                
-                # Check if widget is still valid
-                try:
-                    if widget is None:
-                        return
-                    _ = widget.isVisible()
-                except RuntimeError:
+            if series_key not in self.series_widgets:
+                # Widget not ready yet; queue update and apply when thumbnail is created
+                self._queue_pending_series_update(
+                    series_key,
+                    started=True,
+                    progress_percent=0,
+                    status_text="0%"
+                )
+                return
+
+            widget = self.series_widgets[series_key]
+
+            # Check if widget is still valid
+            try:
+                if widget is None:
                     return
-                
-                # Prevent recursive repaints
-                widget.setUpdatesEnabled(False)
-                
-                try:
-                    # Show glass overlay background
-                    if hasattr(widget, 'glass_overlay'):
-                        widget.glass_overlay.setVisible(True)
-                        widget.glass_overlay.raise_()
-                    
-                    # Show progress overlay with "0%"
-                    if hasattr(widget, 'progress_overlay'):
-                        progress_overlay = widget.progress_overlay
-                        progress_overlay.setText("0%\n...")
-                        progress_overlay.setStyleSheet("""
-                            QLabel {
-                                background: transparent;
-                                color: #ffffff;
-                                font-size: 14px;
-                                font-weight: bold;
-                                font-family: 'Segoe UI', 'Roboto', sans-serif;
-                                border: none;
-                                padding: 0px;
-                                line-height: 1.3;
-                            }
-                        """)
-                        progress_overlay.setVisible(True)
-                        progress_overlay.raise_()
-                        progress_overlay.update()
-                    
-                    # Update border
-                    if hasattr(widget, 'progress_border'):
-                        progress_border = widget.progress_border
-                        progress_border.setDownloading(True)
-                            
-                finally:
-                    widget.setUpdatesEnabled(True)
-                    widget.update()
-                    print(f"   ✅ Progress overlay shown for series {series_key}")
-            else:
-                print(f"   ⚠️ Widget not found for series {series_key} - thumbnail may not be created yet")
-                        
+                _ = widget.isVisible()
+            except RuntimeError:
+                return
+
+            # Prevent recursive repaints
+            widget.setUpdatesEnabled(False)
+
+            try:
+                # Show glass overlay background
+                if hasattr(widget, 'glass_overlay'):
+                    widget.glass_overlay.setVisible(True)
+                    widget.glass_overlay.raise_()
+
+                # Show progress overlay with "0%"
+                if hasattr(widget, 'progress_overlay'):
+                    progress_overlay = widget.progress_overlay
+                    progress_overlay.setText("0%...")
+                    progress_overlay.setStyleSheet("""
+                        QLabel {
+                            background: transparent;
+                            color: #ffffff;
+                            font-size: 14px;
+                            font-weight: bold;
+                            font-family: 'Segoe UI', 'Roboto', sans-serif;
+                            border: none;
+                            padding: 0px;
+                            line-height: 1.3;
+                        }
+                    """)
+                    progress_overlay.setVisible(True)
+                    progress_overlay.raise_()
+                    progress_overlay.update()
+
+                # Update border
+                if hasattr(widget, 'progress_border'):
+                    progress_border = widget.progress_border
+                    progress_border.setDownloading(True)
+
+            finally:
+                widget.setUpdatesEnabled(True)
+                widget.update()
+                print(f"   ??? Progress overlay shown for series {series_key}")
+
         except Exception as e:
-            print(f"⚠️ Error starting series download: {e}")
+            print(f"?????? Error starting series download: {e}")
             import traceback
             traceback.print_exc()
-    
+
     def complete_series_download(self, series_number):
         """
         Mark series as download complete AND ready for display - با سیستم اولویت‌دار
@@ -1365,6 +1410,9 @@ class ThumbnailManager(QObject):
 
             # 1. علامت‌گذاری به عنوان آماده
             self.ready_series.add(series_key)
+
+            if series_key not in self.series_widgets:
+                self._queue_pending_series_update(series_key, completed=True)
 
             # 2. فراخوانی نمایش اولویت‌دار در parent widget
             if hasattr(self, 'parent_widget') and self.parent_widget:

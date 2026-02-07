@@ -1583,7 +1583,19 @@ class UnifiedComposer(QWidget):
         self.btn_all_modality_hq.setProperty("kind", "text")
         self.btn_all_modality_hq.setFixedHeight(40)
         self.btn_all_modality_hq.setFixedWidth(140)
-        self.btn_all_modality_hq.setVisible(False) 
+        self.btn_all_modality_hq.setVisible(False)
+        
+        # ⏸️ دکمه پوز
+        self.btn_pause = QToolButton(controls)
+        self.btn_pause.setProperty("role", "tool")
+        self.btn_pause.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.btn_pause.setCursor(Qt.PointingHandCursor)
+        self.btn_pause.setIconSize(icon_sz)
+        self.btn_pause.setFixedSize(30, 40)
+        _set_icon(self.btn_pause, "pause.png", icon_sz.width(), "Pause/Resume Recording")
+        self.btn_pause.setVisible(False)
+        self.btn_pause.clicked.connect(self._toggle_pause_record)
+
         # ❌ دکمه کنسل
         self.btn_cancel = QToolButton(controls)
         self.btn_cancel.setProperty("role", "tool")
@@ -1615,8 +1627,7 @@ class UnifiedComposer(QWidget):
         ctl.addWidget(self.btn_mic, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_transcribe_quality, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_modality, 0, Qt.AlignVCenter)
-        ctl.addWidget(self.btn_all_modality_hq, 0, Qt.AlignVCenter)  
-
+        ctl.addWidget(self.btn_all_modality_hq, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_send, 0, Qt.AlignVCenter)
 
         shell.addWidget(tabs_bar, 0)
@@ -2366,10 +2377,10 @@ class UnifiedComposer(QWidget):
 
     def _apply_pause_icon(self, is_paused: bool):
         if is_paused:
-            self.btn_pause.setText("▶")  # Play icon when paused
+            _set_icon(self.btn_pause, "play.png", 20, "Resume recording")  # Play icon when paused
             self.btn_pause.setToolTip("Resume recording")
         else:
-            self.btn_pause.setText("⏸")  # Pause icon when playing
+            _set_icon(self.btn_pause, "pause.png", 20, "Pause recording")  # Pause icon when playing
             self.btn_pause.setToolTip("Pause recording")
         self.btn_pause.setVisible(True)
         QTimer.singleShot(0, self._reposition_attachment_overlay)
@@ -3773,18 +3784,27 @@ class UnifiedComposer(QWidget):
         self._mic_mode = mode
         if mode == "record":
             _set_icon(self.btn_mic, "mic.png", 20, "Record voice")
+            # Hide pause button when in record mode
+            self.btn_pause.setVisible(False)
         elif mode == "confirm":
             _set_icon(self.btn_mic, "check.png", 20, "Finish & Transcribe")
+            # Show pause button when in confirm mode (after recording started)
+            self.btn_pause.setVisible(True)
         else:
             _set_icon(self.btn_mic, "mic.png", 20, "Record voice")
+            self.btn_pause.setVisible(False)
 
     def _on_mic_clicked(self):
         if self._mic_mode == "record":
             self._start_record();
+            # Show pause button when recording starts
+            self.btn_pause.setVisible(True)
             return
         if self._mic_mode == "confirm":
             # پایان ضبط و شروع خودکار ترنسکرایب
             self._finish_record_and_transcribe();
+            # Hide pause button when finishing recording
+            self.btn_pause.setVisible(False)
             return
 
     def _on_cancel_clicked(self):

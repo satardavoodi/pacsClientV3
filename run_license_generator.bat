@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 > nul
 echo ==========================================
-echo    ابزار تولید لایسنس AIPacs
+echo    AIPacs License Generator Tool
 echo ==========================================
 echo.
 
@@ -10,7 +10,7 @@ python PacsClient\utils\license_generator_gui.py
 
 if errorlevel 1 (
     echo.
-    echo خطا در اجرای برنامه!
-    echo لطفا مطمئن شوید که Python نصب شده است.
+    echo Error running the program!
+    echo Please make sure Python is installed.
     pause
 )

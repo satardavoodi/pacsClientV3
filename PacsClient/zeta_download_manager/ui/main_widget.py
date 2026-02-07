@@ -111,6 +111,19 @@ class DownloadManagerWidget(QWidget):
 
         # Cache series image counts for fast overall progress calculations
         self._series_image_count_cache: Dict[str, Dict[str, int]] = {}
+
+        # Selection/progress state used by UIObserver and handlers
+        self._selected_study_uid: Optional[str] = None
+        self._pending_progress: Dict[str, dict] = {}
+
+        # Progress throttle timer - ensures _on_worker_progress can batch updates safely
+        self._progress_throttle_timer = QTimer(self)
+        self._progress_throttle_timer.timeout.connect(self._apply_throttled_progress)
+        self._progress_throttle_timer.setInterval(100)
+
+        # Series progress tracking for signal emission
+        self._last_series_number_by_study: Dict[str, str] = {}
+        self._completed_series_emitted: Dict[str, set] = {}
         
         # Priority grouping UI tracking
         self._priority_group_widgets = {}  # priority_name -> PriorityGroupHeader
@@ -138,6 +151,15 @@ class DownloadManagerWidget(QWidget):
         self.attachments_list = None
         self.log_text = None
         self.priority_combo = None
+
+    def closeEvent(self, event):
+        """Ensure worker threads stop before widget is destroyed."""
+        try:
+            if hasattr(self, "worker_pool") and self.worker_pool:
+                self.worker_pool.stop_all()
+        except Exception as e:
+            logger.warning(f"⚠️ Error stopping workers on close: {e}")
+        super().closeEvent(event)
         self.start_btn = None
         self.pause_btn = None
         self.cancel_btn = None
@@ -1102,7 +1124,12 @@ class DownloadManagerWidget(QWidget):
                 return
             
             row = self.download_rows[study_uid]
-            
+
+            # Update status in table - check if table still exists
+            if not self.download_table or self.download_table.isHidden() or self.download_table.window().isHidden():
+                logger.debug(f"Download table not accessible for status update of {study_uid}")
+                return
+                
             # Update status in table
             status_widget = self.download_table.cellWidget(row, 0)
             if isinstance(status_widget, StatusBadge):
@@ -1112,11 +1139,13 @@ class DownloadManagerWidget(QWidget):
             
             # INLINE: Update action buttons (NO nested QTimer call)
             try:
-                action_buttons = self.download_table.cellWidget(row, 6)  # Column 6 for Actions
-                if action_buttons:
-                    state = self.state_store.get(study_uid)
-                    if state and hasattr(action_buttons, 'update_state'):
-                        action_buttons.update_state(state)
+                # Check if table still exists before accessing cell widgets
+                if self.download_table and not self.download_table.isHidden() and not self.download_table.window().isHidden():
+                    action_buttons = self.download_table.cellWidget(row, 6)  # Column 6 for Actions
+                    if action_buttons:
+                        state = self.state_store.get(study_uid)
+                        if state and hasattr(action_buttons, 'update_state'):
+                            action_buttons.update_state(state)
             except Exception as e:
                 logger.error(f"Error updating action buttons: {e}")
             
@@ -2627,7 +2656,10 @@ class DownloadManagerWidget(QWidget):
             
             logger.info(f"🔄 [REFRESH] Priority groups: Critical={len(priority_groups['Critical'])}, High={len(priority_groups['High'])}, Normal={len(priority_groups['Normal'])}, Low={len(priority_groups['Low'])}")
             
-            # Clear table
+            # Clear table - check if widget still exists
+            if not self.download_table or self.download_table.isHidden() or self.download_table.window().isHidden():
+                logger.debug("Download table not accessible, skipping refresh")
+                return
             self.download_table.setRowCount(0)
             self.download_rows.clear()
             self._priority_group_widgets.clear()

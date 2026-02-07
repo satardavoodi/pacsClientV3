@@ -20,9 +20,10 @@ from PacsClient.utils import get_count_instances_in_study
 from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachment_folder, open_folder, \
     check_and_get_thumbnails, get_name_file_from_path, get_quickly_series_info
 
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtWidgets import QHBoxLayout, QSlider, QLabel, QScrollArea, QGridLayout, QToolBar, QPushButton, \
-    QButtonGroup, QStackedWidget, QSizePolicy, QFrame, QGroupBox, QMessageBox, QListWidget, QListWidgetItem, QSplitter
+    QButtonGroup, QStackedWidget, QSizePolicy, QFrame, QGroupBox, QMessageBox, QListWidget, QListWidgetItem, QSplitter, \
+    QGraphicsOpacityEffect
 from PySide6.QtGui import QPainter
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
@@ -139,28 +140,31 @@ class PatientWidget(QWidget):
         self._series_load_queue = None  # asyncio.Queue - initialized lazily
         self._series_worker_task = None  # Worker task that processes queue
         self._queue_worker_running = False  # Flag to prevent duplicate workers
-        
+
         # Thread-safe lock for synchronous operations
         self._first_series_lock = threading.Lock()
         self._pipeline_running = False
-        
+
         # Separate locks for different operations to avoid deadlock
         # These are initialized lazily in event loop context
         self._pipeline_lock = None  # Controls pipeline execution
         self._series_load_lock = None  # Controls series loading
-        
+
         # ========== MEMORY POOL ==========
         self._metadata_pool = {}  # Reuse metadata dictionaries
         self._layout_pool = []  # Reuse layout objects
-        
+
         # Task semaphore with proper limit
         self._task_semaphore = None
         self._concurrent_tasks_limit = 1  # Prevent concurrent async operations
-        
+
         # Task tracking for proper cleanup
         self._active_load_task = None  # Track currently running load task
         self._task_generation = 0  # Generation counter to invalidate old tasks
         self._pending_series_loads = set()  # Track pending series number loads
+
+        # Event loop reference for proper cleanup
+        self._event_loop = None
 
 
         # Progressive display support
@@ -232,8 +236,7 @@ class PatientWidget(QWidget):
         default_layout = self._get_default_layout_from_config()
         self._deferred_size = default_layout if size_init_viewers in (None, (1, 1)) else size_init_viewers
         
-        # Create and show loading overlay IMMEDIATELY
-        self._create_init_overlay()
+        # Disable loading overlay (no fade, no screen overlay)
         
         self._priority_series_queue = []  # صف سری‌های اولویت‌دار
         self._priority_display_timer = QTimer()
@@ -384,50 +387,8 @@ class PatientWidget(QWidget):
             print(f"⚠️ Error processing priority queue: {e}")
 
     def _create_init_overlay(self):
-        """Create a full-screen loading overlay to prevent seeing desktop"""
-        self._init_overlay = QFrame(self)
-        self._init_overlay.setObjectName("InitOverlay")
-        # SOLID background - no transparency to prevent seeing desktop
-        self._init_overlay.setStyleSheet("""
-            QFrame#InitOverlay {
-                background-color: #1a1a2e;
-                border: none;
-            }
-        """)
-        # Ensure overlay is opaque
-        self._init_overlay.setAttribute(Qt.WA_OpaquePaintEvent, True)
-        self._init_overlay.setAutoFillBackground(True)
-
-        overlay_layout = QVBoxLayout(self._init_overlay)
-        overlay_layout.setAlignment(Qt.AlignCenter)
-        overlay_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Commented out loading label so user won't see loading message
-        # loading_label = QLabel("Loading Viewer...")
-        # loading_label.setStyleSheet("""
-        #     QLabel {
-        #         color: #64b5f6;
-        #         font-size: 20px;
-        #         font-weight: bold;
-        #         background-color: transparent;
-        #     }
-        # """)
-        # loading_label.setAlignment(Qt.AlignCenter)
-        # overlay_layout.addWidget(loading_label)
-
-        # Make overlay fill the entire widget - use very large size to ensure coverage
-        # This will be updated when widget is resized
-        self._init_overlay.setGeometry(0, 0, 10000, 10000)
-        self._init_overlay.setParent(self)
-        self._init_overlay.raise_()
-        # self._init_overlay.show()  # Commented out to hide the loading overlay
-        self._init_overlay.activateWindow()
-        QApplication.processEvents()
-
-        # Update overlay size periodically to ensure it covers the widget
-        QTimer.singleShot(50, self._update_overlay_size)
-        QTimer.singleShot(200, self._update_overlay_size)
-        QTimer.singleShot(500, self._update_overlay_size)
+        """No-op: loading overlay disabled by request."""
+        return
     
     def _update_overlay_size(self):
         """Update overlay size to match widget size - ensure it covers everything"""
@@ -455,19 +416,19 @@ class PatientWidget(QWidget):
     def _start_pipeline(self):
         """Deferred pipeline start - called after window is painted"""
         print("🚀 _start_pipeline called")
-        
+
         # ✅ PREVENT CONCURRENT EXECUTION
         if self._pipeline_running:
             print("⚠️ Pipeline already running, skipping...")
             return
-            
+
         try:
             self._pipeline_running = True
             print("✅ Pipeline flag set to True")
-            
+
             # ✅ Use QTimer to schedule pipeline in the main thread
             QTimer.singleShot(0, lambda: self._run_pipeline_safely())
-            
+
         except Exception as e:
             print(f"❌ _start_pipeline error: {e}")
             import traceback
@@ -494,14 +455,7 @@ class PatientWidget(QWidget):
             finally:
                 self._pipeline_running = False
                 print("✅ Pipeline flag reset to False")
-                # Notify Home UI that loading is complete
-                try:
-                    self.loading_complete.emit()
-                except Exception:
-                    pass
-                # Hide overlay after pipeline is ready
-                QTimer.singleShot(300, self._hide_init_overlay)
-                    
+
         except Exception as e:
             print(f"❌ _run_pipeline_safely error: {e}")
             import traceback
@@ -511,11 +465,8 @@ class PatientWidget(QWidget):
             
 
     def _hide_init_overlay(self):
-        """Hide and delete the loading overlay"""
-        if hasattr(self, '_init_overlay') and self._init_overlay:
-            self._init_overlay.hide()
-            self._init_overlay.deleteLater()
-            self._init_overlay = None
+        """No-op: loading overlay disabled by request."""
+        return
 
     def set_method_open_ai_module_tab(self, method_add_new_tab):
         self.method_add_new_tab = method_add_new_tab
@@ -545,13 +496,20 @@ class PatientWidget(QWidget):
         """Kick off background thumbnail loading (cache → server)."""
         try:
             loop = asyncio.get_running_loop()
+            # Store the event loop reference for cleanup
+            self._event_loop = loop
 
             async def _runner():
                 await self._load_server_thumbnails_async()
 
             task = asyncio.create_task(_runner())
             self._background_tasks.add(task)
-            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: self._background_tasks.discard(t)))
+            def cleanup_task(t):
+                try:
+                    self._background_tasks.discard(t)
+                except:
+                    pass  # Ignore errors during cleanup
+            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
         except RuntimeError:
             def _worker():
                 try:
@@ -673,17 +631,24 @@ class PatientWidget(QWidget):
                 try:
                     loop = asyncio.get_running_loop()
                     if loop and loop.is_running():
+                        # Store the event loop reference for cleanup
+                        self._event_loop = loop
                         logo_check_result = self.check_logo_patient(thumbnails[0])
                         # Only create task if result is a coroutine
                         if logo_check_result is not None and asyncio.iscoroutine(logo_check_result):
                             task = asyncio.create_task(logo_check_result)
                             self._background_tasks.add(task)
                             # Safe cleanup using QTimer
-                            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: self._background_tasks.discard(t)))
+                            def cleanup_task(t):
+                                try:
+                                    self._background_tasks.discard(t)
+                                except:
+                                    pass  # Ignore errors during cleanup
+                            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
                 except RuntimeError:
                     # No running event loop - skip logo check
                     pass
-                
+
             for thumbnail_file in thumbnails:
                 thumbnail_file: Path
                 series_number = thumbnail_file.stem
@@ -705,7 +670,7 @@ class PatientWidget(QWidget):
         try:
             # Yield immediately to prevent blocking
             await asyncio.sleep(0)
-            
+
             self._progressive_display_enabled = True
 
             # Set up folder path if not set
@@ -877,6 +842,8 @@ class PatientWidget(QWidget):
             loop = asyncio.get_running_loop()
             has_running_loop = loop and loop.is_running()
             print(f"🔍 [PIPELINE] has_running_loop = {has_running_loop}")
+            # Store the event loop reference for cleanup
+            self._event_loop = loop
         except RuntimeError:
             has_running_loop = False
             print("⚠️ No running event loop detected")
@@ -912,13 +879,23 @@ class PatientWidget(QWidget):
                 task = asyncio.create_task(self.lazy_load_first_series_progressive(size_init_viewers))
                 self._background_tasks.add(task)
                 # Safe cleanup
-                task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: self._background_tasks.discard(t)))
+                def cleanup_task(t):
+                    try:
+                        self._background_tasks.discard(t)
+                    except:
+                        pass  # Ignore errors during cleanup
+                task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
             return
         elif count_exist_thumbnails > 0:
             print(f"🔍 [PIPELINE] Creating lazy_load_first_series task for {count_exist_thumbnails} thumbnails")
             task = asyncio.create_task(self.lazy_load_first_series(size_init_viewers))
             self._background_tasks.add(task)
-            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: self._background_tasks.discard(t)))
+            def cleanup_task(t):
+                try:
+                    self._background_tasks.discard(t)
+                except:
+                    pass  # Ignore errors during cleanup
+            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
             return
 
         # if getattr(self, "selected_widget", None) and getattr(self.selected_widget, "viewport_spinner", None):
@@ -928,12 +905,22 @@ class PatientWidget(QWidget):
             task = asyncio.create_task(
                 self.pipeline_manager_import(thumb_index=count_exist_thumbnails, size_init_viewers=size_init_viewers))
             self._background_tasks.add(task)
-            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: self._background_tasks.discard(t)))
+            def cleanup_task(t):
+                try:
+                    self._background_tasks.discard(t)
+                except:
+                    pass  # Ignore errors during cleanup
+            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
         elif caller == CallerTypes.SERVER:
             task = asyncio.create_task(
                 self.pipeline_manager_server(thumb_index=count_exist_thumbnails, size_init_viewers=size_init_viewers))
             self._background_tasks.add(task)
-            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: self._background_tasks.discard(t)))
+            def cleanup_task(t):
+                try:
+                    self._background_tasks.discard(t)
+                except:
+                    pass  # Ignore errors during cleanup
+            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
 
     def _load_first_series_sync(self, size_init_viewers):
         """Load first series synchronously when no event loop is available"""
@@ -1021,18 +1008,21 @@ class PatientWidget(QWidget):
     async def lazy_load_first_series_progressive(self, size_init_viewers):
         """Wait for first series to download, then load it - OR load immediately if already exists"""
         print(f"🔍 [PROGRESSIVE] Starting lazy_load_first_series_progressive")
-        
+
         try:
             # Yield control immediately to allow other tasks to start
             await asyncio.sleep(0)
-            
+
             # Check if widget is still valid
-            if not self.isVisible():
-                return
-            
+            try:
+                if not self.isVisible():
+                    return
+            except RuntimeError:
+                return  # Widget was deleted
+
             # Perform the lazy load directly without locks to avoid deadlocks
             await self._do_lazy_load_first_series(size_init_viewers)
-            
+
         except asyncio.CancelledError:
             print(f"⚠️ [PROGRESSIVE] Task cancelled")
             raise
@@ -1060,10 +1050,17 @@ class PatientWidget(QWidget):
     async def _do_lazy_load_first_series(self, size_init_viewers):
         from pathlib import Path
         study_path = Path(self.import_folder_path)
-        
+
         # Yield control before I/O operation
         await asyncio.sleep(0)
-        
+
+        # Check if widget is still valid
+        try:
+            if not self.isVisible():
+                return
+        except RuntimeError:
+            return  # Widget was deleted
+
         # Efficiently find existing series using generator expression
         existing_series = sorted(
             int(d.name) for d in study_path.iterdir()
@@ -1071,10 +1068,17 @@ class PatientWidget(QWidget):
                 next(d.glob("*.dcm"), None) or next(d.glob("*.DCM"), None)
             )
         )
-        
+
         # Yield after I/O
         await asyncio.sleep(0)
-        
+
+        # Check if widget is still valid
+        try:
+            if not self.isVisible():
+                return
+        except RuntimeError:
+            return  # Widget was deleted
+
         # Determine series source: existing or download
         first_series_folder = None
         if existing_series:
@@ -1084,13 +1088,20 @@ class PatientWidget(QWidget):
             first_series_number = await self._wait_for_series_download(timeout=60)
             if first_series_number:
                 first_series_folder = study_path / str(first_series_number)
-        
+
         if not (first_series_folder and first_series_folder.exists()):
             return
-        
+
         # Yield before heavy operation
         await asyncio.sleep(0)
-        
+
+        # Check if widget is still valid
+        try:
+            if not self.isVisible():
+                return
+        except RuntimeError:
+            return  # Widget was deleted
+
         try:
             series_num = int(first_series_folder.name)
             result = load_single_series_by_number(
@@ -1114,11 +1125,11 @@ class PatientWidget(QWidget):
 
             self.check_and_add_meta_fixed((patient_pk, study_pk))
             optimal_layout = self.get_optimal_layout_for_series(metadata)
-            
+
             # Initialize viewers if needed
             if not self.lst_nodes_viewer:
                 await self.create_progressive_viewers(optimal_layout)
-            
+
             # Update UI state
             thumbnail_path = metadata['series'].get('thumbnail_path', '')
             self.add_new_data_to_lst_thumbnails_data({
@@ -1126,21 +1137,19 @@ class PatientWidget(QWidget):
                 'metadata': metadata,
                 'file_path': thumbnail_path
             })
-            
+
             if thumbnail_path and not self.logo_patient:
                 self.logo_patient = thumbnail_path
                 self.update_tab_manager()
 
             self._distribute_series_to_viewers()
-            QTimer.singleShot(200, self._hide_init_overlay)
-            
+
         except Exception as e:
             self._handle_loading_error(e, first_series_folder.name)
             
     def load_series_immediately(self, series_number: str, series_dir: str):
         """
-        Load a series immediately after download, but DO NOT display it automatically.
-        Only mark it as ready for user interaction.
+        Load a series immediately after download and display it automatically.
         
         Args:
             series_number: Can be either a simple series number (e.g., "1", "2") 
@@ -1149,7 +1158,7 @@ class PatientWidget(QWidget):
         """
         try:
             print(f"{'='*80}")
-            print(f"📥 [PRIORITY LOAD] Loading series {series_number} (no auto-display)")
+            print(f"📥 [PRIORITY LOAD] Loading series {series_number} (auto-display)")
             print(f"📁 Directory: {series_dir}")
             print(f"{'='*80}")
 
@@ -1190,12 +1199,19 @@ class PatientWidget(QWidget):
                 print(f"❌ Failed to load series {series_int}")
                 return
 
-            # Mark as ready (do NOT display)
+            # Auto-display in viewers
+            if not self._first_series_displayed:
+                if self._display_first_series_in_all_viewers(str(series_int)):
+                    self._mark_first_series_displayed()
+            else:
+                self.change_series_on_viewer(series_int, flag_change_selected_widget=True)
+
+            # Mark as ready
             if hasattr(self, 'thumbnail_manager'):
                 self.thumbnail_manager.set_series_ready(str(series_number))
                 self.thumbnail_manager.apply_border_states_new()
 
-            print(f"✅ Series {series_int} loaded and ready for manual selection.")
+            print(f"✅ Series {series_int} loaded and displayed.")
         except Exception as e:
             print(f"❌ CRITICAL ERROR in load_series_immediately: {e}")
             import traceback
@@ -1203,33 +1219,21 @@ class PatientWidget(QWidget):
 
 
     def _trigger_priority_display(self, series_key):
-        """تحریک نمایش سری اولویت‌دار که قبلاً لود شده"""
+        """Trigger first-series display only; later series stay ready until user clicks."""
         try:
-            # Check if lst_thumbnails_data exists and is initialized
-            if not hasattr(self, 'lst_thumbnails_data') or not self.lst_thumbnails_data:
-                print(f"⚠️ lst_thumbnails_data not initialized or empty, cannot trigger priority display for series {series_key}")
+            series_key = self.resolve_series_key(series_key)
+
+            # Only auto-display the very first series
+            if not self._first_series_displayed:
+                self.load_series_on_demand(series_key)
                 return
 
-            # پیدا کردن داده‌های سری
-            vtk_image_data = None
-            metadata = None
-            series_idx = -1
-
-            for i in range(len(self.lst_thumbnails_data)):
-                if str(self.lst_thumbnails_data[i]['metadata']['series']['series_number']) == series_key:
-                    vtk_image_data = self.lst_thumbnails_data[i]['vtk_image_data']
-                    metadata = self.lst_thumbnails_data[i]['metadata']
-                    series_idx = i
-                    break
-
-            if vtk_image_data and metadata:
-                print(f"🎯 [EXISTING PRIORITY] Adding existing series {series_key} to priority display")
-                self.add_priority_series_for_display(series_key, vtk_image_data, metadata)
-            else:
-                print(f"⚠️ Cannot find data for existing series {series_key}")
-
+            # For subsequent series, just mark ready (no auto-switch)
+            if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                self.thumbnail_manager.set_series_ready(str(series_key))
+                self.thumbnail_manager.apply_border_states_new()
         except Exception as e:
-            print(f"❌ Error triggering priority display: {e}")
+            print(f"? Error triggering priority display: {e}")
 
     def show_priority_status(self, message):
         """Show special status for priority download"""
@@ -1245,14 +1249,14 @@ class PatientWidget(QWidget):
         """Wait for first series download signal with timeout"""
         series_number = None
         download_event = asyncio.Event()
-        
+
         def handle_download(series_str: str):
             nonlocal series_number
             with contextlib.suppress(ValueError):
                 series_number = int(series_str)
             if not download_event.is_set():
                 download_event.set()
-        
+
         try:
             self.series_downloaded.connect(handle_download, Qt.QueuedConnection)
             await asyncio.wait_for(download_event.wait(), timeout=timeout)
@@ -1274,6 +1278,11 @@ class PatientWidget(QWidget):
             spinner = getattr(self.lst_nodes_viewer[0].vtk_widget, 'viewport_spinner', None)
             if spinner:
                 spinner.hide_loading()
+        self._hide_init_overlay()
+        try:
+            self.loading_complete.emit()
+        except Exception:
+            pass
                
     def _distribute_series_to_viewers(self):
         # Check if lst_thumbnails_data exists and initialize if not
@@ -1379,24 +1388,31 @@ class PatientWidget(QWidget):
         """Create viewers for progressive display mode"""
         try:
             self.logger.info(f"Creating {layout[0]}x{layout[1]} viewer layout")
-            
+
+            # Check if widget is still valid
+            try:
+                if not self.isVisible():
+                    return
+            except RuntimeError:
+                return  # Widget was deleted
+
             # Prevent flickering by setting updates disabled during layout changes
             if hasattr(self, 'vtk_layout') and self.vtk_layout:
                 container = self.vtk_layout.parentWidget()
                 if container:
                     container.setUpdatesEnabled(False)
-            
+
             # Clean up any existing viewers
             if self.lst_nodes_viewer:
                 self.cleanup_all_viewers()
                 self.lst_nodes_viewer.clear()
-            
+
             # Create viewers based on layout
             number_of_row, number_of_column = layout
             count = number_of_row * number_of_column
-            
+
             self.create_some_viewers(count)
-            
+
             # Apply layout without triggering redraws
             if layout == (1, 1) and len(self.lst_nodes_viewer) > 0:
                 self.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
@@ -1415,19 +1431,26 @@ class PatientWidget(QWidget):
                 self.vtk_layout.addWidget(self.lst_nodes_viewer[2].widget, 1, 0)
                 self.vtk_layout.addWidget(self.lst_nodes_viewer[3].widget, 1, 1)
                 self.change_container_border(0)
-            
+
             # Re-enable updates and refresh once
             if hasattr(self, 'vtk_layout') and self.vtk_layout:
                 container = self.vtk_layout.parentWidget()
                 if container:
                     container.setUpdatesEnabled(True)
                     container.update()  # Single update instead of multiple redraws
-            
+
             # Give UI a chance to update
             await asyncio.sleep(0)
-            
+
+            # Check if widget is still valid after update
+            try:
+                if not self.isVisible():
+                    return
+            except RuntimeError:
+                return  # Widget was deleted
+
             self.logger.info(f"Successfully created {layout[0]}x{layout[1]} viewer layout")
-            
+
         except asyncio.CancelledError:
             self.logger.debug("Viewer creation cancelled")
             raise
@@ -1449,6 +1472,13 @@ class PatientWidget(QWidget):
                     study_pk=self.metadata_fixed.get('study_pk', None),
                     ordering_by_instances_number=self.ordering_by_instances_number
             ):
+                # Check if widget is still valid before continuing
+                try:
+                    if not self.isVisible():
+                        return
+                except RuntimeError:
+                    return  # Widget was deleted
+                
                 QApplication.processEvents()
 
                 self.check_and_add_meta_fixed(patient_info)
@@ -1469,7 +1499,7 @@ class PatientWidget(QWidget):
 
 
                     self._distribute_series_to_viewers()
-                    
+
                     first_series_loaded = True
                     self._hide_loading_spinner()
 
@@ -1580,6 +1610,12 @@ class PatientWidget(QWidget):
                 return
 
             print('waiting...')
+            # Check if widget is still valid before continuing
+            try:
+                if not self.isVisible():
+                    return
+            except RuntimeError:
+                return  # Widget was deleted
             await asyncio.sleep(pull_request)
 
     def check_logo_patient(self, file_path):
@@ -1675,6 +1711,8 @@ class PatientWidget(QWidget):
         _pipeline_start = time.time()
 
         loop = asyncio.get_running_loop()
+        # Store the event loop reference for cleanup
+        self._event_loop = loop
         q = asyncio.Queue(maxsize=4)  # backpressure تا UI نفس بکشد
         _series_count = 0
 
@@ -1753,6 +1791,12 @@ class PatientWidget(QWidget):
 
             _total_series_time = time.time() - _series_start
 
+            # Check if widget is still valid before continuing
+            try:
+                if not self.isVisible():
+                    return
+            except RuntimeError:
+                return  # Widget was deleted
             await asyncio.sleep(0)  # فرصت به UI
 
         self._hide_loading_spinner()
@@ -2919,7 +2963,7 @@ class PatientWidget(QWidget):
         print(f"   📌 Stored in series_widgets with key: '{key_thumbnail}'")
         print(f"   📋 Current series_widgets keys: {list(self.thumbnail_manager.series_widgets.keys())}")
         
-        # بعد از:
+        # بعد ��ز:
         self.thumb_grid.addWidget(thumb_widget, thumb_index, 0, 1, 2)
         self.thumb_count_label.setText(f"{thumb_index + 1} series")
 
@@ -4184,7 +4228,7 @@ class PatientWidget(QWidget):
                 return  # Widget was deleted
 
             series_number_str = self.resolve_series_key(series_number)
-            
+
             # Avoid duplicate loads
             if series_number_str in self._pending_series_loads:
                 self.logger.debug(f"Series {series_number_str} already queued for loading")
@@ -4203,15 +4247,18 @@ class PatientWidget(QWidget):
             try:
                 loop = asyncio.get_running_loop()
                 
+                # Store the event loop reference for cleanup
+                self._event_loop = loop
+
                 async def _safe_async_load():
                     """Load series asynchronously without locks"""
                     try:
                         # Yield immediately to prevent blocking
                         await asyncio.sleep(0)
-                        
+
                         # Load and display the series
                         await self._async_load_and_display_series(series_number_str)
-                        
+
                     except asyncio.CancelledError:
                         self.logger.debug(f"Load cancelled for series {series_number_str}")
                     except RuntimeError as e:
@@ -4222,21 +4269,24 @@ class PatientWidget(QWidget):
                     finally:
                         # Remove from pending set
                         self._pending_series_loads.discard(series_number_str)
-                
+
                 # Create task - no locks, just schedule it
                 task = asyncio.create_task(_safe_async_load())
                 self._background_tasks.add(task)
-                
+
                 # Cleanup on completion
                 def cleanup_task(t):
-                    self._background_tasks.discard(t)
-                
+                    try:
+                        self._background_tasks.discard(t)
+                    except:
+                        pass  # Ignore errors during cleanup
+
                 task.add_done_callback(cleanup_task)
-                
+
             except RuntimeError:
                 # No event loop - use thread-based loading
                 self.logger.debug(f"No event loop, loading series {series_number_str} in thread")
-                
+
                 def _thread_load():
                     try:
                         # Load synchronously in thread
@@ -4245,10 +4295,10 @@ class PatientWidget(QWidget):
                         self.logger.error(f"Error loading series in thread: {e}", exc_info=True)
                     finally:
                         self._pending_series_loads.discard(series_number_str)
-                
+
                 thread = threading.Thread(target=_thread_load, daemon=True, name=f"SeriesLoad-{series_number_str}")
                 thread.start()
-                
+
         except Exception as e:
             self.logger.error(f"Error in load_series_on_demand: {e}", exc_info=True)
             self._pending_series_loads.discard(series_number_str)
@@ -4380,19 +4430,22 @@ class PatientWidget(QWidget):
         Async method to load and display a series without blocking UI.
         Uses asyncio lock to prevent race conditions with contextvars.
         After loading, it immediately displays the series in the first viewer.
-        
+
         Args:
-            series_number: Can be either a simple series number (e.g., "1", "2") 
+            series_number: Can be either a simple series number (e.g., "1", "2")
                           or a Series Instance UID (e.g., "1.3.12.2.1107...")
         """
         try:
             # Yield control first
             await asyncio.sleep(0)
-            
+
             # Validate widget state
-            if not self.isVisible():
-                return
-            
+            try:
+                if not self.isVisible():
+                    return
+            except RuntimeError:
+                return  # Widget was deleted
+
             # ✅ FIX: Handle both series numbers and Series Instance UIDs
             # Try to convert to integer (simple series number)
             try:
@@ -4401,7 +4454,7 @@ class PatientWidget(QWidget):
                 # Not a simple number - might be a Series Instance UID
                 # Try to find the series in loaded data by UID
                 self.logger.warning(f"Series identifier '{series_number}' is not a simple number - searching by UID")
-                
+
                 # Search for series by UID in loaded thumbnails
                 for idx, thumb_data in enumerate(self.lst_thumbnails_data):
                     series_uid = thumb_data.get('metadata', {}).get('series', {}).get('series_uid', '')
@@ -4414,10 +4467,10 @@ class PatientWidget(QWidget):
                     # Not found in loaded data - series may not be downloaded yet
                     self.logger.warning(f"Series UID {series_number} not found in loaded thumbnails - may need download")
                     return
-            
+
             # Yield before heavy operation
             await asyncio.sleep(0)
-            
+
             # Use asyncio.to_thread to properly handle contextvars and prevent RuntimeError
             try:
                 success = await asyncio.to_thread(
@@ -4442,7 +4495,7 @@ class PatientWidget(QWidget):
                 QTimer.singleShot(0, lambda: self._display_series_after_load(series_number))
             else:
                 self.logger.warning(f"Failed to load series {series_number}")
-                
+
         except asyncio.CancelledError:
             self.logger.debug(f"Load cancelled for series {series_number}")
             raise
@@ -4464,8 +4517,7 @@ class PatientWidget(QWidget):
 
             if not self._first_series_displayed:
                 if self._display_first_series_in_all_viewers(series_number):
-                    self._first_series_displayed = True
-                    self._hide_viewer_loading_all()
+                    self._mark_first_series_displayed()
                     return
             
             # Mark as ready in thumbnail manager
@@ -4678,6 +4730,31 @@ class PatientWidget(QWidget):
         except Exception:
             pass
 
+    def _display_first_series_in_viewer(self):
+        """Display the first available series in all viewers."""
+        try:
+            if not self.lst_thumbnails_data:
+                return False
+            series_number = str(self.lst_thumbnails_data[0]['metadata']['series']['series_number'])
+            if self._display_first_series_in_all_viewers(series_number):
+                self._mark_first_series_displayed()
+                return True
+            return False
+        except Exception:
+            return False
+
+    def _mark_first_series_displayed(self):
+        """Finalize first-series display: hide overlays and notify Home UI."""
+        if self._first_series_displayed:
+            return
+        self._first_series_displayed = True
+        self._hide_viewer_loading_all()
+        self._hide_init_overlay()
+        try:
+            self.loading_complete.emit()
+        except Exception:
+            pass
+
     def _display_first_series_in_all_viewers(self, series_number: str) -> bool:
         """Display the first downloaded series in all viewers."""
         try:
@@ -4713,6 +4790,7 @@ class PatientWidget(QWidget):
                     slider=slider
                 )
 
+            self._mark_first_series_displayed()
             return True
         except Exception as e:
             self.logger.debug(f"Error displaying first series: {e}")
@@ -5132,8 +5210,40 @@ class PatientWidget(QWidget):
                     home_widget._actually_hide_patient_loading_overlay()
             except Exception:
                 pass
-            
-            # Clean up viewers first
+
+            # Cancel all background tasks first to prevent new tasks from being created
+            if hasattr(self, '_background_tasks'):
+                for task in list(self._background_tasks):
+                    try:
+                        if not task.done():
+                            task.cancel()
+                            # Wait briefly for task to finish cancellation
+                            try:
+                                if hasattr(task, 'exception'):
+                                    task.exception()  # Consume any exceptions from cancellation
+                            except:
+                                pass
+                    except:
+                        pass
+                self._background_tasks.clear()
+
+            # Cancel the series worker task if it exists
+            if hasattr(self, '_series_worker_task') and self._series_worker_task:
+                try:
+                    if not self._series_worker_task.done():
+                        self._series_worker_task.cancel()
+                except:
+                    pass
+
+            # Cancel any active load task
+            if hasattr(self, '_active_load_task') and self._active_load_task:
+                try:
+                    if not self._active_load_task.done():
+                        self._active_load_task.cancel()
+                except:
+                    pass
+
+            # Clean up viewers
             self.cleanup_all_viewers()
 
             # Check if lst_thumbnails_data exists before trying to access it
@@ -5144,7 +5254,7 @@ class PatientWidget(QWidget):
                         item = self.lst_thumbnails_data[i]
                         if not item:
                             continue
-                            
+
                         # Release VTK data
                         if 'vtk_image_data' in item:
                             vtk_data = item['vtk_image_data']
@@ -5161,13 +5271,13 @@ class PatientWidget(QWidget):
                             pass
                     except Exception as e:
                         self.logger.debug(f"Error cleaning item {i}: {e}")
-                
+
                 self.lst_thumbnails_data.clear()
 
             # Clean up node viewer list
             if hasattr(self, 'lst_nodes_viewer'):
                 self.lst_nodes_viewer.clear()
-                
+
             # Clean up series names
             if hasattr(self, 'lst_series_name'):
                 self.lst_series_name.clear()
@@ -5186,7 +5296,7 @@ class PatientWidget(QWidget):
             # Force garbage collection for VTK objects
             import gc as garbage_collector
             garbage_collector.collect()
-            
+
             print("✅ [EXIT] PatientWidget cleaned up successfully")
         except Exception as e:
             self.logger.error(f"Error in exit_patient_widget: {e}")
@@ -5196,8 +5306,42 @@ class PatientWidget(QWidget):
     def closeEvent(self, event):
         """Handle widget close event"""
         try:
+            # Cancel all background tasks before cleanup
+            if hasattr(self, '_background_tasks'):
+                for task in list(self._background_tasks):
+                    try:
+                        if not task.done():
+                            task.cancel()
+                            # Wait briefly for task to finish cancellation
+                            try:
+                                if hasattr(task, 'exception'):
+                                    task.exception()  # Consume any exceptions from cancellation
+                            except:
+                                pass
+                    except:
+                        pass
+                self._background_tasks.clear()
+
+            # Cancel the series worker task if it exists
+            if hasattr(self, '_series_worker_task') and self._series_worker_task:
+                try:
+                    if not self._series_worker_task.done():
+                        self._series_worker_task.cancel()
+                except:
+                    pass
+
             # Clean up resources
             self.exit_patient_widget()
+            
+            # Explicitly clean up event loop references to prevent abandoned handles
+            if hasattr(self, '_event_loop') and self._event_loop:
+                try:
+                    # Run any remaining callbacks to clear pending tasks
+                    if not self._event_loop.is_closed():
+                        self._event_loop.stop()
+                except:
+                    pass
+            
             # Accept the close event
             event.accept()
         except Exception as e:
@@ -5644,6 +5788,8 @@ class PatientWidget(QWidget):
         _pipeline_start = time.time()
 
         loop = asyncio.get_running_loop()
+        # Store the event loop reference for cleanup
+        self._event_loop = loop
         q = asyncio.Queue(maxsize=4)  # backpressure تا UI نفس بکشد
         _series_count = 0
 
@@ -5715,7 +5861,13 @@ class PatientWidget(QWidget):
 
             _total_series_time = time.time() - _series_start
 
-            await asyncio.sleep(0)  
+            # Check if widget is still valid before continuing
+            try:
+                if not self.isVisible():
+                    return
+            except RuntimeError:
+                return  # Widget was deleted
+            await asyncio.sleep(0)
 
         self._hide_loading_spinner()
 

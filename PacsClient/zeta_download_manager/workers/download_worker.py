@@ -73,6 +73,7 @@ class DownloadWorker(QThread):
         This method runs in a separate thread and should not be called directly.
         Use start() to begin execution.
         """
+        loop: Optional[asyncio.AbstractEventLoop] = None
         try:
             logger.info(f"🔄 Worker started: {self.task.patient_name}")
             
@@ -108,6 +109,17 @@ class DownloadWorker(QThread):
             self.completed.emit(self.task.study_uid, False)
         
         finally:
+            # Close loop to avoid ResourceWarning
+            try:
+                if loop:
+                    if loop.is_running():
+                        loop.stop()
+                    if not loop.is_closed():
+                        loop.close()
+            except Exception:
+                pass
+            finally:
+                asyncio.set_event_loop(None)
             # R40: Worker cleanup always required
             self._cleanup()
     

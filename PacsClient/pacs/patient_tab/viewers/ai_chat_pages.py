@@ -3143,7 +3143,7 @@ class OneChatPage(QWidget):
         def work():
             m = Manage.instance()
             if not m.is_validated():
-                self.history.add_bubble("AI ChatBot", "❌ API Key تنظیم نشده. لطفاً فقط در صفحه ورودی وارد کنید.")
+                self.history.add_bubble("AI ChatBot", "❌ API Key not configured. Please enter it on the login page only.")
                 return
 
             try:

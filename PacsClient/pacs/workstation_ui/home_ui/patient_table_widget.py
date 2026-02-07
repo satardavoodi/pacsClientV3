@@ -923,7 +923,7 @@ class PatientTableWidget(QWidget):
         self.download_btn = QPushButton(qta.icon('fa5s.download', color='white'), "")
         self.download_btn.setToolTip("Download selected studies with Zeta Download Manager")
         self.download_btn.clicked.connect(self._on_zeta_npr_clicked)
-        self.download_btn.setFixedSize(36, 36)
+        self.download_btn.setFixedSize(64, 36)
         self.download_btn.setStyleSheet("""
         QPushButton {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,

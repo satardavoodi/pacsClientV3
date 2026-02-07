@@ -458,7 +458,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         """
         ANTI-FLICKERING: Initialize series without processEvents calls
         """
-        # Show spinner (non-blocking)
+        # Show spinner immediately (non-blocking)
         self.viewport_spinner.show_loading("Loading...")
 
         try:
@@ -466,10 +466,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # ANTI-FLICKERING: Disable updates during heavy operation
             # =====================================================
             self.setUpdatesEnabled(False)
-            
+
             self.image_viewer = ImageViewer2D(self.render_window, self.interactor, self.height_viewer, vtk_image_data,
                                               metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
-            
+
             self.style = AbstractInteractorStyle(self.image_viewer)
             self.current_style = self.style
             self.interactor.SetInteractorStyle(self.style)
@@ -484,6 +484,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self.setUpdatesEnabled(True)
             # Hide spinner with small delay to allow final render
             QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
+
+        # Ensure spinner is properly positioned after viewer is created
+        if hasattr(self, 'viewport_spinner') and self.viewport_spinner.spinner:
+            self.viewport_spinner.spinner.center_in_parent()
 
     def reset_image(self, vtk_image_data, metadata):  # reload image
         # Show reset spinner
@@ -521,6 +525,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
         finally:
             # Hide spinner after reset is complete
             QTimer.singleShot(300, self.viewport_spinner.hide_loading)
+
+        # Ensure spinner is properly positioned during reset
+        if hasattr(self, 'viewport_spinner') and self.viewport_spinner.spinner:
+            self.viewport_spinner.spinner.center_in_parent()
 
     def cleanup_image_viewer(self):
         # Check if image_viewer exists before cleanup (for progressive download dummy viewers)
@@ -695,6 +703,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
             
         # Hide spinner with delay to allow render to complete
         QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
+
+        # Ensure spinner is properly positioned after viewer is created
+        if hasattr(self, 'viewport_spinner') and self.viewport_spinner.spinner:
+            self.viewport_spinner.spinner.center_in_parent()
+
         return True
 
     def get_count_of_slices(self):
