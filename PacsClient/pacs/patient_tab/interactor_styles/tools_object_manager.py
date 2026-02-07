@@ -369,7 +369,7 @@ class TextActor2DObject(ToolObjectAbstract):
         self.Off()
         text_actor = self.get_widget()
         try:
-            image_viewer.renderer.RemoveActor2D(text_actor)
+            image_viewer.renderer.RemoveViewProp(text_actor)
         except Exception:
             image_viewer.renderer.RemoveActor(text_actor)
         del text_actor

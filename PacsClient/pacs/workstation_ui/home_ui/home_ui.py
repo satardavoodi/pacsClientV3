@@ -98,6 +98,10 @@ class HomePanelWidget(QWidget):
         self.dict_tabs_widget = {}
         self.tab_widget = tab_widget
         self.title_bar_tab_area = title_bar_tab_area
+        
+        # Initialize loading feed components
+        self._loading_feed_overlay = None
+        self._loading_feed_label = None
         self._thumbs_event = None  # will be an asyncio.Event when waiting for thumbs
         self._search_task = None  # آخرین تسک جستجو برای جلوگیری از موازی‌سازی ناخواسته
         self._cancel_search_requested = False
@@ -105,6 +109,8 @@ class HomePanelWidget(QWidget):
         
         # ✅ رفع خطای اصلی: ایجاد ویژگی _background_tasks
         self._background_tasks = set()  # مجموعه‌ای برای مدیریت تسک‌های پس‌زمینه
+        # Guard to prevent duplicate patient widget opens
+        self._opening_studies = set()
         
         # Initialize custom tab manager with title bar integration
         self.custom_tab_manager = CustomTabManager(tab_widget, title_bar_tab_area) if tab_widget else None
@@ -621,15 +627,37 @@ class HomePanelWidget(QWidget):
         FAST patient opening - tab opens immediately, background loading for everything else
         """
         from pathlib import Path
+        from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget, QFrame
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QFont, QMovie
         from PacsClient.pacs.patient_tab.utils.utils import check_study_complete
 
-        # Loading dialog disabled by request
-
-        # Track loading state: keep until first series is displayed
-        self._double_click_loading_active = True
-        self._double_click_first_series_loaded = False
-
         try:
+            # Prevent duplicate open requests for the same study (double-trigger / re-entrancy)
+            if study_uid in self._opening_studies:
+                print(f"⚠️ Duplicate open prevented for study {study_uid}")
+                return
+
+            # If already open, just focus it and exit
+            existing_widget = self._find_widget_by_study_uid(study_uid)
+            if existing_widget:
+                try:
+                    idx = self.tab_widget.indexOf(existing_widget)
+                    if idx != -1:
+                        self.tab_widget.setCurrentIndex(idx)
+                except Exception:
+                    pass
+                return
+
+            self._opening_studies.add(study_uid)
+
+            # Create custom loading feed overlay
+            self._create_loading_feed("Initializing patient data...")
+
+            # Track loading state: keep until first series is displayed
+            self._double_click_loading_active = True
+            self._double_click_first_series_loaded = False
+
             # --- STEP 1: Mark as opened immediately (UI feedback) ---
             self.patient_table_widget.update_visited_status(study_uid, status='opened')
             
@@ -644,9 +672,15 @@ class HomePanelWidget(QWidget):
             if not output_dir:
                 # Create output directory path
                 output_dir = str(SOURCE_PATH / study_uid)
+                
+            # Update loading feed
+            self._update_loading_feed("Checking study data...")
 
             # --- STEP 3: Open tab IMMEDIATELY ---
             caller = CallerTypes.IMPORT if is_local else CallerTypes.SERVER
+
+            # Update loading feed
+            self._update_loading_feed("Opening patient tab...")
 
             widget = self.add_new_tab_widget(
                 patient_id=patient_id,
@@ -661,6 +695,9 @@ class HomePanelWidget(QWidget):
             if not widget:
                 self._double_click_first_series_loaded = True
                 self._maybe_hide_double_click_loading()
+                
+                # Hide loading feed
+                self._hide_loading_feed()
                 return
 
             # Connect to first-series displayed signal (to hide loading)
@@ -675,6 +712,9 @@ class HomePanelWidget(QWidget):
                     widget.loading_complete.connect(self._on_first_series_loaded)
             except Exception:
                 pass
+
+            # Update loading feed
+            self._update_loading_feed("Setting up download manager...")
 
             # --- STEP 3.5: IMMEDIATE PRIORITY DOWNLOAD ---
             # When a patient is double-clicked:
@@ -733,6 +773,9 @@ class HomePanelWidget(QWidget):
                             except Exception:
                                 pass
 
+                        # Update loading feed
+                        self._update_loading_feed("Starting download...")
+
                         # ⚡ IMMEDIATE START - pauses all, starts this one right away
                         download_manager.start_priority_download_immediately(
                             study_data=dm_study_data,
@@ -743,6 +786,9 @@ class HomePanelWidget(QWidget):
                         # Connect Download Manager progress signals to this widget
                         # This allows real-time progress tracking for the opened patient
                         self._connect_download_manager_to_widget(download_manager, widget, study_uid)
+                        
+                        # Update loading feed after download starts
+                        self._update_loading_feed("Download started...")
                 except Exception as e:
                     print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
 
@@ -750,7 +796,11 @@ class HomePanelWidget(QWidget):
             async def _safe_task_wrapper(coro, name="unknown"):
                 """Wrapper to safely run async tasks and catch errors"""
                 try:
-                    return await coro
+                    # Check if coroutine is already awaited
+                    if asyncio.iscoroutine(coro):
+                        return await coro
+                    else:
+                        return coro
                 except RuntimeError as e:
                     if "Cannot enter into task" in str(e) or "already deleted" in str(e).lower():
                         # Ignore task re-entry errors - this is a known qasync issue
@@ -768,10 +818,10 @@ class HomePanelWidget(QWidget):
             async def _background_setup():
                 try:
                     # Load series info for right panel (non-blocking)
-                    asyncio.create_task(_safe_task_wrapper(
+                    await _safe_task_wrapper(
                         self._load_and_display_series_info(patient_id, patient_name, study_uid),
                         "load_series_info"
-                    ))
+                    )
 
                     # Load thumbnails for right panel (non-blocking)
                     patient_info = {
@@ -779,17 +829,17 @@ class HomePanelWidget(QWidget):
                         "PatientName": patient_name,
                         "StudyInstanceUID": study_uid,
                     }
-                    asyncio.create_task(_safe_task_wrapper(
+                    await _safe_task_wrapper(
                         self.show_patient_studies(patient_info),
                         "show_patient_studies"
-                    ))
+                    )
 
                     # Download attachments in background (non-blocking)
                     if not is_local:
-                        asyncio.create_task(_safe_task_wrapper(
+                        await _safe_task_wrapper(
                             download_attachments_for_study_async(study_uid),
                             "download_attachments"
-                        ))
+                        )
 
                     # Get series list for on-demand download
                     series_list = []
@@ -816,15 +866,31 @@ class HomePanelWidget(QWidget):
                     print(f"⚠️ [BACKGROUND] Error in background setup: {e}")
 
             # Start background tasks without waiting
-            asyncio.create_task(_safe_task_wrapper(_background_setup(), "background_setup"))
+            asyncio.create_task(_background_setup())
+
+            # Update loading feed
+            self._update_loading_feed("Loading series information...")
 
             # Hide loading after tab is shown
             self.hide_loading()
             self._hide_double_click_loading()
-            
+
             # Auto-hide patient widget overlay after 3 seconds as fallback
             QTimer.singleShot(3000, lambda: widget._hide_init_overlay() if hasattr(widget, '_hide_init_overlay') else None)
+
+            # Add a small delay to ensure everything is properly loaded
+            # This gives time for the UI to update and for the patient widget to initialize
+            await asyncio.sleep(0.5)  # 500ms delay to ensure proper loading
             
+            # Update loading feed
+            self._update_loading_feed("Finishing up...")
+            
+            # Close loading feed after a short delay to show completion
+            await asyncio.sleep(0.2)  # 200ms delay before hiding
+            
+            # Hide loading feed
+            self._hide_loading_feed()
+
             # Everything is handled in the fast path above
         except Exception as e:
             print(f"Error in patient double-click handler: {str(e)}")
@@ -832,8 +898,17 @@ class HomePanelWidget(QWidget):
             self.hide_loading()
             self._double_click_first_series_loaded = True
             self._maybe_hide_double_click_loading()
+            
+            # Hide loading feed on error
+            try:
+                self._hide_loading_feed()
+            except Exception:
+                pass
         finally:
-            pass
+            try:
+                self._opening_studies.discard(study_uid)
+            except Exception:
+                pass
 
     def _hide_double_click_loading(self):
         """Hide the loading screen specifically for double-click events"""
@@ -4745,6 +4820,110 @@ Study UID: {study_uid}
         except Exception as e:
             print(f"Error in save_complete_study_info: {str(e)}")
             return False
+
+    def _create_loading_feed(self, message="Loading medical images..."):
+        """Create a custom loading feed overlay with centered message"""
+        try:
+            from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget, QFrame, QGraphicsOpacityEffect
+            from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation
+            from PySide6.QtGui import QFont, QPalette, QColor
+
+            # Create overlay widget that covers the entire parent
+            if self._loading_feed_overlay is None:
+                self._loading_feed_overlay = QWidget(self)
+                self._loading_feed_overlay.setStyleSheet("""
+                    background-color: rgba(0, 0, 0, 180);
+                """)
+                
+                # Set layout for overlay
+                layout = QVBoxLayout(self._loading_feed_overlay)
+                layout.setAlignment(Qt.AlignCenter)
+                
+                # Create label for loading message
+                self._loading_feed_label = QLabel(message)
+                font = QFont()
+                font.setPointSize(14)
+                font.setBold(True)
+                self._loading_feed_label.setFont(font)
+                self._loading_feed_label.setStyleSheet("""
+                    color: white;
+                    background-color: transparent;
+                    padding: 20px;
+                    border-radius: 10px;
+                """)
+                self._loading_feed_label.setAlignment(Qt.AlignCenter)
+                
+                # Add label to layout
+                layout.addWidget(self._loading_feed_label)
+                
+                # Add fade-in animation
+                opacity_effect = QGraphicsOpacityEffect()
+                self._loading_feed_overlay.setGraphicsEffect(opacity_effect)
+                self._fade_in_animation = QPropertyAnimation(opacity_effect, b"opacity")
+                self._fade_in_animation.setDuration(300)
+                self._fade_in_animation.setStartValue(0)
+                self._fade_in_animation.setEndValue(1)
+                self._fade_in_animation.setEasingCurve(QEasingCurve.InOutQuad)
+            
+            # Update message
+            self._loading_feed_label.setText(message)
+            
+            # Resize to cover parent
+            self._loading_feed_overlay.resize(self.size())
+            self._loading_feed_overlay.raise_()  # Bring to front
+            self._loading_feed_overlay.show()
+            
+            # Start fade-in animation
+            self._fade_in_animation.start()
+            
+        except Exception as e:
+            print(f"Error creating loading feed: {e}")
+
+    def _update_loading_feed(self, message="Loading..."):
+        """Update the loading feed message"""
+        try:
+            if self._loading_feed_label:
+                self._loading_feed_label.setText(message)
+                QApplication.processEvents()
+        except Exception as e:
+            print(f"Error updating loading feed: {e}")
+
+    def _hide_loading_feed(self):
+        """Hide the loading feed overlay"""
+        try:
+            if self._loading_feed_overlay:
+                # Add fade-out animation
+                from PySide6.QtCore import QEasingCurve, QPropertyAnimation
+                from PySide6.QtWidgets import QGraphicsOpacityEffect
+                
+                opacity_effect = self._loading_feed_overlay.graphicsEffect()
+                if opacity_effect is None:
+                    opacity_effect = QGraphicsOpacityEffect()
+                    self._loading_feed_overlay.setGraphicsEffect(opacity_effect)
+                
+                fade_out_animation = QPropertyAnimation(opacity_effect, b"opacity")
+                fade_out_animation.setDuration(300)
+                fade_out_animation.setStartValue(1)
+                fade_out_animation.setEndValue(0)
+                fade_out_animation.setEasingCurve(QEasingCurve.InOutQuad)
+                
+                def finish_hide():
+                    self._loading_feed_overlay.hide()
+                
+                fade_out_animation.finished.connect(finish_hide)
+                fade_out_animation.start()
+        except Exception as e:
+            print(f"Error hiding loading feed: {e}")
+            # Fallback: just hide the overlay
+            if self._loading_feed_overlay:
+                self._loading_feed_overlay.hide()
+
+    def resizeEvent(self, event):
+        """Handle resize event to keep loading feed overlay sized properly"""
+        super().resizeEvent(event)
+        # Resize the loading feed overlay to match the parent
+        if self._loading_feed_overlay:
+            self._loading_feed_overlay.resize(self.size())
 
     # def get_series_statistics(self, study_uid: str):
     #     """

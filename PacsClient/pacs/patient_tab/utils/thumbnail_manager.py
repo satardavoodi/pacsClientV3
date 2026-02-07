@@ -609,11 +609,43 @@ class ThumbnailManager(QObject):
         self.series_widgets = {}
         self.ready_series = set()
         self.current_study_uid = None  # برای ذخیره study_uid فعلی
-    
+
     def set_current_study_uid(self, study_uid):
         """Set the current study UID - fixes the AttributeError"""
         self.current_study_uid = study_uid
         print(f"📝 [ThumbnailManager] Set current study UID: {study_uid}")
+
+    def reset_all_states(self):
+        """Reset all thumbnail states for a new patient"""
+        print(f"🔄 [ThumbnailManager] Resetting all states for new patient")
+        
+        # Clear all ready series
+        self.ready_series.clear()
+        
+        # Clear selected series
+        self.selected_series = None
+        
+        # Reset all widget states
+        for key, widget in self.series_widgets.items():
+            try:
+                if hasattr(widget, 'progress_border'):
+                    # Reset to pending state
+                    widget.progress_border._is_ready = False
+                    widget.progress_border._is_selected = False
+                    widget.progress_border._downloading = False
+                    widget.progress_border._progress = 0
+                    widget.progress_border.update()
+            except Exception as e:
+                print(f"⚠️ Error resetting widget {key}: {e}")
+        
+        # Clear all buttons
+        self.buttons.clear()
+        self.lst_buttons_name.clear()
+        
+        # Clear all widgets
+        self.series_widgets.clear()
+        
+        print(f"✅ [ThumbnailManager] All states reset")
         
     def apply_border_states(self):
         """
