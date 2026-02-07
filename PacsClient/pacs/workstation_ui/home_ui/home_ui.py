@@ -686,58 +686,8 @@ class HomePanelWidget(QWidget):
         # Note: Enhanced R17 (duplicate check) now prevents re-download of completed studies
         # by checking both StateStore AND Database. If study is complete, R17 returns
         # allowed=False and the caller (Download Manager) handles loading from local files.
-        if not is_local:
-            try:
-                download_manager = self._get_or_create_download_manager_tab()
-                if download_manager:
-                    # Get server info
-                    server = self.data_access_panel_widget.get_server_selected()
-                    
-                    # Create study info for Download Manager
-                    # Try to get series info from server if not in study_data
-                    series_list = []
-                    series_count = 0
-                    images_count = 0
-                    
-                    if study_data and 'series' in study_data:
-                        series_list = study_data.get('series', [])
-                        series_count = len(series_list)
-                        images_count = sum(s.get('image_count', 0) for s in series_list)
-                    else:
-                        # Fetch series info from server if not available
-                        try:
-                            study_info = self.get_series_info_from_server(study_uid, patient_id)
-                            if study_info:
-                                series_list = study_info.get('series', [])
-                                series_count = study_info.get('count_of_series', len(series_list))
-                                images_count = sum(s.get('image_count', 0) for s in series_list)
-                        except Exception as e:
-                            print(f"Warning: Could not fetch series info: {e}")
-                    
-                    dm_study_data = {
-                        'patient_id': patient_id,
-                        'patient_name': patient_name,
-                        'study_uid': study_uid,
-                        'study_date': study_data.get('study_date', 'Unknown') if study_data else 'Unknown',
-                        'modality': study_data.get('modality', 'Unknown') if study_data else 'Unknown',
-                        'description': study_data.get('study_description', '') if study_data else '',
-                        'series_count': series_count,
-                        'images_count': images_count,
-                        'series': series_list,  # Include series array for Download Manager UI
-                    }
-                    
-                    # ⚡ IMMEDIATE START - pauses all, starts this one right away
-                    download_manager.start_priority_download_immediately(
-                        study_data=dm_study_data,
-                        server_info=server,
-                        priority="Critical"  # Double-clicked patient = Critical priority
-                    )
-                    
-                    # Connect Download Manager progress signals to this widget
-                    # This allows real-time progress tracking for the opened patient
-                    self._connect_download_manager_to_widget(download_manager, widget, study_uid)
-            except Exception as e:
-                print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
+        # NOTE: On double-click, only the Patient Widget should open.
+        # Do not open the Download Manager tab or start priority downloads here.
         
         # --- STEP 4: Background tasks (non-blocking) ---
         async def _safe_task_wrapper(coro, name="unknown"):
@@ -1257,7 +1207,10 @@ class HomePanelWidget(QWidget):
                 if uid == study_uid and widget:
                     try:
                         if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.start_series_download(series_uid)
+                            series_key = series_uid
+                            if hasattr(widget, 'resolve_series_key'):
+                                series_key = widget.resolve_series_key(series_uid)
+                            widget.thumbnail_manager.start_series_download(series_key)
                     except Exception:
                         pass
             
@@ -1265,10 +1218,13 @@ class HomePanelWidget(QWidget):
                 if uid == study_uid and widget:
                     try:
                         if hasattr(widget, 'thumbnail_manager'):
+                            series_key = series_uid
+                            if hasattr(widget, 'resolve_series_key'):
+                                series_key = widget.resolve_series_key(series_uid)
                             if total > 0:
                                 progress_percent = (current / total) * 100
                                 widget.thumbnail_manager.update_series_progress(
-                                    series_number=series_uid,
+                                    series_number=series_key,
                                     progress_percent=progress_percent,
                                     status_text=f"{current}/{total}"
                                 )
@@ -1279,10 +1235,16 @@ class HomePanelWidget(QWidget):
                 if uid == study_uid and widget:
                     try:
                         if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.complete_series_download(series_uid)
+                            series_key = series_uid
+                            if hasattr(widget, 'resolve_series_key'):
+                                series_key = widget.resolve_series_key(series_uid)
+                            widget.thumbnail_manager.complete_series_download(series_key)
                         # Also notify the widget that a series is ready for display
                         if hasattr(widget, 'series_downloaded'):
-                            widget.series_downloaded.emit(series_uid)
+                            series_key = series_uid
+                            if hasattr(widget, 'resolve_series_key'):
+                                series_key = widget.resolve_series_key(series_uid)
+                            widget.series_downloaded.emit(series_key)
                     except Exception:
                         pass
             
@@ -4064,14 +4026,9 @@ Study UID: {study_uid}
             # Delay of 50ms to allow loading overlay to render
             QTimer.singleShot(50, show_patient_widget)
 
-            if study_uid:
-                download_manager = self._get_or_create_download_manager_tab()
-                if download_manager:
-                    # Zeta uses 'download_completed' signal (not 'studyDownloadCompleted')
-                    download_manager.download_completed.connect(
-                        lambda completed_study_uid: widget.refresh_after_download(completed_study_uid)
-                        if completed_study_uid == study_uid else None
-                    )
+            # NOTE: Do NOT open Download Manager tab on patient double-click
+            # User only wants to see the Patient Widget, not the Download Manager
+            # Download progress can be accessed separately via sidebar button
 
             if self.custom_tab_manager:
                 tab_index = self.custom_tab_manager.add_patient_tab(

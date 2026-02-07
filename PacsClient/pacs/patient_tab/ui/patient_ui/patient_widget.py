@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import numpy as np
 import vtk
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QColor
 import contextlib
 import json
 import pydicom
@@ -168,6 +168,8 @@ class PatientWidget(QWidget):
         
         self._pipeline_task = None
         self._server_series_info = {}
+        self._series_uid_to_number = {}
+        self._first_series_displayed = False
         self._background_tasks = set()
         self._report_status_service = None
 
@@ -227,7 +229,8 @@ class PatientWidget(QWidget):
 
         # Store params for deferred initialization
         self._deferred_caller = caller
-        self._deferred_size = size_init_viewers
+        default_layout = self._get_default_layout_from_config()
+        self._deferred_size = default_layout if size_init_viewers in (None, (1, 1)) else size_init_viewers
         
         # Create and show loading overlay IMMEDIATELY
         self._create_init_overlay()
@@ -491,6 +494,11 @@ class PatientWidget(QWidget):
             finally:
                 self._pipeline_running = False
                 print("✅ Pipeline flag reset to False")
+                # Notify Home UI that loading is complete
+                try:
+                    self.loading_complete.emit()
+                except Exception:
+                    pass
                 # Hide overlay after pipeline is ready
                 QTimer.singleShot(300, self._hide_init_overlay)
                     
@@ -521,10 +529,140 @@ class PatientWidget(QWidget):
             series_list: List of series info dicts from server
         """
         self._server_series_info = {}
+        self._series_uid_to_number = {}
         for series in series_list:
             series_number = str(series.get('series_number', ''))
             if series_number:
                 self._server_series_info[series_number] = series
+                series_uid = str(series.get('series_uid') or series.get('series_instance_uid') or '')
+                if series_uid:
+                    self._series_uid_to_number[series_uid] = series_number
+
+        # Load real thumbnails (cache → server)
+        QTimer.singleShot(0, self._load_server_thumbnails)
+
+    def _load_server_thumbnails(self):
+        """Kick off background thumbnail loading (cache → server)."""
+        try:
+            loop = asyncio.get_running_loop()
+
+            async def _runner():
+                await self._load_server_thumbnails_async()
+
+            task = asyncio.create_task(_runner())
+            self._background_tasks.add(task)
+            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: self._background_tasks.discard(t)))
+        except RuntimeError:
+            def _worker():
+                try:
+                    asyncio.run(self._load_server_thumbnails_async())
+                except Exception as e:
+                    self.logger.debug(f"Thumbnail worker failed: {e}")
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+    async def _load_server_thumbnails_async(self):
+        """Load thumbnails from local cache or gRPC server and render them."""
+        try:
+            if not self.study_uid:
+                return
+
+            thumbnails = check_and_get_thumbnails(self.import_folder_path, self.study_uid)
+            if thumbnails:
+                QTimer.singleShot(0, lambda: self._render_thumbnails_from_files(thumbnails))
+                return
+
+            from PacsClient.components.grpc_client import DicomGrpcClient
+            from PacsClient.utils.socket_config import get_socket_server_settings
+            from PacsClient.pacs.patient_tab.utils import save_thumbnail_with_bytes
+
+            server = get_socket_server_settings() or {}
+            host = server.get('host') or server.get('socket_host')
+            if not host:
+                self.logger.debug("No server host available for thumbnails")
+                return
+
+            def _fetch():
+                grpc_client = DicomGrpcClient(host=host, port=50051)
+                result = grpc_client.get_thumbnails(self.patient_id, self.study_uid)
+                grpc_client.close()
+                return result
+
+            result = await asyncio.to_thread(_fetch)
+            if not result or 'thumbnails' not in result:
+                return
+
+            series_entries = []
+            for series in result.get('thumbnails', []):
+                series_number = str(series.get('series_number', ''))
+                thumbnail_bytes = series.get('thumbnail_data')
+                if not (series_number and thumbnail_bytes):
+                    continue
+                file_path = save_thumbnail_with_bytes(self.study_uid, series_number, thumbnail_bytes)
+                series['file_path'] = file_path
+                series_entries.append(series)
+
+            if series_entries:
+                QTimer.singleShot(0, lambda: self._render_thumbnails_from_entries(series_entries))
+        except Exception as e:
+            self.logger.debug(f"Error loading server thumbnails: {e}")
+
+    def _render_thumbnails_from_files(self, thumbnails):
+        """Render thumbnail widgets from cached file paths."""
+        try:
+            thumb_index = 0
+            for thumbnail_file in thumbnails:
+                series_number = Path(thumbnail_file).stem
+                series_info = self._server_series_info.get(str(series_number))
+                thumb_index = self.add_thumbnail_to_thumbnail_layout(
+                    thumb_index=thumb_index,
+                    file_path_thumbnail=thumbnail_file,
+                    key_thumbnail=str(series_number),
+                    series_info=series_info
+                )
+        except Exception as e:
+            self.logger.debug(f"Error rendering cached thumbnails: {e}")
+
+    def _render_thumbnails_from_entries(self, series_entries: list):
+        """Render thumbnail widgets from server entries."""
+        try:
+            def _sort_key(item):
+                try:
+                    return int(item.get('series_number', 0))
+                except (TypeError, ValueError):
+                    return 0
+
+            thumb_index = 0
+            for series in sorted(series_entries, key=_sort_key):
+                file_path = series.get('file_path')
+                series_number = str(series.get('series_number', ''))
+                if not (file_path and series_number):
+                    continue
+                thumb_index = self.add_thumbnail_to_thumbnail_layout(
+                    thumb_index=thumb_index,
+                    file_path_thumbnail=file_path,
+                    key_thumbnail=series_number,
+                    series_info=series
+                )
+        except Exception as e:
+            self.logger.debug(f"Error rendering server thumbnails: {e}")
+
+    def resolve_series_key(self, series_identifier: str) -> str:
+        """Resolve series UID to series number when possible."""
+        series_key = str(series_identifier)
+        if series_key.isdigit():
+            return series_key
+
+        mapped = getattr(self, '_series_uid_to_number', {}).get(series_key)
+        if mapped:
+            return str(mapped)
+
+        for series_number, info in getattr(self, '_server_series_info', {}).items():
+            uid = str(info.get('series_uid') or info.get('series_instance_uid') or '')
+            if uid and uid == series_key:
+                return str(series_number)
+
+        return series_key
 
     def show_exist_thumbnails(self):
         thumb_index = 0
@@ -590,8 +728,10 @@ class PatientWidget(QWidget):
             # Create viewers synchronously (VTK widgets must be created in main thread)
             # But use processEvents to keep UI responsive
             QApplication.processEvents()
-            self._create_viewers_sync((1, 1))
+            default_layout = self._get_default_layout_from_config()
+            self._create_viewers_sync(default_layout)
             QApplication.processEvents()
+            self._show_viewer_loading_all()
 
             if self.lst_nodes_viewer and len(self.lst_nodes_viewer) > 0:
                 first_viewer = self.lst_nodes_viewer[0]
@@ -603,7 +743,7 @@ class PatientWidget(QWidget):
                 if count_exist_thumbnails > 0:
                     try:
                         # Use await instead of creating a separate task
-                        await self.lazy_load_first_series_progressive(size_init_viewers=(1, 1))
+                        await self.lazy_load_first_series_progressive(size_init_viewers=default_layout)
                     except asyncio.CancelledError:
                         self.logger.debug("Progressive load cancelled")
                     except Exception as e:
@@ -728,6 +868,7 @@ class PatientWidget(QWidget):
             traceback.print_exc()
 
     def pipeline_manager(self, caller, size_init_viewers=(1, 1)):
+        size_init_viewers = self._get_default_layout_from_config()
         count_exist_thumbnails = self.show_exist_thumbnails()
         print(f"🔍 [PIPELINE] count_exist_thumbnails = {count_exist_thumbnails}")
 
@@ -745,6 +886,7 @@ class PatientWidget(QWidget):
         print(f"🔨 [PIPELINE] Creating viewers upfront with layout {size_init_viewers}...")
         try:
             self.apply_multi_viewer(size_init_viewers, modify_by_user=False)
+            self._show_viewer_loading_all()
             print(f"✅ [PIPELINE] Viewers created successfully")
         except Exception as e:
             print(f"❌ [PIPELINE] Error creating viewers: {e}")
@@ -1467,65 +1609,15 @@ class PatientWidget(QWidget):
 
     def get_optimal_layout_for_series(self, metadata: dict) -> tuple[int, int]:
         """
-        بازگشت بهترین layout برای یک series بر اساس modality و ویژگی‌های آن
-        تنظیمات را از فایل modality_grid.json می‌خواند
-        
-        Returns:
-            (rows, cols)
+        Always use default layout from modality_grid.json (fallback 1x2).
         """
-        if not metadata:
-            return 1, 2
-        
-        series_info: dict = metadata.get('series', {})
-        modality: str = series_info.get('modality', '').upper()
-        
-        # خواندن تنظیمات از فایل JSON
-        try:
-            if GRID_CONFIG_PATH.exists():
-                with open(GRID_CONFIG_PATH, 'r', encoding='utf-8') as f:
-                    grid_config = json.load(f)
-                    
-                # جستجو برای مودالیتی
-                if modality in grid_config:
-                    layout_config = grid_config[modality]
-                    if isinstance(layout_config, dict):
-                        rows = layout_config.get('rows', 1)
-                        cols = layout_config.get('cols', 2)
-                    elif isinstance(layout_config, (list, tuple)):
-                        rows = layout_config[0] if len(layout_config) > 0 else 1
-                        cols = layout_config[1] if len(layout_config) > 1 else 2
-                    else:
-                        rows, cols = 1, 2
-                    return rows, cols
-        except Exception as e:
-            print(f"خطا در خواندن تنظیمات grid: {e}")
-            # در صورت خطا به پیش‌فرض برمی‌گردیم
-        
-        # Layout های خاص بر اساس modality (پیش‌فرض)
-        modality_layout_map: dict[str, tuple[int, int]] = {
-            'MG': (2, 2),  # Mammography: معمولاً 4 تصویر
-            'CT': (1, 2),
-            'MR': (1, 2),
-            'MRI': (1, 2),
-        }
-        
-        # اگر modality layout مشخص دارد
-        layout = modality_layout_map.get(modality)
-        if layout:
-            return layout
-        
-        # مودالیتی‌های تک‌فریمی (CR, DX, US, ...)
-        if hasattr(self, 'is_single_frame_modality'):
-            if self.is_single_frame_modality(metadata):
-                return (1, 2)
-        
-        # fallback عمومی
-        return (1, 2)
+        return self._get_default_layout_from_config()
 
     def init_grid_config():
         """فایل config اولیه را ایجاد می‌کند اگر وجود نداشته باشد"""
         if not GRID_CONFIG_PATH.exists():
             default_config = {
+                "default": {"rows": 1, "cols": 2},
                 "CT": {"rows": 1, "cols": 2},
                 "MR": {"rows": 1, "cols": 2},
                 "MG": {"rows": 2, "cols": 2},
@@ -3915,6 +4007,7 @@ class PatientWidget(QWidget):
     def _trigger_download_if_needed(self, series_number: str):
         """Trigger server download if series not available locally"""
         try:
+            series_number = self.resolve_series_key(series_number)
             # Check if we have server info
             if hasattr(self, '_server_series_info') and self._server_series_info:
                 if series_number in self._server_series_info:
@@ -3929,16 +4022,24 @@ class PatientWidget(QWidget):
 
 
     def _show_loading_spinner(self, message="Loading..."):
-        """نمایش spinner در viewport فعلی - DISABLED TO AVOID SHOWING LOADING MESSAGE TO USER"""
-
-        pass  # Do nothing to avoid showing loading message to user
+        """نمایش spinner در viewport فعلی"""
+        try:
+            if hasattr(self, 'selected_widget') and self.selected_widget:
+                spinner = getattr(self.selected_widget, 'viewport_spinner', None)
+                if spinner:
+                    spinner.show_loading(message)
+        except Exception:
+            pass
 
     def _hide_loading_spinner(self):
-        """مخفی کردن spinner در viewport فعلی - DISABLED TO MATCH SHOW FUNCTION BEING DISABLED"""
-        # COMMENTED OUT TO MATCH _show_loading_spinner BEING DISABLED
-        # if hasattr(self, 'selected_widget') and hasattr(self.selected_widget, 'viewport_spinner'):
-        #     self.selected_widget.viewport_spinner.hide_loading()
-        pass  # Do nothing to match _show_loading_spinner being disabled
+        """مخفی کردن spinner در viewport فعلی"""
+        try:
+            if hasattr(self, 'selected_widget') and self.selected_widget:
+                spinner = getattr(self.selected_widget, 'viewport_spinner', None)
+                if spinner:
+                    spinner.hide_loading()
+        except Exception:
+            pass
 
     def _load_single_series_on_demand(self, series_number: int, study_path: str = None) -> bool:
         """
@@ -4082,7 +4183,7 @@ class PatientWidget(QWidget):
             except RuntimeError:
                 return  # Widget was deleted
 
-            series_number_str = str(series_number)
+            series_number_str = self.resolve_series_key(series_number)
             
             # Avoid duplicate loads
             if series_number_str in self._pending_series_loads:
@@ -4353,13 +4454,19 @@ class PatientWidget(QWidget):
 
     def _display_series_after_load(self, series_number: str):
         """
-        Only mark the series as ready in UI. Do NOT auto-display it.
-        Auto-display is reserved for user interaction only.
+        Mark series ready; for the first downloaded series, display it in all viewers
+        and hide loading.
         """
         try:
             # Validate widget state
             if not self.isVisible():
                 return
+
+            if not self._first_series_displayed:
+                if self._display_first_series_in_all_viewers(series_number):
+                    self._first_series_displayed = True
+                    self._hide_viewer_loading_all()
+                    return
             
             # Mark as ready in thumbnail manager
             if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
@@ -4548,6 +4655,83 @@ class PatientWidget(QWidget):
             import traceback
             traceback.print_exc()
             return False
+
+    def _show_viewer_loading_all(self):
+        """Show loading spinner on all viewers."""
+        try:
+            for node in self.lst_nodes_viewer:
+                vtk_widget = getattr(node, 'vtk_widget', None)
+                spinner = getattr(vtk_widget, 'viewport_spinner', None)
+                if spinner:
+                    spinner.show_loading("Loading...")
+        except Exception:
+            pass
+
+    def _hide_viewer_loading_all(self):
+        """Hide loading spinner on all viewers."""
+        try:
+            for node in self.lst_nodes_viewer:
+                vtk_widget = getattr(node, 'vtk_widget', None)
+                spinner = getattr(vtk_widget, 'viewport_spinner', None)
+                if spinner:
+                    spinner.hide_loading()
+        except Exception:
+            pass
+
+    def _display_first_series_in_all_viewers(self, series_number: str) -> bool:
+        """Display the first downloaded series in all viewers."""
+        try:
+            series_number = self.resolve_series_key(series_number)
+            vtk_image_data = None
+            metadata = None
+
+            for data in self.lst_thumbnails_data:
+                if str(data.get('metadata', {}).get('series', {}).get('series_number')) == str(series_number):
+                    vtk_image_data = data.get('vtk_image_data')
+                    metadata = data.get('metadata')
+                    break
+
+            if vtk_image_data is None or metadata is None:
+                return False
+
+            if self.lst_nodes_viewer and self.selected_widget is None:
+                first_node = self.lst_nodes_viewer[0]
+                self.selected_widget = getattr(first_node, 'vtk_widget', None)
+                self.slider = getattr(first_node, 'slider', None)
+
+            for node in self.lst_nodes_viewer:
+                vtk_widget = getattr(node, 'vtk_widget', None)
+                slider = getattr(node, 'slider', None)
+                if vtk_widget is None:
+                    continue
+                self._display_loaded_series(
+                    series_number=series_number,
+                    vtk_image_data=vtk_image_data,
+                    metadata=metadata,
+                    flag_change_selected_widget=False,
+                    vtk_widget=vtk_widget,
+                    slider=slider
+                )
+
+            return True
+        except Exception as e:
+            self.logger.debug(f"Error displaying first series: {e}")
+            return False
+
+    def _get_default_layout_from_config(self) -> tuple[int, int]:
+        """Read default layout from modality_grid.json (fallback 1x2)."""
+        try:
+            if GRID_CONFIG_PATH.exists():
+                with open(GRID_CONFIG_PATH, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                default_cfg = data.get('default') or data.get('DEFAULT')
+                if isinstance(default_cfg, dict):
+                    rows = int(default_cfg.get('rows', 1))
+                    cols = int(default_cfg.get('cols', 2))
+                    return (rows, cols)
+        except Exception:
+            pass
+        return (1, 2)
 
     def reset_slider(self, vtk_widget: VTKWidget, slider: QSlider):
         """بهینه‌سازی شدهٔ slider reset"""
@@ -4940,6 +5124,14 @@ class PatientWidget(QWidget):
         """تمام resources را با سرعت تمیز کن"""
         try:
             print("🔴 exit_patient_widget: Starting cleanup...")
+            # Ensure home loading overlay is hidden if this widget is closed early
+            try:
+                from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
+                home_widget = get_home_widget()
+                if home_widget is not None:
+                    home_widget._actually_hide_patient_loading_overlay()
+            except Exception:
+                pass
             
             # Clean up viewers first
             self.cleanup_all_viewers()
