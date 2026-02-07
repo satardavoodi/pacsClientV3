@@ -648,30 +648,14 @@ class PatientWidget(QWidget):
 
     def _load_server_thumbnails(self):
         """Kick off background thumbnail loading (cache → server)."""
-        try:
-            loop = asyncio.get_running_loop()
-            # Store the event loop reference for cleanup
-            self._event_loop = loop
+        def _worker():
+            try:
+                asyncio.run(self._load_server_thumbnails_async())
+            except Exception as e:
+                self.logger.debug(f"Thumbnail worker failed: {e}")
 
-            async def _runner():
-                await self._load_server_thumbnails_async()
-
-            task = asyncio.create_task(_runner())
-            self._background_tasks.add(task)
-            def cleanup_task(t):
-                try:
-                    self._background_tasks.discard(t)
-                except:
-                    pass  # Ignore errors during cleanup
-            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
-        except RuntimeError:
-            def _worker():
-                try:
-                    asyncio.run(self._load_server_thumbnails_async())
-                except Exception as e:
-                    self.logger.debug(f"Thumbnail worker failed: {e}")
-
-            threading.Thread(target=_worker, daemon=True).start()
+        # Run in a separate thread to avoid asyncio conflicts with the main event loop
+        threading.Thread(target=_worker, daemon=True).start()
 
     async def _load_server_thumbnails_async(self):
         """Load thumbnails from local cache or gRPC server and render them."""
@@ -788,26 +772,16 @@ class PatientWidget(QWidget):
             self._thumbnails_shown = True  # Mark as shown
             # Check if check_logo_patient method exists and has an event loop
             if hasattr(self, 'check_logo_patient') and callable(getattr(self, 'check_logo_patient', None)):
-                try:
-                    loop = asyncio.get_running_loop()
-                    if loop and loop.is_running():
-                        # Store the event loop reference for cleanup
-                        self._event_loop = loop
+                def _logo_worker():
+                    try:
                         logo_check_result = self.check_logo_patient(thumbnails[0])
-                        # Only create task if result is a coroutine
                         if logo_check_result is not None and asyncio.iscoroutine(logo_check_result):
-                            task = asyncio.create_task(logo_check_result)
-                            self._background_tasks.add(task)
-                            # Safe cleanup using QTimer
-                            def cleanup_task(t):
-                                try:
-                                    self._background_tasks.discard(t)
-                                except:
-                                    pass  # Ignore errors during cleanup
-                            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
-                except RuntimeError:
-                    # No running event loop - skip logo check
-                    pass
+                            asyncio.run(logo_check_result)
+                    except Exception as e:
+                        self.logger.debug(f"Logo check worker failed: {e}")
+
+                # Run in a separate thread to avoid asyncio conflicts with the main event loop
+                threading.Thread(target=_logo_worker, daemon=True).start()
 
             for thumbnail_file in thumbnails:
                 thumbnail_file: Path
@@ -1004,6 +978,7 @@ class PatientWidget(QWidget):
         count_exist_thumbnails = self.show_exist_thumbnails()
         print(f"🔍 [PIPELINE] count_exist_thumbnails = {count_exist_thumbnails}")
 
+        # Check if we have a running event loop - but avoid creating conflicting tasks
         try:
             # Check if we have a running event loop
             loop = asyncio.get_running_loop()
@@ -1014,6 +989,26 @@ class PatientWidget(QWidget):
         except RuntimeError:
             has_running_loop = False
             print("⚠️ No running event loop detected")
+        
+        # If there's a running loop, we'll need to be careful about creating new tasks
+        # to avoid the "Cannot enter into task while another task is being executed" error
+        # So we'll defer task creation to avoid conflicts
+        if has_running_loop and count_exist_thumbnails > 0:
+            print("⚠️ Has running loop with thumbnails, deferring to thread to avoid conflicts")
+            def _deferred_load():
+                if getattr(self, '_progressive_display_enabled', False):
+                    try:
+                        asyncio.run(self.lazy_load_first_series_progressive(size_init_viewers))
+                    except Exception as e:
+                        print(f"Error in deferred progressive load: {e}")
+                else:
+                    try:
+                        asyncio.run(self.lazy_load_first_series(size_init_viewers))
+                    except Exception as e:
+                        print(f"Error in deferred series load: {e}")
+            
+            threading.Thread(target=_deferred_load, daemon=True).start()
+            has_running_loop = False  # Prevent the original task creation code from running
 
         # ✅ FLICKER FIX: Only create viewers AFTER data is loaded, not before
         # This prevents the empty widget from appearing first
