@@ -4100,7 +4100,7 @@ Study UID: {study_uid}
             
             if download_manager:
                 # Check if this study is in the Download Manager's queue
-                for study_download in download_manager.study_downloads:
+                for study_download in download_manager.state_store.get_all_downloads():
                     if study_download.study_uid == study_uid:
                         if study_download.status in ["Downloading", "Pending", "Paused"]:
                             study_being_downloaded = True
