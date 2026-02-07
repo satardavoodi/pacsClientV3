@@ -316,6 +316,21 @@ class PatientWidget(QWidget):
             # استفاده از اولین ویوور
             viewer = self.lst_nodes_viewer[0]
 
+            # If this is the first displayed series (or any viewer is empty), fill all viewers
+            if (not self._first_series_displayed) or self._any_viewer_empty():
+                print(f"   🔄 Filling all viewers for first series {series_key}")
+                if self._display_first_series_in_all_viewers(series_key):
+                    self._mark_first_series_displayed()
+                    # Set main viewer to first
+                    self.set_viewer_to_main_viewer(viewer)
+                    # Remove from queue/data
+                    if series_key in self._priority_series_queue:
+                        self._priority_series_queue.remove(series_key)
+                    if series_key in self._priority_series_data:
+                        del self._priority_series_data[series_key]
+                    print(f"🎉 [PRIORITY DISPLAY] Series {series_key} displayed in all viewers!")
+                    return True
+
             # روش اصلی: استفاده از switch_series
             if hasattr(viewer, 'switch_series'):
                 print(f"   🔄 Using switch_series for series {series_key}")
@@ -1200,7 +1215,7 @@ class PatientWidget(QWidget):
                 return
 
             # Auto-display in viewers
-            if not self._first_series_displayed:
+            if (not self._first_series_displayed) or self._any_viewer_empty():
                 if self._display_first_series_in_all_viewers(str(series_int)):
                     self._mark_first_series_displayed()
             else:
@@ -4515,7 +4530,7 @@ class PatientWidget(QWidget):
             if not self.isVisible():
                 return
 
-            if not self._first_series_displayed:
+            if (not self._first_series_displayed) or self._any_viewer_empty():
                 if self._display_first_series_in_all_viewers(series_number):
                     self._mark_first_series_displayed()
                     return
@@ -4531,6 +4546,26 @@ class PatientWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error in _display_series_after_load: {e}", exc_info=True)
             traceback.print_exc()
+
+    def _any_viewer_empty(self) -> bool:
+        """Return True if any viewer has not been initialized with image data."""
+        try:
+            if not self.lst_nodes_viewer:
+                return True
+            for node in self.lst_nodes_viewer:
+                vtk_widget = getattr(node, 'vtk_widget', None)
+                if vtk_widget is None:
+                    return True
+                if getattr(vtk_widget, 'image_viewer', None) is None:
+                    return True
+                try:
+                    if vtk_widget.get_count_of_slices() == 0:
+                        return True
+                except Exception:
+                    return True
+            return False
+        except Exception:
+            return True
 
 
     async def _do_load_series(self, series_number: str):

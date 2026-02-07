@@ -688,7 +688,7 @@ class HomePanelWidget(QWidget):
             # allowed=False and the caller (Download Manager) handles loading from local files.
             if not is_local:
                 try:
-                    download_manager = self._get_or_create_download_manager_tab()
+                    download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
                     if download_manager:
                         # Get server info
                         server = self.data_access_panel_widget.get_server_selected()
@@ -1137,7 +1137,7 @@ class HomePanelWidget(QWidget):
             print(f"🚀 [Zeta NPR] Server selected - {server}")
             
             # Get or create the main Download Manager tab (same as sidebar button)
-            download_manager = self._get_or_create_download_manager_tab()
+            download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
             
             if not download_manager:
                 QMessageBox.critical(self, "Error", "Failed to open Download Manager")
@@ -1210,8 +1210,8 @@ class HomePanelWidget(QWidget):
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error in CD burn request: {str(e)}")
 
-    def _get_or_create_download_manager_tab(self):
-        """Get existing Download Manager tab or create new one - unified for all download buttons"""
+    def _get_or_create_download_manager_tab(self, activate_tab: bool = False):
+        """Get existing Download Manager tab or create new one (optionally activate it)."""
         try:
             from PacsClient.utils.config import SOURCE_PATH
             
@@ -1220,6 +1220,11 @@ class HomePanelWidget(QWidget):
                 widget = self.tab_widget.widget(i)
                 if isinstance(widget, DownloadManagerWidget):
                     print(f"[Download Manager] Using existing tab at index {i}")
+                    if activate_tab:
+                        if self.custom_tab_manager:
+                            self.custom_tab_manager.set_tab_active_simple(i)
+                        else:
+                            self.tab_widget.setCurrentIndex(i)
                     return widget
 
             # Create new Download Manager tab (Zeta with v1.0.6 UI)
@@ -1229,10 +1234,15 @@ class HomePanelWidget(QWidget):
             
             # Add to tab widget with standard name "Download Manager"
             if self.custom_tab_manager:
-                tab_index = self.custom_tab_manager.add_download_manager_tab(widget=download_manager)
+                tab_index = self.custom_tab_manager.add_download_manager_tab(
+                    widget=download_manager,
+                    activate=activate_tab
+                )
                 print(f"[Download Manager] Tab added at index: {tab_index}")
             else:
                 self.tab_widget.addTab(download_manager, "Download Manager")
+                if activate_tab:
+                    self.tab_widget.setCurrentWidget(download_manager)
             
             # Connect download completion signals
             try:
@@ -4041,29 +4051,19 @@ Study UID: {study_uid}
             )
             widget.set_method_open_ai_module_tab(self.add_new_tab_widget)
             
-            # 🔥 اتصال سیگنال priority_download_requested از thumbnail_manager
+            # 🔥 اتصال سیگنال priority_download_requested از thumbnail_manager (only once)
             if hasattr(widget, 'thumbnail_manager') and widget.thumbnail_manager is not None:
                 widget.thumbnail_manager.set_current_study_uid(study_uid)
-                
-                # اصلاح سیگنال برای داشتن widget
-                def on_priority_download_requested(series_number, study_uid):
-                    print(f"🎯 [HomeUI] Priority download requested: series={series_number}, study={study_uid}")
-                    # widget را مستقیماً به تابع ارسال می‌کنیم
-                    self._handle_priority_download_from_thumbnail(series_number, study_uid, widget)
-                
-                widget.thumbnail_manager.priority_download_requested.connect(on_priority_download_requested)
-                            
-                # ایجاد یک تابع wrapper برای اتصال سیگنال
+
                 def on_priority_download_requested(series_number, study_uid_param):
                     print(f"🎯 [HomeUI] Priority download requested: series={series_number}, study={study_uid_param}")
                     self._handle_priority_download_from_thumbnail(series_number, study_uid_param, widget)
-                
-                # اتصال سیگنال
+
                 widget.thumbnail_manager.priority_download_requested.connect(on_priority_download_requested)
                 print(f"✅ Connected priority download signal for study {study_uid}")
                         
             if study_uid:
-                download_manager = self._get_or_create_download_manager_tab()
+                download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
                 if download_manager:
                     # Zeta uses 'download_completed' signal (not 'studyDownloadCompleted')
                     download_manager.download_completed.connect(
@@ -4136,7 +4136,7 @@ Study UID: {study_uid}
                 return
             
             # ========== CRITICAL: Check if Download Manager is already handling this study ==========
-            download_manager = self._get_or_create_download_manager_tab()
+            download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
             study_being_downloaded = False
 
             if download_manager:

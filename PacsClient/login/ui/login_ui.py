@@ -88,8 +88,8 @@ class LoginWindow(QWidget):
                     config = json.load(f)
                     if config.get("remember_me"):
                         self.username_input.setText(config.get("username", ""))
+                        self.password_input.setText(config.get("password", ""))
                         self.remember_me_checkbox.setChecked(True)
-                        # Note: We don't load the password for security reasons
         except Exception as e:
             print(f"Error loading saved credentials: {e}")
 
@@ -146,7 +146,7 @@ class LoginWindow(QWidget):
             print(f"❌ Socket authentication error: {e}")
             return False, f"Authentication error: {str(e)}", None, None
 
-    def save_credentials(self, username: str):
+    def save_credentials(self, username: str, password: str):
         """Save credentials if 'Remember Me' is checked"""
         try:
             if self.remember_me_checkbox.isChecked():
@@ -156,6 +156,7 @@ class LoginWindow(QWidget):
                 
                 config = {
                     "username": username,
+                    "password": password,
                     "remember_me": True
                 }
                 
@@ -185,7 +186,7 @@ class LoginWindow(QWidget):
 
         if success:
             # Save credentials if "Remember Me" is checked
-            self.save_credentials(username)
+            self.save_credentials(username, password)
             
             # Move to next page/index in parent stacked widget
             if self.parent() and hasattr(self.parent(), 'setCurrentIndex'):
