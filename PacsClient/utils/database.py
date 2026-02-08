@@ -2009,11 +2009,34 @@ def search_patients_local(search_data: dict) -> list:
     Returns:
         List of patient dictionaries matching the criteria
     """
+    print(f"[DB_SEARCH] search_patients_local called with: {search_data}")
     conn = get_connection_database()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     
-    # Check if series_description filter is needed
+    # Check total patients in database first
+    cur.execute("SELECT COUNT(*) as count FROM patients")
+    total_count = cur.fetchone()[0]
+    print(f"[DB_SEARCH] Total patients in database: {total_count}")
+    
+    # Check total studies in database
+    cur.execute("SELECT COUNT(*) as count FROM studies")
+    total_studies = cur.fetchone()[0]
+    print(f"[DB_SEARCH] Total studies in database: {total_studies}")
+    
+    # Check if any studies have study_path set
+    cur.execute("SELECT COUNT(*) as count FROM studies WHERE study_path IS NOT NULL AND study_path != ''")
+    studies_with_path = cur.fetchone()[0]
+    print(f"[DB_SEARCH] Studies with study_path: {studies_with_path}")
+    
+    # List first few studies
+    cur.execute("SELECT patient_fk, study_uid, study_path FROM studies LIMIT 5")
+    studies = cur.fetchall()
+    print(f"[DB_SEARCH] Sample studies:")
+    for s in studies:
+        print(f"[DB_SEARCH]   - patient_fk={s[0]}, study_uid={s[1]}, study_path={s[2]}")
+    
+    # Check if any series_description filter is needed
     has_series_filter = bool(search_data.get('series_description'))
     
     # Build the SQL query dynamically based on provided filters
@@ -2061,12 +2084,12 @@ def search_patients_local(search_data: dict) -> list:
         query += " AND LOWER(s.study_id) LIKE LOWER(?)"
         params.append(f"%{search_data['study_id']}%")
     
-    # Date range filter
-    if search_data.get('date_from'):
+    # Date range filter - only apply if dates are explicitly provided (not None)
+    if search_data.get('date_from') and search_data['date_from'] is not None:
         query += " AND s.study_date >= ?"
         params.append(search_data['date_from'])
     
-    if search_data.get('date_to'):
+    if search_data.get('date_to') and search_data['date_to'] is not None:
         query += " AND s.study_date <= ?"
         params.append(search_data['date_to'])
     
@@ -2092,10 +2115,18 @@ def search_patients_local(search_data: dict) -> list:
     # Order by patient name and study date
     query += " ORDER BY p.patient_name, s.study_date DESC"
     
+    print(f"[DB_SEARCH] Query: {query}")
+    print(f"[DB_SEARCH] Params: {params}")
+    
     try:
         cur.execute(query, params)
         rows = cur.fetchall()
-        return [dict(r) for r in rows]
+        print(f"[DB_SEARCH] Query returned {len(rows)} rows")
+        result = [dict(r) for r in rows]
+        if result:
+            for i, r in enumerate(result[:3]):
+                print(f"[DB_SEARCH]   Row {i}: patient_name={r.get('patient_name')}, study_uid={r.get('study_uid')}")
+        return result
     finally:
         conn.close()
 

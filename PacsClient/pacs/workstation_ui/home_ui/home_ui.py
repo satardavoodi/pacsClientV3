@@ -277,6 +277,11 @@ class HomePanelWidget(QWidget):
         # server_layout.setSpacing(6)
 
         self.data_access_panel_widget = DataAccessPanelWidget(select_folder)
+        # Connect refresh button if it exists
+        if hasattr(self.data_access_panel_widget, 'refresh_local_button'):
+            self.data_access_panel_widget.refresh_local_button.clicked.connect(
+                lambda: asyncio.create_task(self.search_patients_from_local_async())
+            )
         # self.data_access_panel_widget.set_method_select_folder(self.select_folder)
         server_layout.addWidget(self.data_access_panel_widget)
 
@@ -670,8 +675,33 @@ class HomePanelWidget(QWidget):
 
             self._opening_studies.add(study_uid)
 
-            # Create custom loading feed overlay
-            self._create_loading_feed("Initializing patient data...")
+            # ✅ Show blocking loading dialog to prevent UI interaction
+            loading_dialog = QProgressDialog("Loading patient data...", None, 0, 0, self)
+            loading_dialog.setWindowTitle("Please Wait")
+            loading_dialog.setWindowModality(Qt.WindowModal)
+            loading_dialog.setMinimumDuration(0)
+            loading_dialog.setCancelButton(None)
+            loading_dialog.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+            loading_dialog.setStyleSheet("""
+                QProgressDialog {
+                    background-color: #1a1a2e;
+                    color: white;
+                    font-size: 13px;
+                }
+                QProgressBar {
+                    border: 2px solid #4a5568;
+                    border-radius: 5px;
+                    background-color: #2d3748;
+                    text-align: center;
+                    color: white;
+                }
+                QProgressBar::chunk {
+                    background-color: #3b82f6;
+                    border-radius: 3px;
+                }
+            """)
+            loading_dialog.show()
+            QApplication.processEvents()
 
             # Track loading state: keep until first series is displayed
             self._double_click_loading_active = True
@@ -692,14 +722,16 @@ class HomePanelWidget(QWidget):
                 # Create output directory path
                 output_dir = str(SOURCE_PATH / study_uid)
                 
-            # Update loading feed
-            self._update_loading_feed("Checking study data...")
+            # Update loading dialog
+            loading_dialog.setLabelText("Checking study data...")
+            QApplication.processEvents()
 
             # --- STEP 3: Open tab but DON'T show yet ---
             caller = CallerTypes.IMPORT if is_local else CallerTypes.SERVER
 
-            # Update loading feed
-            self._update_loading_feed("Opening patient tab...")
+            # Update loading dialog
+            loading_dialog.setLabelText("Opening patient tab...")
+            QApplication.processEvents()
 
             widget = self.add_new_tab_widget(
                 patient_id=patient_id,
@@ -715,17 +747,22 @@ class HomePanelWidget(QWidget):
                 self._double_click_first_series_loaded = True
                 self._maybe_hide_double_click_loading()
                 
-                # Hide loading feed
-                self._hide_loading_feed()
+                # Close loading dialog
+                loading_dialog.close()
                 return
 
-            # ✅ CRITICAL: Wait for thumbnails to render before showing the tab
-            # This prevents showing empty viewers before thumbnails are ready
-            print("⏳ [TAB] Waiting for thumbnails to render before showing tab...")
-            await asyncio.sleep(0.5)  # 500ms delay to allow thumbnail rendering
-            print("✅ [TAB] Thumbnail wait complete, activating tab...")
+            # ✅ CRITICAL: Wait for UI to be ready before showing the tab
+            # This prevents showing empty viewers before they are prepared
+            loading_dialog.setLabelText("Preparing viewer...")
+            QApplication.processEvents()
+            print("⏳ [TAB] Waiting for UI to be ready...")
+            await asyncio.sleep(0.3)  # 300ms delay to allow viewer setup
+            print("✅ [TAB] UI ready, activating tab...")
             
-            # NOW activate the tab after thumbnails have had time to render
+            # Close loading dialog before showing tab
+            loading_dialog.close()
+            
+            # NOW activate the tab after UI is ready
             if self.custom_tab_manager:
                 try:
                     tab_index = self.custom_tab_manager.find_tab_by_study_uid(study_uid)
@@ -753,9 +790,6 @@ class HomePanelWidget(QWidget):
                     widget.loading_complete.connect(self._on_first_series_loaded)
             except Exception:
                 pass
-
-            # Update loading feed
-            self._update_loading_feed("Setting up download manager...")
 
             # --- STEP 3.5: IMMEDIATE PRIORITY DOWNLOAD ---
             # When a patient is double-clicked:
@@ -814,9 +848,6 @@ class HomePanelWidget(QWidget):
                             except Exception:
                                 pass
 
-                        # Update loading feed
-                        self._update_loading_feed("Starting download...")
-
                         # ⚡ IMMEDIATE START - pauses all, starts this one right away
                         download_manager.start_priority_download_immediately(
                             study_data=dm_study_data,
@@ -827,9 +858,6 @@ class HomePanelWidget(QWidget):
                         # Connect Download Manager progress signals to this widget
                         # This allows real-time progress tracking for the opened patient
                         self._connect_download_manager_to_widget(download_manager, widget, study_uid)
-                        
-                        # Update loading feed after download starts
-                        self._update_loading_feed("Download started...")
                 except Exception as e:
                     print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
 
@@ -909,28 +937,12 @@ class HomePanelWidget(QWidget):
             # Start background tasks in a separate thread (no async conflicts)
             threading.Thread(target=_background_setup_thread, daemon=True).start()
 
-            # Update loading feed
-            self._update_loading_feed("Loading series information...")
-
             # Hide loading after tab is shown
             self.hide_loading()
             self._hide_double_click_loading()
 
             # Auto-hide patient widget overlay after 3 seconds as fallback
             QTimer.singleShot(3000, lambda: widget._hide_init_overlay() if hasattr(widget, '_hide_init_overlay') else None)
-
-            # Add a small delay to ensure everything is properly loaded
-            # This gives time for the UI to update and for the patient widget to initialize
-            await asyncio.sleep(0.5)  # 500ms delay to ensure proper loading
-            
-            # Update loading feed
-            self._update_loading_feed("Finishing up...")
-            
-            # Close loading feed after a short delay to show completion
-            await asyncio.sleep(0.2)  # 200ms delay before hiding
-            
-            # Hide loading feed
-            self._hide_loading_feed()
 
             # Everything is handled in the fast path above
         except Exception as e:
@@ -1466,42 +1478,185 @@ class HomePanelWidget(QWidget):
         """Update patient list when a study download completes"""
         try:
             from PacsClient.pacs.patient_tab.utils.utils import check_study_complete
+            from PacsClient.utils.config import SOURCE_PATH
+            from PacsClient.utils.db_manager import find_study_pk_with_study_uid, update_study_missing_fields
             
-            print(f"📥 Study download completed: {study_uid}")
+            print(f"\n{'='*70}")
+            print(f"📥 [DOWNLOAD_COMPLETE] Study download completed: {study_uid}")
+            print(f"{'='*70}")
             
             # Re-check download status with detailed info
             result = check_study_complete(study_uid)
+            print(f"[CHECK_STATUS] check_study_complete returned: {result}")
             
             # Determine status
             if isinstance(result, dict):
                 if result.get('is_complete', False):
                     status = 'complete'
-                    print(f"✓ Study {study_uid} is completely downloaded")
+                    print(f"[STATUS] ✓ Study is completely downloaded")
+                    print(f"[STATUS] Confirmed {result.get('series_downloaded', 0)}/{result.get('series_expected', 0)} series")
                 elif result.get('series_downloaded', 0) > 0:
                     status = 'partial'
-                    print(f"⚠️ Study {study_uid} is partially downloaded: {result.get('series_downloaded')}/{result.get('series_expected')} series")
+                    print(f"[STATUS] ⚠️ Study is partially downloaded: {result.get('series_downloaded')}/{result.get('series_expected')} series")
                 else:
                     status = 'not_downloaded'
-                    print(f"✗ Study {study_uid} has no downloaded series")
+                    print(f"[STATUS] ✗ Study has no downloaded series")
             elif isinstance(result, bool):
                 status = 'complete' if result else 'not_downloaded'
+                print(f"[STATUS] Result is bool: {status}")
             else:
                 status = 'not_downloaded'
+                print(f"[STATUS] Unknown result type: {type(result)}")
             
+            # ✅ Save study info to database when download is complete
+            if status == 'complete':
+                try:
+                    print(f"[SAVE_TO_DB] Retrieving study info for {study_uid}...")
+                    study_info = self._get_study_info_for_completed_download(study_uid)
+                    if study_info:
+                        print(f"[SAVE_TO_DB] Got study info: patient={study_info.get('patient_name')}, series_count={len(study_info.get('series', []))}")
+                        saved = self.save_complete_study_info(study_uid, study_info=study_info)
+                        if saved:
+                            print(f"[SAVE_TO_DB] ✅ Study saved to database")
+                            self._refresh_local_tab_after_download()
+                        else:
+                            print(f"[SAVE_TO_DB] ❌ Failed to save study to database")
+                    else:
+                        print(f"[SAVE_TO_DB] ❌ Could not retrieve study info")
+                except Exception as e:
+                    print(f"[SAVE_TO_DB] ❌ Error: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Ensure study_path is populated for local search visibility
+            try:
+                study_pk = find_study_pk_with_study_uid(study_uid)
+                if study_pk:
+                    study_path = str(SOURCE_PATH / study_uid)
+                    from PacsClient.utils.db_manager import update_study_missing_fields
+                    update_study_missing_fields(study_pk, study_path=study_path)
+                    print(f"[LOCAL_SYNC] Updated study_path: {study_path}")
+                else:
+                    print(f"[LOCAL_SYNC] ❌ Study not found in database after download")
+            except Exception as update_error:
+                print(f"[LOCAL_SYNC] ❌ Failed to update study_path: {update_error}")
+
             # Update patient table widget
             if hasattr(self, 'patient_table_widget'):
                 self.patient_table_widget.update_study_download_status(study_uid, status)
-                print(f"✓ Updated patient table for {study_uid}: {status}")
+                print(f"[UI_UPDATE] Updated patient table for {study_uid}: {status}")
             
             # ✅ Auto-open study if it's completely downloaded and setting is enabled
             if status == 'complete' and hasattr(self, '_auto_open_after_download'):
                 if self._auto_open_after_download:
+                    print(f"[AUTO_OPEN] Opening study {study_uid}...")
                     self._auto_open_downloaded_study(study_uid)
             
+            print(f"{'='*70}\n")
+            
         except Exception as e:
-            print(f"Error updating study download status: {e}")
+            print(f"❌ [FATAL] Error: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _get_study_info_for_completed_download(self, study_uid: str) -> dict:
+        """Get study info for a completed download from local files or database"""
+        try:
+            print(f"\n[GET_INFO] Retrieving study info for {study_uid}...")
+            
+            # First try to get from database
+            print(f"[GET_INFO] Querying database...")
+            study_info = get_study_by_study_uid(study_uid)
+            if study_info:
+                print(f"[GET_INFO] ✓ Found study in database")
+                print(f"[GET_INFO] Study info keys: {study_info.keys()}")
+                
+                # Get patient info from the study
+                from PacsClient.utils.db_manager import get_patient_by_patient_pk
+                patient_pk = study_info.get('patient_fk')
+                patient_info = None
+                
+                if patient_pk:
+                    patient_info = get_patient_by_patient_pk(patient_pk)
+                    if patient_info:
+                        print(f"[GET_INFO] ✓ Found patient: {patient_info.get('patient_name')} ({patient_info.get('patient_id')})")
+                        # Add patient info to study_info
+                        study_info['patient_id'] = patient_info.get('patient_id')
+                        study_info['patient_name'] = patient_info.get('patient_name')
+                    else:
+                        print(f"[GET_INFO] ❌ Patient not found for pk={patient_pk}")
+                else:
+                    print(f"[GET_INFO] ❌ No patient_fk in study_info")
+                
+                # Get series from database
+                from PacsClient.utils.db_manager import get_series_by_study_pk
+                series_list = get_series_by_study_pk(study_info['study_pk'])
+                if series_list:
+                    print(f"[GET_INFO] ✓ Found {len(series_list)} series in database")
+                    study_info['series'] = series_list
+                    study_info['count_of_series'] = len(series_list)
+                    
+                    # Make sure patient_id and patient_name are set
+                    if study_info.get('patient_id') and study_info.get('patient_name'):
+                        print(f"[GET_INFO] ✅ Complete study info ready: {study_info.get('patient_name')} ({len(series_list)} series)")
+                        return study_info
+                    else:
+                        print(f"[GET_INFO] ⚠️ Missing patient info, trying local files...")
+                else:
+                    print(f"[GET_INFO] ⚠️ No series in database, trying local files...")
+            else:
+                print(f"[GET_INFO] ⚠️ Not in database, trying local files...")
+            
+            # If not in database or missing patient info, try to get from local files
+            study_path = SOURCE_PATH / study_uid
+            print(f"[GET_INFO] Checking local path: {study_path}")
+            if study_path.exists():
+                print(f"[GET_INFO] 📂 Found study path, analyzing files...")
+                # Build study info from local files
+                from PacsClient.pacs.patient_tab.utils import get_all_series_thumbnail_from_study_folder
+                series_data = get_all_series_thumbnail_from_study_folder(str(study_path))
+                if series_data and 'series' in series_data:
+                    series_count = len(series_data['series'])
+                    print(f"[GET_INFO] ✓ Found {series_count} series in local files")
+                    # Get basic study info from first series
+                    first_series = series_data['series'][0] if series_data['series'] else {}
+                    study_info = {
+                        'study_uid': study_uid,
+                        'patient_id': first_series.get('patient_id', 'Unknown'),
+                        'patient_name': first_series.get('patient_name', 'Unknown'),
+                        'study_date': first_series.get('study_date', ''),
+                        'study_description': first_series.get('study_description', ''),
+                        'series': series_data['series'],
+                        'count_of_series': series_count
+                    }
+                    print(f"[GET_INFO] ✅ Built study info from files: {study_info['patient_name']} ({series_count} series)")
+                    return study_info
+                else:
+                    print(f"[GET_INFO] ❌ No series data in local files")
+            else:
+                print(f"[GET_INFO] ❌ Study path does not exist: {study_path}")
+            
+            return None
+        except Exception as e:
+            print(f"[GET_INFO] ❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _refresh_local_tab_after_download(self):
+        """Refresh local patient list if currently on Local tab"""
+        try:
+            # Check if we're on the Local tab
+            current_tab = self.data_access_panel_widget.tab_selected_name
+            print(f"[REFRESH_LOCAL] Current tab: {current_tab}")
+            if current_tab and current_tab.lower() == 'local':
+                print(f"[REFRESH_LOCAL] 🔄 Refreshing local patient list...")
+                # Trigger a search to refresh the list
+                asyncio.create_task(self.search_patients_from_local_async())
+            else:
+                print(f"[REFRESH_LOCAL] Not on Local tab, skipping refresh")
+        except Exception as e:
+            print(f"[REFRESH_LOCAL] ❌ Error: {e}")
     
     def _on_study_download_failed(self, study_uid: str, error_message: str):
         """Handle study download failure"""
@@ -2037,6 +2192,10 @@ class HomePanelWidget(QWidget):
         self._cancel_search_requested = False
 
         try:
+            print(f"\n{'='*70}")
+            print(f"[LOCAL_SEARCH] Starting local database search...")
+            print(f"{'='*70}")
+            
             # دیالوگ لودینگ و نوار پیشرفت شبیه سرور (قابل کنسل)
             self.show_loading("Local Search", "Searching local database...", cancellable=True)
             self.search_progress.setVisible(True)
@@ -2056,10 +2215,22 @@ class HomePanelWidget(QWidget):
 
             # Get search criteria from search widget
             search_data = self.patient_search_widget.get_search_data()
+            print(f"[LOCAL_SEARCH] Search criteria: {search_data}")
+            
+            # For Local tab: Remove date filters to show ALL downloaded studies regardless of date
+            # Users want to see all locally downloaded files, not just today's
+            search_data_local = search_data.copy()
+            search_data_local['date_from'] = None
+            search_data_local['date_to'] = None
+            print(f"[LOCAL_SEARCH] Modified search_data for local (removed date filters): {search_data_local}")
             
             # مرحله‌ی نسبتاً سنگین: جستجوی بیماران با فیلتر از DB
             # (داخل executor تا UI قفل نشود)
-            patients = await loop.run_in_executor(self.thread_pool, search_patients_local, search_data)
+            print(f"[LOCAL_SEARCH] Querying database...")
+            print(f"[LOCAL_SEARCH] search_data passed to search_patients_local: {search_data_local}")
+            patients = await loop.run_in_executor(self.thread_pool, search_patients_local, search_data_local)
+            print(f"[LOCAL_SEARCH] search_patients_local returned: {patients}")
+            print(f"[LOCAL_SEARCH] Found {len(patients or [])} patients in database")
 
             if self._cancel_search_requested:
                 raise asyncio.CancelledError()
@@ -2072,8 +2243,10 @@ class HomePanelWidget(QWidget):
             # پیمایش و افزودن به جدول — با چکِ کنسل در هر چند آیتم
             CHUNK = 25
             added = 0
+            skipped = 0
             if patients:
                 from PacsClient.pacs.patient_tab.utils.utils import has_subfolders
+                from PacsClient.utils.db_manager import find_study_pk_with_study_uid, update_study_missing_fields
 
                 for i, patient in enumerate(patients, start=1):
                     if self._cancel_search_requested:
@@ -2081,15 +2254,45 @@ class HomePanelWidget(QWidget):
 
                     # فقط رکوردهای تکمیل/دارای فایل را نمایش بدهیم (رفتار فعلی شما)
                     study_path = patient.get('study_path')
+                    study_uid = patient.get('study_uid')
+                    
+                    # Log details
+                    print(f"[LOCAL_SEARCH] [{i}/{total}] Patient: {patient.get('patient_name')} - {study_uid}")
+
+                    # Fallback: infer study_path from SOURCE_PATH if missing
+                    if not study_path and study_uid:
+                        try:
+                            fallback_path = SOURCE_PATH / study_uid
+                            print(f"[LOCAL_SEARCH] Checking fallback path: {fallback_path}")
+                            if fallback_path.exists() and has_subfolders(fallback_path):
+                                study_path = str(fallback_path)
+                                patient['study_path'] = study_path
+                                print(f"[LOCAL_SEARCH] ✓ Using fallback path")
+                                # Persist missing study_path for future local searches
+                                study_pk = find_study_pk_with_study_uid(study_uid)
+                                if study_pk:
+                                    update_study_missing_fields(study_pk, study_path=study_path)
+                            else:
+                                print(f"[LOCAL_SEARCH] ✗ Fallback path doesn't exist or has no subfolders")
+                        except Exception as update_error:
+                            print(f"[LOCAL_SEARCH] Error checking fallback: {update_error}")
+
                     if not study_path:
+                        print(f"[LOCAL_SEARCH] ⚠️ Skipping - no study_path")
+                        skipped += 1
                         continue
                     try:
                         if not has_subfolders(study_path):
+                            print(f"[LOCAL_SEARCH] ⚠️ Skipping - no subfolders in {study_path}")
+                            skipped += 1
                             continue
-                    except Exception:
+                    except Exception as err:
+                        print(f"[LOCAL_SEARCH] ⚠️ Error checking subfolders: {err}")
+                        skipped += 1
                         continue
 
                     # مقادیر لازم
+                    print(f"[LOCAL_SEARCH] ✓ Adding to table: {patient.get('patient_name')}")
                     self.add_data2patient_list_table(
                         patient_id=patient.get('patient_id'),
                         patient_name=patient.get('patient_name'),
@@ -2112,12 +2315,14 @@ class HomePanelWidget(QWidget):
                         await asyncio.sleep(0)
 
             # وضعیت نهایی
+            print(f"[LOCAL_SEARCH] ✅ Completed: {added} studies loaded, {skipped} skipped")
             self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#10b981').pixmap(12, 12))
             self.connection_indicator.setText(f" Local DB - Found {added} studies")
             self.connection_indicator.setStyleSheet("""
                 QLabel { font-size: 14px; color: #10b981; padding: 4px 8px;
                          background: rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.3); border-radius:8px; }
             """)
+            print(f"[LOCAL] Loaded {added} studies from local database")
 
         except asyncio.CancelledError:
             # کنسل توسط کاربر
@@ -4605,82 +4810,147 @@ Study UID: {study_uid}
             study_info: Pre-fetched study info (optional, to avoid double fetch)
         """
         try:
+            print(f"[SAVE_COMPLETE] Starting to save study {study_uid}...")
+            print(f"[SAVE_COMPLETE] study_info provided: {study_info is not None}")
 
             # Get detailed information from server only if not provided
             if not study_info:
+                print(f"[SAVE_COMPLETE] Fetching from server...")
                 study_info = self.get_series_info_from_server(study_uid, patient_id)
-                print('study_info:', study_info)
+                print(f"[SAVE_COMPLETE] Server returned: {study_info}")
             else:
-                print('✅ Using cached study_info (avoiding double fetch)')
+                print(f"[SAVE_COMPLETE] Using cached study_info")
             
             if not study_info:
+                print(f"[SAVE_COMPLETE] ❌ No study_info available")
                 return False
 
+            # Validate required fields
+            patient_id_val = study_info.get('patient_id')
+            patient_name_val = study_info.get('patient_name')
+            
+            if not patient_id_val:
+                print(f"[SAVE_COMPLETE] ❌ Missing patient_id in study_info")
+                print(f"[SAVE_COMPLETE] Available keys: {study_info.keys()}")
+                return False
+            
+            if not patient_name_val:
+                patient_name_val = 'Unknown Patient'
+                print(f"[SAVE_COMPLETE] ⚠️ Missing patient_name, using default")
+
+            print(f"[SAVE_COMPLETE] Patient: {patient_name_val} ({patient_id_val})")
+
             # Save study information if not exists
-            patient_pk = find_patient_pk(study_info['patient_id'])
+            print(f"[SAVE_COMPLETE] Looking for existing patient...")
+            patient_pk = find_patient_pk(patient_id_val)
             if not patient_pk:
+                print(f"[SAVE_COMPLETE] Creating new patient record...")
                 # Create patient record
                 patient_pk = insert_patient(
-                    patient_id=study_info['patient_id'],
-                    name=study_info['patient_name'],
+                    patient_id=patient_id_val,
+                    name=patient_name_val,
                     birth_date=None,
                     sex=None,
                     age=None,
                     patient_weight=None
                 )
+                print(f"[SAVE_COMPLETE] ✓ Created patient (pk={patient_pk})")
+            else:
+                print(f"[SAVE_COMPLETE] ✓ Found existing patient (pk={patient_pk})")
 
             # Check if study exists
+            print(f"[SAVE_COMPLETE] Looking for existing study...")
             study_pk = find_study_pk_with_study_uid(study_uid)
             if not study_pk:
-                static_data: dict = study_info['series'][0]
+                static_data: dict = study_info['series'][0] if study_info.get('series') else {}
                 study_path = SOURCE_PATH / study_uid
                 study_path.mkdir(parents=True, exist_ok=True)
 
+                print(f"[SAVE_COMPLETE] Creating new study record...")
                 # Create study record
                 study_pk = insert_study(
                     study_uid=study_uid,
                     patient_fk=patient_pk,
-                    study_date=study_info['study_date'],
-                    study_description=study_info['study_description'],
+                    study_date=study_info.get('study_date', ''),
+                    study_description=study_info.get('study_description', ''),
                     institution_name=static_data.get('institution_name', None),
                     modality=static_data.get('modality', None),
                     body_part=static_data.get('body_part_examined', None),
-                    number_of_series=study_info['count_of_series'],
-                    number_of_instances=sum(s['image_count'] for s in study_info['series']),
+                    number_of_series=study_info.get('count_of_series', len(study_info.get('series', []))),
+                    number_of_instances=sum(s.get('image_count', 0) for s in study_info.get('series', [])),
                     study_path=str(study_path)
                 )
+                print(f"[SAVE_COMPLETE] ✓ Created study record (pk={study_pk}) at {study_path}")
+            else:
+                print(f"[SAVE_COMPLETE] ✓ Found existing study (pk={study_pk})")
+                # Update study_path if it doesn't exist
+                from PacsClient.utils.db_manager import update_study_missing_fields
+                study_path = SOURCE_PATH / study_uid
+                study_path.mkdir(parents=True, exist_ok=True)
+                update_study_missing_fields(
+                    study_pk,
+                    study_path=str(study_path),
+                    number_of_series=study_info.get('count_of_series', len(study_info.get('series', []))),
+                    number_of_instances=sum(s.get('image_count', 0) for s in study_info.get('series', []))
+                )
+                print(f"✅ Updated study record with study_path: {study_path}")
 
             # Save series information
             saved_series = 0
-            for series in study_info['series']:
+            print(f"[SAVE_SERIES] Saving {len(study_info.get('series', []))} series...")
+            for series in study_info.get('series', []):
                 try:
                     # Check if series exists
-                    existing_series_pk = find_series_pk(series['series_uid'])
+                    series_uid = series.get('series_uid', '')
+                    if not series_uid:
+                        print(f"[SAVE_SERIES] ⚠️ Skipping series with no UID")
+                        continue
+                    
+                    series_number = series.get('series_number', 'unknown')
+                    print(f"[SAVE_SERIES] Processing series {series_number}...")
+                        
+                    existing_series_pk = find_series_pk(series_uid)
                     if existing_series_pk:
+                        print(f"[SAVE_SERIES] ✓ Series {series_number} already in database (pk={existing_series_pk})")
                         continue
 
-                    # Create series record
+                    # Build series path
+                    series_path = SOURCE_PATH / study_uid / str(series_number)
+                    series_path.mkdir(parents=True, exist_ok=True)
+
+                    # Create series record with full information
                     series_pk = insert_series(
-                        series_uid=series['series_uid'],
+                        series_uid=series_uid,
                         study_fk=study_pk,
-                        series_name=f"Series {series['series_number']}",
-                        series_number=series['series_number'],
-                        series_description=series['series_description'],
+                        series_name=f"Series {series_number}",
+                        series_number=str(series_number),
+                        series_description=series.get('series_description', ''),
+                        modality=series.get('modality', ''),
+                        image_count=series.get('image_count', 0),
+                        protocol_name=series.get('protocol_name', ''),
+                        body_part_examined=series.get('body_part_examined', ''),
+                        manufacturer=series.get('manufacturer', ''),
+                        institution_name=series.get('institution_name', ''),
                         main_thumbnail=False,  # Will be updated when thumbnails are saved
                         thumbnail_path=None,
-                        series_path=None
+                        series_path=str(series_path)
                     )
 
                     saved_series += 1
+                    print(f"[SAVE_SERIES] ✅ Saved series {series_number} (pk={series_pk})")
 
                 except Exception as e:
-                    print(f"❌ Error saving series {series['series_number']}: {str(e)}")
+                    print(f"[SAVE_SERIES] ❌ Error saving series {series_number}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
 
+            print(f"[SAVE_SERIES] ✅ Complete: {saved_series}/{len(study_info.get('series', []))} series saved")
             return True
-
         except Exception as e:
-            print(f"Error in save_complete_study_info: {str(e)}")
+            print(f"[SAVE_COMPLETE] ❌ Error: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def _create_loading_feed(self, message="Loading medical images..."):

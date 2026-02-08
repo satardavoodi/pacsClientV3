@@ -3919,14 +3919,15 @@ class PatientWidget(QWidget):
                 has_data = False
             
             if not has_data:
-                print("   ⚠️ No thumbnail data, creating dummy widget")
+                print("   📦 No thumbnail data, creating lightweight VTK widget...")
                 try:
-                    vtk_widget = self.create_dummy_vtk_widget()
+                    # ✅ FLICKER FIX: Use lightweight VTK widget with deferred rendering
+                    vtk_widget = self._create_lightweight_vtk_placeholder()
                     if vtk_widget is None:
-                        raise RuntimeError("create_dummy_vtk_widget returned None")
-                    print("   ✅ Dummy widget created")
+                        raise RuntimeError("_create_lightweight_vtk_placeholder returned None")
+                    print("   ✅ Lightweight VTK widget created")
                 except Exception as dwe:
-                    print(f"   ❌ Dummy widget creation failed: {dwe}")
+                    print(f"   ❌ Lightweight VTK widget creation failed: {dwe}")
                     raise
             else:
                 print(f"   ✅ Thumbnail data exists ({len(self.lst_thumbnails_data)} items)")
@@ -3934,10 +3935,10 @@ class PatientWidget(QWidget):
                 try:
                     vtk_widget = self.create_new_vtk_widget(default_thumb_index)
                     if vtk_widget is None:
-                        print("   ⚠️ create_new_vtk_widget returned None, trying fallback")
-                        vtk_widget = self.create_dummy_vtk_widget()
+                        print("   ⚠️ create_new_vtk_widget returned None, using lightweight fallback")
+                        vtk_widget = self._create_lightweight_vtk_placeholder()
                         if vtk_widget is None:
-                            raise RuntimeError("Both create_new_vtk_widget and create_dummy_vtk_widget failed")
+                            raise RuntimeError("Both create_new_vtk_widget and _create_lightweight_vtk_placeholder failed")
                     print("   ✅ VTK widget created")
                 except Exception as vwe:
                     print(f"   ❌ VTK widget creation failed: {vwe}")
@@ -4098,25 +4099,34 @@ class PatientWidget(QWidget):
             
             # Check if methods exist
             if not hasattr(vtk_widget, 'set_slider'):
-                raise AttributeError("VTK widget doesn't have set_slider method")
-            
-            vtk_widget.set_slider(slider)
-            
-            if not hasattr(vtk_widget, 'get_count_of_slices'):
-                raise AttributeError("VTK widget doesn't have get_count_of_slices method")
-            
-            count_slices = vtk_widget.get_count_of_slices()
-            mid_slices = 0
-            last_slices = max(0, count_slices - 1)
+                print("   ⚠️ VTK widget doesn't have set_slider yet (placeholder mode)")
+                # For placeholder widgets, just set slider to default values
+                slider.setMinimum(0)
+                slider.setMaximum(0)
+                slider.setValue(0)
+                print("   ✅ Slider configured in placeholder mode (0 slices)")
+            else:
+                vtk_widget.set_slider(slider)
+                
+                if not hasattr(vtk_widget, 'get_count_of_slices'):
+                    raise AttributeError("VTK widget doesn't have get_count_of_slices method")
+                
+                count_slices = vtk_widget.get_count_of_slices()
+                mid_slices = 0
+                last_slices = max(0, count_slices - 1)
 
-            slider.setMinimum(0)
-            slider.setMaximum(last_slices)
-            slider.setValue(mid_slices)
-            print(f"   ✅ Slider configured (slices: {count_slices}, current: {mid_slices})")
+                slider.setMinimum(0)
+                slider.setMaximum(last_slices)
+                slider.setValue(mid_slices)
+                print(f"   ✅ Slider configured (slices: {count_slices}, current: {mid_slices})")
         except Exception as e:
             print(f"   ❌ ERROR configuring slider: {e}")
-            self.logger.error(f"Error configuring slider: {e}", exc_info=True)
-            raise
+            # Don't raise - allow viewer creation to continue
+            # Just set slider to defaults
+            slider.setMinimum(0)
+            slider.setMaximum(0)
+            slider.setValue(0)
+            print("   ⚠️ Slider set to default values after error")
 
         # Connect signals
         try:
@@ -4166,24 +4176,42 @@ class PatientWidget(QWidget):
             print(f"   ⏭️ Skipping processEvents ({label}) - nested call ({self._critical_sections_running})")
         self._critical_sections_running -= 1
 
-    def create_dummy_vtk_widget(self):
-        """Create a dummy VTKWidget without image data for placeholder"""
+    def _create_lightweight_vtk_placeholder(self):
+        """Create a lightweight VTK widget that defers rendering until data is loaded
+        
+        ✅ FLICKER FIX: This creates a VTK widget with minimal initialization
+        to avoid the black screen flicker while maintaining all required methods
+        """
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
-            vtk_dummy_widget = VTKWidget(height_viewer=height)
+            vtk_widget = VTKWidget(height_viewer=height)
             
-            if vtk_dummy_widget is None:
+            if vtk_widget is None:
                 raise RuntimeError("VTKWidget constructor returned None")
             
-            # Verify widget was created successfully
-            if not hasattr(vtk_dummy_widget, 'render_window'):
-                raise RuntimeError("VTKWidget has no render_window attribute")
+            # ✅ CRITICAL: Set solid background FIRST to prevent any flash
+            if hasattr(vtk_widget, 'renderer'):
+                vtk_widget.renderer.SetBackground(0.10, 0.10, 0.18)  # #1a1a2e in RGB
+                # Force immediate render of background
+                if hasattr(vtk_widget, 'render_window'):
+                    vtk_widget.render_window.Render()
             
-            return vtk_dummy_widget
+            # Minimize rendering updates until real data is loaded
+            if hasattr(vtk_widget, 'render_window'):
+                vtk_widget.render_window.SetDesiredUpdateRate(0.001)  # Very low update rate
+            
+            # Add a flag to indicate this is a placeholder
+            vtk_widget._is_placeholder = True
+            
+            return vtk_widget
         except Exception as e:
-            print(f"❌ Error creating dummy VTK widget: {e}")
-            self.logger.error(f"Error creating dummy VTK widget: {e}", exc_info=True)
+            print(f"❌ Error creating lightweight VTK widget: {e}")
+            self.logger.error(f"Error creating lightweight VTK widget: {e}", exc_info=True)
             return None
+    
+    def create_dummy_vtk_widget(self):
+        """Legacy method - redirects to lightweight placeholder"""
+        return self._create_lightweight_vtk_placeholder()
 
     ##############################################################################################
     ##############################################################################################
