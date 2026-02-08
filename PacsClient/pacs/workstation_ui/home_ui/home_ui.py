@@ -2,6 +2,7 @@ import asyncio
 import base64
 import time
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QSize
@@ -99,6 +100,9 @@ class HomePanelWidget(QWidget):
         self.tab_widget = tab_widget
         self.title_bar_tab_area = title_bar_tab_area
         
+        # Initialize loading message attribute
+        self.loading_message = None
+        
         # Initialize loading feed components
         self._loading_feed_overlay = None
         self._loading_feed_label = None
@@ -148,6 +152,21 @@ class HomePanelWidget(QWidget):
                 apply_anti_aliasing_to_table(self.patient_table_widget.results_table)
         except Exception as e:
             print(f"Error refreshing table anti-aliasing: {str(e)}")
+
+    def show_loading_message(self):
+        if self.loading_message is None:
+            self.loading_message = QLabel("Loading medical images...", self)
+            self.loading_message.setAlignment(Qt.AlignCenter)
+            self.loading_message.setStyleSheet("font-size: 20px; color: blue;")
+            self.loading_message.setGeometry(100, 100, 300, 50)  # Adjust position and size as needed
+            self.loading_message.show()
+
+    def open_patient_widget(self, patient_id, patient_name, study_uid):
+        if self.loading_message:
+            self.loading_message.hide()  # Hide loading message
+        # Logic to open the patient widget goes here
+        patient_widget = PatientWidget(patient_id, patient_name, study_uid)
+        patient_widget.show()  # Show the patient widget
 
     def setup_left_panel(self):
         """
@@ -676,7 +695,7 @@ class HomePanelWidget(QWidget):
             # Update loading feed
             self._update_loading_feed("Checking study data...")
 
-            # --- STEP 3: Open tab IMMEDIATELY ---
+            # --- STEP 3: Open tab but DON'T show yet ---
             caller = CallerTypes.IMPORT if is_local else CallerTypes.SERVER
 
             # Update loading feed
@@ -699,6 +718,28 @@ class HomePanelWidget(QWidget):
                 # Hide loading feed
                 self._hide_loading_feed()
                 return
+
+            # ✅ CRITICAL: Wait for thumbnails to render before showing the tab
+            # This prevents showing empty viewers before thumbnails are ready
+            print("⏳ [TAB] Waiting for thumbnails to render before showing tab...")
+            await asyncio.sleep(0.5)  # 500ms delay to allow thumbnail rendering
+            print("✅ [TAB] Thumbnail wait complete, activating tab...")
+            
+            # NOW activate the tab after thumbnails have had time to render
+            if self.custom_tab_manager:
+                try:
+                    tab_index = self.custom_tab_manager.find_tab_by_study_uid(study_uid)
+                    if tab_index is not None and tab_index != -1:
+                        self.custom_tab_manager.set_tab_active(tab_index)
+                        print(f"✅ [TAB] Activated tab at index {tab_index}")
+                except Exception as e:
+                    print(f"⚠️ [TAB] Error activating tab: {e}")
+            else:
+                try:
+                    self.tab_widget.setCurrentWidget(widget)
+                    print("✅ [TAB] Activated tab via setCurrentWidget")
+                except Exception as e:
+                    print(f"⚠️ [TAB] Error setting current widget: {e}")
 
             # Connect to first-series displayed signal (to hide loading)
             try:
@@ -792,54 +833,54 @@ class HomePanelWidget(QWidget):
                 except Exception as e:
                     print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
 
-            # --- STEP 4: Background tasks (non-blocking) ---
-            async def _safe_task_wrapper(coro, name="unknown"):
-                """Wrapper to safely run async tasks and catch errors"""
-                try:
-                    # Check if coroutine is already awaited
-                    if asyncio.iscoroutine(coro):
-                        return await coro
-                    else:
-                        return coro
-                except RuntimeError as e:
-                    if "Cannot enter into task" in str(e) or "already deleted" in str(e).lower():
-                        # Ignore task re-entry errors - this is a known qasync issue
-                        print(f"⚠️ [TASK:{name}] Ignoring task re-entry error: {e}")
-                        return None
-                    else:
-                        print(f"⚠️ [TASK:{name}] RuntimeError: {e}")
-                except asyncio.CancelledError:
-                    print(f"⚠️ [TASK:{name}] Task was cancelled")
-                    pass  # Task was cancelled, ignore
-                except Exception as e:
-                    print(f"⚠️ [TASK:{name}] Error: {e}")
-                return None
-
-            async def _background_setup():
+            # --- STEP 4: Background tasks (non-blocking via threading to avoid async conflicts) ---
+            def _background_setup_thread():
+                """Run background setup in a separate thread to avoid async conflicts"""
                 try:
                     # Load series info for right panel (non-blocking)
-                    await _safe_task_wrapper(
-                        self._load_and_display_series_info(patient_id, patient_name, study_uid),
-                        "load_series_info"
-                    )
+                    try:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            loop.run_until_complete(
+                                self._load_and_display_series_info(patient_id, patient_name, study_uid)
+                            )
+                        finally:
+                            loop.close()
+                    except Exception as e:
+                        print(f"⚠️ [THREAD] Error loading series info: {e}")
 
                     # Load thumbnails for right panel (non-blocking)
-                    patient_info = {
-                        "PatientID": patient_id,
-                        "PatientName": patient_name,
-                        "StudyInstanceUID": study_uid,
-                    }
-                    await _safe_task_wrapper(
-                        self.show_patient_studies(patient_info),
-                        "show_patient_studies"
-                    )
+                    try:
+                        patient_info = {
+                            "PatientID": patient_id,
+                            "PatientName": patient_name,
+                            "StudyInstanceUID": study_uid,
+                        }
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            loop.run_until_complete(
+                                self.show_patient_studies(patient_info)
+                            )
+                        finally:
+                            loop.close()
+                    except Exception as e:
+                        print(f"⚠️ [THREAD] Error showing patient studies: {e}")
 
                     # Download attachments in background (non-blocking)
                     if not is_local:
-                        await _safe_task_wrapper(
-                            download_attachments_for_study_async(study_uid),
-                            "download_attachments"
-                        )
+                        try:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            try:
+                                loop.run_until_complete(
+                                    download_attachments_for_study_async(study_uid)
+                                )
+                            finally:
+                                loop.close()
+                        except Exception as e:
+                            print(f"⚠️ [THREAD] Error downloading attachments: {e}")
 
                     # Get series list for on-demand download
                     series_list = []
@@ -865,8 +906,8 @@ class HomePanelWidget(QWidget):
                 except Exception as e:
                     print(f"⚠️ [BACKGROUND] Error in background setup: {e}")
 
-            # Start background tasks without waiting
-            asyncio.create_task(_background_setup())
+            # Start background tasks in a separate thread (no async conflicts)
+            threading.Thread(target=_background_setup_thread, daemon=True).start()
 
             # Update loading feed
             self._update_loading_feed("Loading series information...")
@@ -2608,194 +2649,12 @@ class HomePanelWidget(QWidget):
 
     def show_loading(self, title, message, cancellable=False, on_cancel=None,
                      cancel_text="Cancel Searching", dim_background=False):
-        from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, \
-            QGraphicsDropShadowEffect, QPushButton
-        from PySide6.QtCore import QTimer, QPropertyAnimation, QEasingCurve
-        from PySide6.QtGui import QIcon, QColor
-        # بستن دیالوگ قبلی درصورت وجود
-        if hasattr(self, 'loading_dialog') and self.loading_dialog:
-            self.loading_dialog.close()
-
-        if dim_background:
-            self._show_loading_overlay()
-
-        parent_widget = self.window() or self
-        self.loading_dialog = QDialog(parent_widget)
-        self.loading_dialog.setWindowIcon(QIcon("PacsClient/login/images/favicon.ico"))
-        self.loading_dialog.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint)
-        self.loading_dialog.setAttribute(Qt.WA_TranslucentBackground)
-        self.loading_dialog.setModal(True)
-        self.loading_dialog.setFixedSize(400, 210)
-
-        # مرکزچینی
-        if parent_widget:
-            parent_geometry = parent_widget.geometry()
-            x = parent_geometry.x() + (parent_geometry.width() - 400) // 2
-            y = parent_geometry.y() + (parent_geometry.height() - 210) // 2
-            self.loading_dialog.move(x, y)
-        else:
-            screen = QApplication.primaryScreen().geometry()
-            x = (screen.width() - 400) // 2
-            y = (screen.height() - 210) // 2
-            self.loading_dialog.move(x, y)
-
-        main_layout = QVBoxLayout(self.loading_dialog)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-
-        container = QLabel()
-        container.setFixedSize(400, 210)
-        container.setStyleSheet("""
-            QLabel {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(15, 23, 42, 0.95),
-                    stop:0.5 rgba(30, 41, 59, 0.95),
-                    stop:1 rgba(15, 23, 42, 0.95));
-                border: 2px solid rgba(59, 130, 246, 0.6);
-                border-radius: 8px;
-            }
-        """)
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(30)
-        shadow.setColor(QColor(59, 130, 246, 100))
-        shadow.setOffset(0, 5)
-        container.setGraphicsEffect(shadow)
-
-        content_layout = QVBoxLayout(container)
-        content_layout.setContentsMargins(30, 22, 30, 18)
-        content_layout.setSpacing(16)
-
-        header_layout = QHBoxLayout()
-        header_layout.setSpacing(15)
-
-        icon_label = QLabel()
-        icon_label.setPixmap(qta.icon('fa5s.bolt', color='#3b82f6').pixmap(32, 32))
-        icon_label.setStyleSheet("""
-            QLabel {
-                background: rgba(59, 130, 246, 0.1);
-                border: 2px solid rgba(59, 130, 246, 0.3);
-                border-radius: 8px;
-                padding: 8px;
-                min-width: 50px;
-                min-height: 50px;
-            }
-        """)
-        icon_label.setAlignment(Qt.AlignCenter)
-
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(4)
-
-        title_label = QLabel(title)
-        title_label.setStyleSheet("""
-            QLabel { color: #f8fafc; font-size: 14px; font-family: 'Roboto', sans-serif; background: transparent; border: none; }
-        """)
-
-        self._loading_message_label = QLabel(message)
-        self._loading_message_label.setStyleSheet("""
-            QLabel { color: #cbd5e1; font-size: 14px; font-family: 'Roboto', sans-serif; background: transparent; border: none; }
-        """)
-        self._loading_message_label.setWordWrap(True)
-
-        text_layout.addWidget(title_label)
-        text_layout.addWidget(self._loading_message_label)
-
-        header_layout.addWidget(icon_label)
-        header_layout.addLayout(text_layout)
-        header_layout.addStretch()
-
-        progress_bar = QProgressBar()
-        progress_bar.setRange(0, 0)
-        progress_bar.setTextVisible(False)
-        progress_bar.setFixedHeight(6)
-        progress_bar.setStyleSheet("""
-            QProgressBar { border: none; border-radius: 8px; background: rgba(71, 85, 105, 0.3); }
-            QProgressBar::chunk {
-                border-radius: 8px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3b82f6, stop:0.5 #6366f1, stop:1 #8b5cf6);
-            }
-        """)
-
-        dots_layout = QHBoxLayout()
-        dots_layout.setSpacing(8)
-        dots_layout.addStretch()
-        self.status_dots = []
-        for _ in range(3):
-            dot = QLabel()
-            dot.setPixmap(qta.icon('fa5s.circle', color='rgba(59, 130, 246, 0.4)').pixmap(12, 12))
-            dot.setStyleSheet("QLabel { background: transparent; border: none; }")
-            dot.setAlignment(Qt.AlignCenter)
-            self.status_dots.append(dot)
-            dots_layout.addWidget(dot)
-        dots_layout.addStretch()
-
-        content_layout.addLayout(header_layout)
-        content_layout.addWidget(progress_bar)
-        content_layout.addLayout(dots_layout)
-
-        # --- دکمه کنسل اختیاری ---
-        self.loading_cancel_btn = None
-        self._loading_on_cancel_cb = on_cancel
-        if cancellable:
-            btn_row = QHBoxLayout()
-            btn_row.addStretch()
-            self.loading_cancel_btn = QPushButton(qta.icon('fa5s.times', color='white'), cancel_text)
-            self.loading_cancel_btn.setCursor(Qt.PointingHandCursor)
-            self.loading_cancel_btn.setStyleSheet("""
-                QPushButton {
-                    background: #ef4444; color: #ffffff; border: none; border-radius: 8px;
-                    padding: 8px 14px; font-weight: 600; font-size: 12px;
-                    min-width: 120px;
-                    min-height: 15px;
-                }
-                QPushButton:hover { background: #dc2626; }
-                QPushButton:disabled { background: #7f1d1d; color: #dddddd; }
-            """)
-
-            self.loading_cancel_btn.clicked.connect(self._on_cancel_search_clicked if on_cancel is None else on_cancel)
-            btn_row.addWidget(self.loading_cancel_btn, 0, Qt.AlignmentFlag.AlignRight)
-            content_layout.addLayout(btn_row)
-
-        main_layout.addWidget(container)
-
-        # انیمیشن نقاط
-        if not hasattr(self, 'dot_timer'):
-            self.dot_timer = QTimer()
-            self.dot_timer.timeout.connect(self._update_dots)
-            self.dot_index = 0
-        self.dot_timer.start(500)
-
-        self.loading_dialog.setWindowOpacity(1)
-        self.loading_dialog.show()
-        self.loading_dialog.raise_()
-        self.loading_dialog.activateWindow()
-        QApplication.processEvents()
+        """No-op: loading dialog disabled by request."""
+        return
 
     def hide_loading(self):
-        if getattr(self, '_double_click_loading_active', False) and not getattr(self, '_double_click_first_series_loaded', False):
-            return
-        if hasattr(self, 'dot_timer') and self.dot_timer:
-            self.dot_timer.stop()
-
-        # قطع اتصال کال‌بک کنسل (برای ایمنی)
-        if hasattr(self, 'loading_cancel_btn') and self.loading_cancel_btn:
-            try:
-                self.loading_cancel_btn.clicked.disconnect()
-            except Exception:
-                pass
-            self.loading_cancel_btn = None
-            self._loading_on_cancel_cb = None
-
-        if hasattr(self, 'loading_dialog') and self.loading_dialog:
-            fade_out = QPropertyAnimation(self.loading_dialog, b"windowOpacity")
-            fade_out.setDuration(200)
-            fade_out.setStartValue(1)
-            fade_out.setEndValue(0)
-            fade_out.setEasingCurve(QEasingCurve.InCubic)
-            fade_out.finished.connect(self.loading_dialog.close)
-            fade_out.start()
-            self.fade_out_animation = fade_out
-
-        if getattr(self, "_loading_overlay", None) and self._loading_overlay.isVisible():
-            self._hide_loading_overlay()
+        """No-op: loading dialog disabled by request."""
+        return
 
     def _on_cancel_search_clicked(self):
         # جلوگیری از چندبار کلیک
@@ -4194,18 +4053,21 @@ Study UID: {study_uid}
                     )
 
             if self.custom_tab_manager:
+                # ✅ DON'T activate tab yet - let caller activate after thumbnails are ready
                 tab_index = self.custom_tab_manager.add_patient_tab(
                     patient_name=patient_name,
                     patient_id=patient_id or "N/A",
                     thumbnail_path=None,
                     widget=widget,
-                    study_uid=study_uid
+                    study_uid=study_uid,
+                    activate=False  # Don't activate until thumbnails are ready
                 )
                 widget.set_tab_manager(self.custom_tab_manager)
                 widget.update_tab_manager(patient_name=patient_name, patient_id=patient_id)
             else:
-                self.tab_widget.addTab(widget, patient_name)
-                self.tab_widget.setCurrentWidget(widget)
+                # ✅ Add tab but DON'T set as current yet
+                tab_index = self.tab_widget.addTab(widget, patient_name)
+                # DON'T call setCurrentWidget here - let caller do it after thumbnails ready
 
             if study_uid:
                 self.dict_tabs_widget[study_uid] = widget
@@ -4822,108 +4684,21 @@ Study UID: {study_uid}
             return False
 
     def _create_loading_feed(self, message="Loading medical images..."):
-        """Create a custom loading feed overlay with centered message"""
-        try:
-            from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget, QFrame, QGraphicsOpacityEffect
-            from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation
-            from PySide6.QtGui import QFont, QPalette, QColor
-
-            # Create overlay widget that covers the entire parent
-            if self._loading_feed_overlay is None:
-                self._loading_feed_overlay = QWidget(self)
-                self._loading_feed_overlay.setStyleSheet("""
-                    background-color: rgba(0, 0, 0, 180);
-                """)
-                
-                # Set layout for overlay
-                layout = QVBoxLayout(self._loading_feed_overlay)
-                layout.setAlignment(Qt.AlignCenter)
-                
-                # Create label for loading message
-                self._loading_feed_label = QLabel(message)
-                font = QFont()
-                font.setPointSize(14)
-                font.setBold(True)
-                self._loading_feed_label.setFont(font)
-                self._loading_feed_label.setStyleSheet("""
-                    color: white;
-                    background-color: transparent;
-                    padding: 20px;
-                    border-radius: 10px;
-                """)
-                self._loading_feed_label.setAlignment(Qt.AlignCenter)
-                
-                # Add label to layout
-                layout.addWidget(self._loading_feed_label)
-                
-                # Add fade-in animation
-                opacity_effect = QGraphicsOpacityEffect()
-                self._loading_feed_overlay.setGraphicsEffect(opacity_effect)
-                self._fade_in_animation = QPropertyAnimation(opacity_effect, b"opacity")
-                self._fade_in_animation.setDuration(300)
-                self._fade_in_animation.setStartValue(0)
-                self._fade_in_animation.setEndValue(1)
-                self._fade_in_animation.setEasingCurve(QEasingCurve.InOutQuad)
-            
-            # Update message
-            self._loading_feed_label.setText(message)
-            
-            # Resize to cover parent
-            self._loading_feed_overlay.resize(self.size())
-            self._loading_feed_overlay.raise_()  # Bring to front
-            self._loading_feed_overlay.show()
-            
-            # Start fade-in animation
-            self._fade_in_animation.start()
-            
-        except Exception as e:
-            print(f"Error creating loading feed: {e}")
+        """No-op: loading feed disabled by request."""
+        return
 
     def _update_loading_feed(self, message="Loading..."):
-        """Update the loading feed message"""
-        try:
-            if self._loading_feed_label:
-                self._loading_feed_label.setText(message)
-                QApplication.processEvents()
-        except Exception as e:
-            print(f"Error updating loading feed: {e}")
+        """No-op: loading feed disabled by request."""
+        return
 
     def _hide_loading_feed(self):
-        """Hide the loading feed overlay"""
-        try:
-            if self._loading_feed_overlay:
-                # Add fade-out animation
-                from PySide6.QtCore import QEasingCurve, QPropertyAnimation
-                from PySide6.QtWidgets import QGraphicsOpacityEffect
-                
-                opacity_effect = self._loading_feed_overlay.graphicsEffect()
-                if opacity_effect is None:
-                    opacity_effect = QGraphicsOpacityEffect()
-                    self._loading_feed_overlay.setGraphicsEffect(opacity_effect)
-                
-                fade_out_animation = QPropertyAnimation(opacity_effect, b"opacity")
-                fade_out_animation.setDuration(300)
-                fade_out_animation.setStartValue(1)
-                fade_out_animation.setEndValue(0)
-                fade_out_animation.setEasingCurve(QEasingCurve.InOutQuad)
-                
-                def finish_hide():
-                    self._loading_feed_overlay.hide()
-                
-                fade_out_animation.finished.connect(finish_hide)
-                fade_out_animation.start()
-        except Exception as e:
-            print(f"Error hiding loading feed: {e}")
-            # Fallback: just hide the overlay
-            if self._loading_feed_overlay:
-                self._loading_feed_overlay.hide()
+        """No-op: loading feed disabled by request."""
+        return
 
     def resizeEvent(self, event):
-        """Handle resize event to keep loading feed overlay sized properly"""
+        """Handle resize event - loading feed disabled by request."""
         super().resizeEvent(event)
-        # Resize the loading feed overlay to match the parent
-        if self._loading_feed_overlay:
-            self._loading_feed_overlay.resize(self.size())
+        # No loading feed overlay to resize
 
     # def get_series_statistics(self, study_uid: str):
     #     """

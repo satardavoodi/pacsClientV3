@@ -644,7 +644,7 @@ class AppHandler(QDialog):
     def _authenticate_with_socket(self, username: str, password: str) -> tuple:
         """
         Authenticate user with Socket server
-        
+
         Returns:
             tuple: (success: bool, message: str)
         """
@@ -653,31 +653,36 @@ class AppHandler(QDialog):
             client = self.socket_service._ensure_client()
             if not client:
                 return False, "Could not create socket client"
-            
+
             # Try to connect
             if not client.connected:
                 if not client.connect():
                     return False, "Could not connect to server"
-            
+
             # Attempt login
             success, message, token, user = client.login(username, password)
-            
+
             if success:
                 self.auth_token = token
                 self.auth_user = user
-                
+
                 # Store token in TokenManager for use in all socket requests
                 token_manager = get_socket_token_manager()
                 token_manager.set_token(token, user)
-                
+
                 print(f"✅ Authenticated as: {user.get('full_name')} ({user.get('role')})")
                 print(f"✅ Token stored in TokenManager for socket requests")
                 return True, message
             else:
                 return False, message
-                
+
         except Exception as e:
             print(f"❌ Socket authentication error: {e}")
+            # Return a more specific message for connection issues to enable faster fallback
+            error_msg = str(e)
+            if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+                print("⏰ Socket connection timed out - falling back to demo mode quickly")
+                return False, "Server not available (timeout)"
             return False, f"Authentication error: {str(e)}"
     
     def _authenticate_user(self, username, password):

@@ -365,33 +365,33 @@ class SocketDicomClient:
     def send_request(self, endpoint: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Send request to server with authentication
-        
+
         Args:
             endpoint: Endpoint name
             params: Request parameters
-            
+
         Returns:
             Response dict or None on error
         """
         logger.info(f"📤 send_request: {endpoint} - acquiring lock...")
-        
+
         with self.lock:
             logger.info(f"📤 send_request: {endpoint} - lock acquired")
-            
+
             if not self.connected:
                 logger.info(f"📤 send_request: Not connected, attempting connection...")
                 if not self.connect():
                     logger.error(f"❌ send_request: Connection failed!")
                     return None
                 logger.info(f"📤 send_request: Connected successfully")
-            
+
             try:
                 # Build request
                 request = {
                     "endpoint": endpoint,
                     "params": params
                 }
-                
+
                 # Add authentication token (priority: explicit > token_manager)
                 # Skip token for Login endpoint to avoid circular dependency
                 if endpoint != 'Login':
@@ -403,53 +403,58 @@ class SocketDicomClient:
                         logger.info(f"🔐 Added token from manager to {endpoint} request")
                     else:
                         logger.warning(f"⚠️ No auth token available for {endpoint}")
-                
+
                 # Serialize to JSON
                 request_json = json.dumps(request, ensure_ascii=False)
                 request_bytes = request_json.encode('utf-8')
-                
+
                 logger.info(f"📤 Sending {endpoint} request ({len(request_bytes)} bytes)...")
-                
+
                 # Send length prefix (4 bytes, big endian)
                 length_bytes = len(request_bytes).to_bytes(4, byteorder='big')
-                self.socket.send(length_bytes)
-                
+                self.socket.sendall(length_bytes)
+
                 # Send request data
-                self.socket.send(request_bytes)
+                self.socket.sendall(request_bytes)
                 logger.info(f"📤 Request sent, waiting for response...")
-                
+
                 # Receive response length
                 logger.info(f"📥 Waiting for response header (4 bytes)...")
-                response_length_bytes = self.socket.recv(4)
+                response_length_bytes = self._safe_recv(4)
                 if not response_length_bytes:
                     raise NetworkError("Connection closed by server")
-                
+
                 response_length = int.from_bytes(response_length_bytes, byteorder='big')
                 
+                # Validate response length to prevent extremely large allocations
+                if response_length > 50 * 1024 * 1024:  # 50MB limit
+                    raise NetworkError(f"Response too large: {response_length} bytes")
+
                 logger.info(f"📥 Receiving response body ({response_length} bytes)...")
-                
+
                 # Receive response data
                 response_data = b''
                 while len(response_data) < response_length:
                     chunk_size = min(SOCKET_CHUNK_SIZE, response_length - len(response_data))
-                    chunk = self.socket.recv(chunk_size)
+                    chunk = self._safe_recv(chunk_size)
                     if not chunk:
                         raise NetworkError("Connection lost while receiving data")
                     response_data += chunk
                     if response_length > 100000:  # Log progress for large responses
                         logger.info(f"📥 Received {len(response_data)}/{response_length} bytes ({100*len(response_data)//response_length}%)")
-                
+
                 logger.info(f"📥 Response received completely ({len(response_data)} bytes)")
-                
+
                 # Parse response
                 response = json.loads(response_data.decode('utf-8'))
                 logger.info(f"📥 Response parsed: status={response.get('status', 'unknown')}")
                 return response
-            
-            except Exception as e:
-                logger.error(f"❌ Request error for {endpoint}: {e}")
+
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as e:
+                logger.error(f"❌ Connection reset error for {endpoint}: {e}")
                 import traceback
                 logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                # Mark connection as broken and clean up
                 self.connected = False
                 if self.socket:
                     try:
@@ -457,7 +462,65 @@ class SocketDicomClient:
                     except:
                         pass
                     self.socket = None
+                # R30: Record failure for health monitoring
+                self.health_monitor.record_failure()
                 return None
+            except Exception as e:
+                logger.error(f"❌ Request error for {endpoint}: {e}")
+                import traceback
+                logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                # Handle other socket errors that indicate connection problems
+                if isinstance(e, (socket.error, OSError)) or "forcibly closed" in str(e):
+                    self.connected = False
+                    if self.socket:
+                        try:
+                            self.socket.close()
+                        except:
+                            pass
+                        self.socket = None
+                    # R30: Record failure for health monitoring
+                    self.health_monitor.record_failure()
+                return None
+
+    def _safe_recv(self, size: int) -> bytes:
+        """
+        Safely receive data with timeout handling and connection checking
+        
+        Args:
+            size: Number of bytes to receive
+            
+        Returns:
+            Bytes received or empty bytes if connection closed
+        """
+        try:
+            return self.socket.recv(size)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as e:
+            logger.warning(f"⚠️ Connection reset during recv: {e}")
+            self.connected = False
+            if self.socket:
+                try:
+                    self.socket.close()
+                except:
+                    pass
+                self.socket = None
+            return b""
+        except socket.timeout:
+            logger.warning(f"⚠️ Socket timeout during recv")
+            return b""
+        except OSError as e:
+            if e.errno == 10054:  # Connection reset by peer
+                logger.warning(f"⚠️ Connection forcibly closed during recv: {e}")
+                self.connected = False
+                if self.socket:
+                    try:
+                        self.socket.close()
+                    except:
+                        pass
+                    self.socket = None
+                return b""
+            else:
+                logger.error(f"❌ OSError during recv: {e}")
+                raise
     
     def download_batch(
         self,

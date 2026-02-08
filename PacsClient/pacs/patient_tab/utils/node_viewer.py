@@ -20,13 +20,20 @@ class NodeViewer:
                 return False
             
             # Debug info
-            print(f"🔍 NodeViewer.switch_series called for series_index: {series_index}")
+            series_key = series_index
+            try:
+                if metadata and isinstance(metadata, dict):
+                    series_key = metadata.get('series', {}).get('series_number', series_index)
+            except Exception:
+                series_key = series_index
+
+            print(f"🔍 NodeViewer.switch_series called for series_index: {series_index} (key={series_key})")
             print(f"🔍 vtk_widget type: {type(self.vtk_widget)}")
             print(f"🔍 vtk_widget has switch_series: {hasattr(self.vtk_widget, 'switch_series')}")
                 
             # Delegate to the vtk_widget if it has the method
             if hasattr(self.vtk_widget, 'switch_series'):
-                result = self.vtk_widget.switch_series(vtk_image_data, metadata, series_index, vtk_widget_data_2, metadata_2, metadata_fixed)
+                result = self.vtk_widget.switch_series(vtk_image_data, metadata, series_key, vtk_widget_data_2, metadata_2, metadata_fixed)
                 print(f"🔍 vtk_widget.switch_series returned: {result}")
                 return result
             else:

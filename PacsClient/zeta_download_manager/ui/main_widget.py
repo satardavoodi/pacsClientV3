@@ -1332,55 +1332,61 @@ class DownloadManagerWidget(QWidget):
                 logger.info("=" * 80)
                 return
             
-            # Step 4: Log each download to be processed
-            logger.info(f"[PLAY-4] Processing {len(to_process)} downloads...")
+            # Step 4: Set all downloads to PENDING (they'll be queued)
+            logger.info(f"[PLAY-4] Setting {len(to_process)} downloads to PENDING status...")
             for i, state in enumerate(to_process):
                 logger.info(f"[PLAY-4.{i}] {state.patient_name or 'Unknown'} - Status: {state.status.value}")
-            
-            # Step 5: Process each download
-            logger.info(f"[PLAY-5] Starting download workers...")
-            success_count = 0
-            error_count = 0
-            
-            for i, state in enumerate(to_process):
                 try:
-                    logger.info(f"[PLAY-5.{i}] Processing: {state.study_uid[:40]}...")
-                    logger.info(f"[PLAY-5.{i}] Current status: {state.status.value}")
-                    
-                    # Update status to PENDING for restart
-                    logger.info(f"[PLAY-5.{i}] Updating status to PENDING...")
                     self.state_store.update(
                         state.study_uid,
                         status=DownloadStatus.PENDING,
                         error_message=None,
                         is_auto_paused=False
                     )
-                    logger.info(f"[PLAY-5.{i}] Status updated successfully")
-                    
-                    # Start download
-                    logger.info(f"[PLAY-5.{i}] Starting download worker...")
+                except Exception as e:
+                    logger.error(f"[PLAY-4.{i}] ❌ Error updating status: {e}")
+            
+            # Step 5: Start workers up to pool capacity
+            # The rest will be started automatically by _start_next_pending() as workers complete
+            logger.info(f"[PLAY-5] Starting workers up to pool capacity...")
+            max_workers = self.worker_pool.max_workers
+            logger.info(f"[PLAY-5] Pool capacity: {max_workers}, Pending downloads: {len(to_process)}")
+            
+            success_count = 0
+            error_count = 0
+            started_count = 0
+            
+            # Only try to start as many workers as pool capacity allows
+            for i, state in enumerate(to_process):
+                # Check if pool still has capacity
+                if not self.worker_pool.can_add_worker():
+                    logger.info(f"[PLAY-5] Pool at capacity, remaining {len(to_process) - i} downloads will auto-start when slots free up")
+                    break
+                
+                try:
+                    logger.info(f"[PLAY-5.{i}] Starting worker for {state.study_uid[:40]}...")
                     started = self._start_download_worker(state.study_uid)
                     
                     if started:
                         logger.info(f"[PLAY-5.{i}] ✅ Worker started successfully")
                         success_count += 1
+                        started_count += 1
                     else:
-                        logger.warning(f"[PLAY-5.{i}] ⚠️ Worker did not start (pool capacity?)")
+                        logger.warning(f"[PLAY-5.{i}] ⚠️ Worker did not start")
                         error_count += 1
                 
                 except Exception as e:
-                    logger.error(f"[PLAY-5.{i}] ❌ ERROR processing {state.study_uid[:40]}...")
-                    logger.error(f"[PLAY-5.{i}] Error type: {type(e).__name__}")
-                    logger.error(f"[PLAY-5.{i}] Error message: {str(e)}")
+                    logger.error(f"[PLAY-5.{i}] ❌ ERROR: {e}")
                     import traceback
                     logger.error(f"[PLAY-5.{i}] Traceback:\n{traceback.format_exc()}")
                     error_count += 1
             
             # Step 6: Summary
             logger.info(f"[PLAY-6] Processing complete:")
-            logger.info(f"[PLAY-6]   ✅ Success: {success_count}")
+            logger.info(f"[PLAY-6]   ✅ Workers started: {started_count}")
+            logger.info(f"[PLAY-6]   ⏳ Queued (will auto-start): {len(to_process) - started_count - error_count}")
             logger.info(f"[PLAY-6]   ❌ Errors: {error_count}")
-            logger.info(f"[PLAY-6]   📊 Total processed: {len(to_process)}")
+            logger.info(f"[PLAY-6]   📊 Total downloads: {len(to_process)}")
             
             # Step 7: Check final worker pool state
             active_workers_after = self.worker_pool.get_active_count()
@@ -2994,8 +3000,11 @@ class DownloadManagerWidget(QWidget):
                     # Study is completed in database - signal caller to load from local files
                     logger.info(f"✅ {can_add.reason} - Viewer will load from local files")
                 else:
-                    # Other rejection reason
-                    logger.warning(f"⚠️ Cannot add download: {can_add.reason}")
+                    # Other rejection reason - suppress if already completed (expected)
+                    if "already exists" not in can_add.reason.lower() or "completed" not in can_add.reason.lower():
+                        logger.warning(f"⚠️ Cannot add download: {can_add.reason}")
+                    else:
+                        logger.debug(f"Download already complete: {study_uid[:40]}...")
                 
                 return False  # Don't proceed with download
             
