@@ -630,6 +630,17 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.setUpdatesEnabled(False)
         
         try:
+            # ✅ ANTI-FLICKER: Clear the old image immediately before switching
+            # This prevents the old data from showing for a moment
+            if self.image_viewer is not None:
+                try:
+                    renderer = self.render_window.GetRenderers().GetFirstRenderer()
+                    if renderer:
+                        renderer.RemoveAllViewProps()
+                        renderer.SetBackground(0.0, 0.0, 0.0)
+                except:
+                    pass  # Ignore errors on clear
+            
             # OPTIMIZATION: Reuse existing viewer instead of recreating it!
             if self.image_viewer is not None:
                 # Viewer already exists - just update the image data
@@ -652,6 +663,14 @@ class VTKWidget(QVTKRenderWindowInteractor):
                             self.cleanup_image_viewer()
                         else:
                             # Single viewer - use fast reset
+                            # ✅ ANTI-FLICKER: Clear old render before switching
+                            try:
+                                self.render_window.BeginRender()
+                                self.render_window.Render()
+                                self.render_window.EndRender()
+                            except:
+                                pass  # Ignore errors on forced render
+                            
                             self.image_viewer.reset_image_viewer(vtk_image_data, metadata)
                             self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
                             

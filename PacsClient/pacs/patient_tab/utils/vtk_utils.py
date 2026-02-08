@@ -208,7 +208,7 @@ class VTKMemoryManager:
                 actors2d.InitTraversal()
                 actor2d = actors2d.GetNextItem()
                 while actor2d:
-                    renderer.RemoveActor2D(actor2d)
+                    renderer.RemoveViewProp(actor2d)
                     actor2d = actors2d.GetNextItem()
             
             logger.debug("Cleaned up VTK renderer")
