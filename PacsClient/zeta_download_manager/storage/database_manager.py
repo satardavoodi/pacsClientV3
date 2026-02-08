@@ -139,8 +139,50 @@ class DatabaseManager:
             }
         
         except Exception as e:
-            logger.error(f"❌ Database initialization failed: {e}")
-            raise DatabaseError(f"Failed to initialize study: {e}")
+            # Handle UNIQUE constraint error when study already exists
+            import sqlite3
+            if isinstance(e, sqlite3.IntegrityError) and 'UNIQUE constraint failed' in str(e):
+                logger.warning(f"⚠️ Study already exists in database: {task.study_uid}, querying existing records")
+                try:
+                    # Query existing records
+                    from PacsClient.utils.database import get_connection_database
+                    conn = get_connection_database()
+                    cur = conn.cursor()
+                    
+                    # Get patient_pk
+                    cur.execute("SELECT patient_pk FROM patient WHERE patient_id = ?", (task.patient_id,))
+                    patient_row = cur.fetchone()
+                    patient_pk = patient_row[0] if patient_row else None
+                    
+                    # Get study_pk
+                    cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (task.study_uid,))
+                    study_row = cur.fetchone()
+                    study_pk = study_row[0] if study_row else None
+                    
+                    # Get series_pks
+                    series_pks = {}
+                    for series_info in metadata.series_list:
+                        cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_info.series_uid,))
+                        series_row = cur.fetchone()
+                        if series_row:
+                            series_pks[series_info.series_uid] = series_row[0]
+                    
+                    logger.info(
+                        f"💾 DB records found: Patient PK={patient_pk}, Study PK={study_pk}, "
+                        f"{len(series_pks)} series"
+                    )
+                    
+                    return {
+                        'patient_pk': patient_pk,
+                        'study_pk': study_pk,
+                        'series_pks': series_pks
+                    }
+                except Exception as query_error:
+                    logger.error(f"❌ Failed to query existing records: {query_error}")
+                    raise DatabaseError(f"Study exists but failed to query records: {query_error}")
+            else:
+                logger.error(f"❌ Database initialization failed: {e}")
+                raise DatabaseError(f"Failed to initialize study: {e}")
     
     def insert_download_progress(
         self,
