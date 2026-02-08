@@ -578,21 +578,21 @@ class PatientWidget(QWidget):
             if not self._server_series_info:
                 print("📝 [PlaceholderThumbs] No server series info available")
                 return
-            
+
             print(f"📝 [PlaceholderThumbs] Creating placeholder thumbnails for {len(self._server_series_info)} series")
-            
+
             # Sort by series number for consistent ordering
             sorted_series = sorted(self._server_series_info.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999999)
-            
+
             thumb_index = 0
             for series_number, series_info in sorted_series:
                 try:
                     series_name = series_info.get('series_name', f"Series {series_number}")
                     modality = series_info.get('modality', 'Unknown')
                     instance_count = series_info.get('number_of_instances', 0)
-                    
+
                     print(f"📝 [PlaceholderThumbs] Adding placeholder for series {series_number}: {series_name} ({modality}, {instance_count} instances)")
-                    
+
                     # Create a placeholder thumbnail without a file path
                     # This will show series info immediately while actual image loads
                     thumb_index = self.add_thumbnail_to_thumbnail_layout(
@@ -601,11 +601,22 @@ class PatientWidget(QWidget):
                         key_thumbnail=str(series_number),
                         series_info=series_info
                     )
+                    
+                    # Update thumbnail manager to show pending state
+                    if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                        self.thumbnail_manager.set_series_pending(str(series_number))
+                        
                 except Exception as e:
                     print(f"⚠️ [PlaceholderThumbs] Error adding placeholder for series {series_number}: {e}")
-            
+                    import traceback
+                    traceback.print_exc()
+
             print(f"✅ [PlaceholderThumbs] Created {thumb_index} placeholder thumbnails")
-            
+
+            # Update thumbnail count label
+            if hasattr(self, 'thumb_count_label'):
+                self.thumb_count_label.setText(f"{thumb_index} series")
+
         except Exception as e:
             print(f"⚠️ [PlaceholderThumbs] Error creating placeholders: {e}")
             import traceback
@@ -3706,14 +3717,13 @@ class PatientWidget(QWidget):
                 print(f"   ⚠️ Layout creation warning: {le}")
                 raise RuntimeError(f"Failed to create grid layout: {le}")
 
-            # ✅ FLICKER FIX: Only create dummy widget if we're in initialization phase
-            # Otherwise, wait for actual data to be available before creating the viewer
+            # ✅ IMPROVED: Always create a proper VTK widget with actual data if available
             print("   🔍 Checking thumbnail data and initialization state...")
             try:
                 has_data = (hasattr(self, 'lst_thumbnails_data') and
                            self.lst_thumbnails_data and
                            len(self.lst_thumbnails_data) > 0)
-                
+
                 # Check if we're still initializing and don't have data yet
                 is_initializing = getattr(self, '_is_initializing', True)
             except Exception as ce:
@@ -3721,41 +3731,27 @@ class PatientWidget(QWidget):
                 has_data = False
                 is_initializing = True
 
-            if not has_data and not is_initializing:
-                print("   ⚠️ No thumbnail data and not initializing, creating dummy widget...")
+            # ✅ IMPROVED: Create proper VTK widget with actual data if available
+            if has_data and default_thumb_index < len(self.lst_thumbnails_data):
+                print(f"   ✅ Thumbnail data exists ({len(self.lst_thumbnails_data)} items) - creating widget with actual data")
                 try:
-                    vtk_widget = self.create_dummy_vtk_widget()
+                    # Create widget with actual data
+                    vtk_widget = self.create_new_vtk_widget(default_thumb_index)
                     if vtk_widget is None:
-                        raise RuntimeError("create_dummy_vtk_widget returned None")
-                    print("   ✅ Dummy widget created as placeholder")
+                        print("   ⚠️ Failed to create widget with actual data, falling back to dummy")
+                        vtk_widget = self.create_dummy_vtk_widget()
+                    else:
+                        print("   ✅ Created VTK widget with actual data")
                 except Exception as dwe:
-                    print(f"   ❌ Dummy widget creation failed: {dwe}")
-                    raise
-            elif not has_data:
-                print("   ⚠️ No thumbnail data but initializing, creating dummy widget...")
+                    print(f"   ⚠️ Error creating widget with actual data: {dwe}, falling back to dummy")
+                    vtk_widget = self.create_dummy_vtk_widget()
+            else:
+                print("   ⚠️ No thumbnail data available, creating dummy widget...")
                 try:
                     vtk_widget = self.create_dummy_vtk_widget()
                     if vtk_widget is None:
                         raise RuntimeError("create_dummy_vtk_widget returned None")
                     print("   ✅ Dummy widget created")
-                except Exception as dwe:
-                    print(f"   ❌ Dummy widget creation failed: {dwe}")
-                    raise
-            else:
-                print(f"   ℹ️  Thumbnail data exists ({len(self.lst_thumbnails_data)} items) - using lightweight dummy widget")
-                print("   💡 Series data will load in background for responsive UI")
-                try:
-                    # Use dummy widget to keep UI responsive
-                    vtk_widget = self.create_dummy_vtk_widget()
-                    if vtk_widget is None:
-                        raise RuntimeError("create_dummy_vtk_widget returned None")
-                    print("   ✅ Dummy widget created (responsive UI)")
-                    
-                    # Schedule loading actual series data in background
-                    if default_thumb_index < len(self.lst_thumbnails_data):
-                        print(f"   📋 Scheduling series load for index {default_thumb_index}")
-                        # Load series data after a small delay to ensure UI is rendered first
-                        QTimer.singleShot(200, lambda: self._load_series_into_viewer_deferred(vtk_widget, default_thumb_index))
                 except Exception as dwe:
                     print(f"   ❌ Dummy widget creation failed: {dwe}")
                     raise
