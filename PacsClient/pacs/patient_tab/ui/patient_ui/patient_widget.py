@@ -146,8 +146,10 @@ class PatientWidget(QWidget):
 
         # Thread-safe lock for synchronous operations
         self._first_series_lock = threading.Lock()
-        self._pipeline_running = False
 
+        # ✅ CRITICAL: Pipeline state flags - PREVENT DOUBLE EXECUTION
+        self._pipeline_running = False      # Currently executing pipeline
+        self._pipeline_started = False      # Pipeline has been started at least once 
         # Separate locks for different operations to avoid deadlock
         # These are initialized lazily in event loop context
         self._pipeline_lock = None  # Controls pipeline execution
@@ -168,6 +170,9 @@ class PatientWidget(QWidget):
 
         # Event loop reference for proper cleanup
         self._event_loop = None
+
+        # Track current applied layout to avoid redundant rebuilds (flicker fix)
+        self._current_layout = None
 
 
         # Progressive display support
@@ -255,10 +260,37 @@ class PatientWidget(QWidget):
         # Prevent non-user reception auto-switch during load (can cause flicker)
         self._block_reception_autoswitch = True
 
+        self._currently_loading_series = set()
+        self._recently_loaded_series = {}
+        self._pending_border_update = False
+        self._border_update_timer = None
+        self._pipeline_started = False
+
         # Defer VTK initialization to let the window paint first
         # Use longer delay to ensure window is fully painted
         QTimer.singleShot(50, self._start_pipeline)
 
+    def _schedule_border_update(self):
+        if self._pending_border_update:
+            return
+        self._pending_border_update = True
+        
+        if self._border_update_timer:
+            self._border_update_timer.stop()
+        
+        self._border_update_timer = QTimer()
+        self._border_update_timer.setSingleShot(True)
+        self._border_update_timer.timeout.connect(self._apply_batched_borders)
+        self._border_update_timer.start(50)
+
+    def _apply_batched_borders(self):
+        try:
+            if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                count = len(getattr(self.thumbnail_manager, 'series_widgets', {}))
+                if count > 0:
+                    self.thumbnail_manager.apply_border_states_new()
+        finally:
+            self._pending_border_update = False
 
     def add_priority_series_for_display(self, series_number, vtk_image_data, metadata):
         """افزودن سری اولویت‌دار به صف نمایش مستقل"""
@@ -437,31 +469,28 @@ class PatientWidget(QWidget):
             self._init_overlay.raise_()
 
     def _start_pipeline(self):
-        """Deferred pipeline start - called after window is painted"""
-        print("🚀 _start_pipeline called")
-
-        # ✅ PREVENT CONCURRENT EXECUTION
-        if self._pipeline_running:
-            print("⚠️ Pipeline already running, skipping...")
+        if self._pipeline_started:
             return
-
+        if self._pipeline_running:
+            return
+        
         try:
             self._pipeline_running = True
-            print("✅ Pipeline flag set to True")
-            
-            # ✅ FLICKER FIX: Disable UI updates during entire initialization
-            self.setUpdatesEnabled(False)
-
-            # ✅ Use QTimer to schedule pipeline in the main thread
-            QTimer.singleShot(0, lambda: self._run_pipeline_safely())
-
+            self._pipeline_started = True
+            self.setUpdatesEnabled(False)  # 🔒 کلید اصلی
+            QTimer.singleShot(0, self._run_pipeline_safely)
         except Exception as e:
-            print(f"❌ _start_pipeline error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ {e}")
             self._pipeline_running = False
-            self.setUpdatesEnabled(True)  # Re-enable on error
-            self._hide_init_overlay()
+            self.setUpdatesEnabled(True)
+
+    def _run_pipeline_safely(self):
+        try:
+            self.pipeline_manager(self._deferred_caller, self._deferred_size)
+        finally:
+            self._pipeline_running = False
+            self.setUpdatesEnabled(True)  # 🔓 
+            QTimer.singleShot(0, self.update)  # یک بار render
 
     def _run_pipeline_safely(self):
         """Run pipeline safely, handling async context properly"""
@@ -611,6 +640,13 @@ class PatientWidget(QWidget):
                     key_thumbnail=str(series_number),
                     series_info=series_info
                 )
+                # ✅ تمام thumbnail های کش شده ready هستند - حاشیه سبز
+                if hasattr(self, 'thumbnail_manager'):
+                    self.thumbnail_manager.set_series_ready(str(series_number))
+            
+            # ✅ اعمال وضعیت حاشیه‌ها
+            if hasattr(self, 'thumbnail_manager'):
+                self.thumbnail_manager.apply_border_states_new()
         except Exception as e:
             self.logger.debug(f"Error rendering cached thumbnails: {e}")
 
@@ -635,6 +671,16 @@ class PatientWidget(QWidget):
                     key_thumbnail=series_number,
                     series_info=series
                 )
+                # ✅ اگر سری دانلود شده (فایل‌های DICOM موجود)، حاشیه سبز نشان بده
+                if self.import_folder_path:
+                    series_path = Path(self.import_folder_path) / str(series_number)
+                    if series_path.exists() and list(series_path.glob("*.dcm")):
+                        if hasattr(self, 'thumbnail_manager'):
+                            self.thumbnail_manager.set_series_ready(str(series_number))
+            
+            # ✅ اعمال وضعیت حاشیه‌ها
+            if hasattr(self, 'thumbnail_manager'):
+                self.thumbnail_manager.apply_border_states_new()
         except Exception as e:
             self.logger.debug(f"Error rendering server thumbnails: {e}")
 
@@ -699,6 +745,15 @@ class PatientWidget(QWidget):
                                                                      file_path_thumbnail=thumbnail_file,
                                                                      key_thumbnail=series_number,
                                                                      series_info=series_info_from_server)
+                
+                # ✅ سری از قبل دانلود شده، حاشیه سبز نشان بده
+                if hasattr(self, 'thumbnail_manager'):
+                    self.thumbnail_manager.set_series_ready(str(series_number))
+        
+        # ✅ بعد از افزودن همه thumbnail ها، وضعیت حاشیه‌ها را اعمال کن
+        if hasattr(self, 'thumbnail_manager'):
+            self.thumbnail_manager.apply_border_states_new()
+        
         return thumb_index
 
     async def enable_progressive_display(self):
@@ -1047,6 +1102,8 @@ class PatientWidget(QWidget):
                 self.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
                 self.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 0, 1)
                 self.change_container_border(0)
+
+            self._current_layout = (number_of_row, number_of_column)
             
             # ✅ FLICKER FIX: Only process events if not in initialization batch
             if self.updatesEnabled():
@@ -1206,6 +1263,30 @@ class PatientWidget(QWidget):
             print(f"📁 Directory: {series_dir}")
             print(f"{'='*80}")
 
+            series_key = self.resolve_series_key(series_number)
+
+            # Fast path: already in memory -> just switch (no disk reload)
+            try:
+                current_series = None
+                if self.selected_widget and getattr(self.selected_widget, 'image_viewer', None):
+                    current_series = str(self.selected_widget.image_viewer.metadata['series']['series_number'])
+                if current_series == str(series_key):
+                    print(f"⏭️ Series {series_key} already displayed, skipping reload")
+                    return
+            except Exception:
+                pass
+
+            if series_key in self._series_cache:
+                print(f"⚡ Series {series_key} already in cache, switching without reload")
+                self.change_series_on_viewer(series_key, flag_change_selected_widget=True)
+                return
+            else:
+                for data in self.lst_thumbnails_data:
+                    if str(data.get('metadata', {}).get('series', {}).get('series_number')) == str(series_key):
+                        print(f"⚡ Series {series_key} already in memory, switching without reload")
+                        self.change_series_on_viewer(series_key, flag_change_selected_widget=True)
+                        return
+
             # Update folder path if needed
             if series_dir and series_dir != self.import_folder_path:
                 self.import_folder_path = series_dir
@@ -1219,8 +1300,8 @@ class PatientWidget(QWidget):
                 return
 
             # Skip if already loaded
-            series_key = f"series_{series_number}"
-            if series_key in self.lst_series_name:
+            series_flag = f"series_{series_number}"
+            if series_flag in self.lst_series_name:
                 print(f"⏭️ Series {series_number} already loaded")
                 return
 
@@ -1475,6 +1556,8 @@ class PatientWidget(QWidget):
                 self.vtk_layout.addWidget(self.lst_nodes_viewer[2].widget, 1, 0)
                 self.vtk_layout.addWidget(self.lst_nodes_viewer[3].widget, 1, 1)
                 self.change_container_border(0)
+            
+            self._current_layout = (number_of_row, number_of_column)
 
             # Re-enable updates and refresh once
             if hasattr(self, 'vtk_layout') and self.vtk_layout:
@@ -3050,8 +3133,10 @@ class PatientWidget(QWidget):
             # هنوز vtk_image_data برای این سری نداریم → Pending
             self.thumbnail_manager.set_series_pending(series_no_str)
         else:
-            # سری همراه با metadata (و vtk_image_data) آمده → Ready
+            # سری همراه با metadata (و vtk_image_data) آمده → Ready با حاشیه سبز
             self.thumbnail_manager.set_series_ready(series_no_str)
+            # ✅ اعمال فوری وضعیت حاشیه سبز
+            self.thumbnail_manager.apply_border_states_new()
 
         return thumb_index + 1
 
@@ -4260,6 +4345,12 @@ class PatientWidget(QWidget):
 
             _elapsed = time.time() - _start
             print(f"✅ [LOAD] Series {series_number} loaded in {_elapsed:.3f}s")
+            
+            # ✅ بعد از بارگذاری موفق، حاشیه سبز نشان بده
+            if hasattr(self, 'thumbnail_manager'):
+                self.thumbnail_manager.set_series_ready(str(series_number))
+                self.thumbnail_manager.apply_border_states_new()
+            
             return True
 
         except Exception as e:
@@ -4300,11 +4391,24 @@ class PatientWidget(QWidget):
         except Exception as e:
             self.logger.debug(f"Error updating download progress: {e}")
     
-    def load_series_on_demand(self, series_number: str):
-        """
-        Load a series on demand with simple queue-based coordination
-        Avoids async lock conflicts by using non-blocking async calls
-        """
+    def load_series_on_demand(self, series_number):
+        series_key = str(series_number)
+        current_time = time.time()
+        
+        # ✅ جلوگیری از بارگذاری همزمان
+        if series_key in self._currently_loading_series:
+            print(f"⛔ Series {series_key} در حال بارگذاری است")
+            return
+        
+        # ✅ جلوگیری از بارگذاری مجدد (ظرف 2 ثانیه)
+        if series_key in self._recently_loaded_series:
+            last_time = self._recently_loaded_series[series_key]
+            if (current_time - last_time) < 2.0:
+                print(f"⛔ Series {series_key} قبلاً بارگذاری شده")
+                return
+        
+        self._currently_loading_series.add(series_key)
+        
         try:
             # Check if widget is still valid
             try:
@@ -4385,10 +4489,14 @@ class PatientWidget(QWidget):
                 thread = threading.Thread(target=_thread_load, daemon=True, name=f"SeriesLoad-{series_number_str}")
                 thread.start()
 
+            self._recently_loaded_series[series_key] = current_time
+            self._schedule_border_update()
+
         except Exception as e:
             self.logger.error(f"Error in load_series_on_demand: {e}", exc_info=True)
             self._pending_series_loads.discard(series_number_str)
-            
+        finally:
+            self._currently_loading_series.discard(series_key)            
 
     async def load_multiple_series_parallel(self, series_numbers: list, max_concurrent=8):
         """
@@ -5055,6 +5163,12 @@ class PatientWidget(QWidget):
             required_count = rows * cols
             current_count = len(self.lst_nodes_viewer)
             current_data_count = len(self.lst_thumbnails_data)
+            requested_layout = (rows, cols)
+
+            # Skip redundant layout rebuilds to prevent flicker
+            if self._current_layout == requested_layout and current_count == required_count:
+                print(f"✅ [LAYOUT] Layout {rows}x{cols} already applied, skipping rebuild")
+                return
             
             print(f"🔧 [LAYOUT] Applying {rows}x{cols} layout (need {required_count} viewers, have {current_count})")
             
@@ -5114,6 +5228,7 @@ class PatientWidget(QWidget):
                 QTimer.singleShot(500, self._hide_loading_msg)
                 
             print(f"✅ [LAYOUT] Applied {rows}x{cols} layout with {len(self.lst_nodes_viewer)} viewers")
+            self._current_layout = requested_layout
             
         except Exception as e:
             print(f"❌ [LAYOUT] Error: {e}")
@@ -5316,6 +5431,7 @@ class PatientWidget(QWidget):
             
             self._render_batch_pending = False
             self._ui_components_lazy_loaded = False
+            self._current_layout = None
             
             print("✅ cleanup_all_viewers completed")
         except Exception as e:

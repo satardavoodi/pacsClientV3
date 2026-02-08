@@ -105,6 +105,8 @@ class HomePanelWidget(QWidget):
         
         # ✅ رفع خطای اصلی: ایجاد ویژگی _background_tasks
         self._background_tasks = set()  # مجموعه‌ای برای مدیریت تسک‌های پس‌زمینه
+        # Guard to prevent duplicate patient widget opens
+        self._opening_studies = set()
         
         # Initialize custom tab manager with title bar integration
         self.custom_tab_manager = CustomTabManager(tab_widget, title_bar_tab_area) if tab_widget else None
@@ -623,13 +625,31 @@ class HomePanelWidget(QWidget):
         from pathlib import Path
         from PacsClient.pacs.patient_tab.utils.utils import check_study_complete
 
-        # Loading dialog disabled by request
-
-        # Track loading state: keep until first series is displayed
-        self._double_click_loading_active = True
-        self._double_click_first_series_loaded = False
-
         try:
+            # Prevent duplicate open requests for the same study (double-trigger / re-entrancy)
+            if study_uid in self._opening_studies:
+                print(f"⚠️ Duplicate open prevented for study {study_uid}")
+                return
+
+            # If already open, just focus it and exit
+            existing_widget = self._find_widget_by_study_uid(study_uid)
+            if existing_widget:
+                try:
+                    idx = self.tab_widget.indexOf(existing_widget)
+                    if idx != -1:
+                        self.tab_widget.setCurrentIndex(idx)
+                except Exception:
+                    pass
+                return
+
+            self._opening_studies.add(study_uid)
+
+            # Loading dialog disabled by request
+
+            # Track loading state: keep until first series is displayed
+            self._double_click_loading_active = True
+            self._double_click_first_series_loaded = False
+
             # --- STEP 1: Mark as opened immediately (UI feedback) ---
             self.patient_table_widget.update_visited_status(study_uid, status='opened')
             
@@ -833,7 +853,10 @@ class HomePanelWidget(QWidget):
             self._double_click_first_series_loaded = True
             self._maybe_hide_double_click_loading()
         finally:
-            pass
+            try:
+                self._opening_studies.discard(study_uid)
+            except Exception:
+                pass
 
     def _hide_double_click_loading(self):
         """Hide the loading screen specifically for double-click events"""
