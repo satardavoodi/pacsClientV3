@@ -305,12 +305,10 @@ class PatientWidget(QWidget):
                 'added_time': time.time()
             }
             
-            # افزودن به صف (اگر قبلاً نبوده)
             if series_key not in self._priority_series_queue:
                 self._priority_series_queue.append(series_key)
                 print(f"   ✅ Added to queue. Queue length: {len(self._priority_series_queue)}")
             
-            # تلاش برای نمایش فوری
             self._try_display_priority_series(series_key)
             
         except Exception as e:
@@ -640,9 +638,13 @@ class PatientWidget(QWidget):
                     key_thumbnail=str(series_number),
                     series_info=series_info
                 )
-                # ✅ تمام thumbnail های کش شده ready هستند - حاشیه سبز
-                if hasattr(self, 'thumbnail_manager'):
-                    self.thumbnail_manager.set_series_ready(str(series_number))
+                # ✅ فقط اگر فایل‌های DICOM واقعی موجود باشند، حاشیه سبز نشان بده
+                if self.import_folder_path:
+                    series_path = Path(self.import_folder_path) / str(series_number)
+                    # Check if series folder exists and has DICOM files
+                    if series_path.exists() and (list(series_path.glob("*.dcm")) or list(series_path.glob("*.DCM"))):
+                        if hasattr(self, 'thumbnail_manager'):
+                            self.thumbnail_manager.set_series_ready(str(series_number))
             
             # ✅ اعمال وضعیت حاشیه‌ها
             if hasattr(self, 'thumbnail_manager'):
@@ -746,9 +748,13 @@ class PatientWidget(QWidget):
                                                                      key_thumbnail=series_number,
                                                                      series_info=series_info_from_server)
                 
-                # ✅ سری از قبل دانلود شده، حاشیه سبز نشان بده
-                if hasattr(self, 'thumbnail_manager'):
-                    self.thumbnail_manager.set_series_ready(str(series_number))
+                # ✅ فقط اگر فایل‌های DICOM واقعی موجود باشند، حاشیه سبز نشان بده
+                if self.import_folder_path:
+                    series_path = Path(self.import_folder_path) / str(series_number)
+                    # Check if series folder exists and has DICOM files
+                    if series_path.exists() and (list(series_path.glob("*.dcm")) or list(series_path.glob("*.DCM"))):
+                        if hasattr(self, 'thumbnail_manager'):
+                            self.thumbnail_manager.set_series_ready(str(series_number))
         
         # ✅ بعد از افزودن همه thumbnail ها، وضعیت حاشیه‌ها را اعمال کن
         if hasattr(self, 'thumbnail_manager'):
