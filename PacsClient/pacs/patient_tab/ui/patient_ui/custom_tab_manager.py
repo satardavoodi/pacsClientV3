@@ -246,7 +246,7 @@ class CustomTabManager:
                 
                """)
     
-    def add_patient_tab(self, patient_name, patient_id, thumbnail_path=None, widget=None, study_uid=None):
+    def add_patient_tab(self, patient_name, patient_id, thumbnail_path=None, widget=None, study_uid=None, activate=True):
         """
         Add a new patient tab with custom UI
         Prevents duplicate tabs for the same patient using study_uid
@@ -257,14 +257,16 @@ class CustomTabManager:
             thumbnail_path: Path to first thumbnail image
             widget: The widget to display in the tab
             study_uid: Study Instance UID to prevent duplicates
+            activate: Whether to activate (switch to) the tab immediately
         """
         # Check if a tab already exists for this study_uid
         if study_uid and study_uid in self.study_uid_to_tab:
             existing_tab_index = self.study_uid_to_tab[study_uid]
             
-            # Switch to existing tab
-            self.tab_widget.setCurrentIndex(existing_tab_index)
-            self.set_tab_active(existing_tab_index)
+            # Switch to existing tab only if activate is True
+            if activate:
+                self.tab_widget.setCurrentIndex(existing_tab_index)
+                self.set_tab_active(existing_tab_index)
             
             # Update the existing tab with new information if provided
             if patient_name or patient_id or thumbnail_path:
@@ -306,11 +308,11 @@ class CustomTabManager:
         if study_uid:
             self.study_uid_to_tab[study_uid] = tab_index
         
-        # Set as current tab
-        self.tab_widget.setCurrentIndex(tab_index)
-        
-        # Set this tab as active
-        self.set_tab_active(tab_index)
+        # Set as current tab ONLY if activate is True
+        if activate:
+            self.tab_widget.setCurrentIndex(tab_index)
+            # Set this tab as active
+            self.set_tab_active(tab_index)
         
         return tab_index
     
@@ -347,16 +349,27 @@ class CustomTabManager:
         
         if tab_index in self.patient_tabs:
             custom_tab = self.patient_tabs[tab_index]['custom_tab']
-            custom_tab.update_patient_info(patient_name, patient_id, thumbnail_path)
             
-            # Update stored information
-            if patient_name and patient_name != 'N/A':
-                self.patient_tabs[tab_index]['patient_name'] = patient_name
-            if patient_id and patient_id != 'N/A':
-                self.patient_tabs[tab_index]['patient_id'] = patient_id
-            
+            # Check if this is a PatientTabWidget (has update_patient_info method)
+            # ServiceTabWidget and other service tabs don't have this method
+            if hasattr(custom_tab, 'update_patient_info') and callable(getattr(custom_tab, 'update_patient_info')):
+                try:
+                    custom_tab.update_patient_info(patient_name, patient_id, thumbnail_path)
+                    
+                    # Update stored information
+                    if patient_name and patient_name != 'N/A':
+                        self.patient_tabs[tab_index]['patient_name'] = patient_name
+                    if patient_id and patient_id != 'N/A':
+                        self.patient_tabs[tab_index]['patient_id'] = patient_id
+                except Exception as e:
+                    print(f"[CustomTabManager] Error updating patient tab {tab_index}: {e}")
+            else:
+                # ✅ FIX: This is a service tab (Download Manager, Education, etc.) - silently ignore
+                # Service tabs don't need patient info updates
+                pass
         else:
-            print(f"❌ Tab {tab_index} not found in patient_tabs")
+            # ✅ FIX: Silently ignore - tab may be a system tab (Download Manager, Education, etc.)
+            pass  # This is normal for system tabs
     
     def remove_patient_tab(self, tab_index):
         """

@@ -178,8 +178,13 @@ def load_images_from_server(folder_path, patient_pk=None, study_pk=None, study_u
                             lst_series_downloaded: list = None, ordering_by_instances_number=None):
     study_data = get_study_by_study_uid(study_uid)
 
+    # ✅ FIX: Add null check for study_data
     if number_of_instances_on_db is None:
-        number_of_instances_on_db = study_data.get('number_of_instances', None)
+        if study_data and isinstance(study_data, dict):
+            number_of_instances_on_db = study_data.get('number_of_instances', None)
+        else:
+            print(f"⚠️ [load_images_from_server] study_data is None or invalid for study_uid: {study_uid}")
+            number_of_instances_on_db = None
 
     # print('number_of_instances_on_db!!!!!!', number_of_instances_on_db)
 

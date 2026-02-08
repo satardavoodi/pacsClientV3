@@ -458,36 +458,47 @@ class VTKWidget(QVTKRenderWindowInteractor):
         """
         ANTI-FLICKERING: Initialize series without processEvents calls
         """
+        print(f"         [VTK-1] start_process_series called for series {series_index}")
         # Show spinner immediately (non-blocking)
         self.viewport_spinner.show_loading("Loading...")
+        print(f"         [VTK-2] Spinner shown")
 
         try:
             # =====================================================
             # ANTI-FLICKERING: Disable updates during heavy operation
             # =====================================================
+            print(f"         [VTK-3] Disabling updates")
             self.setUpdatesEnabled(False)
 
+            print(f"         [VTK-4] Creating ImageViewer2D")
             self.image_viewer = ImageViewer2D(self.render_window, self.interactor, self.height_viewer, vtk_image_data,
                                               metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
+            print(f"         [VTK-5] ImageViewer2D created")
 
+            print(f"         [VTK-6] Creating interactor style")
             self.style = AbstractInteractorStyle(self.image_viewer)
             self.current_style = self.style
             self.interactor.SetInteractorStyle(self.style)
             self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
+            print(f"         [VTK-7] Interactor style created")
 
             self.last_series_show = series_index
             self.id_vtk_widget = id_vtk_widget
             self.save_status_camera(self.image_viewer)
+            print(f"         [VTK-8] Configuration complete")
 
         finally:
+            print(f"         [VTK-9] Re-enabling updates")
             # Re-enable updates
             self.setUpdatesEnabled(True)
             # Hide spinner with small delay to allow final render
+            print(f"         [VTK-10] Setting timer to hide spinner")
             QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
 
         # Ensure spinner is properly positioned after viewer is created
         if hasattr(self, 'viewport_spinner') and self.viewport_spinner.spinner:
             self.viewport_spinner.spinner.center_in_parent()
+        print(f"         [VTK-11] start_process_series completed")
 
     def reset_image(self, vtk_image_data, metadata):  # reload image
         # Show reset spinner
@@ -710,6 +721,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # Single batched render at the end
             self.image_viewer.UpdateDisplayExtent()
             self.render_window.Render()
+            
+            # ✅ FIX: Force another render to ensure image appears (prevents black viewer)
+            # Some systems need explicit double-render to display properly
+            QTimer.singleShot(10, lambda: self.render_window.Render())
 
             self.last_series_show = series_index
             self.save_status_camera(self.image_viewer)
