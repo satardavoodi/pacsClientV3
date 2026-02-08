@@ -276,8 +276,7 @@ class DownloadExecutor:
                     if completion_callback:
                         completion_callback(study_uid, False)
                     
-                    # Return gracefully without traceback
-                    from PacsClient.zeta_download_manager.core.models import DownloadResult
+                    # Return gracefully without traceback (use module-level import)
                     return DownloadResult(
                         success=False,
                         error_message="Download cancelled by user",
