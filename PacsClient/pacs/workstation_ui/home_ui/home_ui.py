@@ -1524,8 +1524,8 @@ class HomePanelWidget(QWidget):
                 # Display series information in right panel
                 self._display_series_info_in_right_panel(study_info)
 
-                # Also save to database for future use
-                success = self.save_complete_study_info(study_uid, patient_id)
+                # Also save to database for future use (pass study_info to avoid double fetch)
+                success = self.save_complete_study_info(study_uid, patient_id, study_info=study_info)
                 if success:
                     # Clear cache to ensure fresh data
                     clear_study_cache(study_uid)
@@ -4036,6 +4036,53 @@ Study UID: {study_uid}
         else:
             patient_name = patient_name if patient_name is not None else 'N/A'
 
+            # Prevent duplicate PatientWidget creation for the same study
+            if study_uid:
+                existing_widget = None
+                if self.custom_tab_manager:
+                    existing_index = self.custom_tab_manager.find_tab_by_study_uid(study_uid)
+                    if existing_index is not None and existing_index != -1:
+                        try:
+                            self.custom_tab_manager.set_tab_active(existing_index)
+                        except Exception:
+                            pass
+                        tab_info = self.custom_tab_manager.get_patient_tab_info(existing_index)
+                        if tab_info:
+                            existing_widget = tab_info.get('widget')
+                        if existing_widget:
+                            try:
+                                existing_widget.update_tab_manager(
+                                    patient_name=patient_name,
+                                    patient_id=patient_id
+                                )
+                            except Exception:
+                                pass
+                            return existing_widget
+
+                # Fallback to local cache if custom tab manager is not available
+                if study_uid in self.dict_tabs_widget:
+                    existing_widget = self.dict_tabs_widget.get(study_uid)
+                    if existing_widget:
+                        try:
+                            idx = self.tab_widget.indexOf(existing_widget)
+                            if idx != -1:
+                                self.tab_widget.setCurrentIndex(idx)
+                        except Exception:
+                            pass
+                        return existing_widget
+
+                # Last-resort: scan tabs for matching study_uid
+                if self.tab_widget:
+                    for i in range(self.tab_widget.count()):
+                        w = self.tab_widget.widget(i)
+                        if hasattr(w, 'study_uid') and w.study_uid == study_uid:
+                            self.dict_tabs_widget[study_uid] = w
+                            try:
+                                self.tab_widget.setCurrentIndex(i)
+                            except Exception:
+                                pass
+                            return w
+
             if not enable_progressive_mode and study_uid and caller == CallerTypes.SERVER:
                 from PacsClient.pacs.patient_tab.utils import check_study_complete
                 is_complete = check_study_complete(study_uid)
@@ -4084,6 +4131,9 @@ Study UID: {study_uid}
             else:
                 self.tab_widget.addTab(widget, patient_name)
                 self.tab_widget.setCurrentWidget(widget)
+
+            if study_uid:
+                self.dict_tabs_widget[study_uid] = widget
 
             # Notify priority manager that patient tab was opened
             # This promotes all series of this patient to HIGH priority
@@ -4608,19 +4658,24 @@ Study UID: {study_uid}
             print(f"Error getting series info from database: {str(e)}")
             return {}
 
-    def save_complete_study_info(self, study_uid: str, patient_id: str = None):
+    def save_complete_study_info(self, study_uid: str, patient_id: str = None, study_info: dict = None):
         """
         Get complete study and series information and save to database
 
         Args:
             study_uid: Study Instance UID
             patient_id: Patient ID (optional)
+            study_info: Pre-fetched study info (optional, to avoid double fetch)
         """
         try:
 
-            # Get detailed information from server
-            study_info = self.get_series_info_from_server(study_uid, patient_id)
-            print('study_info:', study_info)
+            # Get detailed information from server only if not provided
+            if not study_info:
+                study_info = self.get_series_info_from_server(study_uid, patient_id)
+                print('study_info:', study_info)
+            else:
+                print('✅ Using cached study_info (avoiding double fetch)')
+            
             if not study_info:
                 return False
 

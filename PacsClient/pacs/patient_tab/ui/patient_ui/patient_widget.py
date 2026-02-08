@@ -102,6 +102,9 @@ class PatientWidget(QWidget):
         self._series_name_cache = {}  # Cache for series names {series_number: series_name}
         self._viewer_batch_queue = []  # Queue for batch viewer updates
         
+        # Flag to prevent double thumbnail rendering
+        self._thumbnails_shown = False
+        
         # Patient and study identifiers
         self.tab_manager = None
         self.study_uid = study_uid
@@ -653,9 +656,15 @@ class PatientWidget(QWidget):
         return series_key
 
     def show_exist_thumbnails(self):
+        # Prevent double rendering
+        if self._thumbnails_shown:
+            print("⏭️ Thumbnails already shown, skipping...")
+            return len(check_and_get_thumbnails(self.import_folder_path, self.study_uid) or [])
+        
         thumb_index = 0
         thumbnails = check_and_get_thumbnails(self.import_folder_path, self.study_uid)
         if thumbnails:
+            self._thumbnails_shown = True  # Mark as shown
             # Check if check_logo_patient method exists and has an event loop
             if hasattr(self, 'check_logo_patient') and callable(getattr(self, 'check_logo_patient', None)):
                 try:
@@ -709,26 +718,22 @@ class PatientWidget(QWidget):
                 from PacsClient.pacs.patient_tab.utils import get_study_source_path
                 self.import_folder_path, _ = get_study_source_path(self.study_uid)
 
-            # Show existing thumbnails first (if any)
-            # اول تامب‌نیل‌های موجود را نمایش بده (اگر وجود داشته باشند)
-            count_exist_thumbnails = self.show_exist_thumbnails()
+            # ✅ FIX: Don't call show_exist_thumbnails here - already called in pipeline_manager
+            # ✅ FIX: Don't cleanup viewers here - already done in pipeline_manager
+            # ✅ FIX: Don't create viewers here - already created in pipeline_manager
+            # Just get the count for size calculation
+            thumbnails = check_and_get_thumbnails(self.import_folder_path, self.study_uid)
+            count_exist_thumbnails = len(thumbnails) if thumbnails else 0
+            print(f"📊 [enable_progressive_display] Found {count_exist_thumbnails} thumbnails (already shown)")
 
-            # Create empty viewers synchronously but with processEvents to avoid blocking
-            # ساخت ویوورهای خالی به صورت همزمان اما با processEvents برای جلوگیری از سکته
-
-            # Clear any existing viewers
-            self.cleanup_all_viewers()
-            self.lst_nodes_viewer.clear()
-
-            # Create viewers synchronously (VTK widgets must be created in main thread)
-            # ✅ FLICKER FIX: Only process events if not in initialization batch
-            if self.updatesEnabled():
-                QApplication.processEvents()
+            # Verify we have viewers (should already exist from pipeline_manager)
             default_layout = self._get_default_layout_from_config()
-            self._create_viewers_sync(default_layout)
-            if self.updatesEnabled():
-                QApplication.processEvents()
-            self._show_viewer_loading_all()
+            if not self.lst_nodes_viewer:
+                print("⚠️ No viewers found, creating them...")
+                self.init_matrix_viewers(default_layout)
+                self._show_viewer_loading_all()
+            else:
+                print(f"✅ Using existing {len(self.lst_nodes_viewer)} viewers")
 
             if self.lst_nodes_viewer and len(self.lst_nodes_viewer) > 0:
                 first_viewer = self.lst_nodes_viewer[0]
@@ -761,7 +766,13 @@ class PatientWidget(QWidget):
             if study_uid_downloaded and self.study_uid != study_uid_downloaded:
                 return
             if not getattr(self, '_progressive_display_enabled', False):
-                self.pipeline_manager(caller=CallerTypes.SERVER, size_init_viewers=(1, 1))
+                return
+            
+            # Reset thumbnails flag to allow refresh
+            self._thumbnails_shown = False
+            
+            # Refresh thumbnails
+            self.show_exist_thumbnails()
         except Exception:
             pass
 
@@ -797,7 +808,7 @@ class PatientWidget(QWidget):
                             print(f"✅ [SYNC] Series {series_number} loaded")
                             
                             # Display in viewer
-                            self._create_viewers_sync(size_init_viewers)
+                            self.init_matrix_viewers(size_init_viewers)
                             if self.lst_thumbnails_data:
                                 self._display_first_series_in_viewer()
                         else:
@@ -806,7 +817,7 @@ class PatientWidget(QWidget):
                         print("⚠️ [SYNC] No series folders found")
             else:
                 # Already have data, just display
-                self._create_viewers_sync(size_init_viewers)
+                self.init_matrix_viewers(size_init_viewers)
                 self._display_first_series_in_viewer()
                 
         except Exception as e:
@@ -995,6 +1006,8 @@ class PatientWidget(QWidget):
                     self._hide_loading_spinner()
                     
                     series_no = metadata['series']['series_number']
+                    if (not self._first_series_displayed) or self._any_viewer_empty():
+                        self._display_first_series_in_all_viewers(str(series_no))
                     self.thumbnail_manager.set_series_ready(str(series_no))
                     
                     if file_path and not self.logo_patient:
@@ -1074,9 +1087,6 @@ class PatientWidget(QWidget):
 
     async def _locked_lazy_load(self, size_init_viewers):
         """Run the first-series lazy load without locks to avoid deadlocks."""
-        # Yield control to keep the loop responsive
-        await asyncio.sleep(0)
-
         # Check widget validity before doing heavy work
         try:
             if not self.isVisible():
@@ -1089,9 +1099,6 @@ class PatientWidget(QWidget):
     async def _do_lazy_load_first_series(self, size_init_viewers):
         from pathlib import Path
         study_path = Path(self.import_folder_path)
-
-        # Yield control before I/O operation
-        await asyncio.sleep(0)
 
         # Check if widget is still valid
         try:
@@ -1107,9 +1114,6 @@ class PatientWidget(QWidget):
                 next(d.glob("*.dcm"), None) or next(d.glob("*.DCM"), None)
             )
         )
-
-        # Yield after I/O
-        await asyncio.sleep(0)
 
         # Check if widget is still valid
         try:
@@ -1130,9 +1134,6 @@ class PatientWidget(QWidget):
 
         if not (first_series_folder and first_series_folder.exists()):
             return
-
-        # Yield before heavy operation
-        await asyncio.sleep(0)
 
         # Check if widget is still valid
         try:
@@ -1182,6 +1183,10 @@ class PatientWidget(QWidget):
                 self.update_tab_manager()
 
             self._distribute_series_to_viewers()
+
+            # Ensure the first available series is displayed in all viewers
+            if (not self._first_series_displayed) or self._any_viewer_empty():
+                self._display_first_series_in_all_viewers(str(series_num))
 
         except Exception as e:
             self._handle_loading_error(e, first_series_folder.name)
@@ -1537,7 +1542,8 @@ class PatientWidget(QWidget):
                         QApplication.processEvents()
 
                     # ✅ ساخت viewer مناسب برای هر مودالیتی
-                    self._create_viewers_sync(optimal_layout)
+                    if not self.lst_nodes_viewer:
+                        self.init_matrix_viewers(optimal_layout)
                     if self.updatesEnabled():
                         QApplication.processEvents()
 
@@ -1548,6 +1554,8 @@ class PatientWidget(QWidget):
                     self._hide_loading_spinner()
 
                     series_no = metadata['series']['series_number']
+                    if (not self._first_series_displayed) or self._any_viewer_empty():
+                        self._display_first_series_in_all_viewers(str(series_no))
                     self.thumbnail_manager.set_series_ready(str(series_no))
 
                     if file_path and not self.logo_patient:
@@ -1622,10 +1630,13 @@ class PatientWidget(QWidget):
                     optimal_layout = self.get_optimal_layout_for_series(metadata)
                     print(
                         f"[LAYOUT] Detected modality: {metadata.get('series', {}).get('modality', 'N/A')}, using layout: {optimal_layout}")
-                    self.init_matrix_viewers(optimal_layout)
+                    if not self.lst_nodes_viewer:
+                        self.init_matrix_viewers(optimal_layout)
                     load_viewer = False
                     _viewer_time = time.time() - _viewer_start
                     self._hide_loading_spinner()
+                    if (not self._first_series_displayed) or self._any_viewer_empty():
+                        self._display_first_series_in_all_viewers(str(metadata['series']['series_number']))
 
                 if self.selected_widget:
                     same = self.check_metadata_belong_together(self.selected_widget.image_viewer.metadata, metadata)
@@ -1818,10 +1829,13 @@ class PatientWidget(QWidget):
                 optimal_layout = self.get_optimal_layout_for_series(metadata)
                 modality = metadata.get('series', {}).get('modality', 'N/A')
                 print(f"[LAYOUT] Detected modality: {modality}, using layout: {optimal_layout}")
-                self.init_matrix_viewers(optimal_layout)
+                if not self.lst_nodes_viewer:
+                    self.init_matrix_viewers(optimal_layout)
                 load_viewer = False
                 _viewer_time = time.time() - _viewer_start
                 self._hide_loading_spinner()
+                if (not self._first_series_displayed) or self._any_viewer_empty():
+                    self._display_first_series_in_all_viewers(str(metadata['series']['series_number']))
 
 
             if self.selected_widget:
@@ -3201,7 +3215,7 @@ class PatientWidget(QWidget):
                 if success:
                     print(f"✅ [SYNC_FALLBACK] Series {series_number} loaded")
                     # Create viewers
-                    self._create_viewers_sync(size_init_viewers)
+                    self.init_matrix_viewers(size_init_viewers)
                     # Display first series if available
                     if self.lst_thumbnails_data:
                         self._distribute_series_to_viewers()
