@@ -565,7 +565,15 @@ class PatientWidget(QWidget):
 
         # ✅ NEW: Show placeholder thumbnails immediately from server info (before download completes)
         # This allows users to see the series list before download is done
-        self._render_placeholder_thumbnails_from_server()
+        # Ensure UI updates happen on the main thread
+        try:
+            from PySide6.QtCore import QThread, QMetaObject
+            if QThread.currentThread() != self.thread():
+                QMetaObject.invokeMethod(self, "_render_placeholder_thumbnails_from_server", Qt.QueuedConnection)
+            else:
+                self._render_placeholder_thumbnails_from_server()
+        except Exception:
+            QTimer.singleShot(0, self._render_placeholder_thumbnails_from_server)
         
         # Load real thumbnails (cache → server) in parallel
         QTimer.singleShot(0, self._load_server_thumbnails)
@@ -617,7 +625,10 @@ class PatientWidget(QWidget):
 
             # Update thumbnail count label
             if hasattr(self, 'thumb_count_label'):
-                self.thumb_count_label.setText(f"{thumb_index} series")
+                try:
+                    self.thumb_count_label.setText(f"{thumb_index} series")
+                except RuntimeError:
+                    pass
 
         except Exception as e:
             print(f"⚠️ [PlaceholderThumbs] Error creating placeholders: {e}")
@@ -3632,7 +3643,17 @@ class PatientWidget(QWidget):
             series_info = metadata['series']
         elif series_info:
             # Use series_info from server (passed as parameter)
-            series_name = str(series_info.get('series_number', cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))))
+            if file_path_thumbnail is None:
+                series_name = str(
+                    series_info.get('series_number')
+                    or series_info.get('series_name')
+                    or key_thumbnail
+                    or 'Unknown'
+                )
+            else:
+                series_name = str(
+                    series_info.get('series_number', cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail)))
+                )
         else:
             series_name = cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))
             # Cache the name for future use

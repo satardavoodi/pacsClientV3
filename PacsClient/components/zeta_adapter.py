@@ -63,7 +63,8 @@ def create_download_task_from_study(study_info: dict) -> DownloadTask:
         modality=study_info.get('modality', ''),
         description=study_info.get('description', ''),
         series_list=study_info.get('series_list', []),
-        priority=priority
+        priority=priority,
+        output_dir=Path(SOURCE_PATH) / str(study_info.get('study_uid', ''))
     )
     
     return task

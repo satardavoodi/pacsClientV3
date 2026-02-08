@@ -17,6 +17,7 @@ from ..state.state_store import DownloadStateStore
 from ..rules.rule_engine import DownloadRuleEngine
 from ..network.grpc_client import GrpcMetadataClient
 from ..storage.database_manager import DatabaseManager
+from PacsClient.utils.config import THUMBNAIL_PATH
 from .series_downloader import SeriesDownloader
 
 logger = logging.getLogger(__name__)
@@ -358,16 +359,18 @@ class DownloadExecutor:
             thumbnails: Dict of series_number -> JPEG bytes
         """
         try:
-            thumb_dir = self.base_output_dir / 'thumbnails' / study_uid
+            # ✅ Unified thumbnail cache path (matches UI loaders)
+            thumb_dir = THUMBNAIL_PATH / study_uid
             thumb_dir.mkdir(parents=True, exist_ok=True)
-            
-            for series_number, jpeg_bytes in thumbnails.items():
-                thumb_path = thumb_dir / f"series_{series_number}.jpg"
+
+            for series_number, image_bytes in thumbnails.items():
+                # UI expects {series_number}.png in THUMBNAIL_PATH
+                thumb_path = thumb_dir / f"{series_number}.png"
                 with open(thumb_path, 'wb') as f:
-                    f.write(jpeg_bytes)
-                
-                logger.debug(f"💾 Saved thumbnail: series_{series_number}.jpg")
-        
+                    f.write(image_bytes)
+
+                logger.debug(f"💾 Saved thumbnail: {thumb_path.name}")
+
         except Exception as e:
             logger.warning(f"⚠️ Could not save thumbnails: {e}")
             # Non-critical error, continue

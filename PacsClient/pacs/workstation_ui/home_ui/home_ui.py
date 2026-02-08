@@ -2082,6 +2082,13 @@ class HomePanelWidget(QWidget):
                     # فقط رکوردهای تکمیل/دارای فایل را نمایش بدهیم (رفتار فعلی شما)
                     study_path = patient.get('study_path')
                     if not study_path:
+                        try:
+                            study_uid = patient.get('study_uid')
+                            if study_uid:
+                                study_path = str(SOURCE_PATH / study_uid)
+                        except Exception:
+                            study_path = None
+                    if not study_path:
                         continue
                     try:
                         if not has_subfolders(study_path):

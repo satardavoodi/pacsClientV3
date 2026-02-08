@@ -960,7 +960,8 @@ class DownloadManagerWidget(QWidget):
             study_date=data.get('study_date', ''),
             modality=data.get('modality', ''),
             description=data.get('study_description', ''),
-            series_list=series_list
+            series_list=series_list,
+            output_dir=self.base_output_dir / str(data.get('study_uid', ''))
         )
     
     def add_download_row(self, study_uid: str, state: DownloadState) -> None:
