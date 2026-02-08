@@ -1,11 +1,18 @@
 # AIPacs Copilot Instructions
 
+**Current Stable Version:** v1.09.8.2 (2026-02-08)
+
 ## Architecture map (start here)
 - App entry is `main.py` → `AppHandler` (login) → `MainWindowWidget` → `ControlPanelInterface` → `HomePanelWidget` for patient list and downloads.
 - UI is PySide6 with qasync (`main.py` sets `QEventLoop`) and VTK; keep async UI work on the Qt event loop and offload heavy work to executor threads.
 - Patient workflow lives in `PacsClient/pacs/workstation_ui/home_ui/home_ui.py` and opens `PacsClient/pacs/patient_tab` widgets for viewing.
 - Download stack is Zeta-based: `PacsClient/zeta_download_manager/**` with adapter helpers in `PacsClient/components/zeta_adapter.py`. Legacy download helpers in `home_ui.py` are marked deprecated.
 - Socket comms go through `PacsClient/components/socket_service.py` and config via `PacsClient/utils/socket_config.py` + `config/socket_config.json`.
+
+## Critical rules (learned the hard way)
+- **Do NOT re-sort metadata['instances'] by IPP.** VTK slices are in instance_number order (files are `Instance_NNNN.dcm` loaded via `natsort`). Metadata from DB is already in the correct order. Re-sorting by IPP broke reference lines in v1.09.5-v1.09.7.
+- **The stored DirectionMatrix in field data has row 1 negated** (Y-flip compensation from `convert_itk2vtk`). Do not use it directly for DICOM normal comparisons without un-negating row 1 first.
+- **Local backup of this stable version:** `backups/v1.09.8.2_2026-02-08/`
 
 ## Key flows to preserve
 - Opening a study: `HomePanelWidget._on_patient_double_clicked_async` opens tab immediately, then starts Zeta download with priority and wires progress signals.
@@ -26,3 +33,8 @@
 - Patient UI and tabs: `PacsClient/pacs/patient_tab/**`.
 - MPR modules: `PacsClient/pacs/patient_tab/zeta mpr/**` and `advance_mpr_3d_slicer/**`.
 - Download engine + state: `PacsClient/zeta_download_manager/{core,download,network,storage,state,ui}`.
+
+## Documentation rules for AI
+- When changing image pipeline or sync mapping, update `docs/IMAGE_PIPELINE_REFERENCE.md`.
+- When changing Zeta MPR internals, update `PacsClient/pacs/patient_tab/zeta mpr/ZETA_MPR_PIPELINE_REFERENCE.md`.
+- When bumping versions, update `VERSION_*.md` with date, tag, and commit.

@@ -1,8 +1,11 @@
 # Z‑MPR (Zeta MPR) – Pipeline & Tools Reference
 
+**Version:** 1.09.8.2  
+**Last Updated:** 2026‑02‑08
+
 **Location**: `PacsClient/pacs/patient_tab/zeta mpr/`
 **Scope**: Standard MPR (orthogonal), cross‑lines, tools/measurements, and input orientation handling
-**Generated**: 2026‑02‑05
+**Generated**: 2026‑02‑08
 
 ---
 
@@ -24,6 +27,10 @@
 - `segmentation_tools.py` – lung/airway/vessel/bone segmentation helpers
 - `surface_reconstruction.py` – marching cubes / surface tools
 - `preset_manager.py` – 3D volume presets (depends on `vtk_3d_presets`)
+
+**Related but separate module (v1.09.8.2)**
+- `PacsClient/pacs/patient_tab/orthogonal_mpr/` – Orthogonal MPR viewer widget, launched from toolbar
+   via `ToolbarManager._show_orthogonal_mpr_viewer()`.
 
 ---
 
@@ -72,10 +79,12 @@
   - `_update_slice_positions()` → camera focal points updated
 - This synchronizes axial/sagittal/coronal planes to the crosshair center.
 
-### 3.3 Rotation: **visual only**
-- Oblique reslicing is currently **disabled**.
-- `_update_oblique_reslicing()` returns early and calls `_reset_all_to_orthogonal()`.
-- **Result**: line rotation does **not** create true oblique slices.
+### 3.3 Rotation: **visual vs. oblique**
+- Oblique reslicing is controlled by `StandardMPRViewer.oblique_enabled`.
+- When `oblique_enabled` is `False`, rotations are visual only and `_update_oblique_reslicing()`
+   exits early.
+- When `oblique_enabled` is `True`, oblique reslice transforms are applied via
+   `vtkImageReslice` for the affected views.
 
 ### 3.4 Interaction rules (mouse)
 Implemented in the custom VTK interactor style inside `_add_click_handler()`:
@@ -244,3 +253,13 @@ Z‑MPR receives data that behaves like routine scans.
 - Oblique input requires a **pre‑pipeline canonicalization** layer.
 
 This document is the baseline reference for improvements and architectural changes.
+
+---
+
+## 🧠 AI Notes (Explicit Guidance)
+
+1. **Do not mix Orthogonal MPR and Zeta MPR internals.** They are separate modules.
+2. **If you change crosshair/oblique behavior**, update this document and note
+   whether `oblique_enabled` defaults changed.
+3. **If you modify input orientation handling**, also update
+   `docs/IMAGE_PIPELINE_REFERENCE.md`.
