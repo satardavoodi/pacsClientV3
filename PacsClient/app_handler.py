@@ -391,6 +391,9 @@ class AppHandler(QDialog):
         self.checkbox_remember = self.checkbox_button  # For compatibility
         self._update_checkbox_icon()
         
+        # Load saved credentials if available
+        self.load_saved_credentials()
+
         options_row.addLayout(self.checkbox_container)
         options_row.addWidget(self.license_info_label)
         
@@ -604,24 +607,32 @@ class AppHandler(QDialog):
     def _complete_login(self, username, password):
         """Complete the login process after authentication"""
         self._set_loading_state(False)
-        
+
+        # Validate that both fields are filled before attempting authentication
+        if not username.strip() or not password.strip():
+            self._show_error("Login failed: Username and password are required")
+            return
+
         # Try socket authentication first
         success, message = self._authenticate_with_socket(username, password)
-        
+
         # If socket fails, try demo mode
         if not success:
             success = self._authenticate_user(username, password)
             if success:
                 message = "Login successful (Demo Mode)"
-        
+
         if success:
+            # Save credentials if "Remember Me" is checked
+            self.save_credentials(username, password)
+            
             # Success - fade out and open main window
             fade_out = QPropertyAnimation(self, b"windowOpacity")
             fade_out.setDuration(300)  # Shorter duration
             fade_out.setStartValue(1.0)
             fade_out.setEndValue(0.0)
             fade_out.setEasingCurve(QEasingCurve.OutCubic)
-            
+
             # Store animation reference to prevent garbage collection
             self.fade_animation = fade_out
             fade_out.finished.connect(self._open_main_window)
@@ -740,3 +751,61 @@ class AppHandler(QDialog):
             elif self.line_edit_password.hasFocus():
                 self.login()
         super().keyPressEvent(event)
+
+    def save_credentials(self, username: str, password: str):
+        """Save credentials if 'Remember Me' is checked"""
+        try:
+            if self.checkbox_button.isChecked():
+                import os
+                import json
+                config_dir = os.path.expanduser("~/.aipacs")
+                os.makedirs(config_dir, exist_ok=True)
+                config_file = os.path.join(config_dir, "login_config.json")
+
+                # Store username and password when "Remember Me" is checked
+                config = {
+                    "username": username,
+                    "password": password,
+                    "remember_me": True
+                }
+                
+                with open(config_file, 'w') as f:
+                    json.dump(config, f)
+            else:
+                # Remove saved credentials if unchecked
+                import os
+                config_dir = os.path.expanduser("~/.aipacs")
+                config_file = os.path.join(config_dir, "login_config.json")
+                if os.path.exists(config_file):
+                    os.remove(config_file)
+        except Exception as e:
+            print(f"Error saving credentials: {e}")
+
+    def load_saved_credentials(self):
+        """Load saved credentials if 'Remember Me' was checked previously"""
+        try:
+            import os
+            import json
+            config_dir = os.path.expanduser("~/.aipacs")
+            os.makedirs(config_dir, exist_ok=True)
+            config_file = os.path.join(config_dir, "login_config.json")
+
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    if config.get("remember_me"):
+                        self.line_edit_username.setText(config.get("username", ""))
+                        self.line_edit_password.setText(config.get("password", ""))
+                        self.checkbox_button.setChecked(True)
+                        self._update_checkbox_icon()
+        except Exception as e:
+            print(f"Error loading saved credentials: {e}")
+
+    def closeEvent(self, event):
+        # Ensure cleanup when window is closed
+        if self.socket_service:
+            try:
+                self.socket_service.cleanup()
+            except Exception as e:
+                print(f"Warning: Error during socket service cleanup: {e}")
+        event.accept()

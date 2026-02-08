@@ -718,12 +718,13 @@ class CustomTabManager:
             # Set as current tab
             self.tab_widget.setCurrentIndex(tab_index)
     
-    def add_download_manager_tab(self, widget=None):
+    def add_download_manager_tab(self, widget=None, activate=True):
         """
         Add Download Manager tab with custom tab UI (like patient tabs)
         
         Args:
             widget: The DownloadManagerWidget to display
+            activate: Whether to activate/switch to the tab after creation
         
         Returns:
             int: The index of the added tab
@@ -734,7 +735,8 @@ class CustomTabManager:
         for idx, tab_data in self.patient_tabs.items():
             if tab_data.get('is_download_manager_tab', False):
                 print("[CustomTabManager] Download Manager tab already exists, switching to it")
-                self.set_tab_active_simple(idx)
+                if activate:
+                    self.set_tab_active_simple(idx)
                 return idx
         
         # Create custom tab widget with icon
@@ -767,10 +769,13 @@ class CustomTabManager:
             'is_download_manager_tab': True
         }
         
-        # Set as current tab
-        self.tab_widget.setCurrentIndex(tab_index)
-        self.set_tab_active(tab_index)
-        print(f"[CustomTabManager] Download Manager tab added successfully")
+        # Set as current tab if requested
+        if activate:
+            self.tab_widget.setCurrentIndex(tab_index)
+            self.set_tab_active(tab_index)
+            print(f"[CustomTabManager] Download Manager tab added and activated successfully")
+        else:
+            print(f"[CustomTabManager] Download Manager tab added without activation")
         
         return tab_index
     

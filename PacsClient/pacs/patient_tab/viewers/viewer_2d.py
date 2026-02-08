@@ -700,8 +700,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             current_slice = self.GetSlice()
             # meta = self.metadata['meta_changed'][current_slice]
 
-            study_date = self.metadata_fixed['study_date']
-            series_time = self.metadata_fixed['study_time']
+            study_date = self.metadata_fixed.get('study_date', 'Unknown')
+            series_time = self.metadata_fixed.get('study_time', 'Unknown')
 
             series_name = self.metadata['series']['series_name']
             series_desc = self.metadata['series']['series_description']
@@ -740,8 +740,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         # changeable
         current_slice = self.GetSlice()
-        study_date = self.metadata_fixed['study_date']
-        series_time = self.metadata_fixed['study_time']
+        study_date = self.metadata_fixed.get('study_date', 'Unknown')
+        series_time = self.metadata_fixed.get('study_time', 'Unknown')
 
         series_name = self.metadata['series']['series_name']
         series_desc = self.metadata['series']['series_description']
@@ -801,10 +801,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         gap = 0.02
 
         # fixed
-        p_name = self.metadata_fixed['patient_name']
-        p_id = self.metadata_fixed['patient_id']
-        p_sex = self.metadata_fixed['patient_sex']
-        p_age = self.metadata_fixed['patient_age']
+        p_name = self.metadata_fixed.get('patient_name', 'Unknown')
+        p_id = self.metadata_fixed.get('patient_id', 'Unknown')
+        p_sex = self.metadata_fixed.get('patient_sex', 'Unknown')
+        p_age = self.metadata_fixed.get('patient_age', 'Unknown')
 
         self.dicom_tags_actors.p_name_actor = make_corner_actor(p_name, left, top, 'left', 'top')
         self.dicom_tags_actors.p_id_actor = make_corner_actor(f'PID:{p_id}', left, (top - 1 * gap), 'left', 'top')
@@ -911,7 +911,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         right = 0.96
         gap = 0.02
 
-        hospital_name = self.metadata_fixed['institution_name']
+        hospital_name = self.metadata_fixed.get('institution_name', 'Unknown')
 
         self.dicom_tags_actors.im_hospital_name_actor = make_corner_actor(hospital_name, right, bottom, 'right',
                                                                           'bottom')
@@ -1499,7 +1499,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     def _hide_curved_mpr_overlay(self):
         """Hide the Curved MPR mode overlay text"""
         if self.curved_mpr_overlay_actor is not None:
-            self.renderer.RemoveActor2D(self.curved_mpr_overlay_actor)
+            self.renderer.RemoveViewProp(self.curved_mpr_overlay_actor)
             self.curved_mpr_overlay_actor = None
             self.Render()
             print("[CURVED MPR] Overlay text hidden")
@@ -1766,7 +1766,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 actors2d.InitTraversal()
                 actor2d = actors2d.GetNextItem()
                 while actor2d:
-                    self.renderer.RemoveActor2D(actor2d)
+                    self.renderer.RemoveViewProp(actor2d)
                     actor2d = actors2d.GetNextItem()
 
             # آزاد کردن mapperها و color_mapper

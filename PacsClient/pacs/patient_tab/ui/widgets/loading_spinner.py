@@ -9,38 +9,53 @@ class LoadingSpinner(QWidget):
     Beautiful overlay loading spinner widget for viewport
     Covers entire viewport during loading operations
     """
-    
+
     def __init__(self, parent=None, message="Loading..."):
         super().__init__(parent)
         self.message = message
         self.angle = 0
         self.timer = QTimer()
         self.timer.timeout.connect(self.rotate)
-        
+
         self.setup_ui()
         self.apply_styling()
+        
+        # Ensure proper positioning when parent is resized
+        if self.parent():
+            self.parent().installEventFilter(self)
         
     def setup_ui(self):
         """Setup the overlay spinner UI"""
         # Make it cover the entire parent widget
         if self.parent():
             self.resize(self.parent().size())
-            
+
         # Make it stay on top and cover everything
         self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
         self.setAttribute(Qt.WA_NoSystemBackground, False)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.raise_()
-        
+
         # Enable mouse events to block interaction with underlying widgets
         self.setMouseTracking(True)
+        
+    def eventFilter(self, obj, event):
+        """Handle parent resize events to reposition spinner"""
+        from PySide6.QtCore import QEvent
+        if obj == self.parent() and event.type() == QEvent.Resize:
+            self.center_in_parent()
+        return super().eventFilter(obj, event)
         
     def center_in_parent(self):
         """Resize to cover entire parent widget"""
         if self.parent():
-            self.resize(self.parent().size())
-            self.move(0, 0)
+            # Get the parent's rect (relative to itself) and set the spinner to cover it
+            parent_rect = self.parent().rect()
+            self.setGeometry(parent_rect)
+            
+            # Ensure the spinner stays on top of other elements in the parent
+            self.raise_()
     
     def apply_styling(self):
         """Apply overlay styling to cover entire viewport"""
@@ -54,45 +69,48 @@ class LoadingSpinner(QWidget):
     def paintEvent(self, event):
         """Custom paint event for the overlay spinner"""
         super().paintEvent(event)
-        
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        
+
         # Fill entire background with semi-transparent overlay
         painter.fillRect(self.rect(), QColor(26, 32, 44, 220))  # Dark overlay
-        
-        # Get center and radius for spinner
+
+        # Get center and radius for spinner - ensure it's centered properly in the widget
         center_x = self.width() // 2
         center_y = self.height() // 2 - 20  # Slightly up for text space
-        radius = 30  # Larger radius for better visibility
+        radius = min(30, self.width()//8, self.height()//8)  # Adaptive radius based on widget size, max 30
         
+        # Ensure minimum radius to be visible
+        radius = max(15, radius)
+
         # Draw spinner container background
-        container_radius = 70
+        container_radius = radius + 40
         painter.setPen(QPen(QColor(74, 85, 104, 150), 2))
         painter.setBrush(QColor(45, 55, 72, 200))  # Semi-transparent container
-        painter.drawEllipse(center_x - container_radius, center_y - container_radius, 
+        painter.drawEllipse(center_x - container_radius, center_y - container_radius,
                            container_radius * 2, container_radius * 2)
-        
+
         # Draw spinning circle background
         painter.setPen(QPen(QColor(66, 153, 225, 80), 3))  # Light blue, semi-transparent
         painter.setBrush(Qt.NoBrush)
         painter.drawEllipse(center_x - radius, center_y - radius, radius * 2, radius * 2)
-        
+
         # Draw spinning arc
         painter.setPen(QPen(QColor(66, 153, 225, 255), 4))  # Solid blue
         start_angle = self.angle * 16  # Qt uses 1/16th of a degree
         span_angle = 90 * 16  # 90 degrees
-        painter.drawArc(center_x - radius, center_y - radius, radius * 2, radius * 2, 
+        painter.drawArc(center_x - radius, center_y - radius, radius * 2, radius * 2,
                        start_angle, span_angle)
-        
+
         # Draw message text
         painter.setPen(QPen(QColor(247, 250, 252), 255))  # White text
         font = QFont("Roboto", 12, QFont.Medium)
         painter.setFont(font)
-        
+
         text_rect = QRect(0, center_y + radius + 25, self.width(), 30)
         painter.drawText(text_rect, Qt.AlignCenter, self.message)
-        
+
         painter.end()
     
     def rotate(self):
@@ -105,10 +123,10 @@ class LoadingSpinner(QWidget):
         self.show()
         self.raise_()
         self.center_in_parent()
-        # مطمئن می‌شویم که در بالاترین لایه است
+        # Make sure it's on the topmost layer
         if self.parent():
-            # تنظیم z-order به بالاترین مقدار
-            self.stackUnder(None)  # بردن به بالای stack
+            # Set z-order to topmost
+            self.parent().raise_()  # Ensure parent is visible
         self.timer.start(50)  # 50ms = smooth animation
         
     def stop_spinning(self):
@@ -164,8 +182,10 @@ class ViewportSpinner:
             self.spinner = LoadingSpinner(self.viewport_widget, message)
         else:
             self.spinner.set_message(message)
-            
+
         self.spinner.start_spinning()
+        # Ensure spinner is properly positioned within the viewport
+        self.spinner.center_in_parent()
         
     def show_reset(self, message="Applying reset..."):
         """Show spinner during reset operation"""

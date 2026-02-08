@@ -717,18 +717,45 @@ class FilterConfigWidget(QWidget):
             traceback.print_exc()
 
     # ------------------------------------------------------------------
+    def _ensure_config_file(self):
+        """ایجاد خودکار فایل config اگر وجود نداشت"""
+        try:
+            # اطمینان از وجود پوشهٔ config
+            config_dir = self.config_path.parent
+            if not config_dir.exists():
+                print(f"📁 Creating config directory: {config_dir}")
+                config_dir.mkdir(parents=True, exist_ok=True)
+            
+            # اگر فایل وجود نداشت، آن را از defaults ایجاد کن
+            if not self.config_path.exists():
+                print(f"📝 Creating default filter_settings.json")
+                with open(self.config_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.DEFAULT_FILTERS, f, indent=2, ensure_ascii=False)
+                print(f"✅ Created: {self.config_path}")
+                return True
+            return True
+        except Exception as e:
+            print(f"❌ Error ensuring config file: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def load_config(self):
         """Load configuration from JSON file"""
         try:
             print(f"Loading config from: {self.config_path}")
             
+            # اول فایل را ایجاد کن اگر وجود نداشت
+            self._ensure_config_file()
+            
             if self.config_path.exists():
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     self.filter_settings = json.load(f)
-                print("Config loaded successfully")
+                print("✅ Config loaded successfully")
             else:
-                print("Config file not found, using defaults")
+                print("⚠️ Config file not found, using defaults")
                 self.filter_settings = self.DEFAULT_FILTERS.copy()
+                self._ensure_config_file()  # دوباره سعی کن
             
             # Update UI with loaded settings
             self.update_ui_from_settings()

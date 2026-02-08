@@ -5590,13 +5590,13 @@ class ToolbarManager:
             selected_widget.restore_default_interactorstyle()
 
     def _capture_all_layouts(self):
-        """Capture all layouts in the viewer grid"""
+        """Capture the entire viewer grid as a single image"""
         import os
         import random
         from datetime import datetime
-        import vtkmodules.all as vtk
         from PySide6.QtWidgets import QMessageBox, QApplication
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtGui import QGuiApplication
         
         try:
             # Get study UID
@@ -5610,52 +5610,62 @@ class ToolbarManager:
             if not attach_path.exists():
                 os.makedirs(attach_path, exist_ok=True)
             
-            if not hasattr(self.patient_widget, 'lst_nodes_viewer') or not self.patient_widget.lst_nodes_viewer:
-                QMessageBox.warning(self.patient_widget, "No Viewers", "No viewers available to capture.")
-                return
-            
             # Change cursor to wait
             QApplication.setOverrideCursor(Qt.WaitCursor)
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            captured_count = 0
-            failed_count = 0
             
-            # Capture each viewer
-            for i, node in enumerate(self.patient_widget.lst_nodes_viewer):
-                try:
-                    vtk_widget = node.vtk_widget
-                    
-                    # Check if widget has render window
-                    if hasattr(vtk_widget, 'GetRenderWindow'):
-                        render_window = vtk_widget.GetRenderWindow()
-                        
-                        # Ensure render is up to date
-                        render_window.Render()
-                        
-                        # Window to image filter
-                        wti = vtk.vtkWindowToImageFilter()
-                        wti.SetInput(render_window)
-                        wti.SetInputBufferTypeToRGB()
-                        wti.ReadFrontBufferOff()
-                        wti.Update()
-                        
-                        # Generate filename with position info
-                        filename = f"capture_total_{timestamp}_pos{i+1}.png"
-                        full_path = str(attach_path / filename)
-                        
-                        # PNG Writer
-                        writer = vtk.vtkPNGWriter()
-                        writer.SetFileName(full_path)
-                        writer.SetInputConnection(wti.GetOutputPort())
-                        writer.Write()
-                        
-                        captured_count += 1
-                        print(f"[CAPTURE] Saved: {filename}")
-                        
-                except Exception as e:
-                    print(f"[ERROR] Failed to capture layout {i}: {e}")
-                    failed_count += 1
+            # Generate filename
+            filename = f"capture_all_layouts_{timestamp}.png"
+            full_path = str(attach_path / filename)
+            
+            # Find the main viewer container widget
+            # The patient_widget should have a viewer_container or similar
+            target_widget = None
+            
+            # Find the widget that contains vtk_layout (the grid of viewers)
+            if hasattr(self.patient_widget, 'vtk_layout') and self.patient_widget.vtk_layout:
+                # Get the parent widget of vtk_layout
+                target_widget = self.patient_widget.vtk_layout.parentWidget()
+                if target_widget is None:
+                    print("[ERROR] vtk_layout has no parent widget")
+                    target_widget = self.patient_widget
+            else:
+                print("[WARNING] vtk_layout not found, using patient_widget")
+                target_widget = self.patient_widget
+            
+            print(f"[CAPTURE] Capturing widget: {target_widget}")
+            
+            # Force update/repaint before capture
+            target_widget.repaint()
+            QApplication.processEvents()
+            QTimer.singleShot(120, lambda: None)  # Small delay for rendering
+            QApplication.processEvents()
+
+            # Capture the entire widget as pixmap (OpenGL-safe)
+            screen = None
+            try:
+                window_handle = target_widget.window().windowHandle()
+                screen = window_handle.screen() if window_handle else None
+            except Exception:
+                screen = None
+
+            if screen is None:
+                screen = QGuiApplication.primaryScreen()
+
+            pixmap = screen.grabWindow(int(target_widget.winId())) if screen else None
+
+            # Fallback to QWidget.grab() if screen grab failed
+            if pixmap is None or pixmap.isNull():
+                pixmap = target_widget.grab()
+            
+            # Save the pixmap
+            if pixmap and not pixmap.isNull() and pixmap.save(full_path, "PNG"):
+                print(f"[CAPTURE] Saved: {filename}")
+                success = True
+            else:
+                print(f"[ERROR] Failed to save: {filename}")
+                success = False
             
             # Restore cursor
             QApplication.restoreOverrideCursor()
@@ -5664,16 +5674,19 @@ class ToolbarManager:
             self.update_capture_counter()
             
             # Show result message
-            msg = f"✅ Captured {captured_count} layouts successfully!\n"
-            if failed_count > 0:
-                msg += f"⚠️ {failed_count} layouts failed.\n"
-            msg += f"\n📁 Saved to: {attach_path}"
-            
-            QMessageBox.information(
-                self.patient_widget,
-                "Total Capture Complete",
-                msg
-            )
+            if success:
+                msg = f"✅ Captured entire layout successfully!\n\n📁 Saved to: {attach_path}"
+                QMessageBox.information(
+                    self.patient_widget,
+                    "Layout Capture Complete",
+                    msg
+                )
+            else:
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Capture Failed",
+                    "Failed to save the capture image."
+                )
             
         except Exception as e:
             QApplication.restoreOverrideCursor()

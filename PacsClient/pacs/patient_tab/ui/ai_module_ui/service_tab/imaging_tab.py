@@ -844,14 +844,14 @@ class ImagingToolsTab(AbstractTab):
 
         key = self.lst_boxes_combo.currentText().strip()
         if not key or key not in self._sidebar_store:
-            show_message("لطفاً یک باکس را انتخاب کنید.")
+            show_message("Please select a box.")
             return
 
         data_selected = self._sidebar_store[key]
         status = self.rb_abnormal.isChecked()
         box_object: BoxManager = data_selected.get('box_object', None)
         if not box_object:
-            show_message("box_object یافت نشد.")
+            show_message("Box object not found.")
             return
         corner_ijk_points = box_object.ijk_points
 

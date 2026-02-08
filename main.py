@@ -360,7 +360,19 @@ if __name__ == "__main__":
         """Clean up all download state when application is about to quit"""
         try:
             print("🧹 Application shutting down - preserving download history...")
-            
+
+            # Stop any active download workers before closing event loop
+            try:
+                from PacsClient.components import zeta_adapter
+                worker_pool = getattr(zeta_adapter, "_zeta_worker_pool", None)
+                if worker_pool:
+                    worker_pool.stop_all()
+                dm_widget = getattr(zeta_adapter, "_zeta_download_manager_widget", None)
+                if dm_widget and hasattr(dm_widget, "worker_pool"):
+                    dm_widget.worker_pool.stop_all()
+            except Exception as e:
+                print(f"⚠️ Error stopping download workers: {e}")
+
             # IMPORTANT: DO NOT clear database download progress records!
             # They need to persist across app restarts so users don't re-download completed studies
             # from PacsClient.utils.database import clear_all_download_progress
@@ -368,12 +380,12 @@ if __name__ == "__main__":
             # if cleared > 0:
             #     print(f"   ✅ Cleared {cleared} database progress records")
             print("   ℹ️  Database history preserved (for 'Already Downloaded' checks)")
-            
+
             # Clear UI persistence file so Download Manager list is empty on restart
             # (Database still remembers what was downloaded for checking)
             import sys
             from pathlib import Path
-            
+
             # Get persistence file path (same logic as in download_manager_ui.py)
             if sys.platform == "win32":
                 import os
@@ -388,11 +400,11 @@ if __name__ == "__main__":
                 import os
                 config_dir = os.getenv('XDG_CONFIG_HOME', Path.home() / '.config')
                 persistence_file = Path(config_dir) / 'aipacs' / 'download_manager' / 'download_manager_state.json'
-            
+
             if persistence_file.exists():
                 persistence_file.unlink()
                 print(f"   ✅ Cleared UI list (Download Manager will be empty on restart)")
-            
+
             # Note: We also preserve progress files for resumable downloads
             # These allow incomplete downloads to resume from where they left off
             # try:
@@ -407,14 +419,21 @@ if __name__ == "__main__":
             #         print(f"   ✅ Cleared progress files from {progress_dir}")
             # except Exception as e:
             #     print(f"   ⚠️ Could not clear progress files: {e}")
-            
+
             print("✅ Shutdown complete:")
             print("   - Database history preserved (for 'Already Downloaded' checks)")
             print("   - UI list cleared (Download Manager will be empty on restart)")
-            
+
         except Exception as e:
             print(f"⚠️ Error during shutdown cleanup: {e}")
-    
+        finally:
+            # Only request stop here; final close happens after loop.run_forever()
+            try:
+                if loop.is_running():
+                    loop.stop()
+            except Exception as e:
+                print(f"⚠️ Error stopping event loop: {e}")
+
     # Connect cleanup handler to aboutToQuit signal
     app.aboutToQuit.connect(cleanup_on_quit)
     # === END cleanup handler ===
@@ -423,4 +442,10 @@ if __name__ == "__main__":
     window.show()
     # sys.exit(app.exec())
     with loop:
-        loop.run_forever()
+        try:
+            loop.run_forever()
+        finally:
+            # Ensure the loop is closed when exiting
+            if not loop.is_closed():
+                loop.close()
+                print("✅ Event loop closed")

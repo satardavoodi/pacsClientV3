@@ -839,3 +839,15 @@ class MainWindowWidget(QWidget):
         super().moveEvent(event)
         if (not self.isMaximized()) and (not self.isMinimized()) and (not (self.windowState() & Qt.WindowFullScreen)):
             self._normal_geometry = self.geometry()
+
+    def closeEvent(self, event):
+        # Perform cleanup when the main window is closed
+        try:
+            # Close any active socket connections
+            from PacsClient.components.socket_service import get_socket_service
+            socket_service = get_socket_service()
+            socket_service.cleanup()
+        except Exception as e:
+            print(f"Warning: Error during main window cleanup: {e}")
+        
+        event.accept()

@@ -8,6 +8,11 @@ import logging
 import asyncio
 import threading
 from typing import Optional, Callable
+
+# ✅ Custom exception for graceful cancellation (no traceback)
+class DownloadCancelled(Exception):
+    """Raised when download is cancelled by user - handled gracefully"""
+    pass
 from PySide6.QtCore import QThread, Signal
 
 from ..core.models import DownloadTask, DownloadResult
@@ -68,6 +73,7 @@ class DownloadWorker(QThread):
         This method runs in a separate thread and should not be called directly.
         Use start() to begin execution.
         """
+        loop: Optional[asyncio.AbstractEventLoop] = None
         try:
             logger.info(f"🔄 Worker started: {self.task.patient_name}")
             
@@ -103,6 +109,17 @@ class DownloadWorker(QThread):
             self.completed.emit(self.task.study_uid, False)
         
         finally:
+            # Close loop to avoid ResourceWarning
+            try:
+                if loop:
+                    if loop.is_running():
+                        loop.stop()
+                    if not loop.is_closed():
+                        loop.close()
+            except Exception:
+                pass
+            finally:
+                asyncio.set_event_loop(None)
             # R40: Worker cleanup always required
             self._cleanup()
     
@@ -149,10 +166,10 @@ class DownloadWorker(QThread):
         """
         logger.info(f"📊 [WORKER-PROGRESS] Progress callback called: {event_type}, series={series_number}, {progress_percent:.1f}% ({downloaded}/{total})")
         
-        # Check if cancelled (R39)
+        # Check if cancelled (R39) - use custom exception for graceful handling
         if self.is_cancelled():
             logger.info(f"⏸️ Cancellation detected in progress callback")
-            raise InterruptedError("Download cancelled by user")
+            raise DownloadCancelled("Download cancelled by user")
         
         # Emit progress signal
         logger.info(f"📊 [WORKER-PROGRESS] Emitting progress signal...")
