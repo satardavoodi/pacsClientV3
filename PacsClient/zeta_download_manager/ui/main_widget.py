@@ -914,6 +914,7 @@ class DownloadManagerWidget(QWidget):
         from ..core.models import SeriesInfo
         
         # Extract series list from study data
+        study_uid = data.get('study_uid', '')
         series_dicts = data.get('series', [])
         
         # Debug logging
@@ -954,13 +955,14 @@ class DownloadManagerWidget(QWidget):
             logger.info(f"   ✅ Converted {len(series_list)} series successfully")
         
         return DownloadTask(
-            study_uid=data.get('study_uid', ''),
+            study_uid=study_uid,
             patient_id=data.get('patient_id', ''),
             patient_name=data.get('patient_name', ''),
             study_date=data.get('study_date', ''),
             modality=data.get('modality', ''),
             description=data.get('study_description', ''),
-            series_list=series_list
+            series_list=series_list,
+            output_dir=(self.base_output_dir / study_uid) if study_uid else None
         )
     
     def add_download_row(self, study_uid: str, state: DownloadState) -> None:
@@ -2985,7 +2987,8 @@ class DownloadManagerWidget(QWidget):
                 description=study_data.get('study_description', ''),
                 modality=study_data.get('modality', ''),
                 series_list=series_info_list,
-                priority=priority_enum
+                priority=priority_enum,
+                output_dir=(self.base_output_dir / study_uid) if study_uid else None
             )
             
             # ========== STEP 2: VALIDATE WITH RULE ENGINE (R17) ==========
