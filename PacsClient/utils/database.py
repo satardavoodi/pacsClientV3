@@ -2458,6 +2458,8 @@ def bulk_insert_instances(instances_data: list):
     """
     Bulk insert multiple instances at once for better performance.
     instances_data: list of dicts with instance information
+    
+    ✅ FIX: Use INSERT OR IGNORE to skip duplicates instead of raising UNIQUE constraint error
     """
     if not instances_data:
         return
@@ -2465,9 +2467,10 @@ def bulk_insert_instances(instances_data: list):
     conn = get_connection_database()
     cur = conn.cursor()
     
-    # Prepare bulk insert
+    # ✅ FIX: Use INSERT OR REPLACE to handle duplicates gracefully
+    # This will update existing records instead of failing
     insert_sql = """
-        INSERT INTO instances (
+        INSERT OR REPLACE INTO instances (
             sop_uid, series_fk, instance_path, instance_number,
             rows, columns, window_width, window_center, is_rgb, group_id,
             image_position_patient, image_orientation_patient, pixel_spacing, direction
@@ -2494,10 +2497,16 @@ def bulk_insert_instances(instances_data: list):
             inst['direction']
         ))
     
-    # Execute bulk insert
-    cur.executemany(insert_sql, values)
-    conn.commit()
-    conn.close()
+    try:
+        # Execute bulk insert
+        cur.executemany(insert_sql, values)
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Warning during bulk_insert_instances: {e}")
+        # Try to rollback and continue
+        conn.rollback()
+    finally:
+        conn.close()
 
 
 def bulk_update_instances(instances_data: list):

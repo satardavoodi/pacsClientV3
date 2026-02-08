@@ -150,7 +150,7 @@ class DatabaseManager:
                     cur = conn.cursor()
                     
                     # Get patient_pk
-                    cur.execute("SELECT patient_pk FROM patient WHERE patient_id = ?", (task.patient_id,))
+                    cur.execute("SELECT patient_pk FROM patients WHERE patient_id = ?", (task.patient_id,))
                     patient_row = cur.fetchone()
                     patient_pk = patient_row[0] if patient_row else None
                     
