@@ -13,11 +13,14 @@ from PacsClient.pacs.patient_tab.utils import read_segment_nifti
 import vtkmodules.all as vtk
 from PySide6.QtWidgets import QApplication
 
+logger = logging.getLogger(__name__)
+
 # =====================================================
 # ANTI-FLICKERING CONSTANTS
 # =====================================================
 _RENDER_THROTTLE_MS = 16  # ~60fps max render rate
 _SPINNER_HIDE_DELAY_MS = 50  # Delay before hiding spinner to allow final render
+_SYNC_MOVE_THROTTLE_MS = 16  # min interval between sync mouse move processing (~60fps)
 
 
 def grow_vtk_inplace(old_input, new_vtk_image_data):
@@ -123,6 +126,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._sync_prev_style = None
         self._sync_style = None
         self._target_cursor = None
+        self._sync_last_move_time = 0.0  # throttle mouse-move events
+        self._on_slice_changed_cb = None  # Lock Sync callback
 
     def _schedule_render(self, delay_ms=None):
         """
@@ -311,6 +316,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if not self._sync_enabled or not self._sync_dragging or self.image_viewer is None:
             return
 
+        # Throttle: skip if too soon since last processing
+        now = time.time() * 1000.0
+        if (now - self._sync_last_move_time) < _SYNC_MOVE_THROTTLE_MS:
+            return
+        self._sync_last_move_time = now
+
         display_x, display_y = self.interactor.GetEventPosition()
         world_pos = self.image_viewer.pick_world_point(display_x, display_y)
         if world_pos is None:
@@ -337,9 +348,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         orient = self.image_viewer.GetSliceOrientation()
         cur_slice = self.image_viewer.GetSlice()
-        print(
-            f"[SYNC SOURCE] viewer={self._sync_viewer_id} orient={orient} slice={cur_slice} "
-            f"→ world_pos=({world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f})"
+        logger.debug(
+            "[SYNC SOURCE] viewer=%s orient=%d slice=%d → world_pos=(%.2f, %.2f, %.2f)",
+            self._sync_viewer_id, orient, cur_slice,
+            world_pos[0], world_pos[1], world_pos[2],
         )
 
         self.image_viewer.set_sync_point(world_pos, adjust_slice=False)
@@ -743,12 +755,20 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # Notify interactor style if it's a ruler style
         try:
             style = self.interactor.GetInteractorStyle()
-            style.update_slice()
+            if hasattr(style, 'update_slice'):
+                style.update_slice()
 
         except Exception as e:
             print(f"Error updating on slice change: {e}")
 
         self._update_overlay_extent()
+
+        # Lock Sync callback — fires on EVERY slice change regardless of source
+        if self._on_slice_changed_cb is not None:
+            try:
+                self._on_slice_changed_cb(self)
+            except Exception:
+                pass
 
     def set_slider(self, slider):
         self.slider = slider
@@ -818,7 +838,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # Additional check for ruler style
             try:
                 style = self.interactor.GetInteractorStyle()
-                style.update_slice()
+                if hasattr(style, 'update_slice'):
+                    style.update_slice()
 
             except Exception as e:
                 print(f"Error updating ruler on wheel event: {e}")

@@ -3,7 +3,7 @@ Zeta Download Manager
 Modern, modular DICOM download system with clean architecture
 """
 
-__version__ = "1.0.7"
+__version__ = "1.09.8.2"
 __author__ = "AIPACS Development Team"
 
 from .core.enums import DownloadPriority, DownloadStatus

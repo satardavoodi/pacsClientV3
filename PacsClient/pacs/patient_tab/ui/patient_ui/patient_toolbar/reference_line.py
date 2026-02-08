@@ -7,6 +7,53 @@ def rl_eps() -> float:
     return 1e-7
 
 
+# ---------------------------------------------------------------------------
+# Metadata instance sorting – align metadata['instances'][k] with VTK slice k
+# ---------------------------------------------------------------------------
+
+def rl_sort_instances_by_ipp(instances):
+    """
+    Sort a list of DICOM instance dicts so that index k corresponds to the
+    same slice as VTK / SimpleITK voxel-Z index k.
+
+    SimpleITK (via GDCM) sorts slices by the projection of
+    ImagePositionPatient onto cross(IOP_row, IOP_col), ascending.  Metadata
+    coming from the DB is typically ordered by InstanceNumber, which may
+    differ from that geometric ordering.
+
+    If IOP or IPP data is missing, the list is returned unchanged.
+    """
+    if not instances or len(instances) <= 1:
+        return instances
+
+    # IOP from the first instance (assumed constant across slices)
+    iop = instances[0].get('image_orientation_patient')
+    if iop is None or len(iop) < 6:
+        return instances
+
+    try:
+        row_dir = np.asarray(iop[0:3], dtype=float)   # IOP row cosines
+        col_dir = np.asarray(iop[3:6], dtype=float)    # IOP column cosines
+        normal = np.cross(row_dir, col_dir)             # same convention as GDCM
+        norm_len = np.linalg.norm(normal)
+        if norm_len < 1e-12:
+            return instances
+        normal /= norm_len
+    except Exception:
+        return instances
+
+    def _ipp_key(inst):
+        ipp = inst.get('image_position_patient')
+        if ipp is None:
+            return 0.0
+        try:
+            return float(np.dot(np.asarray(ipp, dtype=float), normal))
+        except Exception:
+            return 0.0
+
+    return sorted(instances, key=_ipp_key)
+
+
 def rl_clip_plane_with_quad(p_plane, n_plane, quad_pts):
     """
     Intersect a plane with a convex quad (slice rectangle).

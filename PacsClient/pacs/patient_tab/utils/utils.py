@@ -259,6 +259,24 @@ def convert_itk2vtk(itk_image: sitk.Image):
     origin_array.SetValue(2, _itk_origin[2])
     vtk_image.GetFieldData().AddArray(origin_array)
 
+    # Store original ITK spacing (before any display upsampling)
+    spacing_arr = vtk.vtkDoubleArray()
+    spacing_arr.SetName("ITKSpacing")
+    spacing_arr.SetNumberOfTuples(3)
+    spacing_arr.SetValue(0, _itk_spacing[0])
+    spacing_arr.SetValue(1, _itk_spacing[1])
+    spacing_arr.SetValue(2, _itk_spacing[2])
+    vtk_image.GetFieldData().AddArray(spacing_arr)
+
+    # Store original ITK dimensions (before any display upsampling)
+    dims_arr = vtk.vtkDoubleArray()
+    dims_arr.SetName("ITKDimensions")
+    dims_arr.SetNumberOfTuples(3)
+    dims_arr.SetValue(0, float(x))
+    dims_arr.SetValue(1, float(y))
+    dims_arr.SetValue(2, float(z))
+    vtk_image.GetFieldData().AddArray(dims_arr)
+
     # OPTIMIZATION: Only copy if contiguous is required
     if not arr.flags['C_CONTIGUOUS']:
         arr = arr.copy()
@@ -323,6 +341,30 @@ def convert_itk2vtk_fast_first(itk_image: sitk.Image) -> tuple:
             for j in range(4):
                 direction_array.SetValue(i * 4 + j, direction_matrix.GetElement(i, j))
         vtk_image_data.GetFieldData().AddArray(direction_array)
+
+        # Store original ITK origin
+        origin_arr = vtk.vtkDoubleArray()
+        origin_arr.SetName("ITKOrigin")
+        origin_arr.SetNumberOfTuples(3)
+        for idx_o in range(3):
+            origin_arr.SetValue(idx_o, origin[idx_o])
+        vtk_image_data.GetFieldData().AddArray(origin_arr)
+
+        # Store original ITK spacing (before any display upsampling)
+        spacing_arr = vtk.vtkDoubleArray()
+        spacing_arr.SetName("ITKSpacing")
+        spacing_arr.SetNumberOfTuples(3)
+        for idx_s in range(3):
+            spacing_arr.SetValue(idx_s, spacing[idx_s])
+        vtk_image_data.GetFieldData().AddArray(spacing_arr)
+
+        # Store original ITK dimensions (before any display upsampling)
+        dims_arr_fd = vtk.vtkDoubleArray()
+        dims_arr_fd.SetName("ITKDimensions")
+        dims_arr_fd.SetNumberOfTuples(3)
+        for idx_d in range(3):
+            dims_arr_fd.SetValue(idx_d, float(dims[idx_d]))
+        vtk_image_data.GetFieldData().AddArray(dims_arr_fd)
 
         if is_rgb:
             # RGB processing - optimized

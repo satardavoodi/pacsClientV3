@@ -1,4 +1,6 @@
-# System-Wide Database Check Architecture
+# System-Wide Database Check Architecture (v1.09.8.2)
+Last Updated: 2026-02-08
+Scope: Zeta Download Manager database-completion checks
 
 ```
 USER ACTION: Double-click patient
@@ -206,5 +208,19 @@ Scenario D: Resume called without database state
 ✅ main_widget.py - COMPILED
 
 All enhancements verified syntactically correct.
+
+═══════════════════════════════════════════════════════════════════
+                         AI NOTES (v1.09.8.2)
+═══════════════════════════════════════════════════════════════════
+
+1) Always keep **all four layers** in sync when changing database
+   completion logic. Do not update only one layer.
+
+2) If you add a new download entry point, it MUST apply the same
+   database check pattern used in R17 + rule_engine + priority_rules
+   + resume_rules.
+
+3) Any change to database completion semantics must update this file
+   and include the new version/date header.
 
 ```

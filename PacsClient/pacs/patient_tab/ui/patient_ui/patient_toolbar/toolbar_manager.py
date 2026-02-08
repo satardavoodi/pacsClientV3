@@ -5,6 +5,8 @@ from PySide6.QtWidgets import QPushButton, QToolBar, QToolButton, QMenu, QWidget
     QGroupBox, QApplication, QProgressDialog,QScrollArea,QFrame
 import qtawesome as qta
 from PySide6.QtGui import QFont
+import json
+import logging
 import os
 import random
 from PacsClient.pacs.patient_tab.interactor_styles import (
@@ -22,6 +24,7 @@ from PacsClient.utils import get_attachments_uploaded
 from .voice_tool_ui import VoiceWidget
 from .attachments_dropdown import AttachmentsDropdownWidget
 from threading import Thread
+from PacsClient.pacs.patient_tab.zeta_sync.sync_types import SyncMode
 
 
 def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa'):
@@ -267,7 +270,7 @@ class ToolbarManager:
 
     def _debug_target(self, message: str):
         if self._target_debug_count < 20:
-            print(f"[TARGET DEBUG] {message}")
+            logging.getLogger(__name__).debug("[TARGET DEBUG] %s", message)
             self._target_debug_count += 1
 
     def _show_curved_mpr_panel(self):
@@ -1667,6 +1670,130 @@ class ToolbarManager:
             self.patient_widget.toggle_sync_point(enabled)
 
         self.handle_buttons_checked()
+
+    def _show_sync_dropdown(self, button):
+        """Show dropdown menu for Lock Sync option."""
+        try:
+            dropdown = QWidget(self.patient_widget)
+            dropdown.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+            dropdown.setAttribute(Qt.WA_DeleteOnClose)
+            dropdown.setStyleSheet("""
+                QWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #1f2937, stop:1 #111827);
+                    border: 2px solid #374151;
+                    border-radius: 10px;
+                }
+            """)
+
+            layout = QVBoxLayout(dropdown)
+            layout.setContentsMargins(10, 10, 10, 10)
+            layout.setSpacing(8)
+
+            from PySide6.QtWidgets import QLabel
+            header = QLabel("🔗 Sync Options")
+            header.setStyleSheet("""
+                QLabel {
+                    color: #f7fafc;
+                    font-size: 15px;
+                    font-weight: 700;
+                    font-family: 'Roboto', sans-serif;
+                    padding: 6px 8px;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #dc2626, stop:1 #b91c1c);
+                    border-radius: 6px;
+                    margin-bottom: 4px;
+                }
+            """)
+            layout.addWidget(header)
+
+            # Lock Sync toggle button
+            lock_sync_enabled = getattr(self.patient_widget, '_lock_sync_enabled', False)
+            lock_icon_name = 'fa5s.lock' if lock_sync_enabled else 'fa5s.lock-open'
+            lock_color = '#10b981' if lock_sync_enabled else '#f59e0b'
+            lock_label = 'Lock Sync  ✓' if lock_sync_enabled else 'Lock Sync'
+
+            lock_sync_btn = QPushButton()
+            lock_sync_btn.setIcon(qta.icon(lock_icon_name, color=lock_color))
+            lock_sync_btn.setIconSize(QSize(18, 18))
+            lock_sync_btn.setText(lock_label)
+            lock_sync_btn.setCursor(Qt.PointingHandCursor)
+            lock_sync_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #374151, stop:1 #1f2937);
+                    color: {lock_color};
+                    border: 1px solid #4b5563;
+                    border-radius: 8px;
+                    padding: 8px 14px;
+                    font-size: 13px;
+                    font-family: 'Roboto', sans-serif;
+                    font-weight: 600;
+                    text-align: left;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #4b5563, stop:1 #374151);
+                    border-color: #6b7280;
+                }}
+            """)
+            lock_sync_btn.clicked.connect(lambda: [
+                self._toggle_lock_sync(),
+                dropdown.close()
+            ])
+            layout.addWidget(lock_sync_btn)
+
+            # Position dropdown below the button
+            button_pos = button.mapToGlobal(QPoint(0, button.height()))
+            dropdown.move(button_pos)
+            dropdown.setFixedWidth(220)
+            dropdown.raise_()
+            dropdown.activateWindow()
+            dropdown.show()
+        except Exception as e:
+            print(f"[ERROR] Failed to show sync dropdown: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _toggle_lock_sync(self):
+        """Toggle Lock Sync mode on patient_widget."""
+        pw = self.patient_widget
+        current = getattr(pw, '_lock_sync_enabled', False)
+        new_state = not current
+
+        if new_state:
+            # Lock Sync needs the sync pipeline (viewer map + sync manager)
+            # but NOT the click-to-target interactor/cursor.
+            # Use pipeline-only registration so other tools work normally.
+            pw._sync_enabled = True
+            pw.sync_manager.set_mode(SyncMode.CURSOR)
+            if hasattr(pw, '_register_sync_viewers_pipeline_only'):
+                pw._register_sync_viewers_pipeline_only()
+        else:
+            # When user explicitly disables Lock Sync, tear down sync infra
+            # (unless the user has Sync Image activated manually)
+            if not getattr(self, '_sync_point_enabled', False):
+                pw.toggle_sync_point(False)
+
+        if hasattr(pw, 'set_lock_sync'):
+            pw.set_lock_sync(new_state)
+
+        # Update hamburger icon to reflect lock state
+        self._update_sync_menu_icon(new_state)
+
+        print(f"[LOCK SYNC] Toggled to: {new_state}")
+
+    def _update_sync_menu_icon(self, lock_active: bool):
+        """Update the hamburger button icon to show Lock Sync state."""
+        btn = getattr(self, '_sync_menu_btn', None)
+        if btn is None:
+            return
+        if lock_active:
+            btn.setIcon(qta.icon('fa5s.link', color='#10b981', scale_factor=0.9))
+            btn.setToolTip('Lock Sync: ON (click to open menu)')
+        else:
+            btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+            btn.setToolTip('Sync Options (Lock Sync)')
 
     def update_capture_counter(self):
         study_uid = self.patient_widget.study_uid
@@ -4122,6 +4249,9 @@ class ToolbarManager:
             f"check_and_deactivate_tools: tool_selected={self.tool_selected}, "
             f"sync_enabled={getattr(self, '_sync_point_enabled', False)}"
         )
+        # Always deactivate the click-to-target interactor when switching tools.
+        # When Lock Sync is active, patient_widget.toggle_sync_point(False) will
+        # remove the interactor/cursor/observers but keep the sync pipeline alive.
         if getattr(self, '_sync_point_enabled', False):
             self.toggle_sync_point(False)
             # continue to handle any other active tool states
@@ -4769,6 +4899,51 @@ class ToolbarManager:
         toolbar_layout.addWidget(rotate_container)
         self.tools_button[self.tool_access.ROTATION_RIGHT] = rotation_right_btn
 
+        # Sync container (hamburger dropdown + sync button)
+        sync_container = QWidget()
+        sync_layout = QHBoxLayout(sync_container)
+        sync_layout.setContentsMargins(0, 0, 0, 0)
+        sync_layout.setSpacing(0)
+        sync_layout.setAlignment(Qt.AlignVCenter)
+
+        sync_menu_btn = QPushButton()
+        sync_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+        sync_menu_btn.setIconSize(QSize(14, 14))
+        sync_menu_btn.setToolTip('Sync Options (Lock Sync)')
+        sync_menu_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #374151, stop:1 #1f2937);
+                color: #e5e7eb;
+                border: 1px solid #4b5563;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                border-right: none;
+                padding: 4px 2px;
+                margin: 0px;
+                min-width: 11px;
+                min-height: 36px;
+                max-width: 11px;
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4b5563, stop:1 #374151);
+                border-color: #6b7280;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1f2937, stop:1 #111827);
+            }
+        """)
+        sync_menu_btn.setCursor(Qt.PointingHandCursor)
+        sync_menu_btn.clicked.connect(lambda: self._show_sync_dropdown(sync_menu_btn))
+        self._sync_menu_btn = sync_menu_btn  # store for Lock Sync icon updates
+
         sync_btn = QPushButton(self.patient_widget)
         sync_btn.setCheckable(True)
         sync_btn.setToolTip('Sync Images')
@@ -4781,9 +4956,13 @@ class ToolbarManager:
                     stop:0 #374151, stop:1 #1f2937);
                 color: #e5e7eb;
                 border: 1px solid #4b5563;
-                border-radius: 6px;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                border-left: none;
                 padding: 4px 6px;
-                margin: 1px;
+                margin: 0px;
                 min-width: 36px;
                 min-height: 36px;
                 font-size: 13px;
@@ -4809,7 +4988,10 @@ class ToolbarManager:
         sync_btn.clicked.connect(lambda checked=False: self.toggle_sync_point(checked))
         self.sync_point_button = sync_btn
         self.tools_button[self.tool_access.TARGET] = sync_btn
-        toolbar_layout.addWidget(sync_btn)
+
+        sync_layout.addWidget(sync_menu_btn)
+        sync_layout.addWidget(sync_btn)
+        toolbar_layout.addWidget(sync_container)
 
         toolbar_layout.addWidget(self._create_separator())
 

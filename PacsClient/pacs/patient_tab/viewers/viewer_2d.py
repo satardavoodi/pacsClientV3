@@ -10,6 +10,9 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import Qt
 import time
 from PacsClient.pacs.patient_tab.curved_mpr_module import CurvedMPRModule
+import logging
+
+logger = logging.getLogger(__name__)
 
 # =====================================================
 # ANTI-FLICKERING CONSTANTS
@@ -1572,14 +1575,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             return result
 
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning("[SYNC PICK] Exception: %s", e)
+            logger.warning("[SYNC PICK] Exception: %s", e)
             return None
 
     def _slice_index_from_world(self, world_pos, return_delta=False):
         """Compute slice index for current orientation from world position."""
-        import logging
-        _log = logging.getLogger(__name__)
         try:
             # Use simple origin+spacing for IJK since the reslice output 
             # is in VTK world space WITHOUT direction rotation
@@ -1598,10 +1598,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             k = max(0.0, min(k, dims[2] - 1))
 
             orientation = self.GetSliceOrientation()
-            print(
-                f"[SLICE FROM WORLD] world=({world_pos[0]:.2f},{world_pos[1]:.2f},{world_pos[2]:.2f}) "
-                f"→ ijk=({i:.2f},{j:.2f},{k:.2f}) orient={orientation} "
-                f"origin=({ox:.2f},{oy:.2f},{oz:.2f}) spacing=({sx:.3f},{sy:.3f},{sz:.3f})"
+            logger.debug(
+                "[SLICE FROM WORLD] world=(%.2f,%.2f,%.2f) "
+                "-> ijk=(%.2f,%.2f,%.2f) orient=%d "
+                "origin=(%.2f,%.2f,%.2f) spacing=(%.3f,%.3f,%.3f)",
+                world_pos[0], world_pos[1], world_pos[2],
+                i, j, k, orientation,
+                ox, oy, oz, sx, sy, sz,
             )
             
             if orientation == 2:  # Axial (XY) — slice along Z (k)
@@ -1649,9 +1652,6 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     def set_sync_point(self, world_pos, adjust_slice=True):
         """Show/update the sync point; optionally move slice to match the point."""
-        import logging
-        _log = logging.getLogger(__name__)
-        
         if world_pos is None:
             self.hide_sync_point()
             return
@@ -1660,25 +1660,27 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         if self._sync_point_source is not None:
             self._sync_point_source.SetCenter(world_pos)
-            self._sync_point_source.Update()
 
         orientation = self.GetSliceOrientation()
         
         if adjust_slice:
             slice_index, delta_world, spacing_axis = self._slice_index_from_world(world_pos, return_delta=True)
-            print(
-                f"[SYNC POINT] orient={orientation}  world_pos=({world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f})  "
-                f"→ slice_index={slice_index}  delta_world={delta_world}  spacing_axis={spacing_axis}  cur_slice={self.GetSlice()}"
+            logger.debug(
+                "[SYNC POINT] orient=%d  world_pos=(%.2f, %.2f, %.2f)  "
+                "-> slice_index=%s  delta_world=%s  spacing_axis=%s  cur_slice=%d",
+                orientation, world_pos[0], world_pos[1], world_pos[2],
+                slice_index, delta_world, spacing_axis, self.GetSlice(),
             )
             if slice_index is not None:
                 max_slice = max(0, self.get_count_of_slices() - 1)
                 slice_index = max(0, min(slice_index, max_slice))
                 if delta_world is None or spacing_axis is None or delta_world <= spacing_axis:
                     self.set_slice(slice_index)
-                    print(f"[SYNC POINT] Navigated to slice {slice_index}")
+                    logger.debug("[SYNC POINT] Navigated to slice %d", slice_index)
                 else:
-                    print(
-                        f"[SYNC POINT] NOT navigating: delta_world={delta_world:.4f} > spacing_axis={spacing_axis:.4f}"
+                    logger.debug(
+                        "[SYNC POINT] NOT navigating: delta_world=%.4f > spacing_axis=%.4f",
+                        delta_world, spacing_axis,
                     )
 
         if self._sync_point_actor is not None:
