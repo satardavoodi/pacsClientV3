@@ -1016,7 +1016,28 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         print(f"         • UpdateDisplayExtent: {_update_display_time:.3f}s")
         
         _render_call_start = time.time()
-        self.Render()
+        # ✅ FIX: Ensure render window and renderer are properly connected
+        renderer = self.GetRenderer()
+        render_window = self.GetRenderWindow()
+        
+        if renderer is None:
+            print(f"         ⚠️  WARNING: Renderer is None!")
+        if render_window is None:
+            print(f"         ⚠️  WARNING: RenderWindow is None!")
+        
+        # Force render window render (more reliable than self.Render())
+        if render_window is not None:
+            try:
+                render_window.Render()
+            except Exception as e:
+                print(f"         ⚠️  ERROR during Render(): {e}")
+        else:
+            # Fallback to self.Render()
+            try:
+                self.Render()
+            except Exception as e:
+                print(f"         ⚠️  ERROR during self.Render(): {e}")
+        
         _render_call_time = time.time() - _render_call_start
         print(f"         • Render: {_render_call_time:.3f}s")
         

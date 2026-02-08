@@ -87,6 +87,21 @@ class PatientWidget(QWidget):
         self.logger.info(f"Initializing PatientWidget with study_uid={study_uid}, patient_id={patient_id}")
         
         # Core data structures - initialize first
+        self.study_uid = study_uid
+        self.patient_id = patient_id
+        
+        # ✅ FIX: Ensure import_folder_path is set correctly from attachment if not provided
+        if not import_folder_path and study_uid:
+            from PacsClient.utils.config import ATTACHMENT_PATH
+            from pathlib import Path
+            attachment_study_path = Path(ATTACHMENT_PATH) / study_uid
+            
+            if attachment_study_path.exists():
+                import_folder_path = str(attachment_study_path)
+                self.logger.info(f"Set import_folder_path from attachment: {import_folder_path}")
+            else:
+                self.logger.warning(f"Study not found in attachment folder: {attachment_study_path}")
+        
         self.import_folder_path = import_folder_path
         self.lst_thumbnails_data = []
         self.lst_nodes_viewer = []
@@ -107,8 +122,6 @@ class PatientWidget(QWidget):
         
         # Patient and study identifiers
         self.tab_manager = None
-        self.study_uid = study_uid
-        self.patient_id = patient_id
         self.report_status = report_status
         self.method_add_new_tab = None
         self.logo_patient = None
@@ -847,18 +860,45 @@ class PatientWidget(QWidget):
     def refresh_after_download(self, study_uid_downloaded: str = None):
         """Refresh UI after download completion"""
         try:
+            print(f"\n🔄 [REFRESH] Refreshing after download")
+            print(f"   - study_uid_downloaded: {study_uid_downloaded}")
+            print(f"   - self.study_uid: {self.study_uid}")
+            print(f"   - Progressive mode: {getattr(self, '_progressive_display_enabled', False)}")
+            
             if study_uid_downloaded and self.study_uid != study_uid_downloaded:
+                print(f"   ⚠️ Study UID mismatch, skipping refresh")
                 return
-            if not getattr(self, '_progressive_display_enabled', False):
-                return
+            
+            # Ensure import_folder_path is correctly set
+            if not self.import_folder_path or not Path(self.import_folder_path).exists():
+                print(f"   ⚠️ import_folder_path not set or doesn't exist: {self.import_folder_path}")
+                
+                # Try to set it from attachment folder
+                if self.study_uid:
+                    from PacsClient.utils.config import ATTACHMENT_PATH
+                    attachment_path = Path(ATTACHMENT_PATH) / self.study_uid
+                    
+                    if attachment_path.exists():
+                        print(f"   ✅ Setting import_folder_path from attachment: {attachment_path}")
+                        self.import_folder_path = str(attachment_path)
+                    else:
+                        print(f"   ❌ Study not found in attachment folder: {attachment_path}")
+                        return
+            
+            print(f"   📂 Using import_folder_path: {self.import_folder_path}")
             
             # Reset thumbnails flag to allow refresh
             self._thumbnails_shown = False
             
             # Refresh thumbnails
-            self.show_exist_thumbnails()
-        except Exception:
-            pass
+            print(f"   🔄 Refreshing thumbnails...")
+            thumb_count = self.show_exist_thumbnails()
+            print(f"   ✅ Refreshed {thumb_count} thumbnails")
+            
+        except Exception as e:
+            print(f"   ❌ Error in refresh: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _load_first_series_sync(self, size_init_viewers=(1, 1)):
         """
@@ -2044,34 +2084,54 @@ class PatientWidget(QWidget):
         # Update series cache
         series_number = str(new_data['metadata']['series']['series_number'])
         series_name = str(new_data['metadata']['series']['series_name'])
-        index = len(self.lst_thumbnails_data)
-        self._series_cache[series_number] = (new_data['vtk_image_data'], new_data['metadata'], index)
-        self._series_name_cache[series_number] = series_name
+        metadata = new_data['metadata']  # ✅ FIX: Define metadata first
+        
         # Ensure required attributes exist
         if not hasattr(self, 'lst_thumbnails_data'):
             self.lst_thumbnails_data = []
         if not hasattr(self, 'unique_elements_index'):
             self.unique_elements_index = 0
         
+        # ✅ FIX: Check for duplicate by series_number, not just series_name
+        for i in range(len(self.lst_thumbnails_data)):
+            existing_series_number = str(self.lst_thumbnails_data[i]['metadata']['series']['series_number'])
+            
+            # If same series number, UPDATE with new data (VTK data might be fresher)
+            if existing_series_number == series_number:
+                print(f"      🔄 Series {series_number} already exists, updating with fresh data")
+                # Always update with new data to ensure we have the latest VTK image
+                self.lst_thumbnails_data[i] = new_data
+                self._series_cache[series_number] = (new_data['vtk_image_data'], new_data['metadata'], i)
+                self._series_name_cache[series_number] = series_name
+                
+                # Mark as ready
+                try:
+                    self.thumbnail_manager.set_series_ready(series_number)
+                except Exception as e:
+                    print(f"      ⚠️ Could not set ready: {e}")
+                
+                print(f"      ✅ Series {series_number} updated at index {i}")
+                return True  # Return True to indicate data was processed
+        
+        # Not a duplicate - add as new
         add_by_head = True
-        metadata = new_data['metadata']
 
         for i in range(len(self.lst_thumbnails_data)):
-
             # we assume lst is such as left and right (front , back) queue without remove element
             if self.lst_thumbnails_data[i]['metadata']['series']['series_name'] == metadata['series']['series_name']:
-
-                # this series has been created before
-                if len(metadata['instances']) == len(self.lst_thumbnails_data[i]['metadata']['instances']):
-                    return False
-
+                # this series is continued another series. so we added at last index lst
                 self.lst_thumbnails_data.append(new_data)
                 add_by_head = False
-                break  # this series is continued another series. so we added at last index lst
+                break
 
         if add_by_head:
             self.lst_thumbnails_data.insert(self.unique_elements_index, new_data)
             self.unique_elements_index += 1
+        
+        # Update cache with final index
+        final_index = len(self.lst_thumbnails_data) - 1 if not add_by_head else self.unique_elements_index - 1
+        self._series_cache[series_number] = (new_data['vtk_image_data'], new_data['metadata'], final_index)
+        self._series_name_cache[series_number] = series_name
 
         # ... بعد از منطق insert/append
         try:
@@ -2080,6 +2140,8 @@ class PatientWidget(QWidget):
             self.thumbnail_manager.set_series_ready(series_no)
         except Exception as e:
             print("set ready border failed:", e)
+        
+        return True
 
     def check_and_add_meta_fixed(self, patient_info):
         if len(self.metadata_fixed) != 0:
@@ -4208,21 +4270,41 @@ class PatientWidget(QWidget):
         """Get the correct study path, ensuring it's not pointing to a series subfolder"""
         from pathlib import Path
         
-        if not self.import_folder_path:
-            return None
+        print(f"🔍 [PATH] Getting correct study path...")
+        print(f"   - import_folder_path: {self.import_folder_path}")
+        print(f"   - study_uid: {self.study_uid}")
+        
+        # Try import_folder_path first
+        if self.import_folder_path:
+            path = Path(self.import_folder_path)
             
-        path = Path(self.import_folder_path)
+            if path.exists():
+                # If current path has numeric subfolders that are series, we're at study level
+                # If current path is numeric and exists inside another folder, go up
+                if path.name.isdigit() and path.parent.exists():
+                    # Check if parent has other series folders
+                    parent = path.parent
+                    series_folders = [d for d in parent.iterdir() if d.is_dir() and d.name.isdigit()]
+                    if len(series_folders) > 1:
+                        print(f"   ✅ Resolved to parent (study level): {parent}")
+                        return str(parent)
+                
+                print(f"   ✅ Using import_folder_path: {path}")
+                return str(path)
         
-        # If current path has numeric subfolders that are series, we're at study level
-        # If current path is numeric and exists inside another folder, go up
-        if path.name.isdigit() and path.parent.exists():
-            # Check if parent has other series folders
-            parent = path.parent
-            series_folders = [d for d in parent.iterdir() if d.is_dir() and d.name.isdigit()]
-            if len(series_folders) > 1:
-                return str(parent)
+        # Fallback: try attachment folder with study_uid
+        if self.study_uid:
+            from PacsClient.utils.config import ATTACHMENT_PATH
+            attachment_study_path = Path(ATTACHMENT_PATH) / self.study_uid
+            
+            if attachment_study_path.exists():
+                print(f"   ✅ Found in attachment folder: {attachment_study_path}")
+                return str(attachment_study_path)
+            else:
+                print(f"   ⚠️ Not found in attachment folder: {attachment_study_path}")
         
-        return str(path)
+        print(f"   ❌ Could not resolve study path")
+        return None
 
     def _perform_series_switch(self, vtk_widget, metadata, vtk_image_data, series_idx, slider):
         """Perform the actual series switch with widget transfer"""
@@ -4248,6 +4330,21 @@ class PatientWidget(QWidget):
             
             # Perform switch
             if hasattr(vtk_widget, 'switch_series'):
+                # ✅ FIX: Validate vtk_image_data before switch
+                if not vtk_image_data:
+                    print(f"   ❌ ERROR: vtk_image_data is None, cannot switch series")
+                    return False
+                
+                dims = vtk_image_data.GetDimensions()
+                if dims[0] == 0 or dims[1] == 0 or dims[2] == 0:
+                    print(f"   ❌ ERROR: Invalid dimensions {dims}, cannot switch series")
+                    return False
+                
+                print(f"   🔄 Calling switch_series for series {series_number}...")
+                print(f"      - vtk_image_data: {type(vtk_image_data)}, dims: {dims}")
+                print(f"      - metadata: {bool(metadata)}")
+                print(f"      - series_idx: {series_idx}")
+                
                 flag_switch = vtk_widget.switch_series(
                     vtk_image_data, 
                     metadata, 
@@ -4256,6 +4353,8 @@ class PatientWidget(QWidget):
                     metadata_2, 
                     self.metadata_fixed
                 )
+                
+                print(f"      - switch_series returned: {flag_switch}")
                 
                 if flag_switch:
                     self.reset_slider(vtk_widget, slider)
@@ -4266,10 +4365,38 @@ class PatientWidget(QWidget):
                         vtk_widget.image_viewer.update_corners_actors()
                         
                     print(f"   ✅ Switch completed for series {series_number}")
+                    return True
                 else:
-                    print(f"   ⚠️ switch_series returned False")
+                    print(f"   ⚠️ switch_series returned False - attempting recovery...")
+                    
+                    # ✅ FIX: Try to force render and reset the viewer
+                    try:
+                        # Force render
+                        if hasattr(vtk_widget, 'render_window') and vtk_widget.render_window:
+                            print(f"      - Forcing render_window.Render()")
+                            vtk_widget.render_window.Render()
+                        
+                        # Try to reset camera
+                        if hasattr(vtk_widget, 'renderer') and vtk_widget.renderer:
+                            print(f"      - Resetting camera")
+                            vtk_widget.renderer.ResetCamera()
+                            vtk_widget.render_window.Render()
+                        
+                        # Force update the widget
+                        if hasattr(vtk_widget, 'GetRenderWindow'):
+                            rw = vtk_widget.GetRenderWindow()
+                            if rw:
+                                print(f"      - Forcing render via GetRenderWindow()")
+                                rw.Render()
+                        
+                        print(f"      ✅ Recovery attempt completed")
+                        return True
+                    except Exception as recovery_error:
+                        print(f"      ❌ Recovery failed: {recovery_error}")
+                        return False
             else:
                 print(f"   ❌ vtk_widget does not have switch_series method")
+                return False
                 
         except Exception as e:
             print(f"❌ Error in _perform_series_switch: {e}")
@@ -4364,38 +4491,79 @@ class PatientWidget(QWidget):
         try:
             _start = time.time()
             
+            print(f"\n📂 [LOAD] === Starting load for series {series_number} ===")
+            print(f"   - Provided study_path: {study_path}")
+            print(f"   - Current import_folder_path: {self.import_folder_path}")
+            print(f"   - study_uid: {self.study_uid}")
+            
             # ✅ FIX: Use provided study_path or correctly determine it
             if study_path is None:
                 # Try parent widget's import folder first
                 if self.import_folder_path and Path(self.import_folder_path).exists():
                     # Ensure we're using the study root folder, not a series subfolder
                     study_path_obj = Path(self.import_folder_path)
+                    print(f"   - Initial path object: {study_path_obj}")
+                    
                     # If current path points to a series folder (has DICOM parent), go up
                     if (study_path_obj / str(series_number)).exists():
+                        print(f"   ✅ Series folder found at: {study_path_obj / str(series_number)}")
                         pass  # Already at study level
                     else:
                         # Check if current path is inside a series folder
                         parent = study_path_obj.parent
+                        print(f"   - Checking parent: {parent}")
                         if parent.exists() and (parent / str(series_number)).exists():
+                            print(f"   ✅ Series folder found at parent: {parent / str(series_number)}")
                             study_path_obj = parent
+                        else:
+                            print(f"   ⚠️ Series folder not found, will check attachment folder")
                     study_path = str(study_path_obj)
+                elif self.study_uid:
+                    # Try to find in attachment folder using study_uid
+                    from PacsClient.utils.config import ATTACHMENT_PATH
+                    attachment_study_path = Path(ATTACHMENT_PATH) / self.study_uid
+                    if attachment_study_path.exists():
+                        print(f"   ✅ Found study in attachment folder: {attachment_study_path}")
+                        study_path = str(attachment_study_path)
+                        self.import_folder_path = study_path  # Update for future use
+                    else:
+                        print(f"   ❌ Study not found in attachment folder: {attachment_study_path}")
+                        return False
                 else:
-                    print(f"❌ No valid study path found")
+                    print(f"   ❌ No valid study path found and no study_uid available")
                     return False
             
-            print(f"📂 [LOAD] Loading series {series_number} from {study_path}")
+            print(f"   📁 Final study_path: {study_path}")
             
             # Verify series folder exists
             series_folder = Path(study_path) / str(series_number)
+            print(f"   🔍 Checking series folder: {series_folder}")
+            
             if not series_folder.exists():
-                print(f"❌ Series folder not found: {series_folder}")
+                print(f"   ❌ Series folder not found: {series_folder}")
+                print(f"   📂 Contents of study folder:")
+                try:
+                    for item in Path(study_path).iterdir():
+                        print(f"      - {item.name}")
+                except Exception as e:
+                    print(f"      Error listing: {e}")
                 return False
                 
             # Check for DICOM files
             dicom_files = list(series_folder.glob("*.dcm")) + list(series_folder.glob("*.DCM"))
+            print(f"   📄 Found {len(dicom_files)} DICOM files")
+            
             if not dicom_files:
-                print(f"❌ No DICOM files in {series_folder}")
+                print(f"   ❌ No DICOM files in {series_folder}")
+                print(f"   📂 Contents of series folder:")
+                try:
+                    for item in series_folder.iterdir():
+                        print(f"      - {item.name}")
+                except Exception as e:
+                    print(f"      Error listing: {e}")
                 return False
+            
+            print(f"   ⏳ Loading series with load_single_series_by_number...")
             
             # Load series with correct path
             result = load_single_series_by_number(
@@ -4406,12 +4574,39 @@ class PatientWidget(QWidget):
                 ordering_by_instances_number=self.ordering_by_instances_number,
             )
             
-            if not result:
+            # ✅ FIX: Convert generator to list before checking length
+            if result:
+                result_list = list(result)
+                print(f"   📊 Load result: {type(result_list)}, length: {len(result_list)}")
+            else:
+                result_list = []
+                print(f"   📊 Load result: None or empty")
+            
+            if not result_list:
+                print(f"   ❌ load_single_series_by_number returned empty result")
                 return False
 
             # Process results
-            for item in result:
+            loaded_count = 0
+            for idx, item in enumerate(result_list):
+                print(f"   📦 Processing result item {idx}...")
                 vtk_image_data, metadata, (patient_pk, study_pk) = item
+                
+                print(f"      - vtk_image_data: {type(vtk_image_data)}")
+                print(f"      - metadata keys: {metadata.keys() if metadata else None}")
+                print(f"      - Series number in metadata: {metadata.get('series', {}).get('series_number') if metadata else None}")
+                
+                # ✅ FIX: Validate vtk_image_data before processing
+                if not vtk_image_data:
+                    print(f"      ❌ ERROR: vtk_image_data is None, skipping")
+                    continue
+                
+                dims = vtk_image_data.GetDimensions()
+                if dims[0] == 0 or dims[1] == 0 or dims[2] == 0:
+                    print(f"      ❌ ERROR: Invalid dimensions {dims}, skipping")
+                    continue
+                
+                print(f"      ✅ Validated vtk_image_data: dims={dims}")
                 
                 # Populate metadata_fixed if needed
                 if not self.metadata_fixed or len(self.metadata_fixed) < 3:
@@ -4424,6 +4619,7 @@ class PatientWidget(QWidget):
                                 self.metadata_fixed['patient_pk'] = patient_pk
                             if study_pk:
                                 self.metadata_fixed['study_pk'] = study_pk
+                            print(f"      ✅ metadata_fixed populated")
 
                 # Add to thumbnails list
                 file_path = metadata['series'].get('thumbnail_path', '')
@@ -4432,17 +4628,36 @@ class PatientWidget(QWidget):
                     'metadata': metadata, 
                     'file_path': file_path
                 }
-                self.add_new_data_to_lst_thumbnails_data(new_data)
+                
+                before_count = len(self.lst_thumbnails_data)
+                add_result = self.add_new_data_to_lst_thumbnails_data(new_data)
+                after_count = len(self.lst_thumbnails_data)
+                
+                print(f"      📊 lst_thumbnails_data: {before_count} -> {after_count}")
+                print(f"      📊 add_new_data returned: {add_result}")
+                
+                if add_result:
+                    # Data was either added or updated
+                    loaded_count += 1
+                    if after_count > before_count:
+                        print(f"      ✅ Data added successfully (new series)")
+                    else:
+                        print(f"      ✅ Data updated successfully (existing series refreshed)")
+                else:
+                    print(f"      ⚠️ Data was rejected (should not happen)")
                 
                 # Update study path if needed
                 if metadata.get('series', {}).get('series_path'):
                     correct_path = Path(metadata['series']['series_path']).parent
                     if str(correct_path) != self.import_folder_path:
                         self.import_folder_path = str(correct_path)
-                        print(f"   🔄 Updated study path to: {correct_path}")
+                        print(f"      🔄 Updated study path to: {correct_path}")
 
             _elapsed = time.time() - _start
-            print(f"✅ [LOAD] Series {series_number} loaded in {_elapsed:.3f}s")
+            print(f"✅ [LOAD] Series {series_number} loaded successfully in {_elapsed:.3f}s")
+            print(f"   - Loaded {loaded_count} series")
+            print(f"   - Total series in memory: {len(self.lst_thumbnails_data)}")
+            print(f"===== Load complete ===\n")
             return True
 
         except Exception as e:
