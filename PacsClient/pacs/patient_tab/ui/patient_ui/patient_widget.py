@@ -572,9 +572,10 @@ class PatientWidget(QWidget):
 
     def _render_placeholder_thumbnails_from_server(self):
         """
-        ✅ Show placeholder thumbnails immediately from server info
+        ✅ Show placeholder thumbnails immediately from server info - EXACTLY like home_ui
         This allows users to see the list of available series BEFORE downloads complete
         Placeholders will be replaced with real thumbnails as they become available
+        Uses same ThumbnailManager.create_thumbnail_widget as home_ui for consistency
         """
         try:
             if not self._server_series_info:
@@ -589,24 +590,31 @@ class PatientWidget(QWidget):
             thumb_index = 0
             for series_number, series_info in sorted_series:
                 try:
-                    series_name = series_info.get('series_name', f"Series {series_number}")
-                    modality = series_info.get('modality', 'Unknown')
-                    instance_count = series_info.get('number_of_instances', 0)
-
-                    print(f"📝 [PlaceholderThumbs] Adding placeholder for series {series_number}: {series_name} ({modality}, {instance_count} instances)")
-
-                    # Create a placeholder thumbnail without a file path
-                    # This will show series info immediately while actual image loads
-                    thumb_index = self.add_thumbnail_to_thumbnail_layout(
-                        thumb_index=thumb_index,
-                        file_path_thumbnail=None,  # None = use placeholder image
-                        key_thumbnail=str(series_number),
-                        series_info=series_info
+                    # Create simple placeholder pixmap (no text overlay - ThumbnailManager will add it)
+                    placeholder_pixmap = self._create_placeholder_pixmap(series_info)
+                    
+                    # Use ThumbnailManager to create widget EXACTLY like home_ui does
+                    combined_widget = self.thumbnail_manager.create_thumbnail_widget(
+                        pixmap=placeholder_pixmap,
+                        label_text=str(series_number),
+                        thumbnail_index=int(series_number),
+                        series_info=series_info,
+                        show_progress=False  # Start with no progress - same as home_ui
                     )
                     
-                    # Update thumbnail manager to show pending state
-                    if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-                        self.thumbnail_manager.set_series_pending(str(series_number))
+                    # Add to layout in 2-column grid (same as home_ui right panel)
+                    row = thumb_index // 2
+                    col = thumb_index % 2
+                    self.thumbnail_layout_thumbnails.addWidget(combined_widget, row, col)
+                    
+                    # Mark as pending (gray dashed border) - same as home_ui
+                    series_no_str = str(series_number)
+                    self.thumbnail_manager.series_widgets[series_no_str] = combined_widget
+                    self.thumbnail_manager.set_series_pending(series_no_str)
+                    
+                    thumb_index += 1
+
+                    print(f"✅ [PlaceholderThumbs] Added placeholder for series {series_number} matching home_ui style")
                         
                 except Exception as e:
                     print(f"⚠️ [PlaceholderThumbs] Error adding placeholder for series {series_number}: {e}")
@@ -707,40 +715,56 @@ class PatientWidget(QWidget):
             traceback.print_exc()
 
     def _render_thumbnails_from_files(self, thumbnails):
-        """Render thumbnail widgets from cached file paths."""
+        """Update existing placeholder widgets with real thumbnail images."""
         try:
-            print(f"📝 [RenderThumbs] Starting to render {len(thumbnails)} cached thumbnails")
-            thumb_index = 0
+            print(f"📝 [RenderThumbs] Starting to update {len(thumbnails)} cached thumbnails")
             for thumbnail_file in thumbnails:
                 try:
-                    series_number = Path(thumbnail_file).stem
-                    series_info = self._server_series_info.get(str(series_number))
-                    print(f"📝 [RenderThumbs] Adding thumbnail for series {series_number} from {thumbnail_file}")
-                    thumb_index = self.add_thumbnail_to_thumbnail_layout(
-                        thumb_index=thumb_index,
-                        file_path_thumbnail=thumbnail_file,
-                        key_thumbnail=str(series_number),
-                        series_info=series_info
-                    )
+                    series_number = str(Path(thumbnail_file).stem)
+                    series_info = self._server_series_info.get(series_number)
+                    print(f"📝 [RenderThumbs] Updating thumbnail for series {series_number} from {thumbnail_file}")
+                    
+                    # Find existing widget in thumbnail_manager
+                    existing_widget = self.thumbnail_manager.series_widgets.get(series_number)
+                    
+                    if existing_widget:
+                        # Update existing widget with real image
+                        try:
+                            pixmap = QPixmap(thumbnail_file)
+                            if not pixmap.isNull() and hasattr(existing_widget, 'children'):
+                                # Find the image button inside the widget
+                                for child in existing_widget.findChildren(QPushButton):
+                                    if hasattr(child, 'setIcon'):
+                                        scaled_pixmap = pixmap.scaled(160, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                        child.setIcon(QIcon(scaled_pixmap))
+                                        child.setIconSize(QSize(160, 120))
+                                        print(f"✅ [RenderThumbs] Updated image for series {series_number}")
+                                        break
+                            # Mark series as ready
+                            self.thumbnail_manager.set_series_ready(series_number)
+                        except Exception as e:
+                            print(f"⚠️ [RenderThumbs] Error updating widget image: {e}")
+                    else:
+                        print(f"⚠️ [RenderThumbs] Widget not found for series {series_number}, skipping")
+                        
                 except Exception as e:
-                    print(f"⚠️ [RenderThumbs] Error adding thumbnail: {e}")
-            print(f"✅ [RenderThumbs] Rendered {thumb_index} thumbnails total")
+                    print(f"⚠️ [RenderThumbs] Error processing thumbnail: {e}")
+            print(f"✅ [RenderThumbs] Updated thumbnails complete")
         except Exception as e:
             print(f"⚠️ [RenderThumbs] Error rendering cached thumbnails: {e}")
             import traceback
             traceback.print_exc()
 
     def _render_thumbnails_from_entries(self, series_entries: list):
-        """Render thumbnail widgets from server entries."""
+        """Update existing placeholder widgets with real thumbnail images from server."""
         try:
-            print(f"📝 [RenderEntries] Starting to render {len(series_entries)} server thumbnail entries")
+            print(f"📝 [RenderEntries] Starting to update {len(series_entries)} server thumbnail entries")
             def _sort_key(item):
                 try:
                     return int(item.get('series_number', 0))
                 except (TypeError, ValueError):
                     return 0
 
-            thumb_index = 0
             for series in sorted(series_entries, key=_sort_key):
                 try:
                     file_path = series.get('file_path')
@@ -748,16 +772,34 @@ class PatientWidget(QWidget):
                     if not (file_path and series_number):
                         print(f"⚠️ [RenderEntries] Skipping entry - missing file_path or series_number")
                         continue
-                    print(f"📝 [RenderEntries] Adding thumbnail for series {series_number}")
-                    thumb_index = self.add_thumbnail_to_thumbnail_layout(
-                        thumb_index=thumb_index,
-                        file_path_thumbnail=file_path,
-                        key_thumbnail=series_number,
-                        series_info=series
-                    )
+                    print(f"📝 [RenderEntries] Updating thumbnail for series {series_number}")
+                    
+                    # Find existing widget in thumbnail_manager
+                    existing_widget = self.thumbnail_manager.series_widgets.get(series_number)
+                    
+                    if existing_widget:
+                        # Update existing widget with real image
+                        try:
+                            pixmap = QPixmap(file_path)
+                            if not pixmap.isNull() and hasattr(existing_widget, 'children'):
+                                # Find the image button inside the widget
+                                for child in existing_widget.findChildren(QPushButton):
+                                    if hasattr(child, 'setIcon'):
+                                        scaled_pixmap = pixmap.scaled(160, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                        child.setIcon(QIcon(scaled_pixmap))
+                                        child.setIconSize(QSize(160, 120))
+                                        print(f"✅ [RenderEntries] Updated image for series {series_number}")
+                                        break
+                            # Mark series as ready
+                            self.thumbnail_manager.set_series_ready(series_number)
+                        except Exception as e:
+                            print(f"⚠️ [RenderEntries] Error updating widget image: {e}")
+                    else:
+                        print(f"⚠️ [RenderEntries] Widget not found for series {series_number}, skipping")
+                        
                 except Exception as e:
-                    print(f"⚠️ [RenderEntries] Error adding thumbnail entry: {e}")
-            print(f"✅ [RenderEntries] Rendered {thumb_index} thumbnails total")
+                    print(f"⚠️ [RenderEntries] Error processing thumbnail entry: {e}")
+            print(f"✅ [RenderEntries] Updated thumbnails complete")
         except Exception as e:
             print(f"⚠️ [RenderEntries] Error rendering server thumbnails: {e}")
             import traceback
@@ -3632,13 +3674,22 @@ class PatientWidget(QWidget):
             series_info = metadata['series']
         elif series_info:
             # Use series_info from server (passed as parameter)
-            series_name = str(series_info.get('series_number', cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))))
+            # FIX: Handle None file_path when getting default value
+            if 'series_number' in series_info:
+                series_name = str(series_info['series_number'])
+            elif file_path_thumbnail:
+                series_name = str(cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail)))
+            else:
+                series_name = str(key_thumbnail) if key_thumbnail else "Unknown"
         else:
-            series_name = cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))
-            # Cache the name for future use
-            if not hasattr(self, '_cached_series_names'):
-                self._cached_series_names = {}
-            self._cached_series_names[file_path_thumbnail] = series_name
+            if file_path_thumbnail:
+                series_name = cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))
+                # Cache the name for future use
+                if not hasattr(self, '_cached_series_names'):
+                    self._cached_series_names = {}
+                self._cached_series_names[file_path_thumbnail] = series_name
+            else:
+                series_name = str(key_thumbnail) if key_thumbnail else "Unknown"
             
             # Get series folder path from study path + series name
             from pathlib import Path
@@ -3700,46 +3751,24 @@ class PatientWidget(QWidget):
 
     def _create_placeholder_pixmap(self, series_info=None):
         """
-        ✅ Create a placeholder image for pending series downloads
-        Shows diagonal stripes pattern with loading text until real image arrives
+        ✅ Create a placeholder pixmap matching home_ui style exactly
+        Simple dark background without any text overlay
+        Text will be added by ThumbnailManager.create_thumbnail_widget
         """
         try:
-            from PySide6.QtGui import QColor, QFont, QPainter, QPen
+            from PySide6.QtGui import QColor, QPixmap
             
-            # Create a placeholder image (140x140 for thumbnail)
-            pixmap = QPixmap(140, 140)
-            pixmap.fill(QColor(30, 40, 50))  # Dark blue background
+            # Create a simple dark placeholder matching ThumbnailManager style
+            pixmap = QPixmap(160, 120)
+            pixmap.fill(QColor(26, 32, 44))  # #1a202c - matches ThumbnailManager background
             
-            # Add diagonal stripes pattern to indicate pending
-            painter = QPainter(pixmap)
-            
-            # Draw diagonal stripes
-            stripe_color = QColor(80, 90, 120)  # Lighter blue stripes
-            painter.setPen(QPen(stripe_color, 2))
-            
-            for i in range(0, 280, 15):
-                painter.drawLine(i, 0, i - 140, 140)
-            
-            # Add loading text with modality
-            series_name = series_info.get('series_name', 'Series') if series_info else 'Loading'
-            modality = series_info.get('modality', '?') if series_info else '?'
-            
-            font = QFont("Arial", 10, QFont.Bold)
-            painter.setFont(font)
-            painter.setPen(QPen(QColor(200, 200, 200)))
-            
-            # Draw text centered
-            text_rect = pixmap.rect()
-            painter.drawText(text_rect, int(1), f"{modality}\nLoading...")  # 1 = AlignCenter
-            
-            painter.end()
-            print(f"📝 [PlaceholderPixmap] Created placeholder for {modality}")
             return pixmap
-            
+
         except Exception as e:
-            print(f"⚠️ Error creating placeholder pixmap: {e}")
+            print(f"⚠️ [PlaceholderPixmap] Error creating placeholder: {e}")
             # Fallback: return simple solid pixmap
-            pixmap = QPixmap(140, 140)
+            from PySide6.QtGui import QColor, QPixmap
+            pixmap = QPixmap(160, 120)
             pixmap.fill(QColor(30, 40, 50))
             return pixmap
 
