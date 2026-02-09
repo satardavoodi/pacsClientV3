@@ -528,77 +528,9 @@ class PatientWidget(QWidget):
                 if series_uid:
                     self._series_uid_to_number[series_uid] = series_number
 
-        # ✅ NEW: Show placeholder thumbnails immediately from server info (before download completes)
-        # This allows users to see the series list before download is done
-        # Ensure UI updates happen on the main thread
-        try:
-            from PySide6.QtCore import QThread, QMetaObject
-            if QThread.currentThread() != self.thread():
-                QMetaObject.invokeMethod(self, "_render_placeholder_thumbnails_from_server", Qt.QueuedConnection)
-            else:
-                self._render_placeholder_thumbnails_from_server()
-        except Exception:
-            QTimer.singleShot(0, self._render_placeholder_thumbnails_from_server)
-
-        # Load real thumbnails (cache → server) in parallel
+        # Load real thumbnails (cache → server)
         QTimer.singleShot(0, self._load_server_thumbnails)
 
-    def _render_placeholder_thumbnails_from_server(self):
-        """
-        ✅ Show placeholder thumbnails immediately from server info
-        This allows users to see the list of available series BEFORE downloads complete
-        Placeholders will be replaced with real thumbnails as they become available
-        """
-        try:
-            if not self._server_series_info:
-                print("📝 [PlaceholderThumbs] No server series info available")
-                return
-
-            print(f"📝 [PlaceholderThumbs] Creating placeholder thumbnails for {len(self._server_series_info)} series")
-
-            # Sort by series number for consistent ordering
-            sorted_series = sorted(self._server_series_info.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999999)
-
-            thumb_index = 0
-            for series_number, series_info in sorted_series:
-                try:
-                    series_name = series_info.get('series_name', f"Series {series_number}")
-                    modality = series_info.get('modality', 'Unknown')
-                    instance_count = series_info.get('number_of_instances', 0)
-
-                    print(f"📝 [PlaceholderThumbs] Adding placeholder for series {series_number}: {series_name} ({modality}, {instance_count} instances)")
-
-                    # Create a placeholder thumbnail without a file path
-                    # This will show series info immediately while actual image loads
-                    thumb_index = self.add_thumbnail_to_thumbnail_layout(
-                        thumb_index=thumb_index,
-                        file_path_thumbnail=None,  # None = use placeholder image
-                        key_thumbnail=str(series_number),
-                        series_info=series_info
-                    )
-
-                    # Update thumbnail manager to show pending state
-                    if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-                        self.thumbnail_manager.set_series_pending(str(series_number))
-
-                except Exception as e:
-                    print(f"⚠️ [PlaceholderThumbs] Error adding placeholder for series {series_number}: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-            print(f"✅ [PlaceholderThumbs] Created {thumb_index} placeholder thumbnails")
-
-            # Update thumbnail count label
-            if hasattr(self, 'thumb_count_label'):
-                try:
-                    self.thumb_count_label.setText(f"{thumb_index} series")
-                except RuntimeError:
-                    pass
-
-        except Exception as e:
-            print(f"⚠️ [PlaceholderThumbs] Error creating placeholders: {e}")
-            import traceback
-            traceback.print_exc()
     def _load_server_thumbnails(self):
         """Kick off background thumbnail loading (cache → server)."""
         try:
@@ -3391,17 +3323,7 @@ class PatientWidget(QWidget):
             series_info = metadata['series']
         elif series_info:
             # Use series_info from server (passed as parameter)
-            if file_path_thumbnail is None:
-                series_name = str(
-                    series_info.get('series_number')
-                    or series_info.get('series_name')
-                    or key_thumbnail
-                    or 'Unknown'
-                )
-            else:
-                series_name = str(
-                    series_info.get('series_number', cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail)))
-                )
+            series_name = str(series_info.get('series_number', cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))))
         else:
             series_name = cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))
             # Cache the name for future use
@@ -4051,7 +3973,7 @@ class PatientWidget(QWidget):
     def creator_vtk_widget(self):
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
-            return VTKWidget(height_viewer=height, patient_widget=self)
+            return VTKWidget(height_viewer=height)
         except Exception as e:
             print(f"❌ Error in creator_vtk_widget: {e}")
             self.logger.error(f"Error in creator_vtk_widget: {e}", exc_info=True)
