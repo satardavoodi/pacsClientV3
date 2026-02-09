@@ -1,11 +1,11 @@
 # Z‑MPR (Zeta MPR) – Pipeline & Tools Reference
 
-**Version:** 1.09.8.2  
-**Last Updated:** 2026‑02‑08
+**Version:** 1.08.9.8.3  
+**Last Updated:** 2026‑02‑09
 
 **Location**: `PacsClient/pacs/patient_tab/zeta mpr/`
 **Scope**: Standard MPR (orthogonal), cross‑lines, tools/measurements, and input orientation handling
-**Generated**: 2026‑02‑08
+**Generated**: 2026‑02‑09
 
 ---
 
@@ -28,7 +28,7 @@
 - `surface_reconstruction.py` – marching cubes / surface tools
 - `preset_manager.py` – 3D volume presets (depends on `vtk_3d_presets`)
 
-**Related but separate module (v1.09.8.2)**
+**Related but separate module (v1.08.9.8.3)**
 - `PacsClient/pacs/patient_tab/orthogonal_mpr/` – Orthogonal MPR viewer widget, launched from toolbar
    via `ToolbarManager._show_orthogonal_mpr_viewer()`.
 

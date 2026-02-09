@@ -14,6 +14,7 @@ Main Components:
 - mpr_measurement_tools: Distance, angle, and ROI measurement tools
 
 Version History:
+- v1.08.9.8.3: Stable release alignment and documentation consolidation
 - v1.09.8.2: Stable release alignment and documentation sync
 - v1.05: Drag-only crosshair (Phase 1 - separating 3D Cursor from Crosshair)
 - v1.02: Stable baseline with input-level flip correction
@@ -29,5 +30,5 @@ __all__ = [
     'PresetCategory',
 ]
 
-__version__ = '1.09.8.2'
+__version__ = '1.08.9.8.3'
 __author__ = 'PACS Development Team'

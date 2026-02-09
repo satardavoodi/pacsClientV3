@@ -72,6 +72,17 @@ class CircleRoiWidget:
 
         self.center = [0.0, 0.0, 0.0]
         self.radius = 1.0
+        self._radius_direction = [1.0, 0.0, 0.0]
+        self._radius_smoothing = 0.25
+
+        self._point_placer = None
+        try:
+            if hasattr(self.image_viewer, 'GetImageActor'):
+                placer = vtk.vtkImageActorPointPlacer()
+                placer.SetImageActor(self.image_viewer.GetImageActor())
+                self._point_placer = placer
+        except Exception:
+            self._point_placer = None
 
         self.source = vtk.vtkRegularPolygonSource()
         self.source.SetNumberOfSides(self.sides)
@@ -103,11 +114,40 @@ class CircleRoiWidget:
     def _distance(self, a, b):
         return float(np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2))
 
+    def _normalize(self, vec, eps: float = 1e-6):
+        length = float(np.sqrt((vec[0] ** 2) + (vec[1] ** 2) + (vec[2] ** 2)))
+        if length <= eps:
+            return None
+        return [vec[0] / length, vec[1] / length, vec[2] / length]
+
+    def _smooth_radius(self, target_radius: float) -> float:
+        return float(self.radius + (target_radius - self.radius) * float(self._radius_smoothing))
+
+    def _world_from_display_on_center(self, display_pos, center_world):
+        try:
+            renderer = self.renderer
+            renderer.SetWorldPoint(center_world[0], center_world[1], center_world[2], 1.0)
+            renderer.WorldToDisplay()
+            ref_display = renderer.GetDisplayPoint()
+            renderer.SetDisplayPoint(float(display_pos[0]), float(display_pos[1]), float(ref_display[2]))
+            renderer.DisplayToWorld()
+            world = renderer.GetWorldPoint()
+            if world and world[3] != 0:
+                return [world[0] / world[3], world[1] / world[3], world[2] / world[3]]
+        except Exception:
+            return None
+        return None
+
     def _create_handle_widget(self, color):
         rep = vtk.vtkPointHandleRepresentation2D()
         rep.GetProperty().SetColor(color)
         rep.GetProperty().SetLineWidth(2)
         rep.SetHandleSize(10)
+        if self._point_placer is not None:
+            try:
+                rep.SetPointPlacer(self._point_placer)
+            except Exception:
+                pass
 
         handle = vtk.vtkHandleWidget()
         handle.SetInteractor(self.interactor)
@@ -134,10 +174,14 @@ class CircleRoiWidget:
 
     def _get_handle_display_position(self, handle):
         rep = handle.GetRepresentation()
-        pos = [0.0, 0.0, 0.0]
         if hasattr(rep, 'GetDisplayPosition'):
-            rep.GetDisplayPosition(pos)
-        return pos
+            try:
+                return list(rep.GetDisplayPosition())
+            except TypeError:
+                pos = [0.0, 0.0, 0.0]
+                rep.GetDisplayPosition(pos)
+                return pos
+        return [0.0, 0.0, 0.0]
 
     def _set_handle_world_position(self, handle, position):
         rep = handle.GetRepresentation()
@@ -146,26 +190,31 @@ class CircleRoiWidget:
 
     def _on_handle_interaction(self, obj, event, calldata=None):
         if obj == self.center_handle:
-            new_center = self._get_handle_world_position(self.center_handle)
+            display_pos = self._get_handle_display_position(self.center_handle)
+            new_center = self._world_from_display_on_center(display_pos, self.center) or \
+                self._get_handle_world_position(self.center_handle)
             self.set_center(new_center)
         elif obj == self.radius_handle:
-            new_pos = self._get_handle_world_position(self.radius_handle)
-            self.set_radius(self._distance(self.center, new_pos))
+            display_pos = self._get_handle_display_position(self.radius_handle)
+            new_pos = self._world_from_display_on_center(display_pos, self.center) or \
+                self._get_handle_world_position(self.radius_handle)
+            self.set_radius_from_world_position(new_pos, smooth=True)
 
         self._update_handles()
-        if self._on_changed:
-            self._on_changed()
         self.image_viewer.Render()
 
     def set_center(self, center):
         self.center = [float(center[0]), float(center[1]), float(center[2])]
         self.source.SetCenter(self.center)
         self.source.Update()
+        if self._on_changed:
+            self._on_changed()
 
     def set_radius(self, radius):
         try:
             spacing = self.image_viewer.vtk_image_data.GetSpacing()
-            collapse_threshold = max(0.0, float(min(spacing)) * 0.25)
+            min_spacing = float(min(spacing)) if spacing else 0.0
+            collapse_threshold = max(0.0, min_spacing * 0.02)
         except Exception:
             collapse_threshold = 0.0
 
@@ -176,11 +225,24 @@ class CircleRoiWidget:
         self.radius = radius_val
         self.source.SetRadius(self.radius)
         self.source.Update()
-        if self.radius <= 0.0:
-            self.actor.SetVisibility(False)
-        else:
-            self.actor.SetVisibility(True)
+        self.actor.SetVisibility(self.radius > 0.0)
         self._update_handles()
+        if self._on_changed:
+            self._on_changed()
+
+    def set_radius_from_world_position(self, world_position, smooth: bool = False):
+        vec = [
+            float(world_position[0]) - float(self.center[0]),
+            float(world_position[1]) - float(self.center[1]),
+            float(world_position[2]) - float(self.center[2]),
+        ]
+        target_radius = self._distance(self.center, world_position)
+        direction = self._normalize(vec)
+        if direction is not None:
+            self._radius_direction = direction
+        if smooth:
+            target_radius = self._smooth_radius(target_radius)
+        self.set_radius(target_radius)
 
     def set_on_changed(self, callback):
         self._on_changed = callback
@@ -240,11 +302,22 @@ class CircleRoiWidget:
         if self.radius <= 0.0:
             radius_pos = [self.center[0], self.center[1], self.center[2]]
         else:
-            radius_pos = [self.center[0] + (self.radius * 1.1), self.center[1], self.center[2]]
+            radius_pos = [
+                self.center[0] + (self.radius * self._radius_direction[0]),
+                self.center[1] + (self.radius * self._radius_direction[1]),
+                self.center[2] + (self.radius * self._radius_direction[2]),
+            ]
         self._set_handle_world_position(self.radius_handle, radius_pos)
 
     def is_handle_hit(self, display_x: float, display_y: float, tolerance_px: float = 8.0) -> bool:
-        for handle in (self.center_handle, self.radius_handle):
+        return self.get_handle_hit_type(display_x, display_y, tolerance_px) is not None
+
+    def get_handle_hit_type(self, display_x: float, display_y: float, tolerance_px: float = 8.0) -> str | None:
+        handle_map = (
+            (self.center_handle, 'center'),
+            (self.radius_handle, 'radius'),
+        )
+        for handle, handle_name in handle_map:
             try:
                 if hasattr(handle, 'GetEnabled') and not handle.GetEnabled():
                     continue
@@ -252,10 +325,10 @@ class CircleRoiWidget:
                 dx = float(display_x) - float(pos[0])
                 dy = float(display_y) - float(pos[1])
                 if (dx * dx + dy * dy) <= (tolerance_px * tolerance_px):
-                    return True
+                    return handle_name
             except Exception:
                 continue
-        return False
+        return None
 
 
 class RoiInteractorStyle(AbstractInteractorStyle):
@@ -266,6 +339,12 @@ class RoiInteractorStyle(AbstractInteractorStyle):
 
         self.active_widget = self.create_contour_widget()
         self.active_widget.Off()
+        self._dragging_obj = None
+        self._drag_start_world = None
+        self._drag_start_nodes = None
+        self._hover_obj = None
+        self._drag_hit_distance_px = 10
+        self._drag_edge_ratio = 0.1
 
     def get_statistics(self, obj: ContourWidget):
         spacing = self.image_viewer.vtk_image_data.GetSpacing()
@@ -364,6 +443,7 @@ class RoiInteractorStyle(AbstractInteractorStyle):
         self.active_widget = self.create_contour_widget()
         self.image_viewer.renderer.ResetCameraClippingRange()
         self.image_viewer.Render()
+        self.auto_deactivate_tool()
 
     def on_interaction(self, obj: ContourWidget, event, calldata=None):
         # self.active_widget.OnEndInteraction(obj, event)
@@ -382,6 +462,114 @@ class RoiInteractorStyle(AbstractInteractorStyle):
         # print(f'on_interaction_start')
         self.emit_interaction()
         # self.image_viewer.GetMeasurements().AddItem(obj)
+
+    def _set_cursor(self, cursor_type):
+        if hasattr(self.image_viewer.image_interactor, 'SetCursor'):
+            self.image_viewer.image_interactor.SetCursor(cursor_type)
+
+    def _find_drag_target(self, mouse_pos):
+        current_slice = self.image_viewer.GetSlice()
+        if current_slice not in self.widgets_by_slice:
+            return None
+
+        closest_obj = None
+        min_distance = self._drag_hit_distance_px
+
+        for obj in self.widgets_by_slice[current_slice]:
+            if not hasattr(obj, self.tool_access.ROI):
+                continue
+
+            line_pairs = obj.get_position_world()
+            for start_point, end_point in line_pairs:
+                start_display = self.world_to_display(start_point)
+                end_display = self.world_to_display(end_point)
+                if not start_display or not end_display:
+                    continue
+
+                distance, t = self.point_to_line_distance_and_t(mouse_pos, start_display, end_display)
+                if distance <= min_distance and self.is_middle_segment_hit(t, self._drag_edge_ratio):
+                    min_distance = distance
+                    closest_obj = obj
+                    break
+
+        if closest_obj is None:
+            return None
+        return closest_obj
+
+    def _capture_roi_nodes(self, roi_widget):
+        nodes = []
+        try:
+            num_nodes = roi_widget.repr.GetNumberOfNodes()
+            for i in range(num_nodes):
+                pos = [0.0, 0.0, 0.0]
+                roi_widget.repr.GetNthNodeWorldPosition(i, pos)
+                nodes.append(list(pos))
+        except Exception:
+            pass
+        return nodes
+
+    def on_left_button_press(self, obj, event):
+        mouse_pos = self.GetInteractor().GetEventPosition()
+        drag_target = self._find_drag_target(mouse_pos)
+        if drag_target is not None:
+            roi_widget, _text_obj = drag_target.get_widget()
+            self._dragging_obj = drag_target
+            self._drag_start_world = self.display_to_world(mouse_pos[0], mouse_pos[1])
+            self._drag_start_nodes = self._capture_roi_nodes(roi_widget)
+            self._set_cursor(vtk.VTK_CURSOR_HAND)
+            return True
+
+        return super().on_left_button_press(obj, event)
+
+    def on_mouse_move(self, obj, event):
+        flag_active = super().on_mouse_move(obj, event)
+        if flag_active:
+            return True
+
+        if self._dragging_obj is not None and self._drag_start_nodes is not None:
+            current_pos = self.GetInteractor().GetEventPosition()
+            current_world = self.display_to_world(current_pos[0], current_pos[1])
+            if current_world is None or self._drag_start_world is None:
+                return True
+
+            dx = current_world[0] - self._drag_start_world[0]
+            dy = current_world[1] - self._drag_start_world[1]
+            dz = current_world[2] - self._drag_start_world[2]
+
+            roi_widget, _text_obj = self._dragging_obj.get_widget()
+            for i, node in enumerate(self._drag_start_nodes):
+                new_pos = [node[0] + dx, node[1] + dy, node[2] + dz]
+                try:
+                    roi_widget.repr.SetNthNodeWorldPosition(i, new_pos)
+                except Exception:
+                    pass
+
+            self.on_interaction(roi_widget, None)
+            self.image_viewer.renderer.ResetCameraClippingRange()
+            self.image_viewer.Render()
+            return True
+
+        hover_target = self._find_drag_target(self.GetInteractor().GetEventPosition())
+        if hover_target is not None:
+            if self._hover_obj != hover_target:
+                self._hover_obj = hover_target
+                self._set_cursor(vtk.VTK_CURSOR_HAND)
+        else:
+            if self._hover_obj is not None:
+                self._hover_obj = None
+                self._set_cursor(vtk.VTK_CURSOR_ARROW)
+
+        return False
+
+    def on_left_button_release(self, obj, event):
+        if self._dragging_obj is not None:
+            self._dragging_obj = None
+            self._drag_start_world = None
+            self._drag_start_nodes = None
+            self._set_cursor(vtk.VTK_CURSOR_ARROW)
+            return True
+
+        return super().on_left_button_release(obj, event)
 
     def activate(self, tool=None):
         self.active_widget.On()
@@ -471,6 +659,9 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
         self._drag_start_center = None
         self._drag_start_radius = None
         self._active_circle_obj = None
+        self._hover_circle_obj = None
+        self._drag_hit_distance_px = 10
+        self._drag_edge_ratio = 0.1
 
     def _create_circle_widget(self):
         widget = CircleRoiWidget(self.image_viewer, self.color)
@@ -535,8 +726,7 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
             should_apply = (float(slope) != 1.0) or (float(intercept) != 0.0)
             if should_apply:
                 region_vals = region_vals * float(slope) + float(intercept)
-        pixel_area_mm2 = spacing[0] * spacing[1]
-        area_mm2 = region_vals.size * pixel_area_mm2
+        area_mm2 = float(np.pi) * (float(radius_mm) ** 2)
         area_cm2 = area_mm2 / 100.0
 
         dict_statistics = {
@@ -625,24 +815,69 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
         if dict_statistics:
             self.update_text_actor(text_actor, dict_statistics, widget.get_radius())
 
-    def _is_over_handle(self, mouse_pos) -> bool:
+    def _get_handle_hit(self, mouse_pos):
         current_slice = self.image_viewer.GetSlice()
         if current_slice not in self.widgets_by_slice:
-            return False
+            return None
 
         for obj in self.widgets_by_slice[current_slice]:
             if not hasattr(obj, self.tool_access.CIRCLE_ROI):
                 continue
             circle_widget = obj.get_widget()[0]
-            if circle_widget.is_handle_hit(mouse_pos[0], mouse_pos[1]):
-                return True
+            hit_type = circle_widget.get_handle_hit_type(mouse_pos[0], mouse_pos[1])
+            if hit_type:
+                return obj, hit_type
 
-        return False
+        return None
+
+    def _get_edge_hit(self, mouse_pos):
+        current_slice = self.image_viewer.GetSlice()
+        if current_slice not in self.widgets_by_slice:
+            return None
+
+        closest_obj = None
+        min_distance = self._drag_hit_distance_px
+
+        for obj in self.widgets_by_slice[current_slice]:
+            if not hasattr(obj, self.tool_access.CIRCLE_ROI):
+                continue
+            line_pairs = obj.get_position_world()
+            for start_point, end_point in line_pairs:
+                start_display = self.world_to_display(start_point)
+                end_display = self.world_to_display(end_point)
+                if not start_display or not end_display:
+                    continue
+
+                distance, t = self.point_to_line_distance_and_t(mouse_pos, start_display, end_display)
+                if distance <= min_distance and self.is_middle_segment_hit(t, self._drag_edge_ratio):
+                    min_distance = distance
+                    closest_obj = obj
+                    break
+
+        return closest_obj
 
     def on_left_button_press(self, obj, event):
         if not self._drawing:
             mouse_pos = self.GetInteractor().GetEventPosition()
-            if self._is_over_handle(mouse_pos):
+            handle_hit = self._get_handle_hit(mouse_pos)
+            if handle_hit:
+                circle_obj, hit_type = handle_hit
+                circle_widget, _text_obj = circle_obj.get_widget()
+                self._active_circle_obj = circle_obj
+                self._drag_mode = 'move' if hit_type == 'center' else 'resize'
+                self._drag_start_world = self.display_to_world(*mouse_pos)
+                self._drag_start_center = circle_widget.get_center()
+                self._drag_start_radius = circle_widget.get_radius()
+                return
+
+            edge_hit = self._get_edge_hit(mouse_pos)
+            if edge_hit:
+                circle_widget, _text_obj = edge_hit.get_widget()
+                self._active_circle_obj = edge_hit
+                self._drag_mode = 'move'
+                self._drag_start_world = self.display_to_world(*mouse_pos)
+                self._drag_start_center = circle_widget.get_center()
+                self._drag_start_radius = circle_widget.get_radius()
                 return
 
             self._center_world = self.display_to_world(*mouse_pos)
@@ -658,22 +893,70 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
         super().on_left_button_press(obj, event)
 
     def on_mouse_move(self, obj, event):
+        if not self._drag_mode and not self._drawing:
+            mouse_pos = self.GetInteractor().GetEventPosition()
+            hover_hit = self._get_edge_hit(mouse_pos)
+            if hover_hit is not None:
+                if self._hover_circle_obj != hover_hit:
+                    self._hover_circle_obj = hover_hit
+                    if hasattr(self.image_viewer.image_interactor, 'SetCursor'):
+                        self.image_viewer.image_interactor.SetCursor(vtk.VTK_CURSOR_HAND)
+            else:
+                if self._hover_circle_obj is not None:
+                    self._hover_circle_obj = None
+                    if hasattr(self.image_viewer.image_interactor, 'SetCursor'):
+                        self.image_viewer.image_interactor.SetCursor(vtk.VTK_CURSOR_ARROW)
+
+        if self._drag_mode and self._active_circle_obj:
+            display_pos = self.GetInteractor().GetEventPosition()
+            circle_widget, _text_obj = self._active_circle_obj.get_widget()
+            if self._drag_mode == 'move':
+                current_world = circle_widget._world_from_display_on_center(display_pos, self._drag_start_center) or \
+                    self.display_to_world(*display_pos)
+                if current_world is not None and self._drag_start_world is not None:
+                    dx = current_world[0] - self._drag_start_world[0]
+                    dy = current_world[1] - self._drag_start_world[1]
+                    dz = current_world[2] - self._drag_start_world[2]
+                    new_center = [
+                        self._drag_start_center[0] + dx,
+                        self._drag_start_center[1] + dy,
+                        self._drag_start_center[2] + dz,
+                    ]
+                    circle_widget.set_center(new_center)
+                    self._update_widget_text(circle_widget)
+                    self.image_viewer.Render()
+                    return True
+            elif self._drag_mode == 'resize':
+                current_world = circle_widget._world_from_display_on_center(display_pos, circle_widget.get_center()) or \
+                    self.display_to_world(*display_pos)
+                if current_world is not None:
+                    circle_widget.set_radius_from_world_position(current_world, smooth=False)
+                    self._update_widget_text(circle_widget)
+                    self.image_viewer.Render()
+                    return True
+
         if self._drawing and self._center_world is not None:
-            current_world = self.display_to_world(*self.GetInteractor().GetEventPosition())
+            display_pos = self.GetInteractor().GetEventPosition()
+            current_world = self.active_widget._world_from_display_on_center(display_pos, self._center_world) or \
+                self.display_to_world(*display_pos)
             if current_world is None:
                 return True
-            radius = np.sqrt(
-                (current_world[0] - self._center_world[0]) ** 2 +
-                (current_world[1] - self._center_world[1]) ** 2 +
-                (current_world[2] - self._center_world[2]) ** 2
-            )
-            self.active_widget.set_radius(radius)
+            self.active_widget.set_radius_from_world_position(current_world, smooth=False)
             self.image_viewer.Render()
             return True
 
         return super().on_mouse_move(obj, event)
 
     def on_left_button_release(self, obj, event):
+        if self._drag_mode:
+            self._drag_mode = None
+            self._active_circle_obj = None
+            self._drag_start_world = None
+            self._drag_start_center = None
+            self._drag_start_radius = None
+            if hasattr(self.image_viewer.image_interactor, 'SetCursor'):
+                self.image_viewer.image_interactor.SetCursor(vtk.VTK_CURSOR_ARROW)
+            return
         if self._drawing:
             self._drawing = False
 
@@ -683,7 +966,7 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
                 text_actor = self.create_text_actor(text_pos, dict_statistics)
                 self.active_widget.set_text_actor(text_actor)
                 text_object = TextActor2DObject(text_actor, default_color=self.color)
-                self.image_viewer.renderer.AddActor2D(text_actor)
+                self.image_viewer.renderer.AddViewProp(text_actor)
 
                 roi_object = CircleRoiObject(self.active_widget, text_object, default_color=self.color)
                 self.add_object_to_store_widgets(roi_object, self.tool_access.CIRCLE_ROI)
@@ -700,6 +983,7 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
             self.active_widget = self._create_circle_widget()
             self.active_widget.Off()
             self._center_world = None
+            self.auto_deactivate_tool()
             return
 
         super().on_left_button_release(obj, event)

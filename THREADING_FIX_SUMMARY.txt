@@ -1,6 +1,6 @@
-# 🧵 Threading & UI Safety Summary (v1.09.8.2)
+# 🧵 Threading & UI Safety Summary (v1.08.9.8.3)
 
-**Last Updated:** 2026-02-08  
+**Last Updated:** 2026-02-09  
 **Applies To:** Zeta Download Manager + Patient UI  
 **Status:** ✅ Standardized
 
@@ -41,4 +41,4 @@ If you touch these files, confirm UI updates are still main‑thread‑safe.
 
 ---
 
-This document is the canonical reference for threading safety in v1.09.8.2.
+This document is the canonical reference for threading safety in v1.08.9.8.3.

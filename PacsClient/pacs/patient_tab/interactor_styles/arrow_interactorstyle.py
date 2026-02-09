@@ -10,6 +10,8 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
         super().__init__(image_viewer)
         self.image_viewer = image_viewer
         self.color = (0, 0.9, 0)
+        self.arrow_head_size_px = 42
+        self.arrow_head_width_ratio = 0.45
 
         self.n_clicks = 0
         self.is_active = False
@@ -17,6 +19,13 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
         self.triangle_object = TriangleObject(default_color=self.color)
         self.active_widget = self.create_widget()
         self.active_widget.Off()
+
+        self._dragging_obj = None
+        self._drag_start_world = None
+        self._drag_start_points = None
+        self._hover_obj = None
+        self._drag_hit_distance_px = 10
+        self._drag_edge_ratio = 0.1
 
         self.interactor_name = self.tool_access.ARROW
 
@@ -63,7 +72,51 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
         self.is_active = False
         # print("Arrow Widget tool deactivated")
 
+    def _set_cursor(self, cursor_type):
+        if hasattr(self.image_viewer.image_interactor, 'SetCursor'):
+            self.image_viewer.image_interactor.SetCursor(cursor_type)
+
+    def _find_drag_target(self, mouse_pos):
+        current_slice = self.image_viewer.GetSlice()
+        if current_slice not in self.widgets_by_slice:
+            return None
+
+        closest_obj = None
+        closest_points = None
+        min_distance = self._drag_hit_distance_px
+
+        for obj in self.widgets_by_slice[current_slice]:
+            if not hasattr(obj, self.tool_access.ARROW):
+                continue
+
+            point1_world, point2_world = obj.get_position_world()
+            point1_display = self.world_to_display(point1_world)
+            point2_display = self.world_to_display(point2_world)
+            if not point1_display or not point2_display:
+                continue
+
+            distance, t = self.point_to_line_distance_and_t(mouse_pos, point1_display, point2_display)
+            if distance <= min_distance and self.is_middle_segment_hit(t, self._drag_edge_ratio):
+                min_distance = distance
+                closest_obj = obj
+                closest_points = (point1_world, point2_world)
+
+        if closest_obj is None:
+            return None
+        return closest_obj, closest_points
+
     def on_left_button_press(self, obj, event):
+        if self.n_clicks == 0:
+            mouse_pos = self.GetInteractor().GetEventPosition()
+            drag_target = self._find_drag_target(mouse_pos)
+            if drag_target is not None:
+                obj_to_drag, points = drag_target
+                self._dragging_obj = obj_to_drag
+                self._drag_start_points = points
+                self._drag_start_world = self.display_to_world(mouse_pos[0], mouse_pos[1])
+                self._set_cursor(vtk.VTK_CURSOR_HAND)
+                return
+
         if not self.is_active:
             return
 
@@ -84,6 +137,8 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
             # reset actors and widgets arrow
             self.triangle_object = TriangleObject(default_color=self.color)
             self.active_widget = self.create_widget()
+            self.is_active = False
+            self.auto_deactivate_tool()
 
         else:
 
@@ -92,7 +147,12 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
 
             # set parameters on triangle (actor, points, tip)
             self.triangle_object.triangle_tip = world_pos
-            self.triangle_object.triangle_actor, self.triangle_object.triangle_points = self.create_triangle_actor(tip=world_pos, tail=world_pos, size=1)
+            self.triangle_object.triangle_actor, self.triangle_object.triangle_points = self.create_triangle_actor(
+                tip=world_pos,
+                tail=world_pos,
+                size=None,
+                width_ratio=None
+            )
             self.image_viewer.renderer.AddActor(self.triangle_object.triangle_actor)
 
             line_rep = self.active_widget.GetLineRepresentation()
@@ -108,7 +168,51 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
         if flag_active_arrow:
             return True
 
+        if self._dragging_obj is not None and self._drag_start_points is not None:
+            current_pos = self.GetInteractor().GetEventPosition()
+            current_world = self.display_to_world(current_pos[0], current_pos[1])
+            if current_world is None or self._drag_start_world is None:
+                return True
+
+            dx = current_world[0] - self._drag_start_world[0]
+            dy = current_world[1] - self._drag_start_world[1]
+            dz = current_world[2] - self._drag_start_world[2]
+
+            p1_start, p2_start = self._drag_start_points
+            new_p1 = [p1_start[0] + dx, p1_start[1] + dy, p1_start[2] + dz]
+            new_p2 = [p2_start[0] + dx, p2_start[1] + dy, p2_start[2] + dz]
+
+            arrow_widget, triangle_object = self._dragging_obj.get_widget()
+            repr_obj = arrow_widget.GetRepresentation()
+            if hasattr(repr_obj, 'SetPoint1WorldPosition'):
+                repr_obj.SetPoint1WorldPosition(new_p1)
+            if hasattr(repr_obj, 'SetPoint2WorldPosition'):
+                repr_obj.SetPoint2WorldPosition(new_p2)
+
+            triangle_object.triangle_tip = new_p1
+            self.update_triangle_points(
+                triangle_object.triangle_points,
+                new_p1,
+                new_p2,
+                size=None,
+                width_ratio=None
+            )
+
+            self.image_viewer.renderer.ResetCameraClippingRange()
+            self.image_viewer.Render()
+            return True
+
         if self.n_clicks != 1:
+            if self.n_clicks == 0:
+                hover_target = self._find_drag_target(self.GetInteractor().GetEventPosition())
+                if hover_target is not None:
+                    if self._hover_obj != hover_target[0]:
+                        self._hover_obj = hover_target[0]
+                        self._set_cursor(vtk.VTK_CURSOR_HAND)
+                else:
+                    if self._hover_obj is not None:
+                        self._hover_obj = None
+                        self._set_cursor(vtk.VTK_CURSOR_ARROW)
             return
 
         # we run on_mouse_move if we are drawing arrow
@@ -119,9 +223,23 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
         line_rep = self.active_widget.GetLineRepresentation()
         if line_rep:
             # update triangle base on new pos mouse
-            self.update_triangle_points(self.triangle_object.triangle_points, self.triangle_object.triangle_tip, world_pos, size=4)
+            self.update_triangle_points(
+                self.triangle_object.triangle_points,
+                self.triangle_object.triangle_tip,
+                world_pos,
+                size=None,
+                width_ratio=None
+            )
             line_rep.SetPoint2WorldPosition(world_pos)
             self.image_viewer.Render()
+
+    def on_left_button_release(self, obj, event):
+        if self._dragging_obj is not None:
+            self._dragging_obj = None
+            self._drag_start_world = None
+            self._drag_start_points = None
+            self._set_cursor(vtk.VTK_CURSOR_ARROW)
+            return
 
     def create_triangle_actor(self, tip, tail, size=8, width_ratio=0.5, color=(1, 1, 0)):
         """
@@ -140,6 +258,13 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
             direction = np.array([1, 0, 0])
         else:
             direction = direction / norm
+
+        if size is None:
+            size = self.world_length_from_pixels(tip, self.arrow_head_size_px, axis='x')
+            if size <= 0:
+                size = 1.0
+        if width_ratio is None:
+            width_ratio = self.arrow_head_width_ratio
 
         # مرکز قاعده (در امتداد خط، size فاصله از نوک)
         base_center = tip + direction * size
@@ -196,6 +321,13 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
             direction = np.array([1, 0, 0])
         else:
             direction = direction / norm
+
+        if size is None:
+            size = self.world_length_from_pixels(tip, self.arrow_head_size_px, axis='x')
+            if size <= 0:
+                size = 1.0
+        if width_ratio is None:
+            width_ratio = self.arrow_head_width_ratio
 
         # مرکز قاعده مثلث
         base_center = tip + direction * size

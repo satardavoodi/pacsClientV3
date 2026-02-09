@@ -1,14 +1,14 @@
 # ZMPR (Zeta MPR) Module
 
-**Version:** 1.09.8.2  
-**Last Updated:** 2026‑02‑08  
+**Version:** 1.08.9.8.3  
+**Last Updated:** 2026‑02‑09  
 **Location:** `PacsClient/pacs/patient_tab/zeta mpr/`
 
 ---
 
 ## Overview
 
-Zeta MPR is the primary MPR implementation in v1.09.8.2. It provides orthogonal
+Zeta MPR is the primary MPR implementation in v1.08.9.8.3. It provides orthogonal
 multi‑planar views, crosshair synchronization, measurement tools, curved MPR,
 and advanced rendering options.
 
@@ -38,7 +38,7 @@ zeta mpr/
 
 ---
 
-## Integration (v1.09.8.2)
+## Integration (v1.08.9.8.3)
 
 Zeta MPR is launched from the main toolbar via:
 - `PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/toolbar_manager.py`

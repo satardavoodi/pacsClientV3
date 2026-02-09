@@ -71,7 +71,7 @@ def grow_vtk_inplace(old_input, new_vtk_image_data):
 
 
 class VTKWidget(QVTKRenderWindowInteractor):
-    def __init__(self, parent=None, height_viewer=480):
+    def __init__(self, parent=None, height_viewer=480, patient_widget=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.last_series_show = None
@@ -80,6 +80,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.image_viewer = None
         self.height_viewer = height_viewer
         self.apply_default_filter = True
+        self.patient_widget = patient_widget
         
         # =====================================================
         # ANTI-FLICKERING: Render throttling state

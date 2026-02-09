@@ -21,6 +21,8 @@ class EraserInteractorStyle(AbstractInteractorStyle):
         obj = self.find_widget_at_position(mouse_pos)
         current_slice = self.image_viewer.GetSlice()
         self.delete_widget(obj, current_slice)
+        if obj is not None:
+            self.auto_deactivate_tool()
 
     def find_widget_at_position(self, mouse_pos):
         try:

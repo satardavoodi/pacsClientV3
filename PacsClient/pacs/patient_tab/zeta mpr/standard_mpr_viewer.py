@@ -2,6 +2,21 @@
 Zeta MPR Viewer based on VTK official patterns
 Uses vtkImageResliceMapper for proper orthogonal views
 
+VERSION: 1.06 - 5-POINT OBLIQUE MPR IMPLEMENTATION
+Date: 2026-02-09
+Status: ✓ Oblique rotation via camera repositioning (no volume reslice)
+Changes from v1.05:
+  1. ROTATION ENABLED: crosshair rotation handles are now active
+  2. 5-POINT OBLIQUE: when crosshairs rotate in a source view, computes
+     oblique plane normals from the 5 crosshair points (center + 4 endpoints)
+     and repositions target view cameras along these normals.
+     vtkImageResliceMapper (SliceFacesCameraOn + SliceAtFocalPointOn)
+     automatically slices at the correct oblique plane.
+  3. REMOVED old vtkImageReslice volume-rotation approach (_apply_oblique_transform)
+     which created rotated volume copies and swapped mappers - replaced with
+     lightweight camera repositioning that uses the existing mapper/volume.
+  4. CT Roll/Azimuth corrections preserved during oblique camera updates.
+
 VERSION: 1.05 - OPTIMIZED CROSSHAIR & WORKFLOW IMPROVEMENTS (FINAL)
 Date: 2026-01-31
 Status: ✓ STABLE - Professional crosshair UX + workflow + performance
@@ -545,8 +560,8 @@ class StandardMPRViewer(QWidget):
         self.drag_start_pos = None
         self.dragging_center = False  # Track if dragging to move center
 
-        # Rotation lock (temporary) - disables crosshair rotation handles
-        self.rotation_enabled = False
+        # Rotation lock - controls crosshair rotation handles
+        self.rotation_enabled = True
 
         # Slab projection state for 2D MPR views
         self._mpr_slab_thickness_mm = 10.0
@@ -567,6 +582,7 @@ class StandardMPRViewer(QWidget):
         self.reslice_filters = {}  # vtkImageReslice for each view
         self.reslice_transforms = {}  # vtkTransform for each view
         self.oblique_enabled = True
+        self._oblique_cameras_active = False  # Track if oblique camera repositioning is active
         
         # Auto-rotation state
         self.auto_rotation_active = False
@@ -3275,23 +3291,29 @@ class StandardMPRViewer(QWidget):
             def on_mouse_wheel_forward(self, obj, event):
                 """Scroll forward through slices - direction depends on image orientation"""
                 self.parent._set_active_view(self.view_name)
-                # Get current focal point
+                # Get current focal point and position
                 camera = self.renderer.GetActiveCamera()
                 focal = list(camera.GetFocalPoint())
+                pos = list(camera.GetPosition())
                 
                 # Get scroll direction based on orientation matrix
                 scroll_dir = self.parent._get_scroll_direction(self.view_name)
                 step = 2.0
                 
+                # Move both focal and position together (preserves camera direction)
                 focal[0] += scroll_dir[0] * step
                 focal[1] += scroll_dir[1] * step
                 focal[2] += scroll_dir[2] * step
+                pos[0] += scroll_dir[0] * step
+                pos[1] += scroll_dir[1] * step
+                pos[2] += scroll_dir[2] * step
                 
                 self.parent.current_position[0] = focal[0]
                 self.parent.current_position[1] = focal[1]
                 self.parent.current_position[2] = focal[2]
                 
                 camera.SetFocalPoint(focal)
+                camera.SetPosition(pos)
                 
                 # Update crosshairs in all views (now uses batch rendering)
                 self.parent._update_all_crosshairs()
@@ -3304,23 +3326,29 @@ class StandardMPRViewer(QWidget):
             def on_mouse_wheel_backward(self, obj, event):
                 """Scroll backward through slices - direction depends on image orientation"""
                 self.parent._set_active_view(self.view_name)
-                # Get current focal point
+                # Get current focal point and position
                 camera = self.renderer.GetActiveCamera()
                 focal = list(camera.GetFocalPoint())
+                pos = list(camera.GetPosition())
                 
                 # Get scroll direction based on orientation matrix (negate for backward)
                 scroll_dir = self.parent._get_scroll_direction(self.view_name)
                 step = 2.0
                 
+                # Move both focal and position together (preserves camera direction)
                 focal[0] -= scroll_dir[0] * step
                 focal[1] -= scroll_dir[1] * step
                 focal[2] -= scroll_dir[2] * step
+                pos[0] -= scroll_dir[0] * step
+                pos[1] -= scroll_dir[1] * step
+                pos[2] -= scroll_dir[2] * step
                 
                 self.parent.current_position[0] = focal[0]
                 self.parent.current_position[1] = focal[1]
                 self.parent.current_position[2] = focal[2]
                 
                 camera.SetFocalPoint(focal)
+                camera.SetPosition(pos)
                 
                 # Update crosshairs in all views (now uses batch rendering)
                 self.parent._update_all_crosshairs()
@@ -3376,7 +3404,8 @@ class StandardMPRViewer(QWidget):
         self._update_oblique_reslicing()
     
     def _update_slice_positions(self):
-        """Update slice positions to follow crosshair (optimized)"""
+        """Update slice positions to follow crosshair.
+        Moves camera + focal point together to preserve viewing direction."""
         for view_name in ['axial', 'sagittal', 'coronal']:
             if view_name not in self.viewers:
                 continue
@@ -3384,20 +3413,25 @@ class StandardMPRViewer(QWidget):
             renderer = self.viewers[view_name]['renderer']
             camera = renderer.GetActiveCamera()
             
-            # Update camera focal point to current position
+            # Move camera AND focal point together (preserves direction vector)
             current_focal = list(camera.GetFocalPoint())
+            current_pos = list(camera.GetPosition())
             
             if view_name == 'axial':
-                # Z axis scrolling
+                delta = self.current_position[2] - current_focal[2]
                 current_focal[2] = self.current_position[2]
+                current_pos[2] += delta
             elif view_name == 'sagittal':
-                # X axis scrolling
+                delta = self.current_position[0] - current_focal[0]
                 current_focal[0] = self.current_position[0]
+                current_pos[0] += delta
             elif view_name == 'coronal':
-                # Y axis scrolling
+                delta = self.current_position[1] - current_focal[1]
                 current_focal[1] = self.current_position[1]
+                current_pos[1] += delta
             
             camera.SetFocalPoint(current_focal)
+            camera.SetPosition(current_pos)
             # Request batched render (optimization)
             self._request_render(view_name)
     
@@ -3669,183 +3703,225 @@ class StandardMPRViewer(QWidget):
     
     def _update_oblique_reslicing(self):
         """
-        Update oblique reslicing when crosshairs rotate.
-        Uses vtkTransform for proper 3D rotation.
+        5-Point Oblique MPR (v1.06).
+        
+        Uses the center point + 4 crosshair endpoints to define oblique slice
+        planes for perpendicular views via camera repositioning.
+        
+        When crosshairs rotate in a source view, the two crosshair lines trace
+        the intersection of two perpendicular oblique planes with the source
+        view's slice plane.  For each crosshair line:
+        
+            oblique_plane_normal = line_direction × source_slice_normal
+        
+        The target view camera is repositioned along this normal so that
+        vtkImageResliceMapper (SliceFacesCameraOn + SliceAtFocalPointOn)
+        automatically slices through the correct oblique plane at the
+        crosshair center position.  No volume reslicing is needed.
+        
+        5 Points per source view:
+          C      = crosshair intersection  (self.current_position)
+          h_p1   = horizontal line endpoint 1
+          h_p2   = horizontal line endpoint 2
+          v_p1   = vertical line endpoint 1
+          v_p2   = vertical line endpoint 2
         """
         import math
+        import numpy as np
 
         if not self.oblique_enabled:
             logger.debug("Oblique reslicing disabled - crosshair rotation is visual only")
-            self._reset_all_to_orthogonal()
+            if self._oblique_cameras_active:
+                self._reset_all_to_orthogonal()
             return
 
         # Check if any view has rotation
         has_rotation = any(abs(angle) > 0.01 for angle in self.crosshair_angles.values())
-        
+
         if not has_rotation:
-            self._reset_all_to_orthogonal()
+            if self._oblique_cameras_active:
+                self._reset_all_to_orthogonal()
             return
 
-        logger.info(
-            "Oblique reslice update: axial=%.2f°, sagittal=%.2f°, coronal=%.2f°",
-            math.degrees(self.crosshair_angles.get('axial', 0.0)),
-            math.degrees(self.crosshair_angles.get('sagittal', 0.0)),
-            math.degrees(self.crosshair_angles.get('coronal', 0.0))
-        )
-        
-        # Apply oblique slicing to perpendicular views
+        bounds = self.image_data.GetBounds()
+
+        # Track which target views have been updated (last write wins)
         for source_view, angle in self.crosshair_angles.items():
             if abs(angle) < 0.01:
                 continue
-            
-            # Use angle directly
-            adjusted_angle = angle * -1.0
-            
+
+            # ── 5 points ──────────────────────────────────────────────
+            h_p1, h_p2, v_p1, v_p2 = self._calculate_crosshair_endpoints(
+                source_view, bounds
+            )
+
+            # Unit direction along each crosshair line
+            h_dir = np.array(h_p1, dtype=float) - np.array(h_p2, dtype=float)
+            h_len = np.linalg.norm(h_dir)
+            if h_len > 1e-8:
+                h_dir /= h_len
+
+            v_dir = np.array(v_p1, dtype=float) - np.array(v_p2, dtype=float)
+            v_len = np.linalg.norm(v_dir)
+            if v_len > 1e-8:
+                v_dir /= v_len
+
+            # ── source slice normal & target mapping ──────────────────
+            # In each source view the horizontal crosshair line is the
+            # trace of one target plane and the vertical line is the
+            # trace of the other.
             if source_view == 'axial':
-                # Axial rotates around Z axis
-                self._apply_oblique_transform('sagittal', adjusted_angle, 'z')
-                self._apply_oblique_transform('coronal', adjusted_angle, 'z')
+                slice_normal = np.array([0.0, 0.0, 1.0])
+                targets = [
+                    ('sagittal', v_dir),   # vertical line → sagittal trace
+                    ('coronal',  h_dir),   # horizontal line → coronal trace
+                ]
             elif source_view == 'sagittal':
-                # Sagittal rotates around X axis
-                self._apply_oblique_transform('axial', adjusted_angle, 'x')
-                self._apply_oblique_transform('coronal', adjusted_angle, 'x')
+                slice_normal = np.array([1.0, 0.0, 0.0])
+                targets = [
+                    ('axial',   h_dir),
+                    ('coronal', v_dir),
+                ]
             elif source_view == 'coronal':
-                # Coronal rotates around Y axis
-                self._apply_oblique_transform('axial', adjusted_angle, 'y')
-                self._apply_oblique_transform('sagittal', adjusted_angle, 'y')
-    
+                slice_normal = np.array([0.0, 1.0, 0.0])
+                targets = [
+                    ('axial',    h_dir),
+                    ('sagittal', v_dir),
+                ]
+            else:
+                continue
+
+            for target_view, line_dir in targets:
+                # Oblique plane normal = line_direction × source_slice_normal
+                oblique_normal = np.cross(line_dir, slice_normal)
+                norm_mag = np.linalg.norm(oblique_normal)
+                if norm_mag < 1e-8:
+                    continue  # degenerate – line parallel to slice normal
+                oblique_normal /= norm_mag
+
+                self._set_oblique_camera(target_view, oblique_normal)
+
+        logger.debug(
+            "5-pt oblique: ax=%.1f° sag=%.1f° cor=%.1f°",
+            math.degrees(self.crosshair_angles.get('axial', 0.0)),
+            math.degrees(self.crosshair_angles.get('sagittal', 0.0)),
+            math.degrees(self.crosshair_angles.get('coronal', 0.0)),
+        )
+
+    # ─── helpers for 5-point oblique ────────────────────────────────────
+
+    def _set_oblique_camera(self, target_view, oblique_normal):
+        """
+        Reposition the camera of *target_view* so that
+        vtkImageResliceMapper slices along the oblique plane whose normal
+        is *oblique_normal*.
+
+        Only the camera POSITION changes (to alter the viewing direction).
+        The focal point is kept unchanged so the image stays centered
+        in the viewport (prevents shift).  The view-up is taken from the
+        camera's current state (which already has CT Roll baked in from
+        view creation) so no additional Azimuth/Roll corrections are
+        needed (prevents flip).
+        """
+        import numpy as np
+
+        if target_view not in self.viewers:
+            return
+
+        renderer = self.viewers[target_view]['renderer']
+        camera   = renderer.GetActiveCamera()
+
+        # Preserve current state
+        parallel_scale = camera.GetParallelScale()
+        old_pos   = np.array(camera.GetPosition(), dtype=float)
+        old_focal = np.array(camera.GetFocalPoint(), dtype=float)
+        old_up    = np.array(camera.GetViewUp(), dtype=float)
+
+        distance  = float(np.linalg.norm(old_pos - old_focal))
+        if distance < 1.0:
+            distance = 500.0
+
+        # Keep focal point unchanged — only reposition camera along
+        # the oblique normal to change the slice plane direction.
+        new_pos = old_focal + oblique_normal * distance
+
+        # Reuse the camera's current view-up (already has CT Roll from
+        # view creation).  Only adjust if near-degenerate.
+        cam_dir = old_focal - new_pos
+        cam_dir_n = cam_dir / np.linalg.norm(cam_dir)
+        view_up = old_up.copy()
+        if abs(float(np.dot(cam_dir_n, view_up))) > 0.99:
+            # Degenerate — pick an alternative that isn't parallel
+            for candidate in [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]:
+                c = np.array(candidate, dtype=float)
+                if abs(float(np.dot(cam_dir_n, c))) < 0.99:
+                    view_up = c
+                    break
+
+        camera.SetPosition(new_pos.tolist())
+        # focal point intentionally NOT changed
+        camera.SetViewUp(view_up.tolist())
+        camera.SetParallelScale(parallel_scale)
+        # No CT Azimuth/Roll — view-up already contains the correct
+        # orientation from view creation; only camera direction changes.
+
+        self._oblique_cameras_active = True
+        self._request_render(target_view)
+
     def _reset_all_to_orthogonal(self):
-        """Reset all views to orthogonal slicing (optimized)"""
+        """
+        Reset all views to standard orthogonal camera positions.
+        Preserves zoom (ParallelScale) and restores original mappers
+        if the old reslice approach left swapped mappers behind.
+        Called only when transitioning from oblique back to orthogonal.
+        """
+
         for view_name in ['axial', 'sagittal', 'coronal']:
             if view_name not in self.viewers:
                 continue
-            
+
+            renderer = self.viewers[view_name]['renderer']
+            camera   = renderer.GetActiveCamera()
+
+            # Preserve zoom
+            parallel_scale = camera.GetParallelScale()
+
+            # Standard camera vectors from direction matrix
+            position, focal, view_up = self._get_camera_vectors_for_view(view_name)
+
+            camera.SetPosition(position)
+            camera.SetFocalPoint(focal)
+            camera.SetViewUp(view_up)
+
+            # CT-specific display corrections
+            if self.detected_modality == "CT":
+                if view_name == 'sagittal':
+                    camera.Roll(180)
+                elif view_name == 'coronal':
+                    camera.Azimuth(180)
+                    camera.Roll(180)
+
+            # Reset camera distance (preserves direction, fixes clipping)
+            renderer.ResetCamera()
+            camera.SetParallelScale(parallel_scale)
+
+            # Restore original mapper if swapped by legacy reslice approach
             if 'original_mapper' in self.viewers[view_name]:
                 original_mapper = self.viewers[view_name]['original_mapper']
                 self.viewers[view_name]['actor'].SetMapper(original_mapper)
                 self.viewers[view_name]['mapper'] = original_mapper
-                
-                # Restore window/level
+                del self.viewers[view_name]['original_mapper']
+
                 window, level = self._get_default_window_level()
                 self.viewers[view_name]['actor'].GetProperty().SetColorWindow(window)
                 self.viewers[view_name]['actor'].GetProperty().SetColorLevel(level)
-                
-                # Request batched render (optimization)
-                self._request_render(view_name)
-                logger.debug(f"Reset {view_name} to orthogonal")
-    
-    def _apply_oblique_transform(self, target_view, rotation_angle, rotation_axis):
-        """
-        Apply oblique transformation using vtkTransform and vtkImageReslice.
-        Simple and robust approach.
-        """
-        import math
-        
-        if target_view not in self.viewers:
-            return
-        
-        # Store original mapper
-        if 'original_mapper' not in self.viewers[target_view]:
-            self.viewers[target_view]['original_mapper'] = self.viewers[target_view]['mapper']
-        
-        # Get or create transform
-        transform_key = f"transform_{target_view}"
-        if transform_key not in self.reslice_transforms:
-            transform = vtk.vtkTransform()
-            self.reslice_transforms[transform_key] = transform
-        else:
-            transform = self.reslice_transforms[transform_key]
-        
-        # Reset transform
-        transform.Identity()
-        
-        # Move to origin, rotate, move back
-        cx, cy, cz = self.current_position
-        transform.Translate(-cx, -cy, -cz)
-        
-        # Apply rotation around axis
-        if rotation_axis == 'z':
-            transform.RotateZ(math.degrees(rotation_angle))
-        elif rotation_axis == 'x':
-            transform.RotateX(math.degrees(rotation_angle))
-        elif rotation_axis == 'y':
-            transform.RotateY(math.degrees(rotation_angle))
-        
-        transform.Translate(cx, cy, cz)
-        
-        # Get or create reslice filter
-        reslice_key = f"reslice_{target_view}"
-        if reslice_key not in self.reslice_filters:
-            reslice = vtk.vtkImageReslice()
-            reslice.SetInputData(self.image_data)
-            reslice.SetOutputDimensionality(3)
-            reslice.SetInterpolationModeToLinear()
-            reslice.SetBackgroundLevel(self.scalar_range[0])
-            
-            # Preserve spacing and origin from input
-            reslice.SetOutputSpacing(self.spacing)
-            reslice.SetOutputOrigin(self.origin)
-            
-            # Set output extent to match input
-            extent = self.image_data.GetExtent()
-            reslice.SetOutputExtent(extent)
-            
-            self.reslice_filters[reslice_key] = reslice
-        else:
-            reslice = self.reslice_filters[reslice_key]
-        
-        # Apply transform
-        reslice.SetResliceTransform(transform)
-        reslice.Update()
 
-        try:
-            matrix = transform.GetMatrix()
-            logger.debug(
-                "Oblique reslice matrix for %s (axis=%s, angle=%.2f°): [%.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f]",
-                target_view,
-                rotation_axis,
-                math.degrees(rotation_angle),
-                matrix.GetElement(0, 0), matrix.GetElement(0, 1), matrix.GetElement(0, 2), matrix.GetElement(0, 3),
-                matrix.GetElement(1, 0), matrix.GetElement(1, 1), matrix.GetElement(1, 2), matrix.GetElement(1, 3),
-                matrix.GetElement(2, 0), matrix.GetElement(2, 1), matrix.GetElement(2, 2), matrix.GetElement(2, 3),
-                matrix.GetElement(3, 0), matrix.GetElement(3, 1), matrix.GetElement(3, 2), matrix.GetElement(3, 3)
-            )
-        except Exception as log_err:
-            logger.debug(f"Failed to log oblique reslice matrix: {log_err}")
-        
-        # Get output
-        oblique_volume = reslice.GetOutput()
-        
-        if oblique_volume is None or oblique_volume.GetNumberOfPoints() == 0:
-            logger.warning(f"Reslice failed for {target_view}")
-            return
-        
-        logger.debug(f"Oblique volume dims: {oblique_volume.GetDimensions()}, bounds: {oblique_volume.GetBounds()}")
-        
-        # Create mapper for oblique volume
-        new_mapper = vtk.vtkImageResliceMapper()
-        new_mapper.SetInputData(oblique_volume)
-        new_mapper.SliceFacesCameraOn()
-        new_mapper.SliceAtFocalPointOn()
-        
-        # Update actor
-        actor = self.viewers[target_view]['actor']
-        actor.SetMapper(new_mapper)
-        
-        # Preserve window/level
-        window = actor.GetProperty().GetColorWindow()
-        level = actor.GetProperty().GetColorLevel()
-        actor.GetProperty().SetColorWindow(window)
-        actor.GetProperty().SetColorLevel(level)
-        
-        # Store
-        self.viewers[target_view]['mapper'] = new_mapper
-        self.viewers[target_view]['oblique_volume'] = oblique_volume
-        
-        # Render
-        self.viewers[target_view]['renderer'].GetRenderWindow().Render()
-        
-        logger.info(f"Applied oblique transform to {target_view}: axis={rotation_axis}, angle={math.degrees(rotation_angle):.1f}°")
+            self._request_render(view_name)
+            logger.debug(f"Reset {view_name} to orthogonal")
+
+        # Reposition cameras to current crosshair position
+        self._update_slice_positions()
+        self._oblique_cameras_active = False
     
     def get_current_volume(self, view_name):
         """Get current volume for a view (for stack tools)"""
@@ -4123,7 +4199,7 @@ class StandardMPRViewer(QWidget):
                     
                     # Recreate text annotation
                     if view_name in self.text_actors:
-                        renderer.RemoveViewProp(self.text_actors[view_name])
+                        renderer.RemoveActor2D(self.text_actors[view_name])
                     self._create_slice_info_text(renderer, view_name)
                     
                     # Update viewer storage

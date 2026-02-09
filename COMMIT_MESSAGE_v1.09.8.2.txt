@@ -1,5 +1,0 @@
-Release v1.09.8.2
-
-- Align app/module version strings with v1.09.8.2
-- Refresh Zeta MPR and system reference docs
-- Add v1.09.8.2 release + deployment summaries
