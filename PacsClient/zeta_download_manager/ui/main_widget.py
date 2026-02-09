@@ -1294,6 +1294,7 @@ class DownloadManagerWidget(QWidget):
         - Only skips if complete AND no new content on server
         """
         logger.info("=" * 80)
+        logger.info("🔵 [BUTTON CLICK] Start All button clicked")
         logger.info("▶ PLAY PRESSED - Starting global resume/restart")
         logger.info("=" * 80)
         
@@ -1401,11 +1402,13 @@ class DownloadManagerWidget(QWidget):
             
             logger.info("=" * 80)
             logger.info("▶ PLAY COMPLETED")
+            logger.info("🟢 [BUTTON SUCCESS] Start All operation completed successfully")
             logger.info("=" * 80)
         
         except Exception as e:
             logger.error("=" * 80)
             logger.error(f"❌ CRITICAL ERROR IN _on_play()")
+            logger.error(f"🔴 [BUTTON FAILURE] Start All operation failed")
             logger.error(f"Error type: {type(e).__name__}")
             logger.error(f"Error message: {str(e)}")
             import traceback
@@ -1423,6 +1426,7 @@ class DownloadManagerWidget(QWidget):
         - Purpose: Freeze everything and keep in paused state
         """
         logger.info("=" * 80)
+        logger.info("🔵 [BUTTON CLICK] Pause All button clicked")
         logger.info("⏸ PAUSE PRESSED - Starting global pause")
         logger.info("=" * 80)
         
@@ -1490,11 +1494,13 @@ class DownloadManagerWidget(QWidget):
             
             logger.info("=" * 80)
             logger.info("⏸ PAUSE COMPLETED")
+            logger.info("🟢 [BUTTON SUCCESS] Pause All operation completed successfully")
             logger.info("=" * 80)
         
         except Exception as e:
             logger.error("=" * 80)
             logger.error(f"❌ CRITICAL ERROR IN _on_pause()")
+            logger.error(f"🔴 [BUTTON FAILURE] Pause All operation failed")
             logger.error(f"Error type: {type(e).__name__}")
             logger.error(f"Error message: {str(e)}")
             import traceback
@@ -1504,9 +1510,15 @@ class DownloadManagerWidget(QWidget):
     
     def _on_clear(self) -> None:
         """Clear completed downloads"""
-        cleared = self.state_store.clear_completed()
-        logger.info(f"🧹 Cleared {cleared} completed downloads")
-        self._update_status_label()
+        logger.info("🔵 [BUTTON CLICK] Clear Completed button clicked")
+        try:
+            cleared = self.state_store.clear_completed()
+            logger.info(f"🧹 Cleared {cleared} completed downloads")
+            self._update_status_label()
+            logger.info(f"🟢 [BUTTON SUCCESS] Clear Completed operation successful - {cleared} items cleared")
+        except Exception as e:
+            logger.error(f"🔴 [BUTTON FAILURE] Clear Completed operation failed: {e}")
+            raise
     
     def _start_download_worker(self, study_uid: str) -> bool:
         """
@@ -2023,9 +2035,11 @@ class DownloadManagerWidget(QWidget):
             
             # Start next pending if available
             self._start_next_pending()
+            logger.info(f"🟢 [OPERATION SUCCESS] Per-patient pause completed for {study_uid[:40]}...")
         
         except Exception as e:
             logger.error(f"❌ Error in per-patient pause: {e}")
+            logger.error(f"🔴 [OPERATION FAILURE] Per-patient pause failed for {study_uid[:40]}...: {e}")
             import traceback
             traceback.print_exc()
     
@@ -2057,9 +2071,11 @@ class DownloadManagerWidget(QWidget):
             self._start_download_worker(study_uid)
             
             logger.info(f"✅ Resume initiated for {study_uid[:40]}...")
+            logger.info(f"🟢 [OPERATION SUCCESS] Per-patient resume completed for {study_uid[:40]}...")
         
         except Exception as e:
             logger.error(f"❌ Error in per-patient resume: {e}")
+            logger.error(f"🔴 [OPERATION FAILURE] Per-patient resume failed for {study_uid[:40]}...: {e}")
             import traceback
             traceback.print_exc()
     
@@ -2087,9 +2103,11 @@ class DownloadManagerWidget(QWidget):
             
             # Start next pending
             self._start_next_pending()
+            logger.info(f"🟢 [OPERATION SUCCESS] Per-patient cancel completed for {study_uid[:40]}...")
         
         except Exception as e:
             logger.error(f"❌ Error in per-patient cancel: {e}")
+            logger.error(f"🔴 [OPERATION FAILURE] Per-patient cancel failed for {study_uid[:40]}...: {e}")
             import traceback
             traceback.print_exc()
     
@@ -2121,9 +2139,11 @@ class DownloadManagerWidget(QWidget):
             self._start_download_worker(study_uid)
             
             logger.info(f"✅ Retry initiated for {study_uid[:40]}...")
+            logger.info(f"🟢 [OPERATION SUCCESS] Per-patient retry completed for {study_uid[:40]}...")
         
         except Exception as e:
             logger.error(f"❌ Error in per-patient retry: {e}")
+            logger.error(f"🔴 [OPERATION FAILURE] Per-patient retry failed for {study_uid[:40]}...: {e}")
             import traceback
             traceback.print_exc()
     
@@ -2547,46 +2567,81 @@ class DownloadManagerWidget(QWidget):
     
     def _on_refresh(self):
         """Refresh download status from database"""
-        logger.info("🔄 Refreshing download status...")
-        self._update_status_label()
+        logger.info("� [BUTTON CLICK] Refresh button clicked")
+        try:
+            logger.info("🔄 Refreshing download status...")
+            self._update_status_label()
+            logger.info("🟢 [BUTTON SUCCESS] Refresh operation completed successfully")
+        except Exception as e:
+            logger.error(f"🔴 [BUTTON FAILURE] Refresh operation failed: {e}")
+            raise
     
     def _on_start_selected(self):
         """Start selected download"""
+        logger.info("🔵 [BUTTON CLICK] Start Selected button clicked")
         if self._selected_study_uid:
+            logger.info(f"Starting download for selected study: {self._selected_study_uid[:40]}...")
             self._on_per_patient_resume(self._selected_study_uid)
+            logger.info("🟢 [BUTTON SUCCESS] Start Selected operation completed")
+        else:
+            logger.warning("⚠️ [BUTTON WARNING] Start Selected clicked but no study selected")
     
     def _on_pause_selected(self):
         """Pause selected download"""
+        logger.info("🔵 [BUTTON CLICK] Pause Selected button clicked")
         if self._selected_study_uid:
+            logger.info(f"Pausing download for selected study: {self._selected_study_uid[:40]}...")
             self._on_per_patient_pause(self._selected_study_uid)
+            logger.info("🟢 [BUTTON SUCCESS] Pause Selected operation completed")
+        else:
+            logger.warning("⚠️ [BUTTON WARNING] Pause Selected clicked but no study selected")
     
     def _on_cancel_selected(self):
         """Cancel selected download"""
+        logger.info("🔵 [BUTTON CLICK] Cancel Selected button clicked")
         if self._selected_study_uid:
+            logger.info(f"Canceling download for selected study: {self._selected_study_uid[:40]}...")
             self._on_per_patient_cancel(self._selected_study_uid)
+            logger.info("🟢 [BUTTON SUCCESS] Cancel Selected operation completed")
+        else:
+            logger.warning("⚠️ [BUTTON WARNING] Cancel Selected clicked but no study selected")
     
     def _on_retry_selected(self):
         """Retry selected download"""
+        logger.info("🔵 [BUTTON CLICK] Retry Selected button clicked")
         if self._selected_study_uid:
+            logger.info(f"Retrying download for selected study: {self._selected_study_uid[:40]}...")
             self._on_per_patient_retry(self._selected_study_uid)
+            logger.info("🟢 [BUTTON SUCCESS] Retry Selected operation completed")
+        else:
+            logger.warning("⚠️ [BUTTON WARNING] Retry Selected clicked but no study selected")
     
     def _on_priority_changed(self, new_priority: str):
         """Handle priority change from combo box"""
+        logger.info(f"🔵 [CONTROL CHANGE] Priority dropdown changed to: {new_priority}")
         study_uid = self._selected_study_uid  # Cache to avoid race condition
         if study_uid:
-            # Map priority name to DownloadPriority enum
-            priority_map = {
-                "Critical": DownloadPriority.CRITICAL,
-                "High": DownloadPriority.HIGH,
-                "Normal": DownloadPriority.NORMAL,
-                "Low": DownloadPriority.LOW
-            }
-            priority = priority_map.get(new_priority, DownloadPriority.NORMAL)
-            
-            # Update state
-            self.state_store.update(study_uid, priority=priority)
-            self._refresh_table_order()
-            logger.info(f"📊 Priority changed for {study_uid[:40]}... → {new_priority}")
+            try:
+                logger.info(f"Changing priority for study: {study_uid[:40]}...")
+                # Map priority name to DownloadPriority enum
+                priority_map = {
+                    "Critical": DownloadPriority.CRITICAL,
+                    "High": DownloadPriority.HIGH,
+                    "Normal": DownloadPriority.NORMAL,
+                    "Low": DownloadPriority.LOW
+                }
+                priority = priority_map.get(new_priority, DownloadPriority.NORMAL)
+                
+                # Update state
+                self.state_store.update(study_uid, priority=priority)
+                self._refresh_table_order()
+                logger.info(f"📊 Priority changed for {study_uid[:40]}... → {new_priority}")
+                logger.info(f"🟢 [CONTROL SUCCESS] Priority change completed successfully")
+            except Exception as e:
+                logger.error(f"🔴 [CONTROL FAILURE] Priority change failed for {study_uid[:40]}...: {e}")
+                raise
+        else:
+            logger.warning("⚠️ [CONTROL WARNING] Priority changed but no study selected")
 
     def _load_reception_data(self, patient_id: str) -> None:
         """Load reception data for the selected patient."""

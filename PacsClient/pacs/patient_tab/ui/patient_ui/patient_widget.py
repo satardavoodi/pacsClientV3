@@ -121,9 +121,11 @@ class PatientWidget(QWidget):
         self._sync_viewer_map = {}
         self._sync_enabled = False
         self.target_mode_enabled = False
-        self._sync_apply_delay_ms = 60
+        self._sync_apply_delay_ms = 0
         self._sync_update_token = 0
         self._sync_orientation_logged = set()
+        self._lock_sync_enabled = False          # Lock Sync: auto-sync on scroll
+        self._lock_sync_updating = False          # re-entrancy guard for Lock Sync
         
         # ========== PERFORMANCE OPTIMIZATION ==========
         self._critical_sections_running = 0  # Prevent nested QApplication.processEvents()
@@ -611,6 +613,12 @@ class PatientWidget(QWidget):
                     key_thumbnail=str(series_number),
                     series_info=series_info
                 )
+                # ✅ Mark downloaded series with green border; keep others pending
+                if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                    if self._is_series_downloaded(series_number):
+                        self.thumbnail_manager.set_series_ready(series_number)
+                    else:
+                        self.thumbnail_manager.set_series_pending(series_number)
         except Exception as e:
             self.logger.debug(f"Error rendering cached thumbnails: {e}")
 
@@ -635,6 +643,12 @@ class PatientWidget(QWidget):
                     key_thumbnail=series_number,
                     series_info=series
                 )
+                # ✅ Default pending style unless series data is already downloaded
+                if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                    if self._is_series_downloaded(series_number):
+                        self.thumbnail_manager.set_series_ready(series_number)
+                    else:
+                        self.thumbnail_manager.set_series_pending(series_number)
         except Exception as e:
             self.logger.debug(f"Error rendering server thumbnails: {e}")
 
@@ -654,6 +668,26 @@ class PatientWidget(QWidget):
                 return str(series_number)
 
         return series_key
+
+    def _is_series_downloaded(self, series_identifier: str) -> bool:
+        """Return True if series folder exists with DICOM files."""
+        try:
+            series_key = self.resolve_series_key(str(series_identifier))
+            if not series_key.isdigit():
+                return False
+
+            study_path = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
+            base_path = Path(study_path) if study_path else Path(self.import_folder_path or "")
+            if not base_path or not base_path.exists():
+                return False
+
+            series_path = base_path / str(series_key)
+            if not series_path.exists() or not series_path.is_dir():
+                return False
+
+            return bool(list(series_path.glob("*.dcm")) or list(series_path.glob("*.DCM")))
+        except Exception:
+            return False
 
     def show_exist_thumbnails(self):
         # Prevent double rendering
@@ -699,6 +733,12 @@ class PatientWidget(QWidget):
                                                                      file_path_thumbnail=thumbnail_file,
                                                                      key_thumbnail=series_number,
                                                                      series_info=series_info_from_server)
+                # ✅ Existing thumbnails mean series likely downloaded
+                if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                    if self._is_series_downloaded(series_number):
+                        self.thumbnail_manager.set_series_ready(series_number)
+                    else:
+                        self.thumbnail_manager.set_series_pending(series_number)
         return thumb_index
 
     async def enable_progressive_display(self):
@@ -2012,11 +2052,49 @@ class PatientWidget(QWidget):
         return header_layout
 
     def toggle_sync_point(self, enabled: bool):
-        """Enable/disable the synced red target point across 2D viewers."""
+        """Enable/disable the synced red target point across 2D viewers.
+        
+        When Lock Sync is active, the sync infrastructure stays alive even
+        when the click-to-target interactor is toggled off by other tools.
+        Only the interactor style, observers, and cursor are cleaned up so
+        that other tools (Ruler, Zoom, Stack, etc.) work normally.
+        """
         self._sync_enabled = bool(enabled)
         self.target_mode_enabled = self._sync_enabled
 
         if not self._sync_enabled:
+            if self._lock_sync_enabled:
+                # --- Lock Sync active: fully remove click-to-target interactor ---
+                # Remove observers, restore previous style, unset cursor
+                # but keep the sync pipeline (viewer map, sync manager) alive
+                for vtk_widget in list(self._sync_viewer_map.values()):
+                    try:
+                        # Remove sync event observers so they don't intercept
+                        for obs_id in vtk_widget._sync_observer_ids:
+                            try:
+                                vtk_widget.interactor.RemoveObserver(obs_id)
+                            except Exception:
+                                pass
+                        vtk_widget._sync_observer_ids = []
+                        vtk_widget._sync_dragging = False
+                        vtk_widget._sync_enabled = False
+
+                        # Restore the previous interactor style
+                        if vtk_widget._sync_prev_style is not None:
+                            vtk_widget.interactor.SetInteractorStyle(
+                                vtk_widget._sync_prev_style
+                            )
+                            vtk_widget._sync_prev_style = None
+                        vtk_widget._sync_style = None
+
+                        # Remove the red target cursor
+                        vtk_widget._set_target_cursor(False)
+                    except Exception:
+                        pass
+                # Keep _sync_enabled True at patient_widget level for auto-sync
+                self._sync_enabled = True
+                return
+
             self.sync_manager.set_mode(SyncMode.DISABLED)
             for vtk_widget in list(self._sync_viewer_map.values()):
                 try:
@@ -2057,6 +2135,39 @@ class PatientWidget(QWidget):
             self.sync_manager.register_viewer(context)
             vtk_widget.enable_sync_point(self.sync_manager, viewer_id=viewer_id)
 
+    def _register_sync_viewers_pipeline_only(self):
+        """Register sync viewers for Lock Sync without enabling click-to-target
+        interactor styles or observers. Only sets up the sync manager pipeline
+        so that _auto_sync_on_slice_change can push world positions through."""
+        self._sync_viewer_map.clear()
+        self.sync_manager.clear_viewers()
+
+        for node in self.lst_nodes_viewer:
+            vtk_widget = getattr(node, 'vtk_widget', None)
+            if vtk_widget is None or getattr(vtk_widget, 'image_viewer', None) is None:
+                continue
+
+            viewer_id = vtk_widget.get_sync_viewer_id()
+            self._sync_viewer_map[viewer_id] = vtk_widget
+
+            # Assign sync manager + viewer_id without changing interactor
+            vtk_widget._sync_manager = self.sync_manager
+            vtk_widget._sync_viewer_id = viewer_id
+
+            series_uid = None
+            try:
+                series_uid = vtk_widget.image_viewer.metadata.get('series', {}).get('series_uid')
+            except Exception:
+                pass
+
+            context = SyncContext(
+                viewer_id=viewer_id,
+                target_type=SyncTarget.VIEWER_2D,
+                series_uid=series_uid,
+                study_uid=self.study_uid
+            )
+            self.sync_manager.register_viewer(context)
+
     def _apply_sync_cursor(self, viewer_id, world_pos):
         vtk_widget = self._sync_viewer_map.get(viewer_id)
         if vtk_widget is None:
@@ -2069,9 +2180,9 @@ class PatientWidget(QWidget):
 
         viewer = getattr(vtk_widget, 'image_viewer', None)
         orient = viewer.GetSliceOrientation() if viewer else -1
-        print(
-            f"[SYNC APPLY] viewer={viewer_id} orient={orient} "
-            f"world_pos=({world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f})"
+        logger.debug(
+            "[SYNC APPLY] viewer=%s orient=%d world_pos=(%.2f, %.2f, %.2f)",
+            viewer_id, orient, world_pos[0], world_pos[1], world_pos[2],
         )
 
         def _apply():
@@ -2083,17 +2194,151 @@ class PatientWidget(QWidget):
 
         QTimer.singleShot(self._sync_apply_delay_ms, _apply)
 
-    @staticmethod
-    def _read_direction_3x3(viewer):
+    # ------------------------------------------------------------------
+    # Lock Sync — auto-sync on slice change
+    # ------------------------------------------------------------------
+    def set_lock_sync(self, enabled: bool):
+        """Enable/disable Lock Sync (auto-sync destination viewer on scroll)."""
+        self._lock_sync_enabled = bool(enabled)
+        logger.info("[LOCK SYNC] %s", "ENABLED" if self._lock_sync_enabled else "DISABLED")
+        # Wire or unwire the slice-changed callback on every VTKWidget
+        self._wire_lock_sync_callbacks()
+
+    def _wire_lock_sync_callbacks(self):
+        """Set or clear the _on_slice_changed_cb on every VTKWidget."""
+        cb = self._auto_sync_on_slice_change if self._lock_sync_enabled else None
+        for node in self.lst_nodes_viewer:
+            vtk_widget = getattr(node, 'vtk_widget', None)
+            if vtk_widget is not None:
+                vtk_widget._on_slice_changed_cb = cb
+
+    def _auto_sync_on_slice_change(self, vtk_widget):
         """
-        Read the original ITK 3×3 direction matrix from the pre-reslice
-        image's "DirectionMatrix" field data.
+        Called after a slice change when Lock Sync is active.
+        Computes the world-space center of the current slice in the source viewer,
+        then pushes it through the existing sync pipeline so the destination viewer
+        navigates to the corresponding location.
+        """
+        if not self._lock_sync_enabled or not self._sync_enabled:
+            return
+        # Re-entrancy guard: avoid infinite loop when target viewer's
+        # set_slice triggers this callback again
+        if self._lock_sync_updating:
+            return
+        self._lock_sync_updating = True
+        try:
+            self._do_lock_sync(vtk_widget)
+        finally:
+            self._lock_sync_updating = False
 
-        The stored matrix has row-1 negated to compensate for the Y-flip
-        done in convert_itk2vtk().  We un-negate row 1 here so the
-        returned matrix is the *original* ITK direction.
+    def _do_lock_sync(self, vtk_widget):
+        """Core Lock Sync logic, called within the re-entrancy guard.
 
-        Returns np.ndarray (3,3) or None.
+        IMPORTANT: This bypasses sync_manager.notify_cursor_moved() and
+        applies directly to target viewers.  The notify path uses
+        QTimer.singleShot(0) + token debouncing which drops updates during
+        continuous mouse-move streams (Stack drag).  Direct application
+        guarantees every slice change is reflected immediately.
+        """
+
+        viewer = getattr(vtk_widget, 'image_viewer', None)
+        if viewer is None:
+            return
+
+        # Find the sync viewer_id for this vtk_widget
+        source_id = None
+        for vid, vw in self._sync_viewer_map.items():
+            if vw is vtk_widget:
+                source_id = vid
+                break
+        if source_id is None:
+            # Viewer not registered yet (e.g. series was changed) — re-register
+            # Use pipeline-only to avoid setting interactor styles
+            self._register_sync_viewers_pipeline_only()
+            for vid, vw in self._sync_viewer_map.items():
+                if vw is vtk_widget:
+                    source_id = vid
+                    break
+        if source_id is None:
+            return
+
+        try:
+            img = viewer.vtk_image_data
+            if img is None:
+                return
+
+            orientation = viewer.GetSliceOrientation()
+            current_slice = viewer.GetSlice()
+            origin = img.GetOrigin()
+            spacing = img.GetSpacing()
+            dims = img.GetDimensions()
+
+            # Compute the center of the current slice in world coordinates
+            # For each axis: center = origin + (dims/2) * spacing
+            # For the slice axis: value = origin + current_slice * spacing
+            cx = origin[0] + (dims[0] - 1) * 0.5 * spacing[0]
+            cy = origin[1] + (dims[1] - 1) * 0.5 * spacing[1]
+            cz = origin[2] + (dims[2] - 1) * 0.5 * spacing[2]
+
+            if orientation == 2:    # Axial (XY) — Z is the slice axis
+                cz = origin[2] + current_slice * spacing[2]
+            elif orientation == 1:  # Coronal (XZ) — Y is the slice axis
+                cy = origin[1] + current_slice * spacing[1]
+            else:                   # Sagittal (YZ) — X is the slice axis
+                cx = origin[0] + current_slice * spacing[0]
+
+            world_pos = (cx, cy, cz)
+
+            logger.debug(
+                "[LOCK SYNC] Auto-sync from viewer=%s orient=%d slice=%d → world=(%.2f, %.2f, %.2f)",
+                source_id, orientation, current_slice, cx, cy, cz,
+            )
+
+            # Show/update the red dot on the source viewer (no slice adjust)
+            viewer.set_sync_point(world_pos, adjust_slice=False)
+
+            # --- Direct sync to all target viewers (no QTimer debounce) ---
+            self.sync_manager.set_active_point(world_pos)
+            for target_vid, target_vw in self._sync_viewer_map.items():
+                if target_vid == source_id:
+                    continue
+                # Map world position from source to target coordinate space
+                mapped_world = world_pos
+                if hasattr(self, '_map_sync_cursor') and self._map_sync_cursor is not None:
+                    mapped = self._map_sync_cursor(source_id, target_vid, world_pos)
+                    if mapped is None:
+                        continue
+                    mapped_world = mapped
+                # Apply directly to target viewer (bypass QTimer debounce)
+                target_viewer = getattr(target_vw, 'image_viewer', None)
+                if target_viewer is not None:
+                    target_viewer.set_sync_point(mapped_world, adjust_slice=True)
+                    # Keep target slider in sync so Stack drag works
+                    # correctly when user switches to this viewer
+                    new_slice = target_viewer.GetSlice()
+                    target_slider = getattr(target_vw, 'slider', None)
+                    if target_slider is not None:
+                        target_slider.blockSignals(True)
+                        target_slider.setValue(new_slice)
+                        target_slider.blockSignals(False)
+
+        except Exception as e:
+            logger.warning("[LOCK SYNC] Auto-sync error: %s", e)
+
+    @staticmethod
+    def _read_itk_geometry(viewer):
+        """
+        Read original ITK geometry from the pre-reslice image's field data.
+
+        Returns dict with:
+          'D_itk'         – np.ndarray (3,3)  original ITK direction
+          'spacing'       – np.ndarray (3,)   original ITK spacing
+          'dims'          – np.ndarray (3,)   original ITK dimensions (int)
+          'extent_y'      – float             (itk_dims_y - 1) * itk_sp_y
+          'extent_y_disp' – float             (display_dims_y - 1) * display_sp_y
+          'origin'        – np.ndarray (3,)   pre-reslice image origin (= ITK origin)
+          'source'        – str               'field_data' or 'image_fallback'
+        or None if direction data is unavailable.
         """
         reslice = getattr(viewer, 'image_reslice', None)
         if reslice is None:
@@ -2104,87 +2349,282 @@ class PatientWidget(QWidget):
         fd = original_img.GetFieldData()
         if fd is None:
             return None
-        arr = fd.GetArray("DirectionMatrix")
-        if arr is None or arr.GetNumberOfTuples() < 16:
+
+        # --- Direction matrix (required) ---
+        dir_arr = fd.GetArray("DirectionMatrix")
+        if dir_arr is None or dir_arr.GetNumberOfTuples() < 16:
             return None
         D = np.zeros((3, 3))
         for r in range(3):
             for c in range(3):
-                D[r, c] = arr.GetValue(r * 4 + c)
+                D[r, c] = dir_arr.GetValue(r * 4 + c)
         # Un-negate row 1 → original ITK direction
         D[1, :] = -D[1, :]
-        return D
+
+        source = 'field_data'
+
+        # --- Pre-reslice origin (= ITK origin, set in convert_itk2vtk) ---
+        pre_origin = np.array(original_img.GetOrigin(), dtype=float)
+
+        # --- Spacing (prefer stored ITK, fallback to image) ---
+        sp_arr = fd.GetArray("ITKSpacing")
+        if sp_arr is not None and sp_arr.GetNumberOfTuples() >= 3:
+            spacing = np.array([sp_arr.GetValue(i) for i in range(3)])
+        else:
+            spacing = np.array(original_img.GetSpacing())
+            source = 'image_fallback'
+
+        # --- Dimensions (prefer stored ITK, fallback to image) ---
+        dm_arr = fd.GetArray("ITKDimensions")
+        if dm_arr is not None and dm_arr.GetNumberOfTuples() >= 3:
+            dims = np.array([int(dm_arr.GetValue(i)) for i in range(3)])
+        else:
+            dims = np.array(original_img.GetDimensions())
+            source = 'image_fallback'
+
+        extent_y_itk = (dims[1] - 1) * spacing[1]
+
+        # Display (post-upsample) extent — needed because vtkImageResample
+        # changes dims/spacing and (display_dims-1)*display_sp != extent_y_itk.
+        disp_sp = np.array(original_img.GetSpacing(), dtype=float)
+        disp_dims = np.array(original_img.GetDimensions(), dtype=float)
+        extent_y_disp = (disp_dims[1] - 1) * disp_sp[1]
+        # Guard: if display extent is essentially zero, fall back to ITK
+        if extent_y_disp < 1e-9:
+            extent_y_disp = extent_y_itk
+
+        return {
+            'D_itk': D,
+            'spacing': spacing,
+            'dims': dims,
+            'extent_y': extent_y_itk,
+            'extent_y_disp': extent_y_disp,
+            'origin': pre_origin,
+            'source': source,
+        }
 
     @staticmethod
-    def _vtk_world_to_patient(world_pos, origin, spacing, dims, D_itk):
+    def _vtk_world_to_patient(world_pos, origin, extent_y_itk, D_itk,
+                               extent_y_disp=None):
         """
         Convert VTK post-Y-flip world position to DICOM patient (LPS+) coordinates.
-        
-        Pipeline recap:
-          - convert_itk2vtk does: arr[:, ::-1, :] (Y-flip in numpy)
-          - VTK world = origin + (i, j, k) * spacing   (identity direction on reslice output)
-          - But voxel (i, j, k) in VTK was originally (i, y-1-j, k) in ITK
-          
-        So to get patient coordinates:
-          ijk_vtk = (world - origin) / spacing         ← VTK voxel indices
-          ijk_itk = (ijk_vtk[0], (dims_y-1) - ijk_vtk[1], ijk_vtk[2])
-          patient = origin + D_itk @ (ijk_itk * spacing)
-          
-        Returns patient position as np.ndarray(3).
+
+        The VTK picker returns simple origin + ijk * spacing (no direction).
+        We undo the Y-flip and apply the ITK direction matrix.
+
+        Math:
+          delta       = world - origin
+          frac_y      = delta[1] / extent_y_disp
+          s_y         = extent_y_itk * (1 - frac_y)   # ITK physical offset (un-flipped)
+          s           = (delta[0], s_y, delta[2])
+          patient     = origin + D_itk @ s
         """
         o = np.array(origin, dtype=float)
-        s = np.array(spacing, dtype=float)
-        
-        # VTK world → VTK voxel (continuous)
-        ijk_vtk = (np.array(world_pos, dtype=float) - o) / s
-        
-        # VTK voxel → ITK voxel (undo Y-flip)
-        ijk_itk = np.array([ijk_vtk[0], (dims[1] - 1) - ijk_vtk[1], ijk_vtk[2]], dtype=float)
-        
-        # ITK voxel → patient (LPS+)
-        patient = o + D_itk @ (ijk_itk * s)
+        delta = np.array(world_pos, dtype=float) - o
+
+        # Undo Y-flip using fractional position
+        ey_d = extent_y_disp if extent_y_disp is not None else extent_y_itk
+        if ey_d > 1e-9:
+            frac_y = delta[1] / ey_d
+        else:
+            frac_y = 0.0
+        s_y = extent_y_itk * (1.0 - frac_y)
+
+        s = np.array([delta[0], s_y, delta[2]], dtype=float)
+
+        # Apply direction → patient LPS+
+        patient = o + D_itk @ s
         return patient
 
     @staticmethod
-    def _patient_to_vtk_world(patient_pos, origin, spacing, dims, D_itk):
+    def _patient_to_vtk_world_clamped(patient_pos, origin,
+                                       spacing_itk, dims_itk, extent_y_itk,
+                                       D_itk, extent_y_disp=None):
         """
-        Convert DICOM patient (LPS+) coordinates to VTK post-Y-flip world position.
-        
-        Inverse of _vtk_world_to_patient:
-          ijk_itk = D_itk_inv @ (patient - origin) / spacing... 
-                  (actually: ijk_itk * spacing = D_itk_inv @ (patient - origin))
-          ijk_vtk = (ijk_itk[0], (dims_y-1) - ijk_itk[1], ijk_itk[2])
-          vtk_world = origin + ijk_vtk * spacing
-          
-        Returns VTK world position as tuple(3).
+        Convert DICOM patient (LPS+) to VTK world, clamped to the volume.
+
+        Returns (vtk_world_tuple, ijk_itk_raw, was_outside).
+          vtk_world_tuple - (float, float, float) VTK world position
+          ijk_itk_raw     - np.ndarray(3) continuous ITK voxel indices (before clamp)
+          was_outside     - bool  True if any index was outside [0, dim-1]
+
+        The Y component is converted from ITK offset to display offset
+        using the fractional position (matching the display extent).
         """
         o = np.array(origin, dtype=float)
-        s = np.array(spacing, dtype=float)
-        
-        # Patient → ITK voxel
+        sp = np.array(spacing_itk, dtype=float)
+        dm = np.array(dims_itk, dtype=float)
+
         D_inv = np.linalg.inv(D_itk)
-        ijk_itk_scaled = D_inv @ (np.array(patient_pos, dtype=float) - o)
-        ijk_itk = ijk_itk_scaled / s
-        
-        # ITK voxel → VTK voxel (apply Y-flip)
-        ijk_vtk = np.array([ijk_itk[0], (dims[1] - 1) - ijk_itk[1], ijk_itk[2]], dtype=float)
-        
-        # VTK voxel → VTK world
-        vtk_world = o + ijk_vtk * s
-        return (float(vtk_world[0]), float(vtk_world[1]), float(vtk_world[2]))
+        s = D_inv @ (np.array(patient_pos, dtype=float) - o)
+
+        # ITK continuous voxel indices
+        ijk_raw = s / sp
+
+        # Clamp to valid range
+        ijk_clamped = np.clip(ijk_raw, 0, dm - 1)
+        was_outside = not np.allclose(ijk_raw, ijk_clamped, atol=0.5)
+
+        # Clamped ITK voxel → physical offset → VTK world
+        s_clamped = ijk_clamped * sp
+
+        ey_d = extent_y_disp if extent_y_disp is not None else extent_y_itk
+        if extent_y_itk > 1e-9:
+            frac_y = s_clamped[1] / extent_y_itk       # fraction along ITK Y
+        else:
+            frac_y = 0.0
+        delta_y_display = ey_d * (1.0 - frac_y)        # display Y offset (re-flip)
+
+        delta = np.array([s_clamped[0], delta_y_display, s_clamped[2]])
+
+        vtk_world = o + delta
+
+        return (
+            (float(vtk_world[0]), float(vtk_world[1]), float(vtk_world[2])),
+            ijk_raw,
+            was_outside,
+        )
+
+    # ------------------------------------------------------------------
+    # DICOM-based sync mapping (consistent with reference_line.py)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _map_sync_dicom(source_viewer, target_viewer, world_pos):
+        """
+        Map a VTK world position from source to target viewer using DICOM
+        IOP / IPP metadata – the **same** coordinate path used by
+        reference_line.py.
+
+        Returns (vtk_world_target, ijk_diag, was_outside) or None
+        if DICOM metadata is unavailable / incomplete.
+
+        Pipeline:
+          VTK world (source)
+            -> display index -> flipped-LPS
+            -> undo flip-Y -> true patient LPS
+            -> project on target slice normal -> closest slice k
+            -> project onto plane -> LPS on slice
+            -> flip-Y -> display-LPS
+            -> target index -> VTK world (target)
+        """
+        from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import reference_line
+
+        # ---- source geometry ----
+        src_img   = source_viewer.vtk_image_data
+        src_orig  = np.asarray(src_img.GetOrigin(),     dtype=float)
+        src_sp    = np.asarray(src_img.GetSpacing(),     dtype=float)
+        src_dims  = np.asarray(src_img.GetDimensions(),  dtype=int)
+
+        # Display index of the click
+        idx_src = (np.asarray(world_pos, dtype=float) - src_orig) / src_sp
+        k_src   = int(round(float(np.clip(idx_src[2], 0, src_dims[2] - 1))))
+
+        # DICOM metadata for this source slice
+        try:
+            s_inst = source_viewer.metadata['instances'][k_src]
+            s_iop  = s_inst['image_orientation_patient']
+            s_ipp  = np.asarray(s_inst['image_position_patient'], dtype=float)
+            if s_iop is None or s_ipp is None:
+                return None
+        except (KeyError, IndexError, TypeError):
+            return None
+
+        col_s = np.asarray(s_iop[0:3], dtype=float)     # IOP row  = display col dir
+        row_s = np.asarray(s_iop[3:6], dtype=float)     # IOP col  = display row dir
+
+        # Build flipped-LPS point from display index, then undo flip-Y → true LPS
+        P_flip_s = (s_ipp
+                    + idx_src[0] * src_sp[0] * col_s
+                    + idx_src[1] * src_sp[1] * row_s)
+
+        center_s = reference_line.rl_center_of_slice(
+            src_dims[1], src_dims[0], s_ipp, row_s, col_s,
+            src_sp[1], src_sp[0])
+
+        P_lps = reference_line.rl_apply_flip_y_in_plane(
+            P_flip_s, center_s, col_s, row_s)
+
+        # ---- target geometry ----
+        tgt_img   = target_viewer.vtk_image_data
+        tgt_orig  = np.asarray(tgt_img.GetOrigin(),     dtype=float)
+        tgt_sp    = np.asarray(tgt_img.GetSpacing(),     dtype=float)
+        tgt_dims  = np.asarray(tgt_img.GetDimensions(),  dtype=int)
+        n_slices  = int(tgt_dims[2])
+
+        try:
+            t0_inst = target_viewer.metadata['instances'][0]
+            t_iop   = t0_inst['image_orientation_patient']
+            ipp_0   = np.asarray(t0_inst['image_position_patient'], dtype=float)
+            if t_iop is None or ipp_0 is None:
+                return None
+            col_t = np.asarray(t_iop[0:3], dtype=float)
+            row_t = np.asarray(t_iop[3:6], dtype=float)
+            n_t   = np.cross(row_t, col_t)
+            n_len = np.linalg.norm(n_t)
+            if n_len < 1e-12:
+                return None
+            n_t /= n_len
+
+            if n_slices > 1:
+                t1_inst = target_viewer.metadata['instances'][1]
+                ipp_1   = np.asarray(t1_inst['image_position_patient'], dtype=float)
+                ds      = float(np.dot(ipp_1 - ipp_0, n_t))
+            else:
+                ds = float(tgt_sp[2])
+        except (KeyError, IndexError, TypeError):
+            return None
+
+        # Closest target slice
+        d0 = float(np.dot(P_lps - ipp_0, n_t))
+        k_float = d0 / ds if abs(ds) > 1e-9 else 0.0
+        k_tgt = int(round(k_float))
+        was_outside = k_tgt < 0 or k_tgt >= n_slices
+        k_tgt = max(0, min(k_tgt, n_slices - 1))
+
+        # IPP for the chosen target slice
+        try:
+            tk_inst = target_viewer.metadata['instances'][k_tgt]
+            ipp_k   = np.asarray(tk_inst['image_position_patient'], dtype=float)
+        except (KeyError, IndexError, TypeError):
+            ipp_k = ipp_0 + k_tgt * ds * n_t
+
+        # Project LPS onto target slice plane
+        dp     = float(np.dot(P_lps - ipp_k, n_t))
+        P_proj = P_lps - dp * n_t
+
+        # Flip-Y for target display
+        center_t = reference_line.rl_center_of_slice(
+            tgt_dims[1], tgt_dims[0], ipp_k, row_t, col_t,
+            tgt_sp[1], tgt_sp[0])
+        P_flip_t = reference_line.rl_apply_flip_y_in_plane(
+            P_proj, center_t, col_t, row_t)
+
+        # LPS → target display index
+        I_t = reference_line.rl_lps_to_target_index(
+            P_flip_t, ipp_k, col_t, row_t,
+            tgt_sp[0], tgt_sp[1], k_tgt)
+
+        # Index → VTK world
+        vtk_t = tgt_orig + tgt_sp * I_t
+
+        ijk_diag = np.array([I_t[0], I_t[1], k_float])
+
+        return (
+            (float(vtk_t[0]), float(vtk_t[1]), float(vtk_t[2])),
+            ijk_diag,
+            was_outside,
+        )
 
     def _map_sync_cursor(self, source_viewer_id, target_viewer_id, world_pos):
         """
         Map a world position from source viewer to target viewer.
-        
-        Strategy: Convert through DICOM patient coordinate space (LPS+).
-        
-        VTK world A  →  patient (LPS+)  →  VTK world B
-        
-        This correctly handles:
-        - Same volume: identity (same D, same origin)
-        - Same orientation, different spacing: proportional mapping through patient space
-        - Different orientations (Axial ↔ Sagittal): direction matrices rotate correctly
+
+        Primary strategy: DICOM IOP/IPP metadata (same path as
+        reference_line.py) – guarantees the sync dot lies on the
+        reference line.
+
+        Fallback 1: ITK direction matrix from field data.
+        Fallback 2: Fractional position mapping.
         """
         if not self._sync_enabled:
             return None
@@ -2208,29 +2648,39 @@ class PatientWidget(QWidget):
             orientA = source_viewer.GetSliceOrientation()  # 0=YZ, 1=XZ, 2=XY
             orientB = target_viewer.GetSliceOrientation()
 
-            originA = imageA.GetOrigin()
-            spacingA = imageA.GetSpacing()
-            dimsA = imageA.GetDimensions()
-            originB = imageB.GetOrigin()
-            spacingB = imageB.GetSpacing()
-            dimsB = imageB.GetDimensions()
+            # Read original ITK geometry for logging / fallback
+            geom_A = self._read_itk_geometry(source_viewer)
+            geom_B = self._read_itk_geometry(target_viewer)
 
-            # Read original ITK direction matrices
-            D_A = self._read_direction_3x3(source_viewer)
-            D_B = self._read_direction_3x3(target_viewer)
+            originA = geom_A['origin'] if geom_A is not None else np.asarray(imageA.GetOrigin())
+            originB = geom_B['origin'] if geom_B is not None else np.asarray(imageB.GetOrigin())
 
             # Log geometry once per viewer pair
             log_key = (source_viewer_id, target_viewer_id)
             if log_key not in self._sync_orientation_logged:
-                print(
-                    f"[SYNC MAP] Pair: {source_viewer_id}(orient={orientA}) → {target_viewer_id}(orient={orientB})\n"
-                    f"  imageA: id={id(imageA)} origin=({originA[0]:.2f},{originA[1]:.2f},{originA[2]:.2f}) "
-                    f"spacing=({spacingA[0]:.3f},{spacingA[1]:.3f},{spacingA[2]:.3f}) dims={dimsA}\n"
-                    f"  imageB: id={id(imageB)} origin=({originB[0]:.2f},{originB[1]:.2f},{originB[2]:.2f}) "
-                    f"spacing=({spacingB[0]:.3f},{spacingB[1]:.3f},{spacingB[2]:.3f}) dims={dimsB}\n"
-                    f"  same_object={imageA is imageB}\n"
-                    f"  D_A (ITK original) =\n{D_A}\n"
-                    f"  D_B (ITK original) =\n{D_B}"
+                _spA = geom_A['spacing'] if geom_A else imageA.GetSpacing()
+                _dmA = geom_A['dims'] if geom_A else imageA.GetDimensions()
+                _spB = geom_B['spacing'] if geom_B else imageB.GetSpacing()
+                _dmB = geom_B['dims'] if geom_B else imageB.GetDimensions()
+                _dspA = imageA.GetSpacing()
+                _dspB = imageB.GetSpacing()
+                _srcA = geom_A.get('source', '?') if geom_A else 'none'
+                _srcB = geom_B.get('source', '?') if geom_B else 'none'
+                _eyA = geom_A['extent_y'] if geom_A else 'N/A'
+                _eyB = geom_B['extent_y'] if geom_B else 'N/A'
+                _eydA = f"{geom_A['extent_y_disp']:.2f}" if geom_A else 'N/A'
+                _eydB = f"{geom_B['extent_y_disp']:.2f}" if geom_B else 'N/A'
+                logger.debug(
+                    "[SYNC MAP] Pair: %s(orient=%d) -> %s(orient=%d)\n"
+                    "  imageA: origin=(%.2f,%.2f,%.2f) ITK_sp=(%s) ITK_dims=(%s) "
+                    "extent_y_itk=%s extent_y_disp=%s src=%s\n"
+                    "  imageB: origin=(%.2f,%.2f,%.2f) ITK_sp=(%s) ITK_dims=(%s) "
+                    "extent_y_itk=%s extent_y_disp=%s src=%s\n"
+                    "  same_object=%s",
+                    source_viewer_id, orientA, target_viewer_id, orientB,
+                    originA[0], originA[1], originA[2], _spA, _dmA, _eyA, _eydA, _srcA,
+                    originB[0], originB[1], originB[2], _spB, _dmB, _eyB, _eydB, _srcB,
+                    imageA is imageB,
                 )
                 self._sync_orientation_logged.add(log_key)
 
@@ -2238,46 +2688,79 @@ class PatientWidget(QWidget):
             # Same VTK object → pass through (same coordinate space)
             # ---------------------------------------------------------------
             if imageA is imageB:
-                print(
-                    f"[SYNC MAP] {source_viewer_id}→{target_viewer_id}: "
-                    f"world=({world_pos[0]:.2f},{world_pos[1]:.2f},{world_pos[2]:.2f}) → SAME IMAGE"
-                )
                 return world_pos
 
             # ---------------------------------------------------------------
-            # Patient-space mapping (direction-aware, handles all cases)
+            # PRIMARY: DICOM IOP/IPP mapping (same as reference_line.py)
             # ---------------------------------------------------------------
-            if D_A is not None and D_B is not None:
-                # Step 1: VTK world A → patient LPS+
-                patient = self._vtk_world_to_patient(
-                    world_pos, originA, spacingA, dimsA, D_A
+            dicom_result = self._map_sync_dicom(source_viewer, target_viewer, world_pos)
+            if dicom_result is not None:
+                mapped, ijk_diag, was_outside = dicom_result
+                outside_tag = ""
+                if was_outside:
+                    outside_tag = (
+                        f" OUT_OF_BOUNDS k_float={ijk_diag[2]:.1f}"
+                        f" valid=[0..{int(target_viewer.vtk_image_data.GetDimensions()[2])-1}]"
+                    )
+                logger.debug(
+                    "[SYNC MAP DICOM] %s->%s: vtk_world=(%.2f,%.2f,%.2f) "
+                    "-> mapped=(%.2f,%.2f,%.2f) slice_float=%.2f%s",
+                    source_viewer_id, target_viewer_id,
+                    world_pos[0], world_pos[1], world_pos[2],
+                    mapped[0], mapped[1], mapped[2],
+                    ijk_diag[2], outside_tag,
                 )
-                
-                # Step 2: patient LPS+ → VTK world B
-                mapped = self._patient_to_vtk_world(
-                    patient, originB, spacingB, dimsB, D_B
-                )
-                
-                # Step 3: Clamp to valid range of volume B
-                mapped_clamped = list(mapped)
-                for axis in range(3):
-                    lo = originB[axis]
-                    hi = originB[axis] + (dimsB[axis] - 1) * spacingB[axis]
-                    if lo > hi:
-                        lo, hi = hi, lo
-                    mapped_clamped[axis] = max(lo, min(mapped_clamped[axis], hi))
-                
-                print(
-                    f"[SYNC MAP] {source_viewer_id}→{target_viewer_id}: "
-                    f"vtk_world=({world_pos[0]:.2f},{world_pos[1]:.2f},{world_pos[2]:.2f}) "
-                    f"→ patient=({patient[0]:.2f},{patient[1]:.2f},{patient[2]:.2f}) "
-                    f"→ mapped=({mapped_clamped[0]:.2f},{mapped_clamped[1]:.2f},{mapped_clamped[2]:.2f})"
-                )
-                return tuple(mapped_clamped)
+                return mapped
 
             # ---------------------------------------------------------------
-            # Fallback: fractional mapping (no direction data available)
+            # FALLBACK 1: ITK direction matrix from field data
             # ---------------------------------------------------------------
+            if geom_A is not None and geom_B is not None:
+                slice_axis = orientA
+                half_slice = imageA.GetSpacing()[slice_axis] / 2.0
+                adjusted = list(world_pos)
+                adjusted[slice_axis] += half_slice
+
+                patient = self._vtk_world_to_patient(
+                    adjusted, originA,
+                    geom_A['extent_y'], geom_A['D_itk'],
+                    extent_y_disp=geom_A['extent_y_disp'],
+                )
+
+                mapped, ijk_raw, was_outside = self._patient_to_vtk_world_clamped(
+                    patient, originB,
+                    geom_B['spacing'], geom_B['dims'], geom_B['extent_y'],
+                    geom_B['D_itk'],
+                    extent_y_disp=geom_B['extent_y_disp'],
+                )
+
+                outside_tag = ""
+                if was_outside:
+                    outside_tag = (
+                        f" OUT_OF_BOUNDS ijk_raw=({ijk_raw[0]:.1f},{ijk_raw[1]:.1f},{ijk_raw[2]:.1f})"
+                        f" valid=[0..{geom_B['dims'][0]-1}, 0..{geom_B['dims'][1]-1}, 0..{geom_B['dims'][2]-1}]"
+                    )
+
+                logger.debug(
+                    "[SYNC MAP ITK] %s->%s: vtk_world=(%.2f,%.2f,%.2f) "
+                    "adj[%d]+=%.3f -> patient=(%.2f,%.2f,%.2f) "
+                    "-> mapped=(%.2f,%.2f,%.2f)%s",
+                    source_viewer_id, target_viewer_id,
+                    world_pos[0], world_pos[1], world_pos[2],
+                    slice_axis, half_slice,
+                    patient[0], patient[1], patient[2],
+                    mapped[0], mapped[1], mapped[2], outside_tag,
+                )
+                return mapped
+
+            # ---------------------------------------------------------------
+            # FALLBACK 2: fractional mapping (no direction data available)
+            # ---------------------------------------------------------------
+            spacingA = imageA.GetSpacing()
+            dimsA = imageA.GetDimensions()
+            spacingB = imageB.GetSpacing()
+            dimsB = imageB.GetDimensions()
+
             mapped = list(world_pos)
             fracs = [0.0, 0.0, 0.0]
             for axis in range(3):
@@ -2290,18 +2773,18 @@ class PatientWidget(QWidget):
                 fracs[axis] = frac
                 mapped[axis] = originB[axis] + frac * extentB
 
-            print(
-                f"[SYNC MAP] {source_viewer_id}→{target_viewer_id}: "
-                f"world=({world_pos[0]:.2f},{world_pos[1]:.2f},{world_pos[2]:.2f}) "
-                f"frac=({fracs[0]:.4f},{fracs[1]:.4f},{fracs[2]:.4f}) "
-                f"→ mapped=({mapped[0]:.2f},{mapped[1]:.2f},{mapped[2]:.2f}) [FRACTIONAL FALLBACK]"
+            logger.debug(
+                "[SYNC MAP FRAC] %s->%s: world=(%.2f,%.2f,%.2f) "
+                "frac=(%.4f,%.4f,%.4f) -> mapped=(%.2f,%.2f,%.2f)",
+                source_viewer_id, target_viewer_id,
+                world_pos[0], world_pos[1], world_pos[2],
+                fracs[0], fracs[1], fracs[2],
+                mapped[0], mapped[1], mapped[2],
             )
             return tuple(mapped)
 
         except Exception as e:
-            print(f"[SYNC MAP] Mapping failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.warning("[SYNC MAP] Mapping failed: %s", e, exc_info=True)
             return None
 
 
