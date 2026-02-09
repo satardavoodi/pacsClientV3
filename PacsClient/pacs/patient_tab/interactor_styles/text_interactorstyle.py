@@ -16,6 +16,7 @@ class TextInteractorStyle(AbstractInteractorStyle):
         self.text_actor = None
         self.is_active = False
         self.color = (0.7, 0.3, 0.3)
+        self.text_size_px = 16
         self.interactor_name = self.tool_access.TEXT
 
 
@@ -86,6 +87,8 @@ class TextInteractorStyle(AbstractInteractorStyle):
         # set text on clipping camera
         self.image_viewer.renderer.ResetCameraClippingRange()
         self.image_viewer.Render()
+        self.is_active = False
+        self.auto_deactivate_tool()
 
     def create_text_actor(self, text, world_position):
         text_source = vtk.vtkVectorText()
@@ -104,9 +107,21 @@ class TextInteractorStyle(AbstractInteractorStyle):
 
         text_actor = vtk.vtkFollower()
         text_actor.SetMapper(text_mapper)
-        text_actor.SetScale(5, 5, 5)
         text_actor.SetPosition(world_position)
         text_actor.GetProperty().SetColor(self.color)
+
+        try:
+            text_actor.GetMapper().Update()
+            bounds = text_actor.GetBounds()
+            if bounds is not None:
+                height = bounds[3] - bounds[2]
+                if height > 0:
+                    target_world_height = self.world_length_from_pixels(world_position, self.text_size_px, axis='y')
+                    if target_world_height > 0:
+                        scale = float(target_world_height) / float(height)
+                        text_actor.SetScale(scale, scale, scale)
+        except Exception:
+            text_actor.SetScale(5, 5, 5)
 
         # Make text follow camera
         # camera = self.image_viewer.renderer.GetActiveCamera()

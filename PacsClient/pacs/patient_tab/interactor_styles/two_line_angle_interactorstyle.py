@@ -39,6 +39,12 @@ class TwoLineAngleInteractorStyle(AbstractInteractorStyle):
         self.text_actor = None
 
         self.interactor_name = self.tool_access.TWO_LINE_ANGLE
+        self._dragging_obj = None
+        self._drag_start_world = None
+        self._drag_start_points = None
+        self._hover_obj = None
+        self._drag_hit_distance_px = 10
+        self._drag_edge_ratio = 0.1
 
     def create_widget(self):
         """Create a distance widget for drawing lines"""
@@ -62,6 +68,51 @@ class TwoLineAngleInteractorStyle(AbstractInteractorStyle):
             self.is_active = False
             self.active_widget.Off()
             self.image_viewer.Render()
+
+    def _set_cursor(self, cursor_type):
+        if hasattr(self.image_viewer.image_interactor, 'SetCursor'):
+            self.image_viewer.image_interactor.SetCursor(cursor_type)
+
+    def _find_drag_target(self, mouse_pos):
+        current_slice = self.image_viewer.GetSlice()
+        if current_slice not in self.widgets_by_slice:
+            return None
+
+        closest_obj = None
+        closest_points = None
+        min_distance = self._drag_hit_distance_px
+
+        for obj in self.widgets_by_slice[current_slice]:
+            if not hasattr(obj, self.tool_access.TWO_LINE_ANGLE):
+                continue
+
+            points = obj.get_position_world()
+            if not points or len(points) < 4:
+                continue
+
+            p1, p2, p3, p4 = points
+            p1_display = self.world_to_display(p1)
+            p2_display = self.world_to_display(p2)
+            p3_display = self.world_to_display(p3)
+            p4_display = self.world_to_display(p4)
+            if not p1_display or not p2_display or not p3_display or not p4_display:
+                continue
+
+            dist_1, t1 = self.point_to_line_distance_and_t(mouse_pos, p1_display, p2_display)
+            dist_2, t2 = self.point_to_line_distance_and_t(mouse_pos, p3_display, p4_display)
+
+            if dist_1 <= min_distance and self.is_middle_segment_hit(t1, self._drag_edge_ratio):
+                min_distance = dist_1
+                closest_obj = obj
+                closest_points = points
+            elif dist_2 <= min_distance and self.is_middle_segment_hit(t2, self._drag_edge_ratio):
+                min_distance = dist_2
+                closest_obj = obj
+                closest_points = points
+
+        if closest_obj is None:
+            return None
+        return closest_obj, closest_points
 
     def place_point_event(self, obj, event):
         """Handle point placement (similar to AngleInteractorStyle)"""
@@ -88,13 +139,97 @@ class TwoLineAngleInteractorStyle(AbstractInteractorStyle):
             
             # Reset for next measurement
             self.n_clicks = 0
+            self.active_widget.Off()
+            self.is_active = False
             self.active_widget = self.create_widget()
-            self.__On_active_widget()  # Turn on for next measurement
             self.line1_widget = None
             self.line2_widget = None
             self.text_actor = None
+            self.auto_deactivate_tool()
 
         self.image_viewer.Render()
+
+    def on_left_button_press(self, obj, event):
+        if self.n_clicks == 0:
+            mouse_pos = self.GetInteractor().GetEventPosition()
+            drag_target = self._find_drag_target(mouse_pos)
+            if drag_target is not None:
+                obj_to_drag, points = drag_target
+                self._dragging_obj = obj_to_drag
+                self._drag_start_points = points
+                self._drag_start_world = self.display_to_world(mouse_pos[0], mouse_pos[1])
+                self._set_cursor(vtk.VTK_CURSOR_HAND)
+                return True
+
+        return super().on_left_button_press(obj, event)
+
+    def on_mouse_move(self, obj, event):
+        flag_active = super().on_mouse_move(obj, event)
+        if flag_active:
+            return True
+
+        if self._dragging_obj is not None and self._drag_start_points is not None:
+            current_pos = self.GetInteractor().GetEventPosition()
+            current_world = self.display_to_world(current_pos[0], current_pos[1])
+            if current_world is None or self._drag_start_world is None:
+                return True
+
+            dx = current_world[0] - self._drag_start_world[0]
+            dy = current_world[1] - self._drag_start_world[1]
+            dz = current_world[2] - self._drag_start_world[2]
+
+            p1, p2, p3, p4 = self._drag_start_points
+            new_p1 = [p1[0] + dx, p1[1] + dy, p1[2] + dz]
+            new_p2 = [p2[0] + dx, p2[1] + dy, p2[2] + dz]
+            new_p3 = [p3[0] + dx, p3[1] + dy, p3[2] + dz]
+            new_p4 = [p4[0] + dx, p4[1] + dy, p4[2] + dz]
+
+            line1_widget, line2_widget, text_actor, _point_actors = self._dragging_obj.get_widget()
+            if line1_widget:
+                rep1 = line1_widget.GetDistanceRepresentation()
+                rep1.SetPoint1WorldPosition(new_p1)
+                rep1.SetPoint2WorldPosition(new_p2)
+            if line2_widget:
+                rep2 = line2_widget.GetDistanceRepresentation()
+                rep2.SetPoint1WorldPosition(new_p3)
+                rep2.SetPoint2WorldPosition(new_p4)
+
+            if text_actor is not None:
+                midpoint = [
+                    (new_p1[0] + new_p2[0] + new_p3[0] + new_p4[0]) / 4,
+                    (new_p1[1] + new_p2[1] + new_p3[1] + new_p4[1]) / 4,
+                    (new_p1[2] + new_p2[2] + new_p3[2] + new_p4[2]) / 4
+                ]
+                display_pos = self.world_to_display(midpoint)
+                if display_pos:
+                    text_actor.SetPosition(display_pos[0], display_pos[1])
+
+            self.image_viewer.renderer.ResetCameraClippingRange()
+            self.image_viewer.Render()
+            return True
+
+        if self.n_clicks == 0:
+            hover_target = self._find_drag_target(self.GetInteractor().GetEventPosition())
+            if hover_target is not None:
+                if self._hover_obj != hover_target[0]:
+                    self._hover_obj = hover_target[0]
+                    self._set_cursor(vtk.VTK_CURSOR_HAND)
+            else:
+                if self._hover_obj is not None:
+                    self._hover_obj = None
+                    self._set_cursor(vtk.VTK_CURSOR_ARROW)
+
+        return False
+
+    def on_left_button_release(self, obj, event):
+        if self._dragging_obj is not None:
+            self._dragging_obj = None
+            self._drag_start_world = None
+            self._drag_start_points = None
+            self._set_cursor(vtk.VTK_CURSOR_ARROW)
+            return True
+
+        return super().on_left_button_release(obj, event)
 
     def __On_active_widget(self):
         """Turn on and style the active widget"""

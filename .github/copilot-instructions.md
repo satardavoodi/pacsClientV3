@@ -1,6 +1,6 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v1.09.8.2 (2026-02-08)
+**Current Stable Version:** v1.08.9.8.3 (2026-02-09)
 
 ## Architecture map (start here)
 - App entry is `main.py` → `AppHandler` (login) → `MainWindowWidget` → `ControlPanelInterface` → `HomePanelWidget` for patient list and downloads.
@@ -12,7 +12,7 @@
 ## Critical rules (learned the hard way)
 - **Do NOT re-sort metadata['instances'] by IPP.** VTK slices are in instance_number order (files are `Instance_NNNN.dcm` loaded via `natsort`). Metadata from DB is already in the correct order. Re-sorting by IPP broke reference lines in v1.09.5-v1.09.7.
 - **The stored DirectionMatrix in field data has row 1 negated** (Y-flip compensation from `convert_itk2vtk`). Do not use it directly for DICOM normal comparisons without un-negating row 1 first.
-- **Local backup of this stable version:** `backups/v1.09.8.2_2026-02-08/`
+- **Local backup of this stable version:** `backups/v1.08.9.8.3_2026-02-09/`
 
 ## Key flows to preserve
 - Opening a study: `HomePanelWidget._on_patient_double_clicked_async` opens tab immediately, then starts Zeta download with priority and wires progress signals.

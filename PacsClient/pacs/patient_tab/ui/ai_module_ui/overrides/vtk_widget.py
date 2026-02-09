@@ -9,7 +9,7 @@ import asyncio
 
 class AIVTKWidget(VTKWidget):
     def __init__(self, parent=None, height_viewer=480, patient_widget=None, type_viewer=None):
-        super().__init__(parent, height_viewer)
+        super().__init__(parent, height_viewer, patient_widget=patient_widget)
         self.apply_default_filter = False
         self.patient_widget = patient_widget
         self.type_viewer = type_viewer

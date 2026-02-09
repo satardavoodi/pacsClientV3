@@ -243,6 +243,12 @@ class ToolbarManager:
             self.tool_access.ROI,
             self.tool_access.CIRCLE_ROI,
         }
+        self.mpr_dropdown_tools = {
+            self.tool_access.CURVED_MPR,
+            self.tool_access.MIP,
+            self.tool_access.MINIP,
+            self.tool_access.THICK_SLAB,
+        }
         
         # Track last MPR series for reopen
         self.last_mpr_series_index = None
@@ -1073,27 +1079,47 @@ class ToolbarManager:
             print('reset selected:', selected_widget)
             self.check_and_deactivate_tools()
 
-            # this is the last series showed on selected widget
-            series_index = selected_widget.last_series_show
-
-            vtk_image_data = self.patient_widget.lst_thumbnails_data[series_index]['vtk_image_data']
-            metadata = self.patient_widget.lst_thumbnails_data[series_index]['metadata']
-
             vtk_image_data = None
             metadata = None
+
+            current_slice = None
+            if hasattr(selected_widget, 'image_viewer') and selected_widget.image_viewer is not None:
+                try:
+                    current_slice = selected_widget.image_viewer.GetSlice()
+                except Exception:
+                    current_slice = None
+
+            series_uid = None
+            series_number = None
+            try:
+                if hasattr(selected_widget, 'image_viewer') and selected_widget.image_viewer is not None:
+                    series_meta = selected_widget.image_viewer.metadata.get('series', {})
+                    series_uid = series_meta.get('series_uid')
+                    series_number = series_meta.get('series_number')
+            except Exception:
+                series_uid = None
 
             print('len(self.patient_widget.lst_thumbnails_data):', len(self.patient_widget.lst_thumbnails_data))
 
             for i in range(len(self.patient_widget.lst_thumbnails_data)):
+                try:
+                    series_meta = self.patient_widget.lst_thumbnails_data[i]['metadata']['series']
+                    if series_uid is not None and series_meta.get('series_uid') == series_uid:
+                        vtk_image_data = self.patient_widget.lst_thumbnails_data[i]['vtk_image_data']
+                        metadata = self.patient_widget.lst_thumbnails_data[i]['metadata']
+                        break
+                except Exception:
+                    pass
 
-                print('series_index:', series_index)
-                print("self.patient_widget.lst_thumbnails_data[i]['metadata']['series']:", self.patient_widget.lst_thumbnails_data[i]['metadata']['series'])
-
-                if int(self.patient_widget.lst_thumbnails_data[i]['metadata']['series']['series_number']) == int(
-                        series_index):
-                    vtk_image_data = self.patient_widget.lst_thumbnails_data[i]['vtk_image_data']
-                    metadata = self.patient_widget.lst_thumbnails_data[i]['metadata']
-                    break
+            if vtk_image_data is None and series_number is not None:
+                for i in range(len(self.patient_widget.lst_thumbnails_data)):
+                    try:
+                        if str(self.patient_widget.lst_thumbnails_data[i]['metadata']['series']['series_number']) == str(series_number):
+                            vtk_image_data = self.patient_widget.lst_thumbnails_data[i]['vtk_image_data']
+                            metadata = self.patient_widget.lst_thumbnails_data[i]['metadata']
+                            break
+                    except Exception:
+                        pass
 
             print('vtkimagedata:', vtk_image_data)
             print('\nmetadata:', metadata)
@@ -1103,6 +1129,11 @@ class ToolbarManager:
                 return
 
             selected_widget.reset_image(vtk_image_data, metadata)
+            if current_slice is not None:
+                try:
+                    selected_widget.set_slice(current_slice)
+                except Exception:
+                    pass
 
             # create an eraser instance for delete widgets from image viewer
             selected_widget.set_new_interactorstyle(EraserInteractorStyle)
@@ -1145,6 +1176,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate()
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:  # activate tool
             self.check_and_deactivate_tools()
@@ -1227,6 +1259,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate()
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             self.check_and_deactivate_tools()
@@ -1255,6 +1288,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate()
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             print("  ▶️ Activating two-line angle")
@@ -1304,6 +1338,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate()
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             self.check_and_deactivate_tools()
@@ -1324,6 +1359,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate()
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             self.check_and_deactivate_tools()
@@ -2166,6 +2202,7 @@ class ToolbarManager:
             dropdown.raise_()
             dropdown.activateWindow()
 
+            self.handle_buttons_checked()
             dropdown.show()
         except Exception as e:
             print(f"[ERROR] Failed to show measurements dropdown: {e}")
@@ -2210,8 +2247,8 @@ class ToolbarManager:
             """)
             layout.addWidget(header)
 
-            # Curved MPR button
-            curved_mpr_btn = create_dropdown_tool('Curved MPR', 'fa5s.bezier-curve', '#8b5cf6')
+            # Curved MPR button (Dental)
+            curved_mpr_btn = create_dropdown_tool('Dental Curve MPR', 'fa5s.bezier-curve', '#8b5cf6')
             curved_mpr_btn.clicked.connect(lambda: [
                 self._show_curved_mpr_panel(),
                 dropdown.close()
@@ -2225,6 +2262,7 @@ class ToolbarManager:
                 dropdown.close()
             ])
             layout.addWidget(mip_btn)
+            self.tools_button[self.tool_access.MIP] = mip_btn
 
             # MinIP button
             minip_btn = create_dropdown_tool('MinIP - Minimum Intensity', 'fa5s.layer-group', '#34d399')
@@ -2233,6 +2271,7 @@ class ToolbarManager:
                 dropdown.close()
             ])
             layout.addWidget(minip_btn)
+            self.tools_button[self.tool_access.MINIP] = minip_btn
 
             # Thick Slab button
             thick_btn = create_dropdown_tool('Thick Slab MIP', 'fa5s.layer-group', '#f59e0b')
@@ -2241,6 +2280,7 @@ class ToolbarManager:
                 dropdown.close()
             ])
             layout.addWidget(thick_btn)
+            self.tools_button[self.tool_access.THICK_SLAB] = thick_btn
 
             # Note: Zeta MPR removed from dropdown - now the main MPR button
 
@@ -2251,6 +2291,7 @@ class ToolbarManager:
             dropdown.raise_()
             dropdown.activateWindow()
 
+            self.handle_buttons_checked()
             dropdown.show()
         except Exception as e:
             print(f"[ERROR] Failed to show MPR dropdown: {e}")
@@ -2336,6 +2377,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate()
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             self.check_and_deactivate_tools()
@@ -2352,6 +2394,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate()
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             self.check_and_deactivate_tools()
@@ -2405,10 +2448,20 @@ class ToolbarManager:
         logger = logging.getLogger(__name__)
 
         try:
+            if getattr(selected_widget, '_mip_mode', None) == 'MIP':
+                self._restore_original_volume(selected_widget)
+                return
             mpr_widget = self.get_mpr_widget(selected_widget)
             if mpr_widget and hasattr(mpr_widget, '_apply_mip'):
+                if self.tool_selected == self.tool_access.MIP and hasattr(mpr_widget, 'reset_slab_projection'):
+                    mpr_widget.reset_slab_projection()
+                    self.tool_selected = None
+                    self.handle_buttons_checked()
+                    return
                 logger.info("Applying MIP in Zeta MPR viewer")
                 mpr_widget._apply_mip()
+                self.tool_selected = self.tool_access.MIP
+                self.handle_buttons_checked()
                 return
 
             logger.info("=" * 60)
@@ -2530,6 +2583,8 @@ class ToolbarManager:
 
             # Mark MIP mode
             selected_widget._mip_mode = 'MIP'
+            self.tool_selected = self.tool_access.MIP
+            self.handle_buttons_checked()
             selected_widget._mip_thickness = thickness
 
             # Update viewer
@@ -2593,6 +2648,8 @@ class ToolbarManager:
             logger.error(f"ERROR in MIP: {e}", exc_info=True)
             QMessageBox.critical(self.patient_widget, "Error", f"Error: {str(e)}")
 
+        self.handle_buttons_checked()
+
     def toggle_minip(self, selected_widget):
         """Apply Minimum Intensity Projection to 2D series - Scrollable"""
         import logging
@@ -2604,10 +2661,20 @@ class ToolbarManager:
         logger = logging.getLogger(__name__)
 
         try:
+            if getattr(selected_widget, '_mip_mode', None) == 'MinIP':
+                self._restore_original_volume(selected_widget)
+                return
             mpr_widget = self.get_mpr_widget(selected_widget)
             if mpr_widget and hasattr(mpr_widget, '_apply_minip'):
+                if self.tool_selected == self.tool_access.MINIP and hasattr(mpr_widget, 'reset_slab_projection'):
+                    mpr_widget.reset_slab_projection()
+                    self.tool_selected = None
+                    self.handle_buttons_checked()
+                    return
                 logger.info("Applying MinIP in Zeta MPR viewer")
                 mpr_widget._apply_minip()
+                self.tool_selected = self.tool_access.MINIP
+                self.handle_buttons_checked()
                 return
 
             logger.info("=" * 60)
@@ -2716,6 +2783,8 @@ class ToolbarManager:
 
             # Mark that we're in MinIP mode
             selected_widget._mip_mode = 'MinIP'
+            self.tool_selected = self.tool_access.MINIP
+            self.handle_buttons_checked()
             selected_widget._mip_thickness = thickness
 
             # Update the viewer with scrollable MinIP volume
@@ -2773,6 +2842,8 @@ class ToolbarManager:
             logger.error(f"ERROR in MinIP: {e}", exc_info=True)
             QMessageBox.critical(self.patient_widget, "Error", f"Error applying MinIP:\n{str(e)}")
 
+        self.handle_buttons_checked()
+
     def toggle_thick_slab(self, selected_widget):
         """Apply Thick Slab (Average) to 2D series"""
         import logging
@@ -2784,8 +2855,16 @@ class ToolbarManager:
         logger = logging.getLogger(__name__)
 
         try:
+            if getattr(selected_widget, '_mip_mode', None) == 'ThickSlab':
+                self._restore_original_volume(selected_widget)
+                return
             mpr_widget = self.get_mpr_widget(selected_widget)
             if mpr_widget and hasattr(mpr_widget, '_apply_thick_slab'):
+                if self.tool_selected == self.tool_access.THICK_SLAB and hasattr(mpr_widget, 'reset_slab_projection'):
+                    mpr_widget.reset_slab_projection()
+                    self.tool_selected = None
+                    self.handle_buttons_checked()
+                    return
                 thickness_mm, ok = QInputDialog.getDouble(
                     self.patient_widget,
                     "Thick Slab Thickness",
@@ -2800,6 +2879,8 @@ class ToolbarManager:
 
                 logger.info(f"Applying Thick Slab in Zeta MPR viewer (thickness={thickness_mm} mm)")
                 mpr_widget._apply_thick_slab(thickness_mm)
+                self.tool_selected = self.tool_access.THICK_SLAB
+                self.handle_buttons_checked()
                 return
 
             logger.info("=" * 60)
@@ -2908,6 +2989,8 @@ class ToolbarManager:
 
             # Mark that we're in Thick Slab mode
             selected_widget._mip_mode = 'ThickSlab'
+            self.tool_selected = self.tool_access.THICK_SLAB
+            self.handle_buttons_checked()
             selected_widget._mip_thickness = thickness
 
             # Update the viewer with scrollable Thick Slab volume
@@ -2964,6 +3047,8 @@ class ToolbarManager:
         except Exception as e:
             logger.error(f"ERROR in Thick Slab: {e}", exc_info=True)
             QMessageBox.critical(self.patient_widget, "Error", f"Error applying Thick Slab:\n{str(e)}")
+
+        self.handle_buttons_checked()
 
     def on_itk_mpr_from_dropdown_requested(self):
         """
@@ -4002,6 +4087,38 @@ class ToolbarManager:
                 f"Error activating Curved MPR:\n{str(e)}"
             )
 
+    def _restore_original_volume(self, selected_widget):
+        try:
+            image_viewer = getattr(selected_widget, 'image_viewer', None)
+            if image_viewer is None:
+                return
+            original_data = getattr(selected_widget, '_original_image_data', None)
+            if original_data is None:
+                return
+
+            current_slice = getattr(selected_widget, '_original_slice', None)
+            image_viewer.vtk_image_data = original_data
+            image_viewer.image_reslice.SetInputData(original_data)
+            image_viewer.image_reslice.Update()
+            image_viewer.color_mapper.SetInputConnection(image_viewer.image_reslice.GetOutputPort())
+            image_viewer.color_mapper.Update()
+            image_viewer.SetInputData(image_viewer.image_reslice.GetOutput())
+            image_viewer.UpdateDisplayExtent()
+
+            if current_slice is not None:
+                image_viewer.SetSlice(current_slice)
+
+            image_viewer.update_corners_actors()
+            image_viewer.GetRenderer().ResetCameraClippingRange()
+            image_viewer.Render()
+
+            selected_widget._mip_mode = None
+            self.tool_selected = None
+        except Exception:
+            pass
+
+        self.handle_buttons_checked()
+
     def toggle_segmentation(self, selected_widget):
         """Toggle Advanced Segmentation Tools panel"""
         import logging
@@ -4220,6 +4337,13 @@ class ToolbarManager:
         except Exception:
             pass
 
+        try:
+            if hasattr(self, '_mpr_menu_btn'):
+                is_mpr_dropdown_active = any(_is_tool_active(tool) for tool in self.mpr_dropdown_tools)
+                self._mpr_menu_btn.setChecked(is_mpr_dropdown_active)
+        except Exception:
+            pass
+
         # Keep MPR button green if any MPR viewer is active
         try:
             mpr_btn = self.tools_button.get(self.tool_access.MPR)
@@ -4301,6 +4425,15 @@ class ToolbarManager:
         elif self.tool_selected == self.tool_access.STACKED:
             self.toggle_stacked(self.patient_widget.selected_widget)  # deactivate stacked
 
+        elif self.tool_selected == self.tool_access.MIP:
+            self.toggle_mip(self.patient_widget.selected_widget)
+
+        elif self.tool_selected == self.tool_access.MINIP:
+            self.toggle_minip(self.patient_widget.selected_widget)
+
+        elif self.tool_selected == self.tool_access.THICK_SLAB:
+            self.toggle_thick_slab(self.patient_widget.selected_widget)
+
         elif self.tool_selected == self.tool_access.ROTATION_LEFT:
             self.toggle_rotation_left(self.patient_widget.selected_widget)  # deactivate rotation left
 
@@ -4325,6 +4458,9 @@ class ToolbarManager:
 
         elif self.tool_selected == self.tool_access.ROI:
             self.toggle_roi(self.patient_widget.selected_widget)  # deactivate Flip Vertical
+
+        elif self.tool_selected == self.tool_access.CURVED_MPR:
+            self.toggle_curved_mpr(self.patient_widget.selected_widget)
 
         elif self.tool_selected == self.tool_access.CIRCLE_ROI:
             self.toggle_circle_roi(self.patient_widget.selected_widget)
@@ -5210,6 +5346,7 @@ class ToolbarManager:
         mpr_layout.setAlignment(Qt.AlignVCenter)
 
         mpr_menu_btn = QPushButton()
+        mpr_menu_btn.setCheckable(True)
         mpr_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
         mpr_menu_btn.setIconSize(QSize(14, 14))
         mpr_menu_btn.setToolTip('View MIP/MinIP/Thick Slab')
@@ -5242,9 +5379,16 @@ class ToolbarManager:
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #1f2937, stop:1 #111827);
             }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #059669, stop:1 #047857);
+                border-color: #10b981;
+                color: #ffffff;
+            }
         """)
         mpr_menu_btn.setCursor(Qt.PointingHandCursor)
         mpr_menu_btn.clicked.connect(lambda: self._show_mpr_dropdown(mpr_menu_btn))
+        self._mpr_menu_btn = mpr_menu_btn
 
         mpr_btn = create_tool_btn(self.patient_widget, 'Zeta MPR Viewer', icon_name=None, text_icon='MPR')
         mpr_btn.setStyleSheet("""
@@ -5289,12 +5433,6 @@ class ToolbarManager:
         mpr_layout.addWidget(mpr_btn)
         toolbar_layout.addWidget(mpr_container)
         self.tools_button[self.tool_access.MPR] = mpr_btn
-        
-        # Curved MPR button
-        curved_mpr_btn = create_tool_btn(self.patient_widget, 'Curved MPR - Vessel/Airway Visualization', icon_name=None, text_icon='CPR')
-        curved_mpr_btn.clicked.connect(lambda: self.toggle_curved_mpr(self.patient_widget.selected_widget))
-        toolbar_layout.addWidget(curved_mpr_btn)
-        self.tools_button[self.tool_access.CURVED_MPR] = curved_mpr_btn
         toolbar_layout.addWidget(self._create_separator())
 
         # ============================================================
