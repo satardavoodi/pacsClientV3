@@ -16,6 +16,8 @@ except Exception:
 
 GRID_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "modality_grid.json"
 
+from PacsClient.pacs.patient_tab.ui.patient_ui.viewer_controller import ViewerController
+
 from PacsClient.utils import get_count_instances_in_study
 from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachment_folder, open_folder, \
     check_and_get_thumbnails, get_name_file_from_path, get_quickly_series_info
@@ -89,22 +91,18 @@ class PatientWidget(QWidget):
         # Core data structures - initialize first
         self.import_folder_path = import_folder_path
         self.lst_thumbnails_data = []
-        self.lst_nodes_viewer = []
-        self.selected_widget: VTKWidget = None
-        self.slider = None  # UI slider for image navigation
         self.lst_series_name = set()
         self.metadata_fixed = {}
         self._series_index = {}
         self.unique_elements_index = 0
-        
+
         # ========== OPTIMIZATION CACHES ==========
-        self._series_cache = {}  # Cache for series metadata lookups {series_number: (vtk_data, metadata, index)}
-        self._series_name_cache = {}  # Cache for series names {series_number: series_name}
+        # NOTE: Some caches are now handled by ViewerController
         self._viewer_batch_queue = []  # Queue for batch viewer updates
-        
+
         # Flag to prevent double thumbnail rendering
         self._thumbnails_shown = False
-        
+
         # Patient and study identifiers
         self.tab_manager = None
         self.study_uid = study_uid
@@ -113,6 +111,14 @@ class PatientWidget(QWidget):
         self.method_add_new_tab = None
         self.logo_patient = None
         self.ordering_by_instances_number = True
+
+        # Initialize the viewer controller
+        self.viewer_controller = ViewerController(self)
+        
+        # Properties that delegate to viewer controller
+        self.lst_nodes_viewer = self.viewer_controller.lst_nodes_viewer
+        self.selected_widget = self.viewer_controller.selected_widget
+        self.slider = self.viewer_controller.slider
 
         # Zeta Sync manager (2D viewer sync point)
         self.sync_manager = SyncManager()
@@ -126,18 +132,16 @@ class PatientWidget(QWidget):
         self._sync_orientation_logged = set()
         self._lock_sync_enabled = False          # Lock Sync: auto-sync on scroll
         self._lock_sync_updating = False          # re-entrancy guard for Lock Sync
-        
+
         # ========== PERFORMANCE OPTIMIZATION ==========
         self._critical_sections_running = 0  # Prevent nested QApplication.processEvents()
         self._render_batch_pending = False  # Flag to prevent redundant rendering
         self._ui_components_lazy_loaded = False  # Track lazy loading status
         self._pending_thumbnail_updates = []  # Queue for thumbnail updates
         self._image_cache_max_size = 10  # محدودیت حافظهٔ کاش
-        
+
         # ========== VIEWER CREATION PROTECTION ==========
-        self._max_viewers_per_session = 25  # Hard limit to prevent resource exhaustion
-        self._viewer_creation_throttle = 0  # Throttle viewer creation when memory pressure
-        self._last_gc_time = 0  # Track last garbage collection
+        # NOTE: Viewer creation protection is now handled by ViewerController
         
         # ========== ASYNC TASK MANAGEMENT ==========
         # Proper async task coordination to prevent RuntimeError
@@ -681,6 +685,12 @@ class PatientWidget(QWidget):
                     key_thumbnail=str(series_number),
                     series_info=series_info
                 )
+                # ✅ Mark downloaded series with green border; keep others pending
+                if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                    if self._is_series_downloaded(series_number):
+                        self.thumbnail_manager.set_series_ready(series_number)
+                    else:
+                        self.thumbnail_manager.set_series_pending(series_number)
         except Exception as e:
             self.logger.debug(f"Error rendering cached thumbnails: {e}")
 
@@ -705,6 +715,12 @@ class PatientWidget(QWidget):
                     key_thumbnail=series_number,
                     series_info=series
                 )
+                # ✅ Default pending style unless series data is already downloaded
+                if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                    if self._is_series_downloaded(series_number):
+                        self.thumbnail_manager.set_series_ready(series_number)
+                    else:
+                        self.thumbnail_manager.set_series_pending(series_number)
         except Exception as e:
             self.logger.debug(f"Error rendering server thumbnails: {e}")
 
@@ -724,6 +740,26 @@ class PatientWidget(QWidget):
                 return str(series_number)
 
         return series_key
+
+    def _is_series_downloaded(self, series_identifier: str) -> bool:
+        """Return True if series folder exists with DICOM files."""
+        try:
+            series_key = self.resolve_series_key(str(series_identifier))
+            if not series_key.isdigit():
+                return False
+
+            study_path = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
+            base_path = Path(study_path) if study_path else Path(self.import_folder_path or "")
+            if not base_path or not base_path.exists():
+                return False
+
+            series_path = base_path / str(series_key)
+            if not series_path.exists() or not series_path.is_dir():
+                return False
+
+            return bool(list(series_path.glob("*.dcm")) or list(series_path.glob("*.DCM")))
+        except Exception:
+            return False
 
     def show_exist_thumbnails(self):
         # Prevent double rendering
@@ -769,6 +805,12 @@ class PatientWidget(QWidget):
                                                                      file_path_thumbnail=thumbnail_file,
                                                                      key_thumbnail=series_number,
                                                                      series_info=series_info_from_server)
+                # ✅ Existing thumbnails mean series likely downloaded
+                if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                    if self._is_series_downloaded(series_number):
+                        self.thumbnail_manager.set_series_ready(series_number)
+                    else:
+                        self.thumbnail_manager.set_series_pending(series_number)
         return thumb_index
 
     async def enable_progressive_display(self):
@@ -850,100 +892,26 @@ class PatientWidget(QWidget):
         """
         Synchronously load the first available series
         بارگذاری همزمان اولین سری موجود
-        
+
         This is a fallback for when there's no running event loop.
         """
-        try:
-            print("🔄 [SYNC] Loading first series synchronously...")
-            
-            # Get first available series
-            if not self.lst_thumbnails_data:
-                # Try to load from folder
-                from PacsClient.pacs.patient_tab.utils import list_subfolders_with_dicom
-                from pathlib import Path
-                
-                if self.import_folder_path:
-                    folder = Path(self.import_folder_path)
-                    series_folders = list_subfolders_with_dicom(folder)
-                    
-                    if series_folders:
-                        # Load first series
-                        first_series = series_folders[0]
-                        series_number = first_series.name
-                        
-                        print(f"📥 [SYNC] Loading series {series_number}...")
-                        success = self._load_single_series_on_demand(int(series_number))
-                        
-                        if success:
-                            print(f"✅ [SYNC] Series {series_number} loaded")
-                            
-                            # Display in viewer
-                            self.init_matrix_viewers(size_init_viewers)
-                            if self.lst_thumbnails_data:
-                                self._display_first_series_in_viewer()
-                        else:
-                            print(f"⚠️ [SYNC] Failed to load series {series_number}")
-                    else:
-                        print("⚠️ [SYNC] No series folders found")
-            else:
-                # Already have data, just display
-                self.init_matrix_viewers(size_init_viewers)
-                self._display_first_series_in_viewer()
-                
-        except Exception as e:
-            print(f"❌ [SYNC] Error in _load_first_series_sync: {e}")
-            import traceback
-            traceback.print_exc()
+        # Delegate to viewer controller
+        self.viewer_controller._load_first_series_sync(size_init_viewers)
 
 
     def load_first_series_only(self, folder_path, series_number):
         """
         Load only the first series when it's downloaded
         بارگذاری فقط اولین سری وقتی دانلود شد
-        
+
         This method is called by home_ui when the first series download completes.
-        
+
         Args:
             folder_path: Path to the study folder
             series_number: The series number that was downloaded
         """
-        try:
-            print(f"🎯 load_first_series_only called: series {series_number}")
-            
-            # Update folder path if needed
-            if folder_path and folder_path != self.import_folder_path:
-                self.import_folder_path = folder_path
-            
-            # Check if we already have this series loaded
-            series_key = f"series_{series_number}"
-            if series_key in self.lst_series_name:
-                print(f"⏭️ Series {series_number} already loaded")
-                return
-            
-            # Load the series
-            try:
-                success = self._load_single_series_on_demand(int(series_number))
-                
-                if success:
-                    self.lst_series_name.add(series_key)
-                    print(f"✅ Series {series_number} loaded successfully")
-                    
-                    # Display in viewer if it's the first series
-                    if len(self.lst_series_name) == 1:
-                        self._display_first_series_in_viewer()
-                        
-                        # Hide any loading spinner
-                        self._hide_loading_spinner()
-                else:
-                    print(f"⚠️ Failed to load series {series_number}")
-                    
-            except Exception as load_error:
-                print(f"❌ Error loading series {series_number}: {load_error}")
-                
-        except Exception as e:
-            print(f"❌ Error in load_first_series_only: {e}")
-            import traceback
-            traceback.print_exc()
+        # Delegate to viewer controller
+        self.viewer_controller.load_first_series_only(folder_path, series_number)
 
     def pipeline_manager(self, caller, size_init_viewers=(1, 1)):
         size_init_viewers = self._get_default_layout_from_config()
@@ -1093,39 +1061,8 @@ class PatientWidget(QWidget):
             traceback.print_exc()
 
     def _apply_multi_viewer_sync(self, numbers):
-        """Synchronously apply multi-viewer layout without async"""
-        try:
-            number_of_row, number_of_column = int(numbers[0]), int(numbers[1])
-            
-            # Cleanup old viewers
-            self.cleanup_all_viewers()
-            self.lst_nodes_viewer.clear()
-            
-            # Create new viewers
-            count = number_of_row * number_of_column
-            self.create_some_viewers(count)
-            
-            # Apply layout
-            if (number_of_row, number_of_column) == (1, 1) and len(self.lst_nodes_viewer) > 0:
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
-                self.change_container_border(0)
-            elif (number_of_row, number_of_column) == (2, 1) and len(self.lst_nodes_viewer) >= 2:
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 1, 0)
-                self.change_container_border(0)
-            elif (number_of_row, number_of_column) == (1, 2) and len(self.lst_nodes_viewer) >= 2:
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 0, 1)
-                self.change_container_border(0)
-            
-            # ✅ FLICKER FIX: Only process events if not in initialization batch
-            if self.updatesEnabled():
-                QApplication.processEvents()
-            
-        except Exception as e:
-            print(f"❌ Error applying viewer layout sync: {e}")
-            import traceback
-            traceback.print_exc()
+        """Delegate to viewer controller"""
+        self.viewer_controller._apply_multi_viewer_sync(numbers)
 
     async def lazy_load_first_series_progressive(self, size_init_viewers):
         """Wait for first series to download, then load it - OR load immediately if already exists"""
@@ -1264,90 +1201,19 @@ class PatientWidget(QWidget):
     def load_series_immediately(self, series_number: str, series_dir: str):
         """
         Load a series immediately after download and display it automatically.
-        
+
         Args:
-            series_number: Can be either a simple series number (e.g., "1", "2") 
+            series_number: Can be either a simple series number (e.g., "1", "2")
                           or a Series Instance UID (e.g., "1.3.12.2.1107...")
             series_dir: Directory containing the series DICOM files
         """
-        try:
-            print(f"{'='*80}")
-            print(f"📥 [PRIORITY LOAD] Loading series {series_number} (auto-display)")
-            print(f"📁 Directory: {series_dir}")
-            print(f"{'='*80}")
-
-            # Update folder path if needed
-            if series_dir and series_dir != self.import_folder_path:
-                self.import_folder_path = series_dir
-
-            # Check DICOM files
-            from pathlib import Path
-            series_path = Path(series_dir)
-            dicom_files = list(series_path.glob("*.dcm"))
-            if not dicom_files:
-                print(f"❌ No DICOM files found in {series_dir}")
-                return
-
-            # Skip if already loaded
-            series_key = f"series_{series_number}"
-            if series_key in self.lst_series_name:
-                print(f"⏭️ Series {series_number} already loaded")
-                return
-
-            # ✅ FIX: Handle both series numbers and Series Instance UIDs
-            try:
-                series_int = int(series_number)
-            except ValueError:
-                # Not a simple number - extract series number from directory name
-                # Directory name should be the actual series number
-                try:
-                    series_int = int(series_path.name)
-                    print(f"   🔍 Extracted series number {series_int} from directory name")
-                except ValueError:
-                    print(f"❌ Cannot determine series number from UID {series_number} or directory {series_path.name}")
-                    return
-
-            # Load the series
-            success = self._load_single_series_on_demand(series_int)
-            if not success:
-                print(f"❌ Failed to load series {series_int}")
-                return
-
-            # Auto-display in viewers
-            if (not self._first_series_displayed) or self._any_viewer_empty():
-                if self._display_first_series_in_all_viewers(str(series_int)):
-                    self._mark_first_series_displayed()
-            else:
-                self.change_series_on_viewer(series_int, flag_change_selected_widget=True)
-
-            # Mark as ready
-            if hasattr(self, 'thumbnail_manager'):
-                self.thumbnail_manager.set_series_ready(str(series_number))
-                self.thumbnail_manager.apply_border_states_new()
-
-            print(f"✅ Series {series_int} loaded and displayed.")
-        except Exception as e:
-            print(f"❌ CRITICAL ERROR in load_series_immediately: {e}")
-            import traceback
-            traceback.print_exc()
+        # Delegate to viewer controller
+        self.viewer_controller.load_series_immediately(series_number, series_dir)
 
 
     def _trigger_priority_display(self, series_key):
-        """Trigger first-series display only; later series stay ready until user clicks."""
-        try:
-            series_key = self.resolve_series_key(series_key)
-
-            # Only auto-display the very first series
-            if not self._first_series_displayed:
-                self.load_series_on_demand(series_key)
-                return
-
-            # For subsequent series, just mark ready (no auto-switch)
-            if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-                self.thumbnail_manager.set_series_ready(str(series_key))
-                self.thumbnail_manager.apply_border_states_new()
-        except Exception as e:
-            print(f"? Error triggering priority display: {e}")
+        """Delegate to viewer controller"""
+        self.viewer_controller._trigger_priority_display(series_key)
 
     def show_priority_status(self, message):
         """Show special status for priority download"""
@@ -1937,12 +1803,12 @@ class PatientWidget(QWidget):
         if numbers is not None:
             # set default-interactorstyle when app started
             self.apply_multi_viewer(numbers)
-            if self.selected_widget:
-                self.toolbar_manager.current_style = self.selected_widget.style
+            if self.viewer_controller.selected_widget:
+                self.toolbar_manager.current_style = self.viewer_controller.selected_widget.style
 
         else:
             # create dummy image for show until image downloaded.
-            dummy_vtk_widget = self.create_dummy_vtk_widget()
+            dummy_vtk_widget = self.viewer_controller.create_dummy_vtk_widget()
             self.vtk_layout.addWidget(dummy_vtk_widget, 0, 0)
 
     def add_series_name_to_lst_series_names(self, series_name):
@@ -1954,8 +1820,10 @@ class PatientWidget(QWidget):
         series_number = str(new_data['metadata']['series']['series_number'])
         series_name = str(new_data['metadata']['series']['series_name'])
         index = len(self.lst_thumbnails_data)
-        self._series_cache[series_number] = (new_data['vtk_image_data'], new_data['metadata'], index)
-        self._series_name_cache[series_number] = series_name
+        
+        # Use the viewer controller's cache since it manages caching
+        self.viewer_controller._series_cache[series_number] = (new_data['vtk_image_data'], new_data['metadata'], index)
+        self.viewer_controller._series_name_cache[series_number] = series_name
         # Ensure required attributes exist
         if not hasattr(self, 'lst_thumbnails_data'):
             self.lst_thumbnails_data = []
@@ -3937,124 +3805,8 @@ class PatientWidget(QWidget):
         return center_widget
 
     def new_viewer(self, default_thumb_index=0):
-        print(f"\n{'='*80}")
-        print(f"🔨 [new_viewer] START - thumb_index={default_thumb_index}")
-        self.logger.info(f"Creating new viewer with thumb index {default_thumb_index}")
-        
-        # Count existing viewers - if too many, be more aggressive with cleanup
-        viewer_count = len(self.lst_nodes_viewer) if hasattr(self, 'lst_nodes_viewer') else 0
-        
-        # Hard limit protection
-        if viewer_count >= self._max_viewers_per_session:
-            print(f"   ⚠️ PROTECTION: Reached max viewers limit ({viewer_count}/{self._max_viewers_per_session})")
-            print("   ⚠️ Creating lightweight placeholder viewer instead")
-            try:
-                return self._create_fallback_viewer()
-            except Exception as e:
-                print(f"   ❌ Even fallback failed: {e}")
-                self.logger.error(f"Max viewers exceeded and fallback failed: {e}", exc_info=True)
-                raise
-        
-        # Aggressive cleanup for high viewer counts
-        if viewer_count > 15:
-            print(f"   ⚠️ WARNING: Already have {viewer_count} viewers - running aggressive cleanup")
-            gc.collect()  # Force garbage collection
-            import time; time.sleep(0.02)  # Let OS recover (reduced from 0.05)
-        
-        # Periodic cleanup
-        import time
-        current_time = time.time()
-        if current_time - self._last_gc_time > 2.0 and viewer_count > 5:  # Every 2 seconds
-            print(f"   🧹 [Periodic GC] Cleaning up ({viewer_count} viewers)")
-            gc.collect()
-            self._last_gc_time = current_time
-        
-        vtk_widget = None
-        slider = None
-        
-        try:
-            # ✅ FLICKER FIX: Removed processEvents - batching UI updates instead
-            # processEvents was causing thumbnail loading to interrupt viewer creation
-            
-            print("   📐 Creating grid layout...")
-            try:
-                layout = QGridLayout()
-                layout.setContentsMargins(0, 0, 0, 0)
-                layout.setSpacing(0)
-                print("   ✅ Grid layout created")
-            except Exception as le:
-                print(f"   ⚠️ Layout creation warning: {le}")
-                raise RuntimeError(f"Failed to create grid layout: {le}")
-
-            # Check if we have thumbnail data
-            print("   🔍 Checking thumbnail data...")
-            try:
-                has_data = (hasattr(self, 'lst_thumbnails_data') and 
-                           self.lst_thumbnails_data and 
-                           len(self.lst_thumbnails_data) > 0)
-            except Exception as ce:
-                print(f"   ⚠️ Data check warning: {ce}")
-                has_data = False
-            
-            if not has_data:
-                print("   ⚠️ No thumbnail data, creating dummy widget")
-                try:
-                    vtk_widget = self.create_dummy_vtk_widget()
-                    if vtk_widget is None:
-                        raise RuntimeError("create_dummy_vtk_widget returned None")
-                    print("   ✅ Dummy widget created")
-                except Exception as dwe:
-                    print(f"   ❌ Dummy widget creation failed: {dwe}")
-                    raise
-            else:
-                print(f"   ✅ Thumbnail data exists ({len(self.lst_thumbnails_data)} items)")
-                print("   🎨 Creating new VTK widget...")
-                try:
-                    vtk_widget = self.create_new_vtk_widget(default_thumb_index)
-                    if vtk_widget is None:
-                        print("   ⚠️ create_new_vtk_widget returned None, trying fallback")
-                        vtk_widget = self.create_dummy_vtk_widget()
-                        if vtk_widget is None:
-                            raise RuntimeError("Both create_new_vtk_widget and create_dummy_vtk_widget failed")
-                    print("   ✅ VTK widget created")
-                except Exception as vwe:
-                    print(f"   ❌ VTK widget creation failed: {vwe}")
-                    raise
-
-            # Validate vtk_widget
-            if vtk_widget is None:
-                raise RuntimeError("vtk_widget is None after creation")
-            
-            if not isinstance(vtk_widget, QWidget):
-                raise RuntimeError(f"vtk_widget is not a QWidget, got {type(vtk_widget)}")
-
-            print("   📊 Creating slider...")
-            try:
-                slider = QSlider(Qt.Vertical, vtk_widget)
-                if slider is None:
-                    raise RuntimeError("QSlider constructor returned None")
-                slider.setInvertedAppearance(True)
-                slider.setMaximumWidth(12)
-                print("   ✅ Slider created")
-            except Exception as se:
-                print(f"   ❌ Slider creation failed: {se}")
-                raise RuntimeError(f"Failed to create slider: {se}")
-                
-        except Exception as e:
-            print(f"   ❌ ERROR in new_viewer setup: {e}")
-            self.logger.error(f"Error in new_viewer setup: {e}", exc_info=True)
-            
-            # Try to return fallback viewer
-            try:
-                print("   🔄 Attempting fallback viewer creation...")
-                fallback = self._create_fallback_viewer()
-                if fallback:
-                    print("   ✅ Fallback viewer created successfully")
-                    return fallback
-            except Exception as fe:
-                print(f"   ❌ Fallback viewer also failed: {fe}")
-            
-            raise
+        # Delegate to viewer controller
+        return self.viewer_controller.new_viewer(default_thumb_index)
 
         # slider.setStyleSheet("""
         #     QSlider {
@@ -4176,25 +3928,34 @@ class PatientWidget(QWidget):
             
             # Check if methods exist
             if not hasattr(vtk_widget, 'set_slider'):
-                raise AttributeError("VTK widget doesn't have set_slider method")
-            
-            vtk_widget.set_slider(slider)
-            
-            if not hasattr(vtk_widget, 'get_count_of_slices'):
-                raise AttributeError("VTK widget doesn't have get_count_of_slices method")
-            
-            count_slices = vtk_widget.get_count_of_slices()
-            mid_slices = 0
-            last_slices = max(0, count_slices - 1)
+                print("   ⚠️ VTK widget doesn't have set_slider yet (placeholder mode)")
+                # For placeholder widgets, just set slider to default values
+                slider.setMinimum(0)
+                slider.setMaximum(0)
+                slider.setValue(0)
+                print("   ✅ Slider configured in placeholder mode (0 slices)")
+            else:
+                vtk_widget.set_slider(slider)
+                
+                if not hasattr(vtk_widget, 'get_count_of_slices'):
+                    raise AttributeError("VTK widget doesn't have get_count_of_slices method")
+                
+                count_slices = vtk_widget.get_count_of_slices()
+                mid_slices = 0
+                last_slices = max(0, count_slices - 1)
 
-            slider.setMinimum(0)
-            slider.setMaximum(last_slices)
-            slider.setValue(mid_slices)
-            print(f"   ✅ Slider configured (slices: {count_slices}, current: {mid_slices})")
+                slider.setMinimum(0)
+                slider.setMaximum(last_slices)
+                slider.setValue(mid_slices)
+                print(f"   ✅ Slider configured (slices: {count_slices}, current: {mid_slices})")
         except Exception as e:
             print(f"   ❌ ERROR configuring slider: {e}")
-            self.logger.error(f"Error configuring slider: {e}", exc_info=True)
-            raise
+            # Don't raise - allow viewer creation to continue
+            # Just set slider to defaults
+            slider.setMinimum(0)
+            slider.setMaximum(0)
+            slider.setValue(0)
+            print("   ⚠️ Slider set to default values after error")
 
         # Connect signals
         try:
@@ -4244,62 +4005,48 @@ class PatientWidget(QWidget):
             print(f"   ⏭️ Skipping processEvents ({label}) - nested call ({self._critical_sections_running})")
         self._critical_sections_running -= 1
 
-    def create_dummy_vtk_widget(self):
-        """Create a dummy VTKWidget without image data for placeholder"""
+    def _create_lightweight_vtk_placeholder(self):
+        """Create a lightweight VTK widget that defers rendering until data is loaded
+        
+        ✅ FLICKER FIX: This creates a VTK widget with minimal initialization
+        to avoid the black screen flicker while maintaining all required methods
+        """
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
-            vtk_dummy_widget = VTKWidget(height_viewer=height, patient_widget=self)
-            
-            if vtk_dummy_widget is None:
+            vtk_widget = VTKWidget(height_viewer=height, patient_widget=self)
+
+            if vtk_widget is None:
                 raise RuntimeError("VTKWidget constructor returned None")
             
-            # Verify widget was created successfully
-            if not hasattr(vtk_dummy_widget, 'render_window'):
-                raise RuntimeError("VTKWidget has no render_window attribute")
+            # ✅ CRITICAL: Set solid background FIRST to prevent any flash
+            if hasattr(vtk_widget, 'renderer'):
+                vtk_widget.renderer.SetBackground(0.10, 0.10, 0.18)  # #1a1a2e in RGB
+                # Force immediate render of background
+                if hasattr(vtk_widget, 'render_window'):
+                    vtk_widget.render_window.Render()
             
-            return vtk_dummy_widget
+            # Minimize rendering updates until real data is loaded
+            if hasattr(vtk_widget, 'render_window'):
+                vtk_widget.render_window.SetDesiredUpdateRate(0.001)  # Very low update rate
+            
+            # Add a flag to indicate this is a placeholder
+            vtk_widget._is_placeholder = True
+            
+            return vtk_widget
         except Exception as e:
-            print(f"❌ Error creating dummy VTK widget: {e}")
-            self.logger.error(f"Error creating dummy VTK widget: {e}", exc_info=True)
+            print(f"❌ Error creating lightweight VTK widget: {e}")
+            self.logger.error(f"Error creating lightweight VTK widget: {e}", exc_info=True)
             return None
+    
+    def create_dummy_vtk_widget(self):
+        """Legacy method - redirects to lightweight placeholder"""
+        return self._create_lightweight_vtk_placeholder()
 
     ##############################################################################################
     ##############################################################################################
     def change_container_border(self, id_vtk_widget):
-        # TODO: at first we must check last viewer selected. if the last viewed selected and id_vtk_widget are the
-        #  same, skip the for (return)
-        node_viewer_selected = self.lst_nodes_viewer[id_vtk_widget]
-        for node_viewer in self.lst_nodes_viewer:
-            node_viewer: NodeViewer
-
-            if node_viewer_selected.widget == node_viewer.widget:
-                # Active viewport - same size border, just different color (blue)
-                node_viewer_selected.widget.setProperty("active", True)
-                node_viewer_selected.widget.setFrameStyle(QFrame.Box | QFrame.Plain)
-                node_viewer_selected.widget.setLineWidth(2)  # Same as inactive
-                node_viewer_selected.widget.setStyleSheet("""
-                    QFrame#ViewportContainer {
-                        border: 2px solid #60a5fa;
-                        border-radius: 2px;
-                        background-color: transparent;
-                    }
-                """)
-                self.set_viewer_to_main_viewer(node_viewer_selected)
-
-            else:
-                # Inactive viewport - same size border, different color (gray)
-                node_viewer.widget.setProperty("active", False)
-                node_viewer.widget.setFrameStyle(QFrame.Box | QFrame.Plain)
-                node_viewer.widget.setLineWidth(2)  # Same as active
-                node_viewer.widget.setStyleSheet("""
-                    QFrame#ViewportContainer {
-                        border: 2px solid #9ca3af;
-                        border-radius: 2px;
-                        background-color: transparent;
-                    }
-                """)
-
-        self.manage_reference_line()
+        # Delegate to viewer controller
+        self.viewer_controller.change_container_border(id_vtk_widget)
 
     def creator_vtk_widget(self):
         try:
@@ -4404,144 +4151,19 @@ class PatientWidget(QWidget):
             return self.create_dummy_vtk_widget()
 
     def set_viewer_to_main_viewer(self, node_viewer: NodeViewer):
-        if self.selected_widget == node_viewer.vtk_widget:
-            # print('we clicked on the main viewer')
-            return False
-
-        # save tool activated
-        tool_activated_method = self.toolbar_manager.get_tool_activated_method()
-
-        # print(f'tool selected before: {self.toolbar_manager.tool_selected},, tool_activated_method before off:', tool_activated_method)
-        self.toolbar_manager.check_and_deactivate_tools()
-        # print(f'tool selected after: {self.toolbar_manager.tool_selected},,,,,, tool_activated_method after off:', self.toolbar_manager.get_tool_activated_method())
-
-        # set new vtk_widget to main vtk_widget
-        self.selected_widget: VTKWidget = node_viewer.vtk_widget
-        self.slider = node_viewer.slider
-
-        # print('************************************************')
-        if tool_activated_method:
-            # apply activated tool on new vtk_widget
-            self.toolbar_manager.tool_selected = None
-            tool_activated_method(self.selected_widget)
+        # Delegate to viewer controller
+        self.viewer_controller.set_viewer_to_main_viewer(node_viewer)
 
     def change_series_on_viewer(self, series_index, flag_change_selected_widget=True,
                                 vtk_widget: VTKWidget = None, slider: QSlider = None):
         """
         Switch series with robust handling for layout changes and missing data
         Uses caching to avoid redundant lookups
-        
+
         ✅ Always ensures viewers exist before attempting to display series
         """
-        try:
-            series_number = str(series_index)
-            vtk_image_data = None
-            metadata = None
-            series_idx = -1
-
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data = []
-
-            print(f"🔄 [CHANGE SERIES] Requested series {series_number}, available: {len(self.lst_thumbnails_data)}")
-
-            # ✅ CRITICAL FIX: Ensure viewers exist before displaying series
-            if not self.lst_nodes_viewer:
-                print(f"   🔨 No viewers found! Creating default viewers...")
-                try:
-                    self.apply_multi_viewer((1, 1), modify_by_user=False)
-                    print(f"   ✅ Default viewers created")
-                except Exception as e:
-                    print(f"   ❌ Failed to create viewers: {e}")
-                    return
-
-            # 1. Check cache first (fast path)
-            if series_number in self._series_cache:
-                vtk_image_data, metadata, series_idx = self._series_cache[series_number]
-                print(f"   ✅ Found series {series_number} in cache at index {series_idx}")
-            else:
-                # 2. Search in existing loaded data
-                for i, data in enumerate(self.lst_thumbnails_data):
-                    data_series_num = str(data['metadata']['series']['series_number'])
-                    if data_series_num == series_number:
-                        vtk_image_data = data['vtk_image_data']
-                        metadata = data['metadata']
-                        series_idx = i
-                        # Cache for future lookups
-                        self._series_cache[series_number] = (vtk_image_data, metadata, series_idx)
-                        print(f"   ✅ Found series {series_number} in memory at index {i} (now cached)")
-                        break
-            
-            # 2. If not found in memory, try to load from disk immediately
-            if metadata is None:
-                print(f"   ⚠️ Series {series_number} not in memory, attempting to load...")
-                
-                # Ensure we have the correct study path
-                correct_study_path = self._get_correct_study_path()
-                
-                success = self._load_single_series_on_demand(int(series_number), correct_study_path)
-                
-                if success:
-                    # Re-search after loading
-                    for i, data in enumerate(self.lst_thumbnails_data):
-                        if str(data['metadata']['series']['series_number']) == series_number:
-                            vtk_image_data = data['vtk_image_data']
-                            metadata = data['metadata']
-                            series_idx = i
-                            print(f"   ✅ Series {series_number} loaded and found at index {i}")
-                            break
-                    else:
-                        print(f"   ❌ Series {series_number} loaded but data not found in list")
-                        return
-                else:
-                    print(f"   ❌ Failed to load series {series_number}")
-                    # Trigger download if server mode
-                    self._trigger_download_if_needed(series_number)
-                    return
-            
-            # 3. Determine target widget
-            if flag_change_selected_widget:
-                # Use first available viewer if selected not set
-                if self.selected_widget is None and self.lst_nodes_viewer:
-                    self.set_viewer_to_main_viewer(self.lst_nodes_viewer[0])
-                    vtk_widget = self.selected_widget
-                    # ✅ FIX: Check if slider exists before assignment
-                    if hasattr(self, 'slider') and self.slider is not None:
-                        slider = self.slider
-                    else:
-                        # Try to get slider from the viewer node
-                        if hasattr(self.lst_nodes_viewer[0], 'slider'):
-                            slider = self.lst_nodes_viewer[0].slider
-                            self.slider = slider  # Cache it
-                else:
-                    vtk_widget = self.selected_widget
-                    # ✅ FIX: Check if slider attribute exists and is not None
-                    if hasattr(self, 'slider') and self.slider is not None:
-                        slider = self.slider
-                    elif vtk_widget and hasattr(vtk_widget, 'slider') and vtk_widget.slider:
-                        slider = vtk_widget.slider
-                        self.slider = slider
-
-            if vtk_widget is None:
-                print(f"   ❌ No viewer available even after creation attempt!")
-                return
-                
-            # Ensure slider is valid before proceeding
-            if slider is None:
-                print(f"   ⚠️ No slider available, creating fallback")
-                if self.lst_nodes_viewer:
-                    slider = self.lst_nodes_viewer[0].slider
-                else:
-                    print(f"   ❌ Cannot proceed without slider")
-                    return
-                
-            # 4. Perform the switch with error recovery
-            self._perform_series_switch(vtk_widget, metadata, vtk_image_data, series_idx, slider)
-            
-        except Exception as e:
-            print(f"❌ [CHANGE SERIES] Error: {e}")
-            import traceback
-            traceback.print_exc()
+        # Delegate to viewer controller
+        self.viewer_controller.change_series_on_viewer(series_index, flag_change_selected_widget, vtk_widget, slider)
 
 
     def _get_correct_study_path(self) -> str:
@@ -4623,16 +4245,16 @@ class PatientWidget(QWidget):
         series_number = str(series_number)
         
         # Super fast path: check cache
-        if series_number in self._series_cache:
-            return self._series_cache[series_number][0]  # Return vtk_data only
-        
+        if series_number in self.viewer_controller._series_cache:
+            return self.viewer_controller._series_cache[series_number][0]  # Return vtk_data only
+
         # Medium path: check name cache
-        if series_number in self._series_name_cache:
+        if series_number in self.viewer_controller._series_name_cache:
             # Search and populate cache
             for data in self.lst_thumbnails_data:
                 sn = str(data['metadata']['series']['series_number'])
                 if sn == series_number:
-                    self._series_cache[series_number] = (
+                    self.viewer_controller._series_cache[series_number] = (
                         data['vtk_image_data'],
                         data['metadata'],
                         self.lst_thumbnails_data.index(data)
@@ -4643,7 +4265,7 @@ class PatientWidget(QWidget):
         for i, data in enumerate(self.lst_thumbnails_data):
             if str(data['metadata']['series']['series_number']) == series_number:
                 # Cache for future
-                self._series_cache[series_number] = (
+                self.viewer_controller._series_cache[series_number] = (
                     data['vtk_image_data'],
                     data['metadata'],
                     i
@@ -4654,142 +4276,28 @@ class PatientWidget(QWidget):
     
     def _invalidate_series_cache(self):
         """Invalidate caches when data structure changes"""
-        self._series_cache.clear()
-        self._series_name_cache.clear()
+        self.viewer_controller._series_cache.clear()
+        self.viewer_controller._series_name_cache.clear()
 
     def _trigger_download_if_needed(self, series_number: str):
-        """Trigger server download if series not available locally"""
-        try:
-            series_number = self.resolve_series_key(series_number)
-            # Check if we have server info
-            if hasattr(self, '_server_series_info') and self._server_series_info:
-                if series_number in self._server_series_info:
-                    print(f"   📥 Triggering server download for series {series_number}")
-                    # Emit signal or call download method
-                    if hasattr(self, 'series_downloaded'):
-                        self.series_downloaded.emit(series_number)
-                    return
-            print(f"   ℹ️ No server info available for download")
-        except Exception as e:
-            print(f"   ⚠️ Error triggering download: {e}")
+        """Delegate to viewer controller"""
+        self.viewer_controller._trigger_download_if_needed(series_number)
 
 
     def _show_loading_spinner(self, message="Loading..."):
-        """نمایش spinner در viewport فعلی"""
-        try:
-            if hasattr(self, 'selected_widget') and self.selected_widget:
-                spinner = getattr(self.selected_widget, 'viewport_spinner', None)
-                if spinner:
-                    spinner.show_loading(message)
-        except Exception:
-            pass
+        """Delegate to viewer controller"""
+        self.viewer_controller._show_loading_spinner(message)
 
     def _hide_loading_spinner(self):
-        """مخفی کردن spinner در viewport فعلی"""
-        try:
-            if hasattr(self, 'selected_widget') and self.selected_widget:
-                spinner = getattr(self.selected_widget, 'viewport_spinner', None)
-                if spinner:
-                    spinner.hide_loading()
-        except Exception:
-            pass
+        """Delegate to viewer controller"""
+        self.viewer_controller._hide_loading_spinner()
 
     def _load_single_series_on_demand(self, series_number: int, study_path: str = None) -> bool:
         """
         Load a single series with correct path resolution
         """
-        import time
-        from pathlib import Path
-        
-        try:
-            _start = time.time()
-            
-            # ✅ FIX: Use provided study_path or correctly determine it
-            if study_path is None:
-                # Try parent widget's import folder first
-                if self.import_folder_path and Path(self.import_folder_path).exists():
-                    # Ensure we're using the study root folder, not a series subfolder
-                    study_path_obj = Path(self.import_folder_path)
-                    # If current path points to a series folder (has DICOM parent), go up
-                    if (study_path_obj / str(series_number)).exists():
-                        pass  # Already at study level
-                    else:
-                        # Check if current path is inside a series folder
-                        parent = study_path_obj.parent
-                        if parent.exists() and (parent / str(series_number)).exists():
-                            study_path_obj = parent
-                    study_path = str(study_path_obj)
-                else:
-                    print(f"❌ No valid study path found")
-                    return False
-            
-            print(f"📂 [LOAD] Loading series {series_number} from {study_path}")
-            
-            # Verify series folder exists
-            series_folder = Path(study_path) / str(series_number)
-            if not series_folder.exists():
-                print(f"❌ Series folder not found: {series_folder}")
-                return False
-                
-            # Check for DICOM files
-            dicom_files = list(series_folder.glob("*.dcm")) + list(series_folder.glob("*.DCM"))
-            if not dicom_files:
-                print(f"❌ No DICOM files in {series_folder}")
-                return False
-            
-            # Load series with correct path
-            result = load_single_series_by_number(
-                study_path=study_path,  # ✅ Pass correct study path, not series path
-                series_number=series_number,
-                patient_pk=self.metadata_fixed.get('patient_pk', None),
-                study_pk=self.metadata_fixed.get('study_pk', None),
-                ordering_by_instances_number=self.ordering_by_instances_number,
-            )
-            
-            if not result:
-                return False
-
-            # Process results
-            for item in result:
-                vtk_image_data, metadata, (patient_pk, study_pk) = item
-                
-                # Populate metadata_fixed if needed
-                if not self.metadata_fixed or len(self.metadata_fixed) < 3:
-                    if metadata and 'instances' in metadata and metadata['instances']:
-                        first_instance_path = metadata['instances'][0].get('instance_path')
-                        if first_instance_path and Path(first_instance_path).exists():
-                            from PacsClient.pacs.patient_tab.utils.utils import get_meta_fixed
-                            self.metadata_fixed = get_meta_fixed(first_instance_path)
-                            if patient_pk:
-                                self.metadata_fixed['patient_pk'] = patient_pk
-                            if study_pk:
-                                self.metadata_fixed['study_pk'] = study_pk
-
-                # Add to thumbnails list
-                file_path = metadata['series'].get('thumbnail_path', '')
-                new_data = {
-                    'vtk_image_data': vtk_image_data, 
-                    'metadata': metadata, 
-                    'file_path': file_path
-                }
-                self.add_new_data_to_lst_thumbnails_data(new_data)
-                
-                # Update study path if needed
-                if metadata.get('series', {}).get('series_path'):
-                    correct_path = Path(metadata['series']['series_path']).parent
-                    if str(correct_path) != self.import_folder_path:
-                        self.import_folder_path = str(correct_path)
-                        print(f"   🔄 Updated study path to: {correct_path}")
-
-            _elapsed = time.time() - _start
-            print(f"✅ [LOAD] Series {series_number} loaded in {_elapsed:.3f}s")
-            return True
-
-        except Exception as e:
-            print(f"❌ [LOAD] Error loading series {series_number}: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+        # Delegate to viewer controller
+        return self.viewer_controller._load_single_series_on_demand(series_number, study_path)
         
 
     def update_download_progress(self, current: int, total: int, percent: int):
@@ -4828,89 +4336,8 @@ class PatientWidget(QWidget):
         Load a series on demand with simple queue-based coordination
         Avoids async lock conflicts by using non-blocking async calls
         """
-        try:
-            # Check if widget is still valid
-            try:
-                if not self.isVisible():
-                    return
-            except RuntimeError:
-                return  # Widget was deleted
-
-            series_number_str = self.resolve_series_key(series_number)
-
-            # Avoid duplicate loads
-            if series_number_str in self._pending_series_loads:
-                self.logger.debug(f"Series {series_number_str} already queued for loading")
-                return
-
-            # Check if already loaded
-            series_key = f"series_{series_number_str}"
-            if series_key in self.lst_series_name:
-                self.logger.debug(f"Series {series_number_str} already loaded, skipping")
-                return
-
-            # Mark as pending
-            self._pending_series_loads.add(series_number_str)
-
-            # Try async loading if event loop available
-            try:
-                loop = asyncio.get_running_loop()
-                
-                # Store the event loop reference for cleanup
-                self._event_loop = loop
-
-                async def _safe_async_load():
-                    """Load series asynchronously without locks"""
-                    try:
-                        # Yield immediately to prevent blocking
-                        await asyncio.sleep(0)
-
-                        # Load and display the series
-                        await self._async_load_and_display_series(series_number_str)
-
-                    except asyncio.CancelledError:
-                        self.logger.debug(f"Load cancelled for series {series_number_str}")
-                    except RuntimeError as e:
-                        if "deleted" not in str(e).lower():
-                            self.logger.warning(f"Runtime error loading series {series_number_str}: {e}")
-                    except Exception as e:
-                        self.logger.error(f"Error loading series {series_number_str}: {e}", exc_info=True)
-                    finally:
-                        # Remove from pending set
-                        self._pending_series_loads.discard(series_number_str)
-
-                # Create task - no locks, just schedule it
-                task = asyncio.create_task(_safe_async_load())
-                self._background_tasks.add(task)
-
-                # Cleanup on completion
-                def cleanup_task(t):
-                    try:
-                        self._background_tasks.discard(t)
-                    except:
-                        pass  # Ignore errors during cleanup
-
-                task.add_done_callback(cleanup_task)
-
-            except RuntimeError:
-                # No event loop - use thread-based loading
-                self.logger.debug(f"No event loop, loading series {series_number_str} in thread")
-
-                def _thread_load():
-                    try:
-                        # Load synchronously in thread
-                        self._load_single_series_on_demand(int(series_number_str))
-                    except Exception as e:
-                        self.logger.error(f"Error loading series in thread: {e}", exc_info=True)
-                    finally:
-                        self._pending_series_loads.discard(series_number_str)
-
-                thread = threading.Thread(target=_thread_load, daemon=True, name=f"SeriesLoad-{series_number_str}")
-                thread.start()
-
-        except Exception as e:
-            self.logger.error(f"Error in load_series_on_demand: {e}", exc_info=True)
-            self._pending_series_loads.discard(series_number_str)
+        # Delegate to viewer controller
+        self.viewer_controller.load_series_on_demand(series_number)
             
 
     async def load_multiple_series_parallel(self, series_numbers: list, max_concurrent=8):
@@ -5142,24 +4569,8 @@ class PatientWidget(QWidget):
             traceback.print_exc()
 
     def _any_viewer_empty(self) -> bool:
-        """Return True if any viewer has not been initialized with image data."""
-        try:
-            if not self.lst_nodes_viewer:
-                return True
-            for node in self.lst_nodes_viewer:
-                vtk_widget = getattr(node, 'vtk_widget', None)
-                if vtk_widget is None:
-                    return True
-                if getattr(vtk_widget, 'image_viewer', None) is None:
-                    return True
-                try:
-                    if vtk_widget.get_count_of_slices() == 0:
-                        return True
-                except Exception:
-                    return True
-            return False
-        except Exception:
-            return True
+        """Delegate to viewer controller"""
+        return self.viewer_controller._any_viewer_empty()
 
 
     async def _do_load_series(self, series_number: str):
@@ -5338,135 +4749,57 @@ class PatientWidget(QWidget):
             return False
 
     def _show_viewer_loading_all(self):
-        """Show loading spinner on all viewers."""
-        try:
-            for node in self.lst_nodes_viewer:
-                vtk_widget = getattr(node, 'vtk_widget', None)
-                spinner = getattr(vtk_widget, 'viewport_spinner', None)
-                if spinner:
-                    spinner.show_loading("Loading...")
-        except Exception:
-            pass
+        """Delegate to viewer controller"""
+        self.viewer_controller._show_viewer_loading_all()
 
     def _hide_viewer_loading_all(self):
-        """Hide loading spinner on all viewers."""
-        try:
-            for node in self.lst_nodes_viewer:
-                vtk_widget = getattr(node, 'vtk_widget', None)
-                spinner = getattr(vtk_widget, 'viewport_spinner', None)
-                if spinner:
-                    spinner.hide_loading()
-        except Exception:
-            pass
+        """Delegate to viewer controller"""
+        self.viewer_controller._hide_viewer_loading_all()
 
     def _display_first_series_in_viewer(self):
-        """Display the first available series in all viewers."""
-        try:
-            if not self.lst_thumbnails_data:
-                return False
-            series_number = str(self.lst_thumbnails_data[0]['metadata']['series']['series_number'])
-            if self._display_first_series_in_all_viewers(series_number):
-                self._mark_first_series_displayed()
-                return True
-            return False
-        except Exception:
-            return False
+        """Delegate to viewer controller"""
+        return self.viewer_controller._display_first_series_in_viewer()
 
     def _mark_first_series_displayed(self):
-        """Finalize first-series display: hide overlays and notify Home UI."""
-        if self._first_series_displayed:
-            return
-        self._first_series_displayed = True
-        self._hide_viewer_loading_all()
-        self._hide_init_overlay()
-        try:
-            self.loading_complete.emit()
-        except Exception:
-            pass
+        """Delegate to viewer controller"""
+        self.viewer_controller._mark_first_series_displayed()
 
     def _display_first_series_in_all_viewers(self, series_number: str) -> bool:
-        """Display the first downloaded series in all viewers."""
-        try:
-            series_number = self.resolve_series_key(series_number)
-            vtk_image_data = None
-            metadata = None
-
-            for data in self.lst_thumbnails_data:
-                if str(data.get('metadata', {}).get('series', {}).get('series_number')) == str(series_number):
-                    vtk_image_data = data.get('vtk_image_data')
-                    metadata = data.get('metadata')
-                    break
-
-            if vtk_image_data is None or metadata is None:
-                return False
-
-            if self.lst_nodes_viewer and self.selected_widget is None:
-                first_node = self.lst_nodes_viewer[0]
-                self.selected_widget = getattr(first_node, 'vtk_widget', None)
-                self.slider = getattr(first_node, 'slider', None)
-
-            for node in self.lst_nodes_viewer:
-                vtk_widget = getattr(node, 'vtk_widget', None)
-                slider = getattr(node, 'slider', None)
-                if vtk_widget is None:
-                    continue
-                self._display_loaded_series(
-                    series_number=series_number,
-                    vtk_image_data=vtk_image_data,
-                    metadata=metadata,
-                    flag_change_selected_widget=False,
-                    vtk_widget=vtk_widget,
-                    slider=slider
-                )
-
-            self._mark_first_series_displayed()
-            return True
-        except Exception as e:
-            self.logger.debug(f"Error displaying first series: {e}")
-            return False
+        """Delegate to viewer controller"""
+        return self.viewer_controller._display_first_series_in_all_viewers(series_number)
 
     def _get_default_layout_from_config(self) -> tuple[int, int]:
-        """Read default layout from modality_grid.json (fallback 1x2)."""
-        try:
-            if GRID_CONFIG_PATH.exists():
-                with open(GRID_CONFIG_PATH, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                default_cfg = data.get('default') or data.get('DEFAULT')
-                if isinstance(default_cfg, dict):
-                    rows = int(default_cfg.get('rows', 1))
-                    cols = int(default_cfg.get('cols', 2))
-                    return (rows, cols)
-        except Exception:
-            pass
-        return (1, 2)
+        """Delegate to viewer controller"""
+        return self.viewer_controller._get_default_layout_from_config()
 
     def reset_slider(self, vtk_widget: VTKWidget, slider: QSlider):
-        """بهینه‌سازی شدهٔ slider reset"""
+        """Delegate to viewer controller"""
+        # This method is still needed as it's used by the viewer controller
         if not vtk_widget or not slider:
             return
-        
+
         try:
             # Block signals to avoid redundant updates
             slider.blockSignals(True)
-            
+
             vtk_widget.set_slider(slider)
             count_slices = vtk_widget.get_count_of_slices()
-            
+
             # اگر فقط یک slice است، بلاک کن
             if count_slices <= 1:
                 slider.blockSignals(False)
                 return
-            
+
             mid_slices = 0  # Always start at first slice for speed
             last_slices = max(0, count_slices - 1)
-            
+
             # Set range and value together to minimize updates
             slider.setRange(0, last_slices)
             slider.setValue(mid_slices)
-            
+
             # Unblock signals and apply window/level
             slider.blockSignals(False)
-            
+
             if hasattr(vtk_widget, 'image_viewer') and vtk_widget.image_viewer is not None:
                 vtk_widget.image_viewer.apply_default_window_level(mid_slices)
         except Exception as e:
@@ -5573,107 +4906,12 @@ class PatientWidget(QWidget):
         Apply multi-viewer layout with optimized batch processing
         Reuses existing data and caches when possible
         """
-        try:
-            rows, cols = int(numbers[0]), int(numbers[1])
-            required_count = rows * cols
-            current_count = len(self.lst_nodes_viewer)
-            current_data_count = len(self.lst_thumbnails_data)
-            
-            print(f"🔧 [LAYOUT] Applying {rows}x{cols} layout (need {required_count} viewers, have {current_count})")
-            
-            # ✅ FLICKER FIX: Disable updates during batch viewer creation
-            self.setUpdatesEnabled(False)
-            if hasattr(self, 'center_widget') and self.center_widget:
-                self.center_widget.setUpdatesEnabled(False)
-            
-            # 1. Cleanup existing viewers but preserve data
-            self.cleanup_all_viewers()
-            self.lst_nodes_viewer.clear()
-            print("   ✅ cleanup_all_viewers completed")  # No processEvents here
-            
-            # 2. Create viewers with existing data assignments
-            displayed_series_indices = set()
-            
-            for i in range(required_count):
-                # Determine which series to show in this viewer
-                series_to_show = 0  # Default to first
-                
-                # If we have enough data, distribute them
-                if current_data_count > 0:
-                    # Cycle through available series if more viewers than series
-                    series_to_show = i % current_data_count
-                
-                try:
-                    node = self.new_viewer(series_to_show)
-                    
-                    # If we have data, display it immediately
-                    if current_data_count > 0 and i < current_data_count:
-                        data = self.lst_thumbnails_data[i]
-                        if hasattr(node.vtk_widget, 'switch_series'):
-                            # Only create, don't switch yet - will do in batch below
-                            pass
-                            
-                except Exception as e:
-                    print(f"   ⚠️ Error creating viewer {i}: {e}")
-                    # Create fallback viewer
-                    node = self._create_fallback_viewer()
-                    self.lst_nodes_viewer.append(node)
-            
-            # 3. Arrange in grid
-            for i, node in enumerate(self.lst_nodes_viewer):
-                if i >= required_count:
-                    break
-                row, col = divmod(i, cols)
-                self.vtk_layout.addWidget(node.widget, row, col)
-            
-            # 4. Distribute series to viewers
-            self._distribute_series_to_viewers()
-            
-            # 5. Set first viewer as active
-            if self.lst_nodes_viewer:
-                self.change_container_border(0)
-                
-            if modify_by_user:
-                QTimer.singleShot(500, self._hide_loading_msg)
-                
-            print(f"✅ [LAYOUT] Applied {rows}x{cols} layout with {len(self.lst_nodes_viewer)} viewers")
-            
-        except Exception as e:
-            print(f"❌ [LAYOUT] Error: {e}")
-            import traceback
-            traceback.print_exc()
-            if modify_by_user:
-                self._hide_loading_msg()
-        finally:
-            # ✅ FLICKER FIX: Re-enable updates after batch creation
-            if hasattr(self, 'center_widget') and self.center_widget:
-                self.center_widget.setUpdatesEnabled(True)
-            self.setUpdatesEnabled(True)
-            # Single repaint after all changes
-            self.update()
+        # Delegate to viewer controller
+        self.viewer_controller.apply_multi_viewer(numbers, modify_by_user)
     
     def _distribute_series_to_viewers(self):
-        """بهینه‌سازی توزیع سری‌ها به viewers"""
-        if not self.lst_thumbnails_data or not self.lst_nodes_viewer:
-            return
-        
-        # استفاده از batch processing برای بهتر شدن performance
-        try:
-            for i, node in enumerate(self.lst_nodes_viewer):
-                series_index = i % len(self.lst_thumbnails_data)
-                # Pre-cache series metadata
-                if series_index < len(self.lst_thumbnails_data):
-                    data = self.lst_thumbnails_data[series_index]
-                    series_num = str(data['metadata']['series']['series_number'])
-                    # Warm up cache
-                    if series_num not in self._series_cache:
-                        self._series_cache[series_num] = (
-                            data['vtk_image_data'],
-                            data['metadata'],
-                            series_index
-                        )
-        except Exception as e:
-            print(f"⚠️ Error pre-caching series: {e}")
+        """Delegate to viewer controller"""
+        self.viewer_controller._distribute_series_to_viewers()
     
     def _create_fallback_viewer(self):
         """Create dummy viewer for missing data - with full error handling"""
@@ -5766,83 +5004,12 @@ class PatientWidget(QWidget):
             self.setUpdatesEnabled(True)
                     
     def create_some_viewers(self, count):
-        last_viewer_index = 0
-        for i in range(count):
-            try:
-                # it's means we have series at enough
-                self.new_viewer(i)
-                last_viewer_index = i
-            except:
-                # we don't have series at enough. so we create from last series until row * col
-                self.new_viewer(last_viewer_index)
+        # Delegate to viewer controller
+        self.viewer_controller.create_some_viewers(count)
 
     def cleanup_all_viewers(self):
-        """تمیز‌کردن بهینهٔ viewers و resources"""
-        try:
-            # Cancel any pending async operations
-            if hasattr(self, '_active_load_task') and self._active_load_task:
-                if not self._active_load_task.done():
-                    self._active_load_task.cancel()
-            
-            # Cancel all background tasks
-            if hasattr(self, '_background_tasks'):
-                for task in list(self._background_tasks):
-                    try:
-                        if not task.done():
-                            task.cancel()
-                    except:
-                        pass
-                self._background_tasks.clear()
-            
-            # Clean up VTK layout
-            if hasattr(self, 'vtk_layout'):
-                try:
-                    delete_widgets_in_layout(self.vtk_layout)
-                except:
-                    pass
-
-            # Clean up viewer nodes efficiently
-            if hasattr(self, 'lst_nodes_viewer'):
-                for node in list(self.lst_nodes_viewer):  # Use list() to avoid modification during iteration
-                    try:
-                        node: NodeViewer
-                        vtk_widget: VTKWidget = node.vtk_widget
-                        if hasattr(vtk_widget, 'cleanup_image_viewer'):
-                            try:
-                                vtk_widget.cleanup_image_viewer()
-                            except:
-                                pass
-
-                        # Safe deletion
-                        for attr in ('vtk_widget', 'widget', 'slider'):
-                            try:
-                                if hasattr(node, attr):
-                                    delattr(node, attr)
-                            except:
-                                pass
-                    except Exception as e:
-                        self.logger.debug(f"Error cleaning up viewer node: {e}")
-            
-            # Clear caches to free memory - اما با احتیاط
-            if hasattr(self, '_series_cache'):
-                self._series_cache.clear()
-            if hasattr(self, '_series_name_cache'):
-                self._series_name_cache.clear()
-            if hasattr(self, '_viewer_batch_queue'):
-                self._viewer_batch_queue.clear()
-            if hasattr(self, '_cached_series_names'):
-                self._cached_series_names.clear()
-            if hasattr(self, '_metadata_pool'):
-                self._metadata_pool.clear()
-            if hasattr(self, '_layout_pool'):
-                self._layout_pool.clear()
-            
-            self._render_batch_pending = False
-            self._ui_components_lazy_loaded = False
-            
-            print("✅ cleanup_all_viewers completed")
-        except Exception as e:
-            self.logger.error(f"Error in cleanup_all_viewers: {e}")
+        """Delegate to viewer controller"""
+        self.viewer_controller.cleanup_all_viewers()
 
     def exit_patient_widget(self):
         """تمام resources را با سرعت تمیز کن"""
@@ -5891,6 +5058,30 @@ class PatientWidget(QWidget):
 
             # Clean up viewers
             self.cleanup_all_viewers()
+
+            # Clean up viewer controller
+            if hasattr(self, 'viewer_controller'):
+                # Clean up viewer nodes efficiently
+                if hasattr(self.viewer_controller, 'lst_nodes_viewer'):
+                    for node in list(self.viewer_controller.lst_nodes_viewer):  # Use list() to avoid modification during iteration
+                        try:
+                            node: NodeViewer
+                            vtk_widget: VTKWidget = node.vtk_widget
+                            if hasattr(vtk_widget, 'cleanup_image_viewer'):
+                                try:
+                                    vtk_widget.cleanup_image_viewer()
+                                except:
+                                    pass
+
+                            # Safe deletion
+                            for attr in ('vtk_widget', 'widget', 'slider'):
+                                try:
+                                    if hasattr(node, attr):
+                                        delattr(node, attr)
+                                except:
+                                    pass
+                        except Exception as e:
+                            self.logger.debug(f"Error cleaning up viewer node: {e}")
 
             # Check if lst_thumbnails_data exists before trying to access it
             if hasattr(self, 'lst_thumbnails_data') and self.lst_thumbnails_data:
@@ -5978,7 +5169,7 @@ class PatientWidget(QWidget):
 
             # Clean up resources
             self.exit_patient_widget()
-            
+
             # Explicitly clean up event loop references to prevent abandoned handles
             if hasattr(self, '_event_loop') and self._event_loop:
                 try:
@@ -5987,7 +5178,7 @@ class PatientWidget(QWidget):
                         self._event_loop.stop()
                 except:
                     pass
-            
+
             # Accept the close event
             event.accept()
         except Exception as e:

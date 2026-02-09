@@ -52,8 +52,13 @@ import os
 if sys.platform == 'win32':
     # Use software rendering for maximum compatibility
     os.environ["QT_OPENGL"] = "software"
-    os.environ["QSG_RHI_BACKEND"] = "software"
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream"
+    os.environ["QSG_RHI_BACKEND"] = "d3d11"  # Use Direct3D 11 instead of software
+    # Additional flags to handle GPU context creation issues
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream --disable-features=VizDisplayCompositor,UseSkiaRenderer"
+    # Additional environment variables to handle GPU context issues
+    os.environ["QT_QUICK_BACKEND"] = "software"
+    os.environ["QMLSCENE_DEVICE"] = "softwarecontext"
+    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
 
 if __name__ == "__main__":
     # Set working directory to _internal for PyInstaller builds

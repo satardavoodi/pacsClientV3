@@ -69,7 +69,7 @@ class ActionButtons(QWidget):
             color='#3b82f6',
             tooltip='Pause download'
         )
-        self.pause_btn.clicked.connect(lambda: self.pause_clicked.emit(self.study_uid))
+        self.pause_btn.clicked.connect(lambda: self._on_pause_clicked())
         layout.addWidget(self.pause_btn)
         
         # Resume button
@@ -78,7 +78,7 @@ class ActionButtons(QWidget):
             color='#10b981',
             tooltip='Resume download'
         )
-        self.resume_btn.clicked.connect(lambda: self.resume_clicked.emit(self.study_uid))
+        self.resume_btn.clicked.connect(lambda: self._on_resume_clicked())
         layout.addWidget(self.resume_btn)
         
         # Cancel button
@@ -87,7 +87,7 @@ class ActionButtons(QWidget):
             color='#ef4444',
             tooltip='Cancel download'
         )
-        self.cancel_btn.clicked.connect(lambda: self.cancel_clicked.emit(self.study_uid))
+        self.cancel_btn.clicked.connect(lambda: self._on_cancel_clicked())
         layout.addWidget(self.cancel_btn)
         
         # Retry button
@@ -96,7 +96,7 @@ class ActionButtons(QWidget):
             color='#f59e0b',
             tooltip='Retry download'
         )
-        self.retry_btn.clicked.connect(lambda: self.retry_clicked.emit(self.study_uid))
+        self.retry_btn.clicked.connect(lambda: self._on_retry_clicked())
         layout.addWidget(self.retry_btn)
     
     def _create_button(self, icon: str, color: str, tooltip: str) -> QPushButton:
@@ -146,3 +146,39 @@ class ActionButtons(QWidget):
         """Update buttons based on new state"""
         self.state = new_state
         self._update_button_states()
+    
+    def _on_pause_clicked(self) -> None:
+        """Handle pause button click with logging"""
+        logger.info(f"🔵 [ACTION BUTTON] Pause clicked for study: {self.study_uid[:40]}...")
+        try:
+            self.pause_clicked.emit(self.study_uid)
+            logger.info(f"🟢 [ACTION BUTTON SUCCESS] Pause signal emitted for {self.study_uid[:40]}...")
+        except Exception as e:
+            logger.error(f"🔴 [ACTION BUTTON FAILURE] Pause failed for {self.study_uid[:40]}...: {e}")
+    
+    def _on_resume_clicked(self) -> None:
+        """Handle resume button click with logging"""
+        logger.info(f"🔵 [ACTION BUTTON] Resume clicked for study: {self.study_uid[:40]}...")
+        try:
+            self.resume_clicked.emit(self.study_uid)
+            logger.info(f"🟢 [ACTION BUTTON SUCCESS] Resume signal emitted for {self.study_uid[:40]}...")
+        except Exception as e:
+            logger.error(f"🔴 [ACTION BUTTON FAILURE] Resume failed for {self.study_uid[:40]}...: {e}")
+    
+    def _on_cancel_clicked(self) -> None:
+        """Handle cancel button click with logging"""
+        logger.info(f"🔵 [ACTION BUTTON] Cancel clicked for study: {self.study_uid[:40]}...")
+        try:
+            self.cancel_clicked.emit(self.study_uid)
+            logger.info(f"🟢 [ACTION BUTTON SUCCESS] Cancel signal emitted for {self.study_uid[:40]}...")
+        except Exception as e:
+            logger.error(f"🔴 [ACTION BUTTON FAILURE] Cancel failed for {self.study_uid[:40]}...: {e}")
+    
+    def _on_retry_clicked(self) -> None:
+        """Handle retry button click with logging"""
+        logger.info(f"🔵 [ACTION BUTTON] Retry clicked for study: {self.study_uid[:40]}...")
+        try:
+            self.retry_clicked.emit(self.study_uid)
+            logger.info(f"🟢 [ACTION BUTTON SUCCESS] Retry signal emitted for {self.study_uid[:40]}...")
+        except Exception as e:
+            logger.error(f"🔴 [ACTION BUTTON FAILURE] Retry failed for {self.study_uid[:40]}...: {e}")
