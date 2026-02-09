@@ -3577,33 +3577,44 @@ class ToolbarManager:
             
             logger.info("   ✅ [MPR OPEN] last_series_show is available")
             
-            # ✅ FIX: last_series_show stores the LIST INDEX (0-based), not the series number
-            active_series_index = selected_widget.last_series_show
+            # ✅ FIX: last_series_show now stores the SERIES NUMBER (string), not list index
+            series_number = str(selected_widget.last_series_show)
             total_thumbnails = len(self.patient_widget.lst_thumbnails_data)
             
-            logger.info(f"   📊 [MPR OPEN] Active series index: {active_series_index} (total thumbnails: {total_thumbnails})")
-            logger.info(f"   📊 [MPR OPEN] active_series_index type: {type(active_series_index)}")
+            logger.info(f"   📊 [MPR OPEN] Active series number: {series_number} (total thumbnails: {total_thumbnails})")
+            logger.info(f"   📊 [MPR OPEN] series_number type: {type(series_number)}")
             
-            # Validate index bounds
-            if not isinstance(active_series_index, int) or active_series_index < 0 or active_series_index >= total_thumbnails:
-                logger.error(f"   ❌ [MPR OPEN] Invalid series index: {active_series_index}")
-                logger.error(f"      isinstance(int): {isinstance(active_series_index, int)}")
-                logger.error(f"      < 0: {active_series_index < 0 if isinstance(active_series_index, int) else 'N/A'}")
-                logger.error(f"      >= {total_thumbnails}: {active_series_index >= total_thumbnails if isinstance(active_series_index, int) else 'N/A'}")
+            # Find the series data by series number
+            series_data = None
+            active_series_index = None
+            
+            for idx, thumb_data in enumerate(self.patient_widget.lst_thumbnails_data):
+                thumb_meta = thumb_data.get('metadata', {})
+                series_meta = thumb_meta.get('series', {})
+                this_series_num = str(series_meta.get('series_number', ''))
+                
+                if this_series_num == series_number:
+                    series_data = thumb_data
+                    active_series_index = idx
+                    logger.info(f"   ✅ [MPR OPEN] Found series {series_number} at index {idx}")
+                    break
+            
+            # Validate that we found the series
+            if series_data is None or active_series_index is None:
+                logger.error(f"   ❌ [MPR OPEN] Could not find series number: {series_number}")
                 logger.info("=" * 100)
                 QMessageBox.warning(
                     self.patient_widget,
                     "Invalid Series",
-                    f"Series index {active_series_index} is out of range.\nAvailable indices: 0 to {total_thumbnails-1}"
+                    f"Series number {series_number} not found in thumbnails data.\nAvailable series count: {total_thumbnails}"
                 )
                 return
             
-            logger.info("   ✅ [MPR OPEN] Series index is valid")
+            logger.info("   ✅ [MPR OPEN] Series data found")
             
-            # ✅ FIX: Get data directly by index instead of searching by series number
+            # ✅ Get VTK data from found series
             try:
-                logger.info(f"   🔍 [MPR OPEN] Retrieving data at index {active_series_index}...")
-                series_data = self.patient_widget.lst_thumbnails_data[active_series_index]
+                logger.info(f"   🔍 [MPR OPEN] Retrieving VTK data for series {series_number}...")
                 logger.info(f"   📦 [MPR OPEN] series_data keys: {series_data.keys() if series_data else 'None'}")
                 
                 vtk_image_data = series_data.get('vtk_image_data')
@@ -3613,14 +3624,11 @@ class ToolbarManager:
                 thumb_metadata = series_data.get('metadata', {})
                 logger.info(f"   📦 [MPR OPEN] thumb_metadata keys: {thumb_metadata.keys() if thumb_metadata else 'None'}")
                 
-                series_metadata = thumb_metadata.get('series', {})
-                logger.info(f"   📦 [MPR OPEN] series_metadata keys: {series_metadata.keys() if series_metadata else 'None'}")
-                
-                series_number = series_metadata.get('series_number', 'Unknown')
-                logger.info(f"   📦 [MPR OPEN] series_number: {series_number}")
+                # series_metadata already retrieved above
+                logger.info(f"   📦 [MPR OPEN] Using series_number: {series_number}")
                 
                 if vtk_image_data is None:
-                    logger.error(f"   ❌ [MPR OPEN] No VTK image data at index {active_series_index}")
+                    logger.error(f"   ❌ [MPR OPEN] No VTK image data for series {series_number}")
                     logger.info("=" * 100)
                     QMessageBox.warning(
                         self.patient_widget,
@@ -3629,14 +3637,15 @@ class ToolbarManager:
                     )
                     return
                     
-                logger.info(f"   ✅ Found series at index {active_series_index}, series_number={series_number}")
+                logger.info(f"   ✅ Found series {series_number} at list index {active_series_index}")
                 logger.info(f"   vtk_image_data dimensions: {vtk_image_data.GetDimensions()}")
 
-                # Remember which series spawned MPR so we can restore on close
-                selected_widget._mpr_source_series_index = active_series_index
+                # Remember which series spawned MPR so we can restore on close (use series_number now)
+                selected_widget._mpr_source_series_number = series_number
+                selected_widget._mpr_source_series_index = active_series_index  # Keep for backward compatibility
                 
             except Exception as e:
-                logger.error(f"Error accessing series data at index {active_series_index}: {e}")
+                logger.error(f"Error accessing series data for series {series_number}: {e}")
                 import traceback
                 traceback.print_exc()
                 QMessageBox.warning(
