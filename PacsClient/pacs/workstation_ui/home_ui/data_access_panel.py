@@ -123,7 +123,7 @@ class DataAccessPanelWidget(QWidget):
             }
         """)
         
-        message = 'Click "Search" to load patient data from local database.'
+        message = 'Shows downloaded studies from Download Manager and locally imported files. Click "Search" or "Refresh" to load.'
         message_label = QLabel(message)
         message_label.setWordWrap(True)
         message_label.setStyleSheet("""
@@ -138,8 +138,32 @@ class DataAccessPanelWidget(QWidget):
             }
         """)
         
+        # Add refresh button for local database
+        refresh_button = QPushButton()
+        refresh_button.setIcon(qta.icon('fa5s.sync-alt', color='#3b82f6'))
+        refresh_button.setText(" Refresh Local")
+        refresh_button.setStyleSheet("""
+            QPushButton {
+                font-size: 9px;
+                font-weight: 500;
+                color: #f7fafc;
+                background: #2563eb;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 10px;
+            }
+            QPushButton:hover {
+                background: #3b82f6;
+            }
+            QPushButton:pressed {
+                background: #1e40af;
+            }
+        """)
+        self.refresh_local_button = refresh_button
+        
         db_layout.addWidget(local_label)
         db_layout.addWidget(message_label)
+        db_layout.addWidget(refresh_button)
         db_layout.addStretch()
         
         db_tab.setLayout(db_layout)

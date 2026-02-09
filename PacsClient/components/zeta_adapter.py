@@ -54,9 +54,11 @@ def create_download_task_from_study(study_info: dict) -> DownloadTask:
     priority_str = study_info.get('priority', 'Normal')
     priority = priority_map.get(priority_str, DownloadPriority.NORMAL)
     
+    study_uid = study_info.get('study_uid', '')
+
     # Create download task
     task = DownloadTask(
-        study_uid=study_info.get('study_uid', ''),
+        study_uid=study_uid,
         patient_id=study_info.get('patient_id', ''),
         patient_name=study_info.get('patient_name', ''),
         study_date=study_info.get('study_date', ''),
@@ -64,7 +66,7 @@ def create_download_task_from_study(study_info: dict) -> DownloadTask:
         description=study_info.get('description', ''),
         series_list=study_info.get('series_list', []),
         priority=priority,
-        output_dir=Path(SOURCE_PATH) / str(study_info.get('study_uid', ''))
+        output_dir=(Path(SOURCE_PATH) / study_uid) if study_uid else None
     )
     
     return task

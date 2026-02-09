@@ -893,34 +893,9 @@ def insert_series(series_uid: str, study_fk: int, series_name: str = None, serie
     """Insert a series row and return its PK. Updates series_path if series already exists."""
     conn = get_connection_database()
     cur = conn.cursor()
-    
-    # Check if series already exists
-    cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_uid,))
-    existing = cur.fetchone()
-    
-    if existing:
-        # Update existing series (especially series_path which may be set later)
-        series_pk = existing[0]
-        cur.execute(
-            """
-            UPDATE series
-            SET study_fk = ?, series_name = ?, series_number = ?, series_thk = ?,
-                series_description = ?, orientation = ?, modality = ?, image_count = ?,
-                protocol_name = ?, body_part_examined = ?, manufacturer = ?, 
-                institution_name = ?, main_thumbnail = ?, thumbnail_path = ?,
-                series_path = COALESCE(?, series_path)
-            WHERE series_uid = ?
-            """,
-            (
-                study_fk, series_name, series_number, series_thk,
-                series_description, orientation, modality, image_count,
-                protocol_name, body_part_examined, manufacturer,
-                institution_name, int(main_thumbnail), thumbnail_path,
-                series_path, series_uid
-            )
-        )
-    else:
-        # Insert new series
+
+    # First, try to insert the series
+    try:
         cur.execute(
             """
             INSERT INTO series
@@ -949,9 +924,32 @@ def insert_series(series_uid: str, study_fk: int, series_name: str = None, serie
                 series_path,
             ),
         )
+        # If insert succeeded, get the new series_pk
+        series_pk = cur.lastrowid
+    except sqlite3.IntegrityError:
+        # If we get a unique constraint error, update the existing record
+        cur.execute(
+            """
+            UPDATE series
+            SET study_fk = ?, series_name = ?, series_number = ?, series_thk = ?,
+                series_description = ?, orientation = ?, modality = ?, image_count = ?,
+                protocol_name = ?, body_part_examined = ?, manufacturer = ?,
+                institution_name = ?, main_thumbnail = ?, thumbnail_path = ?,
+                series_path = COALESCE(?, series_path)
+            WHERE series_uid = ?
+            """,
+            (
+                study_fk, series_name, series_number, series_thk,
+                series_description, orientation, modality, image_count,
+                protocol_name, body_part_examined, manufacturer,
+                institution_name, int(main_thumbnail), thumbnail_path,
+                series_path, series_uid
+            )
+        )
+        # Get the series_pk of the existing record
         cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_uid,))
         series_pk = cur.fetchone()[0]
-    
+
     conn.commit()
     return series_pk
 
@@ -2009,11 +2007,34 @@ def search_patients_local(search_data: dict) -> list:
     Returns:
         List of patient dictionaries matching the criteria
     """
+    print(f"\n[DB_SEARCH] 🔍 search_patients_local called with:\n{search_data}")
     conn = get_connection_database()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     
-    # Check if series_description filter is needed
+    # Check total patients in database first
+    cur.execute("SELECT COUNT(*) as count FROM patients")
+    total_count = cur.fetchone()[0]
+    print(f"[DB_SEARCH] Total patients in database: {total_count}")
+    
+    # Check total studies in database
+    cur.execute("SELECT COUNT(*) as count FROM studies")
+    total_studies = cur.fetchone()[0]
+    print(f"[DB_SEARCH] Total studies in database: {total_studies}")
+    
+    # Check if any studies have study_path set
+    cur.execute("SELECT COUNT(*) as count FROM studies WHERE study_path IS NOT NULL AND study_path != ''")
+    studies_with_path = cur.fetchone()[0]
+    print(f"[DB_SEARCH] Studies with study_path: {studies_with_path}")
+    
+    # List first few studies
+    cur.execute("SELECT patient_fk, study_uid, study_path, study_date FROM studies LIMIT 5")
+    studies = cur.fetchall()
+    print(f"[DB_SEARCH] Sample studies (first 5):")
+    for s in studies:
+        print(f"[DB_SEARCH]   - patient_fk={s[0]}, study_uid={s[1]}, study_path={s[2]}, study_date={s[3]}")
+    
+    # Check if any series_description filter is needed
     has_series_filter = bool(search_data.get('series_description'))
     
     # Build the SQL query dynamically based on provided filters
@@ -2061,12 +2082,12 @@ def search_patients_local(search_data: dict) -> list:
         query += " AND LOWER(s.study_id) LIKE LOWER(?)"
         params.append(f"%{search_data['study_id']}%")
     
-    # Date range filter
-    if search_data.get('date_from'):
+    # Date range filter - only apply if dates are explicitly provided (not None)
+    if search_data.get('date_from') and search_data['date_from'] is not None:
         query += " AND s.study_date >= ?"
         params.append(search_data['date_from'])
     
-    if search_data.get('date_to'):
+    if search_data.get('date_to') and search_data['date_to'] is not None:
         query += " AND s.study_date <= ?"
         params.append(search_data['date_to'])
     
@@ -2092,10 +2113,26 @@ def search_patients_local(search_data: dict) -> list:
     # Order by patient name and study date
     query += " ORDER BY p.patient_name, s.study_date DESC"
     
+    print(f"[DB_SEARCH] ✅ Built query with {len(params)} parameters")
+    print(f"[DB_SEARCH] Query: {query}")
+    print(f"[DB_SEARCH] Params: {params}")
+    
     try:
         cur.execute(query, params)
         rows = cur.fetchall()
-        return [dict(r) for r in rows]
+        result = [dict(r) for r in rows]
+        print(f"[DB_SEARCH] ✅ Query returned {len(rows)} rows")
+        if result:
+            for i, r in enumerate(result[:3]):
+                patient_name = r.get('patient_name')
+                study_uid = r.get('study_uid')
+                study_date = r.get('study_date')
+                print(f"[DB_SEARCH]   Row {i}: patient_name={patient_name}, study_uid={study_uid}, study_date={study_date}")
+        print(f"[DB_SEARCH] ✅ Returning {len(result)} results\n")
+        return result
+    except Exception as e:
+        print(f"[DB_SEARCH] ❌ Query execution failed: {e}")
+        raise
     finally:
         conn.close()
 
