@@ -1145,48 +1145,138 @@ class ToolbarManager:
 
     def toggle_ruler(self, selected_widget):
         """Toggle ruler tool on/off for the selected viewer"""
+        import logging
+        import sys
+        logger = logging.getLogger(__name__)
+        
+        print("="*80, file=sys.stderr, flush=True)
+        print("🔨 [RULER] toggle_ruler called", file=sys.stderr, flush=True)
+        print(f"   selected_widget: {selected_widget}", file=sys.stderr, flush=True)
+        print(f"   selected_widget type: {type(selected_widget)}", file=sys.stderr, flush=True)
+        print(f"   tool_selected: {self.tool_selected}", file=sys.stderr, flush=True)
+        
+        logger.info("="*80)
+        logger.info("🔨 [RULER] toggle_ruler called")
+        logger.info(f"   selected_widget: {selected_widget}")
+        logger.info(f"   selected_widget type: {type(selected_widget)}")
+        logger.info(f"   tool_selected: {self.tool_selected}")
+        
+        # Log all attributes of selected_widget
+        if selected_widget:
+            print(f"   📋 [RULER] selected_widget attributes:", file=sys.stderr, flush=True)
+            print(f"      has image_viewer: {hasattr(selected_widget, 'image_viewer')}", file=sys.stderr, flush=True)
+            if hasattr(selected_widget, 'image_viewer'):
+                print(f"      image_viewer value: {selected_widget.image_viewer}", file=sys.stderr, flush=True)
+            print(f"      has current_style: {hasattr(selected_widget, 'current_style')}", file=sys.stderr, flush=True)
+            print(f"      has vtk_image_data: {hasattr(selected_widget, 'vtk_image_data')}", file=sys.stderr, flush=True)
+            print(f"      selected_widget class name: {selected_widget.__class__.__name__}", file=sys.stderr, flush=True)
+            
+            # Check what type it actually is
+            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget
+            from PacsClient.pacs.patient_tab.curved_mpr_panoramic_view import CurvedMPRViewport
+            print(f"      isinstance(VTKWidget): {isinstance(selected_widget, VTKWidget)}", file=sys.stderr, flush=True)
+            try:
+                print(f"      isinstance(CurvedMPRViewport): {isinstance(selected_widget, CurvedMPRViewport)}", file=sys.stderr, flush=True)
+            except:
+                print(f"      isinstance(CurvedMPRViewport): Error importing", file=sys.stderr, flush=True)
+        
         # Check if we're in MPR mode
-        if self.is_mpr_viewer(selected_widget):
+        is_mpr = self.is_mpr_viewer(selected_widget)
+        print(f"   is_mpr_viewer: {is_mpr}", file=sys.stderr, flush=True)
+        logger.info(f"   is_mpr_viewer: {is_mpr}")
+        
+        if is_mpr:
+            print("   🔄 [RULER] In MPR mode", file=sys.stderr, flush=True)
+            logger.info("   🔄 [RULER] In MPR mode")
             mpr_widget = self.get_mpr_widget(selected_widget)
+            print(f"   mpr_widget: {mpr_widget}", file=sys.stderr, flush=True)
+            logger.info(f"   mpr_widget: {mpr_widget}")
+            
             if mpr_widget:
                 # Check tool state
                 is_ruler_active = self.tool_selected and self.tool_access.RULER in str(self.tool_selected)
+                logger.info(f"   is_ruler_active: {is_ruler_active}")
                 
                 if is_ruler_active:
                     # Deactivate ruler
+                    logger.info("   ❌ [RULER] Deactivating ruler in MPR")
                     mpr_widget.deactivate_tool()
                     self.tool_selected = self.tool_access.MPR
-                    print("✓ Ruler tool deactivated in MPR")
+                    logger.info("   ✓ Ruler tool deactivated in MPR")
                 else:
                     # Activate ruler
+                    logger.info("   ✅ [RULER] Activating ruler in MPR")
                     if self.tool_selected != self.tool_access.MPR:
+                        logger.info("   🔧 [RULER] Deactivating other tools first")
                         self.check_and_deactivate_tools()
                     mpr_widget.activate_ruler()
                     self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.RULER}'
-                    print("✓ Ruler tool activated in MPR on all 2D views")
+                    logger.info("   ✓ Ruler tool activated in MPR on all 2D views")
                 self.handle_buttons_checked()
+                logger.info("="*80)
+            else:
+                logger.warning("   ⚠️ [RULER] MPR mode detected but no mpr_widget found!")
+                logger.info("="*80)
             return
 
         # Normal VTKWidget mode - original code
-        if not self.is_vtk_widget(selected_widget):
+        print("   🔄 [RULER] In normal VTKWidget mode", file=sys.stderr, flush=True)
+        logger.info("   🔄 [RULER] In normal VTKWidget mode")
+        is_vtk = self.is_vtk_widget(selected_widget)
+        print(f"   is_vtk_widget: {is_vtk}", file=sys.stderr, flush=True)
+        logger.info(f"   is_vtk_widget: {is_vtk}")
+        
+        if not is_vtk:
+            print("   ⚠️ [RULER] Not a VTK widget, exiting", file=sys.stderr, flush=True)
+            print("="*80, file=sys.stderr, flush=True)
+            logger.warning("   ⚠️ [RULER] Not a VTK widget, exiting")
+            logger.info("="*80)
             return
 
         if self.tool_selected == self.tool_access.RULER:  # deactivate tool
+            print("   ❌ [RULER] Deactivating ruler", file=sys.stderr, flush=True)
+            logger.info("   ❌ [RULER] Deactivating ruler")
             # Deactivate ruler
-            selected_widget.current_style.deactivate()
+            if hasattr(selected_widget, 'current_style'):
+                logger.info("   🔧 [RULER] Deactivating current_style")
+                selected_widget.current_style.deactivate()
+            else:
+                logger.warning("   ⚠️ [RULER] selected_widget has no 'current_style' attribute")
+            
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
             self.handle_buttons_checked()
+            print("   ✓ [RULER] Ruler deactivated", file=sys.stderr, flush=True)
+            print("="*80, file=sys.stderr, flush=True)
+            logger.info("   ✓ [RULER] Ruler deactivated")
 
         else:  # activate tool
+            print("   ✅ [RULER] Activating ruler", file=sys.stderr, flush=True)
+            print("   🔧 [RULER] Checking and deactivating other tools", file=sys.stderr, flush=True)
+            logger.info("   ✅ [RULER] Activating ruler")
+            logger.info("   🔧 [RULER] Checking and deactivating other tools")
             self.check_and_deactivate_tools()
 
+            print("   🔧 [RULER] Setting new RulerInteractorStyle", file=sys.stderr, flush=True)
+            logger.info("   🔧 [RULER] Setting new RulerInteractorStyle")
             selected_widget.set_new_interactorstyle(RulerInteractorStyle)
 
             # Activate ruler
-            selected_widget.current_style.activate()
+            if hasattr(selected_widget, 'current_style'):
+                print("   🔧 [RULER] Activating current_style", file=sys.stderr, flush=True)
+                logger.info("   🔧 [RULER] Activating current_style")
+                selected_widget.current_style.activate()
+            else:
+                print("   ⚠️ [RULER] selected_widget has no 'current_style' attribute after set_new_interactorstyle", file=sys.stderr, flush=True)
+                logger.warning("   ⚠️ [RULER] selected_widget has no 'current_style' attribute after set_new_interactorstyle")
+            
             self.tool_selected = self.tool_access.RULER
             self.handle_buttons_checked()
+            print("   ✓ [RULER] Ruler activated", file=sys.stderr, flush=True)
+            print("="*80, file=sys.stderr, flush=True)
+            logger.info("   ✓ [RULER] Ruler activated")
+        
+        logger.info("="*80)
 
     def toggle_eraser(self, selected_widget):
         # MPR mode
@@ -2152,46 +2242,55 @@ class ToolbarManager:
 
             # Angle button
             angle_btn = create_dropdown_tool('Angle', 'angle.png', '#f59e0b')
-            angle_btn.clicked.connect(lambda: [
-                self.toggle_angle(self.patient_widget.selected_widget), dropdown.close()])
+            def _on_angle_clicked():
+                self.toggle_angle(self.patient_widget.selected_widget)
+                dropdown.close()
+            angle_btn.clicked.connect(_on_angle_clicked)
             layout.addWidget(angle_btn)
             self.tools_button[self.tool_access.ANGLE] = angle_btn
 
             # Two-Line Angle button
             two_line_angle_btn = create_dropdown_tool('Two-Line Angle', 'fa5s.drafting-compass', '#06b6d4')
-            two_line_angle_btn.clicked.connect(lambda: [
-                print("🖱️ Two-Line Angle button clicked!"),
-                self.toggle_two_line_angle(self.patient_widget.selected_widget), 
-                dropdown.close()])
+            def _on_two_line_angle_clicked():
+                self.toggle_two_line_angle(self.patient_widget.selected_widget)
+                dropdown.close()
+            two_line_angle_btn.clicked.connect(_on_two_line_angle_clicked)
             layout.addWidget(two_line_angle_btn)
             self.tools_button[self.tool_access.TWO_LINE_ANGLE] = two_line_angle_btn
-            print(f"✓ Two-Line Angle button added to dropdown")
 
             # Arrow button
             arrow_btn = create_dropdown_tool('Arrow', 'arrow.png', '#10b981')
-            arrow_btn.clicked.connect(lambda: [
-                self.toggle_arrow(self.patient_widget.selected_widget), dropdown.close()])
+            def _on_arrow_clicked():
+                self.toggle_arrow(self.patient_widget.selected_widget)
+                dropdown.close()
+            arrow_btn.clicked.connect(_on_arrow_clicked)
             layout.addWidget(arrow_btn)
             self.tools_button[self.tool_access.ARROW] = arrow_btn
 
             # Text button
             text_btn = create_dropdown_tool('Text', 'text.png', '#8b5cf6')
-            text_btn.clicked.connect(lambda: [
-                self.toggle_text(self.patient_widget.selected_widget), dropdown.close()])
+            def _on_text_clicked():
+                self.toggle_text(self.patient_widget.selected_widget)
+                dropdown.close()
+            text_btn.clicked.connect(_on_text_clicked)
             layout.addWidget(text_btn)
             self.tools_button[self.tool_access.TEXT] = text_btn
 
             # ROI button
             roi_btn = create_dropdown_tool('ROI', 'Pentagon.svg', '#ec4899')
-            roi_btn.clicked.connect(lambda: [
-                self.toggle_roi(self.patient_widget.selected_widget), dropdown.close()])
+            def _on_roi_clicked():
+                self.toggle_roi(self.patient_widget.selected_widget)
+                dropdown.close()
+            roi_btn.clicked.connect(_on_roi_clicked)
             layout.addWidget(roi_btn)
             self.tools_button[self.tool_access.ROI] = roi_btn
 
             # Circle ROI button
             circle_roi_btn = create_dropdown_tool('Circle ROI', 'fa5s.circle', '#f472b6')
-            circle_roi_btn.clicked.connect(lambda: [
-                self.toggle_circle_roi(self.patient_widget.selected_widget), dropdown.close()])
+            def _on_circle_roi_clicked():
+                self.toggle_circle_roi(self.patient_widget.selected_widget)
+                dropdown.close()
+            circle_roi_btn.clicked.connect(_on_circle_roi_clicked)
             layout.addWidget(circle_roi_btn)
             self.tools_button[self.tool_access.CIRCLE_ROI] = circle_roi_btn
 
@@ -2373,6 +2472,10 @@ class ToolbarManager:
             traceback.print_exc()
 
     def toggle_roi(self, selected_widget):
+        if selected_widget is None:
+            print("⚠️ toggle_roi: selected_widget is None, ignoring")
+            return
+        
         if self.tool_selected == self.tool_access.ROI:  # deactivate tool
             selected_widget.current_style.deactivate()
             self.tool_selected = None
@@ -2390,6 +2493,10 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_circle_roi(self, selected_widget):
+        if selected_widget is None:
+            print("⚠️ toggle_circle_roi: selected_widget is None, ignoring")
+            return
+        
         if self.tool_selected == self.tool_access.CIRCLE_ROI:  # deactivate tool
             selected_widget.current_style.deactivate()
             self.tool_selected = None
@@ -3333,35 +3440,54 @@ class ToolbarManager:
         from PySide6.QtWidgets import QMessageBox
         logger = logging.getLogger(__name__)
         
+        logger.info("="*100)
+        logger.info("🔨 [MPR] toggle_zeta_mpr called")
+        logger.info(f"   patient_widget: {self.patient_widget}")
+        logger.info(f"   selected_widget: {self.patient_widget.selected_widget}")
+        logger.info(f"   tool_selected: {self.tool_selected}")
+        logger.info(f"   lst_nodes_viewer count: {len(self.patient_widget.lst_nodes_viewer)}")
+        logger.info(f"   lst_thumbnails_data count: {len(self.patient_widget.lst_thumbnails_data)}")
+        
         # Check if MPR is already active - if so, close it
         active_original_widget = None
         active_mpr_widget = None
 
+        logger.info("   🔍 [MPR] Checking if MPR is already active...")
         try:
-            for node in self.patient_widget.lst_nodes_viewer:
+            for idx, node in enumerate(self.patient_widget.lst_nodes_viewer):
                 widget = getattr(node, 'vtk_widget', None)
+                logger.info(f"   📋 [MPR] Node {idx}: widget={widget}")
                 if widget is None:
                     continue
                 if hasattr(widget, '_zeta_mpr_widget') and widget._zeta_mpr_widget:
+                    logger.info(f"   ✅ [MPR] Found active _zeta_mpr_widget at node {idx}")
                     active_original_widget = widget
                     active_mpr_widget = widget._zeta_mpr_widget
                     break
                 if hasattr(widget, '_new_mpr_zeta_widget') and widget._new_mpr_zeta_widget:
+                    logger.info(f"   ✅ [MPR] Found active _new_mpr_zeta_widget at node {idx}")
                     active_original_widget = widget
                     active_mpr_widget = widget._new_mpr_zeta_widget
                     break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"   ⚠️ [MPR] Error checking active MPR: {e}")
 
         selected_widget = self.patient_widget.selected_widget
+        logger.info(f"   📋 [MPR] selected_widget after check: {selected_widget}")
+        logger.info(f"   📋 [MPR] active_mpr_widget: {active_mpr_widget}")
+        
         if active_mpr_widget is None and self.is_mpr_viewer(selected_widget):
+            logger.info("   🔍 [MPR] selected_widget is_mpr_viewer")
             if hasattr(selected_widget, '_original_widget'):
+                logger.info("   ✅ [MPR] Found _original_widget on selected_widget")
                 active_original_widget = selected_widget._original_widget
                 active_mpr_widget = selected_widget
 
         if active_mpr_widget is not None:
             logger.info("=" * 60)
-            logger.info("Closing Zeta MPR (toggle OFF)")
+            logger.info("🔄 [MPR CLOSE] Closing Zeta MPR (toggle OFF)")
+            logger.info(f"   active_original_widget: {active_original_widget}")
+            logger.info(f"   active_mpr_widget: {active_mpr_widget}")
             logger.info("=" * 60)
             
             # Restore the original viewer (handles cleanup/layout)
@@ -3393,18 +3519,39 @@ class ToolbarManager:
         # Otherwise, open Zeta MPR (toggle ON)
         try:
             logger.info("=" * 60)
-            logger.info("Opening Zeta MPR (toggle ON)")
+            logger.info("🚀 [MPR OPEN] Opening Zeta MPR (toggle ON)")
             logger.info("=" * 60)
             
             # Deactivate any other active tools
+            logger.info("   🔧 [MPR OPEN] Deactivating other tools...")
             self.check_and_deactivate_tools()
             
             # Get the selected widget (active viewer)
             selected_widget = self.patient_widget.selected_widget
+            logger.info(f"   📋 [MPR OPEN] selected_widget: {selected_widget}")
+            logger.info(f"   📋 [MPR OPEN] selected_widget type: {type(selected_widget)}")
+            
+            # Log all attributes of selected_widget
+            if selected_widget:
+                logger.info("   📋 [MPR OPEN] selected_widget attributes:")
+                logger.info(f"      has image_viewer: {hasattr(selected_widget, 'image_viewer')}")
+                if hasattr(selected_widget, 'image_viewer'):
+                    logger.info(f"      image_viewer value: {selected_widget.image_viewer}")
+                    logger.info(f"      image_viewer type: {type(selected_widget.image_viewer)}")
+                logger.info(f"      has last_series_show: {hasattr(selected_widget, 'last_series_show')}")
+                if hasattr(selected_widget, 'last_series_show'):
+                    logger.info(f"      last_series_show value: {selected_widget.last_series_show}")
+                    logger.info(f"      last_series_show type: {type(selected_widget.last_series_show)}")
+                logger.info(f"      has vtk_image_data: {hasattr(selected_widget, 'vtk_image_data')}")
+                logger.info(f"      has current_style: {hasattr(selected_widget, 'current_style')}")
             
             # Check if widget is valid and has image viewer
             if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
-                logger.warning("No image viewer available in selected widget")
+                logger.warning("   ⚠️ [MPR OPEN] No image viewer available in selected widget")
+                logger.warning(f"      hasattr(image_viewer): {hasattr(selected_widget, 'image_viewer')}")
+                if hasattr(selected_widget, 'image_viewer'):
+                    logger.warning(f"      image_viewer is None: {selected_widget.image_viewer is None}")
+                logger.info("=" * 100)
                 QMessageBox.warning(
                     self.patient_widget,
                     "No Image Available",
@@ -3412,9 +3559,15 @@ class ToolbarManager:
                 )
                 return
             
+            logger.info("   ✅ [MPR OPEN] image_viewer is available")
+            
             # Check if series index is available
             if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
-                logger.warning("No active series index found")
+                logger.warning("   ⚠️ [MPR OPEN] No active series index found")
+                logger.warning(f"      hasattr(last_series_show): {hasattr(selected_widget, 'last_series_show')}")
+                if hasattr(selected_widget, 'last_series_show'):
+                    logger.warning(f"      last_series_show is None: {selected_widget.last_series_show is None}")
+                logger.info("=" * 100)
                 QMessageBox.warning(
                     self.patient_widget,
                     "No Series Available",
@@ -3422,15 +3575,22 @@ class ToolbarManager:
                 )
                 return
             
+            logger.info("   ✅ [MPR OPEN] last_series_show is available")
+            
             # ✅ FIX: last_series_show stores the LIST INDEX (0-based), not the series number
             active_series_index = selected_widget.last_series_show
             total_thumbnails = len(self.patient_widget.lst_thumbnails_data)
             
-            logger.info(f"Active series index: {active_series_index} (total thumbnails: {total_thumbnails})")
+            logger.info(f"   📊 [MPR OPEN] Active series index: {active_series_index} (total thumbnails: {total_thumbnails})")
+            logger.info(f"   📊 [MPR OPEN] active_series_index type: {type(active_series_index)}")
             
             # Validate index bounds
             if not isinstance(active_series_index, int) or active_series_index < 0 or active_series_index >= total_thumbnails:
-                logger.error(f"Invalid series index: {active_series_index}")
+                logger.error(f"   ❌ [MPR OPEN] Invalid series index: {active_series_index}")
+                logger.error(f"      isinstance(int): {isinstance(active_series_index, int)}")
+                logger.error(f"      < 0: {active_series_index < 0 if isinstance(active_series_index, int) else 'N/A'}")
+                logger.error(f"      >= {total_thumbnails}: {active_series_index >= total_thumbnails if isinstance(active_series_index, int) else 'N/A'}")
+                logger.info("=" * 100)
                 QMessageBox.warning(
                     self.patient_widget,
                     "Invalid Series",
@@ -3438,16 +3598,30 @@ class ToolbarManager:
                 )
                 return
             
+            logger.info("   ✅ [MPR OPEN] Series index is valid")
+            
             # ✅ FIX: Get data directly by index instead of searching by series number
             try:
+                logger.info(f"   🔍 [MPR OPEN] Retrieving data at index {active_series_index}...")
                 series_data = self.patient_widget.lst_thumbnails_data[active_series_index]
+                logger.info(f"   📦 [MPR OPEN] series_data keys: {series_data.keys() if series_data else 'None'}")
+                
                 vtk_image_data = series_data.get('vtk_image_data')
+                logger.info(f"   📦 [MPR OPEN] vtk_image_data: {vtk_image_data}")
+                logger.info(f"   📦 [MPR OPEN] vtk_image_data type: {type(vtk_image_data) if vtk_image_data else 'None'}")
+                
                 thumb_metadata = series_data.get('metadata', {})
+                logger.info(f"   📦 [MPR OPEN] thumb_metadata keys: {thumb_metadata.keys() if thumb_metadata else 'None'}")
+                
                 series_metadata = thumb_metadata.get('series', {})
+                logger.info(f"   📦 [MPR OPEN] series_metadata keys: {series_metadata.keys() if series_metadata else 'None'}")
+                
                 series_number = series_metadata.get('series_number', 'Unknown')
+                logger.info(f"   📦 [MPR OPEN] series_number: {series_number}")
                 
                 if vtk_image_data is None:
-                    logger.error(f"No VTK image data at index {active_series_index}")
+                    logger.error(f"   ❌ [MPR OPEN] No VTK image data at index {active_series_index}")
+                    logger.info("=" * 100)
                     QMessageBox.warning(
                         self.patient_widget,
                         "No Image Data",

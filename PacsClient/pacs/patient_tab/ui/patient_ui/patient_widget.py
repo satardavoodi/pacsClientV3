@@ -114,11 +114,6 @@ class PatientWidget(QWidget):
 
         # Initialize the viewer controller
         self.viewer_controller = ViewerController(self)
-        
-        # Properties that delegate to viewer controller
-        self.lst_nodes_viewer = self.viewer_controller.lst_nodes_viewer
-        self.selected_widget = self.viewer_controller.selected_widget
-        self.slider = self.viewer_controller.slider
 
         # Zeta Sync manager (2D viewer sync point)
         self.sync_manager = SyncManager()
@@ -264,6 +259,22 @@ class PatientWidget(QWidget):
         # Defer VTK initialization to let the window paint first
         # Use longer delay to ensure window is fully painted
         QTimer.singleShot(50, self._start_pipeline)
+
+    # ========== DYNAMIC PROPERTIES FROM VIEWER_CONTROLLER ==========
+    @property
+    def lst_nodes_viewer(self):
+        """Dynamic access to viewer controller's node list"""
+        return self.viewer_controller.lst_nodes_viewer
+    
+    @property
+    def selected_widget(self):
+        """Dynamic access to viewer controller's selected widget"""
+        return self.viewer_controller.selected_widget
+    
+    @property
+    def slider(self):
+        """Dynamic access to viewer controller's slider"""
+        return self.viewer_controller.slider
 
 
     def add_priority_series_for_display(self, series_number, vtk_image_data, metadata):
