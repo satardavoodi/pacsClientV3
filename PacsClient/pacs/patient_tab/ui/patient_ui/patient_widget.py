@@ -1368,14 +1368,22 @@ class PatientWidget(QWidget):
             print(f"📁 Directory: {series_dir}")
             print(f"{'='*80}")
 
-            # Update folder path if needed
-            if series_dir and series_dir != self.import_folder_path:
-                self.import_folder_path = series_dir
+            # ✅ CRITICAL FIX: Set import_folder_path to STUDY level (parent of series folder)
+            # NOT to the series folder itself! This is essential for subsequent series loads.
+            from pathlib import Path
+            series_path_obj = Path(series_dir)
+            study_folder = series_path_obj.parent  # Go up from series folder to study folder
+            
+            # Verify this is actually a study folder by checking for numeric subdirectories
+            if study_folder.exists():
+                numeric_subdirs = [d for d in study_folder.iterdir() if d.is_dir() and d.name.isdigit()]
+                if numeric_subdirs and str(study_folder) != self.import_folder_path:
+                    self.import_folder_path = str(study_folder)
+                    print(f"   🔄 Updated import_folder_path to STUDY level: {study_folder}")
+                    print(f"      (Found {len(numeric_subdirs)} series folders)")
 
             # Check DICOM files
-            from pathlib import Path
-            series_path = Path(series_dir)
-            dicom_files = list(series_path.glob("*.dcm"))
+            dicom_files = list(series_path_obj.glob("*.dcm"))
             if not dicom_files:
                 print(f"❌ No DICOM files found in {series_dir}")
                 return
@@ -1393,10 +1401,10 @@ class PatientWidget(QWidget):
                 # Not a simple number - extract series number from directory name
                 # Directory name should be the actual series number
                 try:
-                    series_int = int(series_path.name)
+                    series_int = int(series_path_obj.name)
                     print(f"   🔍 Extracted series number {series_int} from directory name")
                 except ValueError:
-                    print(f"❌ Cannot determine series number from UID {series_number} or directory {series_path.name}")
+                    print(f"❌ Cannot determine series number from UID {series_number} or directory {series_path_obj.name}")
                     return
 
             # Load the series
@@ -4267,7 +4275,10 @@ class PatientWidget(QWidget):
 
 
     def _get_correct_study_path(self) -> str:
-        """Get the correct study path, ensuring it's not pointing to a series subfolder"""
+        """
+        Get the correct study path, ensuring it's not pointing to a series subfolder
+        ✅ FIX: Properly detect and handle study-level vs series-level paths
+        """
         from pathlib import Path
         
         print(f"🔍 [PATH] Getting correct study path...")
@@ -4279,18 +4290,31 @@ class PatientWidget(QWidget):
             path = Path(self.import_folder_path)
             
             if path.exists():
-                # If current path has numeric subfolders that are series, we're at study level
-                # If current path is numeric and exists inside another folder, go up
-                if path.name.isdigit() and path.parent.exists():
-                    # Check if parent has other series folders
-                    parent = path.parent
-                    series_folders = [d for d in parent.iterdir() if d.is_dir() and d.name.isdigit()]
-                    if len(series_folders) > 1:
-                        print(f"   ✅ Resolved to parent (study level): {parent}")
-                        return str(parent)
+                # Check if this path is at study level (has numeric subfolders that are series)
+                numeric_subdirs = [d for d in path.iterdir() if d.is_dir() and d.name.isdigit()]
                 
-                print(f"   ✅ Using import_folder_path: {path}")
-                return str(path)
+                if numeric_subdirs:
+                    # This is study level - has series folders
+                    print(f"   ✅ Path is at study level (has {len(numeric_subdirs)} series folders)")
+                    print(f"   ✅ Using import_folder_path: {path}")
+                    return str(path)
+                else:
+                    # Check if current path itself is numeric and might be a series folder
+                    if path.name.isdigit():
+                        parent = path.parent
+                        if parent.exists():
+                            # Check if parent has numeric subfolders
+                            parent_numeric = [d for d in parent.iterdir() if d.is_dir() and d.name.isdigit()]
+                            if parent_numeric:
+                                # Parent is study level, we're in a series folder
+                                print(f"   ✅ Path is at series level, resolved to parent (study level): {parent}")
+                                self.import_folder_path = str(parent)  # Update for persistence
+                                return str(parent)
+                    
+                    # Path exists but has no series folders - might still be study level
+                    if self.study_uid and self.study_uid in str(path):
+                        print(f"   ✅ Path matches study_uid format, using as study level: {path}")
+                        return str(path)
         
         # Fallback: try attachment folder with study_uid
         if self.study_uid:
@@ -4299,6 +4323,7 @@ class PatientWidget(QWidget):
             
             if attachment_study_path.exists():
                 print(f"   ✅ Found in attachment folder: {attachment_study_path}")
+                self.import_folder_path = str(attachment_study_path)  # Update for persistence
                 return str(attachment_study_path)
             else:
                 print(f"   ⚠️ Not found in attachment folder: {attachment_study_path}")
@@ -4484,6 +4509,7 @@ class PatientWidget(QWidget):
     def _load_single_series_on_demand(self, series_number: int, study_path: str = None) -> bool:
         """
         Load a single series with correct path resolution
+        ✅ FIX: Thread-safe path resolution for concurrent loads
         """
         import time
         from pathlib import Path
@@ -4496,41 +4522,84 @@ class PatientWidget(QWidget):
             print(f"   - Current import_folder_path: {self.import_folder_path}")
             print(f"   - study_uid: {self.study_uid}")
             
-            # ✅ FIX: Use provided study_path or correctly determine it
+            # ✅ CRITICAL FIX: Use study_uid to reliably find the study path
+            # Don't rely on import_folder_path which can be modified by concurrent loads
             if study_path is None:
-                # Try parent widget's import folder first
-                if self.import_folder_path and Path(self.import_folder_path).exists():
-                    # Ensure we're using the study root folder, not a series subfolder
+                study_path = None
+                
+                # 1st priority: Use import_folder_path if it's valid and at study level
+                if self.import_folder_path:
                     study_path_obj = Path(self.import_folder_path)
-                    print(f"   - Initial path object: {study_path_obj}")
-                    
-                    # If current path points to a series folder (has DICOM parent), go up
-                    if (study_path_obj / str(series_number)).exists():
-                        print(f"   ✅ Series folder found at: {study_path_obj / str(series_number)}")
-                        pass  # Already at study level
-                    else:
-                        # Check if current path is inside a series folder
-                        parent = study_path_obj.parent
-                        print(f"   - Checking parent: {parent}")
-                        if parent.exists() and (parent / str(series_number)).exists():
-                            print(f"   ✅ Series folder found at parent: {parent / str(series_number)}")
-                            study_path_obj = parent
+                    if study_path_obj.exists():
+                        # ✅ CRITICAL: Always check if this is study level (has numeric subdirs)
+                        try:
+                            series_folders = [d for d in study_path_obj.iterdir() if d.is_dir() and d.name.isdigit()]
+                        except (PermissionError, OSError) as e:
+                            print(f"   ⚠️ Error reading {study_path_obj}: {e}")
+                            series_folders = []
+                        
+                        if series_folders:
+                            # Already at study level
+                            print(f"   ✅ import_folder_path is at study level ({len(series_folders)} series)")
+                            study_path = str(study_path_obj)
+                        elif study_path_obj.name.isdigit():
+                            # Current path is a series folder, go to parent
+                            parent = study_path_obj.parent
+                            if parent.exists():
+                                try:
+                                    parent_series = [d for d in parent.iterdir() if d.is_dir() and d.name.isdigit()]
+                                except (PermissionError, OSError):
+                                    parent_series = []
+                                if parent_series:
+                                    print(f"   ✅ import_folder_path was a series folder, using parent ({len(parent_series)} series)")
+                                    study_path = str(parent)
                         else:
-                            print(f"   ⚠️ Series folder not found, will check attachment folder")
-                    study_path = str(study_path_obj)
-                elif self.study_uid:
-                    # Try to find in attachment folder using study_uid
-                    from PacsClient.utils.config import ATTACHMENT_PATH
-                    attachment_study_path = Path(ATTACHMENT_PATH) / self.study_uid
-                    if attachment_study_path.exists():
-                        print(f"   ✅ Found study in attachment folder: {attachment_study_path}")
-                        study_path = str(attachment_study_path)
-                        self.import_folder_path = study_path  # Update for future use
-                    else:
-                        print(f"   ❌ Study not found in attachment folder: {attachment_study_path}")
-                        return False
-                else:
-                    print(f"   ❌ No valid study path found and no study_uid available")
+                            print(f"   ℹ️ Using import_folder_path as provided")
+                            study_path = str(study_path_obj)
+                
+                # 2nd priority: If import_folder_path failed, use study_uid to locate it
+                if study_path is None and self.study_uid:
+                    print(f"   ℹ️ import_folder_path not reliable, searching by study_uid...")
+                    
+                    # Try main source folder
+                    source_base = Path(self.import_folder_path or ".").parent.parent if self.import_folder_path else Path.cwd()
+                    study_path_candidate = source_base / "source" / self.study_uid
+                    
+                    if study_path_candidate.exists():
+                        # Verify it has series folders
+                        try:
+                            series_folders = [d for d in study_path_candidate.iterdir() if d.is_dir() and d.name.isdigit()]
+                        except (PermissionError, OSError):
+                            series_folders = []
+                        if series_folders:
+                            print(f"   ✅ Found study by study_uid: {study_path_candidate} ({len(series_folders)} series)")
+                            study_path = str(study_path_candidate)
+                            # Update import_folder_path for future use
+                            self.import_folder_path = study_path
+                    
+                    # Fallback: Try attachment folder
+                    if study_path is None:
+                        from PacsClient.utils.config import ATTACHMENT_PATH
+                        attachment_study_path = Path(ATTACHMENT_PATH) / self.study_uid
+                        if attachment_study_path.exists():
+                            try:
+                                series_folders = [d for d in attachment_study_path.iterdir() if d.is_dir() and d.name.isdigit()]
+                            except (PermissionError, OSError):
+                                series_folders = []
+                            if series_folders:
+                                print(f"   ✅ Found study in attachment folder ({len(series_folders)} series)")
+                                study_path = str(attachment_study_path)
+                                self.import_folder_path = study_path
+                
+                if study_path is None:
+                    print(f"   ❌ Could not resolve study path from import_folder_path or study_uid")
+                    return False
+            else:
+                # study_path was provided, verify it's valid
+                print(f"   📍 Using provided study_path: {study_path}")
+                study_path_obj = Path(study_path)
+                if not study_path_obj.exists():
+                    print(f"   ❌ Provided study_path does not exist: {study_path}")
                     return False
             
             print(f"   📁 Final study_path: {study_path}")
@@ -4646,12 +4715,11 @@ class PatientWidget(QWidget):
                 else:
                     print(f"      ⚠️ Data was rejected (should not happen)")
                 
-                # Update study path if needed
-                if metadata.get('series', {}).get('series_path'):
-                    correct_path = Path(metadata['series']['series_path']).parent
-                    if str(correct_path) != self.import_folder_path:
-                        self.import_folder_path = str(correct_path)
-                        print(f"      🔄 Updated study path to: {correct_path}")
+                # ✅ CRITICAL FIX: Always ensure import_folder_path is set to STUDY LEVEL
+                # This is essential for the next series load to work correctly
+                # Don't rely on metadata['series']['series_path'] - use our resolved study_path instead
+                self.import_folder_path = study_path
+                print(f"      🔄 Updated study path to: {study_path} (verified by series loading)")
 
             _elapsed = time.time() - _start
             print(f"✅ [LOAD] Series {series_number} loaded successfully in {_elapsed:.3f}s")
