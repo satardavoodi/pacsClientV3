@@ -185,19 +185,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
         finally:
             self._render_pending = False
 
-    def _delayed_render(self):
-        """
-        Helper method for delayed render after viewer creation
-        Prevents black viewers on some systems
-        """
-        try:
-            if self.render_window is not None:
-                print(f"[VTK DELAYED] Performing delayed render")
-                self.render_window.Render()
-                print(f"[VTK DELAYED] Delayed render completed")
-        except Exception as e:
-            print(f"[VTK DELAYED] Warning: delayed render failed: {e}")
-
     def get_sync_viewer_id(self):
         if self._sync_viewer_id:
             return self._sync_viewer_id
@@ -471,56 +458,36 @@ class VTKWidget(QVTKRenderWindowInteractor):
         """
         ANTI-FLICKERING: Initialize series without processEvents calls
         """
-        print(f"         [VTK-1] start_process_series called for series {series_index}")
         # Show spinner immediately (non-blocking)
         self.viewport_spinner.show_loading("Loading...")
-        print(f"         [VTK-2] Spinner shown")
 
         try:
             # =====================================================
             # ANTI-FLICKERING: Disable updates during heavy operation
             # =====================================================
-            print(f"         [VTK-3] Disabling updates")
             self.setUpdatesEnabled(False)
 
-            print(f"         [VTK-4] Creating ImageViewer2D")
             self.image_viewer = ImageViewer2D(self.render_window, self.interactor, self.height_viewer, vtk_image_data,
                                               metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
-            print(f"         [VTK-5] ImageViewer2D created")
 
-            print(f"         [VTK-6] Creating interactor style")
             self.style = AbstractInteractorStyle(self.image_viewer)
             self.current_style = self.style
             self.interactor.SetInteractorStyle(self.style)
             self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
-            print(f"         [VTK-7] Interactor style created")
 
             self.last_series_show = series_index
             self.id_vtk_widget = id_vtk_widget
             self.save_status_camera(self.image_viewer)
-            print(f"         [VTK-8] Configuration complete")
-            
-            # ✅ CRITICAL FIX: Force render after viewer creation
-            print(f"         [VTK-8.1] Forcing initial render")
-            try:
-                self.image_viewer.UpdateDisplayExtent()
-                self.render_window.Render()
-                print(f"         [VTK-8.2] Initial render completed")
-            except Exception as e:
-                print(f"         [VTK-8.3] ERROR during initial render: {e}")
 
         finally:
-            print(f"         [VTK-9] Re-enabling updates")
             # Re-enable updates
             self.setUpdatesEnabled(True)
             # Hide spinner with small delay to allow final render
-            print(f"         [VTK-10] Setting timer to hide spinner")
             QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
 
         # Ensure spinner is properly positioned after viewer is created
         if hasattr(self, 'viewport_spinner') and self.viewport_spinner.spinner:
             self.viewport_spinner.spinner.center_in_parent()
-        print(f"         [VTK-11] start_process_series completed")
 
     def reset_image(self, vtk_image_data, metadata):  # reload image
         # Show reset spinner
@@ -620,52 +587,19 @@ class VTKWidget(QVTKRenderWindowInteractor):
                                               metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
 
         self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
-        
-        # Add new renderer with proper error handling
-        try:
-            new_renderer = self.image_viewer.GetRenderer()
-            if new_renderer:
-                # Check if renderer is already added (prevent duplicate)
-                existing_renderers = self.render_window.GetRenderers()
-                renderer_exists = False
-                if existing_renderers:
-                    existing_renderers.InitTraversal()
-                    for i in range(existing_renderers.GetNumberOfItems()):
-                        if existing_renderers.GetNextItem() == new_renderer:
-                            renderer_exists = True
-                            break
-                
-                if not renderer_exists:
-                    print(f"[VTK SWITCH] Adding new renderer")
-                    self.render_window.AddRenderer(new_renderer)
-                else:
-                    print(f"[VTK SWITCH] Renderer already exists, skipping add")
-            else:
-                print(f"[VTK SWITCH] ERROR: No renderer from image_viewer!")
-                return False
-        except Exception as e:
-            print(f"[VTK SWITCH] ERROR adding renderer: {e}")
-            return False
+        # add new renderer
+        new_renderer = self.image_viewer.GetRenderer()
+        self.render_window.AddRenderer(new_renderer)
 
         # set interactor style again
         self.style = AbstractInteractorStyle(self.image_viewer)
         self.interactor.SetInteractorStyle(self.style)
+        # self.style.interactionOccurred.connect(self.change_container_border)
         self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
-        # Force update and render
-        try:
-            self.image_viewer.UpdateDisplayExtent()
-            print(f"[VTK SWITCH] Calling render_window.Render()")
-            self.render_window.Render()
-            print(f"[VTK SWITCH] Render completed successfully")
-        except Exception as e:
-            print(f"[VTK SWITCH] ERROR during render: {e}")
-            # Try recovery
-            try:
-                self.render_window.Render()
-            except Exception as e2:
-                print(f"[VTK SWITCH] Recovery render also failed: {e2}")
-                return False
+        self.image_viewer.UpdateDisplayExtent()
+        # Single render call (not both viewer and window)
+        self.render_window.Render()
 
         self.last_series_show = series_index
         self.save_status_camera(self.image_viewer)
@@ -675,8 +609,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # =====================================================
         self.setUpdatesEnabled(True)
         QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
-        
-        print(f"[VTK SWITCH] Successfully switched to series {series_index}")
         return True
 
     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
@@ -687,14 +619,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         """
         # Check this series has showed
         if self.last_series_show == series_index:
-            print(f"[VTK SWITCH] Series {series_index} already showing, skipping switch")
-            # Force a render to ensure it's visible
-            if self.image_viewer is not None:
-                try:
-                    self.image_viewer.Render()
-                except Exception as e:
-                    print(f"[VTK SWITCH] Warning: render failed: {e}")
-            return True
+            return False
 
         # Show loading spinner (non-blocking - no processEvents!)
         self.viewport_spinner.show_loading("Switching series...")
@@ -705,17 +630,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.setUpdatesEnabled(False)
         
         try:
-            # ✅ ANTI-FLICKER: Clear the old image immediately before switching
-            # This prevents the old data from showing for a moment
-            if self.image_viewer is not None:
-                try:
-                    renderer = self.render_window.GetRenderers().GetFirstRenderer()
-                    if renderer:
-                        renderer.RemoveAllViewProps()
-                        renderer.SetBackground(0.0, 0.0, 0.0)
-                except:
-                    pass  # Ignore errors on clear
-            
             # OPTIMIZATION: Reuse existing viewer instead of recreating it!
             if self.image_viewer is not None:
                 # Viewer already exists - just update the image data
@@ -738,23 +652,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
                             self.cleanup_image_viewer()
                         else:
                             # Single viewer - use fast reset
-                            print(f"[VTK SWITCH] Using fast reset path")
-                            
-                            # Reset the image viewer with new data
                             self.image_viewer.reset_image_viewer(vtk_image_data, metadata)
                             self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
-                            
-                            # ✅ CRITICAL FIX: Force render after reset
-                            print(f"[VTK SWITCH] Forcing render after reset")
-                            try:
-                                # Update display extent first
-                                self.image_viewer.UpdateDisplayExtent()
-                                
-                                # Force render window render
-                                self.render_window.Render()
-                                print(f"[VTK SWITCH] Render completed after reset")
-                            except Exception as e:
-                                print(f"[VTK SWITCH] ERROR during render after reset: {e}")
                             
                             self.last_series_show = series_index
                             self.save_status_camera(self.image_viewer)
@@ -762,8 +661,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
                             # Re-enable updates and hide spinner
                             self.setUpdatesEnabled(True)
                             QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
-                            
-                            print(f"[VTK SWITCH] Fast reset completed successfully")
                             return True
                             
                 except Exception as e:
@@ -782,58 +679,18 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
             self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
             
-            # Add new renderer with proper error handling
-            print(f"[VTK SWITCH] Adding new renderer to render window")
-            try:
-                new_renderer = self.image_viewer.GetRenderer()
-                if new_renderer:
-                    # Check if renderer is already added (prevent duplicate)
-                    existing_renderers = self.render_window.GetRenderers()
-                    renderer_exists = False
-                    if existing_renderers:
-                        existing_renderers.InitTraversal()
-                        for i in range(existing_renderers.GetNumberOfItems()):
-                            if existing_renderers.GetNextItem() == new_renderer:
-                                renderer_exists = True
-                                break
-                    
-                    if not renderer_exists:
-                        print(f"[VTK SWITCH] Adding new renderer")
-                        self.render_window.AddRenderer(new_renderer)
-                    else:
-                        print(f"[VTK SWITCH] Renderer already exists, skipping add")
-                else:
-                    print(f"[VTK SWITCH] ERROR: No renderer from image_viewer!")
-                    return False
-            except Exception as e:
-                print(f"[VTK SWITCH] ERROR adding renderer: {e}")
-                return False
+            # Add new renderer
+            new_renderer = self.image_viewer.GetRenderer()
+            self.render_window.AddRenderer(new_renderer)
 
             # Set interactor style again
             self.style = AbstractInteractorStyle(self.image_viewer)
             self.interactor.SetInteractorStyle(self.style)
             self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
-            # Force update and render with error handling
-            print(f"[VTK SWITCH] Forcing render after viewer creation")
-            try:
-                self.image_viewer.UpdateDisplayExtent()
-                print(f"[VTK SWITCH] Calling render_window.Render()")
-                self.render_window.Render()
-                print(f"[VTK SWITCH] First render completed successfully")
-                
-                # ✅ FIX: Force another render to ensure image appears (prevents black viewer)
-                # Some systems need explicit double-render to display properly
-                QTimer.singleShot(10, lambda: self._delayed_render())
-            except Exception as e:
-                print(f"[VTK SWITCH] ERROR during render: {e}")
-                # Try recovery
-                try:
-                    self.render_window.Render()
-                    print(f"[VTK SWITCH] Recovery render succeeded")
-                except Exception as e2:
-                    print(f"[VTK SWITCH] Recovery render also failed: {e2}")
-                    return False
+            # Single batched render at the end
+            self.image_viewer.UpdateDisplayExtent()
+            self.render_window.Render()
 
             self.last_series_show = series_index
             self.save_status_camera(self.image_viewer)

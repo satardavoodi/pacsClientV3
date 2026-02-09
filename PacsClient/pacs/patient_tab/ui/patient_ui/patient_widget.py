@@ -87,21 +87,6 @@ class PatientWidget(QWidget):
         self.logger.info(f"Initializing PatientWidget with study_uid={study_uid}, patient_id={patient_id}")
         
         # Core data structures - initialize first
-        self.study_uid = study_uid
-        self.patient_id = patient_id
-        
-        # ✅ FIX: Ensure import_folder_path is set correctly from attachment if not provided
-        if not import_folder_path and study_uid:
-            from PacsClient.utils.config import ATTACHMENT_PATH
-            from pathlib import Path
-            attachment_study_path = Path(ATTACHMENT_PATH) / study_uid
-            
-            if attachment_study_path.exists():
-                import_folder_path = str(attachment_study_path)
-                self.logger.info(f"Set import_folder_path from attachment: {import_folder_path}")
-            else:
-                self.logger.warning(f"Study not found in attachment folder: {attachment_study_path}")
-        
         self.import_folder_path = import_folder_path
         self.lst_thumbnails_data = []
         self.lst_nodes_viewer = []
@@ -122,6 +107,8 @@ class PatientWidget(QWidget):
         
         # Patient and study identifiers
         self.tab_manager = None
+        self.study_uid = study_uid
+        self.patient_id = patient_id
         self.report_status = report_status
         self.method_add_new_tab = None
         self.logo_patient = None
@@ -251,26 +238,22 @@ class PatientWidget(QWidget):
         self._deferred_caller = caller
         default_layout = self._get_default_layout_from_config()
         self._deferred_size = default_layout if size_init_viewers in (None, (1, 1)) else size_init_viewers
-
+        
         # Disable loading overlay (no fade, no screen overlay)
-
+        
         self._priority_series_queue = []  # صف سری‌های اولویت‌دار
         self._priority_display_timer = QTimer()
         self._priority_display_timer.setInterval(500)  # هر 500ms بررسی کن
         self._priority_display_timer.timeout.connect(self._process_priority_series_queue)
         self._priority_display_timer.start()
-
+        
         # دیکشنری برای ذخیره داده‌های سری‌های اولویت‌دار
         self._priority_series_data = {}
-
+        
         # ✅ FLICKER FIX: Flag to track initialization state
         self._is_initializing = True
         # Prevent non-user reception auto-switch during load (can cause flicker)
         self._block_reception_autoswitch = True
-
-        # Initialize thumbnail manager with current study UID
-        if self.study_uid:
-            self.thumbnail_manager.set_current_study_uid(self.study_uid)
 
         # Defer VTK initialization to let the window paint first
         # Use longer delay to ensure window is fully painted
@@ -346,10 +329,6 @@ class PatientWidget(QWidget):
                 print(f"   🔄 Filling all viewers for first series {series_key}")
                 if self._display_first_series_in_all_viewers(series_key):
                     self._mark_first_series_displayed()
-                    # پنهان کردن overlay بعد از نمایش اولین سری
-                    self._hide_loading_message()
-                    self._hide_init_overlay()
-                    print(f"✅ [PRIORITY] Loading overlay hidden after first series display")
                     # Set main viewer to first
                     self.set_viewer_to_main_viewer(viewer)
                     # Remove from queue/data
@@ -469,15 +448,9 @@ class PatientWidget(QWidget):
         try:
             self._pipeline_running = True
             print("✅ Pipeline flag set to True")
-
-            # ✅ CLEAR OLD DATA FIRST: Clear all previous patient data to prevent showing old data
-            self.clear_all_viewers_data()
-
+            
             # ✅ FLICKER FIX: Disable UI updates during entire initialization
             self.setUpdatesEnabled(False)
-
-            # ✅ Show loading message to user
-            self._show_loading_message("Initializing patient data...")
 
             # ✅ Use QTimer to schedule pipeline in the main thread
             QTimer.singleShot(0, lambda: self._run_pipeline_safely())
@@ -489,7 +462,6 @@ class PatientWidget(QWidget):
             self._pipeline_running = False
             self.setUpdatesEnabled(True)  # Re-enable on error
             self._hide_init_overlay()
-            self._hide_loading_message()
 
     def _run_pipeline_safely(self):
         """Run pipeline safely, handling async context properly"""
@@ -498,9 +470,6 @@ class PatientWidget(QWidget):
             # Pipeline is already synchronous at its core, so no need for async wrapper
             print("🔄 Running pipeline_manager synchronously...")
             try:
-                # Update loading progress
-                self._update_loading_message(10, "Setting up pipeline...")
-                
                 self.pipeline_manager(
                     self._deferred_caller,
                     self._deferred_size
@@ -517,9 +486,6 @@ class PatientWidget(QWidget):
                 self.setUpdatesEnabled(True)
                 self.update()  # Single repaint
                 print("✅ Pipeline flag reset to False")
-                
-                # Hide loading message after completion
-                self._hide_loading_message()
 
         except Exception as e:
             print(f"❌ _run_pipeline_safely error: {e}")
@@ -534,69 +500,6 @@ class PatientWidget(QWidget):
     def _hide_init_overlay(self):
         """No-op: loading overlay disabled by request."""
         return
-
-    def _show_loading_message(self, message="Loading medical images..."):
-        """Show loading message to user WITHOUT blocking overlay - just a small status label"""
-        try:
-            from PySide6.QtWidgets import QLabel
-            from PySide6.QtCore import Qt
-            from PySide6.QtGui import QFont
-            
-            # Create small status label (non-blocking, no dark overlay)
-            if not hasattr(self, '_loading_label') or self._loading_label is None:
-                self._loading_label = QLabel(self)
-                font = QFont()
-                font.setPointSize(10)
-                font.setBold(True)
-                self._loading_label.setFont(font)
-                # شفاف و با سایه‌ای قابل رویت ولی بدون مسدود کردن صفحه
-                self._loading_label.setStyleSheet("""
-                    QLabel {
-                        color: white;
-                        background-color: rgba(30, 30, 46, 200);
-                        padding: 8px 16px;
-                        border-radius: 8px;
-                        border: 2px solid rgba(124, 58, 237, 180);
-                    }
-                """)
-                self._loading_label.setAlignment(Qt.AlignCenter)
-                # قرار دادن در گوشه بالا سمت راست
-                self._loading_label.setGeometry(self.width() - 220, 10, 210, 40)
-            
-            # Update message
-            self._loading_label.setText(message)
-            self._loading_label.adjustSize()
-            # بروزرسانی موقعیت
-            self._loading_label.setGeometry(self.width() - 220, 10, 210, 40)
-            self._loading_label.raise_()  # Bring to front
-            self._loading_label.show()
-            
-        except Exception as e:
-            print(f"Error showing loading message: {e}")
-
-    def _update_loading_message(self, progress, message="Loading..."):
-        """Update loading message with progress"""
-        try:
-            if hasattr(self, '_loading_label') and self._loading_label:
-                self._loading_label.setText(message)
-                QApplication.processEvents()
-        except Exception as e:
-            print(f"Error updating loading message: {e}")
-
-    def _hide_loading_message(self):
-        """Hide loading message"""
-        try:
-            if hasattr(self, '_loading_label') and self._loading_label:
-                self._loading_label.hide()
-        except Exception as e:
-            print(f"Error hiding loading message: {e}")
-
-    def resizeEvent(self, event):
-        """Handle resize event to reposition loading label"""
-        super().resizeEvent(event)
-        # Reposition the loading label to top-right corner
-        if hasattr(self, '_loading_label') and self._loading_label and self._loading_label.isVisible():
-            self._loading_label.setGeometry(self.width() - 220, 10, 210, 40)
 
     def set_method_open_ai_module_tab(self, method_add_new_tab):
         self.method_add_new_tab = method_add_new_tab
@@ -860,45 +763,18 @@ class PatientWidget(QWidget):
     def refresh_after_download(self, study_uid_downloaded: str = None):
         """Refresh UI after download completion"""
         try:
-            print(f"\n🔄 [REFRESH] Refreshing after download")
-            print(f"   - study_uid_downloaded: {study_uid_downloaded}")
-            print(f"   - self.study_uid: {self.study_uid}")
-            print(f"   - Progressive mode: {getattr(self, '_progressive_display_enabled', False)}")
-            
             if study_uid_downloaded and self.study_uid != study_uid_downloaded:
-                print(f"   ⚠️ Study UID mismatch, skipping refresh")
                 return
-            
-            # Ensure import_folder_path is correctly set
-            if not self.import_folder_path or not Path(self.import_folder_path).exists():
-                print(f"   ⚠️ import_folder_path not set or doesn't exist: {self.import_folder_path}")
-                
-                # Try to set it from attachment folder
-                if self.study_uid:
-                    from PacsClient.utils.config import ATTACHMENT_PATH
-                    attachment_path = Path(ATTACHMENT_PATH) / self.study_uid
-                    
-                    if attachment_path.exists():
-                        print(f"   ✅ Setting import_folder_path from attachment: {attachment_path}")
-                        self.import_folder_path = str(attachment_path)
-                    else:
-                        print(f"   ❌ Study not found in attachment folder: {attachment_path}")
-                        return
-            
-            print(f"   📂 Using import_folder_path: {self.import_folder_path}")
+            if not getattr(self, '_progressive_display_enabled', False):
+                return
             
             # Reset thumbnails flag to allow refresh
             self._thumbnails_shown = False
             
             # Refresh thumbnails
-            print(f"   🔄 Refreshing thumbnails...")
-            thumb_count = self.show_exist_thumbnails()
-            print(f"   ✅ Refreshed {thumb_count} thumbnails")
-            
-        except Exception as e:
-            print(f"   ❌ Error in refresh: {e}")
-            import traceback
-            traceback.print_exc()
+            self.show_exist_thumbnails()
+        except Exception:
+            pass
 
     def _load_first_series_sync(self, size_init_viewers=(1, 1)):
         """
@@ -1000,9 +876,6 @@ class PatientWidget(QWidget):
             traceback.print_exc()
 
     def pipeline_manager(self, caller, size_init_viewers=(1, 1)):
-        # Update loading progress
-        self._update_loading_message(20, "Analyzing study data...")
-        
         size_init_viewers = self._get_default_layout_from_config()
         count_exist_thumbnails = self.show_exist_thumbnails()
         print(f"🔍 [PIPELINE] count_exist_thumbnails = {count_exist_thumbnails}")
@@ -1018,9 +891,17 @@ class PatientWidget(QWidget):
             has_running_loop = False
             print("⚠️ No running event loop detected")
 
-        # ✅ FLICKER FIX: Only create viewers AFTER data is loaded, not before
-        # This prevents the empty widget from appearing first
-        print(f"⏳ [PIPELINE] Waiting for data before creating viewers...")
+        # ✅ CRITICAL: CREATE VIEWERS FIRST (before loading any series)
+        # This ensures the UI is ready with loading indicators
+        print(f"🔨 [PIPELINE] Creating viewers upfront with layout {size_init_viewers}...")
+        try:
+            self.apply_multi_viewer(size_init_viewers, modify_by_user=False)
+            self._show_viewer_loading_all()
+            print(f"✅ [PIPELINE] Viewers created successfully")
+        except Exception as e:
+            print(f"❌ [PIPELINE] Error creating viewers: {e}")
+            import traceback
+            traceback.print_exc()
 
         if not has_running_loop:
             print("⚠️ Pipeline manager called without running event loop - using fallback")
@@ -1033,30 +914,6 @@ class PatientWidget(QWidget):
                 except Exception as e:
                     print(f"⚠️ Could not load first series: {e}")
             return
-
-        # ✅ CRITICAL: CREATE VIEWERS AFTER DATA IS LOADED (not before)
-        # This ensures the UI gets populated data immediately, preventing flicker
-        print(f"🔨 [PIPELINE] Creating viewers after data with layout {size_init_viewers}...")
-        
-        # Update loading progress
-        self._update_loading_message(30, "Creating viewers...")
-        
-        try:
-            self.apply_multi_viewer(size_init_viewers, modify_by_user=False)
-            self._show_viewer_loading_all()
-            print(f"✅ [PIPELINE] Viewers created successfully")
-        except Exception as e:
-            print(f"❌ [PIPELINE] Error creating viewers: {e}")
-            import traceback
-            traceback.print_exc()
-
-        # ✅ RESET THUMBNAIL MANAGER STATE: Clear any previous states to prevent showing old data
-        if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-            # Use the new reset method that clears all states
-            self.thumbnail_manager.reset_all_states()
-
-        # Update loading progress
-        self._update_loading_message(40, "Loading series data...")
 
         if getattr(self, '_progressive_display_enabled', False):
             print(f"🔍 [PIPELINE] Progressive mode enabled")
@@ -1071,6 +928,7 @@ class PatientWidget(QWidget):
                     except:
                         pass  # Ignore errors during cleanup
                 task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
+            return
         elif count_exist_thumbnails > 0:
             print(f"🔍 [PIPELINE] Creating lazy_load_first_series task for {count_exist_thumbnails} thumbnails")
             task = asyncio.create_task(self.lazy_load_first_series(size_init_viewers))
@@ -1081,16 +939,12 @@ class PatientWidget(QWidget):
                 except:
                     pass  # Ignore errors during cleanup
             task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
-
-        # Handle import and server cases after viewers are created
+            return
 
         # if getattr(self, "selected_widget", None) and getattr(self.selected_widget, "viewport_spinner", None):
         #     self.selected_widget.viewport_spinner.show_loading("Loading...")  # Commented out to avoid showing loading message to user
 
         if caller == CallerTypes.IMPORT:
-            # Update loading progress
-            self._update_loading_message(50, "Importing data...")
-            
             task = asyncio.create_task(
                 self.pipeline_manager_import(thumb_index=count_exist_thumbnails, size_init_viewers=size_init_viewers))
             self._background_tasks.add(task)
@@ -1101,9 +955,6 @@ class PatientWidget(QWidget):
                     pass  # Ignore errors during cleanup
             task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
         elif caller == CallerTypes.SERVER:
-            # Update loading progress
-            self._update_loading_message(50, "Loading from server...")
-            
             task = asyncio.create_task(
                 self.pipeline_manager_server(thumb_index=count_exist_thumbnails, size_init_viewers=size_init_viewers))
             self._background_tasks.add(task)
@@ -1118,9 +969,9 @@ class PatientWidget(QWidget):
         """Load first series synchronously when no event loop is available"""
         try:
             from PacsClient.pacs.patient_tab.utils import load_images
-
+            
             print("📂 [SYNC_LOAD] Loading first series synchronously...") # لاگ اضافه شده
-
+            
             first_series_loaded = False
             for vtk_image_data, metadata, patient_info in load_images(
                     self.import_folder_path,
@@ -1131,49 +982,41 @@ class PatientWidget(QWidget):
                 # ✅ FLICKER FIX: Only process events if not in initialization batch
                 if self.updatesEnabled():
                     QApplication.processEvents()
-
+                
                 self.check_and_add_meta_fixed(patient_info)
-
+                
                 file_path = metadata['series'].get('thumbnail_path', '')
                 new_data = {'vtk_image_data': vtk_image_data, 'metadata': metadata, 'file_path': file_path}
-
+                
                 self.add_new_data_to_lst_thumbnails_data(new_data)
-
+                
                 if not first_series_loaded:
                     optimal_layout = self.get_optimal_layout_for_series(metadata)
                     print(f"✅ [SYNC_LOAD] Determined optimal layout: {optimal_layout}") # لاگ اضافه شده
-
+                    
                     # ✅ FLICKER FIX: Only process events if not in initialization batch
                     if self.updatesEnabled():
                         QApplication.processEvents()
-
-                    # Check if viewers already exist, if not create them
-                    if not self.lst_nodes_viewer:
-                        # Use synchronous viewer creation
-                        self._apply_multi_viewer_sync(optimal_layout) # این تابع ویوورها را تنظیم می کند
-                        if self.updatesEnabled():
-                            QApplication.processEvents()
-
+                    # Use synchronous viewer creation
+                    self._apply_multi_viewer_sync(optimal_layout) # این تابع ویوورها را تنظیم می کند
+                    if self.updatesEnabled():
+                        QApplication.processEvents()
+                    
                     first_series_loaded = True
                     self._hide_loading_spinner()
-
+                    
                     series_no = metadata['series']['series_number']
                     if (not self._first_series_displayed) or self._any_viewer_empty():
-                        success = self._display_first_series_in_all_viewers(str(series_no))
-                        # پنهان کردن overlay بعد از نمایش اولین سری
-                        if success:
-                            self._hide_loading_message()
-                            self._hide_init_overlay()
-                            print(f"✅ [SYNC] Loading overlay hidden after first series display")
+                        self._display_first_series_in_all_viewers(str(series_no))
                     self.thumbnail_manager.set_series_ready(str(series_no))
-
+                    
                     if file_path and not self.logo_patient:
                         self.logo_patient = file_path
                         self.update_tab_manager()
-
+                    
                     print(f"✅ [SYNC_LOAD] First series loaded: {series_no}. Breaking loop.") # لاگ اضافه شده
                     break  # فقط اولین سری را بارگذاری کن
-
+                    
         except Exception as e:
             print(f"❌ [SYNC_LOAD] Error loading first series sync: {e}") # لاگ اضافه شده
             import traceback
@@ -1343,12 +1186,7 @@ class PatientWidget(QWidget):
 
             # Ensure the first available series is displayed in all viewers
             if (not self._first_series_displayed) or self._any_viewer_empty():
-                success = self._display_first_series_in_all_viewers(str(series_num))
-                # پنهان کردن overlay بعد از نمایش اولین سری
-                if success:
-                    self._hide_loading_message()
-                    self._hide_init_overlay()
-                    print(f"✅ [FALLBACK] Loading overlay hidden after first series display")
+                self._display_first_series_in_all_viewers(str(series_num))
 
         except Exception as e:
             self._handle_loading_error(e, first_series_folder.name)
@@ -1368,22 +1206,14 @@ class PatientWidget(QWidget):
             print(f"📁 Directory: {series_dir}")
             print(f"{'='*80}")
 
-            # ✅ CRITICAL FIX: Set import_folder_path to STUDY level (parent of series folder)
-            # NOT to the series folder itself! This is essential for subsequent series loads.
-            from pathlib import Path
-            series_path_obj = Path(series_dir)
-            study_folder = series_path_obj.parent  # Go up from series folder to study folder
-            
-            # Verify this is actually a study folder by checking for numeric subdirectories
-            if study_folder.exists():
-                numeric_subdirs = [d for d in study_folder.iterdir() if d.is_dir() and d.name.isdigit()]
-                if numeric_subdirs and str(study_folder) != self.import_folder_path:
-                    self.import_folder_path = str(study_folder)
-                    print(f"   🔄 Updated import_folder_path to STUDY level: {study_folder}")
-                    print(f"      (Found {len(numeric_subdirs)} series folders)")
+            # Update folder path if needed
+            if series_dir and series_dir != self.import_folder_path:
+                self.import_folder_path = series_dir
 
             # Check DICOM files
-            dicom_files = list(series_path_obj.glob("*.dcm"))
+            from pathlib import Path
+            series_path = Path(series_dir)
+            dicom_files = list(series_path.glob("*.dcm"))
             if not dicom_files:
                 print(f"❌ No DICOM files found in {series_dir}")
                 return
@@ -1401,10 +1231,10 @@ class PatientWidget(QWidget):
                 # Not a simple number - extract series number from directory name
                 # Directory name should be the actual series number
                 try:
-                    series_int = int(series_path_obj.name)
+                    series_int = int(series_path.name)
                     print(f"   🔍 Extracted series number {series_int} from directory name")
                 except ValueError:
-                    print(f"❌ Cannot determine series number from UID {series_number} or directory {series_path_obj.name}")
+                    print(f"❌ Cannot determine series number from UID {series_number} or directory {series_path.name}")
                     return
 
             # Load the series
@@ -1417,10 +1247,6 @@ class PatientWidget(QWidget):
             if (not self._first_series_displayed) or self._any_viewer_empty():
                 if self._display_first_series_in_all_viewers(str(series_int)):
                     self._mark_first_series_displayed()
-                    # پنهان کردن overlay بعد از نمایش اولین سری
-                    self._hide_loading_message()
-                    self._hide_init_overlay()
-                    print(f"✅ [IMMEDIATE] Loading overlay hidden after first series display")
             else:
                 self.change_series_on_viewer(series_int, flag_change_selected_widget=True)
 
@@ -1520,46 +1346,46 @@ class PatientWidget(QWidget):
                 return
 
             if not self.lst_thumbnails_data:
-                print("⚠️ [DISTRIBUTE] No thumbnail data available - viewers remain empty until data arrives")
+                print("⚠️ [DISTRIBUTE] No thumbnail data available")
                 return
-
+                
             # For each viewer, assign a series if available
             for viewer_idx, node_viewer in enumerate(self.lst_nodes_viewer):
                 # Skip if viewer is already populated
-                if (hasattr(node_viewer.vtk_widget, 'last_series_show') and
+                if (hasattr(node_viewer.vtk_widget, 'last_series_show') and 
                     node_viewer.vtk_widget.last_series_show is not None):
                     print(f"   ⏭️ Viewer {viewer_idx} already has series {node_viewer.vtk_widget.last_series_show}")
                     continue
-
+                    
                 # Find a series to assign to this viewer
                 series_to_assign = None
                 series_index = None
-
+                
                 # Try to find a series that hasn't been displayed yet
                 for i, thumb_data in enumerate(self.lst_thumbnails_data):
                     series_num = thumb_data['metadata']['series']['series_number']
                     series_displayed = False
-
+                    
                     # Check if this series is already displayed in any viewer
                     for other_viewer in self.lst_nodes_viewer:
                         if (hasattr(other_viewer.vtk_widget, 'last_series_show') and
                             other_viewer.vtk_widget.last_series_show == series_num):
                             series_displayed = True
                             break
-
+                            
                     if not series_displayed:
                         series_to_assign = thumb_data
                         series_index = i
                         break
-
+                        
                 if series_to_assign is None and self.lst_thumbnails_data:
                     # All series are displayed, use the first one for this viewer
                     series_to_assign = self.lst_thumbnails_data[0]
                     series_index = 0
-
+                    
                 if series_to_assign:
                     print(f"   🎯 Assigning series {series_to_assign['metadata']['series']['series_number']} to viewer {viewer_idx}")
-
+                    
                     # Display the series in this viewer
                     flag_switch = node_viewer.switch_series(
                         series_to_assign['vtk_image_data'],
@@ -1567,36 +1393,36 @@ class PatientWidget(QWidget):
                         series_index,
                         metadata_fixed=self.metadata_fixed
                     )
-
+                    
                     # ✅ اطمینان از اینکه selected_widget برای Eagle Eye تنظیم شده
                     if viewer_idx == 0:  # First viewer becomes main
                         self.set_viewer_to_main_viewer(node_viewer)
-
+                    
                     # Reset slider after switching series
                     if flag_switch and hasattr(node_viewer, 'vtk_widget') and hasattr(node_viewer, 'slider'):
                         self.reset_slider(node_viewer.vtk_widget, node_viewer.slider)
-
+                        
                     # Update corners if image_viewer exists
                     if node_viewer.vtk_widget.image_viewer is not None:
                         node_viewer.vtk_widget.image_viewer.update_corners_actors()
-
+                        
                     # Hide loading spinner
                     if hasattr(node_viewer.vtk_widget, 'viewport_spinner'):
                         node_viewer.vtk_widget.viewport_spinner.hide_loading()
-
+                        
                     # Update UI
                     node_viewer.vtk_widget.show()
                     node_viewer.vtk_widget.update()
                     node_viewer.widget.show()
                     node_viewer.widget.update()
-
+                    
                     if node_viewer.vtk_widget.image_viewer:
                         node_viewer.vtk_widget.image_viewer.Render()
                         node_viewer.vtk_widget.render_window.Render()
                         node_viewer.vtk_widget.GetRenderWindow().Render()
-
+                        
                     print(f"   ✅ Viewer {viewer_idx} populated successfully")
-
+                    
         except Exception as e:
             print(f"❌ [DISTRIBUTE] Error distributing series to viewers: {e}")
             import traceback
@@ -1696,7 +1522,7 @@ class PatientWidget(QWidget):
                         return
                 except RuntimeError:
                     return  # Widget was deleted
-
+                
                 # ✅ FLICKER FIX: Only process events if not in initialization batch
                 if self.updatesEnabled():
                     QApplication.processEvents()
@@ -1716,13 +1542,12 @@ class PatientWidget(QWidget):
                         QApplication.processEvents()
 
                     # ✅ ساخت viewer مناسب برای هر مودالیتی
-                    # Check if viewers already exist, if not create them
                     if not self.lst_nodes_viewer:
                         self.init_matrix_viewers(optimal_layout)
                     if self.updatesEnabled():
                         QApplication.processEvents()
 
-                    # Distribute series to viewers after they are created
+
                     self._distribute_series_to_viewers()
 
                     first_series_loaded = True
@@ -1730,12 +1555,7 @@ class PatientWidget(QWidget):
 
                     series_no = metadata['series']['series_number']
                     if (not self._first_series_displayed) or self._any_viewer_empty():
-                        success = self._display_first_series_in_all_viewers(str(series_no))
-                        # پنهان کردن overlay بعد از نمایش اولین سری
-                        if success:
-                            self._hide_loading_message()
-                            self._hide_init_overlay()
-                            print(f"✅ [LAZY_LOAD] Loading overlay hidden after first series display")
+                        self._display_first_series_in_all_viewers(str(series_no))
                     self.thumbnail_manager.set_series_ready(str(series_no))
 
                     if file_path and not self.logo_patient:
@@ -1795,7 +1615,7 @@ class PatientWidget(QWidget):
 
                 _thumbnail_time = time.time() - _series_start
 
-                self.check_logo_patient(file_path)
+                await self.check_logo_patient(file_path)
 
                 thumb_index = self.add_thumbnail_to_thumbnail_layout(
                     thumb_index=thumb_index, file_path_thumbnail=file_path,
@@ -1816,12 +1636,7 @@ class PatientWidget(QWidget):
                     _viewer_time = time.time() - _viewer_start
                     self._hide_loading_spinner()
                     if (not self._first_series_displayed) or self._any_viewer_empty():
-                        success = self._display_first_series_in_all_viewers(str(metadata['series']['series_number']))
-                        # پنهان کردن overlay بعد از نمایش اولین سری
-                        if success:
-                            self._hide_loading_message()
-                            self._hide_init_overlay()
-                            print(f"✅ [SERVER] Loading overlay hidden after first series display")
+                        self._display_first_series_in_all_viewers(str(metadata['series']['series_number']))
 
                 if self.selected_widget:
                     same = self.check_metadata_belong_together(self.selected_widget.image_viewer.metadata, metadata)
@@ -1847,24 +1662,14 @@ class PatientWidget(QWidget):
                 print(
                     f"[TIMING] Average per series: {_total_time / _series_count:.3f}s" if _series_count > 0 else "N/A")
                 print(f"{'=' * 60}\n")
-                
-                # Hide loading overlays when download is complete
-                self._hide_loading_message()
-                self._hide_init_overlay()
                 return
 
             print('waiting...')
             # Check if widget is still valid before continuing
             try:
                 if not self.isVisible():
-                    # Hide loading overlays if widget is no longer visible
-                    self._hide_loading_message()
-                    self._hide_init_overlay()
                     return
             except RuntimeError:
-                # Hide loading overlays if widget was deleted
-                self._hide_loading_message()
-                self._hide_init_overlay()
                 return  # Widget was deleted
             await asyncio.sleep(pull_request)
 
@@ -2007,7 +1812,7 @@ class PatientWidget(QWidget):
             )
             _thumb_time = time.time() - _thumb_start
 
-            self.check_logo_patient(file_path)
+            await self.check_logo_patient(file_path)
 
             thumb_index = self.add_thumbnail_to_thumbnail_layout(
                 thumb_index=thumb_index, file_path_thumbnail=file_path,
@@ -2047,20 +1852,12 @@ class PatientWidget(QWidget):
             # Check if widget is still valid before continuing
             try:
                 if not self.isVisible():
-                    # Hide loading overlays if widget is no longer visible
-                    self._hide_loading_message()
-                    self._hide_init_overlay()
                     return
             except RuntimeError:
-                # Hide loading overlays if widget was deleted
-                self._hide_loading_message()
-                self._hide_init_overlay()
                 return  # Widget was deleted
             await asyncio.sleep(0)  # فرصت به UI
 
         self._hide_loading_spinner()
-        self._hide_loading_message()
-        self._hide_init_overlay()
 
         _total_time = time.time() - _pipeline_start
         print(f"\n{'=' * 60}")
@@ -2074,15 +1871,9 @@ class PatientWidget(QWidget):
                 self.toolbar_manager.current_style = self.selected_widget.style
 
         else:
-            # Only create dummy image if we really need to show something immediately
-            # Otherwise, defer creation until we have actual data
-            if len(self.lst_thumbnails_data) > 0:
-                # We have data, so create viewers with the data
-                dummy_vtk_widget = self.create_dummy_vtk_widget()
-                self.vtk_layout.addWidget(dummy_vtk_widget, 0, 0)
-            else:
-                # No data yet, viewers will be created when data arrives
-                print("⚠️ No data available yet, deferring viewer creation until data arrives")
+            # create dummy image for show until image downloaded.
+            dummy_vtk_widget = self.create_dummy_vtk_widget()
+            self.vtk_layout.addWidget(dummy_vtk_widget, 0, 0)
 
     def add_series_name_to_lst_series_names(self, series_name):
         self.lst_series_name.add(series_name)
@@ -2092,54 +1883,34 @@ class PatientWidget(QWidget):
         # Update series cache
         series_number = str(new_data['metadata']['series']['series_number'])
         series_name = str(new_data['metadata']['series']['series_name'])
-        metadata = new_data['metadata']  # ✅ FIX: Define metadata first
-        
+        index = len(self.lst_thumbnails_data)
+        self._series_cache[series_number] = (new_data['vtk_image_data'], new_data['metadata'], index)
+        self._series_name_cache[series_number] = series_name
         # Ensure required attributes exist
         if not hasattr(self, 'lst_thumbnails_data'):
             self.lst_thumbnails_data = []
         if not hasattr(self, 'unique_elements_index'):
             self.unique_elements_index = 0
         
-        # ✅ FIX: Check for duplicate by series_number, not just series_name
-        for i in range(len(self.lst_thumbnails_data)):
-            existing_series_number = str(self.lst_thumbnails_data[i]['metadata']['series']['series_number'])
-            
-            # If same series number, UPDATE with new data (VTK data might be fresher)
-            if existing_series_number == series_number:
-                print(f"      🔄 Series {series_number} already exists, updating with fresh data")
-                # Always update with new data to ensure we have the latest VTK image
-                self.lst_thumbnails_data[i] = new_data
-                self._series_cache[series_number] = (new_data['vtk_image_data'], new_data['metadata'], i)
-                self._series_name_cache[series_number] = series_name
-                
-                # Mark as ready
-                try:
-                    self.thumbnail_manager.set_series_ready(series_number)
-                except Exception as e:
-                    print(f"      ⚠️ Could not set ready: {e}")
-                
-                print(f"      ✅ Series {series_number} updated at index {i}")
-                return True  # Return True to indicate data was processed
-        
-        # Not a duplicate - add as new
         add_by_head = True
+        metadata = new_data['metadata']
 
         for i in range(len(self.lst_thumbnails_data)):
+
             # we assume lst is such as left and right (front , back) queue without remove element
             if self.lst_thumbnails_data[i]['metadata']['series']['series_name'] == metadata['series']['series_name']:
-                # this series is continued another series. so we added at last index lst
+
+                # this series has been created before
+                if len(metadata['instances']) == len(self.lst_thumbnails_data[i]['metadata']['instances']):
+                    return False
+
                 self.lst_thumbnails_data.append(new_data)
                 add_by_head = False
-                break
+                break  # this series is continued another series. so we added at last index lst
 
         if add_by_head:
             self.lst_thumbnails_data.insert(self.unique_elements_index, new_data)
             self.unique_elements_index += 1
-        
-        # Update cache with final index
-        final_index = len(self.lst_thumbnails_data) - 1 if not add_by_head else self.unique_elements_index - 1
-        self._series_cache[series_number] = (new_data['vtk_image_data'], new_data['metadata'], final_index)
-        self._series_name_cache[series_number] = series_name
 
         # ... بعد از منطق insert/append
         try:
@@ -2148,8 +1919,6 @@ class PatientWidget(QWidget):
             self.thumbnail_manager.set_series_ready(series_no)
         except Exception as e:
             print("set ready border failed:", e)
-        
-        return True
 
     def check_and_add_meta_fixed(self, patient_info):
         if len(self.metadata_fixed) != 0:
@@ -3648,10 +3417,10 @@ class PatientWidget(QWidget):
         print(f"\n{'='*80}")
         print(f"🔨 [new_viewer] START - thumb_index={default_thumb_index}")
         self.logger.info(f"Creating new viewer with thumb index {default_thumb_index}")
-
+        
         # Count existing viewers - if too many, be more aggressive with cleanup
         viewer_count = len(self.lst_nodes_viewer) if hasattr(self, 'lst_nodes_viewer') else 0
-
+        
         # Hard limit protection
         if viewer_count >= self._max_viewers_per_session:
             print(f"   ⚠️ PROTECTION: Reached max viewers limit ({viewer_count}/{self._max_viewers_per_session})")
@@ -3662,13 +3431,13 @@ class PatientWidget(QWidget):
                 print(f"   ❌ Even fallback failed: {e}")
                 self.logger.error(f"Max viewers exceeded and fallback failed: {e}", exc_info=True)
                 raise
-
+        
         # Aggressive cleanup for high viewer counts
         if viewer_count > 15:
             print(f"   ⚠️ WARNING: Already have {viewer_count} viewers - running aggressive cleanup")
             gc.collect()  # Force garbage collection
             import time; time.sleep(0.02)  # Let OS recover (reduced from 0.05)
-
+        
         # Periodic cleanup
         import time
         current_time = time.time()
@@ -3676,17 +3445,14 @@ class PatientWidget(QWidget):
             print(f"   🧹 [Periodic GC] Cleaning up ({viewer_count} viewers)")
             gc.collect()
             self._last_gc_time = current_time
-
+        
         vtk_widget = None
         slider = None
-
+        
         try:
-            # ✅ CRASH FIX: Disable updates during heavy VTK operations
-            self.setUpdatesEnabled(False)
-
             # ✅ FLICKER FIX: Removed processEvents - batching UI updates instead
             # processEvents was causing thumbnail loading to interrupt viewer creation
-
+            
             print("   📐 Creating grid layout...")
             try:
                 layout = QGridLayout()
@@ -3697,34 +3463,18 @@ class PatientWidget(QWidget):
                 print(f"   ⚠️ Layout creation warning: {le}")
                 raise RuntimeError(f"Failed to create grid layout: {le}")
 
-            # ✅ FLICKER FIX: Only create dummy widget if we're in initialization phase
-            # Otherwise, wait for actual data to be available before creating the viewer
-            print("   🔍 Checking thumbnail data and initialization state...")
+            # Check if we have thumbnail data
+            print("   🔍 Checking thumbnail data...")
             try:
-                has_data = (hasattr(self, 'lst_thumbnails_data') and
-                           self.lst_thumbnails_data and
+                has_data = (hasattr(self, 'lst_thumbnails_data') and 
+                           self.lst_thumbnails_data and 
                            len(self.lst_thumbnails_data) > 0)
-                
-                # Check if we're still initializing and don't have data yet
-                is_initializing = getattr(self, '_is_initializing', True)
             except Exception as ce:
                 print(f"   ⚠️ Data check warning: {ce}")
                 has_data = False
-                is_initializing = True
-
-            if not has_data and not is_initializing:
-                print("   ⚠️ No thumbnail data and not initializing, waiting for data...")
-                # Return None or create a placeholder that won't be shown until data is ready
-                try:
-                    vtk_widget = self.create_dummy_vtk_widget()
-                    if vtk_widget is None:
-                        raise RuntimeError("create_dummy_vtk_widget returned None")
-                    print("   ✅ Dummy widget created as placeholder")
-                except Exception as dwe:
-                    print(f"   ❌ Dummy widget creation failed: {dwe}")
-                    raise
-            elif not has_data:
-                print("   ⚠️ No thumbnail data but initializing, creating dummy widget")
+            
+            if not has_data:
+                print("   ⚠️ No thumbnail data, creating dummy widget")
                 try:
                     vtk_widget = self.create_dummy_vtk_widget()
                     if vtk_widget is None:
@@ -3751,7 +3501,7 @@ class PatientWidget(QWidget):
             # Validate vtk_widget
             if vtk_widget is None:
                 raise RuntimeError("vtk_widget is None after creation")
-
+            
             if not isinstance(vtk_widget, QWidget):
                 raise RuntimeError(f"vtk_widget is not a QWidget, got {type(vtk_widget)}")
 
@@ -3766,11 +3516,11 @@ class PatientWidget(QWidget):
             except Exception as se:
                 print(f"   ❌ Slider creation failed: {se}")
                 raise RuntimeError(f"Failed to create slider: {se}")
-
+                
         except Exception as e:
             print(f"   ❌ ERROR in new_viewer setup: {e}")
             self.logger.error(f"Error in new_viewer setup: {e}", exc_info=True)
-
+            
             # Try to return fallback viewer
             try:
                 print("   🔄 Attempting fallback viewer creation...")
@@ -3780,11 +3530,8 @@ class PatientWidget(QWidget):
                     return fallback
             except Exception as fe:
                 print(f"   ❌ Fallback viewer also failed: {fe}")
-
+            
             raise
-        finally:
-            # ✅ CRASH FIX: Always re-enable updates
-            self.setUpdatesEnabled(True)
 
         # slider.setStyleSheet("""
         #     QSlider {
@@ -4275,61 +4022,24 @@ class PatientWidget(QWidget):
 
 
     def _get_correct_study_path(self) -> str:
-        """
-        Get the correct study path, ensuring it's not pointing to a series subfolder
-        ✅ FIX: Properly detect and handle study-level vs series-level paths
-        """
+        """Get the correct study path, ensuring it's not pointing to a series subfolder"""
         from pathlib import Path
         
-        print(f"🔍 [PATH] Getting correct study path...")
-        print(f"   - import_folder_path: {self.import_folder_path}")
-        print(f"   - study_uid: {self.study_uid}")
-        
-        # Try import_folder_path first
-        if self.import_folder_path:
-            path = Path(self.import_folder_path)
+        if not self.import_folder_path:
+            return None
             
-            if path.exists():
-                # Check if this path is at study level (has numeric subfolders that are series)
-                numeric_subdirs = [d for d in path.iterdir() if d.is_dir() and d.name.isdigit()]
-                
-                if numeric_subdirs:
-                    # This is study level - has series folders
-                    print(f"   ✅ Path is at study level (has {len(numeric_subdirs)} series folders)")
-                    print(f"   ✅ Using import_folder_path: {path}")
-                    return str(path)
-                else:
-                    # Check if current path itself is numeric and might be a series folder
-                    if path.name.isdigit():
-                        parent = path.parent
-                        if parent.exists():
-                            # Check if parent has numeric subfolders
-                            parent_numeric = [d for d in parent.iterdir() if d.is_dir() and d.name.isdigit()]
-                            if parent_numeric:
-                                # Parent is study level, we're in a series folder
-                                print(f"   ✅ Path is at series level, resolved to parent (study level): {parent}")
-                                self.import_folder_path = str(parent)  # Update for persistence
-                                return str(parent)
-                    
-                    # Path exists but has no series folders - might still be study level
-                    if self.study_uid and self.study_uid in str(path):
-                        print(f"   ✅ Path matches study_uid format, using as study level: {path}")
-                        return str(path)
+        path = Path(self.import_folder_path)
         
-        # Fallback: try attachment folder with study_uid
-        if self.study_uid:
-            from PacsClient.utils.config import ATTACHMENT_PATH
-            attachment_study_path = Path(ATTACHMENT_PATH) / self.study_uid
-            
-            if attachment_study_path.exists():
-                print(f"   ✅ Found in attachment folder: {attachment_study_path}")
-                self.import_folder_path = str(attachment_study_path)  # Update for persistence
-                return str(attachment_study_path)
-            else:
-                print(f"   ⚠️ Not found in attachment folder: {attachment_study_path}")
+        # If current path has numeric subfolders that are series, we're at study level
+        # If current path is numeric and exists inside another folder, go up
+        if path.name.isdigit() and path.parent.exists():
+            # Check if parent has other series folders
+            parent = path.parent
+            series_folders = [d for d in parent.iterdir() if d.is_dir() and d.name.isdigit()]
+            if len(series_folders) > 1:
+                return str(parent)
         
-        print(f"   ❌ Could not resolve study path")
-        return None
+        return str(path)
 
     def _perform_series_switch(self, vtk_widget, metadata, vtk_image_data, series_idx, slider):
         """Perform the actual series switch with widget transfer"""
@@ -4355,21 +4065,6 @@ class PatientWidget(QWidget):
             
             # Perform switch
             if hasattr(vtk_widget, 'switch_series'):
-                # ✅ FIX: Validate vtk_image_data before switch
-                if not vtk_image_data:
-                    print(f"   ❌ ERROR: vtk_image_data is None, cannot switch series")
-                    return False
-                
-                dims = vtk_image_data.GetDimensions()
-                if dims[0] == 0 or dims[1] == 0 or dims[2] == 0:
-                    print(f"   ❌ ERROR: Invalid dimensions {dims}, cannot switch series")
-                    return False
-                
-                print(f"   🔄 Calling switch_series for series {series_number}...")
-                print(f"      - vtk_image_data: {type(vtk_image_data)}, dims: {dims}")
-                print(f"      - metadata: {bool(metadata)}")
-                print(f"      - series_idx: {series_idx}")
-                
                 flag_switch = vtk_widget.switch_series(
                     vtk_image_data, 
                     metadata, 
@@ -4378,8 +4073,6 @@ class PatientWidget(QWidget):
                     metadata_2, 
                     self.metadata_fixed
                 )
-                
-                print(f"      - switch_series returned: {flag_switch}")
                 
                 if flag_switch:
                     self.reset_slider(vtk_widget, slider)
@@ -4390,38 +4083,10 @@ class PatientWidget(QWidget):
                         vtk_widget.image_viewer.update_corners_actors()
                         
                     print(f"   ✅ Switch completed for series {series_number}")
-                    return True
                 else:
-                    print(f"   ⚠️ switch_series returned False - attempting recovery...")
-                    
-                    # ✅ FIX: Try to force render and reset the viewer
-                    try:
-                        # Force render
-                        if hasattr(vtk_widget, 'render_window') and vtk_widget.render_window:
-                            print(f"      - Forcing render_window.Render()")
-                            vtk_widget.render_window.Render()
-                        
-                        # Try to reset camera
-                        if hasattr(vtk_widget, 'renderer') and vtk_widget.renderer:
-                            print(f"      - Resetting camera")
-                            vtk_widget.renderer.ResetCamera()
-                            vtk_widget.render_window.Render()
-                        
-                        # Force update the widget
-                        if hasattr(vtk_widget, 'GetRenderWindow'):
-                            rw = vtk_widget.GetRenderWindow()
-                            if rw:
-                                print(f"      - Forcing render via GetRenderWindow()")
-                                rw.Render()
-                        
-                        print(f"      ✅ Recovery attempt completed")
-                        return True
-                    except Exception as recovery_error:
-                        print(f"      ❌ Recovery failed: {recovery_error}")
-                        return False
+                    print(f"   ⚠️ switch_series returned False")
             else:
                 print(f"   ❌ vtk_widget does not have switch_series method")
-                return False
                 
         except Exception as e:
             print(f"❌ Error in _perform_series_switch: {e}")
@@ -4509,7 +4174,6 @@ class PatientWidget(QWidget):
     def _load_single_series_on_demand(self, series_number: int, study_path: str = None) -> bool:
         """
         Load a single series with correct path resolution
-        ✅ FIX: Thread-safe path resolution for concurrent loads
         """
         import time
         from pathlib import Path
@@ -4517,122 +4181,38 @@ class PatientWidget(QWidget):
         try:
             _start = time.time()
             
-            print(f"\n📂 [LOAD] === Starting load for series {series_number} ===")
-            print(f"   - Provided study_path: {study_path}")
-            print(f"   - Current import_folder_path: {self.import_folder_path}")
-            print(f"   - study_uid: {self.study_uid}")
-            
-            # ✅ CRITICAL FIX: Use study_uid to reliably find the study path
-            # Don't rely on import_folder_path which can be modified by concurrent loads
+            # ✅ FIX: Use provided study_path or correctly determine it
             if study_path is None:
-                study_path = None
-                
-                # 1st priority: Use import_folder_path if it's valid and at study level
-                if self.import_folder_path:
+                # Try parent widget's import folder first
+                if self.import_folder_path and Path(self.import_folder_path).exists():
+                    # Ensure we're using the study root folder, not a series subfolder
                     study_path_obj = Path(self.import_folder_path)
-                    if study_path_obj.exists():
-                        # ✅ CRITICAL: Always check if this is study level (has numeric subdirs)
-                        try:
-                            series_folders = [d for d in study_path_obj.iterdir() if d.is_dir() and d.name.isdigit()]
-                        except (PermissionError, OSError) as e:
-                            print(f"   ⚠️ Error reading {study_path_obj}: {e}")
-                            series_folders = []
-                        
-                        if series_folders:
-                            # Already at study level
-                            print(f"   ✅ import_folder_path is at study level ({len(series_folders)} series)")
-                            study_path = str(study_path_obj)
-                        elif study_path_obj.name.isdigit():
-                            # Current path is a series folder, go to parent
-                            parent = study_path_obj.parent
-                            if parent.exists():
-                                try:
-                                    parent_series = [d for d in parent.iterdir() if d.is_dir() and d.name.isdigit()]
-                                except (PermissionError, OSError):
-                                    parent_series = []
-                                if parent_series:
-                                    print(f"   ✅ import_folder_path was a series folder, using parent ({len(parent_series)} series)")
-                                    study_path = str(parent)
-                        else:
-                            print(f"   ℹ️ Using import_folder_path as provided")
-                            study_path = str(study_path_obj)
-                
-                # 2nd priority: If import_folder_path failed, use study_uid to locate it
-                if study_path is None and self.study_uid:
-                    print(f"   ℹ️ import_folder_path not reliable, searching by study_uid...")
-                    
-                    # Try main source folder
-                    source_base = Path(self.import_folder_path or ".").parent.parent if self.import_folder_path else Path.cwd()
-                    study_path_candidate = source_base / "source" / self.study_uid
-                    
-                    if study_path_candidate.exists():
-                        # Verify it has series folders
-                        try:
-                            series_folders = [d for d in study_path_candidate.iterdir() if d.is_dir() and d.name.isdigit()]
-                        except (PermissionError, OSError):
-                            series_folders = []
-                        if series_folders:
-                            print(f"   ✅ Found study by study_uid: {study_path_candidate} ({len(series_folders)} series)")
-                            study_path = str(study_path_candidate)
-                            # Update import_folder_path for future use
-                            self.import_folder_path = study_path
-                    
-                    # Fallback: Try attachment folder
-                    if study_path is None:
-                        from PacsClient.utils.config import ATTACHMENT_PATH
-                        attachment_study_path = Path(ATTACHMENT_PATH) / self.study_uid
-                        if attachment_study_path.exists():
-                            try:
-                                series_folders = [d for d in attachment_study_path.iterdir() if d.is_dir() and d.name.isdigit()]
-                            except (PermissionError, OSError):
-                                series_folders = []
-                            if series_folders:
-                                print(f"   ✅ Found study in attachment folder ({len(series_folders)} series)")
-                                study_path = str(attachment_study_path)
-                                self.import_folder_path = study_path
-                
-                if study_path is None:
-                    print(f"   ❌ Could not resolve study path from import_folder_path or study_uid")
-                    return False
-            else:
-                # study_path was provided, verify it's valid
-                print(f"   📍 Using provided study_path: {study_path}")
-                study_path_obj = Path(study_path)
-                if not study_path_obj.exists():
-                    print(f"   ❌ Provided study_path does not exist: {study_path}")
+                    # If current path points to a series folder (has DICOM parent), go up
+                    if (study_path_obj / str(series_number)).exists():
+                        pass  # Already at study level
+                    else:
+                        # Check if current path is inside a series folder
+                        parent = study_path_obj.parent
+                        if parent.exists() and (parent / str(series_number)).exists():
+                            study_path_obj = parent
+                    study_path = str(study_path_obj)
+                else:
+                    print(f"❌ No valid study path found")
                     return False
             
-            print(f"   📁 Final study_path: {study_path}")
+            print(f"📂 [LOAD] Loading series {series_number} from {study_path}")
             
             # Verify series folder exists
             series_folder = Path(study_path) / str(series_number)
-            print(f"   🔍 Checking series folder: {series_folder}")
-            
             if not series_folder.exists():
-                print(f"   ❌ Series folder not found: {series_folder}")
-                print(f"   📂 Contents of study folder:")
-                try:
-                    for item in Path(study_path).iterdir():
-                        print(f"      - {item.name}")
-                except Exception as e:
-                    print(f"      Error listing: {e}")
+                print(f"❌ Series folder not found: {series_folder}")
                 return False
                 
             # Check for DICOM files
             dicom_files = list(series_folder.glob("*.dcm")) + list(series_folder.glob("*.DCM"))
-            print(f"   📄 Found {len(dicom_files)} DICOM files")
-            
             if not dicom_files:
-                print(f"   ❌ No DICOM files in {series_folder}")
-                print(f"   📂 Contents of series folder:")
-                try:
-                    for item in series_folder.iterdir():
-                        print(f"      - {item.name}")
-                except Exception as e:
-                    print(f"      Error listing: {e}")
+                print(f"❌ No DICOM files in {series_folder}")
                 return False
-            
-            print(f"   ⏳ Loading series with load_single_series_by_number...")
             
             # Load series with correct path
             result = load_single_series_by_number(
@@ -4643,39 +4223,12 @@ class PatientWidget(QWidget):
                 ordering_by_instances_number=self.ordering_by_instances_number,
             )
             
-            # ✅ FIX: Convert generator to list before checking length
-            if result:
-                result_list = list(result)
-                print(f"   📊 Load result: {type(result_list)}, length: {len(result_list)}")
-            else:
-                result_list = []
-                print(f"   📊 Load result: None or empty")
-            
-            if not result_list:
-                print(f"   ❌ load_single_series_by_number returned empty result")
+            if not result:
                 return False
 
             # Process results
-            loaded_count = 0
-            for idx, item in enumerate(result_list):
-                print(f"   📦 Processing result item {idx}...")
+            for item in result:
                 vtk_image_data, metadata, (patient_pk, study_pk) = item
-                
-                print(f"      - vtk_image_data: {type(vtk_image_data)}")
-                print(f"      - metadata keys: {metadata.keys() if metadata else None}")
-                print(f"      - Series number in metadata: {metadata.get('series', {}).get('series_number') if metadata else None}")
-                
-                # ✅ FIX: Validate vtk_image_data before processing
-                if not vtk_image_data:
-                    print(f"      ❌ ERROR: vtk_image_data is None, skipping")
-                    continue
-                
-                dims = vtk_image_data.GetDimensions()
-                if dims[0] == 0 or dims[1] == 0 or dims[2] == 0:
-                    print(f"      ❌ ERROR: Invalid dimensions {dims}, skipping")
-                    continue
-                
-                print(f"      ✅ Validated vtk_image_data: dims={dims}")
                 
                 # Populate metadata_fixed if needed
                 if not self.metadata_fixed or len(self.metadata_fixed) < 3:
@@ -4688,7 +4241,6 @@ class PatientWidget(QWidget):
                                 self.metadata_fixed['patient_pk'] = patient_pk
                             if study_pk:
                                 self.metadata_fixed['study_pk'] = study_pk
-                            print(f"      ✅ metadata_fixed populated")
 
                 # Add to thumbnails list
                 file_path = metadata['series'].get('thumbnail_path', '')
@@ -4697,35 +4249,17 @@ class PatientWidget(QWidget):
                     'metadata': metadata, 
                     'file_path': file_path
                 }
+                self.add_new_data_to_lst_thumbnails_data(new_data)
                 
-                before_count = len(self.lst_thumbnails_data)
-                add_result = self.add_new_data_to_lst_thumbnails_data(new_data)
-                after_count = len(self.lst_thumbnails_data)
-                
-                print(f"      📊 lst_thumbnails_data: {before_count} -> {after_count}")
-                print(f"      📊 add_new_data returned: {add_result}")
-                
-                if add_result:
-                    # Data was either added or updated
-                    loaded_count += 1
-                    if after_count > before_count:
-                        print(f"      ✅ Data added successfully (new series)")
-                    else:
-                        print(f"      ✅ Data updated successfully (existing series refreshed)")
-                else:
-                    print(f"      ⚠️ Data was rejected (should not happen)")
-                
-                # ✅ CRITICAL FIX: Always ensure import_folder_path is set to STUDY LEVEL
-                # This is essential for the next series load to work correctly
-                # Don't rely on metadata['series']['series_path'] - use our resolved study_path instead
-                self.import_folder_path = study_path
-                print(f"      🔄 Updated study path to: {study_path} (verified by series loading)")
+                # Update study path if needed
+                if metadata.get('series', {}).get('series_path'):
+                    correct_path = Path(metadata['series']['series_path']).parent
+                    if str(correct_path) != self.import_folder_path:
+                        self.import_folder_path = str(correct_path)
+                        print(f"   🔄 Updated study path to: {correct_path}")
 
             _elapsed = time.time() - _start
-            print(f"✅ [LOAD] Series {series_number} loaded successfully in {_elapsed:.3f}s")
-            print(f"   - Loaded {loaded_count} series")
-            print(f"   - Total series in memory: {len(self.lst_thumbnails_data)}")
-            print(f"===== Load complete ===\n")
+            print(f"✅ [LOAD] Series {series_number} loaded in {_elapsed:.3f}s")
             return True
 
         except Exception as e:
@@ -5070,10 +4604,6 @@ class PatientWidget(QWidget):
             if (not self._first_series_displayed) or self._any_viewer_empty():
                 if self._display_first_series_in_all_viewers(series_number):
                     self._mark_first_series_displayed()
-                    # پنهان کردن overlay بعد از نمایش اولین سری
-                    self._hide_loading_message()
-                    self._hide_init_overlay()
-                    print(f"✅ [AFTER_LOAD] Loading overlay hidden after first series display")
                     return
             
             # Mark as ready in thumbnail manager
@@ -5314,10 +4844,6 @@ class PatientWidget(QWidget):
             series_number = str(self.lst_thumbnails_data[0]['metadata']['series']['series_number'])
             if self._display_first_series_in_all_viewers(series_number):
                 self._mark_first_series_displayed()
-                # پنهان کردن overlay بعد از نمایش اولین سری
-                self._hide_loading_message()
-                self._hide_init_overlay()
-                print(f"✅ [FIRST_VIEWER] Loading overlay hidden after first series display")
                 return True
             return False
         except Exception:
@@ -5351,12 +4877,7 @@ class PatientWidget(QWidget):
             if vtk_image_data is None or metadata is None:
                 return False
 
-            # ✅ FLICKER FIX: Only proceed if we have viewers created
-            if not self.lst_nodes_viewer:
-                print(f"⚠️ No viewers available to display series {series_number}, will display when viewers are created")
-                return False
-
-            if self.selected_widget is None:
+            if self.lst_nodes_viewer and self.selected_widget is None:
                 first_node = self.lst_nodes_viewer[0]
                 self.selected_widget = getattr(first_node, 'vtk_widget', None)
                 self.slider = getattr(first_node, 'slider', None)
@@ -5376,18 +4897,9 @@ class PatientWidget(QWidget):
                 )
 
             self._mark_first_series_displayed()
-            
-            # ✅ پنهان کردن loading overlay بعد از نمایش اولین سری
-            self._hide_loading_message()
-            self._hide_init_overlay()
-            print(f"✅ [DISPLAY] Loading overlay hidden after displaying first series {series_number}")
-            
             return True
         except Exception as e:
             self.logger.debug(f"Error displaying first series: {e}")
-            # پنهان کردن overlay حتی در صورت خطا
-            self._hide_loading_message()
-            self._hide_init_overlay()
             return False
 
     def _get_default_layout_from_config(self) -> tuple[int, int]:
@@ -5543,73 +5055,66 @@ class PatientWidget(QWidget):
             required_count = rows * cols
             current_count = len(self.lst_nodes_viewer)
             current_data_count = len(self.lst_thumbnails_data)
-
+            
             print(f"🔧 [LAYOUT] Applying {rows}x{cols} layout (need {required_count} viewers, have {current_count})")
-
+            
             # ✅ FLICKER FIX: Disable updates during batch viewer creation
             self.setUpdatesEnabled(False)
             if hasattr(self, 'center_widget') and self.center_widget:
                 self.center_widget.setUpdatesEnabled(False)
-
+            
             # 1. Cleanup existing viewers but preserve data
             self.cleanup_all_viewers()
             self.lst_nodes_viewer.clear()
             print("   ✅ cleanup_all_viewers completed")  # No processEvents here
-
+            
             # 2. Create viewers with existing data assignments
             displayed_series_indices = set()
-
+            
             for i in range(required_count):
                 # Determine which series to show in this viewer
                 series_to_show = 0  # Default to first
-
+                
                 # If we have enough data, distribute them
                 if current_data_count > 0:
                     # Cycle through available series if more viewers than series
                     series_to_show = i % current_data_count
-                else:
-                    # ✅ FLICKER FIX: Only create viewers if we have data, otherwise defer creation
-                    # This prevents empty viewers from being created before data is ready
-                    print(f"   ⚠️ No data available yet, creating viewer {i} as placeholder")
-                    
+                
                 try:
                     node = self.new_viewer(series_to_show)
-
+                    
                     # If we have data, display it immediately
                     if current_data_count > 0 and i < current_data_count:
                         data = self.lst_thumbnails_data[i]
                         if hasattr(node.vtk_widget, 'switch_series'):
                             # Only create, don't switch yet - will do in batch below
                             pass
-
+                            
                 except Exception as e:
                     print(f"   ⚠️ Error creating viewer {i}: {e}")
                     # Create fallback viewer
                     node = self._create_fallback_viewer()
                     self.lst_nodes_viewer.append(node)
-
+            
             # 3. Arrange in grid
             for i, node in enumerate(self.lst_nodes_viewer):
                 if i >= required_count:
                     break
                 row, col = divmod(i, cols)
                 self.vtk_layout.addWidget(node.widget, row, col)
-
-            # 4. Distribute series to viewers (only if we have data)
-            if current_data_count > 0:
-                self._distribute_series_to_viewers()
-            else:
-                print(f"   ⚠️ No data to distribute, viewers will be populated when data arrives")
-
+            
+            # 4. Distribute series to viewers
+            self._distribute_series_to_viewers()
+            
             # 5. Set first viewer as active
             if self.lst_nodes_viewer:
                 self.change_container_border(0)
-
+                
             if modify_by_user:
                 QTimer.singleShot(500, self._hide_loading_msg)
-
+                
             print(f"✅ [LAYOUT] Applied {rows}x{cols} layout with {len(self.lst_nodes_viewer)} viewers")
-
+            
         except Exception as e:
             print(f"❌ [LAYOUT] Error: {e}")
             import traceback
@@ -5748,65 +5253,6 @@ class PatientWidget(QWidget):
                 # we don't have series at enough. so we create from last series until row * col
                 self.new_viewer(last_viewer_index)
 
-    def clear_all_viewers_data(self):
-        """Clear all data from viewers to prevent showing previous patient data"""
-        try:
-            print("🧹 Clearing all viewer data to prevent showing previous patient data...")
-            
-            # Clear all viewers' image data
-            if hasattr(self, 'lst_nodes_viewer'):
-                for node in list(self.lst_nodes_viewer):
-                    try:
-                        node: NodeViewer
-                        vtk_widget: VTKWidget = node.vtk_widget
-                        if hasattr(vtk_widget, 'cleanup_image_viewer'):
-                            try:
-                                vtk_widget.cleanup_image_viewer()
-                                
-                                # Also clear the VTK render window to ensure no previous data shows
-                                if hasattr(vtk_widget, 'render_window'):
-                                    renderer = vtk_widget.render_window.GetRenderers().GetFirstRenderer()
-                                    if renderer:
-                                        renderer.RemoveAllViewProps()
-                                        renderer.SetBackground(0.0, 0.0, 0.0)  # Black background
-                                        vtk_widget.render_window.Render()
-                                        
-                            except Exception as e:
-                                print(f"Error cleaning up viewer: {e}")
-                    except Exception as e:
-                        self.logger.debug(f"Error clearing viewer node: {e}")
-
-            # Clear all data structures
-            if hasattr(self, 'lst_thumbnails_data'):
-                self.lst_thumbnails_data.clear()
-            if hasattr(self, 'lst_series_name'):
-                self.lst_series_name.clear()
-            if hasattr(self, 'metadata_fixed'):
-                self.metadata_fixed.clear()
-                
-            # Clear caches
-            if hasattr(self, '_series_cache'):
-                self._series_cache.clear()
-            if hasattr(self, '_series_name_cache'):
-                self._series_name_cache.clear()
-            if hasattr(self, '_viewer_batch_queue'):
-                self._viewer_batch_queue.clear()
-            if hasattr(self, '_cached_series_names'):
-                self._cached_series_names.clear()
-            if hasattr(self, '_metadata_pool'):
-                self._metadata_pool.clear()
-                
-            # Reset state variables
-            self.selected_widget = None
-            self.slider = None
-            self.logo_patient = None
-            self._first_series_displayed = False
-            
-            print("✅ All viewer data cleared successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Error in clear_all_viewers_data: {e}")
-
     def cleanup_all_viewers(self):
         """تمیز‌کردن بهینهٔ viewers و resources"""
         try:
@@ -5814,7 +5260,7 @@ class PatientWidget(QWidget):
             if hasattr(self, '_active_load_task') and self._active_load_task:
                 if not self._active_load_task.done():
                     self._active_load_task.cancel()
-
+            
             # Cancel all background tasks
             if hasattr(self, '_background_tasks'):
                 for task in list(self._background_tasks):
@@ -5824,7 +5270,7 @@ class PatientWidget(QWidget):
                     except:
                         pass
                 self._background_tasks.clear()
-
+            
             # Clean up VTK layout
             if hasattr(self, 'vtk_layout'):
                 try:
@@ -5853,7 +5299,7 @@ class PatientWidget(QWidget):
                                 pass
                     except Exception as e:
                         self.logger.debug(f"Error cleaning up viewer node: {e}")
-
+            
             # Clear caches to free memory - اما با احتیاط
             if hasattr(self, '_series_cache'):
                 self._series_cache.clear()
@@ -5867,10 +5313,10 @@ class PatientWidget(QWidget):
                 self._metadata_pool.clear()
             if hasattr(self, '_layout_pool'):
                 self._layout_pool.clear()
-
+            
             self._render_batch_pending = False
             self._ui_components_lazy_loaded = False
-
+            
             print("✅ cleanup_all_viewers completed")
         except Exception as e:
             self.logger.error(f"Error in cleanup_all_viewers: {e}")
@@ -5920,14 +5366,6 @@ class PatientWidget(QWidget):
                 except:
                     pass
 
-            # Cancel any pipeline tasks
-            if hasattr(self, '_pipeline_task') and self._pipeline_task:
-                try:
-                    if not self._pipeline_task.done():
-                        self._pipeline_task.cancel()
-                except:
-                    pass
-
             # Clean up viewers
             self.cleanup_all_viewers()
 
@@ -5968,7 +5406,7 @@ class PatientWidget(QWidget):
                 self.lst_series_name.clear()
 
             # Stop timers efficiently
-            for timer_attr in ['_priority_display_timer']:
+            for timer_attr in ['_priority_display_timer', '_pipeline_task']:
                 if hasattr(self, timer_attr):
                     timer = getattr(self, timer_attr)
                     if timer:
@@ -6015,17 +5453,9 @@ class PatientWidget(QWidget):
                 except:
                     pass
 
-            # Cancel any pipeline tasks
-            if hasattr(self, '_pipeline_task') and self._pipeline_task:
-                try:
-                    if not self._pipeline_task.done():
-                        self._pipeline_task.cancel()
-                except:
-                    pass
-
             # Clean up resources
             self.exit_patient_widget()
-
+            
             # Explicitly clean up event loop references to prevent abandoned handles
             if hasattr(self, '_event_loop') and self._event_loop:
                 try:
@@ -6034,7 +5464,7 @@ class PatientWidget(QWidget):
                         self._event_loop.stop()
                 except:
                     pass
-
+            
             # Accept the close event
             event.accept()
         except Exception as e:
@@ -6253,7 +5683,7 @@ class PatientWidget(QWidget):
         Add a binary mask to either a 2D or 3D viewer automatically.
 
         - 2D viewer  → RGBA overlay using vtkImageActor
-        - 3D viewer  �� Surface rendering using FlyingEdges / Marching Cubes
+        - 3D viewer  → Surface rendering using FlyingEdges / Marching Cubes
 
         Viewer type is inferred from its capabilities.
         """
@@ -6527,7 +5957,7 @@ class PatientWidget(QWidget):
             )
             _thumb_time = time.time() - _thumb_start
 
-            self.check_logo_patient(file_path)
+            await self.check_logo_patient(file_path)
 
             thumb_index = self.add_thumbnail_to_thumbnail_layout(
                 thumb_index=thumb_index, file_path_thumbnail=file_path,
@@ -6557,20 +5987,12 @@ class PatientWidget(QWidget):
             # Check if widget is still valid before continuing
             try:
                 if not self.isVisible():
-                    # Hide loading overlays if widget is no longer visible
-                    self._hide_loading_message()
-                    self._hide_init_overlay()
                     return
             except RuntimeError:
-                # Hide loading overlays if widget was deleted
-                self._hide_loading_message()
-                self._hide_init_overlay()
                 return  # Widget was deleted
             await asyncio.sleep(0)
 
         self._hide_loading_spinner()
-        self._hide_loading_message()
-        self._hide_init_overlay()
 
         _total_time = time.time() - _pipeline_start
         print(f"\n{'=' * 60}")

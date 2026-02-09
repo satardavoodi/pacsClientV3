@@ -108,7 +108,6 @@ def create_text_actor(world_position, text: str):
 class ImageViewer2D(vtk.vtkResliceImageViewer):
     def __init__(self, render_window, interactor, height, vtk_image_data: vtk.vtkImageData, metadata,
                  metadata_fixed, apply_default_filter, vtk_widget):
-        print(f"               [IV2D-1] ImageViewer2D.__init__ started")
         super().__init__()
         self._overlays = []
         self.viewer_type = None
@@ -146,7 +145,6 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         self.vtk_image_data = vtk_image_data
 
-        print(f"               [IV2D-2] Preprocessing VTK image data")
         self.vtk_image_data = self._preprocess_vtk_image_data(self.vtk_image_data)
         self._apply_direction_matrix_from_field_data()
         # vtk_image_data = flip_image_y(vtk_image_data)
@@ -164,15 +162,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self._render_timer = None
 
         # self.run_test()
-        print(f"               [IV2D-3] Setting render window and interactor")
         self.SetRenderWindow(self.image_render_window)
         self.SetupInteractor(self.image_interactor)
         self.renderer.SetBackground(0, 0, 0)
 
         # Fast initialization without renders
-        print(f"               [IV2D-4] Creating ImageReslice")
         self.image_reslice = ImageReslice(self.vtk_image_data, self.metadata)
-        print(f"               [IV2D-5] Setting input data")
         self.SetInputData(self.image_reslice.GetOutput())  # without color map (window level)
         self.vtk_image_data = self.image_reslice.GetOutput()
         
@@ -199,17 +194,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             f"spacing=({_post_s[0]:.3f},{_post_s[1]:.3f},{_post_s[2]:.3f}) dims={_post_d} has_dir_field={_has_fd_post}"
         )
 
-        print(f"               [IV2D-6] Setting color mapper")
         self.set_color_mapper()
         # self.apply_window_level()
 
-        print(f"               [IV2D-7] Configuring image actor and updates")
         # Smooth zooming on the image actor
         self.GetImageActor().InterpolateOn()
         self.renderer.UseFXAAOn()
 
         self.UpdateDisplayExtent()
-        print(f"               [IV2D-8] Calling first Render()")
         self.Render()
 
         # self.last_index_slice_saved = self.get_count_of_slices() // 2
@@ -224,15 +216,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # self._baseline_scale = self.renderer.GetActiveCamera().GetParallelScale()
         # print('self.base_zoom_scale:', self.base_zoom_scale)
 
-        print(f"               [IV2D-9] Computing zoom to fit")
         self.base_zoom_scale = self.zoom_to_fit()
 
-        print(f"               [IV2D-10] Loading corner actors")
         self.load_top_right_actors()
         self.load_top_left_actors()
         self.load_bottom_left_actors()
         self.load_bottom_right_actors()
-        print(f"               [IV2D-11] ImageViewer2D.__init__ completed")
 
     def __get_factor_upsample(self, vtk_image_data: vtk.vtkImageData, viewer_height):
         # self.renderer.ResetCamera()
@@ -708,8 +697,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             current_slice = self.GetSlice()
             # meta = self.metadata['meta_changed'][current_slice]
 
-            study_date = self.metadata_fixed.get('study_date', 'Unknown')
-            series_time = self.metadata_fixed.get('study_time', 'Unknown')
+            study_date = self.metadata_fixed['study_date']
+            series_time = self.metadata_fixed['study_time']
 
             series_name = self.metadata['series']['series_name']
             series_desc = self.metadata['series']['series_description']
@@ -748,8 +737,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         # changeable
         current_slice = self.GetSlice()
-        study_date = self.metadata_fixed.get('study_date', 'Unknown')
-        series_time = self.metadata_fixed.get('study_time', 'Unknown')
+        study_date = self.metadata_fixed['study_date']
+        series_time = self.metadata_fixed['study_time']
 
         series_name = self.metadata['series']['series_name']
         series_desc = self.metadata['series']['series_description']
@@ -809,10 +798,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         gap = 0.02
 
         # fixed
-        p_name = self.metadata_fixed.get('patient_name', 'Unknown')
-        p_id = self.metadata_fixed.get('patient_id', 'Unknown')
-        p_sex = self.metadata_fixed.get('patient_sex', 'Unknown')
-        p_age = self.metadata_fixed.get('patient_age', 'Unknown')
+        p_name = self.metadata_fixed['patient_name']
+        p_id = self.metadata_fixed['patient_id']
+        p_sex = self.metadata_fixed['patient_sex']
+        p_age = self.metadata_fixed['patient_age']
 
         self.dicom_tags_actors.p_name_actor = make_corner_actor(p_name, left, top, 'left', 'top')
         self.dicom_tags_actors.p_id_actor = make_corner_actor(f'PID:{p_id}', left, (top - 1 * gap), 'left', 'top')
@@ -919,7 +908,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         right = 0.96
         gap = 0.02
 
-        hospital_name = self.metadata_fixed.get('institution_name', 'Unknown')
+        hospital_name = self.metadata_fixed['institution_name']
 
         self.dicom_tags_actors.im_hospital_name_actor = make_corner_actor(hospital_name, right, bottom, 'right',
                                                                           'bottom')
@@ -997,9 +986,6 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         _color_mapper_start = time.time()
         self.set_color_mapper()
-        # ✅ FIX: Force update of the mapper after setting color mapper
-        # This ensures the image actor properly displays the image data
-        self.GetImageActor().GetMapper().Update()
         _color_mapper_time = time.time() - _color_mapper_start
         print(f"         • set_color_mapper: {_color_mapper_time:.3f}s")
         
@@ -1016,28 +1002,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         print(f"         • UpdateDisplayExtent: {_update_display_time:.3f}s")
         
         _render_call_start = time.time()
-        # ✅ FIX: Ensure render window and renderer are properly connected
-        renderer = self.GetRenderer()
-        render_window = self.GetRenderWindow()
-        
-        if renderer is None:
-            print(f"         ⚠️  WARNING: Renderer is None!")
-        if render_window is None:
-            print(f"         ⚠️  WARNING: RenderWindow is None!")
-        
-        # Force render window render (more reliable than self.Render())
-        if render_window is not None:
-            try:
-                render_window.Render()
-            except Exception as e:
-                print(f"         ⚠️  ERROR during Render(): {e}")
-        else:
-            # Fallback to self.Render()
-            try:
-                self.Render()
-            except Exception as e:
-                print(f"         ⚠️  ERROR during self.Render(): {e}")
-        
+        self.Render()
         _render_call_time = time.time() - _render_call_start
         print(f"         • Render: {_render_call_time:.3f}s")
         
@@ -1531,7 +1496,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     def _hide_curved_mpr_overlay(self):
         """Hide the Curved MPR mode overlay text"""
         if self.curved_mpr_overlay_actor is not None:
-            self.renderer.RemoveViewProp(self.curved_mpr_overlay_actor)
+            self.renderer.RemoveActor2D(self.curved_mpr_overlay_actor)
             self.curved_mpr_overlay_actor = None
             self.Render()
             print("[CURVED MPR] Overlay text hidden")
@@ -1799,7 +1764,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 actors2d.InitTraversal()
                 actor2d = actors2d.GetNextItem()
                 while actor2d:
-                    self.renderer.RemoveViewProp(actor2d)
+                    self.renderer.RemoveActor2D(actor2d)
                     actor2d = actors2d.GetNextItem()
 
             # آزاد کردن mapperها و color_mapper
