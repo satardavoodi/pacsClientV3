@@ -103,15 +103,16 @@ class DownloadStateStore:
     def update(self, study_uid: str, **changes) -> None:
         """
         Update download state and auto-notify observers
-        
+
         Implements:
         - R8: Valid state transitions enforced via StateMachine
         - R10: Auto-recovery from invalid states
-        
+        - R9: Prevent updates to terminal states
+
         Args:
             study_uid: Study UID to update
             **changes: Fields to update (status=..., progress_percent=..., etc.)
-            
+
         Raises:
             StateError: If study_uid not found
         """
@@ -119,26 +120,49 @@ class DownloadStateStore:
             state = self._states.get(study_uid)
             if not state:
                 raise StateError(f"Unknown study_uid: {study_uid}")
-            
+
+            # R9: Check if current state is terminal before allowing any changes
+            if DownloadStateMachine.is_terminal_state(state.status):
+                # Only allow updates to non-status fields for terminal states
+                non_status_changes = {k: v for k, v in changes.items() if k != 'status'}
+                
+                if len(changes) > len(non_status_changes):
+                    # Status change attempted on terminal state - log and ignore
+                    new_status = changes.get('status')
+                    logger.warning(
+                        f"⚠️ Cannot change terminal state {state.status.value} - ignoring status change to {new_status.value if new_status else 'None'}"
+                    )
+                    
+                    # Remove status from changes to prevent invalid update
+                    if 'status' in changes:
+                        del changes['status']
+                
+                if not non_status_changes:
+                    # No valid changes to make, return early
+                    return
+                
+                # Only proceed with non-status changes
+                changes = non_status_changes
+
             # Record old values for history
             old_values = {}
             for key in changes.keys():
                 if hasattr(state, key):
                     old_values[key] = getattr(state, key)
-            
+
             # R8: Validate state transition if status is being changed
             if 'status' in changes:
                 new_status = changes['status']
                 old_status = state.status
-                
+
                 if not DownloadStateMachine.is_valid_transition(old_status, new_status):
                     # R10: Attempt auto-recovery
                     logger.warning(
                         f"⚠️ Invalid transition: {old_status.value} → {new_status.value} "
                         f"for {study_uid[:40]}..."
                     )
-                    
-                    # Check if we can auto-recover
+
+                    # Check if we can auto-recovery
                     if DownloadStateMachine.is_terminal_state(old_status):
                         logger.warning(
                             f"⚠️ Cannot change terminal state {old_status.value} - ignoring"
@@ -152,17 +176,17 @@ class DownloadStateStore:
                         logger.warning(
                             f"⚠️ Allowing unusual transition for recovery"
                         )
-            
+
             # Apply changes
             for key, value in changes.items():
                 if hasattr(state, key):
                     setattr(state, key, value)
                 else:
                     logger.warning(f"⚠️ Unknown state field: {key}")
-            
+
             # Update last_update timestamp
             state.last_update = datetime.now()
-            
+
             # Record in history
             change = StateChange(
                 study_uid=study_uid,
@@ -171,12 +195,12 @@ class DownloadStateStore:
                 old_values=old_values
             )
             self._history.append(change)
-            
+
             # Notify observers for each field change
             for field_name, new_value in changes.items():
                 old_value = old_values.get(field_name)
                 self._notify_observers('updated', study_uid, state, field_name, old_value, new_value)
-            
+
             logger.debug(f"Updated state for {study_uid[:40]}...: {changes}")
     
     def get(self, study_uid: str) -> Optional[DownloadState]:
