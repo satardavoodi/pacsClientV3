@@ -3703,28 +3703,38 @@ class StandardMPRViewer(QWidget):
     
     def _update_oblique_reslicing(self):
         """
-        5-Point Oblique MPR (v1.06).
-        
-        Uses the center point + 4 crosshair endpoints to define oblique slice
-        planes for perpendicular views via camera repositioning.
-        
-        When crosshairs rotate in a source view, the two crosshair lines trace
-        the intersection of two perpendicular oblique planes with the source
-        view's slice plane.  For each crosshair line:
-        
+        9-Point Oblique MPR (v1.07) — dual-tier sampling.
+
+        Uses the center point + 8 sample points (two tiers per crosshair
+        line) to define oblique slice planes for perpendicular views via
+        camera repositioning.
+
+        When crosshairs rotate in a source view, the two crosshair lines
+        trace the intersection of two perpendicular oblique planes with
+        the source view's slice plane.  For each crosshair line:
+
             oblique_plane_normal = line_direction × source_slice_normal
-        
-        The target view camera is repositioned along this normal so that
-        vtkImageResliceMapper (SliceFacesCameraOn + SliceAtFocalPointOn)
-        automatically slices through the correct oblique plane at the
-        crosshair center position.  No volume reslicing is needed.
-        
-        5 Points per source view:
-          C      = crosshair intersection  (self.current_position)
-          h_p1   = horizontal line endpoint 1
-          h_p2   = horizontal line endpoint 2
-          v_p1   = vertical line endpoint 1
-          v_p2   = vertical line endpoint 2
+
+        Two tiers of sample points per line provide robustness:
+          • Outer tier (quarter) — at 25% of shortest axis span from
+            center.  Larger baseline → higher directional precision.
+          • Inner tier  (sixth)  — at 1/6 of shortest axis span from
+            center.  Closer to centre → always inside the FOV even
+            when the crosshair centre is near the volume edge.
+
+        If either outer-tier point falls outside the image FOV, the
+        inner-tier pair is used as a fallback for direction computation.
+
+        Each reconstruction plane therefore has **5 sample points**:
+          C        = crosshair intersection  (self.current_position)
+          outer_p1 = outer tier, positive direction
+          outer_p2 = outer tier, negative direction
+          inner_p1 = inner tier, positive direction
+          inner_p2 = inner tier, negative direction
+
+        9 points per source view  (C + 4 per line × 2 lines).
+        5 points per target reconstruction plane (C + 4 on the
+        relevant line).
         """
         import math
         import numpy as np
@@ -3750,21 +3760,71 @@ class StandardMPRViewer(QWidget):
             if abs(angle) < 0.01:
                 continue
 
-            # ── 5 points ──────────────────────────────────────────────
-            h_p1, h_p2, v_p1, v_p2 = self._calculate_crosshair_endpoints(
-                source_view, bounds
-            )
+            # ── 9 points: dual-tier sampling (quarter + sixth) ──────
+            # Two tiers of sample points per crosshair line:
+            #   Outer tier (quarter): 25 % of shortest axis span
+            #   Inner tier (sixth):   1/6 of shortest axis span
+            # Outer pair has larger baseline → better precision.
+            # Inner pair is a robust fallback when the crosshair
+            # centre is near the volume edge and outer points
+            # leave the FOV.
+            # → 5 points per reconstruction plane:
+            #     C + 2 outer + 2 inner.
 
-            # Unit direction along each crosshair line
-            h_dir = np.array(h_p1, dtype=float) - np.array(h_p2, dtype=float)
-            h_len = np.linalg.norm(h_dir)
-            if h_len > 1e-8:
-                h_dir /= h_len
+            cx, cy, cz = self.current_position
+            angle = self.crosshair_angles.get(source_view, 0.0)
 
-            v_dir = np.array(v_p1, dtype=float) - np.array(v_p2, dtype=float)
-            v_len = np.linalg.norm(v_dir)
-            if v_len > 1e-8:
-                v_dir /= v_len
+            axis_spans = [
+                bounds[1] - bounds[0],
+                bounds[3] - bounds[2],
+                bounds[5] - bounds[4],
+            ]
+            shortest = min(s for s in axis_spans if s > 0)
+            dist_quarter = shortest * 0.25       # outer tier
+            dist_sixth   = shortest / 6.0        # inner tier (fallback)
+
+            cos_a  = math.cos(angle)
+            sin_a  = math.sin(angle)
+            cos_a2 = math.cos(angle + math.pi / 2)
+            sin_a2 = math.sin(angle + math.pi / 2)
+
+            if source_view == 'axial':
+                # Horizontal line — outer (quarter)
+                h_q1 = [cx + dist_quarter * cos_a,  cy + dist_quarter * sin_a,  cz]
+                h_q2 = [cx - dist_quarter * cos_a,  cy - dist_quarter * sin_a,  cz]
+                # Horizontal line — inner (sixth)
+                h_s1 = [cx + dist_sixth * cos_a,    cy + dist_sixth * sin_a,    cz]
+                h_s2 = [cx - dist_sixth * cos_a,    cy - dist_sixth * sin_a,    cz]
+                # Vertical line — outer (quarter)
+                v_q1 = [cx + dist_quarter * cos_a2, cy + dist_quarter * sin_a2, cz]
+                v_q2 = [cx - dist_quarter * cos_a2, cy - dist_quarter * sin_a2, cz]
+                # Vertical line — inner (sixth)
+                v_s1 = [cx + dist_sixth * cos_a2,   cy + dist_sixth * sin_a2,   cz]
+                v_s2 = [cx - dist_sixth * cos_a2,   cy - dist_sixth * sin_a2,   cz]
+
+            elif source_view == 'sagittal':
+                h_q1 = [cx, cy + dist_quarter * cos_a,  cz + dist_quarter * sin_a]
+                h_q2 = [cx, cy - dist_quarter * cos_a,  cz - dist_quarter * sin_a]
+                h_s1 = [cx, cy + dist_sixth * cos_a,    cz + dist_sixth * sin_a]
+                h_s2 = [cx, cy - dist_sixth * cos_a,    cz - dist_sixth * sin_a]
+                v_q1 = [cx, cy + dist_quarter * cos_a2, cz + dist_quarter * sin_a2]
+                v_q2 = [cx, cy - dist_quarter * cos_a2, cz - dist_quarter * sin_a2]
+                v_s1 = [cx, cy + dist_sixth * cos_a2,   cz + dist_sixth * sin_a2]
+                v_s2 = [cx, cy - dist_sixth * cos_a2,   cz - dist_sixth * sin_a2]
+
+            elif source_view == 'coronal':
+                h_q1 = [cx + dist_quarter * cos_a,  cy, cz + dist_quarter * sin_a]
+                h_q2 = [cx - dist_quarter * cos_a,  cy, cz - dist_quarter * sin_a]
+                h_s1 = [cx + dist_sixth * cos_a,    cy, cz + dist_sixth * sin_a]
+                h_s2 = [cx - dist_sixth * cos_a,    cy, cz - dist_sixth * sin_a]
+                v_q1 = [cx + dist_quarter * cos_a2, cy, cz + dist_quarter * sin_a2]
+                v_q2 = [cx - dist_quarter * cos_a2, cy, cz - dist_quarter * sin_a2]
+                v_s1 = [cx + dist_sixth * cos_a2,   cy, cz + dist_sixth * sin_a2]
+                v_s2 = [cx - dist_sixth * cos_a2,   cy, cz - dist_sixth * sin_a2]
+
+            # Best direction from outermost valid pair (fallback to inner)
+            h_dir = self._best_line_direction(h_q1, h_q2, h_s1, h_s2, bounds)
+            v_dir = self._best_line_direction(v_q1, v_q2, v_s1, v_s2, bounds)
 
             # ── source slice normal & target mapping ──────────────────
             # In each source view the horizontal crosshair line is the
@@ -3802,13 +3862,41 @@ class StandardMPRViewer(QWidget):
                 self._set_oblique_camera(target_view, oblique_normal)
 
         logger.debug(
-            "5-pt oblique: ax=%.1f° sag=%.1f° cor=%.1f°",
+            "9-pt oblique: ax=%.1f° sag=%.1f° cor=%.1f°",
             math.degrees(self.crosshair_angles.get('axial', 0.0)),
             math.degrees(self.crosshair_angles.get('sagittal', 0.0)),
             math.degrees(self.crosshair_angles.get('coronal', 0.0)),
         )
 
-    # ─── helpers for 5-point oblique ────────────────────────────────────
+    # ─── helpers for 9-point oblique ────────────────────────────────────
+
+    def _best_line_direction(self, p1_outer, p2_outer, p1_inner, p2_inner, bounds):
+        """
+        Return the normalised direction vector for a crosshair line.
+
+        Prefers the outer (quarter) pair — larger baseline gives higher
+        directional precision.  Falls back to the inner (sixth) pair if
+        either outer point is outside the image FOV.
+        """
+        import numpy as np
+
+        if (self._point_inside_bounds(p1_outer, bounds)
+                and self._point_inside_bounds(p2_outer, bounds)):
+            d = np.array(p1_outer, dtype=float) - np.array(p2_outer, dtype=float)
+        else:
+            d = np.array(p1_inner, dtype=float) - np.array(p2_inner, dtype=float)
+
+        mag = np.linalg.norm(d)
+        if mag > 1e-8:
+            d /= mag
+        return d
+
+    @staticmethod
+    def _point_inside_bounds(pt, bounds):
+        """True if *pt* lies within the 6-component VTK image bounds."""
+        return (bounds[0] <= pt[0] <= bounds[1]
+                and bounds[2] <= pt[1] <= bounds[3]
+                and bounds[4] <= pt[2] <= bounds[5])
 
     def _set_oblique_camera(self, target_view, oblique_normal):
         """
@@ -3867,6 +3955,48 @@ class StandardMPRViewer(QWidget):
 
         self._oblique_cameras_active = True
         self._request_render(target_view)
+
+    def _clamp_to_fov(self, center, endpoint, bounds):
+        """
+        If *endpoint* lies outside the image FOV (bounds), compute a
+        replacement point on the same ray center→endpoint that sits at
+        the volume boundary edge.  Direction is preserved; only the
+        distance from center shrinks.
+
+        Parameters
+        ----------
+        center   : list[float]  –  crosshair intersection (assumed inside)
+        endpoint : list[float]  –  peripheral crosshair endpoint
+        bounds   : tuple        –  (xmin, xmax, ymin, ymax, zmin, zmax)
+
+        Returns
+        -------
+        list[float]  –  original endpoint if inside, or clamped point
+        """
+        import numpy as np
+
+        c = np.array(center, dtype=float)
+        p = np.array(endpoint, dtype=float)
+        d = p - c
+
+        # Find the largest t ∈ (0, 1] such that  c + t·d  is inside bounds.
+        # For each axis the ray exits at t = (boundary − c_i) / d_i.
+        t_max = 1.0
+        for i in range(3):
+            if abs(d[i]) < 1e-10:
+                continue
+            if d[i] > 0:
+                t_i = (bounds[2 * i + 1] - c[i]) / d[i]
+            else:
+                t_i = (bounds[2 * i] - c[i]) / d[i]
+            if t_i < t_max:
+                t_max = max(t_i, 0.0)
+
+        if t_max < 1.0 - 1e-8:
+            # Pull 2 % inward so the point sits safely inside bounds
+            t_safe = t_max * 0.98
+            return (c + t_safe * d).tolist()
+        return list(endpoint)
 
     def _reset_all_to_orthogonal(self):
         """
