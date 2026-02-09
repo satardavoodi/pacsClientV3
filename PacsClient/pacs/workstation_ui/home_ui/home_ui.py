@@ -670,8 +670,33 @@ class HomePanelWidget(QWidget):
 
             self._opening_studies.add(study_uid)
 
-            # Create custom loading feed overlay
-            self._create_loading_feed("Initializing patient data...")
+            # ✅ Show blocking loading dialog to prevent UI interaction
+            loading_dialog = QProgressDialog("Loading patient data...", None, 0, 0, self)
+            loading_dialog.setWindowTitle("Please Wait")
+            loading_dialog.setWindowModality(Qt.WindowModal)
+            loading_dialog.setMinimumDuration(0)
+            loading_dialog.setCancelButton(None)
+            loading_dialog.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+            loading_dialog.setStyleSheet("""
+                QProgressDialog {
+                    background-color: #1a1a2e;
+                    color: white;
+                    font-size: 13px;
+                }
+                QProgressBar {
+                    border: 2px solid #4a5568;
+                    border-radius: 5px;
+                    background-color: #2d3748;
+                    text-align: center;
+                    color: white;
+                }
+                QProgressBar::chunk {
+                    background-color: #3b82f6;
+                    border-radius: 3px;
+                }
+            """)
+            loading_dialog.show()
+            QApplication.processEvents()
 
             # Track loading state: keep until first series is displayed
             self._double_click_loading_active = True
@@ -692,14 +717,16 @@ class HomePanelWidget(QWidget):
                 # Create output directory path
                 output_dir = str(SOURCE_PATH / study_uid)
                 
-            # Update loading feed
-            self._update_loading_feed("Checking study data...")
+            # Update loading dialog
+            loading_dialog.setLabelText("Checking study data...")
+            QApplication.processEvents()
 
             # --- STEP 3: Open tab but DON'T show yet ---
             caller = CallerTypes.IMPORT if is_local else CallerTypes.SERVER
 
-            # Update loading feed
-            self._update_loading_feed("Opening patient tab...")
+            # Update loading dialog
+            loading_dialog.setLabelText("Opening patient tab...")
+            QApplication.processEvents()
 
             widget = self.add_new_tab_widget(
                 patient_id=patient_id,
@@ -715,17 +742,22 @@ class HomePanelWidget(QWidget):
                 self._double_click_first_series_loaded = True
                 self._maybe_hide_double_click_loading()
                 
-                # Hide loading feed
-                self._hide_loading_feed()
+                # Close loading dialog
+                loading_dialog.close()
                 return
 
-            # ✅ CRITICAL: Wait for thumbnails to render before showing the tab
-            # This prevents showing empty viewers before thumbnails are ready
-            print("⏳ [TAB] Waiting for thumbnails to render before showing tab...")
-            await asyncio.sleep(0.5)  # 500ms delay to allow thumbnail rendering
-            print("✅ [TAB] Thumbnail wait complete, activating tab...")
+            # ✅ CRITICAL: Wait for UI to be ready before showing the tab
+            # This prevents showing empty viewers before they are prepared
+            loading_dialog.setLabelText("Preparing viewer...")
+            QApplication.processEvents()
+            print("⏳ [TAB] Waiting for UI to be ready...")
+            await asyncio.sleep(0.3)  # 300ms delay to allow viewer setup
+            print("✅ [TAB] UI ready, activating tab...")
             
-            # NOW activate the tab after thumbnails have had time to render
+            # Close loading dialog before showing tab
+            loading_dialog.close()
+            
+            # NOW activate the tab after UI is ready
             if self.custom_tab_manager:
                 try:
                     tab_index = self.custom_tab_manager.find_tab_by_study_uid(study_uid)
@@ -753,9 +785,6 @@ class HomePanelWidget(QWidget):
                     widget.loading_complete.connect(self._on_first_series_loaded)
             except Exception:
                 pass
-
-            # Update loading feed
-            self._update_loading_feed("Setting up download manager...")
 
             # --- STEP 3.5: IMMEDIATE PRIORITY DOWNLOAD ---
             # When a patient is double-clicked:
@@ -814,9 +843,6 @@ class HomePanelWidget(QWidget):
                             except Exception:
                                 pass
 
-                        # Update loading feed
-                        self._update_loading_feed("Starting download...")
-
                         # ⚡ IMMEDIATE START - pauses all, starts this one right away
                         download_manager.start_priority_download_immediately(
                             study_data=dm_study_data,
@@ -827,9 +853,6 @@ class HomePanelWidget(QWidget):
                         # Connect Download Manager progress signals to this widget
                         # This allows real-time progress tracking for the opened patient
                         self._connect_download_manager_to_widget(download_manager, widget, study_uid)
-                        
-                        # Update loading feed after download starts
-                        self._update_loading_feed("Download started...")
                 except Exception as e:
                     print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
 
@@ -909,28 +932,12 @@ class HomePanelWidget(QWidget):
             # Start background tasks in a separate thread (no async conflicts)
             threading.Thread(target=_background_setup_thread, daemon=True).start()
 
-            # Update loading feed
-            self._update_loading_feed("Loading series information...")
-
             # Hide loading after tab is shown
             self.hide_loading()
             self._hide_double_click_loading()
 
             # Auto-hide patient widget overlay after 3 seconds as fallback
             QTimer.singleShot(3000, lambda: widget._hide_init_overlay() if hasattr(widget, '_hide_init_overlay') else None)
-
-            # Add a small delay to ensure everything is properly loaded
-            # This gives time for the UI to update and for the patient widget to initialize
-            await asyncio.sleep(0.5)  # 500ms delay to ensure proper loading
-            
-            # Update loading feed
-            self._update_loading_feed("Finishing up...")
-            
-            # Close loading feed after a short delay to show completion
-            await asyncio.sleep(0.2)  # 200ms delay before hiding
-            
-            # Hide loading feed
-            self._hide_loading_feed()
 
             # Everything is handled in the fast path above
         except Exception as e:
