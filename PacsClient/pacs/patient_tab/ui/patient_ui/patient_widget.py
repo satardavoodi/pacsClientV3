@@ -613,6 +613,12 @@ class PatientWidget(QWidget):
                     key_thumbnail=str(series_number),
                     series_info=series_info
                 )
+                # ✅ Mark downloaded series with green border; keep others pending
+                if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                    if self._is_series_downloaded(series_number):
+                        self.thumbnail_manager.set_series_ready(series_number)
+                    else:
+                        self.thumbnail_manager.set_series_pending(series_number)
         except Exception as e:
             self.logger.debug(f"Error rendering cached thumbnails: {e}")
 
@@ -637,6 +643,12 @@ class PatientWidget(QWidget):
                     key_thumbnail=series_number,
                     series_info=series
                 )
+                # ✅ Default pending style unless series data is already downloaded
+                if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                    if self._is_series_downloaded(series_number):
+                        self.thumbnail_manager.set_series_ready(series_number)
+                    else:
+                        self.thumbnail_manager.set_series_pending(series_number)
         except Exception as e:
             self.logger.debug(f"Error rendering server thumbnails: {e}")
 
@@ -656,6 +668,26 @@ class PatientWidget(QWidget):
                 return str(series_number)
 
         return series_key
+
+    def _is_series_downloaded(self, series_identifier: str) -> bool:
+        """Return True if series folder exists with DICOM files."""
+        try:
+            series_key = self.resolve_series_key(str(series_identifier))
+            if not series_key.isdigit():
+                return False
+
+            study_path = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
+            base_path = Path(study_path) if study_path else Path(self.import_folder_path or "")
+            if not base_path or not base_path.exists():
+                return False
+
+            series_path = base_path / str(series_key)
+            if not series_path.exists() or not series_path.is_dir():
+                return False
+
+            return bool(list(series_path.glob("*.dcm")) or list(series_path.glob("*.DCM")))
+        except Exception:
+            return False
 
     def show_exist_thumbnails(self):
         # Prevent double rendering
@@ -701,6 +733,12 @@ class PatientWidget(QWidget):
                                                                      file_path_thumbnail=thumbnail_file,
                                                                      key_thumbnail=series_number,
                                                                      series_info=series_info_from_server)
+                # ✅ Existing thumbnails mean series likely downloaded
+                if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                    if self._is_series_downloaded(series_number):
+                        self.thumbnail_manager.set_series_ready(series_number)
+                    else:
+                        self.thumbnail_manager.set_series_pending(series_number)
         return thumb_index
 
     async def enable_progressive_display(self):

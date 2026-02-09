@@ -1625,6 +1625,7 @@ class HomePanelWidget(QWidget):
                         'patient_id': first_series.get('patient_id', 'Unknown'),
                         'patient_name': first_series.get('patient_name', 'Unknown'),
                         'study_date': first_series.get('study_date', ''),
+                        'study_time': first_series.get('study_time', ''),  # Add study_time
                         'study_description': first_series.get('study_description', ''),
                         'series': series_data['series'],
                         'count_of_series': series_count
@@ -4749,6 +4750,7 @@ Study UID: {study_uid}
                 'patient_id': response.patient_id,
                 'patient_name': response.patient_name,
                 'study_date': response.study_date,
+                'study_time': getattr(response, 'study_time', ''),  # Try to get study_time if available
                 'study_description': response.study_description,
                 'count_of_series': getattr(response, 'count_of_series', len(response.series_thumbnails)),
                 'thumbnails_available': getattr(response, 'thumbnails_available', True),
@@ -4872,6 +4874,7 @@ Study UID: {study_uid}
                     study_uid=study_uid,
                     patient_fk=patient_pk,
                     study_date=study_info.get('study_date', ''),
+                    study_time=study_info.get('study_time', ''),  # Add study_time
                     study_description=study_info.get('study_description', ''),
                     institution_name=static_data.get('institution_name', None),
                     modality=static_data.get('modality', None),
@@ -4890,6 +4893,8 @@ Study UID: {study_uid}
                 update_study_missing_fields(
                     study_pk,
                     study_path=str(study_path),
+                    study_date=study_info.get('study_date', ''),
+                    study_time=study_info.get('study_time', ''),
                     number_of_series=study_info.get('count_of_series', len(study_info.get('series', []))),
                     number_of_instances=sum(s.get('image_count', 0) for s in study_info.get('series', []))
                 )
