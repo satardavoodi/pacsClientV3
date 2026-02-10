@@ -183,6 +183,44 @@ def get_study_by_study_uid(study_uid: str):
     return
 
 
+def get_patient_by_study_uid(study_uid: str):
+    """Get patient information by study UID"""
+    conn = get_connection_database()
+    cur = conn.cursor()
+    
+    # Join studies and patients tables
+    # ✅ CRITICAL FIX: Use correct column names from schema (birth_date, sex, age)
+    cur.execute("""
+        SELECT 
+            p.patient_pk,
+            p.patient_id,
+            p.patient_name,
+            p.birth_date,
+            p.sex,
+            p.age,
+            p.patient_weight
+        FROM patients p
+        JOIN studies s ON p.patient_pk = s.patient_fk
+        WHERE s.study_uid = ?
+    """, (study_uid,))
+    
+    row = cur.fetchone()
+    
+    if row:
+        keys = [
+            'patient_pk',
+            'patient_id',
+            'patient_name',
+            'birth_date',
+            'patient_sex',
+            'patient_age',
+            'patient_weight'
+        ]
+        return dict(zip(keys, row))
+    
+    return None
+
+
 def get_series_by_study_pk(study_pk: int) -> list[dict]:
     conn = get_connection_database()
     cur = conn.cursor()

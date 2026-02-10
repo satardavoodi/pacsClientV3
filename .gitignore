@@ -25,6 +25,11 @@ backups/
 data/
 Segments/
 dicom.*
+*.dcm
+*.DCM
+*.ipdcom
+*.IPdcom
+Education/**/CacheFile/
 sample_files
 PacsClient/segments/
 *.spec

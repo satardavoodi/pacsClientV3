@@ -666,12 +666,64 @@ class HomePanelWidget(QWidget):
             existing_widget = self._find_widget_by_study_uid(study_uid)
             if existing_widget:
                 try:
-                    idx = self.tab_widget.indexOf(existing_widget)
-                    if idx != -1:
-                        self.tab_widget.setCurrentIndex(idx)
-                except Exception:
-                    pass
-                return
+                    # Check if the widget is still valid (not deleted by Qt)
+                    try:
+                        import sip
+                        if sip.isdeleted(existing_widget):
+                            print(f"⚠️ Existing widget for study {study_uid} has been deleted, creating new one")
+                            # Remove from cache since widget is deleted
+                            if study_uid in self.dict_tabs_widget:
+                                del self.dict_tabs_widget[study_uid]
+                        else:
+                            idx = self.tab_widget.indexOf(existing_widget)
+                            if idx != -1:
+                                # Activate the tab using custom tab manager if available
+                                if self.custom_tab_manager:
+                                    self.custom_tab_manager.set_tab_active(idx)
+                                else:
+                                    self.tab_widget.setCurrentIndex(idx)
+                                
+                                # Ensure the loading is hidden
+                                self.hide_loading()
+                                self._double_click_first_series_loaded = True
+                                self._maybe_hide_double_click_loading()
+                                
+                                # Update the patient table status
+                                self.patient_table_widget.update_visited_status(study_uid, status='opened')
+                                
+                                return
+                    except ImportError:
+                        # If sip is not available, try a different approach
+                        # Check if widget still has parent or is visible
+                        try:
+                            # Try to access a basic property to see if object is valid
+                            _ = existing_widget.isVisible()
+                            idx = self.tab_widget.indexOf(existing_widget)
+                            if idx != -1:
+                                # Activate the tab using custom tab manager if available
+                                if self.custom_tab_manager:
+                                    self.custom_tab_manager.set_tab_active(idx)
+                                else:
+                                    self.tab_widget.setCurrentIndex(idx)
+                                
+                                # Ensure the loading is hidden
+                                self.hide_loading()
+                                self._double_click_first_series_loaded = True
+                                self._maybe_hide_double_click_loading()
+                                
+                                # Update the patient table status
+                                self.patient_table_widget.update_visited_status(study_uid, status='opened')
+                                
+                                return
+                        except RuntimeError:
+                            # Widget has been deleted, continue with normal flow
+                            print(f"⚠️ Existing widget for study {study_uid} has been deleted, creating new one")
+                            # Remove from cache since widget is deleted
+                            if study_uid in self.dict_tabs_widget:
+                                del self.dict_tabs_widget[study_uid]
+                except Exception as e:
+                    print(f"⚠️ Error switching to existing tab: {e}")
+                    # Continue with normal flow if tab switching fails
 
             self._opening_studies.add(study_uid)
 
@@ -861,41 +913,22 @@ class HomePanelWidget(QWidget):
                 except Exception as e:
                     print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
 
+            # --- STEP 3.6: UI-bound async tasks must run on main thread/event loop ---
+            try:
+                asyncio.create_task(self._load_and_display_series_info_async(patient_id, patient_name, study_uid))
+                patient_info = {
+                    "PatientID": patient_id,
+                    "PatientName": patient_name,
+                    "StudyInstanceUID": study_uid,
+                }
+                asyncio.create_task(self.show_patient_studies(patient_info))
+            except Exception as e:
+                print(f"⚠️ [UI] Error scheduling UI tasks: {e}")
+
             # --- STEP 4: Background tasks (non-blocking via threading to avoid async conflicts) ---
             def _background_setup_thread():
                 """Run background setup in a separate thread to avoid async conflicts"""
                 try:
-                    # Load series info for right panel (non-blocking)
-                    try:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        try:
-                            loop.run_until_complete(
-                                self._load_and_display_series_info(patient_id, patient_name, study_uid)
-                            )
-                        finally:
-                            loop.close()
-                    except Exception as e:
-                        print(f"⚠️ [THREAD] Error loading series info: {e}")
-
-                    # Load thumbnails for right panel (non-blocking)
-                    try:
-                        patient_info = {
-                            "PatientID": patient_id,
-                            "PatientName": patient_name,
-                            "StudyInstanceUID": study_uid,
-                        }
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        try:
-                            loop.run_until_complete(
-                                self.show_patient_studies(patient_info)
-                            )
-                        finally:
-                            loop.close()
-                    except Exception as e:
-                        print(f"⚠️ [THREAD] Error showing patient studies: {e}")
-
                     # Download attachments in background (non-blocking)
                     if not is_local:
                         try:
@@ -971,6 +1004,14 @@ class HomePanelWidget(QWidget):
     def _on_first_series_loaded(self):
         self._double_click_first_series_loaded = True
         self._maybe_hide_double_click_loading()
+
+    def remove_from_opening_studies(self, study_uid):
+        """Remove a study from the opening studies set"""
+        try:
+            self._opening_studies.discard(study_uid)
+            print(f"Removed study {study_uid} from opening studies set")
+        except Exception as e:
+            print(f"Error removing study from opening studies: {e}")
 
     def _maybe_hide_double_click_loading(self):
         if not getattr(self, '_double_click_loading_active', False):
@@ -4189,50 +4230,122 @@ Study UID: {study_uid}
             # Prevent duplicate PatientWidget creation for the same study
             if study_uid:
                 existing_widget = None
+                
+                # First check: Look in custom tab manager
                 if self.custom_tab_manager:
                     existing_index = self.custom_tab_manager.find_tab_by_study_uid(study_uid)
                     if existing_index is not None and existing_index != -1:
                         try:
-                            self.custom_tab_manager.set_tab_active(existing_index)
-                        except Exception:
-                            pass
-                        tab_info = self.custom_tab_manager.get_patient_tab_info(existing_index)
-                        if tab_info:
-                            existing_widget = tab_info.get('widget')
-                        if existing_widget:
-                            try:
-                                existing_widget.update_tab_manager(
-                                    patient_name=patient_name,
-                                    patient_id=patient_id
-                                )
-                            except Exception:
-                                pass
-                            return existing_widget
+                            # Verify the widget is still valid before activating
+                            widget_at_index = self.tab_widget.widget(existing_index)
+                            if widget_at_index and hasattr(widget_at_index, 'study_uid'):
+                                self.custom_tab_manager.set_tab_active(existing_index)
+                                tab_info = self.custom_tab_manager.get_patient_tab_info(existing_index)
+                                if tab_info:
+                                    existing_widget = tab_info.get('widget')
+                                if existing_widget:
+                                    try:
+                                        # Verify widget is not deleted
+                                        _ = existing_widget.isVisible()
+                                        existing_widget.update_tab_manager(
+                                            patient_name=patient_name,
+                                            patient_id=patient_id
+                                        )
+                                        return existing_widget
+                                    except RuntimeError:
+                                        # Widget was deleted, continue to create new
+                                        print(f"⚠️ Cached widget for study {study_uid} was deleted, creating new one")
+                                        existing_widget = None
+                        except Exception as e:
+                            print(f"⚠️ Error with custom tab manager: {e}")
 
-                # Fallback to local cache if custom tab manager is not available
-                if study_uid in self.dict_tabs_widget:
-                    existing_widget = self.dict_tabs_widget.get(study_uid)
-                    if existing_widget:
+                # Second check: Look in local cache dict_tabs_widget
+                if existing_widget is None and study_uid in self.dict_tabs_widget:
+                    cached_widget = self.dict_tabs_widget.get(study_uid)
+                    if cached_widget:
                         try:
-                            idx = self.tab_widget.indexOf(existing_widget)
-                            if idx != -1:
-                                self.tab_widget.setCurrentIndex(idx)
-                        except Exception:
-                            pass
-                        return existing_widget
+                            # Check if the widget is still valid (not deleted by Qt)
+                            try:
+                                import sip
+                                if sip.isdeleted(cached_widget):
+                                    print(f"⚠️ Cached widget for study {study_uid} has been deleted, removing from cache")
+                                    del self.dict_tabs_widget[study_uid]
+                                else:
+                                    # Verify it's actually in the tab widget
+                                    idx = self.tab_widget.indexOf(cached_widget)
+                                    if idx != -1:
+                                        # Activate the tab using custom tab manager if available
+                                        if self.custom_tab_manager:
+                                            self.custom_tab_manager.set_tab_active(idx)
+                                        else:
+                                            self.tab_widget.setCurrentIndex(idx)
+                                        return cached_widget
+                                    else:
+                                        # Widget exists but not in tab widget, remove from cache
+                                        print(f"⚠️ Widget for study {study_uid} not found in tabs, removing from cache")
+                                        del self.dict_tabs_widget[study_uid]
+                            except ImportError:
+                                # If sip is not available, try a different approach
+                                try:
+                                    # Try to access a basic property to see if object is valid
+                                    _ = cached_widget.isVisible()
+                                    idx = self.tab_widget.indexOf(cached_widget)
+                                    if idx != -1:
+                                        # Activate the tab using custom tab manager if available
+                                        if self.custom_tab_manager:
+                                            self.custom_tab_manager.set_tab_active(idx)
+                                        else:
+                                            self.tab_widget.setCurrentIndex(idx)
+                                        return cached_widget
+                                    else:
+                                        del self.dict_tabs_widget[study_uid]
+                                except RuntimeError:
+                                    # Widget has been deleted, remove from cache
+                                    print(f"⚠️ Cached widget for study {study_uid} has been deleted, removing from cache")
+                                    del self.dict_tabs_widget[study_uid]
+                        except Exception as e:
+                            print(f"⚠️ Error checking cached widget: {e}")
+                            # Remove from cache to be safe
+                            if study_uid in self.dict_tabs_widget:
+                                del self.dict_tabs_widget[study_uid]
 
-                # Last-resort: scan tabs for matching study_uid
-                if self.tab_widget:
+                # Third check: Scan all tabs for matching study_uid (fallback)
+                if existing_widget is None and self.tab_widget:
                     for i in range(self.tab_widget.count()):
                         w = self.tab_widget.widget(i)
                         if hasattr(w, 'study_uid') and w.study_uid == study_uid:
-                            self.dict_tabs_widget[study_uid] = w
+                            # Check if the widget is still valid
                             try:
-                                self.tab_widget.setCurrentIndex(i)
-                            except Exception:
-                                pass
-                            return w
+                                import sip
+                                if not sip.isdeleted(w):
+                                    self.dict_tabs_widget[study_uid] = w
+                                    try:
+                                        # Activate the tab using custom tab manager if available
+                                        if self.custom_tab_manager:
+                                            self.custom_tab_manager.set_tab_active(i)
+                                        else:
+                                            self.tab_widget.setCurrentIndex(i)
+                                    except Exception as e:
+                                        print(f"⚠️ Error switching to existing tab: {e}")
+                                    return w
+                            except ImportError:
+                                # If sip is not available, try a different approach
+                                try:
+                                    _ = w.isVisible()
+                                    self.dict_tabs_widget[study_uid] = w
+                                    try:
+                                        if self.custom_tab_manager:
+                                            self.custom_tab_manager.set_tab_active(i)
+                                        else:
+                                            self.tab_widget.setCurrentIndex(i)
+                                    except Exception as e:
+                                        print(f"⚠️ Error switching to existing tab: {e}")
+                                    return w
+                                except RuntimeError:
+                                    # Widget has been deleted, skip it
+                                    continue
 
+            # Create new widget if not found or existing was invalid
             if not enable_progressive_mode and study_uid and caller == CallerTypes.SERVER:
                 from PacsClient.pacs.patient_tab.utils import check_study_complete
                 is_complete = check_study_complete(study_uid)
@@ -4248,7 +4361,7 @@ Study UID: {study_uid}
             )
             widget.set_method_open_ai_module_tab(self.add_new_tab_widget)
             
-            # 🔥 اتصال سیگنال priority_download_requested از thumbnail_manager (only once)
+            # Connect signals
             if hasattr(widget, 'thumbnail_manager') and widget.thumbnail_manager is not None:
                 widget.thumbnail_manager.set_current_study_uid(study_uid)
 
@@ -4262,34 +4375,30 @@ Study UID: {study_uid}
             if study_uid:
                 download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
                 if download_manager:
-                    # Zeta uses 'download_completed' signal (not 'studyDownloadCompleted')
                     download_manager.download_completed.connect(
                         lambda completed_study_uid: widget.refresh_after_download(completed_study_uid)
                         if completed_study_uid == study_uid else None
                     )
 
+            # Add to tab widget
             if self.custom_tab_manager:
-                # ✅ DON'T activate tab yet - let caller activate after thumbnails are ready
                 tab_index = self.custom_tab_manager.add_patient_tab(
                     patient_name=patient_name,
                     patient_id=patient_id or "N/A",
                     thumbnail_path=None,
                     widget=widget,
                     study_uid=study_uid,
-                    activate=False  # Don't activate until thumbnails are ready
+                    activate=False
                 )
                 widget.set_tab_manager(self.custom_tab_manager)
                 widget.update_tab_manager(patient_name=patient_name, patient_id=patient_id)
             else:
-                # ✅ Add tab but DON'T set as current yet
                 tab_index = self.tab_widget.addTab(widget, patient_name)
-                # DON'T call setCurrentWidget here - let caller do it after thumbnails ready
 
             if study_uid:
                 self.dict_tabs_widget[study_uid] = widget
 
-            # Notify priority manager that patient tab was opened
-            # This promotes all series of this patient to HIGH priority
+            # Notify priority manager
             if study_uid and PRIORITY_MANAGER_AVAILABLE:
                 try:
                     print(f"🏠 [HOME-UI] Calling on_patient_tab_opened for {patient_name}")
@@ -4425,6 +4534,8 @@ Study UID: {study_uid}
             
             # Get series list
             series_list = self._get_series_list_for_study(widget, study_uid)
+            study_info = None  # Initialize to None
+            
             if not series_list:
                 study_info = self.get_series_info_from_server(study_uid)
                 if study_info:
@@ -4463,12 +4574,22 @@ Study UID: {study_uid}
                     dm_patient_name = widget.patient_name
                 
                 # 2. If still missing, try study_info from server (already fetched above)
-                if (not dm_patient_id or not dm_patient_name) and 'study_info' in dir():
+                if (not dm_patient_id or not dm_patient_name) and study_info:
                     dm_patient_id = dm_patient_id or study_info.get('patient_id', '')
                     dm_patient_name = dm_patient_name or study_info.get('patient_name', '')
                     dm_study_date = study_info.get('study_date', '')
                     dm_modality = study_info.get('modality', '')
                     dm_description = study_info.get('study_description', '')
+                
+                # 2.5. If study_info wasn't fetched yet (series_list came from widget cache), fetch it now
+                if (not dm_patient_id or not dm_patient_name) and not study_info:
+                    study_info = self.get_series_info_from_server(study_uid)
+                    if study_info:
+                        dm_patient_id = dm_patient_id or study_info.get('patient_id', '')
+                        dm_patient_name = dm_patient_name or study_info.get('patient_name', '')
+                        dm_study_date = study_info.get('study_date', '')
+                        dm_modality = study_info.get('modality', '')
+                        dm_description = study_info.get('study_description', '')
                 
                 # 3. If still missing, try database lookup
                 if not dm_patient_id or not dm_patient_name:

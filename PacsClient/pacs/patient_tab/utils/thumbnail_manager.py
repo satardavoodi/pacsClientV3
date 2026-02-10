@@ -509,7 +509,7 @@ class StatusLabel(QLabel):
 class DraggableButton(QPushButton):
     dragStarted = Signal(object)
 
-    def __init__(self, pixmap, parent=None, thumbnail_index=0):
+    def __init__(self, pixmap, parent=None, thumbnail_index=0, series_number=None):
         super().__init__(parent)
         self.setIcon(pixmap)
         self.setIconSize(pixmap.size())
@@ -523,6 +523,8 @@ class DraggableButton(QPushButton):
         """)
         self._drag_start_pos = None
         self.thumbnail_index = thumbnail_index
+        # ✅ CRITICAL FIX: Store series_number for drag-and-drop to avoid index confusion
+        self.series_number = series_number if series_number is not None else thumbnail_index
 
     def mousePressEvent(self, event: QMouseEvent):  # create signal 'click'
         if event.button() == Qt.LeftButton:
@@ -541,7 +543,8 @@ class DraggableButton(QPushButton):
 
                     drag = QDrag(self)
                     mime_data = QMimeData()
-                    mime_data.setText(str(self.thumbnail_index))  # send mime_data's value to interactor
+                    # ✅ CRITICAL FIX: Send series_number instead of index to avoid confusion
+                    mime_data.setText(str(self.series_number))  # send series number for correct lookup
                     drag.setMimeData(mime_data)
                     drag.setPixmap(self.icon().pixmap(self.iconSize()))
                     drag.exec(Qt.MoveAction)
@@ -966,7 +969,11 @@ class ThumbnailManager(QObject):
             
             # Create draggable button for the image
             scaled_pixmap = pixmap.scaled(160, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            image_button = DraggableButton(scaled_pixmap, thumbnail_index=thumbnail_index)
+            # ✅ Extract series_number from series_info for proper drag-and-drop
+            series_number = None
+            if series_info and 'series' in series_info:
+                series_number = series_info['series'].get('series_number')
+            image_button = DraggableButton(scaled_pixmap, thumbnail_index=thumbnail_index, series_number=series_number)
             image_button.setFixedSize(160, 120)
             image_button.setIconSize(QSize(160, 120))
             image_button.setCheckable(True)

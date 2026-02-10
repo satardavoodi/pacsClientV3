@@ -369,7 +369,8 @@ class TextActor2DObject(ToolObjectAbstract):
         self.Off()
         text_actor = self.get_widget()
         try:
-            image_viewer.renderer.RemoveActor2D(text_actor)
+            # Use RemoveViewProp instead of deprecated RemoveActor2D (VTK 9.5.0+)
+            image_viewer.renderer.RemoveViewProp(text_actor)
         except Exception:
             pass
         try:

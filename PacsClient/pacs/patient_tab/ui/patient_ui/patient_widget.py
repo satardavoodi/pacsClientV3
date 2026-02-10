@@ -114,11 +114,6 @@ class PatientWidget(QWidget):
 
         # Initialize the viewer controller
         self.viewer_controller = ViewerController(self)
-        
-        # Properties that delegate to viewer controller
-        self.lst_nodes_viewer = self.viewer_controller.lst_nodes_viewer
-        self.selected_widget = self.viewer_controller.selected_widget
-        self.slider = self.viewer_controller.slider
 
         # Zeta Sync manager (2D viewer sync point)
         self.sync_manager = SyncManager()
@@ -264,6 +259,22 @@ class PatientWidget(QWidget):
         # Defer VTK initialization to let the window paint first
         # Use longer delay to ensure window is fully painted
         QTimer.singleShot(50, self._start_pipeline)
+
+    # ========== DYNAMIC PROPERTIES FROM VIEWER_CONTROLLER ==========
+    @property
+    def lst_nodes_viewer(self):
+        """Dynamic access to viewer controller's node list"""
+        return self.viewer_controller.lst_nodes_viewer
+    
+    @property
+    def selected_widget(self):
+        """Dynamic access to viewer controller's selected widget"""
+        return self.viewer_controller.selected_widget
+    
+    @property
+    def slider(self):
+        """Dynamic access to viewer controller's slider"""
+        return self.viewer_controller.slider
 
 
     def add_priority_series_for_display(self, series_number, vtk_image_data, metadata):
@@ -528,77 +539,9 @@ class PatientWidget(QWidget):
                 if series_uid:
                     self._series_uid_to_number[series_uid] = series_number
 
-        # ✅ NEW: Show placeholder thumbnails immediately from server info (before download completes)
-        # This allows users to see the series list before download is done
-        # Ensure UI updates happen on the main thread
-        try:
-            from PySide6.QtCore import QThread, QMetaObject
-            if QThread.currentThread() != self.thread():
-                QMetaObject.invokeMethod(self, "_render_placeholder_thumbnails_from_server", Qt.QueuedConnection)
-            else:
-                self._render_placeholder_thumbnails_from_server()
-        except Exception:
-            QTimer.singleShot(0, self._render_placeholder_thumbnails_from_server)
-
-        # Load real thumbnails (cache → server) in parallel
+        # Load real thumbnails (cache → server)
         QTimer.singleShot(0, self._load_server_thumbnails)
 
-    def _render_placeholder_thumbnails_from_server(self):
-        """
-        ✅ Show placeholder thumbnails immediately from server info
-        This allows users to see the list of available series BEFORE downloads complete
-        Placeholders will be replaced with real thumbnails as they become available
-        """
-        try:
-            if not self._server_series_info:
-                print("📝 [PlaceholderThumbs] No server series info available")
-                return
-
-            print(f"📝 [PlaceholderThumbs] Creating placeholder thumbnails for {len(self._server_series_info)} series")
-
-            # Sort by series number for consistent ordering
-            sorted_series = sorted(self._server_series_info.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999999)
-
-            thumb_index = 0
-            for series_number, series_info in sorted_series:
-                try:
-                    series_name = series_info.get('series_name', f"Series {series_number}")
-                    modality = series_info.get('modality', 'Unknown')
-                    instance_count = series_info.get('number_of_instances', 0)
-
-                    print(f"📝 [PlaceholderThumbs] Adding placeholder for series {series_number}: {series_name} ({modality}, {instance_count} instances)")
-
-                    # Create a placeholder thumbnail without a file path
-                    # This will show series info immediately while actual image loads
-                    thumb_index = self.add_thumbnail_to_thumbnail_layout(
-                        thumb_index=thumb_index,
-                        file_path_thumbnail=None,  # None = use placeholder image
-                        key_thumbnail=str(series_number),
-                        series_info=series_info
-                    )
-
-                    # Update thumbnail manager to show pending state
-                    if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-                        self.thumbnail_manager.set_series_pending(str(series_number))
-
-                except Exception as e:
-                    print(f"⚠️ [PlaceholderThumbs] Error adding placeholder for series {series_number}: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-            print(f"✅ [PlaceholderThumbs] Created {thumb_index} placeholder thumbnails")
-
-            # Update thumbnail count label
-            if hasattr(self, 'thumb_count_label'):
-                try:
-                    self.thumb_count_label.setText(f"{thumb_index} series")
-                except RuntimeError:
-                    pass
-
-        except Exception as e:
-            print(f"⚠️ [PlaceholderThumbs] Error creating placeholders: {e}")
-            import traceback
-            traceback.print_exc()
     def _load_server_thumbnails(self):
         """Kick off background thumbnail loading (cache → server)."""
         try:
@@ -3391,17 +3334,7 @@ class PatientWidget(QWidget):
             series_info = metadata['series']
         elif series_info:
             # Use series_info from server (passed as parameter)
-            if file_path_thumbnail is None:
-                series_name = str(
-                    series_info.get('series_number')
-                    or series_info.get('series_name')
-                    or key_thumbnail
-                    or 'Unknown'
-                )
-            else:
-                series_name = str(
-                    series_info.get('series_number', cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail)))
-                )
+            series_name = str(series_info.get('series_number', cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))))
         else:
             series_name = cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))
             # Cache the name for future use
@@ -3618,8 +3551,13 @@ class PatientWidget(QWidget):
             import traceback
             traceback.print_exc()
 
-    def _change_report_status(self, study_uid: str, old_status: str, new_status: str, comment: str = ""):
-        """Change report status for a study"""
+    def _change_report_status(self, study_uid: str, old_status: str, new_status: str, comment: str = "") -> bool:
+        """
+        Change report status for a study
+        
+        Returns:
+            bool: True if update initiated (does not guarantee server success)
+        """
         print(f"\n{'='*60}")
         print(f"🔄 [PatientWidget] Starting status change: {study_uid}")
         print(f"   Old status: {old_status}")
@@ -3627,7 +3565,11 @@ class PatientWidget(QWidget):
         print(f"   Comment: {comment}")
         
         # Get service (lazy initialization)
-        report_status_service = self._get_report_status_service()
+        try:
+            report_status_service = self._get_report_status_service()
+        except Exception as e:
+            print(f"❌ [PatientWidget] Failed to get report status service: {e}")
+            return False
         
         # Run in background thread to avoid blocking UI
         def update_status_thread():
@@ -3658,6 +3600,7 @@ class PatientWidget(QWidget):
         thread = threading.Thread(target=update_status_thread, daemon=True)
         thread.start()
         print(f"✅ [PatientWidget] Background thread started")
+        return True
     
     def _handle_status_update_result(self, study_uid: str, new_status: str, response):
         """Handle status update result in main thread - with toolbar sync"""
@@ -3665,12 +3608,16 @@ class PatientWidget(QWidget):
         print(f"[PatientWidget] Handling status update result")
         print(f"   Study UID: {study_uid}")
         print(f"   New Status: {new_status}")
+        print(f"   Response: {response}")
         
         from PySide6.QtWidgets import QMessageBox
         from PySide6.QtCore import QTimer
         
         if response:
             print(f"[PatientWidget] Response valid")
+            
+            # Check if it's local-only update
+            is_local_only = response.get('local_only', False)
             
             # Get report_status from server response
             server_status = None
@@ -3689,13 +3636,35 @@ class PatientWidget(QWidget):
             self.report_status = final_status
             print(f"[PatientWidget] Updated widget report_status to: {final_status}")
             
-            # UPDATE TOOLBAR STATUS DISPLAY (3-line widget)
+            # UPDATE TOOLBAR STATUS DISPLAY
             if hasattr(self, 'toolbar_manager') and self.toolbar_manager:
                 QTimer.singleShot(100, self.toolbar_manager._update_report_status_display)
                 print(f"[PatientWidget] Triggered toolbar status update")
+            
+            # UPDATE HOME WIDGET TABLE STATUS (if available)
+            try:
+                from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
+                home_widget = get_home_widget()
+                if home_widget and hasattr(home_widget, 'patient_table_widget'):
+                    print(f"[PatientWidget] Updating home table status...")
+                    home_widget.patient_table_widget._update_report_status_in_table(study_uid, final_status)
+                    print(f"[PatientWidget] ✅ Home table status updated")
+            except Exception as e:
+                print(f"[PatientWidget] ⚠️ Could not update home table: {e}")
+            
+            # Show result message
+            from PacsClient.components.socket_report_status_service import REPORT_STATUSES
+            status_label = REPORT_STATUSES.get(final_status, final_status.replace('_', ' ').title())
+            
+            if is_local_only:
+                print(f"⚠️ [PatientWidget] Status changed locally only (server sync failed): {status_label}")
+            else:
+                print(f"✅ [PatientWidget] Status successfully changed to: {status_label}")
         else:
-            print(f"[PatientWidget] Response is None or invalid")
-            QMessageBox.warning(self, "Error", "Failed to change status.")
+            print(f"⚠️ [PatientWidget] Response is None or invalid")
+            # Don't show warning popup - it's too intrusive
+            # Just log the error
+            print(f"❌ Failed to change status - server did not confirm change")
         
         print(f"{'='*60}\n")
 
@@ -4014,7 +3983,6 @@ class PatientWidget(QWidget):
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
             vtk_widget = VTKWidget(height_viewer=height, patient_widget=self)
-
             if vtk_widget is None:
                 raise RuntimeError("VTKWidget constructor returned None")
             
@@ -4051,7 +4019,7 @@ class PatientWidget(QWidget):
     def creator_vtk_widget(self):
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
-            return VTKWidget(height_viewer=height, patient_widget=self)
+            return VTKWidget(height_viewer=height)
         except Exception as e:
             print(f"❌ Error in creator_vtk_widget: {e}")
             self.logger.error(f"Error in creator_vtk_widget: {e}", exc_info=True)
@@ -5020,9 +4988,25 @@ class PatientWidget(QWidget):
                 from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
                 home_widget = get_home_widget()
                 if home_widget is not None:
-                    home_widget._actually_hide_patient_loading_overlay()
-            except Exception:
-                pass
+                    home_widget._hide_double_click_loading()
+
+                    # Remove this widget from home widget's cache if it exists
+                    if hasattr(home_widget, 'dict_tabs_widget') and self.study_uid:
+                        if self.study_uid in home_widget.dict_tabs_widget:
+                            del home_widget.dict_tabs_widget[self.study_uid]
+                            print(f"✅ Removed study {self.study_uid} from home widget cache")
+                        else:
+                            print(f"⚠️ Study {self.study_uid} not found in home widget cache")
+                    else:
+                        print(f"⚠️ Home widget doesn't have dict_tabs_widget or study_uid is None")
+                        
+                    # Remove this study from the opening studies set to allow reopening
+                    if hasattr(home_widget, 'remove_from_opening_studies') and self.study_uid:
+                        home_widget.remove_from_opening_studies(self.study_uid)
+            except Exception as e:
+                print(f"⚠️ Error removing widget from home cache: {e}")
+                import traceback
+                traceback.print_exc()
 
             # Cancel all background tasks first to prevent new tasks from being created
             if hasattr(self, '_background_tasks'):
@@ -5066,12 +5050,14 @@ class PatientWidget(QWidget):
                     for node in list(self.viewer_controller.lst_nodes_viewer):  # Use list() to avoid modification during iteration
                         try:
                             node: NodeViewer
-                            vtk_widget: VTKWidget = node.vtk_widget
-                            if hasattr(vtk_widget, 'cleanup_image_viewer'):
-                                try:
-                                    vtk_widget.cleanup_image_viewer()
-                                except:
-                                    pass
+                            # CRITICAL: Check if vtk_widget attribute exists before accessing
+                            if hasattr(node, 'vtk_widget'):
+                                vtk_widget: VTKWidget = node.vtk_widget
+                                if hasattr(vtk_widget, 'cleanup_image_viewer'):
+                                    try:
+                                        vtk_widget.cleanup_image_viewer()
+                                    except:
+                                        pass
 
                             # Safe deletion
                             for attr in ('vtk_widget', 'widget', 'slider'):
@@ -5169,6 +5155,27 @@ class PatientWidget(QWidget):
 
             # Clean up resources
             self.exit_patient_widget()
+
+            # If we have a tab manager, notify it that this tab is being closed
+            if hasattr(self, 'tab_manager') and self.tab_manager:
+                try:
+                    # Remove this tab from the custom tab manager
+                    tab_index = self.tab_manager.find_tab_by_study_uid(self.study_uid)
+                    if tab_index is not None and tab_index != -1:
+                        print(f"Removing tab at index {tab_index} for study {self.study_uid}")
+                        # Call the tab manager's close method to properly remove the tab
+                        self.tab_manager.close_patient_tab(tab_index)
+                except Exception as e:
+                    print(f"Warning: Error interacting with tab manager: {e}")
+                    
+                    # Fallback: try to remove from tab manager's study_uid mapping directly
+                    try:
+                        if (hasattr(self.tab_manager, 'study_uid_to_tab') and 
+                            self.study_uid in self.tab_manager.study_uid_to_tab):
+                            del self.tab_manager.study_uid_to_tab[self.study_uid]
+                            print(f"Fallback: Removed study {self.study_uid} from tab manager mapping")
+                    except Exception as fallback_e:
+                        print(f"Fallback removal also failed: {fallback_e}")
 
             # Explicitly clean up event loop references to prevent abandoned handles
             if hasattr(self, '_event_loop') and self._event_loop:

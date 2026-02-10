@@ -125,22 +125,26 @@ class DownloadStateStore:
             if DownloadStateMachine.is_terminal_state(state.status):
                 # Only allow updates to non-status fields for terminal states
                 non_status_changes = {k: v for k, v in changes.items() if k != 'status'}
-                
+
                 if len(changes) > len(non_status_changes):
-                    # Status change attempted on terminal state - log and ignore
+                    # Status change attempted on terminal state
                     new_status = changes.get('status')
-                    logger.warning(
-                        f"⚠️ Cannot change terminal state {state.status.value} - ignoring status change to {new_status.value if new_status else 'None'}"
-                    )
                     
+                    # Only log warning if trying to change to a different status
+                    # (don't warn if trying to set to same terminal status)
+                    if new_status and new_status != state.status:
+                        logger.warning(
+                            f"⚠️ Cannot change terminal state {state.status.value} - ignoring status change to {new_status.value}"
+                        )
+
                     # Remove status from changes to prevent invalid update
                     if 'status' in changes:
                         del changes['status']
-                
+
                 if not non_status_changes:
                     # No valid changes to make, return early
                     return
-                
+
                 # Only proceed with non-status changes
                 changes = non_status_changes
 
@@ -164,9 +168,13 @@ class DownloadStateStore:
 
                     # Check if we can auto-recovery
                     if DownloadStateMachine.is_terminal_state(old_status):
-                        logger.warning(
-                            f"⚠️ Cannot change terminal state {old_status.value} - ignoring"
-                        )
+                        # Only log warning if trying to change to a different status
+                        # (don't warn if trying to set to same terminal status)
+                        new_status = changes.get('status')
+                        if new_status and new_status != old_status:
+                            logger.warning(
+                                f"⚠️ Cannot change terminal state {old_status.value} - ignoring"
+                            )
                         # Remove status from changes to prevent invalid update
                         del changes['status']
                         if 'status' in old_values:

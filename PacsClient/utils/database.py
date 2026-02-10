@@ -849,32 +849,9 @@ def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_
     """Insert a study row and return its PK. Updates study_path if study already exists."""
     conn = get_connection_database()
     cur = conn.cursor()
-    
-    # Check if study already exists
-    cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
-    existing = cur.fetchone()
-    
-    if existing:
-        # Update existing study (especially study_path which may be set later)
-        study_pk = existing[0]
-        cur.execute(
-            """
-            UPDATE studies
-            SET patient_fk = ?, study_date = ?, study_time = ?, study_description = ?,
-                institution_name = ?, modality = ?, body_part = ?, 
-                number_of_series = ?, number_of_instances = ?, 
-                study_path = COALESCE(?, study_path)
-            WHERE study_uid = ?
-            """,
-            (
-                patient_fk, study_date, study_time, study_description,
-                institution_name, modality, body_part,
-                number_of_series, number_of_instances,
-                study_path, study_uid
-            )
-        )
-    else:
-        # Insert new study
+
+    try:
+        # Try to insert the study
         cur.execute(
             """
             INSERT INTO studies
@@ -896,9 +873,30 @@ def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_
                 study_path,
             ),
         )
+        # If insert succeeded, get the new study_pk
+        study_pk = cur.lastrowid
+    except sqlite3.IntegrityError:
+        # If we get a unique constraint error, update the existing record
+        cur.execute(
+            """
+            UPDATE studies
+            SET patient_fk = ?, study_date = ?, study_time = ?, study_description = ?,
+                institution_name = ?, modality = ?, body_part = ?,
+                number_of_series = ?, number_of_instances = ?,
+                study_path = COALESCE(?, study_path)
+            WHERE study_uid = ?
+            """,
+            (
+                patient_fk, study_date, study_time, study_description,
+                institution_name, modality, body_part,
+                number_of_series, number_of_instances,
+                study_path, study_uid
+            )
+        )
+        # Get the study_pk of the existing record
         cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
         study_pk = cur.fetchone()[0]
-    
+
     conn.commit()
     return study_pk
 
@@ -1070,40 +1068,8 @@ def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_n
     pixel_spacing_json = serialize_value(pixel_spacing)
     direction_json = serialize_value(direction)
     
-    # Check if instance already exists
-    cur.execute("SELECT instance_pk, rows, columns FROM instances WHERE sop_uid = ?", (sop_uid,))
-    existing = cur.fetchone()
-    
-    if existing:
-        # Update existing instance (especially rows/columns which may be set later)
-        instance_pk = existing[0]
-        existing_rows = existing[1]
-        existing_columns = existing[2]
-        
-        # Only update if new values are provided (not None)
-        cur.execute(
-            """
-            UPDATE instances
-            SET series_fk = ?, instance_path = ?, instance_number = ?,
-                rows = COALESCE(?, rows), columns = COALESCE(?, columns),
-                window_width = ?, window_center = ?, is_rgb = ?, group_id = ?,
-                image_position_patient = COALESCE(?, image_position_patient),
-                image_orientation_patient = COALESCE(?, image_orientation_patient),
-                pixel_spacing = COALESCE(?, pixel_spacing),
-                direction = COALESCE(?, direction)
-            WHERE sop_uid = ?
-            """,
-            (
-                series_fk, instance_path, instance_number,
-                rows, columns,
-                window_width, window_center, int(is_rgb), int(group_id),
-                image_position_json, image_orientation_json,
-                pixel_spacing_json, direction_json,
-                sop_uid
-            )
-        )
-    else:
-        # Insert new instance
+    try:
+        # Try to insert the instance
         cur.execute(
             """
             INSERT INTO instances
@@ -1129,9 +1095,35 @@ def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_n
                 direction_json
             ),
         )
+        # If insert succeeded, get the new instance_pk
+        instance_pk = cur.lastrowid
+    except sqlite3.IntegrityError:
+        # If we get a unique constraint error, update the existing record
+        cur.execute(
+            """
+            UPDATE instances
+            SET series_fk = ?, instance_path = ?, instance_number = ?,
+                rows = COALESCE(?, rows), columns = COALESCE(?, columns),
+                window_width = ?, window_center = ?, is_rgb = ?, group_id = ?,
+                image_position_patient = COALESCE(?, image_position_patient),
+                image_orientation_patient = COALESCE(?, image_orientation_patient),
+                pixel_spacing = COALESCE(?, pixel_spacing),
+                direction = COALESCE(?, direction)
+            WHERE sop_uid = ?
+            """,
+            (
+                series_fk, instance_path, instance_number,
+                rows, columns,
+                window_width, window_center, int(is_rgb), int(group_id),
+                image_position_json, image_orientation_json,
+                pixel_spacing_json, direction_json,
+                sop_uid
+            )
+        )
+        # Get the instance_pk of the existing record
         cur.execute("SELECT instance_pk FROM instances WHERE sop_uid = ?", (sop_uid,))
         instance_pk = cur.fetchone()[0]
-    
+
     conn.commit()
     return instance_pk
 
@@ -1782,7 +1774,7 @@ def ai_save_reception_report(
 ) -> int:
     """
     Save an AI-generated report to reception reports table.
-    
+
     Args:
         patient_id: Patient identifier
         html_content: HTML formatted report content
@@ -1790,24 +1782,51 @@ def ai_save_reception_report(
         session_id: AI chat session ID (optional)
         msg_id: Message ID from ai_messages (optional)
         sender_info: Additional sender information (optional)
-        
+
     Returns:
         int: Report ID
     """
     import time
+    import logging
     
+    logger = logging.getLogger(__name__)
+    
+    logger.info("=" * 80)
+    logger.info("AI_SAVE_RECEPTION_REPORT - START")
+    logger.info("=" * 80)
+    logger.info(f"→ Patient ID: {patient_id}")
+    logger.info(f"→ Study UID: {study_uid}")
+    logger.info(f"→ Session ID: {session_id}")
+    logger.info(f"→ Message ID: {msg_id}")
+    logger.info(f"→ Sender Info: {sender_info}")
+    logger.info(f"→ Content length: {len(html_content) if html_content else 0} chars")
+    logger.info(f"→ Content preview: {(html_content[:200] + '...' if len(html_content) > 200 else html_content) if html_content else 'None'}")
+
     with get_db_connection() as conn:
         cur = conn.cursor()
         created_at = int(time.time())
+
+        logger.info(f"→ About to execute INSERT query at timestamp: {created_at}")
         
         cur.execute("""
-            INSERT INTO ai_reception_reports 
+            INSERT INTO ai_reception_reports
             (patient_id, study_uid, html_content, session_id, msg_id, status, created_at, sender_info)
             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
         """, (patient_id, study_uid, html_content, session_id, msg_id, created_at, sender_info))
-        
+
         conn.commit()
-        return cur.lastrowid
+        report_id = cur.lastrowid
+        
+        logger.info(f"→ INSERT successful, report_id: {report_id}")
+        logger.info("=" * 80)
+        logger.info("AI_SAVE_RECEPTION_REPORT - COMPLETED SUCCESSFULLY")
+        logger.info(f"  • Report ID: {report_id}")
+        logger.info(f"  • Patient ID: {patient_id}")
+        logger.info(f"  • Status: pending")
+        logger.info(f"  • Created at: {created_at}")
+        logger.info("=" * 80)
+
+        return report_id
 
 
 def ai_get_reception_reports(
@@ -1818,140 +1837,260 @@ def ai_get_reception_reports(
 ) -> list[dict]:
     """
     Get reception reports with optional filtering.
-    
+
     Args:
         patient_id: Filter by patient ID (optional)
         study_uid: Filter by study UID (optional)
         status: Filter by status ('pending', 'read', 'archived') (optional)
         limit: Maximum number of results (optional)
-        
+
     Returns:
         List of report dictionaries
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("=" * 80)
+    logger.info("AI_GET_RECEPTION_REPORTS - START")
+    logger.info("=" * 80)
+    logger.info(f"→ Patient ID: {patient_id}")
+    logger.info(f"→ Study UID: {study_uid}")
+    logger.info(f"→ Status: {status}")
+    logger.info(f"→ Limit: {limit}")
+
     with get_db_connection() as conn:
         cur = conn.cursor()
-        
+
         query = "SELECT * FROM ai_reception_reports WHERE 1=1"
         params = []
-        
+
         if patient_id:
             query += " AND patient_id = ?"
             params.append(patient_id)
-        
+            logger.info(f"  • Added patient_id filter: {patient_id}")
+
         if study_uid:
             query += " AND study_uid = ?"
             params.append(study_uid)
-        
+            logger.info(f"  • Added study_uid filter: {study_uid}")
+
         if status:
             query += " AND status = ?"
             params.append(status)
-        
+            logger.info(f"  • Added status filter: {status}")
+
         query += " ORDER BY created_at DESC"
-        
+        logger.info(f"  • Query: {query}")
+
         if limit:
             query += f" LIMIT {int(limit)}"
-        
+            logger.info(f"  • Added limit: {limit}")
+
+        logger.info(f"→ Executing query with params: {params}")
         cur.execute(query, params)
         rows = cur.fetchall()
-        
+
+        logger.info(f"→ Query returned {len(rows)} rows")
+
         if not rows:
+            logger.info("→ No reports found in database")
+            logger.info("=" * 80)
+            logger.info("AI_GET_RECEPTION_REPORTS - COMPLETED (NO RESULTS)")
+            logger.info("=" * 80)
             return []
-        
+
         # Convert to dictionaries
         columns = [desc[0] for desc in cur.description]
-        return [dict(zip(columns, row)) for row in rows]
+        result = [dict(zip(columns, row)) for row in rows]
+        
+        logger.info(f"→ Converted {len(result)} rows to dictionaries")
+        logger.info(f"→ Sample report IDs: {[r.get('id') for r in result[:3]]}")  # Show first 3 report IDs
+        logger.info("=" * 80)
+        logger.info("AI_GET_RECEPTION_REPORTS - COMPLETED SUCCESSFULLY")
+        logger.info(f"  • Total reports returned: {len(result)}")
+        logger.info(f"  • Columns: {columns}")
+        logger.info("=" * 80)
+
+        return result
 
 
 def ai_mark_reception_report_read(report_id: int):
     """
     Mark a reception report as read.
-    
+
     Args:
         report_id: Report ID to mark as read
     """
     import time
+    import logging
     
+    logger = logging.getLogger(__name__)
+    
+    logger.info("=" * 80)
+    logger.info("AI_MARK_RECEPTION_REPORT_READ - START")
+    logger.info("=" * 80)
+    logger.info(f"→ Report ID: {report_id}")
+    logger.info(f"→ Current timestamp: {int(time.time())}")
+
     with get_db_connection() as conn:
         cur = conn.cursor()
         read_at = int(time.time())
+
+        logger.info(f"→ About to execute UPDATE query for report_id: {report_id}")
         
         cur.execute("""
-            UPDATE ai_reception_reports 
+            UPDATE ai_reception_reports
             SET status = 'read', read_at = ?
             WHERE id = ?
         """, (read_at, report_id))
-        
+
         conn.commit()
+        rows_affected = cur.rowcount
+        
+        logger.info(f"→ UPDATE successful, rows affected: {rows_affected}")
+        logger.info("=" * 80)
+        logger.info("AI_MARK_RECEPTION_REPORT_READ - COMPLETED")
+        logger.info(f"  • Report ID: {report_id}")
+        logger.info(f"  • Rows affected: {rows_affected}")
+        logger.info(f"  • New status: read")
+        logger.info(f"  • Read at: {read_at}")
+        logger.info("=" * 80)
 
 
 def ai_update_reception_report_status(report_id: int, status: str):
     """
     Update reception report status.
-    
+
     Args:
         report_id: Report ID
         status: New status ('pending', 'read', 'archived')
-        
+
     Returns:
         bool: True if successful
     """
+    import time
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    logger.info("=" * 80)
+    logger.info("AI_UPDATE_RECEPTION_REPORT_STATUS - START")
+    logger.info("=" * 80)
+    logger.info(f"→ Report ID: {report_id}")
+    logger.info(f"→ New Status: {status}")
+    logger.info(f"→ Current timestamp: {int(time.time())}")
+
     with get_db_connection() as conn:
         cur = conn.cursor()
+
+        logger.info(f"→ About to execute UPDATE query for report_id: {report_id}, new status: {status}")
         
         cur.execute("""
-            UPDATE ai_reception_reports 
-            SET status = ?
+            UPDATE ai_reception_reports
+            SET status = ?, updated_at = ?
             WHERE id = ?
-        """, (status, report_id))
-        
+        """, (status, int(time.time()), report_id))
+
         conn.commit()
+        rows_affected = cur.rowcount
+        
+        logger.info(f"→ UPDATE successful, rows affected: {rows_affected}")
+        logger.info("=" * 80)
+        logger.info("AI_UPDATE_RECEPTION_REPORT_STATUS - COMPLETED")
+        logger.info(f"  • Report ID: {report_id}")
+        logger.info(f"  • New Status: {status}")
+        logger.info(f"  • Rows affected: {rows_affected}")
+        logger.info(f"  • Success: {rows_affected > 0}")
+        logger.info("=" * 80)
+        
         return cur.rowcount > 0
 
 
 def ai_delete_reception_report(report_id: int):
     """
     Delete a reception report.
-    
+
     Args:
         report_id: Report ID to delete
-        
+
     Returns:
         bool: True if successful
     """
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    logger.info("=" * 80)
+    logger.info("AI_DELETE_RECEPTION_REPORT - START")
+    logger.info("=" * 80)
+    logger.info(f"→ Report ID: {report_id}")
+
     with get_db_connection() as conn:
         cur = conn.cursor()
+
+        logger.info(f"→ About to execute DELETE query for report_id: {report_id}")
         
         cur.execute("DELETE FROM ai_reception_reports WHERE id = ?", (report_id,))
         conn.commit()
+        rows_affected = cur.rowcount
+        
+        logger.info(f"→ DELETE successful, rows affected: {rows_affected}")
+        logger.info("=" * 80)
+        logger.info("AI_DELETE_RECEPTION_REPORT - COMPLETED")
+        logger.info(f"  • Report ID: {report_id}")
+        logger.info(f"  • Rows affected: {rows_affected}")
+        logger.info(f"  • Success: {rows_affected > 0}")
+        logger.info("=" * 80)
+        
         return cur.rowcount > 0
 
 
 def ai_get_pending_reception_reports_count(patient_id: str | None = None) -> int:
     """
     Get count of pending reception reports.
-    
+
     Args:
         patient_id: Filter by patient ID (optional)
-        
+
     Returns:
         Number of pending reports
     """
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    logger.info("=" * 80)
+    logger.info("AI_GET_PENDING_RECEPTION_REPORTS_COUNT - START")
+    logger.info("=" * 80)
+    logger.info(f"→ Patient ID: {patient_id}")
+
     with get_db_connection() as conn:
         cur = conn.cursor()
-        
+
         if patient_id:
+            logger.info(f"→ About to execute COUNT query for patient_id: {patient_id}")
             cur.execute("""
-                SELECT COUNT(*) FROM ai_reception_reports 
+                SELECT COUNT(*) FROM ai_reception_reports
                 WHERE patient_id = ? AND status = 'pending'
             """, (patient_id,))
         else:
+            logger.info(f"→ About to execute COUNT query for all patients")
             cur.execute("""
-                SELECT COUNT(*) FROM ai_reception_reports 
+                SELECT COUNT(*) FROM ai_reception_reports
                 WHERE status = 'pending'
             """)
-        
+
         row = cur.fetchone()
-        return row[0] if row else 0
+        count = row[0] if row else 0
+        
+        logger.info(f"→ COUNT query returned: {count}")
+        logger.info("=" * 80)
+        logger.info("AI_GET_PENDING_RECEPTION_REPORTS_COUNT - COMPLETED")
+        logger.info(f"  • Patient ID: {patient_id}")
+        logger.info(f"  • Pending reports count: {count}")
+        logger.info("=" * 80)
+        
+        return count
 
 
 

@@ -2062,34 +2062,52 @@ class PatientTableWidget(QWidget):
     def _change_report_status(self, study_uid: str, old_status: str, new_status: str, comment: str = ""):
         """Change report status for a study"""
         print(f"\n{'='*60}")
-        print(f"🔄 [UI] Starting status change: {study_uid}")
+        print(f"🔄 [PatientTable] Starting status change: {study_uid}")
         print(f"   Old status: {old_status}")
         print(f"   New status: {new_status}")
         print(f"   Comment: {comment}")
-        logger.info(f"🔄 [UI] Starting status change: {study_uid}")
+        logger.info(f"🔄 [PatientTable] Starting status change: {study_uid}")
         logger.info(f"   Old status: {old_status}")
         logger.info(f"   New status: {new_status}")
         logger.info(f"   Comment: {comment}")
+        logger.info(f"   Service available: {self.report_status_service is not None}")
         
         # Run in background thread to avoid blocking UI
         def update_status_thread():
             try:
-                print(f"📡 [Thread] Calling update_report_status service...")
+                logger.info(f"📡 [PatientTable-Thread] Calling update_report_status service...")
+                logger.info(f"   Thread ID: {threading.current_thread().ident}")
+                
                 response = self.report_status_service.update_report_status(
                     study_uid, new_status, user_id=None, comment=comment
                 )
+                
+                logger.info(f"📥 [PatientTable-Thread] Response received: {response}")
                 self.statusUpdateResult.emit(study_uid, new_status, response)
             except Exception as e:
-                logger.error(f"Exception in update_status_thread: {e}")
+                logger.error(f"❌ [PatientTable-Thread] Exception in update_status_thread: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 self.statusUpdateResult.emit(study_uid, new_status, None)
         
         # Start background thread
+        logger.info(f"🚀 [PatientTable] Starting background thread...")
         thread = threading.Thread(target=update_status_thread, daemon=True)
         thread.start()
+        logger.info(f"✅ [PatientTable] Background thread started")
     
     def _handle_status_update_result(self, study_uid: str, new_status: str, response):
         """Handle status update result in main thread"""
+        logger.info(f"\n{'='*60}")
+        logger.info(f"📥 [PatientTable] Handling status update result")
+        logger.info(f"   Study UID: {study_uid}")
+        logger.info(f"   New Status: {new_status}")
+        logger.info(f"   Response: {response}")
+        
         if response:
+            # Check if it's local-only update
+            is_local_only = response.get('local_only', False)
+            
             # Get report_status from server response (preferred) or use new_status as fallback
             server_status = None
             if isinstance(response, dict):
@@ -2102,14 +2120,54 @@ class PatientTableWidget(QWidget):
             
             # Use server status if available, otherwise use the status we sent
             final_status = server_status if server_status else new_status
+            logger.info(f"   Final status: {final_status}")
+            logger.info(f"   Is local only: {is_local_only}")
             
             # Update UI immediately
             self._update_report_status_in_table(study_uid, final_status)
+            
+            # UPDATE OPEN PATIENT WIDGET (if exists)
+            try:
+                # Try to find open patient tab with this study
+                from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
+                home_widget = get_home_widget()
+                if home_widget and home_widget.tab_widget:
+                    logger.info(f"[PatientTable] Searching for open patient widget...")
+                    # Search through tabs for this study
+                    for i in range(home_widget.tab_widget.count()):
+                        widget = home_widget.tab_widget.widget(i)
+                        if hasattr(widget, 'study_uid') and widget.study_uid == study_uid:
+                            logger.info(f"[PatientTable] Found open patient widget at tab {i}")
+                            # Update patient widget status
+                            widget.report_status = final_status
+                            # Update toolbar display if available
+                            if hasattr(widget, 'toolbar_manager') and widget.toolbar_manager:
+                                from PySide6.QtCore import QTimer
+                                QTimer.singleShot(100, widget.toolbar_manager._update_report_status_display)
+                                logger.info(f"[PatientTable] ✅ Updated patient widget toolbar")
+                            break
+            except Exception as e:
+                logger.warning(f"[PatientTable] Could not update open patient widget: {e}")
+            
             status_label = REPORT_STATUSES.get(final_status, final_status)
-            QMessageBox.information(self, "Success", f"Report status changed to '{status_label}'.")
+            
+            if is_local_only:
+                logger.warning(f"⚠️ Status updated locally only (server sync failed)")
+                QMessageBox.warning(
+                    self, 
+                    "Local Update Only", 
+                    f"Report status changed to '{status_label}'.\n\n"
+                    f"⚠️ Warning: Changes saved locally only.\n"
+                    f"Server synchronization failed."
+                )
+            else:
+                logger.info(f"✅ Status updated successfully: {final_status}")
+                QMessageBox.information(self, "Success", f"Report status changed to '{status_label}'.")
         else:
-            logger.error(f"Failed to update report status for {study_uid}")
-            QMessageBox.warning(self, "Error", "Failed to change report status.")
+            logger.error(f"❌ Failed to update report status for {study_uid}")
+            QMessageBox.warning(self, "Error", "Failed to change report status.\nServer did not respond.")
+        
+        logger.info(f"{'='*60}\n")
     
     def _update_report_status_in_table(self, study_uid: str, new_status: str):
         """Update report status display in table"""

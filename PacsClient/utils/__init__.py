@@ -4,7 +4,7 @@ from .utils import get_server, get_all_servers, get_all_patients, search_patient
 from .database import load_token_usage, save_token_usage
 from .db_manager import get_connection_database, insert_patient, insert_study, insert_series, insert_instance, \
     find_patient_pk, find_study_pk, find_series_pk, find_instance_pk,\
-    get_patient_by_patient_pk, get_studies_by_patient_pk, get_series_by_study_pk, get_instances_by_series_pk,\
+    get_patient_by_patient_pk, get_patient_by_study_uid, get_studies_by_patient_pk, get_series_by_study_pk, get_instances_by_series_pk,\
     get_series_by_series_pk, update_series_thumbnail_path, get_series_thumbnail_path, find_study_pk_with_study_uid,\
     get_count_instances_in_study, get_study_by_study_uid, update_study_counts_by_uid,\
     update_patient_missing_fields, update_study_missing_fields, update_series_missing_fields,\

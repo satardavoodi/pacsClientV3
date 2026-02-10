@@ -85,14 +85,6 @@ class PatientListSocketClient:
             # Check if socket exists and is connected, if not try to connect
             if not self.connected or self.socket is None:
                 logger.info(f"🔌 [Socket] Not connected, attempting to connect...")
-                # Force close any existing socket first
-                if self.socket:
-                    try:
-                        self.socket.close()
-                    except:
-                        pass
-                    self.socket = None
-                
                 if not self.connect():
                     logger.error(f"❌ [Socket] Connection failed")
                     return None
@@ -126,49 +118,47 @@ class PatientListSocketClient:
                 
                 logger.info(f"✅ [Socket] Request sent, waiting for response...")
                 
-                # Receive response length (4 bytes header)
-                response_length_bytes = self.socket.recv(4)
+                # Loop to handle broadcasts and wait for actual response
+                max_broadcast_retries = 10
+                broadcast_count = 0
                 
-                # Check if we got valid header
-                if len(response_length_bytes) == 0:
-                    # Connection closed by server
-                    logger.error(f"❌ [Socket] Server closed connection (received 0 bytes)")
-                    self.connected = False
-                    self.socket = None
-                    raise Exception("Server closed connection - no response received")
+                while broadcast_count < max_broadcast_retries:
+                    # Receive response length
+                    response_length_bytes = self.socket.recv(4)
+                    if len(response_length_bytes) != 4:
+                        raise Exception("Invalid response length header")
+                    
+                    response_length = int.from_bytes(response_length_bytes, byteorder='big')
+                    logger.info(f"📥 [Socket] Response length: {response_length} bytes")
+                    
+                    # Receive response content
+                    response_data = b''
+                    while len(response_data) < response_length:
+                        chunk_size = min(8192, response_length - len(response_data))
+                        chunk = self.socket.recv(chunk_size)
+                        if not chunk:
+                            break
+                        response_data += chunk
+                    
+                    logger.info(f"📥 [Socket] Received {len(response_data)} bytes of response data")
+                    
+                    # Convert to JSON
+                    response = json.loads(response_data.decode('utf-8'))
+                    
+                    # Check if this is a broadcast message
+                    if response.get('type') == 'broadcast':
+                        broadcast_count += 1
+                        event_type = response.get('event_type', 'unknown')
+                        logger.info(f"📡 [Socket] Received broadcast message (type: {event_type}), continuing to wait for actual response... ({broadcast_count}/{max_broadcast_retries})")
+                        continue  # Skip this broadcast and wait for the actual response
+                    
+                    # This is the actual response
+                    logger.info(f"📥 [Socket] Parsed response successfully")
+                    return response
                 
-                if len(response_length_bytes) != 4:
-                    # Incomplete header received
-                    logger.error(f"❌ [Socket] Invalid response header: received {len(response_length_bytes)} bytes instead of 4")
-                    logger.error(f"❌ [Socket] Header bytes: {response_length_bytes.hex() if response_length_bytes else 'empty'}")
-                    # Reset connection on next request
-                    self.connected = False
-                    try:
-                        self.socket.close()
-                    except:
-                        pass
-                    self.socket = None
-                    raise Exception(f"Invalid response length header (got {len(response_length_bytes)} bytes, expected 4)")
-                
-                response_length = int.from_bytes(response_length_bytes, byteorder='big')
-                logger.info(f"📥 [Socket] Response length: {response_length} bytes")
-                
-                # Receive response content
-                response_data = b''
-                while len(response_data) < response_length:
-                    chunk_size = min(8192, response_length - len(response_data))
-                    chunk = self.socket.recv(chunk_size)
-                    if not chunk:
-                        break
-                    response_data += chunk
-                
-                logger.info(f"📥 [Socket] Received {len(response_data)} bytes of response data")
-                
-                # Convert to JSON
-                response = json.loads(response_data.decode('utf-8'))
-                logger.info(f"📥 [Socket] Parsed response successfully")
-                
-                return response
+                # If we exit the loop, we received too many broadcasts without a response
+                logger.error(f"❌ [Socket] Received {broadcast_count} broadcasts without getting actual response")
+                return None
                 
             except Exception as e:
                 logger.error(f"❌ [Socket] Error in send_request: {e}")
@@ -256,8 +246,14 @@ class PatientListSocketClient:
             if response and response.get("status") == "success":
                 return response
             else:
-                error_msg = response.get("error", "Unknown error") if response else "No response"
-                logger.error(f"Update report status failed: {error_msg}")
+                # Better error extraction with full response logging
+                if response:
+                    error_msg = response.get("error") or response.get("message") or response.get("msg", "Unknown error")
+                    logger.error(f"Update report status failed: {error_msg}")
+                    logger.error(f"Full response for debugging: {response}")
+                else:
+                    error_msg = "No response"
+                    logger.error(f"Update report status failed: {error_msg}")
                 return None
         except Exception as e:
             logger.error(f"Exception in update_report_status: {e}")
