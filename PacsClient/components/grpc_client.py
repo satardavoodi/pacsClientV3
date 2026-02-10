@@ -33,9 +33,9 @@ class DicomGrpcClient:
         try:
             # Configure channel options for better performance on slow networks
             options = [
-                ('grpc.keepalive_time_ms', 30000),  # Send keepalive ping every 30s
+                ('grpc.keepalive_time_ms', 60000),  # Send keepalive ping every 60s (reduced frequency)
                 ('grpc.keepalive_timeout_ms', 10000),  # Wait 10s for ping response
-                ('grpc.keepalive_permit_without_calls', True),  # Allow keepalive without active calls
+                ('grpc.keepalive_permit_without_calls', False),  # Disable keepalive without active calls
                 ('grpc.http2.min_time_between_pings_ms', 10000),  # Min 10s between pings
                 ('grpc.max_receive_message_length', 100 * 1024 * 1024),  # 100MB max message
             ]

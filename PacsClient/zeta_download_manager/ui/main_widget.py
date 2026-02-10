@@ -152,6 +152,7 @@ class DownloadManagerWidget(QWidget):
         self._reception_service.error_occurred.connect(self._on_reception_data_error)
         self._reception_cache: Dict[str, Dict] = {}
         self._pending_reception_patient_id: Optional[str] = None
+        self._pending_reception_study_uid: Optional[str] = None  # Track which study requested the data
         self._last_reception_patient_id: Optional[str] = None
 
         # Series progress tracking for signal emission
@@ -2447,8 +2448,10 @@ class DownloadManagerWidget(QWidget):
     
     def _on_selection_changed(self):
         """Handle table row selection - update details panel"""
-        logger.info("🔍 [SELECTION] Table row selection changed")
-        
+        logger.info("=" * 100)
+        logger.info("🖱️ [USER_CLICK] Table row selection changed by user")
+        logger.info("=" * 100)
+
         # ✅ WIDGET VALIDITY: Check if table still exists before accessing
         if not self.download_table or not hasattr(self, 'download_table'):
             logger.debug("⚠️ download_table not available (widget may be deleted)")
@@ -2463,19 +2466,20 @@ class DownloadManagerWidget(QWidget):
 
         selected_items = self.download_table.selectedItems()
         if not selected_items:
-            logger.info("🔍 [SELECTION] No items selected, clearing details panel")
+            logger.info("🖱️ [USER_CLICK] No items selected, clearing details panel")
             self._selected_study_uid = None
             self._clear_details_panel()
+            logger.info("✅ [USER_CLICK] Details panel cleared")
             return
 
         # Get study_uid from selected row
         row = selected_items[0].row()
-        logger.info(f"🔍 [SELECTION] Selected row: {row}")
+        logger.info(f"🖱️ [USER_CLICK] User clicked on row: {row}")
 
         # Skip if this is a priority group header or spacer row
         widget = self.download_table.cellWidget(row, 0)
         if isinstance(widget, (PriorityGroupHeader, QFrame)):
-            logger.info("🔍 [SELECTION] Clicked on priority group header, skipping details update")
+            logger.info("🖱️ [USER_CLICK] Clicked on priority group header, skipping details update")
             return
 
         # Find study_uid for this row
@@ -2486,21 +2490,75 @@ class DownloadManagerWidget(QWidget):
                 break
 
         if study_uid:
-            logger.info(f"🔍 [SELECTION] Selected study: {study_uid[:40]}...")
-            self._selected_study_uid = study_uid
+            logger.info("=" * 100)
+            logger.info(f"🖱️ [USER_CLICK] ✅ User clicked on patient: {study_uid[:60]}...")
+            logger.info("=" * 100)
+
+            # Log the patient click event specifically with comprehensive details
+            state = self.state_store.get(study_uid)
+            task = self._tasks.get(study_uid)
             
-            # Force update of details panel to ensure it shows the correct information
+            patient_name = getattr(state, 'patient_name', 'Unknown')
+            patient_id = getattr(state, 'patient_id', 'Unknown') if state else (getattr(task, 'patient_id', 'Unknown') if task else 'Unknown')
+            study_date = getattr(state, 'study_date', 'Unknown') if state else (getattr(task, 'study_date', 'Unknown') if task else 'Unknown')
+            modality = getattr(state, 'modality', 'Unknown') if state else (getattr(task, 'modality', 'Unknown') if task else 'Unknown')
+            description = getattr(state, 'study_description', 'Unknown') if state else (getattr(task, 'description', 'Unknown') if task else 'Unknown')
+            status = getattr(state, 'status', 'Unknown') if state else 'Unknown'
+            priority = getattr(getattr(state, 'priority', None), 'display_name', 'Unknown') if state else 'Unknown'
+            
+            logger.info(f"👤 [PATIENT_CLICKED] User clicked on patient with comprehensive details:")
+            logger.info(f"   Patient Name: {patient_name}")
+            logger.info(f"   Patient ID: {patient_id}")
+            logger.info(f"   Study UID: {study_uid[:40]}...")
+            logger.info(f"   Study Date: {study_date}")
+            logger.info(f"   Modality: {modality}")
+            logger.info(f"   Description: {description}")
+            logger.info(f"   Status: {status}")
+            logger.info(f"   Priority: {priority}")
+            
+            # Count series if available
+            series_count = 0
+            if task and hasattr(task, 'series_list'):
+                series_count = len(task.series_list)
+            elif state and hasattr(state, 'total_series_count'):
+                series_count = getattr(state, 'total_series_count', 0)
+            logger.info(f"   Series Count: {series_count}")
+
+            # Always update details panel when a new study is selected (even if same as before)
+            # This ensures fresh data loading from reception service
+            self._selected_study_uid = study_uid
+
+            # Force full panel update for this patient
             try:
-                QTimer.singleShot(0, lambda: self._update_details_panel(study_uid))
+                logger.info(f"📋 [PANEL_UPDATE] Starting full panel update for patient...")
+
+                # Clear reception fields first to show loading state
+                logger.info(f"📋 [PANEL_UPDATE] Resetting reception fields to 'Loading...'")
+                self._reset_reception_fields("Loading...")
+
+                # Clear all details before updating with new patient info
+                logger.info(f"📋 [PANEL_UPDATE] Clearing all existing panel data")
+                self._clear_details_panel()
+
+                # Update details panel immediately with complete refresh
+                logger.info(f"📋 [PANEL_UPDATE] Calling _update_details_panel() for fresh data load")
+                self._update_details_panel(study_uid)
+
+                logger.info("=" * 100)
+                logger.info(f"✅ [PANEL_UPDATE] ✅ Panel update completed successfully for patient")
+                logger.info("=" * 100)
+                
+                # Log successful panel update
+                logger.info(f"🔄 [RIGHT_PANEL_UPDATED] Right panel updated for patient: {patient_name} (Study UID: {study_uid[:40]}...)")
             except Exception as e:
                 logger.error(f"❌ Error updating details panel: {e}")
                 import traceback
                 logger.error(f"Traceback:\n{traceback.format_exc()}")
         else:
-            logger.warning(f"🔍 [SELECTION] No study_uid found for row {row}")
+            logger.warning(f"🖱️ [USER_CLICK] ❌ No study_uid found for row {row}")
             self._selected_study_uid = None
             self._clear_details_panel()
-            
+
             # Disable buttons when no study is selected
             self.start_btn.setEnabled(False)
             self.pause_btn.setEnabled(False)
@@ -2514,18 +2572,20 @@ class DownloadManagerWidget(QWidget):
             if not self.download_table or not hasattr(self, 'download_table'):
                 logger.debug("⚠️ download_table not available (widget may be deleted)")
                 return
-            
+
             # Additional check: verify widget is not deleted
             try:
                 _ = self.download_table.rowCount()  # Try to access a property
             except RuntimeError:
                 logger.debug("⚠️ download_table deleted, skipping selection")
                 return
-            
+
             row = self.download_rows.get(study_uid)
             if row is None:
+                logger.warning(f"⚠️ No row found for study_uid: {study_uid[:40]}")
                 return
 
+            logger.info(f"🔍 [SELECT] Programmatic selection of study row: {study_uid[:40]}...")
             self.download_table.selectRow(row)
 
             if ensure_visible:
@@ -2533,8 +2593,18 @@ class DownloadManagerWidget(QWidget):
                 if item:
                     self.download_table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
 
+            # Always update details panel (don't skip even if same study)
             self._selected_study_uid = study_uid
+            
+            # Clear all fields first to ensure fresh start
+            self._clear_details_panel()
+            
+            # Clear reception fields to show loading state
+            self._reset_reception_fields("Loading...")
+            
+            # Update details panel with full refresh
             self._update_details_panel(study_uid)
+            logger.info(f"✅ [SELECT] Study row programmatic selection completed for: {study_uid[:40]}...")
         except Exception as e:
             logger.error(f"❌ Error selecting study row: {e}")
             import traceback
@@ -2568,8 +2638,47 @@ class DownloadManagerWidget(QWidget):
                     break
 
             if study_uid:
-                self._selected_study_uid = study_uid
-                self._update_details_panel(study_uid)
+                # Log the patient click event specifically with comprehensive details
+                state = self.state_store.get(study_uid)
+                task = self._tasks.get(study_uid)
+                
+                patient_name = getattr(state, 'patient_name', 'Unknown')
+                patient_id = getattr(state, 'patient_id', 'Unknown') if state else (getattr(task, 'patient_id', 'Unknown') if task else 'Unknown')
+                study_date = getattr(state, 'study_date', 'Unknown') if state else (getattr(task, 'study_date', 'Unknown') if task else 'Unknown')
+                modality = getattr(state, 'modality', 'Unknown') if state else (getattr(task, 'modality', 'Unknown') if task else 'Unknown')
+                description = getattr(state, 'study_description', 'Unknown') if state else (getattr(task, 'description', 'Unknown') if task else 'Unknown')
+                status = getattr(state, 'status', 'Unknown') if state else 'Unknown'
+                priority = getattr(getattr(state, 'priority', None), 'display_name', 'Unknown') if state else 'Unknown'
+                
+                logger.info(f"👤 [PATIENT_CLICKED] User clicked on patient via cell click with comprehensive details:")
+                logger.info(f"   Patient Name: {patient_name}")
+                logger.info(f"   Patient ID: {patient_id}")
+                logger.info(f"   Study UID: {study_uid[:40]}...")
+                logger.info(f"   Study Date: {study_date}")
+                logger.info(f"   Modality: {modality}")
+                logger.info(f"   Description: {description}")
+                logger.info(f"   Status: {status}")
+                logger.info(f"   Priority: {priority}")
+                
+                # Count series if available
+                series_count = 0
+                if task and hasattr(task, 'series_list'):
+                    series_count = len(task.series_list)
+                elif state and hasattr(state, 'total_series_count'):
+                    series_count = getattr(state, 'total_series_count', 0)
+                logger.info(f"   Series Count: {series_count}")
+
+                # Only update if the selection actually changed
+                if self._selected_study_uid != study_uid:
+                    self._selected_study_uid = study_uid
+
+                    # Clear reception fields first to show loading state
+                    self._reset_reception_fields("Loading...")
+
+                    self._update_details_panel(study_uid)
+                    
+                    # Log successful panel update
+                    logger.info(f"🔄 [RIGHT_PANEL_UPDATED] Right panel updated for patient: {patient_name} (Study UID: {study_uid[:40]}...)")
         except Exception as e:
             logger.error(f"❌ Error handling cell click: {e}")
             import traceback
@@ -2590,8 +2699,47 @@ class DownloadManagerWidget(QWidget):
                     break
 
             if study_uid:
-                self._selected_study_uid = study_uid
-                self._update_details_panel(study_uid)
+                # Log the patient click event specifically with comprehensive details
+                state = self.state_store.get(study_uid)
+                task = self._tasks.get(study_uid)
+                
+                patient_name = getattr(state, 'patient_name', 'Unknown')
+                patient_id = getattr(state, 'patient_id', 'Unknown') if state else (getattr(task, 'patient_id', 'Unknown') if task else 'Unknown')
+                study_date = getattr(state, 'study_date', 'Unknown') if state else (getattr(task, 'study_date', 'Unknown') if task else 'Unknown')
+                modality = getattr(state, 'modality', 'Unknown') if state else (getattr(task, 'modality', 'Unknown') if task else 'Unknown')
+                description = getattr(state, 'study_description', 'Unknown') if state else (getattr(task, 'description', 'Unknown') if task else 'Unknown')
+                status = getattr(state, 'status', 'Unknown') if state else 'Unknown'
+                priority = getattr(getattr(state, 'priority', None), 'display_name', 'Unknown') if state else 'Unknown'
+                
+                logger.info(f"👤 [PATIENT_CLICKED] User clicked on patient via item click with comprehensive details:")
+                logger.info(f"   Patient Name: {patient_name}")
+                logger.info(f"   Patient ID: {patient_id}")
+                logger.info(f"   Study UID: {study_uid[:40]}...")
+                logger.info(f"   Study Date: {study_date}")
+                logger.info(f"   Modality: {modality}")
+                logger.info(f"   Description: {description}")
+                logger.info(f"   Status: {status}")
+                logger.info(f"   Priority: {priority}")
+                
+                # Count series if available
+                series_count = 0
+                if task and hasattr(task, 'series_list'):
+                    series_count = len(task.series_list)
+                elif state and hasattr(state, 'total_series_count'):
+                    series_count = getattr(state, 'total_series_count', 0)
+                logger.info(f"   Series Count: {series_count}")
+
+                # Only update if the selection actually changed
+                if self._selected_study_uid != study_uid:
+                    self._selected_study_uid = study_uid
+
+                    # Clear reception fields first to show loading state
+                    self._reset_reception_fields("Loading...")
+
+                    self._update_details_panel(study_uid)
+                    
+                    # Log successful panel update
+                    logger.info(f"🔄 [RIGHT_PANEL_UPDATED] Right panel updated for patient: {patient_name} (Study UID: {study_uid[:40]}...)")
         except Exception as e:
             logger.error(f"❌ Error handling item click: {e}")
             import traceback
@@ -2648,21 +2796,28 @@ class DownloadManagerWidget(QWidget):
     
     def _update_details_panel(self, study_uid: str):
         """Update details panel with selected download information"""
-        logger.info(f"📋 [DETAILS] Updating details panel for study: {study_uid[:40]}...")
-        
+        logger.info("=" * 100)
+        logger.info(f"📋 [DETAILS] ▶️ Starting to update details panel for patient")
+        logger.info(f"📋 [DETAILS] Study UID: {study_uid[:60]}...")
+        logger.info("=" * 100)
+
         state = self.state_store.get(study_uid)
         task = self._tasks.get(study_uid)
 
         if not state:
-            logger.warning(f"📋 [DETAILS] No state found for study: {study_uid[:40]}...")
+            logger.warning(f"📋 [DETAILS] ❌ No state found for study: {study_uid[:40]}...")
+            logger.info(f"📋 [DETAILS] Clearing panel due to missing state")
             self._clear_details_panel()
             return
 
-        logger.info(f"📋 [DETAILS] State loaded: {getattr(state, 'patient_name', 'Unknown')}, Status: {getattr(state.status, 'value', 'Unknown')}, Priority: {getattr(getattr(state, 'priority', None), 'display_name', 'Unknown')}")
+        logger.info(f"📋 [DETAILS] ✅ State loaded successfully")
+        logger.info(f"📋 [DETAILS] Patient Name: {getattr(state, 'patient_name', 'Unknown')}")
+        logger.info(f"📋 [DETAILS] Status: {getattr(state.status, 'value', 'Unknown')}")
+        logger.info(f"📋 [DETAILS] Priority: {getattr(getattr(state, 'priority', None), 'display_name', 'Unknown')}")
 
         # Update patient info (use task for full metadata if available)
-        logger.info(f"📋 [DETAILS] Updating patient info: {getattr(state, 'patient_name', 'Unknown')}")
-        
+        logger.info(f"📋 [DETAILS] Step 1️⃣: Extracting patient name information")
+
         # Extract first name and last name from patient name if available
         patient_name = getattr(state, 'patient_name', 'Unknown')
         if patient_name and patient_name != 'Unknown':
@@ -2676,50 +2831,72 @@ class DownloadManagerWidget(QWidget):
                 display_name = patient_name
         else:
             display_name = 'Unknown'
-        
+
+        logger.info(f"📋 [DETAILS] Display Name: {display_name}")
         self.patient_name_label.setText(f"Name: {display_name}")
+        logger.info(f"✅ [DETAILS] Updated patient_name_label")
+        
         self.patient_id_label.setText(f"ID: {task.patient_id if task and task.patient_id else getattr(state, 'study_uid', '').split('.')[-1] if getattr(state, 'study_uid', None) else '-'}")
+        logger.info(f"✅ [DETAILS] Updated patient_id_label")
+        
         self._reset_reception_fields("Loading...")
         self.url_label.setText(f"Study UID: {getattr(state, 'study_uid', '-')}")
-        
+        logger.info(f"✅ [DETAILS] Updated url_label")
+
         # Use task data first, then fall back to state data
-        self.study_date_label.setText(f"Study Date: {getattr(task, 'study_date', '') or getattr(state, 'study_date', '-') or '-'}")
-        self.study_desc_label.setText(f"Description: {getattr(task, 'description', '') or getattr(state, 'study_description', '-') or '-'}")
-        self.modality_label.setText(f"Modality: {getattr(task, 'modality', '') or getattr(state, 'modality', '-') or '-'}")
+        logger.info(f"📋 [DETAILS] Step 2️⃣: Extracting study information from task/state")
         
+        study_date = getattr(task, 'study_date', '') or getattr(state, 'study_date', '-') or '-'
+        self.study_date_label.setText(f"Study Date: {study_date}")
+        logger.info(f"✅ [DETAILS] Study Date: {study_date}")
+        
+        description = getattr(task, 'description', '') or getattr(state, 'study_description', '-') or '-'
+        self.study_desc_label.setText(f"Description: {description}")
+        logger.info(f"✅ [DETAILS] Description: {description}")
+        
+        modality = getattr(task, 'modality', '') or getattr(state, 'modality', '-') or '-'
+        self.modality_label.setText(f"Modality: {modality}")
+        logger.info(f"✅ [DETAILS] Modality: {modality}")
+
         # Add additional patient information from task if available
+        logger.info(f"📋 [DETAILS] Step 3️⃣: Extracting additional patient information")
+        
         if task:
             if hasattr(self, 'age_label') and self.age_label:
-                # Try to get from additional_info dictionary first, then fallback to direct attribute
                 patient_age = '-'
                 if hasattr(self, '_additional_task_info') and self._additional_task_info and task.study_uid in self._additional_task_info:
                     patient_age = self._additional_task_info[task.study_uid].get('patient_age', '-')
                 self.age_label.setText(f"Age: {patient_age}")
+                logger.info(f"✅ [DETAILS] Age: {patient_age}")
+                
             if hasattr(self, 'gender_label') and self.gender_label:
                 patient_sex = '-'
                 if hasattr(self, '_additional_task_info') and self._additional_task_info and task.study_uid in self._additional_task_info:
                     patient_sex = self._additional_task_info[task.study_uid].get('patient_sex', '-')
                 self.gender_label.setText(f"Gender: {patient_sex}")
+                logger.info(f"✅ [DETAILS] Gender: {patient_sex}")
+                
             if hasattr(self, 'birth_date_label') and self.birth_date_label:
                 patient_birth_date = '-'
                 if hasattr(self, '_additional_task_info') and self._additional_task_info and task.study_uid in self._additional_task_info:
                     patient_birth_date = self._additional_task_info[task.study_uid].get('patient_birth_date', '-')
                 self.birth_date_label.setText(f"Birth Date: {patient_birth_date}")
+                logger.info(f"✅ [DETAILS] Birth Date: {patient_birth_date}")
+                
             if hasattr(self, 'tel_label') and self.tel_label:
                 study_time = '-'
                 if hasattr(self, '_additional_task_info') and self._additional_task_info and task.study_uid in self._additional_task_info:
                     study_time = self._additional_task_info[task.study_uid].get('study_time', '-')
                 self.tel_label.setText(f"Time: {study_time}")
-            
-            # Add body part information
+                logger.info(f"✅ [DETAILS] Time: {study_time}")
+
             body_part = '-'
             if hasattr(self, '_additional_task_info') and self._additional_task_info and task.study_uid in self._additional_task_info:
                 body_part = self._additional_task_info[task.study_uid].get('body_part', '-')
             elif hasattr(task, 'body_part'):
                 body_part = getattr(task, 'body_part', '-')
-                
+
             if body_part and body_part != '-':
-                # Create or update a body part label if it doesn't exist
                 if not hasattr(self, 'body_part_label'):
                     self.body_part_label = QLabel(f"Body Part: {body_part}")
                     self.body_part_label.setStyleSheet("""
@@ -2733,14 +2910,14 @@ class DownloadManagerWidget(QWidget):
                     # Note: This would need to be added to the layout in the setup phase
                 else:
                     self.body_part_label.setText(f"Body Part: {body_part}")
-            
+
             # Add modality information
             modality = '-'
             if hasattr(self, '_additional_task_info') and self._additional_task_info and task.study_uid in self._additional_task_info:
                 modality = self._additional_task_info[task.study_uid].get('modality', '-')
             elif hasattr(task, 'modality'):
                 modality = getattr(task, 'modality', '-')
-                
+
             # Update modality label if it exists
             if hasattr(self, 'modality_label') and self.modality_label:
                 # Only update if the modality is not already set or if it's different
@@ -2749,13 +2926,15 @@ class DownloadManagerWidget(QWidget):
                     self.modality_label.setText(f"Modality: {modality}")
 
         # Update progress
+        logger.info(f"📋 [DETAILS] Step 4️⃣: Updating progress information")
+        
         display_total = getattr(state, 'total_count', 0) or (task.total_image_count if task else 0)
         display_downloaded = getattr(state, 'downloaded_count', 0)
         display_percent = getattr(state, 'progress_percent', 0)
         if display_percent <= 0 and display_total > 0 and display_downloaded > 0:
             display_percent = (display_downloaded / display_total) * 100
 
-        logger.info(f"📋 [DETAILS] Progress: {display_percent:.1f}% ({display_downloaded}/{display_total} images)")
+        logger.info(f"✅ [DETAILS] Progress: {display_percent:.1f}% ({display_downloaded}/{display_total} images)")
         self.progress_bar.setValue(int(display_percent))
         self.progress_bar.setFormat(
             f"{display_percent:.1f}% ({display_downloaded}/{display_total} images)"
@@ -2765,26 +2944,66 @@ class DownloadManagerWidget(QWidget):
         )
 
         # Use task for series count if available
+        logger.info(f"📋 [DETAILS] Step 5️⃣: Extracting series information")
+        
         series_count = len(task.series_list) if task else (getattr(state, 'total_series_count', 0) if hasattr(state, 'total_series_count') else 0)
         self.size_label.setText(f"Series: {series_count} | Images: {display_total}")
-        logger.info(f"📋 [DETAILS] Series count: {series_count}, Total images: {display_total}")
+        logger.info(f"✅ [DETAILS] Series count: {series_count}, Total images: {display_total}")
 
         # Update priority
-        logger.info(f"📋 [DETAILS] Updating priority to: {getattr(getattr(state, 'priority', None), 'display_name', 'Normal')}")
+        logger.info(f"📋 [DETAILS] Step 6️⃣: Updating priority information")
         self.priority_combo.setCurrentText(getattr(getattr(state, 'priority', None), 'display_name', 'Normal'))
 
         # Update button states based on current download status
         self._update_button_states(state)
 
-        # Load reception data for richer patient info
-        patient_id_to_use = task.patient_id if task and task.patient_id else getattr(state, 'patient_id', None)
+        # Load reception data for richer patient info - ALWAYS attempt to load from server when clicked
+        # Try multiple sources for patient_id with priority order:
+        # 1. Task metadata (most reliable)
+        # 2. Database query (second best)
+        # 3. State data (fallback)
+        logger.info(f"📋 [DETAILS] Step 7️⃣: Looking up patient_id for reception data loading")
+        
+        patient_id_to_use = None
+        
+        # Try task first
+        if task and task.patient_id:
+            patient_id_to_use = task.patient_id
+            logger.info(f"✅ [PATIENT_ID] Found in task: {patient_id_to_use}")
+        
+        # Try database query second (most reliable for completed downloads)
+        if not patient_id_to_use:
+            try:
+                if study_uid:
+                    logger.info(f"📋 [PATIENT_ID] Querying database for study: {study_uid[:40]}...")
+                    study_info = self.database_manager.get_study_info(study_uid)
+                    if study_info and 'patient_id' in study_info:
+                        patient_id_to_use = study_info['patient_id']
+                        logger.info(f"✅ [PATIENT_ID] Found in database: {patient_id_to_use}")
+            except Exception as e:
+                logger.warning(f"⚠️ [PATIENT_ID] Database query failed: {e}")
+        
+        # Try state data third
+        if not patient_id_to_use:
+            patient_id_to_use = getattr(state, 'patient_id', None)
+            if patient_id_to_use:
+                logger.info(f"✅ [PATIENT_ID] Found in state: {patient_id_to_use}")
+        
+        # Check if we already have cached reception data - apply it immediately for faster UI
+        logger.info(f"📋 [DETAILS] Step 8️⃣: Loading reception data from server")
+        
+        if patient_id_to_use and patient_id_to_use in self._reception_cache:
+            logger.info(f"✅ [RECEPTION] Applying cached data for patient: {patient_id_to_use}")
+            self._apply_reception_data(self._reception_cache[patient_id_to_use])
+        
+        # Always fetch fresh data from server (even if cached) to ensure up-to-date info
         if patient_id_to_use:
-            logger.info(f"📋 [DETAILS] Loading reception data for patient: {patient_id_to_use}")
-            self._load_reception_data(patient_id_to_use)
+            logger.info(f"📋 [RECEPTION] 📡 Fetching fresh data from server for patient: {patient_id_to_use}")
+            self._load_reception_data(patient_id_to_use, study_uid)
         else:
-            logger.info(f"📋 [DETAILS] No patient ID available for reception data loading")
-            self._reset_reception_fields("No Patient ID")
-            
+            logger.warning(f"❌ [RECEPTION] No patient_id available for study {study_uid[:40] if study_uid else 'None'}...")
+            self._reset_reception_fields("Patient ID not available")
+
             # Set default values for additional patient info fields
             if hasattr(self, 'age_label') and self.age_label:
                 self.age_label.setText("Age: -")
@@ -2798,14 +3017,19 @@ class DownloadManagerWidget(QWidget):
                 self.body_part_label.setText("Body Part: -")
 
         # Update series breakdown
+        logger.info(f"📋 [DETAILS] Step 9️⃣: Updating series breakdown")
+        
         if task and task.series_list:
-            logger.info(f"📋 [DETAILS] Updating series breakdown for {len(task.series_list)} series")
+            logger.info(f"✅ [DETAILS] Updating series breakdown for {len(task.series_list)} series")
             self._update_series_breakdown_from_task(task, state)
         else:
-            logger.info(f"📋 [DETAILS] No series list available, showing empty breakdown")
+            logger.info(f"⚠️ [DETAILS] No series list available, showing empty breakdown")
             self._update_series_breakdown_from_task(None, state)
-        
-        logger.info(f"📋 [DETAILS] Details panel updated successfully for {study_uid[:40]}...")
+
+        logger.info("=" * 100)
+        logger.info(f"✅ [DETAILS] ✅ Details panel update COMPLETED successfully")
+        logger.info(f"✅ [DETAILS] Study UID: {study_uid[:60]}...")
+        logger.info("=" * 100)
 
     def _update_button_states(self, state):
         """Update button states based on current download status"""
@@ -2815,6 +3039,7 @@ class DownloadManagerWidget(QWidget):
             self.pause_btn.setEnabled(False)
             self.cancel_btn.setEnabled(False)
             self.retry_btn.setEnabled(False)
+            logger.info(f"📋 [BUTTONS] No state - all buttons disabled")
             return
 
         status = state.status
@@ -2827,7 +3052,7 @@ class DownloadManagerWidget(QWidget):
             self.pause_btn.setEnabled(True)
             self.cancel_btn.setEnabled(True)
             self.retry_btn.setEnabled(False)
-            logger.info(f"📋 [BUTTONS] Active download - pause and cancel enabled")
+            logger.info(f"✅ [BUTTONS] Active download - pause and cancel enabled")
         elif status in [DownloadStatus.PAUSED]:
             # Download is paused - enable start and cancel
             self.start_btn.setEnabled(True)
@@ -3124,32 +3349,41 @@ class DownloadManagerWidget(QWidget):
         else:
             logger.warning("⚠️ [CONTROL WARNING] Priority changed but no study selected")
 
-    def _load_reception_data(self, patient_id: str) -> None:
-        """Load reception data for the selected patient."""
+    def _load_reception_data(self, patient_id: str, study_uid: str = None) -> None:
+        """Load reception data for the selected patient - always fetch fresh data from server."""
         if not patient_id:
             logger.info("📋 [RECEPTION] No patient ID provided, skipping reception data load")
             return
 
-        logger.info(f"📋 [RECEPTION] Loading reception data for patient: {patient_id}")
+        logger.info("=" * 100)
+        logger.info(f"📋 [RECEPTION] 🔄 Loading reception data for patient")
+        logger.info(f"📋 [RECEPTION] Patient ID: {patient_id}")
+        logger.info(f"📋 [RECEPTION] Study UID: {study_uid[:60] if study_uid else 'None'}...")
+        logger.info("=" * 100)
+        
         self._pending_reception_patient_id = patient_id
+        self._pending_reception_study_uid = study_uid  # Track which study requested this data
 
-        if patient_id in self._reception_cache:
-            logger.info(f"📋 [RECEPTION] Patient {patient_id} found in cache, applying cached data")
-            self._apply_reception_data(self._reception_cache[patient_id])
-            return
-
-        logger.info(f"📋 [RECEPTION] Patient {patient_id} not in cache, fetching from service")
+        # IMPORTANT: Always fetch fresh data from server when a patient is clicked
+        # Even if we have cached data, fetch fresh to ensure up-to-date information
+        logger.info(f"📋 [RECEPTION] 📡 Requesting fresh data from server for patient: {patient_id}")
         self._reception_service.fetch_patient_data(patient_id)
 
     def _on_reception_data_received(self, data: dict) -> None:
-        """Handle reception data response."""
+        """Handle reception data response - apply only if it's for currently selected patient."""
         patient_id = self._pending_reception_patient_id
+        study_uid = self._pending_reception_study_uid
+        
         if not patient_id:
             logger.info("📋 [RECEPTION] No pending patient ID, ignoring reception data response")
             return
 
-        logger.info(f"📋 [RECEPTION] Reception data received for patient: {patient_id}")
-        
+        logger.info("=" * 100)
+        logger.info(f"📋 [RECEPTION] ✅ Reception data received from server")
+        logger.info(f"📋 [RECEPTION] Patient ID: {patient_id}")
+        logger.info(f"📋 [RECEPTION] Study UID: {study_uid[:60] if study_uid else 'None'}...")
+        logger.info("=" * 100)
+
         patient_data = None
         if isinstance(data, dict):
             if "data" in data:
@@ -3163,50 +3397,105 @@ class DownloadManagerWidget(QWidget):
             logger.info(f"📋 [RECEPTION] Response was list, taking first element")
 
         if not isinstance(patient_data, dict):
-            logger.warning(f"📋 [RECEPTION] Invalid patient data format received for {patient_id}")
+            logger.warning(f"📋 [RECEPTION] ❌ Invalid patient data format received for {patient_id}")
             return
 
-        logger.info(f"📋 [RECEPTION] Caching reception data for patient: {patient_id}")
+        logger.info(f"📋 [RECEPTION] 💾 Caching fresh reception data for patient: {patient_id}")
         self._reception_cache[patient_id] = patient_data
-        self._apply_reception_data(patient_data)
+        self._last_reception_patient_id = patient_id
+        
+        # Apply the data ONLY if it's for currently selected study
+        # This is critical: we should only update the UI if this data is for the patient being displayed
+        if self._selected_study_uid:
+            should_apply = False
+            
+            # Check if this data is for the currently selected study
+            if study_uid and study_uid == self._selected_study_uid:
+                logger.info(f"📋 [RECEPTION] ✅ Data IS for currently selected study: {study_uid[:60]}...")
+                should_apply = True
+            else:
+                # Check if current selection has matching patient_id
+                current_task = self._tasks.get(self._selected_study_uid)
+                current_state = self.state_store.get(self._selected_study_uid)
+                current_patient_id = None
+                
+                if current_task and current_task.patient_id:
+                    current_patient_id = current_task.patient_id
+                elif current_state:
+                    current_patient_id = getattr(current_state, 'patient_id', None)
+                
+                # Also try database for current selection
+                if not current_patient_id:
+                    try:
+                        study_info = self.database_manager.get_study_info(self._selected_study_uid)
+                        if study_info and 'patient_id' in study_info:
+                            current_patient_id = study_info['patient_id']
+                    except:
+                        pass
+                
+                if current_patient_id == patient_id:
+                    logger.info(f"📋 [RECEPTION] ✅ Current selection has matching patient_id: {patient_id}")
+                    should_apply = True
+                else:
+                    logger.info(f"📋 [RECEPTION] ℹ️ Data is for different patient (current: {current_patient_id}, received: {patient_id}). Not applying to UI.")
+            
+            if should_apply:
+                logger.info(f"📋 [RECEPTION] 🎨 Applying reception data to UI for patient {patient_id}")
+                self._apply_reception_data(patient_data)
+            else:
+                logger.info(f"📋 [RECEPTION] ⏭️ Skipping UI update - data is cached but not for current selection")
+        else:
+            logger.info(f"📋 [RECEPTION] ℹ️ No patient currently selected, data cached for {patient_id}")
+        
+        # Clear pending references
+        self._pending_reception_patient_id = None
+        self._pending_reception_study_uid = None
 
     def _on_reception_data_error(self, error_message: str) -> None:
         """Handle reception data error (non-fatal)."""
-        logger.warning(f"📋 [RECEPTION] Reception data fetch failed: {error_message}")
+        logger.warning("=" * 100)
+        logger.warning(f"❌ [RECEPTION] Reception data fetch failed: {error_message}")
+        logger.warning("=" * 100)
         try:
             if hasattr(self, 'patient_identifier_label') and self.patient_identifier_label:
                 self.patient_identifier_label.setText("Identifier: Unavailable")
+                logger.info(f"⚠️ [RECEPTION] Set identifier to Unavailable")
             if hasattr(self, 'requesting_physician_label') and self.requesting_physician_label:
                 self.requesting_physician_label.setText("Requesting Physician: Unavailable")
+                logger.info(f"⚠️ [RECEPTION] Set physician to Unavailable")
             if hasattr(self, 'reception_status_label') and self.reception_status_label:
                 self.reception_status_label.setText("Reception Status: Unavailable")
+                logger.info(f"⚠️ [RECEPTION] Set status to Unavailable")
         except Exception as e:
-            logger.error(f"📋 [RECEPTION] Error updating reception labels: {e}")
+            logger.error(f"❌ [RECEPTION] Error updating reception labels: {e}")
+        
+        # Clear pending references
         self._pending_reception_patient_id = None
+        self._pending_reception_study_uid = None
         logger.info("📋 [RECEPTION] Reception data fields reset to unavailable")
 
     def _apply_reception_data(self, patient_data: dict) -> None:
         """Apply reception data to details panel fields."""
-        logger.info(f"📋 [RECEPTION] Applying reception data to details panel")
-        
+        logger.info("=" * 100)
+        logger.info(f"🎨 [RECEPTION] Applying reception data to details panel")
+        logger.info("=" * 100)
+
         if not self._selected_study_uid:
-            logger.info("📋 [RECEPTION] No selected study, skipping reception data application")
+            logger.info("⚠️ [RECEPTION] No selected study, skipping reception data application")
             return
 
         task = self._tasks.get(self._selected_study_uid)
-        if not task or not task.patient_id:
-            logger.info(f"📋 [RECEPTION] No task or patient ID for selected study {self._selected_study_uid[:40] if self._selected_study_uid else 'None'}..., skipping")
+        if not task:
+            logger.info(f"⚠️ [RECEPTION] No task for selected study {self._selected_study_uid[:40] if self._selected_study_uid else 'None'}..., skipping")
             return
 
-        if self._pending_reception_patient_id and task.patient_id != self._pending_reception_patient_id:
-            logger.info(f"📋 [RECEPTION] Patient ID mismatch, skipping reception data application")
-            return
+        logger.info(f"📋 [RECEPTION] Processing reception data for study: {self._selected_study_uid[:60]}...")
 
-        logger.info(f"📋 [RECEPTION] Processing reception data for patient: {task.patient_id}")
-        
         patient_info = patient_data.get("patient", {}) if isinstance(patient_data, dict) else {}
-        
+
         # Extract comprehensive patient information
+        logger.info(f"📋 [RECEPTION] Extracting patient information from server response")
+        
         patient_name_raw = (
             patient_info.get("Name")
             or patient_info.get("FullName")
@@ -3214,7 +3503,7 @@ class DownloadManagerWidget(QWidget):
             or task.patient_name
             or "Unknown"
         )
-        
+
         # Process patient name to extract first and last names
         if patient_name_raw and patient_name_raw != "Unknown":
             if '^' in patient_name_raw:
@@ -3228,7 +3517,7 @@ class DownloadManagerWidget(QWidget):
                 full_display_name = patient_name_raw
         else:
             full_display_name = "Unknown"
-        
+
         patient_identifier = (
             patient_info.get("NationalID")
             or patient_info.get("PatientID")
@@ -3259,58 +3548,77 @@ class DownloadManagerWidget(QWidget):
         patient_birth_date = patient_info.get("BD", "-")  # Birth date
         patient_tel = patient_info.get("Tel", "-")
 
-        logger.info(f"📋 [RECEPTION] Updating details panel with reception data:")
-        logger.info(f"📋 [RECEPTION]   Full Name: {full_display_name}")
-        logger.info(f"📋 [RECEPTION]   Identifier: {patient_identifier}")
-        logger.info(f"📋 [RECEPTION]   Physician: {physician_name}")
-        logger.info(f"📋 [RECEPTION]   Status: {reception_status}")
-        logger.info(f"📋 [RECEPTION]   Age: {patient_age}, Gender: {patient_gender}")
+        logger.info(f"✅ [RECEPTION] Extracted data from server:")
+        logger.info(f"✅ [RECEPTION]   Full Name: {full_display_name}")
+        logger.info(f"✅ [RECEPTION]   Identifier: {patient_identifier}")
+        logger.info(f"✅ [RECEPTION]   Physician: {physician_name}")
+        logger.info(f"✅ [RECEPTION]   Status: {reception_status}")
+        logger.info(f"✅ [RECEPTION]   Age: {patient_age}, Gender: {patient_gender}")
 
-        # Update all patient information fields
-        self.patient_name_label.setText(f"Name: {full_display_name}")
-        self.patient_identifier_label.setText(f"Identifier: {patient_identifier}")
-        self.requesting_physician_label.setText(f"Requesting Physician: {physician_name}")
-        self.reception_status_label.setText(f"Reception Status: {reception_status}")
+        # Update all patient information fields - with widget existence checks
+        logger.info(f"📋 [RECEPTION] Updating UI widgets with reception data")
         
+        if hasattr(self, 'patient_name_label') and self.patient_name_label:
+            self.patient_name_label.setText(f"Name: {full_display_name}")
+            logger.info(f"✅ [RECEPTION] Updated patient_name_label: {full_display_name}")
+        
+        if hasattr(self, 'patient_identifier_label') and self.patient_identifier_label:
+            self.patient_identifier_label.setText(f"Identifier: {patient_identifier}")
+            logger.info(f"✅ [RECEPTION] Updated patient_identifier_label: {patient_identifier}")
+        
+        if hasattr(self, 'requesting_physician_label') and self.requesting_physician_label:
+            self.requesting_physician_label.setText(f"Requesting Physician: {physician_name}")
+            logger.info(f"✅ [RECEPTION] Updated requesting_physician_label: {physician_name}")
+        
+        if hasattr(self, 'reception_status_label') and self.reception_status_label:
+            self.reception_status_label.setText(f"Reception Status: {reception_status}")
+            logger.info(f"✅ [RECEPTION] Updated reception_status_label: {reception_status}")
+
         # Update additional fields if they exist
         if hasattr(self, 'age_label') and self.age_label:
             self.age_label.setText(f"Age: {patient_age}")
+            logger.info(f"✅ [RECEPTION] Updated age_label: {patient_age}")
+        
         if hasattr(self, 'gender_label') and self.gender_label:
             self.gender_label.setText(f"Gender: {patient_gender}")
+            logger.info(f"✅ [RECEPTION] Updated gender_label: {patient_gender}")
+        
         if hasattr(self, 'birth_date_label') and self.birth_date_label:
             self.birth_date_label.setText(f"Birth Date: {patient_birth_date}")
+            logger.info(f"✅ [RECEPTION] Updated birth_date_label: {patient_birth_date}")
+        
         if hasattr(self, 'tel_label') and self.tel_label:
             self.tel_label.setText(f"Time: {patient_tel}")  # Changed from Phone to Time
+            logger.info(f"✅ [RECEPTION] Updated tel_label: {patient_tel}")
+        
         if hasattr(self, 'body_part_label') and self.body_part_label:
             # Try to get body part from the patient data or task
             body_part = patient_info.get("BodyPart", patient_info.get("body_part", "-"))
             if body_part == "-":
                 # Get from task if available
-                task = self._tasks.get(self._selected_study_uid)
                 if task:
                     if hasattr(self, '_additional_task_info') and self._additional_task_info and task.study_uid in self._additional_task_info:
                         body_part = self._additional_task_info[task.study_uid].get('body_part', '-')
                     elif hasattr(task, 'body_part'):
                         body_part = getattr(task, 'body_part', '-')
             self.body_part_label.setText(f"Body Part: {body_part}")
-        
+            logger.info(f"📋 [RECEPTION] ✅ Updated body_part_label: {body_part}")
+
         # Update modality if available in reception data
         if hasattr(self, 'modality_label') and self.modality_label:
             # Try to get modality from the patient data or task
             modality = patient_info.get("Modality", patient_info.get("modality", "-"))
             if modality == "-":
                 # Get from task if available
-                task = self._tasks.get(self._selected_study_uid)
                 if task:
                     if hasattr(self, '_additional_task_info') and self._additional_task_info and task.study_uid in self._additional_task_info:
                         modality = self._additional_task_info[task.study_uid].get('modality', '-')
                     elif hasattr(task, 'modality'):
                         modality = getattr(task, 'modality', '-')
             self.modality_label.setText(f"Modality: {modality}")
-        
-        self._last_reception_patient_id = task.patient_id
-        
-        logger.info(f"📋 [RECEPTION] Reception data applied successfully to details panel")
+            logger.info(f"📋 [RECEPTION] ✅ Updated modality_label: {modality}")
+
+        logger.info(f"📋 [RECEPTION] ✅ Reception data applied successfully to details panel")
     
     def _refresh_table_order(self):
         """Refresh table with priority grouping - shows all 4 priority groups"""

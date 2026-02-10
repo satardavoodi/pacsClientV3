@@ -155,40 +155,53 @@ def start_zeta_download(
 ) -> bool:
     """
     Start a download using Zeta Download Manager
-    
+
     Legacy-compatible function that wraps Zeta API
-    
+
     Args:
         study_info: Dictionary with study information
         progress_callback: Progress callback function (signature: func(study_uid, progress, status))
         completion_callback: Completion callback function (signature: func(study_uid, success, error_msg))
-    
+
     Returns:
         True if download started successfully, False otherwise
     """
     try:
         # Create download task
         task = create_download_task_from_study(study_info)
-        
+
         # Get executor and worker pool
         executor = get_zeta_executor()
         worker_pool = get_zeta_worker_pool()
-        
+
         # Get state store
         state_store = get_state_store()
-        
-        # Create download state
+
+        # Create download state BEFORE creating worker to ensure it exists
         state = state_store.create(task)
         
+        # Verify state was created
+        if not state_store.get(task.study_uid):
+            logger.error(f"❌ Failed to create state for study: {task.study_uid[:40]}...")
+            return False
+
+        # Get the download manager widget to ensure task is registered there too
+        # This is critical for the health check and other UI operations
+        dm_widget = get_zeta_download_manager_widget()
+        
+        # Store the task in the UI widget's task dictionary as well
+        # This ensures the health check can find the original task
+        dm_widget._tasks[task.study_uid] = task
+
         # Create worker
         worker = DownloadWorker(task, executor)
-        
+
         # Connect callbacks if provided
         if progress_callback:
             worker.progress.connect(
                 lambda study_uid, progress, status: progress_callback(study_uid, progress, status)
             )
-        
+
         if completion_callback:
             worker.completed.connect(
                 lambda study_uid: completion_callback(study_uid, True, "")
@@ -196,14 +209,19 @@ def start_zeta_download(
             worker.error.connect(
                 lambda study_uid, error_msg: completion_callback(study_uid, False, error_msg)
             )
-        
-        # Add worker to pool and start
-        worker_pool.add_worker(worker, task.study_uid)
+
+        # Add worker to pool BEFORE starting to ensure it's registered
+        worker_added = worker_pool.add_worker(worker, task.study_uid)
+        if not worker_added:
+            logger.error(f"❌ Failed to add worker to pool for study: {task.study_uid[:40]}...")
+            return False
+            
+        # Now start the worker
         worker.start()
-        
+
         logger.info(f"✅ Started Zeta download for study: {task.study_uid[:40]}...")
         return True
-    
+
     except Exception as e:
         logger.error(f"❌ Failed to start Zeta download: {e}")
         return False

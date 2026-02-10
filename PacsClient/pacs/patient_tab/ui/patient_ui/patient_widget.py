@@ -3551,8 +3551,13 @@ class PatientWidget(QWidget):
             import traceback
             traceback.print_exc()
 
-    def _change_report_status(self, study_uid: str, old_status: str, new_status: str, comment: str = ""):
-        """Change report status for a study"""
+    def _change_report_status(self, study_uid: str, old_status: str, new_status: str, comment: str = "") -> bool:
+        """
+        Change report status for a study
+        
+        Returns:
+            bool: True if update initiated (does not guarantee server success)
+        """
         print(f"\n{'='*60}")
         print(f"🔄 [PatientWidget] Starting status change: {study_uid}")
         print(f"   Old status: {old_status}")
@@ -3560,7 +3565,11 @@ class PatientWidget(QWidget):
         print(f"   Comment: {comment}")
         
         # Get service (lazy initialization)
-        report_status_service = self._get_report_status_service()
+        try:
+            report_status_service = self._get_report_status_service()
+        except Exception as e:
+            print(f"❌ [PatientWidget] Failed to get report status service: {e}")
+            return False
         
         # Run in background thread to avoid blocking UI
         def update_status_thread():
@@ -3591,6 +3600,7 @@ class PatientWidget(QWidget):
         thread = threading.Thread(target=update_status_thread, daemon=True)
         thread.start()
         print(f"✅ [PatientWidget] Background thread started")
+        return True
     
     def _handle_status_update_result(self, study_uid: str, new_status: str, response):
         """Handle status update result in main thread - with toolbar sync"""
@@ -3598,12 +3608,16 @@ class PatientWidget(QWidget):
         print(f"[PatientWidget] Handling status update result")
         print(f"   Study UID: {study_uid}")
         print(f"   New Status: {new_status}")
+        print(f"   Response: {response}")
         
         from PySide6.QtWidgets import QMessageBox
         from PySide6.QtCore import QTimer
         
         if response:
             print(f"[PatientWidget] Response valid")
+            
+            # Check if it's local-only update
+            is_local_only = response.get('local_only', False)
             
             # Get report_status from server response
             server_status = None
@@ -3622,13 +3636,35 @@ class PatientWidget(QWidget):
             self.report_status = final_status
             print(f"[PatientWidget] Updated widget report_status to: {final_status}")
             
-            # UPDATE TOOLBAR STATUS DISPLAY (3-line widget)
+            # UPDATE TOOLBAR STATUS DISPLAY
             if hasattr(self, 'toolbar_manager') and self.toolbar_manager:
                 QTimer.singleShot(100, self.toolbar_manager._update_report_status_display)
                 print(f"[PatientWidget] Triggered toolbar status update")
+            
+            # UPDATE HOME WIDGET TABLE STATUS (if available)
+            try:
+                from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
+                home_widget = get_home_widget()
+                if home_widget and hasattr(home_widget, 'patient_table_widget'):
+                    print(f"[PatientWidget] Updating home table status...")
+                    home_widget.patient_table_widget._update_report_status_in_table(study_uid, final_status)
+                    print(f"[PatientWidget] ✅ Home table status updated")
+            except Exception as e:
+                print(f"[PatientWidget] ⚠️ Could not update home table: {e}")
+            
+            # Show result message
+            from PacsClient.components.socket_report_status_service import REPORT_STATUSES
+            status_label = REPORT_STATUSES.get(final_status, final_status.replace('_', ' ').title())
+            
+            if is_local_only:
+                print(f"⚠️ [PatientWidget] Status changed locally only (server sync failed): {status_label}")
+            else:
+                print(f"✅ [PatientWidget] Status successfully changed to: {status_label}")
         else:
-            print(f"[PatientWidget] Response is None or invalid")
-            QMessageBox.warning(self, "Error", "Failed to change status.")
+            print(f"⚠️ [PatientWidget] Response is None or invalid")
+            # Don't show warning popup - it's too intrusive
+            # Just log the error
+            print(f"❌ Failed to change status - server did not confirm change")
         
         print(f"{'='*60}\n")
 
@@ -4953,9 +4989,25 @@ class PatientWidget(QWidget):
                 from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
                 home_widget = get_home_widget()
                 if home_widget is not None:
-                    home_widget._actually_hide_patient_loading_overlay()
-            except Exception:
-                pass
+                    home_widget._hide_double_click_loading()
+
+                    # Remove this widget from home widget's cache if it exists
+                    if hasattr(home_widget, 'dict_tabs_widget') and self.study_uid:
+                        if self.study_uid in home_widget.dict_tabs_widget:
+                            del home_widget.dict_tabs_widget[self.study_uid]
+                            print(f"✅ Removed study {self.study_uid} from home widget cache")
+                        else:
+                            print(f"⚠️ Study {self.study_uid} not found in home widget cache")
+                    else:
+                        print(f"⚠️ Home widget doesn't have dict_tabs_widget or study_uid is None")
+                        
+                    # Remove this study from the opening studies set to allow reopening
+                    if hasattr(home_widget, 'remove_from_opening_studies') and self.study_uid:
+                        home_widget.remove_from_opening_studies(self.study_uid)
+            except Exception as e:
+                print(f"⚠️ Error removing widget from home cache: {e}")
+                import traceback
+                traceback.print_exc()
 
             # Cancel all background tasks first to prevent new tasks from being created
             if hasattr(self, '_background_tasks'):
@@ -5104,6 +5156,27 @@ class PatientWidget(QWidget):
 
             # Clean up resources
             self.exit_patient_widget()
+
+            # If we have a tab manager, notify it that this tab is being closed
+            if hasattr(self, 'tab_manager') and self.tab_manager:
+                try:
+                    # Remove this tab from the custom tab manager
+                    tab_index = self.tab_manager.find_tab_by_study_uid(self.study_uid)
+                    if tab_index is not None and tab_index != -1:
+                        print(f"Removing tab at index {tab_index} for study {self.study_uid}")
+                        # Call the tab manager's close method to properly remove the tab
+                        self.tab_manager.close_patient_tab(tab_index)
+                except Exception as e:
+                    print(f"Warning: Error interacting with tab manager: {e}")
+                    
+                    # Fallback: try to remove from tab manager's study_uid mapping directly
+                    try:
+                        if (hasattr(self.tab_manager, 'study_uid_to_tab') and 
+                            self.study_uid in self.tab_manager.study_uid_to_tab):
+                            del self.tab_manager.study_uid_to_tab[self.study_uid]
+                            print(f"Fallback: Removed study {self.study_uid} from tab manager mapping")
+                    except Exception as fallback_e:
+                        print(f"Fallback removal also failed: {fallback_e}")
 
             # Explicitly clean up event loop references to prevent abandoned handles
             if hasattr(self, '_event_loop') and self._event_loop:
