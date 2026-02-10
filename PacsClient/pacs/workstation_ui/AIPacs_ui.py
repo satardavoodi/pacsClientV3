@@ -61,26 +61,113 @@ class ControlPanelWindow(object):
 
     def __init__(self, MainWindow):
         self.MainWindow: ControlPanelInterface = MainWindow
-        self.size_button = QSize(22, 22)
+        # Sidebar sizing
+        # User request: increase sidebar icons ~30% and show labels when expanded.
+        self.size_button = QSize(29, 29)  # ~30% bigger than 22px
+        self._menu_button_size = 54       # ~30% bigger than 42px
+        self._menu_collapsed_width = 62   # fits 54px button + margins
+        self._menu_expanded_width = 220   # comfortable for labels
         self._menu_expanded = False
+        self._left_menu_buttons = []
 
     def connect_buttons(self):
         self.menuBtn.clicked.connect(self._toggle_menu)
-        self.settingsBtn.clicked.connect(lambda: self.centerMenuContainer.setVisible(not self.centerMenuContainer.isVisible()))
-        self.infoBtn.clicked.connect(lambda: self.centerMenuContainer.setVisible(not self.centerMenuContainer.isVisible()))
-        self.helpBtn.clicked.connect(lambda: self.centerMenuContainer.setVisible(not self.centerMenuContainer.isVisible()))
+
+        # Bottom section: open center menu with the correct page
+        self.settingsBtn.clicked.connect(lambda: self._toggle_center_menu(page="theme"))
+        self.infoBtn.clicked.connect(lambda: self._toggle_center_menu(page="info"))
+        self.helpBtn.clicked.connect(lambda: self._toggle_center_menu(page="help"))
+
         self.closeCenterMenuBtn.clicked.connect(lambda: self.centerMenuContainer.hide())
         self.closeRightMenuBtn.clicked.connect(lambda: self.rightMenuContainer.hide())
+
+    def _toggle_center_menu(self, *, page: str):
+        """Show/hide the center menu and switch to the requested page."""
+        try:
+            if not hasattr(self, 'centerMenuContainer') or not hasattr(self, 'centerMenuPages'):
+                return
+
+            # Map logical page names to widgets
+            target = None
+            if page == "theme":
+                target = getattr(self, 'page_3', None)
+            elif page == "help":
+                target = getattr(self, 'page_5', None)
+            elif page == "info":
+                target = getattr(self, 'page_4', None)
+
+            if target is None:
+                return
+
+            # If already visible on this page -> hide. Otherwise show & switch.
+            if self.centerMenuContainer.isVisible() and self.centerMenuPages.currentWidget() is target:
+                self.centerMenuContainer.hide()
+            else:
+                self.centerMenuContainer.show()
+                self.centerMenuPages.setCurrentWidget(target)
+        except Exception as e:
+            print(f"Error toggling center menu: {e}")
 
     def _toggle_menu(self):
         """Toggle left menu between collapsed and expanded."""
         self._menu_expanded = not self._menu_expanded
         if self._menu_expanded:
-            self.leftMenuContainer.setFixedWidth(180)
+            self.leftMenuContainer.setFixedWidth(self._menu_expanded_width)
         else:
-            self.leftMenuContainer.setFixedWidth(50)
+            self.leftMenuContainer.setFixedWidth(self._menu_collapsed_width)
 
-    def _create_menu_button(self, parent, name, icon_file, text="", tooltip=""):
+        self._apply_left_menu_state()
+
+    def _apply_left_menu_state(self):
+        """Apply expanded/collapsed visuals to all left-menu buttons."""
+        expanded = bool(self._menu_expanded)
+        for btn in getattr(self, '_left_menu_buttons', []) or []:
+            try:
+                full_text = btn.property("fullText") or btn.toolTip() or ""
+
+                btn.setIconSize(self.size_button)
+
+                if expanded:
+                    btn.setText(full_text)
+                    btn.setFixedHeight(self._menu_button_size)
+                    btn.setMinimumWidth(0)
+                    btn.setMaximumWidth(16777215)
+                    btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: transparent;
+                            color: #ffffff;
+                            border: none;
+                            padding: 8px 12px;
+                            margin: 0px;
+                            text-align: left;
+                        }
+                        QPushButton:hover {
+                            background-color: rgba(255, 255, 255, 0.15);
+                            border-radius: 10px;
+                        }
+                    """)
+                else:
+                    btn.setText("")
+                    btn.setFixedSize(self._menu_button_size, self._menu_button_size)
+                    btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: transparent;
+                            color: #ffffff;
+                            border: none;
+                            padding: 0px;
+                            margin: 0px;
+                        }
+                        QPushButton:hover {
+                            background-color: rgba(255, 255, 255, 0.15);
+                            border-radius: 10px;
+                        }
+                    """)
+            except Exception as e:
+                print(f"Error applying menu state: {e}")
+
+    def _create_menu_button(self, parent, name, icon_file, text="", tooltip="", *, register_left_menu: bool = False):
         """Create a styled menu button with icon."""
         btn = QPushButton(parent)
         btn.setObjectName(name)
@@ -89,11 +176,19 @@ class ControlPanelWindow(object):
         icon_path = str(ICON_PATH / icon_file)
         icon = QIcon(icon_path)
         btn.setIcon(icon)
-        btn.setIconSize(QSize(22, 22))
-        btn.setText(text)
+        btn.setIconSize(self.size_button)
+
+        # We store the label text and show it only when expanded.
+        btn.setProperty("fullText", text or tooltip or "")
+        btn.setText(text if self._menu_expanded else "")
+
         btn.setToolTip(tooltip)
         btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn.setFixedSize(42, 42)
+        if self._menu_expanded:
+            btn.setFixedHeight(self._menu_button_size)
+        else:
+            btn.setFixedSize(self._menu_button_size, self._menu_button_size)
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         btn.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
@@ -107,12 +202,16 @@ class ControlPanelWindow(object):
                 border-radius: 8px;
             }
         """)
+
+        if register_left_menu:
+            self._left_menu_buttons.append(btn)
+
         return btn
 
     def setup_left_menu_subcontainer(self):
         self.leftMenuContainer = QFrame(self.centralwidget)
         self.leftMenuContainer.setObjectName(u"leftMenuContainer")
-        self.leftMenuContainer.setFixedWidth(50)
+        self.leftMenuContainer.setFixedWidth(self._menu_collapsed_width)
         self.leftMenuContainer.setStyleSheet("background-color: #2d3748; border-radius: 10px; margin: 3px;")
 
         self.verticalLayout = QVBoxLayout(self.leftMenuContainer)
@@ -125,7 +224,14 @@ class ControlPanelWindow(object):
         self.verticalLayout_2.setContentsMargins(0, 0, 0, 0)
 
         # Menu toggle button
-        self.menuBtn = self._create_menu_button(self.leftMenuSubContainer, "menuBtn", "align-justify.png", "", "Menu")
+        self.menuBtn = self._create_menu_button(
+            self.leftMenuSubContainer,
+            "menuBtn",
+            "align-justify.png",
+            "Menu",
+            "Menu",
+            register_left_menu=True,
+        )
         self.verticalLayout_2.addWidget(self.menuBtn)
 
         self.verticalLayout.addWidget(self.leftMenuSubContainer)
@@ -137,26 +243,27 @@ class ControlPanelWindow(object):
         self.verticalLayout_3.setSpacing(5)
         self.verticalLayout_3.setContentsMargins(0, 5, 0, 5)
 
-        # Main navigation buttons (no text, icon only)
-        self.home_btn = self._create_menu_button(self.frame_2, "home_btn", "home.png", "", "Home")
+        # Main navigation buttons
+        self.home_btn = self._create_menu_button(self.frame_2, "home_btn", "home.png", "Home", "Home", register_left_menu=True)
         self.verticalLayout_3.addWidget(self.home_btn)
 
-        self.dataBtn = self._create_menu_button(self.frame_2, "dataBtn", "list.png", "", "Data Analysis")
+        self.dataBtn = self._create_menu_button(self.frame_2, "dataBtn", "list.png", "Data Analysis", "Data Analysis", register_left_menu=True)
         self.verticalLayout_3.addWidget(self.dataBtn)
 
-        self.reportBtn = self._create_menu_button(self.frame_2, "reportBtn", "printer.png", "", "View Reports")
+        # User-facing label requested: Print
+        self.reportBtn = self._create_menu_button(self.frame_2, "reportBtn", "printer.png", "Print", "Print / Reports", register_left_menu=True)
         self.verticalLayout_3.addWidget(self.reportBtn)
 
-        self.settings_server_btn = self._create_menu_button(self.frame_2, "settings_server_btn", "settings.png", "", "Settings")
+        self.settings_server_btn = self._create_menu_button(self.frame_2, "settings_server_btn", "settings.png", "Settings", "Settings", register_left_menu=True)
         self.verticalLayout_3.addWidget(self.settings_server_btn)
 
-        self.download_manager_btn = self._create_menu_button(self.frame_2, "download_manager_btn", "download.png", "", "Download Manager")
+        self.download_manager_btn = self._create_menu_button(self.frame_2, "download_manager_btn", "download.png", "Download Manager", "Download Manager", register_left_menu=True)
         self.verticalLayout_3.addWidget(self.download_manager_btn)
 
-        self.web_browser_btn = self._create_menu_button(self.frame_2, "web_browser_btn", "globe.png", "", "Web Browser")
+        self.web_browser_btn = self._create_menu_button(self.frame_2, "web_browser_btn", "globe.png", "Web Browser", "Web Browser", register_left_menu=True)
         self.verticalLayout_3.addWidget(self.web_browser_btn)
 
-        self.education_btn = self._create_menu_button(self.frame_2, "education_btn", "book-open.png", "", "Educational Courses")
+        self.education_btn = self._create_menu_button(self.frame_2, "education_btn", "book-open.png", "Educational Courses", "Educational Courses", register_left_menu=True)
         self.verticalLayout_3.addWidget(self.education_btn)
 
         self.verticalLayout_2.addWidget(self.frame_2)
@@ -171,13 +278,13 @@ class ControlPanelWindow(object):
         self.verticalLayout_4.setSpacing(5)
         self.verticalLayout_4.setContentsMargins(0, 5, 0, 5)
 
-        self.settingsBtn = self._create_menu_button(self.frame_3, "settingsBtn", "grid.png", "", "Themes")
+        self.settingsBtn = self._create_menu_button(self.frame_3, "settingsBtn", "grid.png", "Theme", "Theme", register_left_menu=True)
         self.verticalLayout_4.addWidget(self.settingsBtn)
 
-        self.infoBtn = self._create_menu_button(self.frame_3, "infoBtn", "info.png", "", "Information")
+        self.infoBtn = self._create_menu_button(self.frame_3, "infoBtn", "info.png", "Information", "Information", register_left_menu=True)
         self.verticalLayout_4.addWidget(self.infoBtn)
 
-        self.helpBtn = self._create_menu_button(self.frame_3, "helpBtn", "help-circle.png", "", "Get help")
+        self.helpBtn = self._create_menu_button(self.frame_3, "helpBtn", "help-circle.png", "Get Help", "Get Help", register_left_menu=True)
         self.verticalLayout_4.addWidget(self.helpBtn)
 
         self.verticalLayout_2.addWidget(self.frame_3)
@@ -260,6 +367,18 @@ class ControlPanelWindow(object):
         self.label_3.setStyleSheet("color: white;")
         self.label_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.verticalLayout_8.addWidget(self.label_3)
+
+        info_text = (
+            "This software is related to the AI Pacs company, which has been registered in the European Union "
+            "for more than ten years.\n\n"
+            "AIPacs provides tools for medical imaging workflows, study management, viewing, and downloads."
+        )
+        self.info_body = QLabel(info_text, self.page_4)
+        self.info_body.setWordWrap(True)
+        self.info_body.setStyleSheet(
+            "color: #e2e8f0; font-size: 12px; line-height: 1.3; padding: 6px;"
+        )
+        self.verticalLayout_8.addWidget(self.info_body)
         self.centerMenuPages.addWidget(self.page_4)
 
         self.verticalLayout_5.addWidget(self.centerMenuPages)
@@ -435,6 +554,9 @@ class ControlPanelWindow(object):
         # Connect buttons
         self.connect_buttons()
         self.connect_left_navigation()
+
+        # Apply initial (collapsed) style to left menu buttons
+        self._apply_left_menu_state()
 
     def connect_left_navigation(self):
         """Connect left-side navigation buttons to stacked pages."""

@@ -89,10 +89,10 @@ class SettingsTabWidget(QTabWidget):
                 border: 1px solid #4a5568;
                 border-bottom: none;
                 border-radius: 6px 6px 0 0;
-                padding: 7px 14px;
+                padding: 12px 22px;
                 margin-right: 2px;
-                font-size: 11px;
-                min-width: 110px;
+                font-size: 20px;
+                min-width: 170px;
             }
             QTabWidget#SettingsTabWidget QTabBar::tab:selected {
                 background: #3182ce;

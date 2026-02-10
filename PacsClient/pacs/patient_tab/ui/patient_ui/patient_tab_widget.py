@@ -201,7 +201,7 @@ class PatientTabWidget(QWidget):
             QLabel#PatientName {
                 color: #ffffff;
                 font-family: 'Segoe UI', sans-serif;
-                font-size: 13px;
+                font-size: 16px;
                 font-weight: bold;
                 background: transparent;
                 padding: 0px;
@@ -211,13 +211,13 @@ class PatientTabWidget(QWidget):
             PatientTabWidget.active QLabel#PatientName {
                 color: #ffffff;
                 font-weight: bold;
-                font-size: 13px;
+                font-size: 16px;
             }
             
             QLabel#PatientID {
                 color: rgba(255, 255, 255, 0.8);
                 font-family: 'Segoe UI', sans-serif;
-                font-size: 13px;
+                font-size: 16px;
                 font-weight: bold;
                 background: transparent;
                 padding: 0px;
@@ -227,7 +227,7 @@ class PatientTabWidget(QWidget):
             PatientTabWidget.active QLabel#PatientID {
                 color: rgba(255, 255, 255, 0.9);
                 font-weight: bold;
-                font-size: 13px;
+                font-size: 16px;
             }
             
             QFrame#SeparatorLine {

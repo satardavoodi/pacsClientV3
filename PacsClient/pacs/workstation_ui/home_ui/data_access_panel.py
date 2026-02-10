@@ -75,7 +75,7 @@ class DataAccessPanelWidget(QWidget):
                     border-radius: 6px 6px 0 0;
                     padding: 6px 10px;
                     margin-right: 2px;
-                    font-size: 10px;
+                    font-size: 13px;
                     font-weight: 500;
                     min-width: 50px;
                     max-width: 65px;
@@ -116,7 +116,7 @@ class DataAccessPanelWidget(QWidget):
         local_label.setText(" Local Database")
         local_label.setStyleSheet("""
             QLabel {
-                font-size: 10px;
+                font-size: 13px;
                 font-weight: 600;
                 color: #f7fafc;
                 padding: 2px 0px;
@@ -128,7 +128,7 @@ class DataAccessPanelWidget(QWidget):
         message_label.setWordWrap(True)
         message_label.setStyleSheet("""
             QLabel {
-                font-size: 9px;
+                font-size: 12px;
                 color: #a0aec0;
                 padding: 3px 5px;
                 background: rgba(160, 174, 192, 0.1);
@@ -144,7 +144,7 @@ class DataAccessPanelWidget(QWidget):
         refresh_button.setText(" Refresh Local")
         refresh_button.setStyleSheet("""
             QPushButton {
-                font-size: 9px;
+                font-size: 12px;
                 font-weight: 500;
                 color: #f7fafc;
                 background: #2563eb;
@@ -185,7 +185,7 @@ class DataAccessPanelWidget(QWidget):
         server_label.setText(" Select PACS Server:")
         server_label.setStyleSheet("""
             QLabel {
-                font-size: 10px;
+                font-size: 13px;
                 font-weight: 600;
                 color: #f7fafc;
                 padding: 2px 0px;
@@ -229,7 +229,7 @@ class DataAccessPanelWidget(QWidget):
             QComboBox::down-arrow:after {
                 content: "▼";
                 color: #3182ce;
-                font-size: 10px;
+                font-size: 13px;
                 font-weight: bold;
             }
             QComboBox QAbstractItemView {
@@ -261,7 +261,7 @@ class DataAccessPanelWidget(QWidget):
         self.connection_status.setText(" Disconnected")
         self.connection_status.setStyleSheet("""
             QLabel {
-                font-size: 9px;
+                font-size: 12px;
                 color: #ef4444;
                 padding: 4px 6px;
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -299,7 +299,7 @@ class DataAccessPanelWidget(QWidget):
             self.connection_status.setText(" Checking...")
             self.connection_status.setStyleSheet("""
                 QLabel {
-                    font-size: 9px;
+                    font-size: 12px;
                     color: #f59e0b;
                     padding: 4px 6px;
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -317,7 +317,7 @@ class DataAccessPanelWidget(QWidget):
                 self.connection_status.setText(" Server Ready")
                 self.connection_status.setStyleSheet("""
                     QLabel {
-                        font-size: 11px;
+                        font-size: 14px;
                         color: #10b981;
                         padding: 4px 6px;
                         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -332,7 +332,7 @@ class DataAccessPanelWidget(QWidget):
                 self.connection_status.setText(" Server Not Found")
                 self.connection_status.setStyleSheet("""
                     QLabel {
-                        font-size: 9px;
+                        font-size: 12px;
                         color: #ef4444;
                         padding: 4px 6px;
                         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -349,7 +349,7 @@ class DataAccessPanelWidget(QWidget):
             self.connection_status.setText(" No Server Selected")
             self.connection_status.setStyleSheet("""
                 QLabel {
-                    font-size: 9px;
+                    font-size: 12px;
                     color: #64748b;
                     padding: 4px 6px;
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -398,7 +398,7 @@ class DataAccessPanelWidget(QWidget):
         import_label.setText(" Import DICOM Files")
         import_label.setStyleSheet("""
             QLabel {
-                font-size: 10px;
+                font-size: 13px;
                 font-weight: 600;
                 color: #f7fafc;
                 padding: 2px 0px;
@@ -417,7 +417,7 @@ class DataAccessPanelWidget(QWidget):
                 border: 1px solid #059669;
                 border-radius: 6px;
                 padding: 6px 12px;
-                font-size: 10px;
+                font-size: 13px;
                 font-weight: 600;
                 min-height: 20px;
             }
@@ -437,7 +437,7 @@ class DataAccessPanelWidget(QWidget):
         self.folder_path_label = QLabel("No folder selected")
         self.folder_path_label.setStyleSheet("""
             QLabel {
-                font-size: 9px;
+                font-size: 12px;
                 color: #a0aec0;
                 padding: 4px 6px;
                 background: rgba(160, 174, 192, 0.1);

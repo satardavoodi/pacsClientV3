@@ -4113,7 +4113,12 @@ Study UID: {study_uid}
             from PacsClient.pacs.education.education_module_redesigned import EducationModuleRedesigned
 
             # Create education module widget
-            education_widget = EducationModuleRedesigned(parent=self)
+            education_widget = EducationModuleRedesigned(
+                parent=self,
+                host_tab_widget=self.tab_widget,
+                host_custom_tab_manager=self.custom_tab_manager,
+                host_parent=self,
+            )
             
             # Use custom tab manager if available
             if self.custom_tab_manager:

@@ -258,7 +258,13 @@ def init_database():
                 body_regions TEXT DEFAULT '[]',
                 level TEXT DEFAULT 'Intermediate',
                 is_my_course INTEGER DEFAULT 1,
-                is_downloaded INTEGER DEFAULT 0
+                is_downloaded INTEGER DEFAULT 0,
+                resource_type TEXT DEFAULT 'Course',
+                content_origin TEXT DEFAULT 'local',
+                validation_status TEXT DEFAULT 'ok',
+                needs_attention INTEGER DEFAULT 0,
+                import_source_path TEXT DEFAULT '',
+                import_manifest_path TEXT DEFAULT ''
             )
         """)
         
@@ -279,6 +285,18 @@ def init_database():
                 cur.execute("ALTER TABLE courses ADD COLUMN is_my_course INTEGER DEFAULT 1")
             if 'is_downloaded' not in columns:
                 cur.execute("ALTER TABLE courses ADD COLUMN is_downloaded INTEGER DEFAULT 0")
+            if 'resource_type' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN resource_type TEXT DEFAULT 'Course'")
+            if 'content_origin' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN content_origin TEXT DEFAULT 'local'")
+            if 'validation_status' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN validation_status TEXT DEFAULT 'ok'")
+            if 'needs_attention' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN needs_attention INTEGER DEFAULT 0")
+            if 'import_source_path' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN import_source_path TEXT DEFAULT ''")
+            if 'import_manifest_path' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN import_manifest_path TEXT DEFAULT ''")
         except Exception as e:
             print(f"Migration warning: {e}")
 

@@ -8,9 +8,11 @@ import SimpleITK as sitk
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTabWidget, QGroupBox, QCheckBox, QSpinBox, QDoubleSpinBox,
-    QListWidget, QLineEdit, QMessageBox, QGridLayout, QScrollArea
+    QListWidget, QLineEdit, QMessageBox, QGridLayout, QScrollArea,
+    QSlider, QSizePolicy, QStyle, QStyleOptionSlider, QFrame, QToolButton
 )
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QRect
+from PySide6.QtGui import QPainter, QFontMetrics
 
 
 # ----------------------------------------------------------------------
@@ -30,16 +32,245 @@ FILTER_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "filter_settings.json"
 # ----------------------------------------------------------------------
 def compact_grid():
     g = QGridLayout()
-    g.setHorizontalSpacing(8)
+    g.setHorizontalSpacing(10)
     g.setVerticalSpacing(6)
-    g.setContentsMargins(6, 6, 6, 6)
+    g.setContentsMargins(8, 6, 8, 6)
+    g.setColumnStretch(0, 0)
+    g.setColumnStretch(1, 1)
+    g.setColumnStretch(2, 0)
+    g.setColumnStretch(3, 0)
     return g
 
 
-def compact_spin(spin, w=80):
+def compact_spin(spin, w=110):
     spin.setFixedWidth(w)
-    spin.setAlignment(Qt.AlignRight)
+    spin.setAlignment(Qt.AlignCenter)
     return spin
+
+
+class LabeledSlider(QSlider):
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        handle_rect = self.style().subControlRect(
+            QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self
+        )
+
+        scale = self.property("scale") or 1
+        decimals = self.property("decimals")
+        actual_value = self.value() / scale
+
+        if decimals is None:
+            value_text = f"{actual_value:g}"
+        else:
+            value_text = f"{actual_value:.{decimals}f}"
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Dynamically size the bubble based on current font + content.
+        # This avoids the "small here, big there" look when global fonts change.
+        painter.setFont(self.font())
+        fm = QFontMetrics(painter.font())
+        pad_x = 10
+        pad_y = 5
+        bubble_width = max(44, fm.horizontalAdvance(value_text) + (pad_x * 2))
+        bubble_height = max(22, fm.height() + (pad_y * 2))
+
+        bubble_y = handle_rect.top() - bubble_height - 10
+        bubble_y = max(2, bubble_y)
+
+        bubble_x = handle_rect.center().x() - (bubble_width // 2)
+        bubble_x = max(6, min(bubble_x, self.width() - bubble_width - 6))
+
+        bubble = QRect(bubble_x, bubble_y, bubble_width, bubble_height)
+        painter.setBrush(Qt.black)
+        painter.setPen(Qt.black)
+        painter.drawRoundedRect(bubble, 6, 6)
+
+        painter.setPen(Qt.white)
+        painter.drawText(bubble, Qt.AlignCenter, value_text)
+        painter.end()
+
+
+def _slider_scale(step: float) -> int:
+    if step <= 0:
+        return 1
+    scale = int(round(1.0 / step))
+    return max(scale, 1)
+
+
+def create_slider_with_spin(spin, min_val, max_val, step, decimals=None):
+    scale = _slider_scale(step)
+    slider = LabeledSlider(Qt.Horizontal)
+    slider.setRange(int(min_val * scale), int(max_val * scale))
+    slider.setSingleStep(int(step * scale))
+    slider.setPageStep(int(step * scale))
+    slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    slider.setMinimumHeight(44)
+    slider.setProperty("scale", scale)
+    if decimals is not None:
+        slider.setProperty("decimals", decimals)
+
+    spin.setRange(min_val, max_val)
+    spin.setSingleStep(step)
+    if isinstance(spin, QDoubleSpinBox):
+        if decimals is None:
+            decimals = max(0, len(str(step).split('.')[-1]) if '.' in str(step) else 0)
+        spin.setDecimals(decimals)
+
+    def _sync_slider_from_spin(value):
+        slider.blockSignals(True)
+        slider.setValue(int(round(value * scale)))
+        slider.blockSignals(False)
+
+    def _sync_spin_from_slider(value):
+        spin.blockSignals(True)
+        spin.setValue(value / scale)
+        spin.blockSignals(False)
+
+    spin.valueChanged.connect(_sync_slider_from_spin)
+    slider.valueChanged.connect(_sync_spin_from_slider)
+
+    min_label = QLabel(f"{min_val:g}")
+    max_label = QLabel(f"{max_val:g}")
+    min_label.setProperty("role", "range")
+    max_label.setProperty("role", "range")
+
+    container = QWidget()
+    container.setProperty("role", "sliderRow")
+    layout = QHBoxLayout(container)
+    # Reserve top space for the value bubble so it doesn't collide with other text.
+    layout.setContentsMargins(0, 18, 0, 0)
+    layout.setSpacing(8)
+    container.setMinimumHeight(60)
+    layout.addWidget(min_label, 0)
+    layout.addWidget(slider, 1)
+    layout.addWidget(max_label, 0)
+    layout.addWidget(spin, 0)
+
+    return container, slider
+
+
+def add_slider_row(gl: QGridLayout, row: int, label_text: str, spin,
+                   min_val, max_val, step, decimals=None, tooltip=None,
+                   detail: str = None):
+    label = QLabel(label_text)
+    label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+    label.setProperty("role", "param")
+    if tooltip:
+        label.setToolTip(tooltip)
+        spin.setToolTip(tooltip)
+    widget, _ = create_slider_with_spin(spin, min_val, max_val, step, decimals)
+    gl.addWidget(label, row, 0)
+    gl.addWidget(widget, row, 1, 1, 3)
+    next_row = row + 1
+    if detail:
+        detail_label = description_label(detail)
+        detail_label.setIndent(12)
+        gl.addWidget(detail_label, row + 1, 0, 1, 4)
+        next_row = row + 2
+    return next_row
+
+
+def description_label(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setProperty("role", "desc")
+    return label
+
+
+class CollapsibleSection(QFrame):
+    """A lightweight accordion-style section (header + collapsible content)."""
+
+    def __init__(self, title: str, *, expanded: bool = True, parent=None):
+        super().__init__(parent)
+        self.setProperty("role", "collapsibleSection")
+        self.setFrameShape(QFrame.NoFrame)
+
+        # Make sections expand to fill the available column width.
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+
+        self._header_btn = QToolButton(self)
+        self._header_btn.setProperty("role", "collapsibleHeader")
+        self._header_btn.setText(title)
+        self._header_btn.setToolTip(title)
+        self._header_btn.setCheckable(True)
+        self._header_btn.setChecked(expanded)
+        self._header_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._header_btn.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self._header_btn.clicked.connect(self._on_toggled)
+
+        # Reduce header font size by ~40% (i.e., keep 60%), but avoid invalid (-1) point sizes.
+        f = self._header_btn.font()
+        ps = f.pointSizeF()
+        if ps is not None and ps > 0:
+            f.setPointSizeF(max(1.0, ps * 0.60))
+        else:
+            px = f.pixelSize()
+            if px is not None and px > 0:
+                f.setPixelSize(max(1, int(px * 0.60)))
+        self._header_btn.setFont(f)
+
+        # Encourage full text display (helps prevent the "..." truncation when space is available).
+        self._header_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self._content = QWidget(self)
+        self._content.setProperty("role", "collapsibleContent")
+        self._content.setVisible(expanded)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+        outer.addWidget(self._header_btn)
+        outer.addWidget(self._content)
+
+    def setContentLayout(self, layout: QVBoxLayout | QGridLayout | QHBoxLayout):
+        # Remove old layout if any
+        old = self._content.layout()
+        if old is not None:
+            QWidget().setLayout(old)
+        self._content.setLayout(layout)
+
+    def isExpanded(self) -> bool:
+        return self._header_btn.isChecked()
+
+    def setExpanded(self, expanded: bool):
+        self._header_btn.setChecked(expanded)
+        self._on_toggled(expanded)
+
+    def _on_toggled(self, checked: bool):
+        self._header_btn.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+        self._content.setVisible(checked)
+
+
+def _filter_card(title: str, enabled_cb: QCheckBox | None = None) -> tuple[QFrame, QGridLayout]:
+    """Compact card container used inside collapsible categories."""
+    card = QFrame()
+    card.setProperty("role", "filterCard")
+    card.setFrameShape(QFrame.NoFrame)
+
+    v = QVBoxLayout(card)
+    v.setContentsMargins(10, 10, 10, 10)
+    v.setSpacing(6)
+
+    header = QHBoxLayout()
+    header.setContentsMargins(0, 0, 0, 0)
+    header.setSpacing(10)
+
+    title_lbl = QLabel(title)
+    title_lbl.setProperty("role", "cardTitle")
+    header.addWidget(title_lbl, 1)
+    if enabled_cb is not None:
+        enabled_cb.setProperty("role", "cardToggle")
+        header.addWidget(enabled_cb, 0, Qt.AlignRight)
+    v.addLayout(header)
+
+    gl = compact_grid()
+    v.addLayout(gl)
+    return card, gl
 
 
 # ----------------------------------------------------------------------
@@ -194,32 +425,273 @@ class FilterConfigWidget(QWidget):
 
     # ------------------------------------------------------------------
     def init_ui(self):
+        self.setObjectName("FilterConfigWidget")
         self.setStyleSheet("""
-        QGroupBox {
-            border: 1px solid #dcdcdc;
-            border-radius: 6px;
-            margin-top: 6px;
-            font-weight: 600;
+        #FilterConfigWidget QLabel {
+            color: #dbe6f2;
+            font-size: 20px;
         }
-        QGroupBox::title {
+        #FilterConfigWidget QLabel[role="title"] {
+            font-size: 30px;
+            font-weight: 800;
+            color: #eef6ff;
+            padding: 4px 0 10px 0;
+        }
+        #FilterConfigWidget QLabel[role="param"] {
+            font-size: 20px;
+            font-weight: 700;
+            color: #eef5ff;
+        }
+        #FilterConfigWidget QLabel[role="desc"] {
+            font-size: 18px;
+            color: #a9b7c6;
+            padding-top: 2px;
+            padding-bottom: 6px;
+        }
+        #FilterConfigWidget QLabel[role="range"] {
+            font-size: 18px;
+            color: #8ea0b2;
+        }
+        #FilterConfigWidget QLabel[role="guideHeading"] {
+            font-size: 21px;
+            font-weight: 800;
+            color: #f0f7ff;
+        }
+        #FilterConfigWidget QLabel[role="guideBody"] {
+            font-size: 19px;
+            color: #b3c1cf;
+            line-height: 1.25;
+        }
+
+        #FilterConfigWidget QGroupBox {
+            border: 1px solid rgba(255,255,255,0.16);
+            border-radius: 10px;
+            margin-top: 14px;
+            background-color: rgba(255,255,255,0.03);
+            padding: 10px;
+            padding-top: 18px;
+        }
+        #FilterConfigWidget QGroupBox::title {
             subcontrol-origin: margin;
-            left: 8px;
-            padding: 0 4px;
+            left: 12px;
+            padding: 0 8px;
+            color: #eef6ff;
+            font-size: 21px;
+            font-weight: 800;
         }
-        QSpinBox, QDoubleSpinBox {
-            min-height: 22px;
-            max-height: 22px;
+        #FilterConfigWidget QGroupBox[role="guideBox"] {
+            border: 1px solid rgba(74,144,226,0.45);
+            background-color: rgba(74,144,226,0.10);
+        }
+
+        #FilterConfigWidget QFrame[role="collapsibleSection"] {
+            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 12px;
+            background-color: rgba(255,255,255,0.02);
+            padding: 10px;
+        }
+        #FilterConfigWidget QToolButton[role="collapsibleHeader"] {
+            text-align: left;
+            font-size: 21px;
+            font-weight: 900;
+            color: #eef6ff;
+            padding: 10px 10px;
+            border-radius: 10px;
+            background-color: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.10);
+        }
+        #FilterConfigWidget QToolButton[role="collapsibleHeader"]:hover {
+            background-color: rgba(255,255,255,0.06);
+        }
+
+        #FilterConfigWidget QFrame[role="filterCard"] {
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            background-color: rgba(0,0,0,0.10);
+        }
+        #FilterConfigWidget QLabel[role="cardTitle"] {
+            font-size: 19px;
+            font-weight: 900;
+            color: #f0f7ff;
+        }
+
+        #FilterConfigWidget QTabWidget::pane {
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px;
+            top: -1px;
+            background: transparent;
+        }
+        #FilterConfigWidget QTabBar::tab {
+            min-width: 140px;
+            min-height: 44px;
+            padding: 8px 16px;
+            margin-right: 6px;
+            border-radius: 10px;
+            background-color: rgba(255,255,255,0.06);
+            color: #dbe6f2;
+            font-size: 20px;
+            font-weight: 800;
+            border: 1px solid rgba(255,255,255,0.10);
+        }
+        #FilterConfigWidget QTabBar::tab:selected {
+            background-color: rgba(74,144,226,0.30);
+            border: 1px solid rgba(74,144,226,0.65);
+        }
+
+        #FilterConfigWidget QCheckBox {
+            spacing: 10px;
+            font-size: 20px;
+            color: #eef5ff;
+        }
+        #FilterConfigWidget QPushButton {
+            min-height: 40px;
+            padding: 8px 14px;
+            font-size: 20px;
+            font-weight: 800;
+            border-radius: 10px;
+        }
+
+        #FilterConfigWidget QSpinBox, #FilterConfigWidget QDoubleSpinBox {
+            min-height: 36px;
+            font-size: 22px;
+            font-weight: 800;
+            padding-right: 8px;
+        }
+        #FilterConfigWidget QSpinBox::up-button, #FilterConfigWidget QDoubleSpinBox::up-button {
+            width: 22px;
+            height: 16px;
+        }
+        #FilterConfigWidget QSpinBox::down-button, #FilterConfigWidget QDoubleSpinBox::down-button {
+            width: 22px;
+            height: 16px;
+        }
+        #FilterConfigWidget QSpinBox::up-arrow, #FilterConfigWidget QDoubleSpinBox::up-arrow,
+        #FilterConfigWidget QSpinBox::down-arrow, #FilterConfigWidget QDoubleSpinBox::down-arrow {
+            width: 9px;
+            height: 9px;
+        }
+        #FilterConfigWidget QLineEdit {
+            min-height: 36px;
+            font-size: 20px;
+        }
+
+        #FilterConfigWidget QSlider::groove:horizontal {
+            border: 1px solid rgba(255,255,255,0.14);
+            height: 8px;
+            background: rgba(255,255,255,0.06);
+            border-radius: 4px;
+        }
+        #FilterConfigWidget QSlider::handle:horizontal {
+            background: #4a90e2;
+            border: 1px solid rgba(255,255,255,0.25);
+            width: 18px;
+            margin: -6px 0;
+            border-radius: 9px;
+        }
+        #FilterConfigWidget QSlider::sub-page:horizontal {
+            background: rgba(74,144,226,0.35);
+            border-radius: 3px;
+        }
+
+        #FilterConfigWidget QScrollArea {
+            border: none;
+            background: transparent;
+        }
+        #FilterConfigWidget QScrollBar:vertical {
+            width: 14px;
+            margin: 2px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 7px;
+        }
+        #FilterConfigWidget QScrollBar::handle:vertical {
+            background: rgba(255,255,255,0.18);
+            border-radius: 7px;
+            min-height: 40px;
+        }
+        #FilterConfigWidget QScrollBar::handle:vertical:hover {
+            background: rgba(255,255,255,0.25);
+        }
+        #FilterConfigWidget QScrollBar::add-line:vertical,
+        #FilterConfigWidget QScrollBar::sub-line:vertical {
+            height: 0px;
+        }
+        #FilterConfigWidget QScrollBar::add-page:vertical,
+        #FilterConfigWidget QScrollBar::sub-page:vertical {
+            background: transparent;
         }
         """)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(12)
 
         title = QLabel("Medical Image Filter Configuration")
-        title.setStyleSheet("font-size:16px;font-weight:700;color:#2c3e50;")
+        title.setProperty("role", "title")
         root.addWidget(title)
 
+        guide = QGroupBox("Quick guide — Hard vs Soft look")
+        guide.setProperty("role", "guideBox")
+        guide_layout = QVBoxLayout(guide)
+        guide_layout.setContentsMargins(14, 14, 14, 14)
+        guide_layout.setSpacing(10)
+
+        def _guide_block(heading: str, body_html: str):
+            h = QLabel(heading)
+            h.setProperty("role", "guideHeading")
+            h.setWordWrap(True)
+
+            b = QLabel(body_html)
+            b.setProperty("role", "guideBody")
+            b.setWordWrap(True)
+            b.setTextFormat(Qt.RichText)
+
+            guide_layout.addWidget(h)
+            guide_layout.addWidget(b)
+
+        _guide_block(
+            "Hard / Coarse look (more edge emphasis)",
+            "Increase <b>Adaptive/Laplacian/Multiscale sharpening</b> and <b>Gaussian High‑Pass</b>. "
+            "Higher values increase edge contrast and can amplify noise in MRI. "
+            "Reducing <b>Noise Reduction</b>, <b>Gaussian Smoothing</b>, or <b>Low‑Pass</b> makes images harder."
+        )
+        line1 = QFrame()
+        line1.setFrameShape(QFrame.HLine)
+        line1.setFixedHeight(1)
+        line1.setStyleSheet("background: rgba(255,255,255,0.18);")
+        guide_layout.addWidget(line1)
+
+        _guide_block(
+            "Soft / Smooth look (less edge emphasis)",
+            "Increase <b>Noise Reduction</b>, <b>Gaussian Smoothing</b>, and <b>Low‑Pass</b>. "
+            "Lower sharpening values (or disabling sharpeners) reduces coarseness and makes MRI appear smoother."
+        )
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.HLine)
+        line2.setFixedHeight(1)
+        line2.setStyleSheet("background: rgba(255,255,255,0.18);")
+        guide_layout.addWidget(line2)
+
+        _guide_block(
+            "How sliders behave",
+            "For sharpening and high‑pass filters, higher values = harder, crisper edges. "
+            "For smoothing and low‑pass filters, higher values = softer, smoother images."
+        )
+        line3 = QFrame()
+        line3.setFrameShape(QFrame.HLine)
+        line3.setFixedHeight(1)
+        line3.setStyleSheet("background: rgba(255,255,255,0.18);")
+        guide_layout.addWidget(line3)
+
+        _guide_block(
+            "Resolution & contrast",
+            "These filters do <u>not</u> increase true resolution. Sharpening and high‑pass can increase "
+            "<i>perceived</i> detail. High‑pass and band‑pass tend to increase local contrast; "
+            "heavy smoothing reduces contrast."
+        )
+        root.addWidget(guide)
+
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         root.addWidget(self.tabs)
 
         self.tabs.addTab(self._build_modality_tab("CT"), "CT")
@@ -246,49 +718,106 @@ class FilterConfigWidget(QWidget):
     def _build_modality_tab(self, modality: str):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        # Two-column layout can exceed narrow windows; allow horizontal scroll if needed.
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         w = QWidget()
+        w.setProperty("role", "scrollContent")
         v = QVBoxLayout(w)
+        v.setContentsMargins(12, 12, 18, 12)
+        v.setSpacing(12)
 
-        # Enable checkbox
+        prefix = modality.lower()
+
+        # --- Basic settings (collapsible)
+        basic = CollapsibleSection("Basic Settings", expanded=False)
+        basic_layout = QVBoxLayout()
+        basic_layout.setContentsMargins(10, 10, 10, 6)
+        basic_layout.setSpacing(10)
+
         enabled_cb = QCheckBox(f"Enable filters for {modality}")
-        setattr(self, f"{modality.lower()}_enabled", enabled_cb)
-        v.addWidget(enabled_cb)
+        setattr(self, f"{prefix}_enabled", enabled_cb)
+        basic_layout.addWidget(enabled_cb)
 
-        # Minimum slices
-        g = QGroupBox("Minimum slices")
-        gl = compact_grid()
+        card, gl = _filter_card("Minimum slices")
+        gl.addWidget(description_label(
+            "Defines the minimum stack depth before any filters run. "
+            "Very thin series can be unstable for filtering, so we skip them."
+        ), 0, 0, 1, 4)
+
         spin = compact_spin(QSpinBox())
-        spin.setRange(1, 200)
-        setattr(self, f"{modality.lower()}_min_slices", spin)
-        gl.addWidget(QLabel("Slices ≥"), 0, 0)
-        gl.addWidget(spin, 0, 1)
-        g.setLayout(gl)
-        v.addWidget(g)
+        setattr(self, f"{prefix}_min_slices", spin)
+        add_slider_row(
+            gl,
+            1,
+            "Slices ≥",
+            spin,
+            min_val=1,
+            max_val=200,
+            step=1,
+            tooltip=(
+                "Minimum number of slices required. If the series has fewer slices, "
+                "filters are skipped to avoid artifacts."
+            ),
+            detail=(
+                "Higher values are safer for low‑slice MRI studies."
+            )
+        )
+        basic_layout.addWidget(card)
+        basic.setContentLayout(basic_layout)
 
-        # Noise reduction
-        v.addWidget(self._build_noise_reduction(modality.lower()))
-        
-        # Gaussian Smoothing
-        v.addWidget(self._build_gaussian_smoothing(modality.lower()))
-        
-        # Multiscale Sharpening
-        v.addWidget(self._build_multiscale_sharpening(modality.lower()))
-        
-        # Laplacian sharpening
-        v.addWidget(self._build_laplacian_sharpening(modality.lower()))
-        
-        # Adaptive sharpening
-        v.addWidget(self._build_adaptive_sharpening(modality.lower()))
-        
-        # Gaussian High Pass
-        v.addWidget(self._build_gaussian_high_pass(modality.lower()))
-        
-        # Gaussian Low Pass
-        v.addWidget(self._build_gaussian_low_pass(modality.lower()))
-        
-        # Gaussian Band Pass
-        v.addWidget(self._build_gaussian_band_pass(modality.lower()))
+        # --- Noise smoothing
+        smoothing = CollapsibleSection("Noise Smoothing", expanded=False)
+        smoothing_layout = QVBoxLayout()
+        smoothing_layout.setContentsMargins(10, 10, 10, 6)
+        smoothing_layout.setSpacing(12)
+        smoothing_layout.addWidget(self._build_noise_reduction(prefix))
+        smoothing_layout.addWidget(self._build_gaussian_smoothing(prefix))
+        smoothing.setContentLayout(smoothing_layout)
+
+        # --- Sharpening
+        sharp = CollapsibleSection("Sharpening", expanded=False)
+        sharp_layout = QVBoxLayout()
+        sharp_layout.setContentsMargins(10, 10, 10, 6)
+        sharp_layout.setSpacing(12)
+        sharp_layout.addWidget(self._build_multiscale_sharpening(prefix))
+        sharp_layout.addWidget(self._build_laplacian_sharpening(prefix))
+        sharp_layout.addWidget(self._build_adaptive_sharpening(prefix))
+        sharp.setContentLayout(sharp_layout)
+
+        # --- Frequency filter
+        freq = CollapsibleSection("Frequency Filter", expanded=False)
+        freq_layout = QVBoxLayout()
+        freq_layout.setContentsMargins(10, 10, 10, 6)
+        freq_layout.setSpacing(12)
+        freq_layout.addWidget(self._build_gaussian_high_pass(prefix))
+        freq_layout.addWidget(self._build_gaussian_low_pass(prefix))
+        freq_layout.addWidget(self._build_gaussian_band_pass(prefix))
+        freq.setContentLayout(freq_layout)
+
+        # --- Two-column layout (left: Basic+Noise, right: Sharpening+Frequency)
+        cols = QHBoxLayout()
+        cols.setContentsMargins(0, 0, 0, 0)
+        cols.setSpacing(12)
+
+        left_col = QVBoxLayout()
+        left_col.setContentsMargins(0, 0, 0, 0)
+        left_col.setSpacing(12)
+        left_col.addWidget(basic)
+        left_col.addWidget(smoothing)
+        left_col.addStretch(1)
+
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(12)
+        right_col.addWidget(sharp)
+        right_col.addWidget(freq)
+        right_col.addStretch(1)
+
+        cols.addLayout(left_col, 1)
+        cols.addLayout(right_col, 1)
+        v.addLayout(cols)
 
         v.addStretch()
         scroll.setWidget(w)
@@ -296,124 +825,233 @@ class FilterConfigWidget(QWidget):
 
     # ------------------------------------------------------------------
     def _build_noise_reduction(self, prefix):
-        g = QGroupBox("Noise reduction (Gaussian)")
-        gl = compact_grid()
-
         enabled = QCheckBox("Enabled")
         setattr(self, f"{prefix}_noise_enabled", enabled)
 
+        g, gl = _filter_card("Noise reduction (Gaussian)", enabled)
+
+        gl.addWidget(description_label(
+            "Reduces random noise by blurring fine-grain variations. "
+            "Higher sigma removes more grain but also softens detail."
+        ), 0, 0, 1, 4)
+
         s1 = compact_spin(QDoubleSpinBox())
         s2 = compact_spin(QDoubleSpinBox())
-        s1.setRange(0.05, 3.0)
-        s1.setSingleStep(0.05)
-        s2.setRange(0.05, 3.0)
-        s2.setSingleStep(0.05)
 
         setattr(self, f"{prefix}_noise_sigma", s1)
         setattr(self, f"{prefix}_noise_mild_sigma", s2)
 
-        gl.addWidget(enabled, 0, 0, 1, 4)
-        gl.addWidget(QLabel("Sigma"), 1, 0)
-        gl.addWidget(s1, 1, 1)
-        gl.addWidget(QLabel("Sigma (Mild)"), 1, 2)
-        gl.addWidget(s2, 1, 3)
+        row = 1
+        row = add_slider_row(
+            gl,
+            row,
+            "Sigma",
+            s1,
+            min_val=0.05,
+            max_val=3.0,
+            step=0.05,
+            decimals=2,
+            tooltip="Controls the strength of noise smoothing.",
+            detail=(
+                "Higher sigma removes more grain but softens detail—use lower values for CT to preserve edges, "
+                "and moderate values for noisy MRI sequences."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "Sigma (Mild)",
+            s2,
+            min_val=0.05,
+            max_val=3.0,
+            step=0.05,
+            decimals=2,
+            tooltip=(
+                "Used for thick-slice (mild) mode. "
+                "Higher values smooth more aggressively."
+            ),
+            detail=(
+                "Mild mode is triggered for larger slice spacing; keep this slightly higher to avoid blocky noise."
+            )
+        )
 
-        g.setLayout(gl)
         return g
 
     def _build_gaussian_smoothing(self, prefix):
-        g = QGroupBox("Gaussian Smoothing")
-        gl = compact_grid()
-
         enabled = QCheckBox("Enabled")
         setattr(self, f"{prefix}_gaussian_smooth_enabled", enabled)
 
+        g, gl = _filter_card("Gaussian smoothing", enabled)
+
+        gl.addWidget(description_label(
+            "Gaussian blur that reduces high‑frequency detail. Higher sigma = smoother/softer."
+        ), 0, 0, 1, 4)
+
         s1 = compact_spin(QDoubleSpinBox())
         s2 = compact_spin(QDoubleSpinBox())
-        s1.setRange(0.1, 5.0)
-        s1.setSingleStep(0.1)
-        s2.setRange(0.1, 5.0)
-        s2.setSingleStep(0.1)
 
         setattr(self, f"{prefix}_gaussian_smooth_sigma", s1)
         setattr(self, f"{prefix}_gaussian_smooth_mild_sigma", s2)
 
-        gl.addWidget(enabled, 0, 0, 1, 4)
-        gl.addWidget(QLabel("Sigma"), 1, 0)
-        gl.addWidget(s1, 1, 1)
-        gl.addWidget(QLabel("Sigma (Mild)"), 1, 2)
-        gl.addWidget(s2, 1, 3)
+        row = 1
+        row = add_slider_row(
+            gl,
+            row,
+            "Sigma",
+            s1,
+            min_val=0.1,
+            max_val=5.0,
+            step=0.1,
+            decimals=1,
+            tooltip="Larger sigma increases blur and reduces fine detail.",
+            detail=(
+                "Higher values smooth textures but can soften anatomy—use smaller values for CT and higher for noisy MRI."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "Sigma (Mild)",
+            s2,
+            min_val=0.1,
+            max_val=5.0,
+            step=0.1,
+            decimals=1,
+            tooltip="Mild-mode smoothing for thicker slices.",
+            detail=(
+                "Mild mode is safer for thick slices; a slightly higher sigma avoids banding."
+            )
+        )
 
-        g.setLayout(gl)
         return g
 
     def _build_multiscale_sharpening(self, prefix):
-        g = QGroupBox("Multiscale Sharpening")
-        gl = compact_grid()
-
         enabled = QCheckBox("Enabled")
         setattr(self, f"{prefix}_multiscale_enabled", enabled)
 
-        gl.addWidget(enabled, 0, 0, 1, 2)
-        gl.addWidget(QLabel("Sigmas (comma-separated):"), 1, 0)
+        g, gl = _filter_card("Multiscale sharpening", enabled)
+
+        gl.addWidget(description_label(
+            "Sharpens multiple edge scales. Use smaller amounts to avoid halos/noise."
+        ), 0, 0, 1, 2)
+
+        row = 1
+
+        sigmas_label = QLabel("Sigmas (comma-separated):")
+        sigmas_label.setToolTip("Gaussian scales used to detect details at multiple sizes.")
+        gl.addWidget(sigmas_label, row, 0)
         sigmas_edit = QLineEdit()
         sigmas_edit.setPlaceholderText("0.5,1.0,2.0")
+        sigmas_edit.setToolTip("Smaller values target fine detail; larger values target broader edges.")
         setattr(self, f"{prefix}_multiscale_sigmas", sigmas_edit)
-        gl.addWidget(sigmas_edit, 1, 1)
-        
-        gl.addWidget(QLabel("Amounts (comma-separated):"), 2, 0)
+        gl.addWidget(sigmas_edit, row, 1)
+        row += 1
+        gl.addWidget(description_label(
+            "Each sigma is an edge scale. Smaller values sharpen fine texture; larger values sharpen broader anatomy."
+        ), row, 0, 1, 2)
+        row += 1
+
+        amounts_label = QLabel("Amounts (comma-separated):")
+        amounts_label.setToolTip("Strength of sharpening at each sigma scale.")
+        gl.addWidget(amounts_label, row, 0)
         amounts_edit = QLineEdit()
         amounts_edit.setPlaceholderText("0.25,0.12,0.06")
+        amounts_edit.setToolTip("Higher amounts sharpen more but can create halos.")
         setattr(self, f"{prefix}_multiscale_amounts", amounts_edit)
-        gl.addWidget(amounts_edit, 2, 1)
-        
-        gl.addWidget(QLabel("Mild Sigmas (comma-separated):"), 3, 0)
+        gl.addWidget(amounts_edit, row, 1)
+        row += 1
+        gl.addWidget(description_label(
+            "Each amount scales how much that sigma contributes. Higher values increase crispness but can amplify noise, "
+            "especially in MRI."
+        ), row, 0, 1, 2)
+        row += 1
+
+        mild_sigmas_label = QLabel("Mild Sigmas (comma-separated):")
+        mild_sigmas_label.setToolTip("Alternate sigma list used for thick-slice (mild) mode.")
+        gl.addWidget(mild_sigmas_label, row, 0)
         mild_sigmas_edit = QLineEdit()
         mild_sigmas_edit.setPlaceholderText("0.5,1.0,2.0,4.0")
+        mild_sigmas_edit.setToolTip("Use larger values to avoid ringing on thick slices.")
         setattr(self, f"{prefix}_multiscale_mild_sigmas", mild_sigmas_edit)
-        gl.addWidget(mild_sigmas_edit, 3, 1)
-        
-        gl.addWidget(QLabel("Mild Amounts (comma-separated):"), 4, 0)
+        gl.addWidget(mild_sigmas_edit, row, 1)
+        row += 1
+        gl.addWidget(description_label(
+            "Mild mode uses safer, broader scales to avoid sharpening artifacts on thick slices."
+        ), row, 0, 1, 2)
+        row += 1
+
+        mild_amounts_label = QLabel("Mild Amounts (comma-separated):")
+        mild_amounts_label.setToolTip("Alternate amount list used for thick-slice (mild) mode.")
+        gl.addWidget(mild_amounts_label, row, 0)
         mild_amounts_edit = QLineEdit()
         mild_amounts_edit.setPlaceholderText("0.20,0.10,0.05,0.025")
+        mild_amounts_edit.setToolTip("Lower values help prevent over-sharpening in mild mode.")
         setattr(self, f"{prefix}_multiscale_mild_amounts", mild_amounts_edit)
-        gl.addWidget(mild_amounts_edit, 4, 1)
+        gl.addWidget(mild_amounts_edit, row, 1)
+        row += 1
+        gl.addWidget(description_label(
+            "Mild amounts should be lower to prevent ringing or haloing in thicker acquisitions."
+        ), row, 0, 1, 2)
 
-        g.setLayout(gl)
         return g
 
     def _build_laplacian_sharpening(self, prefix):
-        g = QGroupBox("Laplacian sharpening")
-        gl = compact_grid()
-
         enabled = QCheckBox("Enabled")
         setattr(self, f"{prefix}_laplacian_enabled", enabled)
 
+        g, gl = _filter_card("Laplacian sharpening", enabled)
+
+        gl.addWidget(description_label(
+            "Edge enhancement using Laplacian response. Higher alpha can create halos."
+        ), 0, 0, 1, 4)
+
         a = compact_spin(QDoubleSpinBox())
         ma = compact_spin(QDoubleSpinBox())
-        a.setRange(0, 1)
-        a.setSingleStep(0.01)
-        ma.setRange(0, 1)
-        ma.setSingleStep(0.01)
 
         setattr(self, f"{prefix}_laplacian_alpha", a)
         setattr(self, f"{prefix}_laplacian_mild_alpha", ma)
 
-        gl.addWidget(enabled, 0, 0, 1, 4)
-        gl.addWidget(QLabel("Alpha"), 1, 0)
-        gl.addWidget(a, 1, 1)
-        gl.addWidget(QLabel("Alpha (Mild)"), 1, 2)
-        gl.addWidget(ma, 1, 3)
+        row = 1
+        row = add_slider_row(
+            gl,
+            row,
+            "Alpha",
+            a,
+            min_val=0,
+            max_val=1,
+            step=0.01,
+            decimals=2,
+            tooltip="Strength of Laplacian edge enhancement.",
+            detail=(
+                "Higher alpha increases edge contrast; too high can create bright/dark halos around structures."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "Alpha (Mild)",
+            ma,
+            min_val=0,
+            max_val=1,
+            step=0.01,
+            decimals=2,
+            tooltip="Mild-mode edge enhancement strength.",
+            detail=(
+                "Use a slightly lower value for thick slices to avoid over‑accentuating slice boundaries."
+            )
+        )
 
-        g.setLayout(gl)
         return g
 
     def _build_adaptive_sharpening(self, prefix):
-        g = QGroupBox("Adaptive sharpening")
-        gl = compact_grid()
-
         en = QCheckBox("Enabled")
         setattr(self, f"{prefix}_adaptive_enabled", en)
+
+        g, gl = _filter_card("Adaptive sharpening", en)
+
+        gl.addWidget(description_label(
+            "Sharpens edges more than flat areas. Boost controls edge emphasis."
+        ), 0, 0, 1, 4)
 
         def create_spin():
             s = compact_spin(QDoubleSpinBox())
@@ -435,109 +1073,271 @@ class FilterConfigWidget(QWidget):
         setattr(self, f"{prefix}_adaptive_mild_boost", mboost)
         setattr(self, f"{prefix}_adaptive_mild_sigma", msig)
 
-        gl.addWidget(en, 0, 0, 1, 6)
+        row = 1
 
-        gl.addWidget(QLabel("Base"), 1, 0)
-        gl.addWidget(base, 1, 1)
-        gl.addWidget(QLabel("Boost"), 1, 2)
-        gl.addWidget(boost, 1, 3)
-        gl.addWidget(QLabel("Sigma"), 1, 4)
-        gl.addWidget(sig, 1, 5)
+        row = add_slider_row(
+            gl,
+            row,
+            "Base",
+            base,
+            min_val=0,
+            max_val=2,
+            step=0.01,
+            decimals=2,
+            tooltip="Baseline sharpening amount applied everywhere.",
+            detail=(
+                "Raises overall crispness. Higher base can make MRI look sharper but may exaggerate background noise."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "Boost",
+            boost,
+            min_val=0,
+            max_val=2,
+            step=0.01,
+            decimals=2,
+            tooltip="Extra sharpening applied to edges.",
+            detail=(
+                "Controls how much more sharpening is applied at edges versus flat regions. "
+                "Keep modest for CT to avoid halos."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "Sigma",
+            sig,
+            min_val=0,
+            max_val=2,
+            step=0.01,
+            decimals=2,
+            tooltip="Edge detection scale; higher values broaden edge detection.",
+            detail=(
+                "Small sigma targets fine edges; larger sigma favors broader structures."
+            )
+        )
 
-        gl.addWidget(QLabel("Base (Mild)"), 2, 0)
-        gl.addWidget(mbase, 2, 1)
-        gl.addWidget(QLabel("Boost (Mild)"), 2, 2)
-        gl.addWidget(mboost, 2, 3)
-        gl.addWidget(QLabel("Sigma (Mild)"), 2, 4)
-        gl.addWidget(msig, 2, 5)
+        row = add_slider_row(
+            gl,
+            row,
+            "Base (Mild)",
+            mbase,
+            min_val=0,
+            max_val=2,
+            step=0.01,
+            decimals=2,
+            tooltip="Baseline sharpening for thick-slice (mild) mode.",
+            detail=(
+                "Use slightly lower base values for thick slices to prevent harsh edges between slices."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "Boost (Mild)",
+            mboost,
+            min_val=0,
+            max_val=2,
+            step=0.01,
+            decimals=2,
+            tooltip="Edge boost for thick-slice (mild) mode.",
+            detail=(
+                "Lower boost helps keep mild mode smooth and avoids ringing."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "Sigma (Mild)",
+            msig,
+            min_val=0,
+            max_val=2,
+            step=0.01,
+            decimals=2,
+            tooltip="Edge detection scale for thick-slice (mild) mode.",
+            detail=(
+                "Use slightly larger sigma to stabilize edge detection with thick slices."
+            )
+        )
 
-        g.setLayout(gl)
         return g
 
     def _build_gaussian_high_pass(self, prefix):
-        g = QGroupBox("Gaussian High Pass Filter")
-        gl = compact_grid()
-
         enabled = QCheckBox("Enabled")
         setattr(self, f"{prefix}_high_pass_enabled", enabled)
 
+        g, gl = _filter_card("Gaussian high-pass", enabled)
+
+        gl.addWidget(description_label(
+            "Removes low‑frequency content to enhance fine details. Can amplify noise."
+        ), 0, 0, 1, 4)
+
         s1 = compact_spin(QDoubleSpinBox())
         s2 = compact_spin(QDoubleSpinBox())
-        s1.setRange(0.1, 5.0)
-        s1.setSingleStep(0.1)
-        s2.setRange(0.1, 5.0)
-        s2.setSingleStep(0.1)
 
         setattr(self, f"{prefix}_high_pass_sigma", s1)
         setattr(self, f"{prefix}_high_pass_mild_sigma", s2)
 
-        gl.addWidget(enabled, 0, 0, 1, 4)
-        gl.addWidget(QLabel("Sigma"), 1, 0)
-        gl.addWidget(s1, 1, 1)
-        gl.addWidget(QLabel("Sigma (Mild)"), 1, 2)
-        gl.addWidget(s2, 1, 3)
+        row = 1
+        row = add_slider_row(
+            gl,
+            row,
+            "Sigma",
+            s1,
+            min_val=0.1,
+            max_val=5.0,
+            step=0.1,
+            decimals=1,
+            tooltip="Higher sigma targets broader low-frequency components.",
+            detail=(
+                "Lower sigma accentuates fine detail; higher sigma emphasizes broader contrast transitions."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "Sigma (Mild)",
+            s2,
+            min_val=0.1,
+            max_val=5.0,
+            step=0.1,
+            decimals=1,
+            tooltip="Mild-mode high-pass sigma for thicker slices.",
+            detail=(
+                "Mild mode is safer on thick slices—keep values moderate to avoid ringing."
+            )
+        )
 
-        g.setLayout(gl)
         return g
 
     def _build_gaussian_low_pass(self, prefix):
-        g = QGroupBox("Gaussian Low Pass Filter")
-        gl = compact_grid()
-
         enabled = QCheckBox("Enabled")
         setattr(self, f"{prefix}_low_pass_enabled", enabled)
 
+        g, gl = _filter_card("Gaussian low-pass", enabled)
+
+        gl.addWidget(description_label(
+            "Suppresses high‑frequency detail to smooth the image. Higher sigma = more smoothing."
+        ), 0, 0, 1, 4)
+
         s1 = compact_spin(QDoubleSpinBox())
         s2 = compact_spin(QDoubleSpinBox())
-        s1.setRange(0.1, 5.0)
-        s1.setSingleStep(0.1)
-        s2.setRange(0.1, 5.0)
-        s2.setSingleStep(0.1)
 
         setattr(self, f"{prefix}_low_pass_sigma", s1)
         setattr(self, f"{prefix}_low_pass_mild_sigma", s2)
 
-        gl.addWidget(enabled, 0, 0, 1, 4)
-        gl.addWidget(QLabel("Sigma"), 1, 0)
-        gl.addWidget(s1, 1, 1)
-        gl.addWidget(QLabel("Sigma (Mild)"), 1, 2)
-        gl.addWidget(s2, 1, 3)
+        row = 1
+        row = add_slider_row(
+            gl,
+            row,
+            "Sigma",
+            s1,
+            min_val=0.1,
+            max_val=5.0,
+            step=0.1,
+            decimals=1,
+            tooltip="Higher sigma increases smoothing and reduces detail.",
+            detail=(
+                "Great for reducing MRI grain, but large values will blur CT edges and small vessels."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "Sigma (Mild)",
+            s2,
+            min_val=0.1,
+            max_val=5.0,
+            step=0.1,
+            decimals=1,
+            tooltip="Mild-mode low-pass sigma for thicker slices.",
+            detail=(
+                "Use slightly higher values in mild mode for smoother transitions between thick slices."
+            )
+        )
 
-        g.setLayout(gl)
         return g
 
     def _build_gaussian_band_pass(self, prefix):
-        g = QGroupBox("Gaussian Band Pass Filter")
-        gl = compact_grid()
-
         enabled = QCheckBox("Enabled")
         setattr(self, f"{prefix}_band_pass_enabled", enabled)
+
+        g, gl = _filter_card("Gaussian band-pass", enabled)
+
+        gl.addWidget(description_label(
+            "Isolates mid‑frequency texture by subtracting two Gaussian blurs."
+        ), 0, 0, 1, 4)
 
         s1 = compact_spin(QDoubleSpinBox())  # low sigma
         s2 = compact_spin(QDoubleSpinBox())  # high sigma
         s3 = compact_spin(QDoubleSpinBox())  # mild low sigma
         s4 = compact_spin(QDoubleSpinBox())  # mild high sigma
-        
-        for s in [s1, s2, s3, s4]:
-            s.setRange(0.1, 5.0)
-            s.setSingleStep(0.1)
 
         setattr(self, f"{prefix}_band_pass_low_sigma", s1)
         setattr(self, f"{prefix}_band_pass_high_sigma", s2)
         setattr(self, f"{prefix}_band_pass_mild_low_sigma", s3)
         setattr(self, f"{prefix}_band_pass_mild_high_sigma", s4)
 
-        gl.addWidget(enabled, 0, 0, 1, 4)
-        gl.addWidget(QLabel("Low Sigma"), 1, 0)
-        gl.addWidget(s1, 1, 1)
-        gl.addWidget(QLabel("High Sigma"), 1, 2)
-        gl.addWidget(s2, 1, 3)
-        gl.addWidget(QLabel("Low Sigma (Mild)"), 2, 0)
-        gl.addWidget(s3, 2, 1)
-        gl.addWidget(QLabel("High Sigma (Mild)"), 2, 2)
-        gl.addWidget(s4, 2, 3)
+        row = 1
+        row = add_slider_row(
+            gl,
+            row,
+            "Low Sigma",
+            s1,
+            min_val=0.1,
+            max_val=5.0,
+            step=0.1,
+            decimals=1,
+            tooltip="Lower cutoff: keeps broader structures when higher.",
+            detail=(
+                "Higher low‑sigma suppresses large structures, isolating finer detail."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "High Sigma",
+            s2,
+            min_val=0.1,
+            max_val=5.0,
+            step=0.1,
+            decimals=1,
+            tooltip="Upper cutoff: keeps finer detail when lower.",
+            detail=(
+                "Lower high‑sigma captures smaller textures; higher values broaden the band."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "Low Sigma (Mild)",
+            s3,
+            min_val=0.1,
+            max_val=5.0,
+            step=0.1,
+            decimals=1,
+            tooltip="Mild-mode low cutoff for thicker slices.",
+            detail=(
+                "Use a gentler cutoff in mild mode to avoid over‑texturing thick slices."
+            )
+        )
+        row = add_slider_row(
+            gl,
+            row,
+            "High Sigma (Mild)",
+            s4,
+            min_val=0.1,
+            max_val=5.0,
+            step=0.1,
+            decimals=1,
+            tooltip="Mild-mode high cutoff for thicker slices.",
+            detail=(
+                "Keep the band wider in mild mode to prevent noisy, granular appearance."
+            )
+        )
 
-        g.setLayout(gl)
         return g
 
     # ------------------------------------------------------------------

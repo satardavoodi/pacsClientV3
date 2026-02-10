@@ -1,6 +1,6 @@
-from PySide6.QtWidgets import QTabWidget, QTabBar, QWidget, QHBoxLayout, QSizePolicy, QPushButton, QLabel
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QTabWidget, QTabBar, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy, QPushButton, QLabel
+from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import QFont, QIcon, QImage, QPainter, QColor, QPixmap
 from .patient_tab_widget import PatientTabWidget
 from .service_tab_widget import ServiceTabWidget
 import os
@@ -46,21 +46,18 @@ class CustomTabManager:
         self.title_bar_layout.setContentsMargins(10, 5, 5, 5)
         self.title_bar_layout.setSpacing(4)
         
-        # Add AIPacs logo button at the beginning
-        from PySide6.QtWidgets import QPushButton, QLabel
-        from PySide6.QtGui import QPixmap, QIcon
-        from PySide6.QtCore import QSize
-        
         # Create logo button
         self.logo_button = QPushButton()
         self.logo_button.setObjectName("LogoButton")
-        self.logo_button.setFixedSize(70, 70)  # Reduced by 30% from 100x100
+        # Text-only logo button (requested: no picture)
+        self.logo_button.setFixedHeight(70)
+        self.logo_button.setFixedWidth(165)
         self.logo_button.setCursor(Qt.PointingHandCursor)
-        
-        # Set logo icon (you can replace this with your actual logo path)
-        # For now, we'll create a simple text-based logo
-        self.logo_button.setText("AI PACS")
-        self.logo_button.setToolTip("Click to show patient list")
+
+        # Build a UI-consistent text-only logotype inside the button using labels.
+        # This avoids the “one weird font” look and matches the app’s Roboto-based UI.
+        self.logo_button.setToolTip("AI-Pacs\nClick to show patient list")
+        self._build_logo_logotype_contents()
         
         # Connect click event to show patient list
         self.logo_button.clicked.connect(self.show_patient_list)
@@ -71,51 +68,8 @@ class CustomTabManager:
         # Force size policy to prevent layout from changing the size
         self.logo_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         
-        # Apply custom CSS to ensure proper sizing
-        self.logo_button.setStyleSheet("""
-            QPushButton#LogoButton {
-                background: #2d3748;
-                border: 1px solid #4a5568;
-                border-radius: 8px;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: bold;
-                font-family: 'Segoe UI', Arial, sans-serif;
-                padding: 0px;
-                margin: 0px;
-                text-align: center;
-                width: 70px !important;
-                min-width: 70px !important;
-                max-width: 70px !important;
-            }
-            
-            QPushButton#LogoButton[active="true"] {
-                background: #4a5568;
-                border: 2px solid #63b3ed;
-                color: #ffffff;
-                font-weight: bold;
-            }
-            
-            QPushButton#LogoButton:hover {
-                background: #4a5568;
-                border: 1px solid #63b3ed;
-            }
-            
-            QPushButton#LogoButton[active="true"]:hover {
-                background: #5a6a7a;
-                border: 2px solid #7bb3ed;
-            }
-            
-            QPushButton#LogoButton:pressed {
-                background: #2d3748;
-                border: 2px solid #3182ce;
-            }
-            
-            QPushButton#LogoButton[active="true"]:pressed {
-                background: #3a4a5a;
-                border: 2px solid #3182ce;
-            }
-        """)
+        # Apply styling for the logo button
+        self._apply_logo_logotype_style()
         
         self.logo_button.setStyle(self.logo_button.style())
         
@@ -144,6 +98,234 @@ class CustomTabManager:
         if hasattr(self, 'logo_button'):
             self.logo_button.updateGeometry()
             self.logo_button.update()
+
+    def _build_logo_logotype_contents(self):
+        """Create the text-only "AI-Pacs" mark using child labels.
+
+        QPushButton text rendering is limited (single color/weight). Using QLabel children lets us
+        build a more brand-like logotype while staying consistent with the UI fonts.
+        """
+        if not hasattr(self, 'logo_button'):
+            return
+
+        # Ensure no icon and no default text.
+        self.logo_button.setIcon(QIcon())
+        self.logo_button.setText("")
+
+        # Avoid rebuilding if already present.
+        if getattr(self, '_logo_mark_built', False):
+            return
+
+        # Container that holds the word-mark.
+        container = QWidget(self.logo_button)
+        container.setObjectName("AIPacsBrandContainer")
+        container.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+
+        ai = QLabel("AI", container)
+        ai.setObjectName("AIPacsBrandAI")
+        ai.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        ai.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        f_ai = QFont("Roboto")
+        f_ai.setPixelSize(26)
+        f_ai.setWeight(QFont.Black)
+        ai.setFont(f_ai)
+
+        dash = QLabel("-", container)
+        dash.setObjectName("AIPacsBrandDash")
+        dash.setAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
+        dash.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        f_dash = QFont("Roboto")
+        f_dash.setPixelSize(20)
+        f_dash.setWeight(QFont.Medium)
+        dash.setFont(f_dash)
+
+        pacs = QLabel("Pacs", container)
+        pacs.setObjectName("AIPacsBrandPacs")
+        pacs.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        pacs.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        f_pacs = QFont("Roboto")
+        f_pacs.setPixelSize(26)
+        f_pacs.setWeight(QFont.DemiBold)
+        pacs.setFont(f_pacs)
+
+        row.addWidget(ai)
+        row.addWidget(dash)
+        row.addWidget(pacs)
+
+        # Mount into the button.
+        btn_layout = self.logo_button.layout()
+        if btn_layout is None:
+            btn_layout = QHBoxLayout(self.logo_button)
+            btn_layout.setContentsMargins(14, 0, 14, 0)
+            btn_layout.setSpacing(0)
+            btn_layout.setAlignment(Qt.AlignCenter)
+
+        btn_layout.addWidget(container)
+        self._logo_mark_built = True
+
+    def _render_svg_icon(self, svg_path, size: QSize, tint: QColor | None = None) -> QIcon | None:
+        """Render an SVG file into a QIcon at the requested size.
+
+        If `tint` is provided, the rendered icon is recolored via SourceIn composition.
+        """
+        try:
+            from PySide6.QtSvg import QSvgRenderer
+        except Exception:
+            return None
+
+        try:
+            renderer = QSvgRenderer(str(svg_path))
+            if not renderer.isValid():
+                return None
+
+            image = QImage(size, QImage.Format_ARGB32_Premultiplied)
+            image.fill(Qt.transparent)
+
+            painter = QPainter(image)
+            renderer.render(painter)
+            painter.end()
+
+            if tint is not None and isinstance(tint, QColor) and tint.isValid():
+                tinted = QImage(size, QImage.Format_ARGB32_Premultiplied)
+                tinted.fill(Qt.transparent)
+                p = QPainter(tinted)
+                p.drawImage(0, 0, image)
+                p.setCompositionMode(QPainter.CompositionMode_SourceIn)
+                p.fillRect(tinted.rect(), tint)
+                p.end()
+                image = tinted
+
+            pixmap = QPixmap.fromImage(image)
+            return QIcon(pixmap)
+        except Exception:
+            return None
+
+    def _try_apply_logo_icon(self):
+        """Try to add an icon to the top-left AI Pacs logotype button.
+
+        Uses `Qss/images/ai_pacs_logo.svg` (imported from user's SVG), with a tinted accent.
+        Falls back to `Qss/images/aiLogo.png` if SVG rendering is unavailable.
+        """
+        if not hasattr(self, 'logo_button'):
+            return
+
+        try:
+            from PacsClient.utils.config import IMAGES_LOGIN_PATH
+        except Exception:
+            IMAGES_LOGIN_PATH = None
+
+        # Bigger icon since the button is icon-only.
+        target_size = QSize(54, 54)
+
+        svg_icon = None
+        png_icon = None
+
+        try:
+            if IMAGES_LOGIN_PATH is not None:
+                svg_path = IMAGES_LOGIN_PATH / "ai_pacs_logo.svg"
+                if svg_path.exists():
+                    # Keep original SVG colors (logo-only request).
+                    svg_icon = self._render_svg_icon(svg_path, target_size, tint=None)
+
+                png_path = IMAGES_LOGIN_PATH / "aiLogo.png"
+                if png_path.exists():
+                    pix = QPixmap(str(png_path)).scaled(
+                        target_size,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation,
+                    )
+                    png_icon = QIcon(pix)
+        except Exception:
+            svg_icon = None
+            png_icon = None
+
+        icon = svg_icon or png_icon
+        if icon is None:
+            return
+
+        try:
+            self.logo_button.setIcon(icon)
+            self.logo_button.setIconSize(target_size)
+            self._apply_logo_logotype_style()
+        except Exception:
+            return
+
+    def _logo_logotype_stylesheet(self) -> str:
+        """Single source of truth for the AI-Pacs text logotype button styling.
+
+        Keep this stable and avoid swapping style blocks on tab changes,
+        because that previously caused the button to revert when opening system tabs.
+        """
+        return """
+            QPushButton#LogoButton {
+                /* Softer, UI-consistent look: low-contrast gradient + muted border */
+                /* Lighter indigo-tinted container gradient (box only; letters are separate) */
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1b2340, stop:1 #111a2e);
+                border: 1px solid rgba(99, 102, 241, 0.18);
+                border-radius: 12px;
+                color: #f8fafc;
+                padding: 0px;
+                margin: 0px;
+                text-align: center;
+            }
+
+            QPushButton#LogoButton QLabel#AIPacsBrandAI {
+                /* Muted accent (less eye-catching) */
+                color: rgba(165, 180, 252, 0.92);
+            }
+
+            QPushButton#LogoButton QLabel#AIPacsBrandDash {
+                color: rgba(148, 163, 184, 0.88);
+            }
+
+            QPushButton#LogoButton QLabel#AIPacsBrandPacs {
+                /* Slightly softened white for lower contrast */
+                color: rgba(226, 232, 240, 0.96);
+            }
+
+            QPushButton#LogoButton[active="true"] {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1a2240, stop:1 #0f172a);
+                border: 1px solid rgba(99, 102, 241, 0.32);
+                color: #ffffff;
+            }
+
+            QPushButton#LogoButton[active="true"] QLabel#AIPacsBrandAI {
+                color: rgba(196, 181, 253, 0.96);
+            }
+
+            QPushButton#LogoButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #222b4d, stop:1 #141e36);
+                border: 1px solid rgba(99, 102, 241, 0.26);
+            }
+
+            QPushButton#LogoButton[active="true"]:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #232c52, stop:1 #111a2e);
+                border: 1px solid rgba(99, 102, 241, 0.34);
+            }
+
+            QPushButton#LogoButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #101a33, stop:1 #0b1220);
+                border: 1px solid rgba(96, 165, 250, 0.32);
+            }
+        """
+
+    def _apply_logo_logotype_style(self):
+        """Apply the logotype stylesheet once (and safely re-apply if needed)."""
+        if not hasattr(self, 'logo_button'):
+            return
+        try:
+            self.logo_button.setStyleSheet(self._logo_logotype_stylesheet())
+        except Exception as e:
+            print(f"[CustomTabManager] Failed to apply logo logotype stylesheet: {e}")
     
     def setup_custom_tab_bar(self):
         """Setup custom tab bar styling"""
@@ -197,53 +379,6 @@ class CustomTabManager:
                        font-size: 12px;
                        font-weight: bold;
                    }
-                   QPushButton#LogoButton {
-                       background: #2d3748;
-                       border: 1px solid #4a5568;
-                       border-radius: 8px;
-                       color: #ffffff;
-                       font-size: 14px;
-                       font-weight: bold;
-                       font-family: 'Segoe UI', Arial, sans-serif;
-                       padding: 0px;
-                       margin: 0px;
-                       text-align: center;
-                       width: 100px !important;
-                       min-width: 100px !important;
-                       max-width: 100px !important;
-                       height: 40px !important;
-                       min-height: 40px !important;
-                       max-height: 40px !important;
-                   }
-                   
-                   QPushButton#LogoButton[active="true"] {
-                       background: #4a5568;
-                       border: 2px solid #63b3ed;
-                       color: #ffffff;
-                       font-weight: bold;
-                   }
-                   
-                   QPushButton#LogoButton:hover {
-                       background: #4a5568;
-                       border: 1px solid #63b3ed;
-                   }
-                   
-                   QPushButton#LogoButton[active="true"]:hover {
-                       background: #5a6a7a;
-                       border: 2px solid #7bb3ed;
-                   }
-                   
-                   QPushButton#LogoButton:pressed {
-                       background: #2d3748;
-                       border: 2px solid #3182ce;
-                   }
-                   
-                   QPushButton#LogoButton[active="true"]:pressed {
-                       background: #3a4a5a;
-                       border: 2px solid #3182ce;
-                   }
-                   
-                
                """)
     
     def add_patient_tab(self, patient_name, patient_id, thumbnail_path=None, widget=None, study_uid=None, activate=True):
@@ -523,55 +658,16 @@ class CustomTabManager:
         """Set the logo button as active or inactive"""
         if hasattr(self, 'logo_button'):
             self.logo_button.setProperty("active", active)
-            
-            # Apply complete CSS with all states
-            self.logo_button.setStyleSheet("""
-                QPushButton#LogoButton {
-                    background: #2d3748;
-                    border: 1px solid #4a5568;
-                    border-radius: 8px;
-                    color: #ffffff;
-                    font-size: 12px;
-                    font-weight: bold;
-                    font-family: 'Segoe UI', Arial, sans-serif;
-                    padding: 0px;
-                    margin: 0px;
-                    text-align: center;
-                    width: 70px !important;
-                    min-width: 70px !important;
-                    max-width: 70px !important;
-                }
-                
-                QPushButton#LogoButton[active="true"] {
-                    background: #4a5568;
-                    border: 2px solid #63b3ed;
-                    color: #ffffff;
-                    font-weight: bold;
-                }
-                
-                QPushButton#LogoButton:hover {
-                    background: #4a5568;
-                    border: 1px solid #63b3ed;
-                }
-                
-                QPushButton#LogoButton[active="true"]:hover {
-                    background: #5a6a7a;
-                    border: 2px solid #7bb3ed;
-                }
-                
-                QPushButton#LogoButton:pressed {
-                    background: #2d3748;
-                    border: 2px solid #3182ce;
-                }
-                
-                QPushButton#LogoButton[active="true"]:pressed {
-                    background: #3a4a5a;
-                    border: 2px solid #3182ce;
-                }
-            """)
-            
-            # Force style update to apply active state
-            self.logo_button.setStyle(self.logo_button.style())
+
+            # Do NOT reassign older styles here.
+            # Only polish/unpolish so the [active="true"] selector updates.
+            try:
+                self._apply_logo_logotype_style()
+            except Exception:
+                pass
+
+            self.logo_button.style().unpolish(self.logo_button)
+            self.logo_button.style().polish(self.logo_button)
             self.logo_button.update()
             self.logo_button.repaint()
     
@@ -902,6 +998,68 @@ class CustomTabManager:
         self.set_tab_active(tab_index)
         print(f"[CustomTabManager] Education Module tab added successfully")
         
+        return tab_index
+
+    def add_educational_course_tab(self, course_name="", course_pk=None, widget=None, activate=True):
+        """
+        Add Educational Course tab with custom tab UI.
+
+        Args:
+            course_name: Name of the selected course (shown as subtitle)
+            course_pk: Optional course primary key for duplicate prevention
+            widget: The educational viewer widget
+            activate: Whether to switch to the tab after creation
+
+        Returns:
+            int: The index of the added/existing tab
+        """
+        print("[CustomTabManager] add_educational_course_tab called")
+
+        # Prevent duplicate course tabs when course_pk is available
+        for idx, tab_data in self.patient_tabs.items():
+            if not tab_data.get('is_educational_course_tab', False):
+                continue
+            if course_pk is not None and tab_data.get('course_pk') == course_pk:
+                print(f"[CustomTabManager] Educational Course tab already exists for course_pk={course_pk}")
+                if activate:
+                    self.set_tab_active_simple(idx)
+                return idx
+
+        custom_tab = ServiceTabWidget(
+            service_name="Educational Course",
+            icon_name="fa5s.book-reader",
+            icon_color="white"
+        )
+        if course_name:
+            custom_tab.set_description(str(course_name))
+
+        tab_index = self.tab_widget.addTab(widget, "")
+        print(f"[CustomTabManager] Educational Course tab added at index: {tab_index}")
+
+        custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
+
+        if self.title_bar_tab_area:
+            custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
+            self.title_bar_layout.addWidget(custom_tab)
+            self.title_bar_tabs[tab_index] = custom_tab
+        else:
+            self.tab_widget.tabBar().setTabButton(tab_index, QTabBar.ButtonPosition.LeftSide, custom_tab)
+
+        self.patient_tabs[tab_index] = {
+            'custom_tab': custom_tab,
+            'widget': widget,
+            'is_educational_course_tab': True,
+            'course_pk': course_pk,
+            'course_name': course_name,
+        }
+
+        if activate:
+            self.tab_widget.setCurrentIndex(tab_index)
+            self.set_tab_active(tab_index)
+            print("[CustomTabManager] Educational Course tab added and activated successfully")
+        else:
+            print("[CustomTabManager] Educational Course tab added without activation")
+
         return tab_index
 
 
