@@ -2901,9 +2901,11 @@ class OneChatPage(QWidget):
                 if not html:
                     continue
                 is_user = who.strip().lower().startswith("you")
+                # Enable buttons for all reports (not just origin=="report"), read from database
                 on_edit = self._edit_bubble if (origin in ("report", "assistant") and not is_user) else None
                 on_persian = self._persian_bubble if (origin in ("report", "assistant") and not is_user) else None
-                on_send_reception = self._send_to_reception if (origin == "report" and not is_user) else None
+                # Enable send_to_reception for all non-user messages that have content
+                on_send_reception = self._send_to_reception if (not is_user and html) else None
 
                 b = self.history.add_bubble(who, html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception)
                 b._origin = origin 
@@ -2927,99 +2929,100 @@ class OneChatPage(QWidget):
             return loaded_any
 
     def _send_to_reception(self, bubble: "MessageBubble"):
-        """Send report to reception with Patient ID input and detailed logging."""
+        """Send report to reception - reads from database for persistence."""
         import logging
+        from datetime import datetime
         logger = logging.getLogger(__name__)
         
-        logger.info("=" * 80)
-        logger.info("SEND TO RECEPTION - START")
-        logger.info("=" * 80)
+        # Print to console for visibility
+        print("\n" + "="*100)
+        print("🔴 USER CLICKED 'SEND TO RECEPTION' BUTTON")
+        print("="*100)
+        print(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
         
-        # Get the report HTML content
+        # Logging
+        logger.info("\n" + "="*100)
+        logger.info("🔴 USER CLICKED 'SEND TO RECEPTION' BUTTON")
+        logger.info("="*100)
+        logger.info(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
+        logger.info(f"Study UID: {self.study_uid}")
+        
+        # Get HTML from bubble
         html_content = ""
         try:
             html_content = (bubble.get_html() or "").strip()
-            logger.info(f"✓ HTML content extracted: {len(html_content)} characters")
+            print(f"✅ HTML content extracted: {len(html_content)} characters")
+            logger.info(f"✅ HTML content extracted: {len(html_content)} characters")
         except Exception as e:
-            logger.warning(f"⚠ Failed to get HTML from bubble.get_html(): {e}")
-            try:
-                html_content = (getattr(bubble, "_raw_text", "") or "").strip()
-                logger.info(f"✓ Fallback to _raw_text: {len(html_content)} characters")
-            except Exception as e2:
-                logger.error(f"✗ Failed to get content from bubble: {e2}")
-        
+            print(f"❌ Error extracting HTML: {e}")
+            logger.error(f"❌ Error extracting HTML: {e}")
+            return
+
         if not html_content:
-            logger.error("✗ FAILED: HTML content is empty!")
+            print("❌ Report content is empty!")
+            logger.error("❌ Report content is empty!")
             QMessageBox.warning(self, "Error", "Report content is empty!")
             return
+
+        # Get patient ID from database
+        print("\n📊 Fetching patient information from database...")
+        logger.info("📊 Fetching patient information from database...")
         
-        # Get patient ID from study data in database
-        logger.info("→ Fetching patient ID from database using study_uid...")
         patient_id = None
-        
         if self.study_uid:
             try:
                 from PacsClient.utils import db_manager as db
-                
-                # Get study data from local database
+
                 study_data = db.get_study_by_study_uid(self.study_uid)
-                
                 if study_data:
-                    # Get patient_fk from study
                     patient_fk = study_data.get('patient_fk')
-                    logger.info(f"  ✓ Found study, patient_fk: {patient_fk}")
+                    print(f"✅ Found - patient_fk: {patient_fk}")
+                    logger.info(f"✅ Found - patient_fk: {patient_fk}")
                     
                     if patient_fk:
-                        # Get patient data
                         patient_data = db.get_patient_by_patient_pk(patient_fk)
-                        
                         if patient_data:
-                            # Try to get patient_id (NationalCode or ID)
                             patient_id = patient_data.get('patient_id') or patient_data.get('patient_pk')
-                            logger.info(f"  ✓ Found patient_id from database: {patient_id}")
-                        else:
-                            logger.warning(f"  ⚠ No patient data found for patient_fk: {patient_fk}")
-                    else:
-                        logger.warning("  ⚠ No patient_fk in study data")
-                else:
-                    logger.warning(f"  ⚠ No study data found for study_uid: {self.study_uid}")
-                    
+                            print(f"✅ Patient ID from database: {patient_id}")
+                            logger.info(f"✅ Patient ID from database: {patient_id}")
             except Exception as e:
-                logger.error(f"  ✗ Failed to get patient ID from database: {e}")
-        
-        # Fallback: Use study_uid if patient_id not found
+                print(f"❌ Error fetching patient: {e}")
+                logger.error(f"❌ Error fetching patient: {e}")
+
         if not patient_id:
-            logger.warning("  ⚠ Using study_uid as fallback patient_id")
             patient_id = self.study_uid
-        
+            print(f"⚠️  Using Study UID as fallback: {patient_id}")
+            logger.warning(f"⚠️  Using Study UID as fallback: {patient_id}")
+
         if not patient_id:
-            logger.error("✗ FAILED: Patient ID is invalid (empty)!")
+            print("❌ Patient ID is invalid!")
+            logger.error("❌ Patient ID is invalid!")
             QMessageBox.warning(self, "Error", "Patient ID is invalid!")
             return
+
+        # Save to database
+        print(f"\n💾 Saving report to database...")
+        print(f"   Patient ID: {patient_id}")
+        logger.info(f"💾 Saving report to database...")
+        logger.info(f"   Patient ID: {patient_id}")
         
-        logger.info(f"→ Using Patient ID: {patient_id}")
-        
-        # Save report to database
         try:
-            # Get message metadata
             session_id = self.controller.session_id if hasattr(self, 'controller') else None
             msg_id = getattr(bubble, '_msg_id', None)
-            
-            # Get modality and sender info
             modality = getattr(self, '_current_modality', 'Unknown')
             sender_info = f"Modality: {modality}, Mode: {getattr(self, 'page_mode', 'Report')}"
+
+            print(f"   Session ID: {session_id}")
+            print(f"   Message ID: {msg_id}")
+            print(f"   Modality: {modality}")
+            logger.info(f"   Session ID: {session_id}")
+            logger.info(f"   Message ID: {msg_id}")
+            logger.info(f"   Modality: {modality}")
             
-            logger.info("→ Preparing report metadata:")
-            logger.info(f"  • Patient ID: {patient_id}")
-            logger.info(f"  • Study UID: {self.study_uid or patient_id}")
-            logger.info(f"  • Session ID: {session_id}")
-            logger.info(f"  • Message ID: {msg_id}")
-            logger.info(f"  • Modality: {modality}")
-            logger.info(f"  • Sender Info: {sender_info}")
-            logger.info(f"  • Content Length: {len(html_content)} chars")
+            # Call save function
+            print(f"→ Calling ai_save_reception_report...")
+            logger.info(f"→ Calling ai_save_reception_report...")
             
-            # Save to database
-            logger.info("→ Calling ai_save_reception_report()...")
             report_id = ai_save_reception_report(
                 patient_id=patient_id,
                 html_content=html_content,
@@ -3028,62 +3031,158 @@ class OneChatPage(QWidget):
                 msg_id=msg_id,
                 sender_info=sender_info
             )
-            
+
             if report_id:
-                logger.info("=" * 80)
-                logger.info("✓✓✓ SUCCESS! Report saved to reception")
-                logger.info(f"  • Report ID: {report_id}")
-                logger.info(f"  • Patient ID: {patient_id}")
-                logger.info(f"  • Study UID: {self.study_uid or patient_id}")
-                logger.info(f"  • Timestamp: {datetime.now().isoformat()}")
-                logger.info("=" * 80)
+                # --- Send to Reception Server (same server) ---
+                server_sent = False
+                server_status = None
+                server_message = "Not sent"
+                try:
+                    from PacsClient.utils.socket_token_manager import get_socket_token_manager
+
+                    token_manager = get_socket_token_manager()
+                    token = token_manager.get_token() if token_manager else None
+
+                    if not token:
+                        server_message = "Missing auth token"
+                        logger.warning("[RECEPTION_SERVER] ❌ Missing auth token; skipping server send")
+                    else:
+                        base_url = "http://81.16.117.196:8080"
+                        url = f"{base_url}/api/pacs/update-report"
+
+                        reception_id = patient_id
+                        try:
+                            reception_id = int(patient_id) if str(patient_id).isdigit() else patient_id
+                        except Exception:
+                            reception_id = patient_id
+
+                        payload = {
+                            "receptionId": reception_id,
+                            "content": html_content,
+                            "findings": html_content,
+                            "status": "pending",
+                        }
+
+                        logger.info(f"[RECEPTION_SERVER] → POST {url}")
+                        logger.info(f"[RECEPTION_SERVER]   receptionId={reception_id}, content_len={len(html_content)}")
+
+                        response = requests.post(
+                            url,
+                            json=payload,
+                            headers={
+                                "Content-Type": "application/json",
+                                "Authorization": f"Bearer {token}",
+                            },
+                            timeout=30,
+                        )
+
+                        server_status = response.status_code
+                        response_text = (response.text or "").strip()
+
+                        logger.info(f"[RECEPTION_SERVER] ← status={server_status}")
+                        try:
+                            logger.info(f"[RECEPTION_SERVER]   headers={dict(response.headers)}")
+                        except Exception:
+                            pass
+                        if response_text:
+                            logger.info(f"[RECEPTION_SERVER]   body={response_text[:2000]}")
+
+                        response_json = None
+                        try:
+                            response_json = response.json()
+                            logger.info(f"[RECEPTION_SERVER]   json={response_json}")
+                            # Print complete JSON response to console
+                            print(f"\n{'='*80}")
+                            print("[RECEPTION_SERVER] ✅ Full Server Response JSON:")
+                            print(f"{'='*80}")
+                            print(json.dumps(response_json, indent=2, ensure_ascii=False))
+                            print(f"{'='*80}\n")
+                        except Exception:
+                            response_json = None
+
+                        if response.ok and (response_json is None or response_json.get("success", True)):
+                            server_sent = True
+                            server_message = (response_json or {}).get("message", "OK") if response_json else "OK"
+                        else:
+                            server_message = (response_json or {}).get("message", response_text[:200]) if response_text else "Server error"
+
+                except Exception as e:
+                    server_message = f"Exception: {e}"
+                    logger.error(f"[RECEPTION_SERVER] ❌ Exception while sending: {e}")
+
+                print("\n" + "="*100)
+                print("✅ ✅ ✅ SUCCESS! Report saved to database")
+                print("="*100)
+                print(f"📌 Report ID: {report_id}")
+                print(f"👤 Patient ID: {patient_id}")
+                print(f"🔬 Modality: {modality}")
+                print(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
+                print(f"• Server message: {server_message}")
+                print("="*100 + "\n")
                 
+                logger.info("="*100)
+                logger.info("✅ ✅ ✅ SUCCESS! Report saved to database")
+                logger.info("="*100)
+                logger.info(f"📌 Report ID: {report_id}")
+                logger.info(f"👤 Patient ID: {patient_id}")
+                logger.info(f"🔬 Modality: {modality}")
+                logger.info(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
+                logger.info("="*100)
+
                 QMessageBox.information(
                     self,
-                    "Success",
-                    f"Report successfully sent to reception.\n\n"
-                    f"📋 Report ID: {report_id}\n"
+                    "✅ Report Saved Successfully",
+                    f"📝 The report has been saved successfully.\n\n"
+                    f"📌 Report ID: {report_id}\n"
                     f"👤 Patient ID: {patient_id}\n"
-                    f"🔬 Modality: {modality}\n\n"
-                    f"The report is now available in the Reception panel."
+                    f"⏱️ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    f"📨 Status:\n"
+                    f"• Saved to database\n"
+                    f"• Sent to reception: {'✅' if server_sent else '❌'}\n"
+                    f"• Server status: {server_status if server_status is not None else 'N/A'}\n"
                 )
-                
-                # Emit signal to refresh reception panel (if exists)
-                try:
-                    if hasattr(self, 'parent') and self.parent():
-                        parent = self.parent()
-                        # Try to find PatientWidget or similar parent with reception refresh capability
-                        while parent:
-                            if hasattr(parent, 'refresh_reception_reports'):
-                                logger.info("→ Triggering reception panel refresh...")
-                                parent.refresh_reception_reports()
-                                break
-                            parent = parent.parent() if hasattr(parent, 'parent') else None
-                except Exception as e:
-                    logger.warning(f"⚠ Could not refresh reception panel: {e}")
-                    
+
+
             else:
-                logger.error("✗ FAILED: ai_save_reception_report returned None/False!")
-                QMessageBox.warning(self, "Error", "Failed to save report!")
+                print("\n" + "="*100)
+                print("❌ ❌ ❌ FAILED! Database save failed")
+                print("="*100 + "\n")
                 
+                logger.error("="*100)
+                logger.error("❌ ❌ ❌ FAILED! Database save failed")
+                logger.error("="*100)
+                
+                QMessageBox.warning(self, "Error", "Failed to save report!")
+
         except Exception as e:
-            logger.error("=" * 80)
-            logger.error("✗✗✗ EXCEPTION OCCURRED!")
-            logger.error(f"Error: {e}")
-            logger.error(f"Type: {type(e).__name__}")
-            import traceback
-            logger.error("Traceback:")
-            logger.error(traceback.format_exc())
-            logger.error("=" * 80)
+            print("\n" + "="*100)
+            print(f"❌ ❌ ❌ Exception Occurred!")
+            print(f"Error: {str(e)}")
+            print("="*100 + "\n")
             
-            QMessageBox.critical(
-                self, 
-                "Error", 
-                f"Error sending report:\n\n{str(e)}\n\nDetails have been logged."
-            )
+            logger.error("="*100)
+            logger.error(f"❌ ❌ ❌ Exception Occurred!")
+            logger.error(f"Error: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            logger.error("="*100)
+
+            QMessageBox.critical(self, "Error", f"Error: {str(e)}")
 
     def _persian_bubble(self, bubble: "MessageBubble"):
-        print("[DEBUG] Persian button clicked.")
+        import logging
+        from datetime import datetime
+        logger = logging.getLogger(__name__)
+        
+        print("\n" + "="*100)
+        print("🔵 USER CLICKED 'PERSIAN TRANSLATE' BUTTON")
+        print("="*100)
+        print(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
+        
+        logger.info("\n" + "="*100)
+        logger.info("🔵 USER CLICKED 'PERSIAN TRANSLATE' BUTTON")
+        logger.info("="*100)
+        logger.info(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
 
         origin = getattr(bubble, "_origin", None)
         is_assistant = (origin == "assistant")
@@ -3102,6 +3201,8 @@ class OneChatPage(QWidget):
         if isinstance(raw, str) and raw.strip():
             english_payload = raw.strip()
             src = "bubble.raw_report_json"
+            print(f"✅ Content extracted from: {src}")
+            logger.info(f"✅ Content extracted from: {src}")
         else:
             html = ""
             try:
@@ -3111,7 +3212,8 @@ class OneChatPage(QWidget):
 
             if not html:
                 msg = "⚠ Cannot translate to Persian: this bubble has no content."
-                print(f"[DEBUG] {msg}")
+                print(f"❌ {msg}")
+                logger.error(f"❌ {msg}")
                 self.controller.bubble("AI ChatBot", msg)
                 return
 
@@ -3123,6 +3225,8 @@ class OneChatPage(QWidget):
             if not english_payload:
                 english_payload = html  # last resort
             src = "bubble.get_html()"
+            print(f"✅ Content extracted from: {src}")
+            logger.info(f"✅ Content extracted from: {src}")
 
             try:
                 bubble.raw_report_json = english_payload
@@ -3131,15 +3235,20 @@ class OneChatPage(QWidget):
 
         if not english_payload.strip():
             msg = "⚠ Cannot translate to Persian: extracted content is empty."
-            print(f"[DEBUG] {msg}")
+            print(f"❌ {msg}")
+            logger.error(f"❌ {msg}")
             self.controller.bubble("AI ChatBot", msg)
             return
 
-        print(f"[DEBUG] Using EN payload from {src}, len={len(english_payload)} origin={origin}")
+        print(f"→ English content extracted: {len(english_payload)} characters")
+        logger.info(f"→ English content extracted: {len(english_payload)} characters")
 
         # ─────────────────────────────────────────────
         # 2) Worker (API call)
         # ─────────────────────────────────────────────
+        print("→ Translating to Persian...")
+        logger.info("→ Translating to Persian...")
+        
         def work():
             m = Manage.instance()
             if not m.is_validated():
@@ -3164,7 +3273,12 @@ class OneChatPage(QWidget):
         # 3) Handle success
         # ─────────────────────────────────────────────
         def ok(resp: dict):
-            print("[FA] Received Persian translation response.")
+            print("\n" + "="*100)
+            print("✅ ✅ ✅ SUCCESS! Persian translation received")
+            print("="*100 + "\n")
+            logger.info("="*100)
+            logger.info("✅ ✅ ✅ SUCCESS! Persian translation received")
+            logger.info("="*100)
 
             # (translate_text_to_persian معمولاً session_id ندارد، ولی برای سازگاری نگه می‌داریم)
             new_sid = resp.get("session_id") if isinstance(resp, dict) else None
@@ -3181,6 +3295,7 @@ class OneChatPage(QWidget):
                 txt = txt.strip()
                 if not txt:
                     self.controller.bubble("AI ChatBot", "⚠ Empty Persian assistant translation.")
+                    logger.warning("⚠ Empty Persian assistant translation.")
                     return
 
                 html = (
@@ -3191,12 +3306,14 @@ class OneChatPage(QWidget):
                 )
                 self._bubble_origin_hint = "assistant"
                 self.controller.bubble("AI ChatBot (Persian)", html)
+                logger.info("✅ Persian assistant translation displayed")
                 return
 
             # ✅ report-style rendering (مثل قبل)
             rep_raw_clean = self._normalize_report_like_payload(resp)
             if not (rep_raw_clean or "").strip():
                 print("[REPORT-FA] Empty translation payload. keys=", list(resp.keys()) if isinstance(resp, dict) else type(resp))
+                logger.error("[REPORT-FA] Empty translation payload.")
                 self.controller.bubble("AI ChatBot", "⚠ Empty Persian report.")
                 return
 
@@ -3211,12 +3328,15 @@ class OneChatPage(QWidget):
 
             self._bubble_origin_hint = "report"
             self.controller.bubble("AI ChatBot (Persian)", html)
+            logger.info("✅ Persian report translation displayed")
 
         # ─────────────────────────────────────────────
         # 4) Handle error
         # ─────────────────────────────────────────────
         def er(msg: str):
-            print(f"[FA] ERROR: {msg}")
+            print(f"\n❌ Translation error: {msg}")
+            print("="*100 + "\n")
+            logger.error(f"❌ Translation error: {msg}")
             self.controller.bubble("AI ChatBot", f"❌ Persian translation failed: {msg}")
 
         self._run_async(work, ok, er, typing="Translating to Persian…")
@@ -3370,7 +3490,8 @@ class OneChatPage(QWidget):
         # --- 5) نمایش UI ---
         on_edit = self._edit_bubble if (origin in ("report", "assistant") and not is_user) else None
         on_persian = self._persian_bubble if (origin in ("report", "assistant") and not is_user) else None
-        on_send_reception = self._send_to_reception if (origin == "report" and not is_user) else None
+        # Enable send_to_reception for all non-user messages
+        on_send_reception = self._send_to_reception if (not is_user and text) else None
 
         b = self.history.add_bubble(
             who,
@@ -3677,7 +3798,8 @@ class OneChatPage(QWidget):
             is_user = who.strip().lower().startswith("you")
             on_edit = self._edit_bubble if (origin in ("report", "assistant") and not is_user) else None
             on_persian = self._persian_bubble if (origin in ("report", "assistant") and not is_user) else None
-            on_send_reception = self._send_to_reception if (origin == "report" and not is_user) else None
+            # Enable send_to_reception for all non-user messages
+            on_send_reception = self._send_to_reception if (not is_user and html) else None
 
             b = self.history.add_bubble(
                 who,
