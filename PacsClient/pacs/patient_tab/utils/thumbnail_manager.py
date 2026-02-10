@@ -241,10 +241,18 @@ class CircularProgressborder(QFrame):
             if hasattr(self, 'dot_timer') and self.dot_timer:
                 self.dot_timer.stop()
                 self.dot_timer.deleteLater()
-            
+
             if hasattr(self, '_animation') and self._animation:
                 self._animation.stop()
                 self._animation.deleteLater()
+                
+            # Clean up progress label if it exists
+            if hasattr(self, '_progress_label') and self._progress_label:
+                try:
+                    self._progress_label.setParent(None)  # Remove from parent
+                    self._progress_label.deleteLater()   # Schedule for deletion
+                except RuntimeError:
+                    pass  # Label already deleted
         except Exception:
             pass
                 
@@ -618,33 +626,44 @@ class ThumbnailManager(QObject):
     def reset_all_states(self):
         """Reset all thumbnail states for a new patient"""
         print(f"🔄 [ThumbnailManager] Resetting all states for new patient")
-        
+
         # Clear all ready series
         self.ready_series.clear()
-        
+
         # Clear selected series
         self.selected_series = None
-        
+
         # Reset all widget states
-        for key, widget in self.series_widgets.items():
+        # Create a copy of the keys to iterate over since we might delete items
+        for key in list(self.series_widgets.keys()):
+            widget = self.series_widgets[key]
             try:
-                if hasattr(widget, 'progress_border'):
-                    # Reset to pending state
-                    widget.progress_border._is_ready = False
-                    widget.progress_border._is_selected = False
-                    widget.progress_border._downloading = False
-                    widget.progress_border._progress = 0
-                    widget.progress_border.update()
-            except Exception as e:
-                print(f"⚠️ Error resetting widget {key}: {e}")
-        
+                if widget and hasattr(widget, 'progress_border'):
+                    # Check if the progress_border still exists before accessing it
+                    try:
+                        if widget.progress_border:
+                            # Reset to pending state
+                            widget.progress_border._is_ready = False
+                            widget.progress_border._is_selected = False
+                            widget.progress_border._downloading = False
+                            widget.progress_border._progress = 0
+                            widget.progress_border.update()
+                    except (RuntimeError, AttributeError):
+                        # Widget or progress_border has been deleted, remove from tracking
+                        if key in self.series_widgets:
+                            del self.series_widgets[key]
+            except RuntimeError:
+                # Widget has been deleted, remove from tracking
+                if key in self.series_widgets:
+                    del self.series_widgets[key]
+
         # Clear all buttons
         self.buttons.clear()
         self.lst_buttons_name.clear()
-        
+
         # Clear all widgets
         self.series_widgets.clear()
-        
+
         print(f"✅ [ThumbnailManager] All states reset")
         
     def apply_border_states(self):
@@ -655,43 +674,65 @@ class ThumbnailManager(QObject):
           - هیچ‌کدام
         """
         try:
-            for key, w in self.series_widgets.items():
-                if not hasattr(w, "status_frame"):
+            # Use list of keys to avoid modification during iteration
+            for key in list(self.series_widgets.keys()):
+                w = self.series_widgets[key]
+                try:
+                    # Check if widget still exists
+                    if not w:
+                        continue
+                        
+                    # Check if C++ object is still valid
+                    try:
+                        if not w.isVisible() and not w.isEnabled():
+                            continue
+                    except RuntimeError:
+                        # Widget has been deleted, remove from tracking
+                        if key in self.series_widgets:
+                            del self.series_widgets[key]
+                        continue
+
+                    if not hasattr(w, "status_frame"):
+                        continue
+
+                    is_ready = key in self.ready_series
+                    is_selected = (self.selected_series == key)
+
+                    # 1) انتخاب‌شده + آماده
+                    if is_ready and is_selected:
+                        w.status_frame.setStyleSheet(READY_SELECTED_FRAME_CSS)
+                    # 2) فقط انتخاب‌شده
+                    elif is_selected:
+                        w.status_frame.setStyleSheet(SELECTED_FRAME_CSS)
+                    # 3) فقط آماده
+                    elif is_ready:
+                        w.status_frame.setStyleSheet(READY_FRAME_CSS)
+                    # 4) هیچ‌کدام → Pending/پیش‌فرض
+                    else:
+                        w.status_frame.setStyleSheet(PENDING_FRAME_CSS)
+
+                    # یک سایه نرم برای انتخاب‌شده‌ها (دید بهتر)
+                    eff = getattr(w.status_frame, "_shadow_eff", None)
+                    if is_selected:
+                        if eff is None:
+                            eff = QGraphicsDropShadowEffect(w.status_frame)
+                            eff.setOffset(0, 0)
+                            eff.setBlurRadius(18)
+                            eff.setColor(QColor(34, 211, 238, 120))  # هم‌رنگ select
+                            w.status_frame._shadow_eff = eff
+                            w.status_frame.setGraphicsEffect(eff)
+                    else:
+                        if eff is not None:
+                            w.status_frame.setGraphicsEffect(None)
+                            w.status_frame._shadow_eff = None
+
+                    w.status_frame.update()
+                    w.update()
+                except RuntimeError:
+                    # Widget has been deleted, remove from tracking
+                    if key in self.series_widgets:
+                        del self.series_widgets[key]
                     continue
-
-                is_ready = key in self.ready_series
-                is_selected = (self.selected_series == key)
-
-                # 1) انتخاب‌شده + آماده
-                if is_ready and is_selected:
-                    w.status_frame.setStyleSheet(READY_SELECTED_FRAME_CSS)
-                # 2) فقط انتخاب‌شده
-                elif is_selected:
-                    w.status_frame.setStyleSheet(SELECTED_FRAME_CSS)
-                # 3) فقط آماده
-                elif is_ready:
-                    w.status_frame.setStyleSheet(READY_FRAME_CSS)
-                # 4) هیچ‌کدام → Pending/پیش‌فرض
-                else:
-                    w.status_frame.setStyleSheet(PENDING_FRAME_CSS)
-
-                # یک سایه نرم برای انتخاب‌شده‌ها (دید بهتر)
-                eff = getattr(w.status_frame, "_shadow_eff", None)
-                if is_selected:
-                    if eff is None:
-                        eff = QGraphicsDropShadowEffect(w.status_frame)
-                        eff.setOffset(0, 0)
-                        eff.setBlurRadius(18)
-                        eff.setColor(QColor(34, 211, 238, 120))  # هم‌رنگ select
-                        w.status_frame._shadow_eff = eff
-                        w.status_frame.setGraphicsEffect(eff)
-                else:
-                    if eff is not None:
-                        w.status_frame.setGraphicsEffect(None)
-                        w.status_frame._shadow_eff = None
-
-                w.status_frame.update()
-                w.update()
         except Exception as e:
             print(f"⚠️ apply_border_states error: {e}")
     
@@ -760,11 +801,18 @@ class ThumbnailManager(QObject):
                         continue
                 
                 # Now do a single update for all widgets
-                for w in self.series_widgets.values():
+                for key, w in list(self.series_widgets.items()):  # Use list to avoid modification during iteration
                     try:
                         if w and hasattr(w, 'progress_border'):
-                            # Schedule update instead of immediate repaint
-                            w.progress_border.update()
+                            # Check if the progress_border still exists before updating
+                            try:
+                                if w.progress_border:
+                                    # Schedule update instead of immediate repaint
+                                    w.progress_border.update()
+                            except (RuntimeError, AttributeError):
+                                # Widget or progress_border has been deleted, remove from tracking
+                                if key in self.series_widgets:
+                                    del self.series_widgets[key]
                     except RuntimeError:
                         continue
                     
@@ -1080,15 +1128,27 @@ class ThumbnailManager(QObject):
         try:
             series_key = str(series_number)
             self.ready_series.discard(series_key)
-            
+
             # Update new border style
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
-                if hasattr(widget, 'progress_border'):
-                    widget.progress_border.setReady(False)
-                    widget.progress_border.setDownloading(False)
-                    widget.progress_border.update()
-            
+                try:
+                    if widget and hasattr(widget, 'progress_border'):
+                        # Check if the progress_border still exists before accessing it
+                        try:
+                            if widget.progress_border:
+                                widget.progress_border.setReady(False)
+                                widget.progress_border.setDownloading(False)
+                                widget.progress_border.update()
+                        except (RuntimeError, AttributeError):
+                            # Widget or progress_border has been deleted, remove from tracking
+                            if series_key in self.series_widgets:
+                                del self.series_widgets[series_key]
+                except RuntimeError:
+                    # Widget has been deleted, remove from tracking
+                    if series_key in self.series_widgets:
+                        del self.series_widgets[series_key]
+
             # Also update old style for backward compatibility
             self.apply_border_states()
             self.apply_border_states_new()
@@ -1102,7 +1162,14 @@ class ThumbnailManager(QObject):
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
                 if hasattr(widget, 'progress_border'):
-                    widget.progress_border.setReady(True)
+                    try:
+                        # Check if the widget and its progress_border still exist
+                        if widget and widget.progress_border:
+                            widget.progress_border.setReady(True)
+                    except (RuntimeError, AttributeError):
+                        # Widget or progress_border has been deleted, remove from tracking
+                        if series_key in self.series_widgets:
+                            del self.series_widgets[series_key]
             self.apply_border_states_new()
         except Exception as e:
             print(f"⚠️ set_series_ready error: {e}")
@@ -1123,47 +1190,67 @@ class ThumbnailManager(QObject):
         try:
             series_key = str(series_number)
             print(f"🎨 Applying priority styling to series {series_key}")
-            
+
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
                 
-                # Add priority animation
-                if hasattr(widget, 'progress_border'):
-                    # Flash animation for priority
-                    from PySide6.QtCore import QTimer, QPropertyAnimation
-                    
-                    # Store original border width
-                    original_width = widget.progress_border._border_width
-                    
-                    # Flash animation
-                    def flash_priority():
-                        anim = QPropertyAnimation(widget.progress_border, b"_border_width")
-                        anim.setDuration(500)
-                        anim.setStartValue(original_width)
-                        anim.setEndValue(original_width * 2)  # Thicker border
-                        anim.setEasingCurve(QEasingCurve.InOutSine)
-                        
-                        def on_finished():
-                            # Return to original
-                            anim2 = QPropertyAnimation(widget.progress_border, b"_border_width")
-                            anim2.setDuration(500)
-                            anim2.setStartValue(original_width * 2)
-                            anim2.setEndValue(original_width)
-                            anim2.setEasingCurve(QEasingCurve.InOutSine)
-                            anim2.start()
-                        
-                        anim.finished.connect(on_finished)
-                        anim.start()
-                    
-                    # Flash 3 times
-                    for i in range(3):
-                        QTimer.singleShot(i * 1000, flash_priority)
-                    
-                    print(f"✅ Priority animation started for series {series_key}")
-                
+                try:
+                    if widget and hasattr(widget, 'progress_border'):
+                        # Check if the progress_border still exists before accessing it
+                        try:
+                            if widget.progress_border:
+                                # Add priority animation
+                                from PySide6.QtCore import QTimer, QPropertyAnimation
+
+                                # Store original border width
+                                original_width = widget.progress_border._border_width
+
+                                # Flash animation
+                                def flash_priority():
+                                    # Double-check that objects still exist before animation
+                                    try:
+                                        if widget and widget.progress_border:
+                                            anim = QPropertyAnimation(widget.progress_border, b"_border_width")
+                                            anim.setDuration(500)
+                                            anim.setStartValue(original_width)
+                                            anim.setEndValue(original_width * 2)  # Thicker border
+                                            anim.setEasingCurve(QEasingCurve.InOutSine)
+
+                                            def on_finished():
+                                                # Return to original
+                                                try:
+                                                    if widget and widget.progress_border:
+                                                        anim2 = QPropertyAnimation(widget.progress_border, b"_border_width")
+                                                        anim2.setDuration(500)
+                                                        anim2.setStartValue(original_width * 2)
+                                                        anim2.setEndValue(original_width)
+                                                        anim2.setEasingCurve(QEasingCurve.InOutSine)
+                                                        anim2.start()
+                                                except (RuntimeError, AttributeError):
+                                                    pass  # Widget deleted during animation
+
+                                            anim.finished.connect(on_finished)
+                                            anim.start()
+                                    except (RuntimeError, AttributeError):
+                                        pass  # Widget deleted before animation
+
+                                # Flash 3 times
+                                for i in range(3):
+                                    QTimer.singleShot(i * 1000, flash_priority)
+
+                                print(f"✅ Priority animation started for series {series_key}")
+                        except (RuntimeError, AttributeError):
+                            # Widget or progress_border has been deleted, remove from tracking
+                            if series_key in self.series_widgets:
+                                del self.series_widgets[series_key]
+                except RuntimeError:
+                    # Widget has been deleted, remove from tracking
+                    if series_key in self.series_widgets:
+                        del self.series_widgets[series_key]
+
                 # Update border state immediately
                 self.apply_border_states_new()
-                
+
         except Exception as e:
             print(f"⚠️ Error highlighting priority series: {e}")
 
@@ -1185,8 +1272,6 @@ class ThumbnailManager(QObject):
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
 
-
-                
                 # Check if widget is still valid
                 try:
                     if widget is None:
@@ -1194,91 +1279,149 @@ class ThumbnailManager(QObject):
                     # Test if widget is still alive by checking a property
                     _ = widget.isVisible()
                 except RuntimeError:
-                    # Widget has been deleted
+                    # Widget has been deleted, remove from tracking
+                    if series_key in self.series_widgets:
+                        del self.series_widgets[series_key]
                     return
-                
+
                 # Batch UI updates to prevent recursive repaints
-                widget.setUpdatesEnabled(False)
-                
+                try:
+                    widget.setUpdatesEnabled(False)
+                except RuntimeError:
+                    # Widget has been deleted, remove from tracking
+                    if series_key in self.series_widgets:
+                        del self.series_widgets[series_key]
+                    return
+
                 try:
                     # Show glass overlay background
                     if hasattr(widget, 'glass_overlay'):
-                        widget.glass_overlay.setVisible(True)
-                        widget.glass_overlay.raise_()
-                    
+                        try:
+                            widget.glass_overlay.setVisible(True)
+                            widget.glass_overlay.raise_()
+                        except RuntimeError:
+                            # Widget has been deleted, remove from tracking
+                            if series_key in self.series_widgets:
+                                del self.series_widgets[series_key]
+                            return
+
                     # Update progress overlay (PRIMARY method - always visible during download)
                     if hasattr(widget, 'progress_overlay'):
-                        progress_overlay = widget.progress_overlay
-                        
+                        try:
+                            progress_overlay = widget.progress_overlay
+                        except RuntimeError:
+                            # Widget has been deleted, remove from tracking
+                            if series_key in self.series_widgets:
+                                del self.series_widgets[series_key]
+                            return
+
                         if progress_percent > 0 and progress_percent < 100:
                             # Show percentage and count during download
                             # status_text format: "current/total" (e.g., "3/8")
                             display_text = f"{int(progress_percent)}%"
                             if status_text:
                                 display_text = f"{int(progress_percent)}%\n{status_text}"
-                            
-                            progress_overlay.setText(display_text)
-                            progress_overlay.setStyleSheet("""
-                                QLabel {
-                                    background: transparent;
-                                    color: #ffffff;
-                                    font-size: 14px;
-                                    font-weight: bold;
-                                    font-family: 'Segoe UI', 'Roboto', sans-serif;
-                                    border: none;
-                                    padding: 0px;
-                                    line-height: 1.3;
-                                }
-                            """)
-                            progress_overlay.setVisible(True)
-                            progress_overlay.raise_()  # Ensure it's on top
-                            
-                            # Force update to make sure it's visible
-                            progress_overlay.update()
-                            
+
+                            try:
+                                progress_overlay.setText(display_text)
+                                progress_overlay.setStyleSheet("""
+                                    QLabel {
+                                        background: transparent;
+                                        color: #ffffff;
+                                        font-size: 14px;
+                                        font-weight: bold;
+                                        font-family: 'Segoe UI', 'Roboto', sans-serif;
+                                        border: none;
+                                        padding: 0px;
+                                        line-height: 1.3;
+                                    }
+                                """)
+                                progress_overlay.setVisible(True)
+                                progress_overlay.raise_()  # Ensure it's on top
+
+                                # Force update to make sure it's visible
+                                progress_overlay.update()
+                            except RuntimeError:
+                                # Widget has been deleted, remove from tracking
+                                if series_key in self.series_widgets:
+                                    del self.series_widgets[series_key]
+                                return
+
                         elif progress_percent >= 100:
                             # Show "Ready" message briefly, then hide
-                            progress_overlay.setText("✅")
-                            progress_overlay.setStyleSheet("""
-                                QLabel {
-                                    background: transparent;
-                                    color: #10b981;
-                                    font-size: 24px;
-                                    font-weight: bold;
-                                    font-family: 'Segoe UI', 'Roboto', sans-serif;
-                                    border: none;
-                                    padding: 0px;
-                                }
-                            """)
-                            progress_overlay.setVisible(True)
-                            progress_overlay.raise_()
-                            progress_overlay.update()
-                            
+                            try:
+                                progress_overlay.setText("✅")
+                                progress_overlay.setStyleSheet("""
+                                    QLabel {
+                                        background: transparent;
+                                        color: #10b981;
+                                        font-size: 24px;
+                                        font-weight: bold;
+                                        font-family: 'Segoe UI', 'Roboto', sans-serif;
+                                        border: none;
+                                        padding: 0px;
+                                    }
+                                """)
+                                progress_overlay.setVisible(True)
+                                progress_overlay.raise_()
+                                progress_overlay.update()
+                            except RuntimeError:
+                                # Widget has been deleted, remove from tracking
+                                if series_key in self.series_widgets:
+                                    del self.series_widgets[series_key]
+                                return
+
                             # Hide after 2.5 seconds (both glass and progress)
-                            QTimer.singleShot(2500, lambda: self._hide_overlay(widget))
-                            
+                            # Use a lambda with error handling to prevent accessing deleted objects
+                            QTimer.singleShot(2500, lambda w=widget: self._hide_overlay_safe(w))
+
                             # Mark as ready
                             self.ready_series.add(series_key)
                         else:
-                            progress_overlay.setVisible(False)
+                            try:
+                                progress_overlay.setVisible(False)
+                            except RuntimeError:
+                                # Widget has been deleted, remove from tracking
+                                if series_key in self.series_widgets:
+                                    del self.series_widgets[series_key]
+                                return
+                                
                             # Hide glass overlay when not in progress
                             if hasattr(widget, 'glass_overlay'):
-                                widget.glass_overlay.setVisible(False)
-                    
+                                try:
+                                    widget.glass_overlay.setVisible(False)
+                                except RuntimeError:
+                                    # Widget has been deleted, remove from tracking
+                                    if series_key in self.series_widgets:
+                                        del self.series_widgets[series_key]
+                                    return
+
                     # Update border state (secondary visual indicator)
                     if hasattr(widget, 'progress_border'):
-                        progress_border = widget.progress_border
-                        
-                        if progress_percent >= 100:
-                            progress_border.setDownloading(False)
-                            progress_border.setReady(True)
-                        elif progress_percent > 0:
-                            progress_border.setDownloading(True)
-                        
+                        try:
+                            progress_border = widget.progress_border
+
+                            if progress_percent >= 100:
+                                progress_border.setDownloading(False)
+                                progress_border.setReady(True)
+                            elif progress_percent > 0:
+                                progress_border.setDownloading(True)
+                        except RuntimeError:
+                            # Widget has been deleted, remove from tracking
+                            if series_key in self.series_widgets:
+                                del self.series_widgets[series_key]
+                            return
+
                 finally:
                     # Re-enable updates and force single repaint
-                    widget.setUpdatesEnabled(True)
-                    widget.update()
+                    try:
+                        widget.setUpdatesEnabled(True)
+                        widget.update()
+                    except RuntimeError:
+                        # Widget has been deleted, remove from tracking
+                        if series_key in self.series_widgets:
+                            del self.series_widgets[series_key]
+                        return
                     
         except Exception as e:
             print(f"⚠️ Error updating series progress: {e}")
@@ -1316,7 +1459,39 @@ class ThumbnailManager(QObject):
         except Exception as e:
             print(f"⚠️ Error hiding overlay: {e}")
 
-            
+
+    def _hide_overlay_safe(self, widget):
+        """Helper method to hide overlay safely with extra error handling for delayed calls"""
+        try:
+            if widget is None:
+                return
+
+            # Check if widget is still valid
+            try:
+                _ = widget.isVisible()
+            except RuntimeError:
+                return  # Widget already deleted
+
+            # Hide progress overlay
+            if hasattr(widget, 'progress_overlay'):
+                try:
+                    # Check if progress_overlay still exists
+                    _ = widget.progress_overlay.isVisible()
+                    widget.progress_overlay.setVisible(False)
+                except RuntimeError:
+                    pass
+
+            # Hide glass overlay
+            if hasattr(widget, 'glass_overlay'):
+                try:
+                    _ = widget.glass_overlay.isVisible()
+                    widget.glass_overlay.setVisible(False)
+                except RuntimeError:
+                    pass
+        except Exception as e:
+            print(f"⚠️ Error hiding overlay (safe): {e}")
+
+
     def start_series_download(self, series_number):
         """
         Mark series as starting download - THREAD SAFE
@@ -1332,52 +1507,85 @@ class ThumbnailManager(QObject):
             # Find widget in series_widgets dictionary
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
-                
+
                 # Check if widget is still valid
                 try:
                     if widget is None:
                         return
                     _ = widget.isVisible()
                 except RuntimeError:
+                    # Widget has been deleted, remove from tracking
+                    if series_key in self.series_widgets:
+                        del self.series_widgets[series_key]
                     return
-                
+
                 # Prevent recursive repaints
-                widget.setUpdatesEnabled(False)
-                
+                try:
+                    widget.setUpdatesEnabled(False)
+                except RuntimeError:
+                    # Widget has been deleted, remove from tracking
+                    if series_key in self.series_widgets:
+                        del self.series_widgets[series_key]
+                    return
+
                 try:
                     # Show glass overlay background
                     if hasattr(widget, 'glass_overlay'):
-                        widget.glass_overlay.setVisible(True)
-                        widget.glass_overlay.raise_()
-                    
+                        try:
+                            widget.glass_overlay.setVisible(True)
+                            widget.glass_overlay.raise_()
+                        except RuntimeError:
+                            # Widget has been deleted, remove from tracking
+                            if series_key in self.series_widgets:
+                                del self.series_widgets[series_key]
+                            return
+
                     # Show progress overlay with "0%"
                     if hasattr(widget, 'progress_overlay'):
-                        progress_overlay = widget.progress_overlay
-                        progress_overlay.setText("0%\n...")
-                        progress_overlay.setStyleSheet("""
-                            QLabel {
-                                background: transparent;
-                                color: #ffffff;
-                                font-size: 14px;
-                                font-weight: bold;
-                                font-family: 'Segoe UI', 'Roboto', sans-serif;
-                                border: none;
-                                padding: 0px;
-                                line-height: 1.3;
-                            }
-                        """)
-                        progress_overlay.setVisible(True)
-                        progress_overlay.raise_()
-                        progress_overlay.update()
-                    
+                        try:
+                            progress_overlay = widget.progress_overlay
+                            progress_overlay.setText("0%\n...")
+                            progress_overlay.setStyleSheet("""
+                                QLabel {
+                                    background: transparent;
+                                    color: #ffffff;
+                                    font-size: 14px;
+                                    font-weight: bold;
+                                    font-family: 'Segoe UI', 'Roboto', sans-serif;
+                                    border: none;
+                                    padding: 0px;
+                                    line-height: 1.3;
+                                }
+                            """)
+                            progress_overlay.setVisible(True)
+                            progress_overlay.raise_()
+                            progress_overlay.update()
+                        except RuntimeError:
+                            # Widget has been deleted, remove from tracking
+                            if series_key in self.series_widgets:
+                                del self.series_widgets[series_key]
+                            return
+
                     # Update border
                     if hasattr(widget, 'progress_border'):
-                        progress_border = widget.progress_border
-                        progress_border.setDownloading(True)
-                            
+                        try:
+                            progress_border = widget.progress_border
+                            progress_border.setDownloading(True)
+                        except RuntimeError:
+                            # Widget has been deleted, remove from tracking
+                            if series_key in self.series_widgets:
+                                del self.series_widgets[series_key]
+                            return
+
                 finally:
-                    widget.setUpdatesEnabled(True)
-                    widget.update()
+                    try:
+                        widget.setUpdatesEnabled(True)
+                        widget.update()
+                    except RuntimeError:
+                        # Widget has been deleted, remove from tracking
+                        if series_key in self.series_widgets:
+                            del self.series_widgets[series_key]
+                        return
                     print(f"   ✅ Progress overlay shown for series {series_key}")
             else:
                 print(f"   ⚠️ Widget not found for series {series_key} - thumbnail may not be created yet")
@@ -1428,11 +1636,37 @@ class ThumbnailManager(QObject):
         try:
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
+                
+                # Check if widget still exists
+                try:
+                    if widget is None:
+                        return
+                    _ = widget.isVisible()
+                except RuntimeError:
+                    # Widget has been deleted, remove from tracking
+                    if series_key in self.series_widgets:
+                        del self.series_widgets[series_key]
+                    return
+
                 if hasattr(widget, 'progress_border'):
-                    widget.progress_border.update()
-                    widget.progress_border.repaint()
-                widget.update()
-                widget.repaint()
+                    try:
+                        if widget.progress_border:
+                            widget.progress_border.update()
+                            widget.progress_border.repaint()
+                    except (RuntimeError, AttributeError):
+                        # Widget or progress_border has been deleted, remove from tracking
+                        if series_key in self.series_widgets:
+                            del self.series_widgets[series_key]
+                        return
+
+                try:
+                    widget.update()
+                    widget.repaint()
+                except RuntimeError:
+                    # Widget has been deleted, remove from tracking
+                    if series_key in self.series_widgets:
+                        del self.series_widgets[series_key]
+                    return
         except Exception:
             pass
         
