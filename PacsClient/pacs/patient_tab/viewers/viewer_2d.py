@@ -1499,7 +1499,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     def _hide_curved_mpr_overlay(self):
         """Hide the Curved MPR mode overlay text"""
         if self.curved_mpr_overlay_actor is not None:
-            self.renderer.RemoveActor2D(self.curved_mpr_overlay_actor)
+            # Use RemoveViewProp instead of deprecated RemoveActor2D (VTK 9.5.0+)
+            self.renderer.RemoveViewProp(self.curved_mpr_overlay_actor)
             self.curved_mpr_overlay_actor = None
             self.Render()
             print("[CURVED MPR] Overlay text hidden")
@@ -1766,7 +1767,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 actors2d.InitTraversal()
                 actor2d = actors2d.GetNextItem()
                 while actor2d:
-                    self.renderer.RemoveActor2D(actor2d)
+                    # Use RemoveViewProp instead of deprecated RemoveActor2D (VTK 9.5.0+)
+                    self.renderer.RemoveViewProp(actor2d)
                     actor2d = actors2d.GetNextItem()
 
             # آزاد کردن mapperها و color_mapper

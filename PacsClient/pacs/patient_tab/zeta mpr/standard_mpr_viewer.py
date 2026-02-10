@@ -4199,7 +4199,8 @@ class StandardMPRViewer(QWidget):
                     
                     # Recreate text annotation
                     if view_name in self.text_actors:
-                        renderer.RemoveActor2D(self.text_actors[view_name])
+                        # Use RemoveViewProp instead of deprecated RemoveActor2D (VTK 9.5.0+)
+                        renderer.RemoveViewProp(self.text_actors[view_name])
                     self._create_slice_info_text(renderer, view_name)
                     
                     # Update viewer storage

@@ -4999,12 +4999,14 @@ class PatientWidget(QWidget):
                     for node in list(self.viewer_controller.lst_nodes_viewer):  # Use list() to avoid modification during iteration
                         try:
                             node: NodeViewer
-                            vtk_widget: VTKWidget = node.vtk_widget
-                            if hasattr(vtk_widget, 'cleanup_image_viewer'):
-                                try:
-                                    vtk_widget.cleanup_image_viewer()
-                                except:
-                                    pass
+                            # CRITICAL: Check if vtk_widget attribute exists before accessing
+                            if hasattr(node, 'vtk_widget'):
+                                vtk_widget: VTKWidget = node.vtk_widget
+                                if hasattr(vtk_widget, 'cleanup_image_viewer'):
+                                    try:
+                                        vtk_widget.cleanup_image_viewer()
+                                    except:
+                                        pass
 
                             # Safe deletion
                             for attr in ('vtk_widget', 'widget', 'slider'):

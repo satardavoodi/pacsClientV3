@@ -4413,6 +4413,8 @@ Study UID: {study_uid}
             
             # Get series list
             series_list = self._get_series_list_for_study(widget, study_uid)
+            study_info = None  # Initialize to None
+            
             if not series_list:
                 study_info = self.get_series_info_from_server(study_uid)
                 if study_info:
@@ -4451,12 +4453,22 @@ Study UID: {study_uid}
                     dm_patient_name = widget.patient_name
                 
                 # 2. If still missing, try study_info from server (already fetched above)
-                if (not dm_patient_id or not dm_patient_name) and 'study_info' in dir():
+                if (not dm_patient_id or not dm_patient_name) and study_info:
                     dm_patient_id = dm_patient_id or study_info.get('patient_id', '')
                     dm_patient_name = dm_patient_name or study_info.get('patient_name', '')
                     dm_study_date = study_info.get('study_date', '')
                     dm_modality = study_info.get('modality', '')
                     dm_description = study_info.get('study_description', '')
+                
+                # 2.5. If study_info wasn't fetched yet (series_list came from widget cache), fetch it now
+                if (not dm_patient_id or not dm_patient_name) and not study_info:
+                    study_info = self.get_series_info_from_server(study_uid)
+                    if study_info:
+                        dm_patient_id = dm_patient_id or study_info.get('patient_id', '')
+                        dm_patient_name = dm_patient_name or study_info.get('patient_name', '')
+                        dm_study_date = study_info.get('study_date', '')
+                        dm_modality = study_info.get('modality', '')
+                        dm_description = study_info.get('study_description', '')
                 
                 # 3. If still missing, try database lookup
                 if not dm_patient_id or not dm_patient_name:

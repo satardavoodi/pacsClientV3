@@ -266,8 +266,10 @@ class ToolbarManager:
         )
         
         # ✅ تایمر برای به‌روزرسانی موقعیت پنل ضبط هنگام حرکت پنجره
-        self._position_update_timer = QTimer()
+        # CRITICAL: Set parent to patient_widget to ensure timer is on main Qt thread
+        self._position_update_timer = QTimer(patient_widget)
         self._position_update_timer.setInterval(100)  # هر 100 میلی‌ثانیه
+        self._position_update_timer.setSingleShot(False)
         self._position_update_timer.timeout.connect(self._update_soundbox_position)
         self._mic_button_ref = None  # رفرنس به دکمه میکروفون
 
@@ -1974,6 +1976,7 @@ class ToolbarManager:
             self._position_update_timer.stop()
     
     def _on_mic_clicked(self, mic_btn):
+        """Handle microphone button click - runs on main Qt thread"""
         selected_widget = self.patient_widget.selected_widget
 
         # 1. ابتدا فریم ویس را بررسی کن
@@ -1981,12 +1984,18 @@ class ToolbarManager:
         
         # ❌ تغییر: اگر در حال نمایش است و کاربر دوباره کلیک کرد، فقط hide کن
         if soundbox.isVisible():
+            # Stop position update timer (CRITICAL: ensure it exists and is active)
+            if hasattr(self, '_position_update_timer') and self._position_update_timer is not None:
+                try:
+                    if self._position_update_timer.isActive():
+                        self._position_update_timer.stop()
+                except RuntimeError:
+                    pass  # Timer already deleted
             soundbox.hide()
             self.turn_on_off_mic_btn(False)
             # تغییر آیکون به حالت عادی
             mic_btn.setIcon(QIcon(f"{ICON_PATH}/mic.png"))
-            # توقف تایمر به‌روزرسانی موقعیت
-            self._position_update_timer.stop()
+            self._mic_button_ref = None
             return
 
         # 2. چک میکروفون
@@ -2022,8 +2031,13 @@ class ToolbarManager:
         # تغییر آیکون به حالت ضبط (قرمز)
         mic_btn.setIcon(qta.icon('fa5s.microphone', color='#ef4444'))
         
-        # شروع تایمر به‌روزرسانی موقعیت
-        self._position_update_timer.start()
+        # شروع تایمر به‌روزرسانی موقعیت (ensure timer exists and is on main thread)
+        if hasattr(self, '_position_update_timer') and self._position_update_timer is not None:
+            try:
+                if not self._position_update_timer.isActive():
+                    self._position_update_timer.start()
+            except RuntimeError as e:
+                print(f"[TIMER WARNING] Could not start position timer: {e}")
 
         # 6. شروع/توقف ضبط
         soundbox.toggle_recording(selected_widget)
@@ -3577,21 +3591,55 @@ class ToolbarManager:
             
             logger.info("   ✅ [MPR OPEN] last_series_show is available")
             
-            # ✅ FIX: last_series_show now stores the SERIES NUMBER (string), not list index
-            series_number = str(selected_widget.last_series_show)
-            total_thumbnails = len(self.patient_widget.lst_thumbnails_data)
+            # ✅ FIX: Get series_number from image_viewer.metadata (reliable source)
+            # last_series_show is an index but may not match lst_thumbnails_data indices
+            try:
+                if not hasattr(selected_widget.image_viewer, 'metadata') or selected_widget.image_viewer.metadata is None:
+                    logger.error("   ❌ [MPR OPEN] image_viewer has no metadata")
+                    QMessageBox.warning(
+                        self.patient_widget,
+                        "No Metadata",
+                        "Image viewer metadata not available.\n\nPlease reload the series."
+                    )
+                    return
+                
+                viewer_metadata = selected_widget.image_viewer.metadata
+                series_meta = viewer_metadata.get('series', {})
+                series_number = str(series_meta.get('series_number', ''))
+                
+                if not series_number:
+                    logger.error("   ❌ [MPR OPEN] series_number not found in viewer metadata")
+                    QMessageBox.warning(
+                        self.patient_widget,
+                        "No Series Number",
+                        "Series number not found in metadata."
+                    )
+                    return
+                
+                logger.info(f"   📊 [MPR OPEN] Active series_number from viewer: {series_number}")
+                
+            except Exception as e:
+                logger.error(f"   ❌ [MPR OPEN] Error extracting series_number from viewer metadata: {e}")
+                import traceback
+                traceback.print_exc()
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "Metadata Error",
+                    f"Could not extract series number from viewer metadata:\n{str(e)}"
+                )
+                return
             
-            logger.info(f"   📊 [MPR OPEN] Active series number: {series_number} (total thumbnails: {total_thumbnails})")
-            logger.info(f"   📊 [MPR OPEN] series_number type: {type(series_number)}")
-            
-            # Find the series data by series number
+            # Now find the series data in lst_thumbnails_data by series_number
             series_data = None
             active_series_index = None
+            total_thumbnails = len(self.patient_widget.lst_thumbnails_data)
+            
+            logger.info(f"   🔍 [MPR OPEN] Searching for series {series_number} in {total_thumbnails} thumbnails...")
             
             for idx, thumb_data in enumerate(self.patient_widget.lst_thumbnails_data):
                 thumb_meta = thumb_data.get('metadata', {})
-                series_meta = thumb_meta.get('series', {})
-                this_series_num = str(series_meta.get('series_number', ''))
+                thumb_series_meta = thumb_meta.get('series', {})
+                this_series_num = str(thumb_series_meta.get('series_number', ''))
                 
                 if this_series_num == series_number:
                     series_data = thumb_data
@@ -3601,12 +3649,12 @@ class ToolbarManager:
             
             # Validate that we found the series
             if series_data is None or active_series_index is None:
-                logger.error(f"   ❌ [MPR OPEN] Could not find series number: {series_number}")
-                logger.info("=" * 100)
+                logger.error(f"   ❌ [MPR OPEN] Series {series_number} not found in lst_thumbnails_data")
+                logger.error(f"   Available series count: {total_thumbnails}")
                 QMessageBox.warning(
                     self.patient_widget,
-                    "Invalid Series",
-                    f"Series number {series_number} not found in thumbnails data.\nAvailable series count: {total_thumbnails}"
+                    "Series Not Found",
+                    f"Series {series_number} not found in loaded thumbnails.\n\nAvailable series: {total_thumbnails}\n\nPlease wait for all series to load."
                 )
                 return
             
@@ -3614,7 +3662,7 @@ class ToolbarManager:
             
             # ✅ Get VTK data from found series
             try:
-                logger.info(f"   🔍 [MPR OPEN] Retrieving VTK data for series {series_number}...")
+                logger.info(f"   🔍 [MPR OPEN] Retrieving VTK data for series {series_number} (index {active_series_index})...")
                 logger.info(f"   📦 [MPR OPEN] series_data keys: {series_data.keys() if series_data else 'None'}")
                 
                 vtk_image_data = series_data.get('vtk_image_data')
@@ -3624,28 +3672,28 @@ class ToolbarManager:
                 thumb_metadata = series_data.get('metadata', {})
                 logger.info(f"   📦 [MPR OPEN] thumb_metadata keys: {thumb_metadata.keys() if thumb_metadata else 'None'}")
                 
-                # series_metadata already retrieved above
-                logger.info(f"   📦 [MPR OPEN] Using series_number: {series_number}")
+                logger.info(f"   📦 [MPR OPEN] Using series_number: {series_number}, index: {active_series_index}")
                 
                 if vtk_image_data is None:
-                    logger.error(f"   ❌ [MPR OPEN] No VTK image data for series {series_number}")
+                    logger.error(f"   ❌ [MPR OPEN] No VTK image data for series {series_number} at index {active_series_index}")
                     logger.info("=" * 100)
                     QMessageBox.warning(
                         self.patient_widget,
                         "No Image Data",
-                        "No VTK image data available for the selected series."
+                        f"No VTK image data available for series {series_number}."
                     )
                     return
                     
                 logger.info(f"   ✅ Found series {series_number} at list index {active_series_index}")
                 logger.info(f"   vtk_image_data dimensions: {vtk_image_data.GetDimensions()}")
 
-                # Remember which series spawned MPR so we can restore on close (use series_number now)
+                # Remember which series spawned MPR so we can restore on close
+                # Store BOTH series_number (for display) and index (for data lookup)
                 selected_widget._mpr_source_series_number = series_number
-                selected_widget._mpr_source_series_index = active_series_index  # Keep for backward compatibility
+                selected_widget._mpr_source_series_index = active_series_index
                 
             except Exception as e:
-                logger.error(f"Error accessing series data for series {series_number}: {e}")
+                logger.error(f"Error accessing series data at index {active_series_index} (series {series_number}): {e}")
                 import traceback
                 traceback.print_exc()
                 QMessageBox.warning(
