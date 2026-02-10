@@ -418,37 +418,55 @@ class SocketDicomClient:
                 self.socket.sendall(request_bytes)
                 logger.info(f"📤 Request sent, waiting for response...")
 
-                # Receive response length
-                logger.info(f"📥 Waiting for response header (4 bytes)...")
-                response_length_bytes = self._safe_recv(4)
-                if not response_length_bytes:
-                    raise NetworkError("Connection closed by server")
-
-                response_length = int.from_bytes(response_length_bytes, byteorder='big')
+                # Loop to handle broadcasts and wait for actual response
+                max_broadcast_retries = 10
+                broadcast_count = 0
                 
-                # Validate response length to prevent extremely large allocations
-                if response_length > 50 * 1024 * 1024:  # 50MB limit
-                    raise NetworkError(f"Response too large: {response_length} bytes")
+                while broadcast_count < max_broadcast_retries:
+                    # Receive response length
+                    logger.info(f"📥 Waiting for response header (4 bytes)...")
+                    response_length_bytes = self._safe_recv(4)
+                    if not response_length_bytes:
+                        raise NetworkError("Connection closed by server")
 
-                logger.info(f"📥 Receiving response body ({response_length} bytes)...")
+                    response_length = int.from_bytes(response_length_bytes, byteorder='big')
+                    
+                    # Validate response length to prevent extremely large allocations
+                    if response_length > 50 * 1024 * 1024:  # 50MB limit
+                        raise NetworkError(f"Response too large: {response_length} bytes")
 
-                # Receive response data
-                response_data = b''
-                while len(response_data) < response_length:
-                    chunk_size = min(SOCKET_CHUNK_SIZE, response_length - len(response_data))
-                    chunk = self._safe_recv(chunk_size)
-                    if not chunk:
-                        raise NetworkError("Connection lost while receiving data")
-                    response_data += chunk
-                    if response_length > 100000:  # Log progress for large responses
-                        logger.info(f"📥 Received {len(response_data)}/{response_length} bytes ({100*len(response_data)//response_length}%)")
+                    logger.info(f"📥 Receiving response body ({response_length} bytes)...")
 
-                logger.info(f"📥 Response received completely ({len(response_data)} bytes)")
+                    # Receive response data
+                    response_data = b''
+                    while len(response_data) < response_length:
+                        chunk_size = min(SOCKET_CHUNK_SIZE, response_length - len(response_data))
+                        chunk = self._safe_recv(chunk_size)
+                        if not chunk:
+                            raise NetworkError("Connection lost while receiving data")
+                        response_data += chunk
+                        if response_length > 100000:  # Log progress for large responses
+                            logger.info(f"📥 Received {len(response_data)}/{response_length} bytes ({100*len(response_data)//response_length}%)")
 
-                # Parse response
-                response = json.loads(response_data.decode('utf-8'))
-                logger.info(f"📥 Response parsed: status={response.get('status', 'unknown')}")
-                return response
+                    logger.info(f"📥 Response received completely ({len(response_data)} bytes)")
+
+                    # Parse response
+                    response = json.loads(response_data.decode('utf-8'))
+                    
+                    # Check if this is a broadcast message
+                    if response.get('type') == 'broadcast':
+                        broadcast_count += 1
+                        event_type = response.get('event_type', 'unknown')
+                        logger.info(f"📡 Received broadcast message (type: {event_type}), continuing to wait for actual response... ({broadcast_count}/{max_broadcast_retries})")
+                        continue  # Skip this broadcast and wait for the actual response
+                    
+                    # This is the actual response
+                    logger.info(f"📥 Response parsed: status={response.get('status', 'unknown')}")
+                    return response
+                
+                # If we exit the loop, we received too many broadcasts without a response
+                logger.error(f"❌ Received {broadcast_count} broadcasts without getting actual response")
+                raise NetworkError(f"Too many broadcast messages, no response received")
 
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as e:
                 logger.error(f"❌ Connection reset error for {endpoint}: {e}")
@@ -668,8 +686,14 @@ class SocketDicomClient:
             logger.info(f"📦 Batch {batch_idx + 1} response received: {response is not None}")
             
             if not response or response.get('status') != 'success':
-                error_msg = response.get('error') or response.get('message', 'Unknown error') if response else 'No response'
-                logger.error(f"❌ Batch {batch_idx + 1} failed: {error_msg}")
+                # Better error extraction with full response logging
+                if response:
+                    error_msg = response.get('error') or response.get('message') or response.get('msg', 'Unknown error')
+                    logger.error(f"❌ Batch {batch_idx + 1} failed: {error_msg}")
+                    logger.error(f"❌ Full response for debugging: {response}")
+                else:
+                    error_msg = 'No response'
+                    logger.error(f"❌ Batch {batch_idx + 1} failed: {error_msg}")
 
                 if "Response too large" in str(error_msg) and batch_size > min_batch_size:
                     batch_size = max(min_batch_size, batch_size // 2)

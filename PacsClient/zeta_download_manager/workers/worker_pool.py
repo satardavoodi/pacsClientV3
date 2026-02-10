@@ -58,53 +58,59 @@ class WorkerPool:
     ) -> bool:
         """
         Add worker to pool
-        
+
         Args:
             worker: Download worker instance
             study_uid: Study UID
-            
+
         Returns:
             True if added, False if at capacity
         """
         try:
             logger.info(f"[POOL] add_worker called for {study_uid[:40]}...")
             logger.info(f"[POOL] Acquiring lock...")
-            
+
             with self.lock:
                 logger.info(f"[POOL] Lock acquired")
-                
+
                 logger.info(f"[POOL] Checking capacity...")
                 # Check capacity directly (don't call can_add_worker to avoid nested lock)
                 if len(self.active_workers) >= self.max_workers:
                     logger.warning(f"⚠️ Worker pool at capacity ({self.max_workers})")
                     return False
                 logger.info(f"[POOL] Capacity OK ({len(self.active_workers)}/{self.max_workers})")
-                
+
                 logger.info(f"[POOL] Capacity OK, checking for duplicates...")
                 # Check if worker already exists for this study
                 if study_uid in self.worker_by_study:
                     logger.warning(f"⚠️ Worker already exists for study {study_uid[:40]}...")
                     return False
-                
+
                 logger.info(f"[POOL] No duplicate, generating worker_id...")
                 worker_id = str(uuid4())
                 logger.info(f"[POOL] Generated worker_id: {worker_id[:8]}...")
-                
+
                 logger.info(f"[POOL] Adding to active_workers dict...")
                 self.active_workers[worker_id] = worker
                 logger.info(f"[POOL] Added to active_workers dict successfully")
-                
+
                 logger.info(f"[POOL] Adding to worker_by_study mapping...")
                 self.worker_by_study[study_uid] = worker_id
                 logger.info(f"[POOL] Added to worker_by_study mapping successfully")
-                
+
                 # Connect cleanup signal (use worker_id for tracking)
                 logger.info(f"[POOL] Connecting finished signal...")
                 logger.info(f"[POOL] Worker has 'finished' attribute: {hasattr(worker, 'finished')}")
                 logger.info(f"[POOL] Worker.finished type: {type(worker.finished) if hasattr(worker, 'finished') else 'N/A'}")
-                
+
                 try:
-                    worker.finished.connect(lambda wid=worker_id, suid=study_uid: self._remove_worker(wid, suid))
+                    # Use a safer approach to connect the signal
+                    def create_cleanup_handler(wid, suid):
+                        def cleanup_handler():
+                            self._remove_worker(wid, suid)
+                        return cleanup_handler
+                    
+                    worker.finished.connect(create_cleanup_handler(worker_id, study_uid))
                     logger.info(f"[POOL] Finished signal connected successfully")
                 except Exception as sig_error:
                     logger.error(f"[POOL] ❌ Error connecting finished signal: {sig_error}")
@@ -112,11 +118,11 @@ class WorkerPool:
                     import traceback
                     logger.error(f"[POOL] Traceback:\n{traceback.format_exc()}")
                     raise
-                
+
                 logger.info(f"✅ Worker added: {study_uid[:40]}... (ID: {worker_id[:8]}...)")
-                
+
                 return True
-                
+
         except Exception as e:
             logger.error(f"[POOL] ❌ CRITICAL ERROR in add_worker:")
             logger.error(f"[POOL] Error type: {type(e).__name__}")

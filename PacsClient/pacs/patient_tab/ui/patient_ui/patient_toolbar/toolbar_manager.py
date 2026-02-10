@@ -6090,7 +6090,7 @@ class ToolbarManager:
             dropdown.setStyleSheet("""
                 QWidget {
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #1f2937, stop:1 #111827);
+                        stop:0 #2d3748, stop:1 #1a202c);
                     border: 2px solid #4b5563;
                     border-radius: 12px;
                     padding: 8px;
@@ -6105,13 +6105,13 @@ class ToolbarManager:
             header = QLabel("📊 Change Report Status")
             header.setStyleSheet("""
                 QLabel {
-                    color: #f7fafc;
+                    color: #ffffff;
                     font-size: 14px;
                     font-weight: 700;
                     font-family: 'Roboto', sans-serif;
                     padding: 8px 12px;
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 #3b82f6, stop:1 #2563eb);
+                        stop:0 #059669, stop:1 #047857);
                     border-radius: 8px;
                     margin-bottom: 8px;
                 }
@@ -6126,13 +6126,14 @@ class ToolbarManager:
             current_label = QLabel(f"Current Status: {REPORT_STATUSES.get(current_status, current_status)}")
             current_label.setStyleSheet("""
                 QLabel {
-                    color: #94a3b8;
+                    color: #e2e8f0;
                     font-size: 11px;
-                    font-weight: 500;
-                    background: rgba(59, 130, 246, 0.1);
+                    font-weight: 600;
+                    background: rgba(5, 150, 105, 0.15);
                     padding: 6px 10px;
                     border-radius: 6px;
                     margin-bottom: 8px;
+                    border: 1px solid rgba(5, 150, 105, 0.3);
                 }
             """)
             current_label.setAlignment(Qt.AlignCenter)
@@ -6196,13 +6197,13 @@ class ToolbarManager:
                 # Container styling
                 base_style = f"""
                     QWidget {{
-                        background: {'qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #374151, stop:1 #1f2937)' if not is_current else 'qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #059669, stop:1 #047857)'};
+                        background: {'qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2d3748, stop:1 #1f2937)' if not is_current else 'qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #059669, stop:1 #047857)'};
                         border: 1px solid {color if not is_current else '#10b981'};
                         border-radius: 8px;
                     }}
                     QWidget:hover {{
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4b5563, stop:1 #374151);
-                        border-color: #60a5fa;
+                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #374151, stop:1 #2d3748);
+                        border-color: #10b981;
                     }}
                 """
                 btn_container.setStyleSheet(base_style)
@@ -6238,6 +6239,8 @@ class ToolbarManager:
     def _change_status_from_dropdown(self, new_status: str, dropdown=None):
         """Change report status from dropdown menu"""
         try:
+            from PySide6.QtWidgets import QMessageBox
+            
             current_status = getattr(self.patient_widget, 'report_status', 'pending')
             
             if new_status == current_status:
@@ -6250,12 +6253,18 @@ class ToolbarManager:
             
             # Call patient widget's change method
             if hasattr(self.patient_widget, '_change_report_status'):
-                self.patient_widget._change_report_status(
+                success = self.patient_widget._change_report_status(
                     study_uid=self.patient_widget.study_uid,
                     old_status=current_status,
                     new_status=new_status,
                     comment=f"Status changed via toolbar dropdown"
                 )
+                
+                # Show result to user
+                if success:
+                    print(f"✅ [Toolbar] Status successfully changed to {new_status}")
+                else:
+                    print(f"⚠️ [Toolbar] Status change may have failed")
             else:
                 # Fallback: update directly
                 self.patient_widget.report_status = new_status
@@ -6268,6 +6277,13 @@ class ToolbarManager:
             print(f"[ERROR] Failed to change status from dropdown: {e}")
             import traceback
             traceback.print_exc()
+            
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self.patient_widget,
+                "Status Update Failed",
+                f"Failed to update report status:\n{str(e)}"
+            )
     
     def _sync_and_go_home(self):
         """Sync patient data and return to home page"""
@@ -6459,30 +6475,32 @@ class ToolbarManager:
             # Style progress dialog
             progress_dialog.setStyleSheet("""
                 QProgressDialog {
-                    background: #0b1220;
-                    border: 1px solid #223046;
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #2d3748, stop:1 #1a202c);
+                    border: 2px solid #4b5563;
                     border-radius: 12px;
                     color: #e5e7eb;
                 }
                 QProgressDialog QLabel {
-                    color: #e5e7eb;
-                    font-family: 'Segoe UI', 'Roboto';
+                    color: #f3f4f6;
+                    font-family: 'Roboto', 'Segoe UI';
                     font-size: 14px;
                     font-weight: 600;
                     padding: 10px 14px;
                 }
                 QProgressBar {
-                    border: 1px solid #2b3b55;
+                    border: 1px solid #4b5563;
                     border-radius: 8px;
-                    background: #0f172a;
+                    background: #1f2937;
                     height: 14px;
                     text-align: center;
-                    color: #94a3b8;
+                    color: #e5e7eb;
+                    font-weight: 600;
                 }
                 QProgressBar::chunk {
                     border-radius: 8px;
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                                 stop:0 #38bdf8, stop:1 #60a5fa);
+                                 stop:0 #059669, stop:1 #047857);
                 }
                 QPushButton {
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -6496,6 +6514,7 @@ class ToolbarManager:
                 QPushButton:hover {
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                         stop:0 #4b5563, stop:1 #374151);
+                    border-color: #10b981;
                 }
             """)
             
