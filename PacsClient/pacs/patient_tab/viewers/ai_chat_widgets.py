@@ -272,6 +272,7 @@ class MessageBubble(QWidget):
         
         # Send to Reception button (only for AI responses with callback)
         self.btnSendReception: QToolButton | None = None
+        self.sendReceptionStatus: QLabel | None = None  # Status indicator
         if (not self._is_user) and (self._on_send_reception_cb is not None):
             self.btnSendReception = QToolButton(box)
             self.btnSendReception.setText("Send to Reception")
@@ -288,7 +289,15 @@ class MessageBubble(QWidget):
                 QToolButton:hover { background: rgba(255,255,255,0.10); }
                 QToolButton:pressed { background: rgba(255,255,255,0.15); }
             """)
+            
+            # Add status label next to button
+            self.sendReceptionStatus = QLabel(box)
+            self.sendReceptionStatus.setText("⏳ Pending")
+            self.sendReceptionStatus.setStyleSheet("color: #ffb366; font-size: 10px;")
+            self.sendReceptionStatus.setVisible(False)  # Initially hidden
+            
             footer.addWidget(self.btnSendReception, 0, Qt.AlignRight)
+            footer.addWidget(self.sendReceptionStatus, 0, Qt.AlignRight)
 
         # Retry (hidden by default)
         self.btnRetry = QToolButton(box)
@@ -744,7 +753,38 @@ class MessageBubble(QWidget):
         old = self.btnCopy.text()
         self.btnCopy.setText("Copied!")
         self.btnCopy.setEnabled(False)
-        QTimer.singleShot(900, lambda: (self.btnCopy.setText(old), self.btnCopy.setEnabled(True)))
+        
+        def reset_copy_button():
+            # Check if the widget and button still exist before accessing them
+            if self and hasattr(self, 'btnCopy') and self.btnCopy:
+                try:
+                    self.btnCopy.setText(old)
+                    self.btnCopy.setEnabled(True)
+                except RuntimeError:
+                    # Widget was probably deleted, ignore the error
+                    pass
+        
+        QTimer.singleShot(900, reset_copy_button)
+
+    # =============== RECEPTION STATUS UPDATE ===============
+    def update_reception_status(self, status: str, icon: str = "⏳", color: str = "#ffb366"):
+        """
+        Update the visual status indicator next to Send to Reception button.
+        
+        Args:
+            status: Status text to display (e.g., "Sent", "Failed", "Success")
+            icon: Icon/emoji to show (default: "⏳")
+            color: Text color (default: orange for pending)
+        """
+        if self.sendReceptionStatus is not None:
+            self.sendReceptionStatus.setText(f"{icon} {status}")
+            self.sendReceptionStatus.setStyleSheet(f"color: {color}; font-size: 10px;")
+            self.sendReceptionStatus.setVisible(True)
+    
+    def reset_reception_status(self):
+        """Reset the status indicator to its initial state."""
+        if self.sendReceptionStatus is not None:
+            self.sendReceptionStatus.setVisible(False)
 
     @staticmethod
     def _is_probably_html(s: str) -> bool:
@@ -865,6 +905,10 @@ class ChatHistory(QWidget):
         """
 
         def _do_scroll():
+            # Check if the widget and its attributes still exist before accessing them
+            if not self or not hasattr(self, 'vbox') or not hasattr(self, 'scroll'):
+                return  # Widget was probably deleted, skip execution
+            
             try:
                 # 1) مطمئن شو layout آپدیت شده
                 try:
@@ -884,7 +928,8 @@ class ChatHistory(QWidget):
 
                 # 3) بعد حتماً برو ته
                 sb.setValue(sb.maximum())
-            except Exception:
+            except RuntimeError:
+                # Widget was probably deleted, ignore the error
                 pass
 
         # چند پاس برای وقتی که Qt دیرتر range را آپدیت می‌کند
