@@ -16,7 +16,7 @@ except Exception:
 
 GRID_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "modality_grid.json"
 
-from PacsClient.pacs.patient_tab.ui.patient_ui.viewer_controller import ViewerController
+from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_viewer_controller import ViewerController
 
 from PacsClient.utils import get_count_instances_in_study
 from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachment_folder, open_folder, \
