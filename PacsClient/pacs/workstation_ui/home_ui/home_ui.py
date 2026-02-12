@@ -2350,7 +2350,8 @@ class HomePanelWidget(QWidget):
                         images_count=patient.get('number_of_instances'),
                         is_downloaded=True,
                         body_part=patient.get('body_part'),
-                        study_time=patient.get('study_time')
+                        study_time=patient.get('study_time'),
+                        age=patient.get('age')
                     )
                     added += 1
 
@@ -4574,8 +4575,13 @@ Study UID: {study_uid}
                 dm_patient_id = ''
                 dm_patient_name = ''
                 dm_study_date = ''
+                dm_study_time = ''
                 dm_modality = ''
                 dm_description = ''
+                dm_patient_age = ''
+                dm_patient_sex = ''
+                dm_patient_birth_date = ''
+                dm_body_part = ''
                 
                 # 1. Try widget attributes first
                 if hasattr(widget, 'patient_id') and widget.patient_id:
@@ -4588,8 +4594,13 @@ Study UID: {study_uid}
                     dm_patient_id = dm_patient_id or study_info.get('patient_id', '')
                     dm_patient_name = dm_patient_name or study_info.get('patient_name', '')
                     dm_study_date = study_info.get('study_date', '')
+                    dm_study_time = study_info.get('study_time', '')
                     dm_modality = study_info.get('modality', '')
                     dm_description = study_info.get('study_description', '')
+                    dm_patient_age = study_info.get('age', '')
+                    dm_patient_sex = study_info.get('sex', '')
+                    dm_patient_birth_date = study_info.get('birth_date', '')
+                    dm_body_part = study_info.get('body_part', '')
                 
                 # 2.5. If study_info wasn't fetched yet (series_list came from widget cache), fetch it now
                 if (not dm_patient_id or not dm_patient_name) and not study_info:
@@ -4598,8 +4609,13 @@ Study UID: {study_uid}
                         dm_patient_id = dm_patient_id or study_info.get('patient_id', '')
                         dm_patient_name = dm_patient_name or study_info.get('patient_name', '')
                         dm_study_date = study_info.get('study_date', '')
+                        dm_study_time = study_info.get('study_time', '')
                         dm_modality = study_info.get('modality', '')
                         dm_description = study_info.get('study_description', '')
+                        dm_patient_age = study_info.get('age', '')
+                        dm_patient_sex = study_info.get('sex', '')
+                        dm_patient_birth_date = study_info.get('birth_date', '')
+                        dm_body_part = study_info.get('body_part', '')
                 
                 # 3. If still missing, try database lookup
                 if not dm_patient_id or not dm_patient_name:
@@ -4610,7 +4626,13 @@ Study UID: {study_uid}
                             dm_patient_id = dm_patient_id or db_info.get('patient_id', '')
                             dm_patient_name = dm_patient_name or db_info.get('patient_name', '')
                             dm_study_date = dm_study_date or db_info.get('study_date', '')
+                            dm_study_time = dm_study_time or db_info.get('study_time', '')
                             dm_modality = dm_modality or db_info.get('modality', '')
+                            dm_description = dm_description or db_info.get('study_description', '')
+                            dm_patient_age = dm_patient_age or db_info.get('age', '')
+                            dm_patient_sex = dm_patient_sex or db_info.get('sex', '')
+                            dm_patient_birth_date = dm_patient_birth_date or db_info.get('birth_date', '')
+                            dm_body_part = dm_body_part or db_info.get('body_part', '')
                     except Exception as e:
                         print(f"⚠️ Database lookup failed: {e}")
                 
@@ -4628,6 +4650,13 @@ Study UID: {study_uid}
                     'description': dm_description,
                     'series_count': len(series_list),
                     'images_count': sum(s.get('image_count', 0) for s in series_list),
+                    # Complete patient information
+                    'patient_age': dm_patient_age,
+                    'patient_sex': dm_patient_sex,
+                    'patient_birth_date': dm_patient_birth_date,
+                    'study_time': dm_study_time,
+                    'body_part': dm_body_part,
+                    'series': series_list,  # Include series array
                 }
                 
                 # ⚡ IMMEDIATE START - pauses all, starts this one right away

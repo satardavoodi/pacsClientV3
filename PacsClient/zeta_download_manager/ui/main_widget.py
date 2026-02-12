@@ -4178,11 +4178,18 @@ class DownloadManagerWidget(QWidget):
                 patient_id=study_data.get('patient_id', ''),
                 patient_name=patient_name,
                 study_date=study_data.get('study_date', ''),
+                study_time=study_data.get('study_time', study_data.get('time', '')),
                 description=study_data.get('study_description', ''),
                 modality=study_data.get('modality', ''),
                 series_list=series_info_list,
                 priority=priority_enum,  # Set the priority on the task
-                output_dir=(self.base_output_dir / study_uid) if study_uid else None
+                output_dir=(self.base_output_dir / study_uid) if study_uid else None,
+                # Complete patient information for database insertion
+                patient_age=study_data.get('patient_age', study_data.get('age', '')),
+                patient_sex=study_data.get('patient_sex', study_data.get('sex', '')),
+                patient_birth_date=study_data.get('patient_birth_date', study_data.get('birth_date', '')),
+                body_part=study_data.get('body_part', study_data.get('body_part_examined', '')),
+                institution_name=study_data.get('institution_name', '')
             )
 
             # ========== STEP 2: VALIDATE WITH RULE ENGINE (R17) ==========

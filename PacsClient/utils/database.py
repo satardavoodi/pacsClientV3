@@ -901,9 +901,10 @@ def migrate_fix_null_study_paths() -> dict:
     import logging
     
     logger = logging.getLogger(__name__)
-    logger.info("=" * 80)
-    logger.info("🔧 [MIGRATION] Starting study_path NULL fix migration...")
-    logger.info("=" * 80)
+    # Silent migration - only reports summary at end
+    logger.debug("=" * 80)
+    logger.debug("🔧 [MIGRATION] Starting study_path NULL fix migration...")
+    logger.debug("=" * 80)
     
     try:
         conn = get_connection_database()
@@ -919,10 +920,10 @@ def migrate_fix_null_study_paths() -> dict:
         """)
         
         null_studies = cur.fetchall()
-        logger.info(f"📋 Found {len(null_studies)} studies with NULL study_path")
+        logger.debug(f"📋 Found {len(null_studies)} studies with NULL study_path")
         
         if not null_studies:
-            logger.info("✅ No studies with NULL study_path found")
+            logger.debug("✅ No studies with NULL study_path found")
             return {'updated': 0, 'checked': 0, 'not_found': 0}
         
         updated = 0
@@ -941,15 +942,16 @@ def migrate_fix_null_study_paths() -> dict:
                             WHERE study_pk = ?
                         """, (str(potential_path), study_pk))
                         
-                        logger.info(f"✅ Updated: {patient_name} ({study_uid[:40]}...)")
-                        logger.info(f"   Path: {potential_path}")
+                        logger.debug(f"✅ Updated: {patient_name} ({study_uid[:40]}...)")
+                        logger.debug(f"   Path: {potential_path}")
                         updated += 1
                     else:
-                        logger.warning(f"❌ Not found: {patient_name} ({study_uid[:40]}...)")
-                        logger.warning(f"   Expected path: {potential_path}")
+                        # Silently count missing studies - they may be archived or deleted
+                        logger.debug(f"❌ Not found: {patient_name} ({study_uid[:40]}...)")
+                        logger.debug(f"   Expected path: {potential_path}")
                         not_found += 1
                 else:
-                    logger.warning(f"❌ No study_uid for study_pk={study_pk}")
+                    logger.debug(f"❌ No study_uid for study_pk={study_pk}")
                     not_found += 1
                     
             except Exception as e:
@@ -959,12 +961,16 @@ def migrate_fix_null_study_paths() -> dict:
         # Commit all changes
         conn.commit()
         
-        logger.info("-" * 80)
-        logger.info(f"📊 Migration Summary:")
-        logger.info(f"   ✅ Updated: {updated}")
-        logger.info(f"   ❌ Not found: {not_found}")
-        logger.info(f"   📋 Total checked: {len(null_studies)}")
-        logger.info("=" * 80)
+        # Only show summary if there were changes or issues
+        if updated > 0 or not_found > 0:
+            logger.info("-" * 80)
+            logger.info(f"📊 Migration Summary:")
+            if updated > 0:
+                logger.info(f"   ✅ Updated: {updated}")
+            if not_found > 0:
+                logger.info(f"   ⚠️  Not found on disk: {not_found}")
+            logger.info(f"   📋 Total checked: {len(null_studies)}")
+            logger.info("=" * 80)
         
         return {
             'updated': updated,
