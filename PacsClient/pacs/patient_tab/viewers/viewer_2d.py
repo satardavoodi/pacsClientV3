@@ -1069,45 +1069,27 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         window_width = instance_metadata['window_width']  # width
         window_center = instance_metadata['window_center']  # level
 
-        # ✅ FIX: Auto-detect and fix bad window/level values
-        # Check if window/level are inappropriate (too small, typical of 8-bit defaults)
-        if window_width is not None and window_center is not None:
-            # If values look like 8-bit defaults (e.g., 127.5/255) but we have 16-bit medical data
-            if window_width < 300 and window_center < 300:
-                # Check actual scalar range to determine if these are appropriate
-                scalar_range = self.vtk_image_data.GetScalarRange()
-                data_range = scalar_range[1] - scalar_range[0]
-                
-                # If data range is much larger than window settings, recalculate
-                if data_range > 500:  # Likely medical imaging (CT/MR)
-                    print(f"⚠️ [Window/Level Fix] Detected inappropriate window/level (W={window_width:.0f}, L={window_center:.0f}) for medical image (range={scalar_range})")
-                    
-                    # Check if CT data (Hounsfield units)
-                    if scalar_range[0] < -500 and scalar_range[1] > 1000:
-                        # CT data - use soft tissue window as default
-                        window_width = 400
-                        window_center = 40
-                        print(f"   → Using CT soft tissue preset: W={window_width}, L={window_center}")
-                    else:
-                        # Other modality - auto calculate from data range
-                        window_width = data_range
-                        window_center = (scalar_range[0] + scalar_range[1]) / 2
-                        print(f"   → Auto-calculated: W={window_width:.0f}, L={window_center:.0f}")
+        # ✅ FIX: Auto-detect and fix bad/missing window/level values
+        needs_auto_calc = False
         
-        # If window/level are None, calculate from data
         if window_width is None or window_center is None:
+            needs_auto_calc = True
+        elif window_width < 300 and window_center < 300:
+            # Check if values look like 8-bit defaults but data is 16-bit medical
             scalar_range = self.vtk_image_data.GetScalarRange()
-            print(f"⚠️ [Window/Level Fix] Missing window/level values, auto-calculating from data range: {scalar_range}")
-            
-            # Check if CT data
+            data_range = scalar_range[1] - scalar_range[0]
+            if data_range > 500:
+                needs_auto_calc = True
+        
+        if needs_auto_calc:
+            scalar_range = self.vtk_image_data.GetScalarRange()
+            # Check if CT data (Hounsfield units)
             if scalar_range[0] < -500 and scalar_range[1] > 1000:
                 window_width = 400
                 window_center = 40
-                print(f"   → CT detected, using soft tissue preset: W={window_width}, L={window_center}")
             else:
                 window_width = scalar_range[1] - scalar_range[0]
                 window_center = (scalar_range[0] + scalar_range[1]) / 2
-                print(f"   → Auto-calculated: W={window_width:.0f}, L={window_center:.0f}")
 
         # print(f'slice: {slice_index}\t width: {window_width}\t center: {window_center}')
         # window_width = window_width * (window_width / (window_center * 2))

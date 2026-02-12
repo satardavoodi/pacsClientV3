@@ -4516,8 +4516,23 @@ Study UID: {study_uid}
                 if widget is None:
                     widget = self._find_widget_by_study_uid(study_uid)
                 if widget and hasattr(widget, 'load_series_immediately'):
-                    QTimer.singleShot(100, lambda sn=series_number, od=str(series_dir):
-                        widget.load_series_immediately(sn, od))
+                    # ✅ FIX: Skip load_series_immediately if the viewer is
+                    # already displaying this series (avoids redundant disk
+                    # reload + re-render after the direct change_series call
+                    # that already happened from the thumbnail click).
+                    vc = getattr(widget, 'viewer_controller', None)
+                    already_shown = False
+                    if vc is not None:
+                        already_shown = (str(getattr(vc, '_last_switch_series', None)) == str(series_number))
+                    if not already_shown:
+                        QTimer.singleShot(100, lambda sn=series_number, od=str(series_dir):
+                            widget.load_series_immediately(sn, od))
+                    else:
+                        print(f"⏭️ Series {series_number} already switched by direct click – skipping reload")
+                        # Still ensure thumbnail border is updated
+                        if hasattr(widget, 'thumbnail_manager') and widget.thumbnail_manager:
+                            widget.thumbnail_manager.set_series_ready(str(series_number))
+                            widget.thumbnail_manager.apply_border_states_new()
                 return
             
             # ========== CRITICAL: Check if Download Manager is already handling this study ==========
@@ -5208,13 +5223,27 @@ Study UID: {study_uid}
                                     rows = getattr(dcm, 'Rows', 512)
                                     columns = getattr(dcm, 'Columns', 512)
                                     
+                                    # Extract window/level from DICOM tags
+                                    window_width = None
+                                    window_center = None
+                                    try:
+                                        ww = getattr(dcm, 'WindowWidth', None)
+                                        wc = getattr(dcm, 'WindowCenter', None)
+                                        if ww is not None and wc is not None:
+                                            window_width = float(ww[0]) if hasattr(ww, '__iter__') and not isinstance(ww, str) else float(ww)
+                                            window_center = float(wc[0]) if hasattr(wc, '__iter__') and not isinstance(wc, str) else float(wc)
+                                    except (ValueError, TypeError, IndexError):
+                                        pass
+                                    
                                     instances_to_save.append({
                                         'sop_uid': str(sop_uid),
                                         'series_fk': series_pk,
                                         'instance_path': str(dcm_file),
                                         'instance_number': instance_number,
                                         'rows': rows,
-                                        'columns': columns
+                                        'columns': columns,
+                                        'window_width': window_width,
+                                        'window_center': window_center
                                     })
                                     
                                 except Exception as dcm_err:

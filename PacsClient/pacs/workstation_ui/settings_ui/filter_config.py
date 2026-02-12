@@ -694,11 +694,10 @@ class FilterConfigWidget(QWidget):
             "<i>perceived</i> detail. High‑pass and band‑pass tend to increase local contrast; "
             "heavy smoothing reduces contrast."
         )
-        root.addWidget(guide)
+        guide.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
-        root.addWidget(self.tabs)
 
         self.tabs.addTab(self._build_modality_tab("CT"), "CT")
         self.tabs.addTab(self._build_modality_tab("MR"), "MR")
@@ -744,7 +743,6 @@ class FilterConfigWidget(QWidget):
         preset_bar.setContentsMargins(0, 0, 0, 0)
         preset_bar.addWidget(preset_container, 0, Qt.AlignLeft)
         preset_bar.addStretch(1)
-        root.addLayout(preset_bar)
 
         btns = QHBoxLayout()
         btns.addStretch()
@@ -761,7 +759,24 @@ class FilterConfigWidget(QWidget):
         reset.clicked.connect(self.reset_to_default)
         btns.addWidget(reset)
 
-        root.addLayout(btns)
+        # Two-column layout: left guide, right controls
+        main_row = QHBoxLayout()
+        main_row.setContentsMargins(0, 0, 0, 0)
+        main_row.setSpacing(12)
+
+        main_row.addWidget(guide, 1)
+
+        right_container = QWidget()
+        right_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        right_col = QVBoxLayout(right_container)
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(12)
+        right_col.addWidget(self.tabs, 1)
+        right_col.addLayout(preset_bar)
+        right_col.addLayout(btns)
+
+        main_row.addWidget(right_container, 2)
+        root.addLayout(main_row, 1)
 
     # ------------------------------------------------------------------
     def _build_modality_tab(self, modality: str):
@@ -845,28 +860,11 @@ class FilterConfigWidget(QWidget):
         freq_layout.addWidget(self._build_gaussian_band_pass(prefix))
         freq.setContentLayout(freq_layout)
 
-        # --- Two-column layout (left: Basic+Noise, right: Sharpening+Frequency)
-        cols = QHBoxLayout()
-        cols.setContentsMargins(0, 0, 0, 0)
-        cols.setSpacing(12)
-
-        left_col = QVBoxLayout()
-        left_col.setContentsMargins(0, 0, 0, 0)
-        left_col.setSpacing(12)
-        left_col.addWidget(basic)
-        left_col.addWidget(smoothing)
-        left_col.addStretch(1)
-
-        right_col = QVBoxLayout()
-        right_col.setContentsMargins(0, 0, 0, 0)
-        right_col.setSpacing(12)
-        right_col.addWidget(sharp)
-        right_col.addWidget(freq)
-        right_col.addStretch(1)
-
-        cols.addLayout(left_col, 1)
-        cols.addLayout(right_col, 1)
-        v.addLayout(cols)
+        # --- Single-column layout (all four filter groups together)
+        v.addWidget(basic)
+        v.addWidget(smoothing)
+        v.addWidget(sharp)
+        v.addWidget(freq)
 
         v.addStretch()
         scroll.setWidget(w)

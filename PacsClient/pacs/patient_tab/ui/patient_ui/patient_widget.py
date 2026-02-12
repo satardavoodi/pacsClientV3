@@ -1798,6 +1798,10 @@ class PatientWidget(QWidget):
             series_no = str(metadata['series']['series_number'])
             # حالا این سری آماده است
             self.thumbnail_manager.set_series_ready(series_no)
+            
+            # ⚡ OPTIMIZATION: Rebuild indices after data change for fast lookups
+            # This is a O(n) one-time cost when new series is added
+            self.viewer_controller._rebuild_series_index()
         except Exception as e:
             print("set ready border failed:", e)
 
@@ -3756,7 +3760,6 @@ class PatientWidget(QWidget):
     ##############################################################################################
 
     def center_layout_ui(self):
-        # Main container widget
         center_widget = QWidget()
         center_widget.setStyleSheet('''
             background-color: #0d0d0d;
@@ -3767,104 +3770,191 @@ class PatientWidget(QWidget):
         ''')
         self.center_widget = center_widget
 
-        # Create a scroll area for the viewer area
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        # Scroll area styling
-        scroll_area.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background: transparent;
-            }
-            QScrollBar:vertical {
-                border: 1px solid #4b5563;
-                background: #1f2937;
-                width: 14px;
-                margin: 0px 0px 0px 0px;
-                border-radius: 7px;
-            }
-            QScrollBar::handle:vertical {
-                background: #374151;
-                min-height: 20px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #4b5563;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 0px;
-                width: 0px;
-                background: transparent;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: none;
-            }
-            QScrollBar:horizontal {
-                border: 1px solid #4b5563;
-                background: #1f2937;
-                height: 14px;
-                margin: 0px 0px 0px 0px;
-                border-radius: 7px;
-            }
-            QScrollBar::handle:horizontal {
-                background: #374151;
-                min-width: 20px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:horizontal:hover {
-                background: #4b5563;
-            }
-            QScrollBar::add-line:horizontal,
-            QScrollBar::sub-line:horizontal {
-                height: 0px;
-                width: 0px;
-                background: transparent;
-            }
-            QScrollBar::add-page:horizontal,
-            QScrollBar::sub-page:horizontal {
-                background: none;
-            }
-        """)
-
-        # Create a container widget for the grid layout
-        container_widget = QWidget()
-        container_widget.setStyleSheet("""
-            QWidget {
-                background-color: transparent;
-            }
-        """)
-
-        # Set up the grid layout for viewers
-        self.vtk_layout = QGridLayout(container_widget)
+        # self.vtk_layout = QHBoxLayout(center_widget)
+        self.vtk_layout = QGridLayout(center_widget)
         self.vtk_layout.setContentsMargins(8, 8, 8, 8)  # More margin for borders to be visible
         self.vtk_layout.setSpacing(8)  # More spacing between viewports
 
-        # Set the container widget as the scroll area's widget
-        scroll_area.setWidget(container_widget)
-
-        # Create the main layout and add the scroll area
-        main_layout = QVBoxLayout(center_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(scroll_area)
-
-        self.center_scroll_area = scroll_area
-        
         return center_widget
 
     def new_viewer(self, default_thumb_index=0):
         # Delegate to viewer controller
-        viewer_node = self.viewer_controller.new_viewer(default_thumb_index)
+        return self.viewer_controller.new_viewer(default_thumb_index)
+
+        # slider.setStyleSheet("""
+        #     QSlider {
+        #         background: rgba(0, 0, 0, 1);
+        #         border-radius: 0px;
+        #         border: none;
+        #         padding-top: 50px;   /* فاصله داخل اسلایدر از بالا */
+        #         padding-bottom: 50px;  /* فاصله داخل اسلایدر از پایین */
+        #     }
+        # """)
+        pass
         
-        # Update scroll area after creating viewer
-        if hasattr(self, 'center_scroll_area'):
-            self.center_scroll_area.updateGeometry()
+        # Configure slider styling
+        try:
+            slider.setStyleSheet("""
+                QSlider {
+                    background: rgba(0, 0, 0, 1);
+                    border-radius: 0px;
+                    border: none;
+                    padding-top: 50px;
+                    padding-bottom: 50px;
+                }
+                QSlider::groove:vertical {
+                    background: #90caf9;
+                    width: 6px;
+                    border-radius: 3px;
+                }
+                QSlider::handle:vertical {
+                    background: #90caf9;
+                    border: none;
+                    width: 0;
+                    height: 0;
+                    border-radius: 0;
+                    margin: 0;
+                }
+                QSlider::handle:vertical:hover {
+                    background: #5d99c6;
+                }
+                QSlider::sub-page:vertical {
+                    background: #90caf9;
+                    border-radius: 3px;
+                }
+                QSlider::add-page:vertical {
+                    background: rgba(0,0,0,0.5);
+                    border-radius: 3px;
+                }
+            """)
+            print("   ✅ Slider styling applied")
+        except Exception as e:
+            print(f"   ⚠️ Warning: Could not apply slider styling: {e}")
+
+        try:
+            print("   📍 Adding widgets to layout...")
+            layout.addWidget(vtk_widget, 0, 0)
+            layout.addWidget(slider, 0, 0, alignment=Qt.AlignRight)
+            print("   ✅ Widgets added to layout")
+        except Exception as e:
+            print(f"   ❌ ERROR adding widgets to layout: {e}")
+            self.logger.error(f"Error adding widgets to layout: {e}", exc_info=True)
+            raise
+
+        # Use QFrame instead of QWidget - QFrame is designed for borders!
+        try:
+            print("   🖼️ Creating container frame...")
+            container = QFrame()
+            container.setObjectName("ViewportContainer")
+            container.setLayout(layout)
+            container.setFrameStyle(QFrame.Box | QFrame.Plain)
+            container.setLineWidth(2)  # Smaller border for inactive
+            container.setProperty("active", False)
+            container.setStyleSheet("""
+                QFrame#ViewportContainer {
+                    border: 2px solid #9ca3af;
+                    border-radius: 2px;
+                    background-color: transparent;
+                }
+            """)
+            print("   ✅ Container created")
+        except Exception as e:
+            print(f"   ❌ ERROR creating container: {e}")
+            self.logger.error(f"Error creating container: {e}", exc_info=True)
+            raise
+
+        # Create NodeViewer
+        try:
+            print("   🔗 Creating NodeViewer...")
+            new_node = NodeViewer(container, vtk_widget, slider)
+            if new_node is None:
+                raise RuntimeError("NodeViewer creation returned None")
+            print("   ✅ NodeViewer created")
+        except Exception as e:
+            print(f"   ❌ ERROR creating NodeViewer: {e}")
+            self.logger.error(f"Error creating NodeViewer: {e}", exc_info=True)
+            raise
+
+        # Set viewer ID and configure
+        try:
+            print("   🆔 Setting viewer ID...")
+            viewer_index = len(self.lst_nodes_viewer)
+            
+            # Safely set ID attribute
+            if hasattr(vtk_widget, '__dict__'):
+                vtk_widget.id_vtk_widget = viewer_index
+            else:
+                setattr(vtk_widget, 'id_vtk_widget', viewer_index)
+            print(f"   ✅ Viewer ID set to {viewer_index}")
+
+            print("   📝 Appending to lst_nodes_viewer...")
+            self.lst_nodes_viewer.append(new_node)
+            print("   ✅ Appended")
+        except Exception as e:
+            print(f"   ❌ ERROR setting viewer ID: {e}")
+            self.logger.error(f"Error setting viewer ID: {e}", exc_info=True)
+            raise
         
-        return viewer_node
+        # Configure slider
+        try:
+            print("   🎚️ Configuring slider...")
+            
+            # Check if methods exist
+            if not hasattr(vtk_widget, 'set_slider'):
+                print("   ⚠️ VTK widget doesn't have set_slider yet (placeholder mode)")
+                # For placeholder widgets, just set slider to default values
+                slider.setMinimum(0)
+                slider.setMaximum(0)
+                slider.setValue(0)
+                print("   ✅ Slider configured in placeholder mode (0 slices)")
+            else:
+                vtk_widget.set_slider(slider)
+                
+                if not hasattr(vtk_widget, 'get_count_of_slices'):
+                    raise AttributeError("VTK widget doesn't have get_count_of_slices method")
+                
+                count_slices = vtk_widget.get_count_of_slices()
+                mid_slices = 0
+                last_slices = max(0, count_slices - 1)
+
+                slider.setMinimum(0)
+                slider.setMaximum(last_slices)
+                slider.setValue(mid_slices)
+                print(f"   ✅ Slider configured (slices: {count_slices}, current: {mid_slices})")
+        except Exception as e:
+            print(f"   ❌ ERROR configuring slider: {e}")
+            # Don't raise - allow viewer creation to continue
+            # Just set slider to defaults
+            slider.setMinimum(0)
+            slider.setMaximum(0)
+            slider.setValue(0)
+            print("   ⚠️ Slider set to default values after error")
+
+        # Connect signals
+        try:
+            print("   🔗 Connecting slider signal...")
+            self.on_slider_value_changed(vtk_widget, mid_slices)
+            slider.valueChanged.connect(lambda val: self.on_slider_value_changed(vtk_widget, val))
+            print("   ✅ Slider connected")
+        except Exception as e:
+            print(f"   ⚠️ Warning: Could not connect slider signal: {e}")
+            self.logger.warning(f"Warning connecting slider signal: {e}")
+
+        # Set VTK widget methods
+        try:
+            print("   🔧 Setting VTK widget methods...")
+            if hasattr(vtk_widget, 'set_method_change_series_on_drop'):
+                vtk_widget.set_method_change_series_on_drop(self.change_series_on_viewer)
+            if hasattr(vtk_widget, 'set_method_change_container_border'):
+                vtk_widget.set_method_change_container_border(self.change_container_border)
+            print("   ✅ Methods set")
+        except Exception as e:
+            print(f"   ⚠️ Warning: Could not set VTK widget methods: {e}")
+            self.logger.warning(f"Warning setting VTK widget methods: {e}")
+        
+        print(f"🔨 [new_viewer] END - Successfully created viewer with ID {viewer_index}")
+        print(f"{'='*80}\n")
+        return new_node
     
     def _process_events_safe(self, label: str):
         """Process events only when safe, preventing nested calls and excessive processing
@@ -3896,8 +3986,7 @@ class PatientWidget(QWidget):
         """
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
-            vtk_widget = VTKWidget(height_viewer=height)
-            
+            vtk_widget = VTKWidget(height_viewer=height, patient_widget=self)
             if vtk_widget is None:
                 raise RuntimeError("VTKWidget constructor returned None")
             
@@ -3934,7 +4023,7 @@ class PatientWidget(QWidget):
     def creator_vtk_widget(self):
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
-            return VTKWidget(height_viewer=height)
+            return VTKWidget(height_viewer=height, patient_widget=self)
         except Exception as e:
             print(f"❌ Error in creator_vtk_widget: {e}")
             self.logger.error(f"Error in creator_vtk_widget: {e}", exc_info=True)
@@ -4965,20 +5054,18 @@ class PatientWidget(QWidget):
                     for node in list(self.viewer_controller.lst_nodes_viewer):  # Use list() to avoid modification during iteration
                         try:
                             node: NodeViewer
-                            # CRITICAL: Check if vtk_widget attribute exists before accessing
-                            if hasattr(node, 'vtk_widget'):
-                                vtk_widget: VTKWidget = node.vtk_widget
-                                if hasattr(vtk_widget, 'cleanup_image_viewer'):
-                                    try:
-                                        vtk_widget.cleanup_image_viewer()
-                                    except:
-                                        pass
+                            vtk_widget: VTKWidget = getattr(node, 'vtk_widget', None)
+                            if vtk_widget is not None and hasattr(vtk_widget, 'cleanup_image_viewer'):
+                                try:
+                                    vtk_widget.cleanup_image_viewer()
+                                except:
+                                    pass
 
-                            # Safe deletion
+                            # Safe cleanup: keep attributes but null them out to avoid AttributeError races
                             for attr in ('vtk_widget', 'widget', 'slider'):
                                 try:
                                     if hasattr(node, attr):
-                                        delattr(node, attr)
+                                        setattr(node, attr, None)
                                 except:
                                     pass
                         except Exception as e:
@@ -5161,7 +5248,9 @@ class PatientWidget(QWidget):
 
         # -------- 2) For each target viewer, compute intersection and draw --------
         for node in self.lst_nodes_viewer:
-            vtk_widget = node.vtk_widget
+            vtk_widget = getattr(node, 'vtk_widget', None)
+            if vtk_widget is None:
+                continue
             iv = getattr(vtk_widget, "image_viewer", None)
             if iv is None:
                 continue

@@ -1102,14 +1102,14 @@ def insert_instances_batch(instances: list) -> int:
                 inst.get('instance_number'),
                 inst.get('rows'),
                 inst.get('columns'),
-                127.5,  # Default window_width
-                255.0,  # Default window_center
-                False,  # Default is_rgb
-                0,      # Default group_id
-                None,   # image_position_patient
-                None,   # image_orientation_patient
-                None,   # pixel_spacing
-                None    # direction
+                inst.get('window_width'),       # None if not provided (viewer will auto-calculate)
+                inst.get('window_center'),      # None if not provided (viewer will auto-calculate)
+                inst.get('is_rgb', False),
+                inst.get('group_id', 0),
+                inst.get('image_position_patient'),
+                inst.get('image_orientation_patient'),
+                inst.get('pixel_spacing'),
+                inst.get('direction')
             ))
         
         cur.executemany(
@@ -1136,7 +1136,7 @@ def insert_instances_batch(instances: list) -> int:
 
 
 def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_number: int = None, rows: int = None,
-                    columns: int = None, window_width: float = 127.5, window_center: float = 255.0,
+                    columns: int = None, window_width: float = None, window_center: float = None,
                     is_rgb: bool = False, group_id=0, image_position_patient=None,
                     image_orientation_patient=None, pixel_spacing=None, direction=None) -> int:
 
