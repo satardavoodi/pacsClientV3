@@ -1798,10 +1798,6 @@ class PatientWidget(QWidget):
             series_no = str(metadata['series']['series_number'])
             # حالا این سری آماده است
             self.thumbnail_manager.set_series_ready(series_no)
-            
-            # ⚡ OPTIMIZATION: Rebuild indices after data change for fast lookups
-            # This is a O(n) one-time cost when new series is added
-            self.viewer_controller._rebuild_series_index()
         except Exception as e:
             print("set ready border failed:", e)
 
@@ -3986,7 +3982,8 @@ class PatientWidget(QWidget):
         """
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
-            vtk_widget = VTKWidget(height_viewer=height, patient_widget=self)
+            vtk_widget = VTKWidget(height_viewer=height)
+            
             if vtk_widget is None:
                 raise RuntimeError("VTKWidget constructor returned None")
             
@@ -4023,7 +4020,7 @@ class PatientWidget(QWidget):
     def creator_vtk_widget(self):
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
-            return VTKWidget(height_viewer=height, patient_widget=self)
+            return VTKWidget(height_viewer=height)
         except Exception as e:
             print(f"❌ Error in creator_vtk_widget: {e}")
             self.logger.error(f"Error in creator_vtk_widget: {e}", exc_info=True)
@@ -5054,18 +5051,20 @@ class PatientWidget(QWidget):
                     for node in list(self.viewer_controller.lst_nodes_viewer):  # Use list() to avoid modification during iteration
                         try:
                             node: NodeViewer
-                            vtk_widget: VTKWidget = getattr(node, 'vtk_widget', None)
-                            if vtk_widget is not None and hasattr(vtk_widget, 'cleanup_image_viewer'):
-                                try:
-                                    vtk_widget.cleanup_image_viewer()
-                                except:
-                                    pass
+                            # CRITICAL: Check if vtk_widget attribute exists before accessing
+                            if hasattr(node, 'vtk_widget'):
+                                vtk_widget: VTKWidget = node.vtk_widget
+                                if hasattr(vtk_widget, 'cleanup_image_viewer'):
+                                    try:
+                                        vtk_widget.cleanup_image_viewer()
+                                    except:
+                                        pass
 
-                            # Safe cleanup: keep attributes but null them out to avoid AttributeError races
+                            # Safe deletion
                             for attr in ('vtk_widget', 'widget', 'slider'):
                                 try:
                                     if hasattr(node, attr):
-                                        setattr(node, attr, None)
+                                        delattr(node, attr)
                                 except:
                                     pass
                         except Exception as e:
@@ -5248,9 +5247,7 @@ class PatientWidget(QWidget):
 
         # -------- 2) For each target viewer, compute intersection and draw --------
         for node in self.lst_nodes_viewer:
-            vtk_widget = getattr(node, 'vtk_widget', None)
-            if vtk_widget is None:
-                continue
+            vtk_widget = node.vtk_widget
             iv = getattr(vtk_widget, "image_viewer", None)
             if iv is None:
                 continue
