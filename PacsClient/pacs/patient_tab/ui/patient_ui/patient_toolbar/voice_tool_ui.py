@@ -37,6 +37,7 @@ class VoiceWidget(QWidget):
         self.method_update_audio_counter = method_update_audio_counter
         self.method_check_status_mic_btn = method_check_status_mic_btn
         self.method_sync = method_sync
+        self._inline_mode = False
         
         # 🔹 تنظیمات پنجره برای ماندگاری و عدم پرش
         self.setWindowFlags(
@@ -109,7 +110,7 @@ class VoiceWidget(QWidget):
         """
         try:
             if state == Qt.ApplicationInactive:
-                if self.isVisible():
+                if not self._inline_mode and self.isVisible():
                     self.hide()
                     try:
                         self.method_check_status_mic_btn(False)
@@ -152,7 +153,7 @@ class VoiceWidget(QWidget):
                     # 🔹 حتی در صورت Deactivate هم پنجره نباید بپرد
                     # فقط در صورت minimize یا hide کردن اصلی
                     if et == QEvent.Hide:
-                        if self.isVisible():
+                        if not self._inline_mode and self.isVisible():
                             self.hide()
                             try:
                                 self.method_check_status_mic_btn(False)
@@ -163,7 +164,7 @@ class VoiceWidget(QWidget):
         elif obj is self.patient_widget:
             if et == QEvent.Hide:
                 # یعنی این تب مخفی شده (tab switch) → پاپ‌آپ را هم ببند
-                if self.isVisible():
+                if not self._inline_mode and self.isVisible():
                     self.hide()
                     try:
                         self.method_check_status_mic_btn(False)
@@ -187,6 +188,8 @@ class VoiceWidget(QWidget):
         """
         پاپ‌آپ را دقیقا زیر دکمه میکروفون نشان می‌دهد.
         """
+        if self._inline_mode:
+            return
         btn_pos = button.mapToGlobal(button.rect().bottomLeft())
         x = btn_pos.x()
         y = btn_pos.y() + 20  # کمی فاصله
@@ -295,6 +298,21 @@ class VoiceWidget(QWidget):
         """
 
     # ---------- Public API used by ToolbarManager ----------
+    def set_inline_mode(self, enabled: bool):
+        self._inline_mode = bool(enabled)
+
+    def is_recording(self) -> bool:
+        return self._is_recording
+
+    def is_paused(self) -> bool:
+        return self._is_paused
+
+    def get_elapsed_ms(self) -> int:
+        return int(self._elapsed_ms)
+
+    def get_elapsed_label(self) -> str:
+        return self._format_time(self._elapsed_ms // 1000)
+
     def check_microphone_available(self) -> bool:
         try:
             _ = sd.query_devices()
@@ -302,6 +320,23 @@ class VoiceWidget(QWidget):
             return True if default_sr else False
         except Exception:
             return False
+
+    def start_recording_inline(self, selected_widget) -> bool:
+        self._inline_mode = True
+        if self._is_recording:
+            return False
+        return self._start_new_recording(selected_widget, show_ui=False)
+
+    def stop_and_save_inline(self):
+        self._on_save_clicked(inline_override=True)
+
+    def cancel_recording_inline(self):
+        self._on_delete_clicked(inline_override=True)
+
+    def toggle_pause_inline(self):
+        if not self._is_recording:
+            return
+        self._set_paused(not self._is_paused)
 
     def toggle_recording(self, selected_widget):
         """
@@ -314,11 +349,15 @@ class VoiceWidget(QWidget):
             self._set_paused(not self._is_paused)
             return
 
+        self._inline_mode = False
+        self._start_new_recording(selected_widget, show_ui=True)
+
+    def _start_new_recording(self, selected_widget, show_ui: bool) -> bool:
         # شروع ضبط جدید
         study_uid = self._resolve_study_uid(selected_widget)
         if not study_uid:
             QMessageBox.information(self, "No Study", "Study UID not found.")
-            return
+            return False
 
         dest_dir = ATTACHMENT_PATH / study_uid
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -341,9 +380,13 @@ class VoiceWidget(QWidget):
         self._start_stream()
 
         self._timer.start(self._tick_ms)
-        self.setVisible(True)
+        if show_ui and not self._inline_mode:
+            self.setVisible(True)
+        else:
+            self.setVisible(False)
         self._update_record_pause_label()
         self._refresh_buttons()
+        return True
 
     # ---------- استریم ورودی ----------
     def _start_stream(self):
@@ -426,7 +469,8 @@ class VoiceWidget(QWidget):
         """
         منطق مشترک pause / resume:
         """
-        self.method_check_status_mic_btn()
+        if not self._inline_mode:
+            self.method_check_status_mic_btn()
 
         if not self._is_recording:
             self._is_paused = False
@@ -529,7 +573,7 @@ class VoiceWidget(QWidget):
         """
         self._on_stop_internal()
 
-    def _on_delete_clicked(self):
+    def _on_delete_clicked(self, inline_override: bool | None = None):
         """
         اگر delete زده شد:
         - اگر در حال ضبط هستیم → ضبط و تایمر فقط متوقف شوند
@@ -538,6 +582,7 @@ class VoiceWidget(QWidget):
         - UI ریست شود
         - popup بسته شود
         """
+        inline_mode = self._inline_mode if inline_override is None else inline_override
 
         # 1) اگر در حال ضبط یا pause هستیم → فقط استریم و تایمر را متوقف کن
         if self._is_recording or self._stream:
@@ -570,27 +615,32 @@ class VoiceWidget(QWidget):
         self._refresh_buttons()
 
         # 5) بعد از Delete پاپ‌آپ پنهان شود
-        self.hide()
-        self.method_check_status_mic_btn(False)
+        if not inline_mode:
+            self.hide()
+            self.method_check_status_mic_btn(False)
 
-    def _on_save_clicked(self):
+    def _on_save_clicked(self, inline_override: bool | None = None):
         """
         اگر save زده شد:
         - اگر هنوز در حال ضبط است → اول stop (و فایل ذخیره شود)
         - popup بسته شود
         """
+        inline_mode = self._inline_mode if inline_override is None else inline_override
         if self._is_recording or self._stream:
             self._on_stop_internal()
 
         # اگر هیچ چیز ضبط نشده بود، فقط پنهان می‌شود
-        self.hide()
-        self.method_check_status_mic_btn(False)
+        if not inline_mode:
+            self.hide()
+            self.method_check_status_mic_btn(False)
 
     # 🔹 متد جدید برای دکمه Sync
     def _on_sync_clicked(self):
         """
         Save + Sync: ذخیره فایل و سپس sync با سرور
         """
+        if self._inline_mode:
+            return
         # 1) ذخیره فایل (اگر در حال ضبط هستیم)
         if self._is_recording or self._stream:
             self._on_stop_internal()
