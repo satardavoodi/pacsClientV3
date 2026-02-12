@@ -1069,6 +1069,28 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         window_width = instance_metadata['window_width']  # width
         window_center = instance_metadata['window_center']  # level
 
+        # ✅ FIX: Auto-detect and fix bad/missing window/level values
+        needs_auto_calc = False
+        
+        if window_width is None or window_center is None:
+            needs_auto_calc = True
+        elif window_width < 300 and window_center < 300:
+            # Check if values look like 8-bit defaults but data is 16-bit medical
+            scalar_range = self.vtk_image_data.GetScalarRange()
+            data_range = scalar_range[1] - scalar_range[0]
+            if data_range > 500:
+                needs_auto_calc = True
+        
+        if needs_auto_calc:
+            scalar_range = self.vtk_image_data.GetScalarRange()
+            # Check if CT data (Hounsfield units)
+            if scalar_range[0] < -500 and scalar_range[1] > 1000:
+                window_width = 400
+                window_center = 40
+            else:
+                window_width = scalar_range[1] - scalar_range[0]
+                window_center = (scalar_range[0] + scalar_range[1]) / 2
+
         # print(f'slice: {slice_index}\t width: {window_width}\t center: {window_center}')
         # window_width = window_width * (window_width / (window_center * 2))
 
