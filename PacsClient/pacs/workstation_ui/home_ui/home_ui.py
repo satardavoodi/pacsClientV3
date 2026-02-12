@@ -5062,6 +5062,65 @@ Study UID: {study_uid}
 
                     saved_series += 1
                     print(f"[SAVE_SERIES] ✅ Saved series {series_number} (pk={series_pk})")
+                    
+                    # ===== SAVE INSTANCES FOR THIS SERIES =====
+                    print(f"[SAVE_INSTANCES] Processing instances for series {series_number}...")
+                    try:
+                        from pathlib import Path
+                        import natsort
+                        from PacsClient.utils.database import insert_instances_batch
+                        
+                        # Get instances from disk
+                        instance_count = series.get('image_count', 0)
+                        print(f"[SAVE_INSTANCES] Series {series_number} has {instance_count} images in metadata")
+                        
+                        # Scan series directory for DICOM files
+                        series_path = SOURCE_PATH / study_uid / str(series_number)
+                        dicom_files = sorted([
+                            f for f in series_path.glob('*.dcm') if f.is_file()
+                        ], key=lambda x: natsort.natsort_keygen()(x.name))
+                        
+                        print(f"[SAVE_INSTANCES] Found {len(dicom_files)} DICOM files on disk for series {series_number}")
+                        
+                        if dicom_files:
+                            instances_to_save = []
+                            for idx, dcm_file in enumerate(dicom_files):
+                                try:
+                                    from pydicom import dcmread
+                                    dcm = dcmread(str(dcm_file))
+                                    
+                                    # Extract instance information
+                                    sop_uid = getattr(dcm, 'SOPInstanceUID', f'unknown_{idx}')
+                                    instance_number = getattr(dcm, 'InstanceNumber', idx + 1)
+                                    rows = getattr(dcm, 'Rows', 512)
+                                    columns = getattr(dcm, 'Columns', 512)
+                                    
+                                    instances_to_save.append({
+                                        'sop_uid': str(sop_uid),
+                                        'series_fk': series_pk,
+                                        'instance_path': str(dcm_file),
+                                        'instance_number': instance_number,
+                                        'rows': rows,
+                                        'columns': columns
+                                    })
+                                    
+                                except Exception as dcm_err:
+                                    print(f"[SAVE_INSTANCES] ⚠️ Error reading DICOM {dcm_file.name}: {dcm_err}")
+                                    continue
+                            
+                            # Batch insert instances
+                            if instances_to_save:
+                                inserted = insert_instances_batch(instances_to_save)
+                                print(f"[SAVE_INSTANCES] ✅ Saved {inserted} instances for series {series_number}")
+                            else:
+                                print(f"[SAVE_INSTANCES] ⚠️ No instances to save for series {series_number}")
+                        else:
+                            print(f"[SAVE_INSTANCES] ⚠️ No DICOM files found in {series_path}")
+                    
+                    except Exception as inst_err:
+                        print(f"[SAVE_INSTANCES] ❌ Error saving instances for series {series_number}: {inst_err}")
+                        import traceback
+                        traceback.print_exc()
 
                 except Exception as e:
                     print(f"[SAVE_SERIES] ❌ Error saving series {series_number}: {e}")
@@ -5070,6 +5129,7 @@ Study UID: {study_uid}
                     continue
 
             print(f"[SAVE_SERIES] ✅ Complete: {saved_series}/{len(study_info.get('series', []))} series saved")
+            print(f"[SAVE_INSTANCES] ✅ All instances saved to database")
             return True
         except Exception as e:
             print(f"[SAVE_COMPLETE] ❌ Error: {str(e)}")
