@@ -1222,7 +1222,7 @@ class DownloadManagerWidget(QWidget):
         logger.info(f"📋 [PATIENT-INFO]   Description: {data.get('study_description', '')}")
         logger.info(f"📋 [PATIENT-INFO]   Modality: {modality}")
 
-        # Create DownloadTask with only supported parameters (since it's a frozen dataclass)
+        # Create DownloadTask with all patient information
         task = DownloadTask(
             study_uid=study_uid,
             patient_id=data.get('patient_id', ''),
@@ -1231,7 +1231,13 @@ class DownloadManagerWidget(QWidget):
             modality=modality,
             description=data.get('study_description', ''),
             series_list=series_list,
-            output_dir=(self.base_output_dir / study_uid) if study_uid else None
+            output_dir=(self.base_output_dir / study_uid) if study_uid else None,
+            # Complete patient information
+            patient_age=patient_age,
+            patient_sex=patient_sex,
+            patient_birth_date=patient_birth_date,
+            study_time=study_time,
+            body_part=body_part
         )
         
         # Store the additional information in the _tasks dictionary alongside the task

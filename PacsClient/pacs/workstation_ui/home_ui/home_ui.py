@@ -891,6 +891,12 @@ class HomePanelWidget(QWidget):
                             'series_count': series_count,
                             'images_count': images_count,
                             'series': series_list,  # Include series array for Download Manager UI
+                            # Add complete patient information
+                            'patient_age': study_data.get('age', '') if study_data else '',
+                            'patient_sex': study_data.get('sex', '') if study_data else '',
+                            'patient_birth_date': study_data.get('birth_date', '') if study_data else '',
+                            'study_time': study_data.get('study_time', '') if study_data else '',
+                            'body_part': study_data.get('body_part', '') if study_data else '',
                         }
 
                         # Ensure series UID -> number mapping is available before download signals fire
@@ -2668,12 +2674,20 @@ class HomePanelWidget(QWidget):
                         except:
                             pass
 
+                    # Calculate study_path from SOURCE_PATH if study files exist
+                    study_path = None
+                    if study_uid:
+                        potential_path = SOURCE_PATH / study_uid
+                        if potential_path.exists():
+                            study_path = str(potential_path)
+                    
                     study_pk = insert_study(
                         study_uid, patient_pk, study_date, "N/A",  # time not available
                         study_description, "N/A",  # institution not available
                         modality, "N/A",  # body part not available
                         patient.get('count_of_series', 0),
-                        patient.get('count_of_instances', 0)
+                        patient.get('count_of_instances', 0),
+                        study_path=study_path  # Add study_path parameter
                     )
 
         except Exception as e:
@@ -2716,9 +2730,17 @@ class HomePanelWidget(QWidget):
             number_of_series = int(getattr(dataset, 'NumberOfStudyRelatedSeries', 0))
             number_of_instances = int(getattr(dataset, 'NumberOfStudyRelatedInstances', 0))
 
+            # Calculate study_path from SOURCE_PATH if study files exist
+            study_path = None
+            if study_uid:
+                potential_path = SOURCE_PATH / study_uid
+                if potential_path.exists():
+                    study_path = str(potential_path)
+            
             study_pk = insert_study(study_uid, patient_pk, study_date, study_time,
                                     study_description, institution_name,
-                                    modality, bodypart, number_of_series, number_of_instances)
+                                    modality, bodypart, number_of_series, number_of_instances,
+                                    study_path=study_path)  # Add study_path parameter
 
         return patient_pk, study_pk
 
