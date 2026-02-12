@@ -4177,6 +4177,56 @@ Study UID: {study_uid}
             print(f"[HomePanelWidget] Error opening education module: {str(e)}")
             import traceback
             traceback.print_exc()
+
+    def open_printing_module(self):
+        """Open printing module in a new tab"""
+        print("[HomePanelWidget] open_printing_module called")
+        try:
+            selected_patients = []
+            if hasattr(self, 'patient_table_widget') and hasattr(self.patient_table_widget, 'get_selected_patient_data_list'):
+                selected_patients = self.patient_table_widget.get_selected_patient_data_list() or []
+
+            if not selected_patients:
+                QMessageBox.warning(self, "Printing", "Please select at least one patient in the list.")
+                return
+
+            # Check if printing module tab already exists
+            if self.custom_tab_manager:
+                for i in range(self.tab_widget.count()):
+                    tab_data = self.custom_tab_manager.patient_tabs.get(i, {})
+                    if tab_data.get('is_printing_tab', False):
+                        # Tab exists, just switch to it
+                        self.tab_widget.setCurrentIndex(i)
+                        print(f"[HomePanelWidget] Switched to existing Printing tab at index {i}")
+                        return
+
+            from printing.ui.printing_widget import PrintingWidget
+
+            printing_widget = PrintingWidget(
+                parent=self,
+                host_tab_widget=self.tab_widget,
+                host_custom_tab_manager=self.custom_tab_manager,
+                selected_patients=selected_patients,
+            )
+
+            if self.custom_tab_manager:
+                print("[HomePanelWidget] Using custom tab manager")
+                tab_index = self.custom_tab_manager.add_printing_tab(widget=printing_widget)
+                print(f"[HomePanelWidget] Printing tab added at index: {tab_index}")
+            else:
+                print("[HomePanelWidget] Using default tab widget")
+                self.tab_widget.addTab(printing_widget, "Printing")
+                self.tab_widget.setCurrentWidget(printing_widget)
+
+            print("[HomePanelWidget] Printing Module opened successfully")
+        except Exception as e:
+            print(f"[HomePanelWidget] Error opening printing module: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            try:
+                QMessageBox.critical(self, "Printing", f"Failed to open Printing module:\n{e}")
+            except Exception:
+                pass
     
     def open_reception_data_tab(self):
         """Open Reception Data tab"""

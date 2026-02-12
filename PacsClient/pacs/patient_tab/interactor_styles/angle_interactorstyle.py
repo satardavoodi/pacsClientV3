@@ -57,6 +57,7 @@ class AngleInteractorStyle(AbstractInteractorStyle):
             self.is_active = False
             self.active_widget = self.create_widget()
             self.auto_deactivate_tool()
+            return
 
         self.image_viewer.Render()
 

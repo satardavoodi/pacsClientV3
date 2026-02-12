@@ -1000,6 +1000,62 @@ class CustomTabManager:
         
         return tab_index
 
+    def add_printing_tab(self, widget=None):
+        """
+        Add Printing tab with custom tab UI (like patient tabs)
+
+        Args:
+            widget: The PrintingWidget to display
+
+        Returns:
+            int: The index of the added tab
+        """
+        print("[CustomTabManager] add_printing_tab called")
+
+        # Check if printing tab already exists
+        for idx, tab_data in self.patient_tabs.items():
+            if tab_data.get('is_printing_tab', False):
+                print("[CustomTabManager] Printing tab already exists, switching to it")
+                self.set_tab_active_simple(idx)
+                return idx
+
+        # Create custom tab widget with icon
+        custom_tab = ServiceTabWidget(
+            service_name="Printing",
+            icon_name="fa5s.print",
+            icon_color="white"
+        )
+
+        # Add tab to tab widget
+        tab_index = self.tab_widget.addTab(widget, "")
+        print(f"[CustomTabManager] Printing tab added at index: {tab_index}")
+
+        # Connect close button signal
+        custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
+
+        if self.title_bar_tab_area:
+            # Add to title bar
+            custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
+            self.title_bar_layout.addWidget(custom_tab)
+            self.title_bar_tabs[tab_index] = custom_tab
+        else:
+            # Set custom tab widget as tab button
+            self.tab_widget.tabBar().setTabButton(tab_index, QTabBar.ButtonPosition.LeftSide, custom_tab)
+
+        # Store reference
+        self.patient_tabs[tab_index] = {
+            'custom_tab': custom_tab,
+            'widget': widget,
+            'is_printing_tab': True
+        }
+
+        # Set as current tab
+        self.tab_widget.setCurrentIndex(tab_index)
+        self.set_tab_active(tab_index)
+        print("[CustomTabManager] Printing tab added successfully")
+
+        return tab_index
+
     def add_educational_course_tab(self, course_name="", course_pk=None, widget=None, activate=True):
         """
         Add Educational Course tab with custom tab UI.

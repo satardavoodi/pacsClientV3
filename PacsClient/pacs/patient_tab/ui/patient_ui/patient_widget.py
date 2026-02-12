@@ -4019,7 +4019,7 @@ class PatientWidget(QWidget):
     def creator_vtk_widget(self):
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
-            return VTKWidget(height_viewer=height)
+            return VTKWidget(height_viewer=height, patient_widget=self)
         except Exception as e:
             print(f"❌ Error in creator_vtk_widget: {e}")
             self.logger.error(f"Error in creator_vtk_widget: {e}", exc_info=True)
@@ -5050,20 +5050,18 @@ class PatientWidget(QWidget):
                     for node in list(self.viewer_controller.lst_nodes_viewer):  # Use list() to avoid modification during iteration
                         try:
                             node: NodeViewer
-                            # CRITICAL: Check if vtk_widget attribute exists before accessing
-                            if hasattr(node, 'vtk_widget'):
-                                vtk_widget: VTKWidget = node.vtk_widget
-                                if hasattr(vtk_widget, 'cleanup_image_viewer'):
-                                    try:
-                                        vtk_widget.cleanup_image_viewer()
-                                    except:
-                                        pass
+                            vtk_widget: VTKWidget = getattr(node, 'vtk_widget', None)
+                            if vtk_widget is not None and hasattr(vtk_widget, 'cleanup_image_viewer'):
+                                try:
+                                    vtk_widget.cleanup_image_viewer()
+                                except:
+                                    pass
 
-                            # Safe deletion
+                            # Safe cleanup: keep attributes but null them out to avoid AttributeError races
                             for attr in ('vtk_widget', 'widget', 'slider'):
                                 try:
                                     if hasattr(node, attr):
-                                        delattr(node, attr)
+                                        setattr(node, attr, None)
                                 except:
                                     pass
                         except Exception as e:
@@ -5246,7 +5244,9 @@ class PatientWidget(QWidget):
 
         # -------- 2) For each target viewer, compute intersection and draw --------
         for node in self.lst_nodes_viewer:
-            vtk_widget = node.vtk_widget
+            vtk_widget = getattr(node, 'vtk_widget', None)
+            if vtk_widget is None:
+                continue
             iv = getattr(vtk_widget, "image_viewer", None)
             if iv is None:
                 continue

@@ -1,4 +1,5 @@
 import json
+import copy
 import time
 import os
 from pathlib import Path
@@ -9,7 +10,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTabWidget, QGroupBox, QCheckBox, QSpinBox, QDoubleSpinBox,
     QListWidget, QLineEdit, QMessageBox, QGridLayout, QScrollArea,
-    QSlider, QSizePolicy, QStyle, QStyleOptionSlider, QFrame, QToolButton
+    QSlider, QSizePolicy, QStyle, QStyleOptionSlider, QFrame, QToolButton,
+    QInputDialog, QComboBox
 )
 from PySide6.QtCore import Signal, Qt, QRect
 from PySide6.QtGui import QPainter, QFontMetrics
@@ -25,6 +27,7 @@ except Exception:
     SOCKET_CONFIG_PATH = Path.cwd() / "config"
 
 FILTER_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "filter_settings.json"
+PRESET_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "filter_presets.json"
 
 
 # ----------------------------------------------------------------------
@@ -417,7 +420,10 @@ class FilterConfigWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config_path = FILTER_CONFIG_PATH
+        self.preset_path = PRESET_CONFIG_PATH
         self.filter_settings = {}
+        self._presets = {}
+        self._active_preset = "Default"
         self.init_ui()
         self.load_config()
         print(f"Config path: {self.config_path}")
@@ -696,6 +702,49 @@ class FilterConfigWidget(QWidget):
 
         self.tabs.addTab(self._build_modality_tab("CT"), "CT")
         self.tabs.addTab(self._build_modality_tab("MR"), "MR")
+
+        # Preset controls (compact column on the right)
+        preset_container = QWidget()
+        preset_container.setMaximumWidth(340)
+        preset_container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+        preset_col = QVBoxLayout(preset_container)
+        preset_col.setContentsMargins(0, 0, 0, 0)
+        preset_col.setSpacing(8)
+
+        preset_row = QHBoxLayout()
+        preset_row.setContentsMargins(0, 0, 0, 0)
+        preset_row.setSpacing(8)
+
+        preset_label = QLabel("Preset:")
+        preset_label.setProperty("role", "param")
+        preset_row.addWidget(preset_label)
+
+        self.preset_combo = QComboBox()
+        self.preset_combo.setMinimumWidth(220)
+        self.preset_combo.currentTextChanged.connect(self._on_preset_selected)
+        preset_row.addWidget(self.preset_combo, 1)
+
+        preset_col.addLayout(preset_row)
+
+        # Small vertical nudge so the Save As button visually lines up better with
+        # the bottom action buttons (Save/Reload/Reset).
+        preset_col.addSpacing(8)
+
+        save_as = QPushButton("💾 Save As")
+        save_as.clicked.connect(self.save_preset_as)
+        # Make Save As visually larger and easier to hit.
+        save_as.setMinimumWidth(160)
+        save_as.setMinimumHeight(44)
+        save_as.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        preset_col.addWidget(save_as, 0, Qt.AlignLeft)
+
+        # Place presets on the viewer-left side (patient-right side of the image)
+        preset_bar = QHBoxLayout()
+        preset_bar.setContentsMargins(0, 0, 0, 0)
+        preset_bar.addWidget(preset_container, 0, Qt.AlignLeft)
+        preset_bar.addStretch(1)
+        root.addLayout(preset_bar)
 
         btns = QHBoxLayout()
         btns.addStretch()
@@ -1540,25 +1589,154 @@ class FilterConfigWidget(QWidget):
             traceback.print_exc()
             return False
 
+    def _ensure_preset_file(self):
+        """Ensure preset file exists with base defaults and a Default preset."""
+        try:
+            preset_dir = self.preset_path.parent
+            if not preset_dir.exists():
+                preset_dir.mkdir(parents=True, exist_ok=True)
+
+            if not self.preset_path.exists():
+                base = copy.deepcopy(self.DEFAULT_FILTERS)
+                payload = {
+                    "base": base,
+                    "presets": {"Default": copy.deepcopy(base)},
+                    "active": "Default"
+                }
+                with open(self.preset_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
+                return True
+            return True
+        except Exception as e:
+            print(f"❌ Error ensuring preset file: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _load_presets(self):
+        """Load presets from disk (or create defaults)."""
+        self._ensure_preset_file()
+        try:
+            if self.preset_path.exists():
+                with open(self.preset_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self._presets = data.get("presets", {}) or {}
+                self._active_preset = data.get("active", "Default")
+                if "Default" not in self._presets:
+                    self._presets["Default"] = copy.deepcopy(self.DEFAULT_FILTERS)
+            else:
+                self._presets = {"Default": copy.deepcopy(self.DEFAULT_FILTERS)}
+                self._active_preset = "Default"
+        except Exception as e:
+            print(f"❌ Error loading presets: {e}")
+            import traceback
+            traceback.print_exc()
+            self._presets = {"Default": copy.deepcopy(self.DEFAULT_FILTERS)}
+            self._active_preset = "Default"
+
+        try:
+            if hasattr(self, "preset_combo"):
+                self.preset_combo.blockSignals(True)
+                self.preset_combo.clear()
+                for name in sorted(self._presets.keys()):
+                    self.preset_combo.addItem(name)
+                if self._active_preset in self._presets:
+                    self.preset_combo.setCurrentText(self._active_preset)
+                else:
+                    self._active_preset = "Default"
+                    self.preset_combo.setCurrentText("Default")
+                self.preset_combo.blockSignals(False)
+        except Exception:
+            pass
+
+    def _save_presets(self):
+        """Persist presets and active preset selection."""
+        try:
+            payload = {
+                "base": copy.deepcopy(self.DEFAULT_FILTERS),
+                "presets": self._presets,
+                "active": self._active_preset
+            }
+            with open(self.preset_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"❌ Error saving presets: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _write_active_filter_settings(self):
+        """Write active preset to the main filter_settings.json for runtime usage."""
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(self.filter_settings, f, indent=4)
+        except Exception as e:
+            print(f"❌ Error writing active filter settings: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _apply_preset(self, preset_name: str):
+        """Apply a preset to UI + active filter settings."""
+        if preset_name not in self._presets:
+            preset_name = "Default"
+        self._active_preset = preset_name
+        self.filter_settings = copy.deepcopy(self._presets[preset_name])
+        self.update_ui_from_settings()
+        self._write_active_filter_settings()
+        self._save_presets()
+
+    def _on_preset_selected(self, preset_name: str):
+        if not preset_name:
+            return
+        self._apply_preset(preset_name)
+
+    def save_preset_as(self):
+        """Save current settings as a new preset (or overwrite with confirmation)."""
+        try:
+            name, ok = QInputDialog.getText(self, "Save Preset", "Preset name:")
+            if not ok or not name.strip():
+                return
+            preset_name = name.strip()
+
+            if preset_name in self._presets:
+                reply = QMessageBox.question(
+                    self,
+                    "Overwrite Preset",
+                    f"Preset '{preset_name}' already exists. Overwrite?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply != QMessageBox.Yes:
+                    return
+
+            # Update current UI values into settings
+            self.update_settings_from_ui()
+            self._presets[preset_name] = copy.deepcopy(self.filter_settings)
+            self._active_preset = preset_name
+            self._save_presets()
+
+            if hasattr(self, "preset_combo"):
+                self.preset_combo.blockSignals(True)
+                if preset_name not in [self.preset_combo.itemText(i) for i in range(self.preset_combo.count())]:
+                    self.preset_combo.addItem(preset_name)
+                self.preset_combo.setCurrentText(preset_name)
+                self.preset_combo.blockSignals(False)
+
+            self._write_active_filter_settings()
+        except Exception as e:
+            print(f"Error saving preset: {e}")
+            import traceback
+            traceback.print_exc()
+
     def load_config(self):
         """Load configuration from JSON file"""
         try:
             print(f"Loading config from: {self.config_path}")
-            
-            # اول فایل را ایجاد کن اگر وجود نداشت
-            self._ensure_config_file()
-            
-            if self.config_path.exists():
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    self.filter_settings = json.load(f)
-                print("✅ Config loaded successfully")
-            else:
-                print("⚠️ Config file not found, using defaults")
-                self.filter_settings = self.DEFAULT_FILTERS.copy()
-                self._ensure_config_file()  # دوباره سعی کن
-            
-            # Update UI with loaded settings
-            self.update_ui_from_settings()
+            # Ensure preset file is present and load presets
+            self._load_presets()
+
+            # Apply active preset (fall back to Default)
+            self._apply_preset(self._active_preset)
+            print("✅ Preset config loaded successfully")
             
         except Exception as e:
             print(f"Error loading config: {e}")
@@ -1566,8 +1744,9 @@ class FilterConfigWidget(QWidget):
             traceback.print_exc()
             
             # Use defaults on error
-            self.filter_settings = self.DEFAULT_FILTERS.copy()
+            self.filter_settings = copy.deepcopy(self.DEFAULT_FILTERS)
             self.update_ui_from_settings()
+            self._write_active_filter_settings()
             
             # QMessageBox.warning(
             #     self, 
@@ -1579,19 +1758,21 @@ class FilterConfigWidget(QWidget):
     def save_config(self):
         """Save configuration to JSON file"""
         try:
-            print(f"Saving config to: {self.config_path}")
-            
-            # First update settings from UI
+            print(f"Saving preset config (active={self._active_preset})")
+
+            # Update current settings from UI
             self.update_settings_from_ui()
-            
-            # Ensure directory exists
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Save to file
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump(self.filter_settings, f, indent=4)
-            
-            print("Config saved successfully")
+
+            # Save into active preset (project-wide but not global overwrite)
+            if not self._active_preset:
+                self._active_preset = "Default"
+            self._presets[self._active_preset] = copy.deepcopy(self.filter_settings)
+            self._save_presets()
+
+            # Write active preset to runtime filter_settings.json
+            self._write_active_filter_settings()
+
+            print("Preset saved successfully")
             
             # Emit signal
             self.configChanged.emit()
@@ -1627,9 +1808,22 @@ class FilterConfigWidget(QWidget):
             
             if reply == QMessageBox.Yes:
                 print("Resetting to defaults...")
-                self.filter_settings = self.DEFAULT_FILTERS.copy()
+                self.filter_settings = copy.deepcopy(self.DEFAULT_FILTERS)
                 self.update_ui_from_settings()
-                self.save_config()  # Save the defaults
+
+                # Reset active preset to Default and persist
+                self._active_preset = "Default"
+                self._presets["Default"] = copy.deepcopy(self.filter_settings)
+                self._save_presets()
+
+                if hasattr(self, "preset_combo"):
+                    self.preset_combo.blockSignals(True)
+                    self.preset_combo.setCurrentText("Default")
+                    self.preset_combo.blockSignals(False)
+
+                # Write active defaults for runtime
+                self._write_active_filter_settings()
+                self.configChanged.emit()
                 
         except Exception as e:
             print(f"Error resetting to defaults: {e}")

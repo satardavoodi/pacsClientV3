@@ -1311,6 +1311,7 @@ class ToolbarManager:
             self.tool_selected = None
             # Restore default interactor style
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             self.check_and_deactivate_tools()
@@ -4548,6 +4549,8 @@ class ToolbarManager:
 
     def handle_buttons_checked(self):
         def _is_tool_active(tool_name: str) -> bool:
+            if self.tool_selected is None:
+                return False
             if self.tool_selected == tool_name:
                 return True
             if isinstance(self.tool_selected, str):
@@ -4555,24 +4558,55 @@ class ToolbarManager:
                 return tool_name in parts
             return False
 
+        stale_keys = []
+        changed_btns = []
         for tool_name, tool_btn in self.tools_button.items():
             try:
                 tool_btn: QPushButton
-                tool_btn.setChecked(_is_tool_active(tool_name))
+                tool_btn.isChecked()  # throws RuntimeError if deleted
+                should_be_checked = _is_tool_active(tool_name)
+                was_checked = tool_btn.isChecked()
+                if was_checked != should_be_checked:
+                    tool_btn.setChecked(should_be_checked)
+                    changed_btns.append(tool_btn)
+            except RuntimeError:
+                stale_keys.append(tool_name)
+            except Exception:
+                pass
+
+        for key in stale_keys:
+            try:
+                del self.tools_button[key]
             except Exception:
                 pass
 
         try:
             if hasattr(self, '_measurement_menu_btn'):
                 is_measurement_active = any(_is_tool_active(tool) for tool in self.measurement_tools)
-                self._measurement_menu_btn.setChecked(is_measurement_active)
+                was = self._measurement_menu_btn.isChecked()
+                if was != is_measurement_active:
+                    self._measurement_menu_btn.setChecked(is_measurement_active)
+                    changed_btns.append(self._measurement_menu_btn)
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, '_sync_menu_btn'):
+                is_sync_active = _is_tool_active(self.tool_access.TARGET)
+                was = self._sync_menu_btn.isChecked()
+                if was != is_sync_active:
+                    self._sync_menu_btn.setChecked(is_sync_active)
+                    changed_btns.append(self._sync_menu_btn)
         except Exception:
             pass
 
         try:
             if hasattr(self, '_mpr_menu_btn'):
                 is_mpr_dropdown_active = any(_is_tool_active(tool) for tool in self.mpr_dropdown_tools)
-                self._mpr_menu_btn.setChecked(is_mpr_dropdown_active)
+                was = self._mpr_menu_btn.isChecked()
+                if was != is_mpr_dropdown_active:
+                    self._mpr_menu_btn.setChecked(is_mpr_dropdown_active)
+                    changed_btns.append(self._mpr_menu_btn)
         except Exception:
             pass
 
@@ -4583,6 +4617,16 @@ class ToolbarManager:
                 mpr_btn.setChecked(_is_tool_active(self.tool_access.MPR) or self._is_any_mpr_open())
         except Exception:
             pass
+
+        # Force SYNCHRONOUS repaint for every button that changed state.
+        for btn in changed_btns:
+            try:
+                ss = btn.styleSheet()
+                if ss:
+                    btn.setStyleSheet(ss)
+                btn.repaint()
+            except Exception:
+                pass
 
     def _is_any_mpr_open(self):
         try:

@@ -725,28 +725,55 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
 
     def auto_deactivate_tool(self):
         """
-        Return to default interactor style and clear toolbar selection after one-shot tools.
+        Return to default interactor style and clear toolbar selection.
+        Called from VTK observer callbacks when a one-shot tool completes.
         """
         try:
             vtk_widget = getattr(self.image_viewer, 'vtk_widget', None)
             if vtk_widget is None:
                 return
 
+            # --- 1. Clear toolbar state immediately ---
             patient_widget = getattr(vtk_widget, 'patient_widget', None)
+            toolbar = None
             if patient_widget is not None and hasattr(patient_widget, 'toolbar_manager'):
-                patient_widget.toolbar_manager.tool_selected = None
-                patient_widget.toolbar_manager.handle_buttons_checked()
+                toolbar = patient_widget.toolbar_manager
+                toolbar.tool_selected = None
 
-            vtk_widget.restore_default_interactorstyle()
+            # --- 2. Restore default interactor style (all VTK work) ---
+            try:
+                vtk_widget.restore_default_interactorstyle()
+            except Exception as e:
+                pass
             try:
                 if hasattr(vtk_widget, 'current_style') and hasattr(vtk_widget.current_style, 'update_slice'):
                     vtk_widget.current_style.update_slice()
             except Exception:
                 pass
-            try:
-                vtk_widget.image_viewer.Render()
-            except Exception:
-                pass
+
+            # --- 3. Update toolbar buttons ---
+            if toolbar is not None:
+                try:
+                    toolbar.handle_buttons_checked()
+                except Exception:
+                    pass
+
+                # Force Qt to process the repaint events RIGHT NOW
+                try:
+                    from PySide6.QtWidgets import QApplication
+                    app = QApplication.instance()
+                    if app:
+                        app.processEvents()
+                except Exception:
+                    pass
+
+                # Safety net: deferred callbacks
+                try:
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(50, toolbar.handle_buttons_checked)
+                    QTimer.singleShot(200, toolbar.handle_buttons_checked)
+                except Exception:
+                    pass
         except Exception:
             pass
     

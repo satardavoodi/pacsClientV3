@@ -139,6 +139,7 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
             self.active_widget = self.create_widget()
             self.is_active = False
             self.auto_deactivate_tool()
+            return
 
         else:
 

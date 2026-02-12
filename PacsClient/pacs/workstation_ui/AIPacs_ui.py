@@ -563,7 +563,7 @@ class ControlPanelWindow(object):
         self.home_btn.clicked.connect(lambda: self.mainPages.setCurrentIndex(0))
         self.settings_server_btn.clicked.connect(lambda: self.mainPages.setCurrentIndex(1))
         self.dataBtn.clicked.connect(lambda: self.mainPages.setCurrentIndex(2))
-        self.reportBtn.clicked.connect(lambda: self.mainPages.setCurrentIndex(3))
+        self.reportBtn.clicked.connect(self.open_printing_module)
         self.education_btn.clicked.connect(self.open_education_module)
         
         self.download_manager_btn.clicked.connect(self.open_download_manager)
@@ -592,6 +592,16 @@ class ControlPanelWindow(object):
                 self.home_widget.open_education_module()
         except Exception as e:
             print(f"Error opening education module: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def open_printing_module(self):
+        """Open printing module in a new tab"""
+        try:
+            if hasattr(self, 'home_widget') and hasattr(self.home_widget, 'open_printing_module'):
+                self.home_widget.open_printing_module()
+        except Exception as e:
+            print(f"Error opening printing module: {str(e)}")
             import traceback
             traceback.print_exc()
     
