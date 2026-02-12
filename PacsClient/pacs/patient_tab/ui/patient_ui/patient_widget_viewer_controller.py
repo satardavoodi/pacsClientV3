@@ -877,10 +877,15 @@ class ViewerController:
         - Fast paired series detection using index
         - No redundant list iterations
         - Direct metadata access without nesting lookups
+        - Shows loading spinner for series changes
         """
         try:
             series_number = str(metadata.get('series', {}).get('series_number', ''))
             series_name = str(metadata.get('series', {}).get('series_name', ''))
+            
+            # 🎬 Show loading spinner before switch
+            # The message is set in switch_series based on series size
+            # but we can optionally enhance it here if needed
             
             # ⚡ FAST PAIRED SERIES LOOKUP: O(1) instead of linear search
             vtk_widget_data_2 = None
@@ -909,11 +914,11 @@ class ViewerController:
                 )
                 
                 if flag_switch:
-                    # Quick slider configuration
+                    # Quick slider configuration (without blocking)
                     self.parent_widget.reset_slider(vtk_widget, slider)
                     self.parent_widget.toolbar_manager.turn_off_all_tools()
                     
-                    # Update UI elements
+                    # Update UI elements (batch updates)
                     if hasattr(vtk_widget, 'image_viewer') and vtk_widget.image_viewer:
                         vtk_widget.image_viewer.update_corners_actors()
         

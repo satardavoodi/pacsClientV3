@@ -891,6 +891,12 @@ class HomePanelWidget(QWidget):
                             'series_count': series_count,
                             'images_count': images_count,
                             'series': series_list,  # Include series array for Download Manager UI
+                            # Add complete patient information
+                            'patient_age': study_data.get('age', '') if study_data else '',
+                            'patient_sex': study_data.get('sex', '') if study_data else '',
+                            'patient_birth_date': study_data.get('birth_date', '') if study_data else '',
+                            'study_time': study_data.get('study_time', '') if study_data else '',
+                            'body_part': study_data.get('body_part', '') if study_data else '',
                         }
 
                         # Ensure series UID -> number mapping is available before download signals fire
@@ -2344,7 +2350,8 @@ class HomePanelWidget(QWidget):
                         images_count=patient.get('number_of_instances'),
                         is_downloaded=True,
                         body_part=patient.get('body_part'),
-                        study_time=patient.get('study_time')
+                        study_time=patient.get('study_time'),
+                        age=patient.get('age')
                     )
                     added += 1
 
@@ -2668,12 +2675,20 @@ class HomePanelWidget(QWidget):
                         except:
                             pass
 
+                    # Calculate study_path from SOURCE_PATH if study files exist
+                    study_path = None
+                    if study_uid:
+                        potential_path = SOURCE_PATH / study_uid
+                        if potential_path.exists():
+                            study_path = str(potential_path)
+                    
                     study_pk = insert_study(
                         study_uid, patient_pk, study_date, "N/A",  # time not available
                         study_description, "N/A",  # institution not available
                         modality, "N/A",  # body part not available
                         patient.get('count_of_series', 0),
-                        patient.get('count_of_instances', 0)
+                        patient.get('count_of_instances', 0),
+                        study_path=study_path  # Add study_path parameter
                     )
 
         except Exception as e:
@@ -2716,9 +2731,17 @@ class HomePanelWidget(QWidget):
             number_of_series = int(getattr(dataset, 'NumberOfStudyRelatedSeries', 0))
             number_of_instances = int(getattr(dataset, 'NumberOfStudyRelatedInstances', 0))
 
+            # Calculate study_path from SOURCE_PATH if study files exist
+            study_path = None
+            if study_uid:
+                potential_path = SOURCE_PATH / study_uid
+                if potential_path.exists():
+                    study_path = str(potential_path)
+            
             study_pk = insert_study(study_uid, patient_pk, study_date, study_time,
                                     study_description, institution_name,
-                                    modality, bodypart, number_of_series, number_of_instances)
+                                    modality, bodypart, number_of_series, number_of_instances,
+                                    study_path=study_path)  # Add study_path parameter
 
         return patient_pk, study_pk
 
@@ -4552,8 +4575,13 @@ Study UID: {study_uid}
                 dm_patient_id = ''
                 dm_patient_name = ''
                 dm_study_date = ''
+                dm_study_time = ''
                 dm_modality = ''
                 dm_description = ''
+                dm_patient_age = ''
+                dm_patient_sex = ''
+                dm_patient_birth_date = ''
+                dm_body_part = ''
                 
                 # 1. Try widget attributes first
                 if hasattr(widget, 'patient_id') and widget.patient_id:
@@ -4566,8 +4594,13 @@ Study UID: {study_uid}
                     dm_patient_id = dm_patient_id or study_info.get('patient_id', '')
                     dm_patient_name = dm_patient_name or study_info.get('patient_name', '')
                     dm_study_date = study_info.get('study_date', '')
+                    dm_study_time = study_info.get('study_time', '')
                     dm_modality = study_info.get('modality', '')
                     dm_description = study_info.get('study_description', '')
+                    dm_patient_age = study_info.get('age', '')
+                    dm_patient_sex = study_info.get('sex', '')
+                    dm_patient_birth_date = study_info.get('birth_date', '')
+                    dm_body_part = study_info.get('body_part', '')
                 
                 # 2.5. If study_info wasn't fetched yet (series_list came from widget cache), fetch it now
                 if (not dm_patient_id or not dm_patient_name) and not study_info:
@@ -4576,8 +4609,13 @@ Study UID: {study_uid}
                         dm_patient_id = dm_patient_id or study_info.get('patient_id', '')
                         dm_patient_name = dm_patient_name or study_info.get('patient_name', '')
                         dm_study_date = study_info.get('study_date', '')
+                        dm_study_time = study_info.get('study_time', '')
                         dm_modality = study_info.get('modality', '')
                         dm_description = study_info.get('study_description', '')
+                        dm_patient_age = study_info.get('age', '')
+                        dm_patient_sex = study_info.get('sex', '')
+                        dm_patient_birth_date = study_info.get('birth_date', '')
+                        dm_body_part = study_info.get('body_part', '')
                 
                 # 3. If still missing, try database lookup
                 if not dm_patient_id or not dm_patient_name:
@@ -4588,7 +4626,13 @@ Study UID: {study_uid}
                             dm_patient_id = dm_patient_id or db_info.get('patient_id', '')
                             dm_patient_name = dm_patient_name or db_info.get('patient_name', '')
                             dm_study_date = dm_study_date or db_info.get('study_date', '')
+                            dm_study_time = dm_study_time or db_info.get('study_time', '')
                             dm_modality = dm_modality or db_info.get('modality', '')
+                            dm_description = dm_description or db_info.get('study_description', '')
+                            dm_patient_age = dm_patient_age or db_info.get('age', '')
+                            dm_patient_sex = dm_patient_sex or db_info.get('sex', '')
+                            dm_patient_birth_date = dm_patient_birth_date or db_info.get('birth_date', '')
+                            dm_body_part = dm_body_part or db_info.get('body_part', '')
                     except Exception as e:
                         print(f"⚠️ Database lookup failed: {e}")
                 
@@ -4606,6 +4650,13 @@ Study UID: {study_uid}
                     'description': dm_description,
                     'series_count': len(series_list),
                     'images_count': sum(s.get('image_count', 0) for s in series_list),
+                    # Complete patient information
+                    'patient_age': dm_patient_age,
+                    'patient_sex': dm_patient_sex,
+                    'patient_birth_date': dm_patient_birth_date,
+                    'study_time': dm_study_time,
+                    'body_part': dm_body_part,
+                    'series': series_list,  # Include series array
                 }
                 
                 # ⚡ IMMEDIATE START - pauses all, starts this one right away
@@ -5062,6 +5113,65 @@ Study UID: {study_uid}
 
                     saved_series += 1
                     print(f"[SAVE_SERIES] ✅ Saved series {series_number} (pk={series_pk})")
+                    
+                    # ===== SAVE INSTANCES FOR THIS SERIES =====
+                    print(f"[SAVE_INSTANCES] Processing instances for series {series_number}...")
+                    try:
+                        from pathlib import Path
+                        import natsort
+                        from PacsClient.utils.database import insert_instances_batch
+                        
+                        # Get instances from disk
+                        instance_count = series.get('image_count', 0)
+                        print(f"[SAVE_INSTANCES] Series {series_number} has {instance_count} images in metadata")
+                        
+                        # Scan series directory for DICOM files
+                        series_path = SOURCE_PATH / study_uid / str(series_number)
+                        dicom_files = sorted([
+                            f for f in series_path.glob('*.dcm') if f.is_file()
+                        ], key=lambda x: natsort.natsort_keygen()(x.name))
+                        
+                        print(f"[SAVE_INSTANCES] Found {len(dicom_files)} DICOM files on disk for series {series_number}")
+                        
+                        if dicom_files:
+                            instances_to_save = []
+                            for idx, dcm_file in enumerate(dicom_files):
+                                try:
+                                    from pydicom import dcmread
+                                    dcm = dcmread(str(dcm_file))
+                                    
+                                    # Extract instance information
+                                    sop_uid = getattr(dcm, 'SOPInstanceUID', f'unknown_{idx}')
+                                    instance_number = getattr(dcm, 'InstanceNumber', idx + 1)
+                                    rows = getattr(dcm, 'Rows', 512)
+                                    columns = getattr(dcm, 'Columns', 512)
+                                    
+                                    instances_to_save.append({
+                                        'sop_uid': str(sop_uid),
+                                        'series_fk': series_pk,
+                                        'instance_path': str(dcm_file),
+                                        'instance_number': instance_number,
+                                        'rows': rows,
+                                        'columns': columns
+                                    })
+                                    
+                                except Exception as dcm_err:
+                                    print(f"[SAVE_INSTANCES] ⚠️ Error reading DICOM {dcm_file.name}: {dcm_err}")
+                                    continue
+                            
+                            # Batch insert instances
+                            if instances_to_save:
+                                inserted = insert_instances_batch(instances_to_save)
+                                print(f"[SAVE_INSTANCES] ✅ Saved {inserted} instances for series {series_number}")
+                            else:
+                                print(f"[SAVE_INSTANCES] ⚠️ No instances to save for series {series_number}")
+                        else:
+                            print(f"[SAVE_INSTANCES] ⚠️ No DICOM files found in {series_path}")
+                    
+                    except Exception as inst_err:
+                        print(f"[SAVE_INSTANCES] ❌ Error saving instances for series {series_number}: {inst_err}")
+                        import traceback
+                        traceback.print_exc()
 
                 except Exception as e:
                     print(f"[SAVE_SERIES] ❌ Error saving series {series_number}: {e}")
@@ -5070,6 +5180,7 @@ Study UID: {study_uid}
                     continue
 
             print(f"[SAVE_SERIES] ✅ Complete: {saved_series}/{len(study_info.get('series', []))} series saved")
+            print(f"[SAVE_INSTANCES] ✅ All instances saved to database")
             return True
         except Exception as e:
             print(f"[SAVE_COMPLETE] ❌ Error: {str(e)}")

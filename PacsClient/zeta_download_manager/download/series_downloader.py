@@ -26,6 +26,13 @@ from .progress_tracker import ProgressTracker
 # Import token manager for authentication
 from PacsClient.utils.socket_token_manager import get_socket_token_manager
 
+# ✅ CRITICAL FIX: Import DICOM reading and database functions
+try:
+    import pydicom
+    PYDICOM_AVAILABLE = True
+except ImportError:
+    PYDICOM_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +53,8 @@ class SeriesDownloader:
         rule_engine: DownloadRuleEngine,
         base_output_dir: Path,
         progress_callback: Optional[Callable] = None,
-        cancel_check: Optional[Callable[[], bool]] = None
+        cancel_check: Optional[Callable[[], bool]] = None,
+        database_manager=None
     ):
         """
         Initialize series downloader
@@ -57,12 +65,14 @@ class SeriesDownloader:
             base_output_dir: Base output directory
             progress_callback: Progress callback function
             cancel_check: Callable that returns True if cancelled (for preemption)
+            database_manager: DatabaseManager instance for saving instances
         """
         self.state = state_store
         self.rules = rule_engine
         self.base_output_dir = Path(base_output_dir)
         self.progress_callback = progress_callback
         self.cancel_check = cancel_check  # Preemption check callback
+        self.database_manager = database_manager
         
         # R35: Progress update throttling (10 Hz max)
         self.progress_tracker = ProgressTracker(callback=progress_callback)
@@ -211,7 +221,7 @@ class SeriesDownloader:
             )
             
             if is_complete:
-                # Series complete - skip
+                # Series complete - skip download but ensure instances in database
                 skipped_series.append(series_info.series_uid)
                 total_skipped += existing_count
 
@@ -223,6 +233,24 @@ class SeriesDownloader:
                         self.state.update(study_uid, skipped_series=updated_skipped)
                 
                 logger.info(f"    ⏭️ SKIPPED: Series {series_number} already complete ({existing_count} files)")
+                
+                # ✅ CRITICAL FIX: Ensure instances are in database even for skipped series
+                # This handles cases where files exist but instances were never saved to DB
+                if self.database_manager:
+                    try:
+                        # First update series_path
+                        await self._update_series_path_in_db(
+                            series_uid=series_info.series_uid,
+                            series_path=str(series_output_dir)
+                        )
+                        # Then ensure instances are saved
+                        await self._save_series_instances_to_db(
+                            study_uid=study_uid,
+                            series_info=series_info,
+                            series_output_dir=series_output_dir
+                        )
+                    except Exception as e:
+                        logger.warning(f"    ⚠️ Failed to update DB for skipped series: {e}")
                 
                 # Update progress
                 self._update_progress(study_uid, series_list, idx + 1, total_downloaded, total_skipped)
@@ -265,6 +293,28 @@ class SeriesDownloader:
                         self.state.update(study_uid, completed_series=updated_completed)
                 
                 logger.info(f"    ✅ SUCCESS: {series_result.downloaded} downloaded, {series_result.skipped} skipped ({series_result.elapsed_seconds:.1f}s)")
+                
+                # ✅ CRITICAL FIX: Update series_path in database so local tab can find files
+                if self.database_manager:
+                    try:
+                        await self._update_series_path_in_db(
+                            series_uid=series_info.series_uid,
+                            series_path=str(series_output_dir)
+                        )
+                    except Exception as e:
+                        logger.warning(f"    ⚠️ Failed to update series_path: {e}")
+                
+                # ✅ CRITICAL FIX: Save instances to database after successful download
+                if self.database_manager and series_result.success:
+                    try:
+                        await self._save_series_instances_to_db(
+                            study_uid=study_uid,
+                            series_info=series_info,
+                            series_output_dir=series_output_dir
+                        )
+                    except Exception as e:
+                        logger.warning(f"    ⚠️ Failed to save instances for series {series_number}: {e}")
+                        # Don't fail the entire download if instance saving fails
             else:
                 failed_series.append(series_info.series_uid)
                 if state:
@@ -355,3 +405,129 @@ class SeriesDownloader:
             downloaded_count=total_done,
             total_count=total_images
         )
+    
+    async def _update_series_path_in_db(
+        self,
+        series_uid: str,
+        series_path: str
+    ) -> None:
+        """
+        Update series_path in database so local tab can locate DICOM files
+        
+        Args:
+            series_uid: Series UID
+            series_path: Path to series directory on disk
+        """
+        try:
+            from PacsClient.utils.database import get_connection_database
+            conn = get_connection_database()
+            cur = conn.cursor()
+            
+            cur.execute(
+                "UPDATE series SET series_path = ? WHERE series_uid = ?",
+                (series_path, series_uid)
+            )
+            conn.commit()
+            
+            logger.debug(f"💾 Updated series_path in database: {series_uid[:40]}... -> {series_path}")
+        
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to update series_path: {e}")
+    
+    async def _save_series_instances_to_db(
+        self,
+        study_uid: str,
+        series_info: SeriesInfo,
+        series_output_dir: Path
+    ) -> None:
+        """
+        Save instances from downloaded DICOM files to database (R37)
+        
+        ✅ CRITICAL FIX: This ensures instances are recorded in the database
+        after download, enabling local tab display and print functionality.
+        
+        Args:
+            study_uid: Study UID
+            series_info: Series information
+            series_output_dir: Path to downloaded DICOM files
+        """
+        try:
+            if not PYDICOM_AVAILABLE:
+                logger.warning(f"⚠️ pydicom not available - skipping instance database insertion")
+                return
+            
+            # Get series_pk from database
+            from PacsClient.utils.database import get_connection_database
+            conn = get_connection_database()
+            cur = conn.cursor()
+            
+            cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_info.series_uid,))
+            series_row = cur.fetchone()
+            if not series_row:
+                logger.warning(f"⚠️ Series not found in database: {series_info.series_uid}")
+                return
+            
+            series_pk = series_row[0]
+            
+            # Find all DICOM files in series directory
+            dicom_files = sorted(series_output_dir.glob("*.dcm"))
+            if not dicom_files:
+                logger.warning(f"⚠️ No DICOM files found in {series_output_dir}")
+                return
+            
+            # Read DICOM metadata and prepare instance records
+            instances_to_insert = []
+            inserted_count = 0
+            skipped_count = 0
+            
+            logger.info(f"    💾 [DB-INSERT] Processing {len(dicom_files)} DICOM files for series {series_info.series_number or series_info.series_uid[:20]}...")
+            
+            for dcm_file in dicom_files:
+                try:
+                    # Read DICOM file
+                    dcm = pydicom.dcmread(dcm_file, stop_before_pixels=True)
+                    
+                    # Extract instance information
+                    sop_uid = dcm.get('SOPInstanceUID', str(dcm_file))
+                    instance_number = dcm.get('InstanceNumber', 0)
+                    rows = dcm.get('Rows', 0)
+                    columns = dcm.get('Columns', 0)
+                    
+                    # Create instance record
+                    instance_record = {
+                        'sop_uid': str(sop_uid),
+                        'series_fk': series_pk,
+                        'instance_path': str(dcm_file),
+                        'instance_number': int(instance_number),
+                        'rows': int(rows),
+                        'columns': int(columns)
+                    }
+                    
+                    instances_to_insert.append(instance_record)
+                    
+                except Exception as dcm_err:
+                    logger.debug(f"    ⚠️ Error reading DICOM {dcm_file.name}: {dcm_err}")
+                    skipped_count += 1
+            
+            # Batch insert all instances
+            if instances_to_insert:
+                try:
+                    count = self.database_manager.batch_insert_instances(
+                        series_pk=series_pk,
+                        instances=instances_to_insert
+                    )
+                    inserted_count = count
+                    logger.info(f"    ✅ Inserted {inserted_count} instances to database for series {series_info.series_number or series_info.series_uid[:20]}")
+                except Exception as db_err:
+                    logger.error(f"    ❌ Database batch insert failed: {db_err}")
+                    return
+            
+            if skipped_count > 0:
+                logger.warning(f"    ⚠️ Skipped {skipped_count} DICOM files with read errors")
+            
+            logger.info(f"    💾 [DB-INSERT] Series {series_info.series_number or series_info.series_uid[:20]}: {inserted_count} instances saved to database")
+        
+        except Exception as e:
+            logger.error(f"❌ Failed to save series instances to database: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())

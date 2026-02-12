@@ -39,6 +39,7 @@ def create_download_task_from_study(study_info: dict) -> DownloadTask:
         study_info: Dictionary with study information
             Expected keys: study_uid, patient_id, patient_name, study_date,
                           modality, description, series_list (optional)
+                          patient_age, patient_sex, patient_birth_date, body_part (optional)
     
     Returns:
         DownloadTask instance
@@ -56,17 +57,24 @@ def create_download_task_from_study(study_info: dict) -> DownloadTask:
     
     study_uid = study_info.get('study_uid', '')
 
-    # Create download task
+    # Create download task with complete patient information
     task = DownloadTask(
         study_uid=study_uid,
         patient_id=study_info.get('patient_id', ''),
         patient_name=study_info.get('patient_name', ''),
         study_date=study_info.get('study_date', ''),
+        study_time=study_info.get('study_time') or study_info.get('study_time_str'),
         modality=study_info.get('modality', ''),
         description=study_info.get('description', ''),
         series_list=study_info.get('series_list', []),
         priority=priority,
-        output_dir=(Path(SOURCE_PATH) / study_uid) if study_uid else None
+        output_dir=(Path(SOURCE_PATH) / study_uid) if study_uid else None,
+        # Complete patient information for database insertion
+        patient_age=study_info.get('patient_age') or study_info.get('age'),
+        patient_sex=study_info.get('patient_sex') or study_info.get('sex'),
+        patient_birth_date=study_info.get('patient_birth_date') or study_info.get('birth_date'),
+        body_part=study_info.get('body_part') or study_info.get('body_part_examined'),
+        institution_name=study_info.get('institution_name')
     )
     
     return task
