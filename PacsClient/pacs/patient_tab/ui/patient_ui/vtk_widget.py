@@ -8,7 +8,7 @@ from PacsClient.pacs.patient_tab.viewers.viewer_2d import ImageViewer2D, CustomC
 from PacsClient.pacs.patient_tab.ui.widgets import ViewportSpinner
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QCursor, QPainter, QPixmap, QColor
-import gc  # برای garbage collection دستی
+import gc  # For manual garbage collection
 from PacsClient.pacs.patient_tab.utils import read_segment_nifti
 import vtkmodules.all as vtk
 from PySide6.QtWidgets import QApplication
@@ -24,47 +24,47 @@ _SYNC_MOVE_THROTTLE_MS = 16  # min interval between sync mouse move processing (
 
 
 def grow_vtk_inplace(old_input, new_vtk_image_data):
-    # ابعاد قدیم/جدید
+    # Old/new dimensions
     ox, oy, oz = old_input.GetDimensions()
     nx, ny, nz = new_vtk_image_data.GetDimensions()
 
-    # اگر چیزی اضافه نشده، فقط Modified بده
+    # If nothing was added, just mark as Modified
     if (nx <= ox and ny <= oy and nz <= oz):
         old_input.Modified()
         return False
 
-    # 2) XY باید ثابت باشد؛ در غیر این صورت، از تخریب حافظه جلوگیری کن
+    # 2) XY must remain unchanged; otherwise avoid memory corruption
     if (ox, oy) != (nx, ny):
-        # اگر XY تغییر کرده، برای جلوگیری از کراش/مصرف سنگین، فعلاً رد کن
-        # (در صورت نیاز می‌توان مسیر ایمن دیگری پیاده کرد)
+        # If XY changed, reject for now to avoid crashes/heavy memory use
+        # (A safer path can be implemented if needed)
         return False
 
-    # 3) فقط در صورت تغییر، spacing/origin را به‌روز کن
+    # 3) Update spacing/origin only when changed
     if old_input.GetSpacing() != new_vtk_image_data.GetSpacing():
         old_input.SetSpacing(new_vtk_image_data.GetSpacing())
     if old_input.GetOrigin() != new_vtk_image_data.GetOrigin():
         old_input.SetOrigin(new_vtk_image_data.GetOrigin())
 
-    # 4) ابعاد/extent جدید
+    # 4) New dimensions/extent
     old_input.SetDimensions(nx, ny, nz)
     old_input.SetExtent(0, nx - 1, 0, ny - 1, 0, nz - 1)
 
-    # 5) کم‌هزینه‌ترین آپدیت اسکالرها: به‌جای DeepCopy، SetScalars (تعویض اشاره‌گر)
+    # 5) Lowest-cost scalar update: use SetScalars instead of DeepCopy (pointer swap)
     new_scalars = new_vtk_image_data.GetPointData().GetScalars()
     old_input.GetPointData().SetScalars(new_scalars)
 
-    # 7) علامت‌زدن تغییر؛ بدون Render/Update فوری
+    # 7) Mark as modified; no immediate Render/Update
     old_input.GetPointData().Modified()
     old_input.Modified()
 
     # self.image_reslice.Modified()
-    # self.image_reslice.Update()      # عمداً حذف شد
-    # self.UpdateDisplayExtent()       # عمداً حذف شد
-    # self.update_corners_actors()     # عمداً حذف شد (caller می‌تواند بعد از throttle صدا بزند)
-    # self.Render()                    # عمداً حذف شد
+    # self.image_reslice.Update()      # intentionally removed
+    # self.UpdateDisplayExtent()       # intentionally removed
+    # self.update_corners_actors()     # intentionally removed (caller can trigger after throttle)
+    # self.Render()                    # intentionally removed
 
     ################################################################
-    # # 3) سیگنالِ تغییر
+    # # 3) Change signal
     # old_vtk.GetPointData().Modified()
     # old_vtk.Modified()
     return True
@@ -367,7 +367,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.image_viewer.set_sync_point(world_pos, adjust_slice=adjust_slice)
 
     def grow_current_series_inplace(self, new_vtk_image_data, new_metadata=None):
-        """افزایش نرم تعداد اسلایس‌های سری فعلی، بدون ریست/سوییچ."""
+        """Soft-increase slice count for the current series without reset/switch."""
         if not hasattr(self, "image_viewer") or self.image_viewer is None:
             return False
 
@@ -380,12 +380,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # print('after grow')
             # if grown and hasattr(self, "slider"):
             #     # print('after grow and has slider')
-            #     # فقط حداکثر اسلایدر را آپدیت کن؛ مقدار فعلی دست‌نخورده بماند
+            #     # Only update slider maximum; keep current value unchanged
             #     max_slice = self.get_count_of_slices() - 1
             #     cur = self.slider.value()
             #     self.slider.setMaximum(max_slice)
             #
-            #     # اگر کاربر روی آخرین اسلایس بود و اسلایس جدید اضافه شد، می‌توانی تصمیم بگیری خودکار یک قدم جلوتر برود یا نه
+            #     # If the user was on the last slice and a new slice is added, decide whether to auto-advance
             #     if cur > max_slice:
             #         print('CURRRR')
             #         self.slider.setValue(max_slice)
@@ -558,7 +558,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # if old_renderer:
         #     self.render_window.RemoveRenderer(old_renderer)
 
-        # فراخوانی cleanup برای آزاد کردن همه چیز
+        # Call cleanup to release everything
 
         # del self.style
         # self.style = None
@@ -566,7 +566,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # del self.current_style
         # self.current_style = None
 
-        # فراخوانی garbage collection برای کمک به آزادسازی حافظه
+        # Run garbage collection to help free memory
         gc.collect()
 
     def switch_series_backup(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
@@ -752,12 +752,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
                     series_name = metadata.get('series', {}).get('series_name', '')
                 
                 # Adaptive messages based on size
-                if num_slices > 500:
-                    return f"📊 درحال بارگزاری سری بزرگ... ({num_slices} عکس)"
-                elif num_slices > 200:
-                    return f"📷 درحال تغییر سری... ({num_slices} عکس)"
+                if num_slices > 200:
+                    return f"📊 Loading large series... ({num_slices} images)"
+                elif num_slices > 100:
+                    return f"📷 Switching series... ({num_slices} images)"
                 elif num_slices > 50:
-                    return "⏳ درحال تغییر سری..."
+                    return " Switching series..."
                 else:
                     return "Switching series..."
         except:
@@ -935,11 +935,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         try:
             data = int(data)
-            # dropped from thumbnails series
-            # change series with drag and drop - ASYNC for smooth UI
+            # Dropped from thumbnails series
+            # Change series with drag and drop - async for smooth UI
             self.change_container_border()
             
-            # 🎬 Show loading spinner IMMEDIATELY when series is dropped
+            # 🎬 Show loading spinner immediately when series is dropped
             # This provides instant visual feedback to the user
             self.viewport_spinner.show_loading("Switching series...")
             
@@ -954,7 +954,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
             ))
             
         except Exception as e:
-            # dropped segmentation out of app
+            # Dropped segmentation out of app
             if event.mimeData().hasUrls():
                 data = event.mimeData().urls()[0].toLocalFile()
                 print(f'dropped file url: {data}\n')
@@ -964,11 +964,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
     def overlay(self, vtk_image_data: vtk.vtkImageData, color=(1.0, 0.0, 0.0), opacity=0.4, is_label=True):
         """
-        یک تصویر را به عنوان اوورلی روی image_viewer فعلی می‌اندازد.
+        Overlays an image on the current image_viewer.
         - vtk_image_data: vtk.vtkImageData
-        - color: (r,g,b) در بازه [0..1]
-        - opacity: شفافیت اوورلی (برای پیکسل‌های غیر صفر)
-        - is_label: اگر True باشد نداشتن مقدار (0) شفاف می‌شود و غیرصفرها رنگ می‌گیرند.
+        - color: (r,g,b) in [0..1]
+        - opacity: overlay opacity (for non-zero pixels)
+        - is_label: if True, zero becomes transparent and non-zero is colored.
         """
         if not hasattr(self, "image_viewer") or self.image_viewer is None:
             return
@@ -976,20 +976,20 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.clear_overlay()
         self._overlay = {}
 
-        # 1) ریسلایس اوورلی مطابق ریسلایس تصویر پایه
+        # 1) Reslice overlay to match base image
         ov_reslice = vtk.vtkImageReslice()
         ov_reslice.SetInputData(vtk_image_data)
 
-        # # همان ماتریس محورهای ریسلایس تصویر اصلی
+        # # Same reslice axes matrix as the base image
         # axes = self.image_viewer.image_reslice.GetResliceAxes()
         # if axes is not None:
         #     ov_reslice.SetResliceAxes(axes)
 
-        # اطلاعات هندسی را از تصویر فعلی بگیر (origin/spacing/extent)
+        # Get geometry from current image (origin/spacing/extent)
         # ov_reslice.SetInformationInput(self.image_viewer.vtk_image_data)
         # ov_reslice.SetOutputOrigin(self.image_viewer.vtk_image_data.GetOrigin())
 
-        # # اینترپولیشن: برای ماسک nearest، برای تصویر معمولی linear
+        # # Interpolation: nearest for masks, linear for normal images
         # if is_label:
         #     ov_reslice.SetInterpolationModeToNearestNeighbor()
         # else:
@@ -1001,25 +1001,25 @@ class VTKWidget(QVTKRenderWindowInteractor):
         ov_reslice.Update()
         self._overlay["reslice"] = ov_reslice
 
-        # 2) نگاشت رنگ/آلفا
-        #   الف) برای ماسک برچسبی: LUT با 0 شفاف، بقیه رنگ/opacity
-        #   ب) برای تصویر معمولی: WL/WW دلخواه می‌توان گذاشت؛ فعلاً LUT ساده
+        # 2) Color/alpha mapping
+        #   a) Label mask: LUT with 0 transparent, others colored/opacity
+        #   b) Normal image: WL/WW could be applied; using simple LUT for now
         rng = ov_reslice.GetOutput().GetScalarRange()
         lut = vtk.vtkLookupTable()
-        # تعداد جدول را معقول تعیین می‌کنیم
+        # Set a reasonable LUT size
 
         table_size = max(256, int(rng[1] - rng[0] + 1))
         lut.SetNumberOfTableValues(table_size)
         lut.Build()
 
         if is_label:
-            # index۰ شفاف کامل
+            # Index 0 fully transparent
             lut.SetTableValue(0, 0.0, 0.0, 0.0, 0.0)
-            # بقیه اندیس‌ها با رنگ/اپسیتی
+            # Other indices with color/opacity
             for i in range(1, table_size):
                 lut.SetTableValue(i, float(color[0]), float(color[1]), float(color[2]), float(opacity))
         else:
-            # همه مقادیر با یک شفافیت ملایم؛ اگر خواستی می‌تونی WL/WW مجزا بگذاری
+            # All values with mild opacity; WL/WW can be customized if needed
             for i in range(table_size):
                 lut.SetTableValue(i, float(color[0]), float(color[1]), float(color[2]), float(opacity))
 
@@ -1029,21 +1029,21 @@ class VTKWidget(QVTKRenderWindowInteractor):
         map_colors.Update()
         self._overlay["map"] = map_colors
 
-        # 3) اکتور تصویر اوورلی
+        # 3) Overlay image actor
         actor = vtk.vtkImageActor()
         actor.GetMapper().SetInputConnection(map_colors.GetOutputPort())
         actor.SetPickable(False)
         self.image_viewer.GetRenderer().AddActor(actor)
         self._overlay["actor"] = actor
 
-        # 4) همگام کردن Extent با اسلایس فعلی و اورینتیشن
+        # 4) Sync extent with current slice and orientation
         self._update_overlay_extent()
 
-        # 5) رندر
+        # 5) Render
         self._schedule_render(1)
 
     def clear_overlay(self):
-        """حذف اوورلی از رندرر و آزادسازی مرجع‌ها"""
+        """Remove overlay from renderer and release references."""
         if hasattr(self, "_overlay") and self._overlay:
             try:
                 actor = self._overlay.get("actor")
@@ -1054,7 +1054,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._overlay = {}
 
     def _update_overlay_extent(self):
-        """DisplayExtent اوورلی را با توجه به اسلایس و اورینتیشن فعلی تنظیم می‌کند."""
+        """Set overlay DisplayExtent based on current slice and orientation."""
         if not hasattr(self, "_overlay") or not self._overlay:
             return
         actor = self._overlay.get("actor")
@@ -1063,7 +1063,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if not actor or not ov_img or not base_img:
             return
 
-        # از ویوِر اصلی ابعاد و اسلایس فعلی را بگیر
+        # Get dimensions and current slice from the main viewer
         slice_idx = self.image_viewer.GetSlice()
         dims = base_img.GetDimensions()
         # slice_idx = dims[2] - (slice_idx + 2)

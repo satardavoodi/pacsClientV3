@@ -412,13 +412,38 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
         for i, dicom_file in enumerate(dicom_files):
             try:
                 dcm = utils._safe_dcmread(dicom_file, stop_before_pixels=True)
+                
+                # ✅ IMPROVED: Better window/level extraction with None fallback
+                window_width = dcm.get('WindowWidth', None)
+                window_center = dcm.get('WindowCenter', None)
+                
+                # Handle MultiValue DICOM tags
+                if window_width is not None:
+                    if hasattr(window_width, '__iter__') and not isinstance(window_width, str):
+                        window_width = float(window_width[0])
+                    else:
+                        window_width = float(window_width)
+                
+                if window_center is not None:
+                    if hasattr(window_center, '__iter__') and not isinstance(window_center, str):
+                        window_center = float(window_center[0])
+                    else:
+                        window_center = float(window_center)
+                
+                # If missing, try modality-based defaults (CT gets 400/40, others get None for auto-calc)
+                if window_width is None or window_center is None:
+                    modality = dcm.get('Modality', None)
+                    if modality == 'CT':
+                        window_width = window_width if window_width is not None else 400
+                        window_center = window_center if window_center is not None else 40
+                
                 instance = {
                     'instance_number': i,
                     'instance_path': str(dicom_file),
                     'rows': int(dcm.get('Rows', 512)),
                     'columns': int(dcm.get('Columns', 512)),
-                    'window_width': float(dcm.get('WindowWidth', 400)),
-                    'window_center': float(dcm.get('WindowCenter', 40)),
+                    'window_width': window_width,
+                    'window_center': window_center,
                     'is_rgb': dcm.PhotometricInterpretation in ['RGB', 'YBR_FULL', 'YBR_FULL_422'],
                     'sop_uid': dcm.get('SOPInstanceUID', f'generated_{i}'),
                 }

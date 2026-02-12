@@ -163,6 +163,11 @@ class ViewerController:
             if self.lst_nodes_viewer:
                 self.change_container_border(0)
 
+            # Ensure scroll area is properly sized after layout changes
+            if hasattr(self.parent_widget, 'center_scroll_area'):
+                self.parent_widget.center_scroll_area.updateGeometry()
+                self.parent_widget.center_scroll_area.verticalScrollBar().setValue(0)  # Reset to top
+
             if modify_by_user:
                 QTimer.singleShot(500, self._hide_loading_msg)
 
@@ -281,7 +286,10 @@ class ViewerController:
                 if slider is None:
                     raise RuntimeError("QSlider constructor returned None")
                 slider.setInvertedAppearance(True)
-                slider.setMaximumWidth(12)
+                slider.setMinimumWidth(18)
+                slider.setMaximumWidth(18)
+                slider.setRange(0, 1)
+                slider.setValue(0)
                 print("   ✅ Slider created")
             except Exception as se:
                 print(f"   ❌ Slider creation failed: {se}")
@@ -305,37 +313,37 @@ class ViewerController:
 
         # Configure slider styling
         try:
+            slider.setFixedWidth(18)
             slider.setStyleSheet("""
                 QSlider {
-                    background: rgba(0, 0, 0, 1);
-                    border-radius: 0px;
+                    background: transparent;
                     border: none;
-                    padding-top: 50px;
-                    padding-bottom: 50px;
+                    padding-top: 10px;
+                    padding-bottom: 10px;
                 }
                 QSlider::groove:vertical {
-                    background: #90caf9;
-                    width: 6px;
-                    border-radius: 3px;
+                    background: #111827;
+                    width: 10px;
+                    border-radius: 5px;
                 }
                 QSlider::handle:vertical {
-                    background: #90caf9;
-                    border: none;
-                    width: 0;
-                    height: 0;
-                    border-radius: 0;
+                    background: #6b7280;
+                    border: 1px solid #4b5563;
+                    width: 10px;
+                    height: 34px;
+                    border-radius: 5px;
                     margin: 0;
                 }
                 QSlider::handle:vertical:hover {
-                    background: #5d99c6;
+                    background: #9ca3af;
                 }
                 QSlider::sub-page:vertical {
-                    background: #90caf9;
-                    border-radius: 3px;
+                    background: #374151;
+                    border-radius: 4px;
                 }
                 QSlider::add-page:vertical {
-                    background: rgba(0,0,0,0.5);
-                    border-radius: 3px;
+                    background: #111827;
+                    border-radius: 4px;
                 }
             """)
             print("   ✅ Slider styling applied")
@@ -644,6 +652,9 @@ class ViewerController:
                     }
                 """)
                 self.set_viewer_to_main_viewer(node_viewer_selected)
+
+                # Ensure the active viewer is visible in the scroll area
+                self.ensure_viewer_visible(node_viewer_selected.vtk_widget)
 
             else:
                 # Inactive viewport - same size border, different color (gray)
@@ -1044,6 +1055,20 @@ class ViewerController:
         except Exception as e:
             print(f"⚠️ Error pre-caching series: {e}")
 
+    def ensure_viewer_visible(self, viewer_widget):
+        """Ensure the specified viewer widget is visible in the scroll area"""
+        try:
+            if hasattr(self.parent_widget, 'center_scroll_area'):
+                scroll_area = self.parent_widget.center_scroll_area
+                # Scroll to make the widget visible
+                scroll_area.ensureWidgetVisible(
+                    viewer_widget,
+                    scroll_area.width() // 4,
+                    scroll_area.height() // 4
+                )
+        except Exception as e:
+            print(f"⚠️ Error ensuring viewer visibility: {e}")
+
     def _create_fallback_viewer(self):
         """Create dummy viewer for missing data - with full error handling"""
         try:
@@ -1088,6 +1113,10 @@ class ViewerController:
             except:
                 # we don't have series at enough. so we create from last series until row * col
                 self.new_viewer(last_viewer_index)
+        
+        # Update scroll area after creating viewers
+        if hasattr(self.parent_widget, 'center_scroll_area'):
+            self.parent_widget.center_scroll_area.updateGeometry()
 
     def cleanup_all_viewers(self):
         """تمیز‌کردن بهینهٔ viewers و resources"""
