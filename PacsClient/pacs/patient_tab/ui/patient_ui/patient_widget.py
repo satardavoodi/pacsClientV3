@@ -16,7 +16,7 @@ except Exception:
 
 GRID_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "modality_grid.json"
 
-from PacsClient.pacs.patient_tab.ui.patient_ui.viewer_controller import ViewerController
+from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_viewer_controller import ViewerController
 
 from PacsClient.utils import get_count_instances_in_study
 from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachment_folder, open_folder, \
@@ -1798,6 +1798,10 @@ class PatientWidget(QWidget):
             series_no = str(metadata['series']['series_number'])
             # حالا این سری آماده است
             self.thumbnail_manager.set_series_ready(series_no)
+            
+            # ⚡ OPTIMIZATION: Rebuild indices after data change for fast lookups
+            # This is a O(n) one-time cost when new series is added
+            self.viewer_controller._rebuild_series_index()
         except Exception as e:
             print("set ready border failed:", e)
 

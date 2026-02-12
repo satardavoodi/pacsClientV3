@@ -247,7 +247,8 @@ class DownloadExecutor:
                 rule_engine=self.rules,
                 base_output_dir=self.base_output_dir,
                 progress_callback=progress_callback,
-                cancel_check=cancel_check  # Pass cancel check for preemption
+                cancel_check=cancel_check,  # Pass cancel check for preemption
+                database_manager=self.database  # ✅ Pass database manager for instance insertion
             )
             
             # Execute download

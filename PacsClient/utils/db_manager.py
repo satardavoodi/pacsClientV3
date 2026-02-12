@@ -886,3 +886,19 @@ def get_series_by_study_uid(study_uid: str) -> list[dict]:
     except Exception as e:
         print(f"Error getting series by study UID: {str(e)}")
         return []
+
+
+def migrate_fix_null_study_paths() -> dict:
+    """
+    Run migration to fix studies with NULL study_path by checking disk.
+    
+    When studies are imported from Socket/PACS, they may have study_path=NULL in the database.
+    This function:
+    1. Finds all studies with study_path IS NULL
+    2. Checks if files exist on disk at SOURCE_PATH/{study_uid}
+    3. Updates database with correct study_path if files exist
+    
+    Returns:
+        dict: {'updated': count, 'checked': count, 'not_found': count}
+    """
+    return database.migrate_fix_null_study_paths()

@@ -260,6 +260,90 @@ class DownloadStateStore:
                 self._notify_observers('removed', study_uid, state)
                 logger.info(f"🗑️ Removed state for {study_uid[:40]}...")
     
+    def reset(self, study_uid: str) -> None:
+        """
+        Force reset download state to PENDING with all progress cleared
+        
+        This bypasses terminal state checks and completely resets the download.
+        Special method for Reset All button - overrides normal validation.
+        
+        Args:
+            study_uid: Study UID to reset
+            
+        Raises:
+            StateError: If study_uid not found
+        """
+        with self._lock:
+            state = self._states.get(study_uid)
+            if not state:
+                raise StateError(f"Unknown study_uid: {study_uid}")
+            
+            # Record old values for history
+            old_values = {
+                'status': state.status,
+                'progress_percent': state.progress_percent,
+                'downloaded_count': state.downloaded_count,
+                'current_series': state.current_series,
+                'error_message': state.error_message,
+                'retry_count': state.retry_count,
+                'completed_series': state.completed_series.copy() if state.completed_series else [],
+                'failed_series': state.failed_series.copy() if state.failed_series else [],
+                'skipped_series': state.skipped_series.copy() if state.skipped_series else [],
+            }
+            
+            # FORCE reset to PENDING state (bypass terminal state check)
+            new_state = replace(
+                state,
+                status=DownloadStatus.PENDING,
+                priority=DownloadPriority.NORMAL,
+                progress_percent=0.0,
+                downloaded_count=0,
+                total_count=state.total_count,  # Keep total count
+                current_series=None,
+                current_series_number=None,
+                current_series_downloaded=0,
+                current_series_total=0,
+                current_series_progress=0.0,
+                error_message=None,
+                retry_count=0,
+                start_time=None,
+                end_time=None,
+                completed_series=[],
+                failed_series=[],
+                skipped_series=[],
+                is_auto_paused=False,
+                worker_id=None
+            )
+            
+            # Update state in store
+            self._states[study_uid] = new_state
+            
+            # Record change for history
+            change = StateChange(
+                study_uid=study_uid,
+                timestamp=datetime.now(),
+                changes={
+                    'status': DownloadStatus.PENDING,
+                    'progress_percent': 0.0,
+                    'downloaded_count': 0,
+                    'current_series': None,
+                    'error_message': None,
+                    'retry_count': 0,
+                    'completed_series': [],
+                    'failed_series': [],
+                    'skipped_series': [],
+                    'priority': DownloadPriority.NORMAL,
+                    'is_auto_paused': False
+                },
+                old_values=old_values
+            )
+            self._history.append(change)
+            
+            # Notify observers for status change
+            self._notify_observers('updated', study_uid, new_state, 'status', old_values['status'], DownloadStatus.PENDING)
+            
+            logger.info(f"✅ 🔄 FORCE RESET study {study_uid[:40]}... to PENDING (bypassed terminal state check)")
+    
     def get_by_status(self, status: DownloadStatus) -> List[DownloadState]:
         """
         Get all states with specific status

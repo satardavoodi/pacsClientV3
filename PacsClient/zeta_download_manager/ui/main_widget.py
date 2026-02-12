@@ -493,6 +493,44 @@ class DownloadManagerWidget(QWidget):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+            QScrollBar:vertical {
+                border: 1px solid #4b5563;
+                background: #1f2937;
+                width: 12px;
+                margin: 12px 0px 12px 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #374151;
+                min-height: 40px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #4b5563;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
+                height: 0px;
+            }
+        """)
         
         details_content = QWidget()
         details_content_layout = QVBoxLayout(details_content)
@@ -790,6 +828,38 @@ class DownloadManagerWidget(QWidget):
                 border: 1px solid #374151;
                 border-radius: 4px;
             }
+            QScrollBar:vertical {
+                border: 1px solid #4b5563;
+                background: #1f2937;
+                width: 12px;
+                margin: 12px 0px 12px 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #374151;
+                min-height: 40px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #4b5563;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
+                height: 0px;
+            }
         """)
         
         self.series_container = QWidget()
@@ -828,7 +898,11 @@ class DownloadManagerWidget(QWidget):
         self.retry_btn.setIcon(qta.icon('fa5s.redo', color='white'))
         self.retry_btn.clicked.connect(self._on_retry_selected)
         
-        for btn in [self.start_btn, self.pause_btn, self.cancel_btn, self.retry_btn]:
+        self.reset_btn = QPushButton("Reset All")
+        self.reset_btn.setIcon(qta.icon('fa5s.sync', color='white'))
+        self.reset_btn.clicked.connect(self._on_reset_all)
+        
+        for btn in [self.start_btn, self.pause_btn, self.cancel_btn, self.retry_btn, self.reset_btn]:
             btn.setStyleSheet("""
                 QPushButton {
                     background: #374151;
@@ -1148,7 +1222,7 @@ class DownloadManagerWidget(QWidget):
         logger.info(f"📋 [PATIENT-INFO]   Description: {data.get('study_description', '')}")
         logger.info(f"📋 [PATIENT-INFO]   Modality: {modality}")
 
-        # Create DownloadTask with only supported parameters (since it's a frozen dataclass)
+        # Create DownloadTask with all patient information
         task = DownloadTask(
             study_uid=study_uid,
             patient_id=data.get('patient_id', ''),
@@ -1157,7 +1231,13 @@ class DownloadManagerWidget(QWidget):
             modality=modality,
             description=data.get('study_description', ''),
             series_list=series_list,
-            output_dir=(self.base_output_dir / study_uid) if study_uid else None
+            output_dir=(self.base_output_dir / study_uid) if study_uid else None,
+            # Complete patient information
+            patient_age=patient_age,
+            patient_sex=patient_sex,
+            patient_birth_date=patient_birth_date,
+            study_time=study_time,
+            body_part=body_part
         )
         
         # Store the additional information in the _tasks dictionary alongside the task
@@ -1572,7 +1652,8 @@ class DownloadManagerWidget(QWidget):
                     DownloadStatus.PAUSED,
                     DownloadStatus.FAILED,
                     DownloadStatus.PENDING,
-                    DownloadStatus.CANCELLED
+                    DownloadStatus.CANCELLED,
+                    DownloadStatus.COMPLETED  # ⭐ Allow restarting completed downloads
                 ]
             ]
             logger.info(f"[PLAY-3] Downloads to process: {len(to_process)}")
@@ -1588,12 +1669,18 @@ class DownloadManagerWidget(QWidget):
             for i, state in enumerate(to_process):
                 logger.info(f"[PLAY-4.{i}] {state.patient_name or 'Unknown'} - Status: {state.status.value}")
                 try:
-                    self.state_store.update(
-                        state.study_uid,
-                        status=DownloadStatus.PENDING,
-                        error_message=None,
-                        is_auto_paused=False
-                    )
+                    # For terminal states (COMPLETED, CANCELLED), use force reset
+                    # For non-terminal states, use normal update
+                    if state.status in [DownloadStatus.COMPLETED, DownloadStatus.CANCELLED]:
+                        logger.info(f"[PLAY-4.{i}] ⭐ FORCE RESET from terminal state {state.status.value}")
+                        self.state_store.reset(state.study_uid)
+                    else:
+                        self.state_store.update(
+                            state.study_uid,
+                            status=DownloadStatus.PENDING,
+                            error_message=None,
+                            is_auto_paused=False
+                        )
                 except Exception as e:
                     logger.error(f"[PLAY-4.{i}] ❌ Error updating status: {e}")
             
@@ -2358,6 +2445,12 @@ class DownloadManagerWidget(QWidget):
             logger.info(f"🔄 Refreshing table after pause for {study_uid[:40]}...")
             self._refresh_table_order()
 
+            # Update button states after status change
+            updated_state = self.state_store.get(study_uid)
+            if updated_state and self._selected_study_uid == study_uid:
+                logger.info(f"🔄 Updating button states for paused study {study_uid[:40]}...")
+                self._update_button_states(updated_state)
+
             # Update the details panel to reflect the new status
             if self._selected_study_uid == study_uid:
                 logger.info(f"🔄 Updating details panel for paused study {study_uid[:40]}...")
@@ -2406,12 +2499,27 @@ class DownloadManagerWidget(QWidget):
                 # Start the download worker
                 logger.info(f"🚀 Starting download worker for resumed study: {study_uid[:40] if study_uid else 'None'}...")
                 self._start_download_worker(study_uid)
+            elif state.status == DownloadStatus.COMPLETED:
+                # For COMPLETED (terminal state), use force reset
+                logger.info(f"💾 Force resetting COMPLETED download: {study_uid[:40] if study_uid else 'None'}...")
+                self.state_store.reset(study_uid)
+                logger.info(f"💾 Database update: {study_uid[:40] if study_uid else 'None'}... status reset to PENDING")
+
+                # Start the download worker
+                logger.info(f"🚀 Starting download worker for reset study: {study_uid[:40] if study_uid else 'None'}...")
+                self._start_download_worker(study_uid)
             else:
                 logger.info(f"ℹ️ Study {study_uid[:40] if study_uid else 'None'}... is not in a resumable state: {state.status.value}")
 
             # Refresh the table to reflect the status change
             logger.info(f"🔄 Refreshing table after resume for {study_uid[:40] if study_uid else 'None'}...")
             self._refresh_table_order()
+
+            # Update button states after status change
+            updated_state = self.state_store.get(study_uid)
+            if updated_state and self._selected_study_uid == study_uid:
+                logger.info(f"🔄 Updating button states for resumed study {study_uid[:40] if study_uid else 'None'}...")
+                self._update_button_states(updated_state)
 
             # Update the details panel to reflect the new status
             if self._selected_study_uid == study_uid:
@@ -2462,6 +2570,17 @@ class DownloadManagerWidget(QWidget):
             logger.info(f"🔄 Refreshing table after cancel for {study_uid[:40] if study_uid else 'None'}...")
             self._refresh_table_order()
 
+            # Update button states after status change
+            updated_state = self.state_store.get(study_uid)
+            if updated_state and self._selected_study_uid == study_uid:
+                logger.info(f"🔄 Updating button states for cancelled study {study_uid[:40] if study_uid else 'None'}...")
+                self._update_button_states(updated_state)
+
+            # Update details panel if this study is selected
+            if self._selected_study_uid == study_uid:
+                logger.info(f"🔄 Updating details panel after cancel {study_uid[:40] if study_uid else 'None'}...")
+                QTimer.singleShot(0, lambda: self._update_details_panel(study_uid))
+
             # Start next pending
             logger.info(f"🔄 Checking for next pending download after cancel...")
             self._start_next_pending()
@@ -2492,14 +2611,19 @@ class DownloadManagerWidget(QWidget):
             logger.info(f"📊 Current state before retry: {state.status.value}, Retry count: {state.retry_count}")
 
             # Reset error and update to PENDING
-            self.state_store.update(
-                study_uid,
-                status=DownloadStatus.PENDING,
-                error_message=None,
-                is_auto_paused=False
-            )
-
-            logger.info(f"💾 Database update: {study_uid[:40] if study_uid else 'None'}... status changed to PENDING, error cleared")
+            # For COMPLETED (terminal state), use force reset
+            if state.status == DownloadStatus.COMPLETED:
+                logger.info(f"💾 Force resetting COMPLETED download for retry: {study_uid[:40] if study_uid else 'None'}...")
+                self.state_store.reset(study_uid)
+                logger.info(f"💾 Database update: {study_uid[:40] if study_uid else 'None'}... status reset to PENDING for retry")
+            else:
+                self.state_store.update(
+                    study_uid,
+                    status=DownloadStatus.PENDING,
+                    error_message=None,
+                    is_auto_paused=False
+                )
+                logger.info(f"💾 Database update: {study_uid[:40] if study_uid else 'None'}... status changed to PENDING, error cleared")
 
             # Start the download worker
             logger.info(f"🚀 Starting download worker for retry: {study_uid[:40] if study_uid else 'None'}...")
@@ -2508,6 +2632,17 @@ class DownloadManagerWidget(QWidget):
             # Refresh the table to reflect the status change
             logger.info(f"🔄 Refreshing table after retry for {study_uid[:40] if study_uid else 'None'}...")
             self._refresh_table_order()
+
+            # Update button states after status change
+            updated_state = self.state_store.get(study_uid)
+            if updated_state and self._selected_study_uid == study_uid:
+                logger.info(f"🔄 Updating button states after retry {study_uid[:40] if study_uid else 'None'}...")
+                self._update_button_states(updated_state)
+
+            # Update details panel if this study is selected
+            if self._selected_study_uid == study_uid:
+                logger.info(f"🔄 Updating details panel after retry {study_uid[:40] if study_uid else 'None'}...")
+                QTimer.singleShot(0, lambda: self._update_details_panel(study_uid))
 
             logger.info(f"✅ Retry initiated for {study_uid[:40] if study_uid else 'None'}...")
             logger.info(f"🟢 [OPERATION SUCCESS] Per-patient retry completed for {study_uid[:40] if study_uid else 'None'}...")
@@ -2593,22 +2728,40 @@ class DownloadManagerWidget(QWidget):
             }
             
             QScrollBar:vertical {
-                background: #1a202c;
+                border: 1px solid #4b5563;
+                background: #1f2937;
                 width: 12px;
-                border: none;
+                margin: 12px 0px 12px 0px;
+                border-radius: 6px;
             }
             
             QScrollBar::handle:vertical {
                 background: #374151;
-                border-radius: 6px;
-                min-height: 30px;
+                min-height: 40px;
+                border-radius: 5px;
             }
             
             QScrollBar::handle:vertical:hover {
                 background: #4b5563;
             }
             
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
                 height: 0px;
             }
         """)
@@ -2845,6 +2998,7 @@ class DownloadManagerWidget(QWidget):
     def _update_details_panel(self, study_uid: str):
         state = self.state_store.get(study_uid)
         task = self._tasks.get(study_uid)
+        additional_info = self._additional_task_info.get(study_uid, {}) if hasattr(self, '_additional_task_info') else {}
 
         # If no state, try to get from task (for newly added but not yet started)
         if not state and task:
@@ -2857,7 +3011,7 @@ class DownloadManagerWidget(QWidget):
                 study_description=task.description,
                 modality=task.modality,
                 status=DownloadStatus.PENDING,
-                priority=task.priority,
+                priority=DownloadPriority.NORMAL,
                 total_count=task.total_image_count,
                 downloaded_count=0,
                 progress_percent=0.0,
@@ -2877,6 +3031,12 @@ class DownloadManagerWidget(QWidget):
             self._clear_details_panel()
             return
 
+        # ===== LOG COMPREHENSIVE PATIENT INFO =====
+        logger.info(f"📋 [DETAILS-PANEL] Updating details for: {state.patient_name} ({study_uid[:40]}...)")
+        logger.info(f"   State available: {state is not None}")
+        logger.info(f"   Task available: {task is not None}")
+        logger.info(f"   Additional info keys: {list(additional_info.keys())}")
+
         # Update patient info
         self.patient_name_label.setText(f"Name: {state.patient_name or 'Unknown'}")
         self.patient_id_label.setText(f"ID: {task.patient_id if task else '-'}")
@@ -2885,6 +3045,30 @@ class DownloadManagerWidget(QWidget):
         self.study_date_label.setText(f"Study Date: {task.study_date if task else '-'}")
         self.modality_label.setText(f"Modality: {task.modality if task else '-'}")
         self.study_desc_label.setText(f"Description: {state.study_description or '-'}")
+
+        # Update additional patient information from additional_info dict
+        if additional_info:
+            age = additional_info.get('patient_age', '-')
+            sex = additional_info.get('patient_sex', '-')
+            birth_date = additional_info.get('patient_birth_date', '-')
+            study_time = additional_info.get('study_time', '-')
+            body_part = additional_info.get('body_part', '-')
+            
+            logger.info(f"   Setting additional info - Age: {age}, Sex: {sex}, BirthDate: {birth_date}")
+            logger.info(f"   Setting time: {study_time}, Body Part: {body_part}")
+            
+            if hasattr(self, 'age_label') and self.age_label:
+                self.age_label.setText(f"Age: {age}")
+            if hasattr(self, 'gender_label') and self.gender_label:
+                self.gender_label.setText(f"Gender: {sex}")
+            if hasattr(self, 'birth_date_label') and self.birth_date_label:
+                self.birth_date_label.setText(f"Birth Date: {birth_date}")
+            if hasattr(self, 'tel_label') and self.tel_label:
+                self.tel_label.setText(f"Time: {study_time}")
+            if hasattr(self, 'body_part_label') and self.body_part_label:
+                self.body_part_label.setText(f"Body Part: {body_part}")
+        else:
+            logger.info(f"   ⚠️ No additional info available for display")
 
         # Update progress
         display_total = state.total_count or (task.total_image_count if task else 0)
@@ -2906,15 +3090,19 @@ class DownloadManagerWidget(QWidget):
         self.size_label.setText(f"Series: {series_count} | Images: {display_total}")
 
         # Priority
+        self.priority_combo.blockSignals(True)
         self.priority_combo.setCurrentText(state.priority.display_name)
+        self.priority_combo.blockSignals(False)
 
         # Load reception data
         if task and task.patient_id:
-            self._load_reception_data(task.patient_id)
+            self._load_reception_data(task.patient_id, study_uid)
 
         # Update series breakdown
         if task:
             self._update_series_breakdown_from_task(task, state)
+        
+        logger.info(f"✅ [DETAILS-PANEL] Details panel updated successfully")
 
 
 
@@ -3198,12 +3386,30 @@ class DownloadManagerWidget(QWidget):
                         logger.info(f"✅ Download worker started successfully for {self._selected_study_uid[:40]}...")
                     else:
                         logger.warning(f"⚠️ Failed to start download worker for {self._selected_study_uid[:40]}...")
+                elif state.status == DownloadStatus.COMPLETED:
+                    # For COMPLETED (terminal state), use force reset and restart
+                    logger.info(f"💾 Force resetting COMPLETED download: {self._selected_study_uid[:40]}...")
+                    self.state_store.reset(self._selected_study_uid)
+                    logger.info(f"💾 Database update: {self._selected_study_uid[:40]}... status reset to PENDING")
+                    
+                    # Start the download worker
+                    logger.info(f"🚀 Starting download worker for reset study: {self._selected_study_uid[:40]}...")
+                    started = self._start_download_worker(self._selected_study_uid)
+                    
+                    if started:
+                        logger.info(f"✅ Download worker started successfully for {self._selected_study_uid[:40]}...")
+                    else:
+                        logger.warning(f"⚠️ Failed to start download worker for {self._selected_study_uid[:40]}...")
                         
-                    # Refresh the table to reflect the status change
-                    logger.info(f"🔄 Refreshing table after start selected for {self._selected_study_uid[:40]}...")
-                    self._refresh_table_order()
-                else:
-                    logger.info(f"ℹ️ Study {self._selected_study_uid[:40]}... is in state {state.status.value}, not starting")
+                # Refresh the table to reflect the status change
+                logger.info(f"🔄 Refreshing table after start selected for {self._selected_study_uid[:40]}...")
+                self._refresh_table_order()
+                
+                # Update button states after status change
+                updated_state = self.state_store.get(self._selected_study_uid)
+                if updated_state:
+                    logger.info(f"🔄 Updating button states for started study {self._selected_study_uid[:40]}...")
+                    self._update_button_states(updated_state)
             else:
                 logger.warning(f"⚠️ No state found for study {self._selected_study_uid[:40]}...")
             
@@ -3255,6 +3461,96 @@ class DownloadManagerWidget(QWidget):
             logger.info("🟢 [BUTTON SUCCESS] Retry Selected operation completed")
         else:
             logger.warning("⚠️ [BUTTON WARNING] Retry Selected clicked but no study selected")
+    
+    def _on_reset_all(self):
+        """
+        Reset All Downloads button - Reset all downloads and restart from beginning
+        
+        This resets ALL downloads regardless of their current state:
+        - PENDING → PENDING (clear progress)
+        - DOWNLOADING → PENDING (abort current, reset from start)
+        - COMPLETED → PENDING (download again) ⭐ FORCED via state_store.reset()
+        - FAILED → PENDING (clear error, retry)
+        - CANCELLED → PENDING (restore to queue) ⭐ FORCED via state_store.reset()
+        - PAUSED → PENDING (unpause and reset)
+        
+        For each download:
+        1. Reset status to PENDING (FORCED even from terminal states)
+        2. Clear all progress (downloaded, current series, etc.)
+        3. Clear errors
+        4. Reset series tracking
+        5. Clear timers
+        """
+        logger.info("=" * 100)
+        logger.info("🟡 [BUTTON CLICK] Reset All button clicked")
+        logger.info("🔄 RESET PRESSED - Resetting ALL downloads to start from beginning")
+        logger.info("=" * 100)
+        
+        try:
+            # Get all downloads currently in the system
+            all_studies = list(self.state_store._states.keys())
+            
+            if not all_studies:
+                logger.warning("⚠️ No downloads to reset")
+                self.log_message("ℹ️ No downloads to reset")
+                return
+            
+            logger.info(f"📊 Resetting {len(all_studies)} downloads...")
+            
+            reset_count = 0
+            for study_uid in all_studies:
+                try:
+                    task = self._tasks.get(study_uid)
+                    if not task:
+                        logger.warning(f"⚠️ No task found for {study_uid[:40] if study_uid else 'None'}...")
+                        continue
+                    
+                    logger.info(f"🔄 Resetting {task.patient_name} ({study_uid[:40]}...)")
+                    
+                    # Use FORCE RESET method (bypasses terminal state check)
+                    # This is necessary because COMPLETED and CANCELLED are terminal states
+                    self.state_store.reset(study_uid)
+                    
+                    # Clear series image count cache for this study
+                    if study_uid in self._series_image_count_cache:
+                        del self._series_image_count_cache[study_uid]
+                    
+                    # Clear pending progress for this study
+                    if study_uid in self._pending_progress:
+                        del self._pending_progress[study_uid]
+                    
+                    logger.info(
+                        f"✅ Reset {task.patient_name}: Status=PENDING, "
+                        f"Progress=0%, Priority=NORMAL, Error=None"
+                    )
+                    reset_count += 1
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to reset {study_uid[:40]}...: {e}", exc_info=True)
+            
+            logger.info("-" * 100)
+            logger.info(f"✅ Reset complete: {reset_count}/{len(all_studies)} downloads reset")
+            logger.info("=" * 100)
+            
+            # Log to UI
+            self.log_message(f"✅ Reset {reset_count} downloads - all ready to restart")
+            
+            # Refresh entire table
+            self._refresh_table_order()
+            
+            # Update status label
+            self._update_status_label()
+            
+            # Clear details panel since all downloads were affected
+            self._clear_details_panel()
+            self._selected_study_uid = None
+            
+            logger.info("🟢 [BUTTON SUCCESS] Reset All operation completed")
+            
+        except Exception as e:
+            logger.error(f"🔴 [BUTTON FAILURE] Reset All failed: {e}", exc_info=True)
+            self.log_message(f"❌ Reset failed: {e}")
+            raise
     
     def _on_priority_changed(self, new_priority: str):
         """Handle priority change from combo box"""
@@ -3882,11 +4178,18 @@ class DownloadManagerWidget(QWidget):
                 patient_id=study_data.get('patient_id', ''),
                 patient_name=patient_name,
                 study_date=study_data.get('study_date', ''),
+                study_time=study_data.get('study_time', study_data.get('time', '')),
                 description=study_data.get('study_description', ''),
                 modality=study_data.get('modality', ''),
                 series_list=series_info_list,
-                priority=priority_enum,
-                output_dir=(self.base_output_dir / study_uid) if study_uid else None
+                priority=priority_enum,  # Set the priority on the task
+                output_dir=(self.base_output_dir / study_uid) if study_uid else None,
+                # Complete patient information for database insertion
+                patient_age=study_data.get('patient_age', study_data.get('age', '')),
+                patient_sex=study_data.get('patient_sex', study_data.get('sex', '')),
+                patient_birth_date=study_data.get('patient_birth_date', study_data.get('birth_date', '')),
+                body_part=study_data.get('body_part', study_data.get('body_part_examined', '')),
+                institution_name=study_data.get('institution_name', '')
             )
 
             # ========== STEP 2: VALIDATE WITH RULE ENGINE (R17) ==========
@@ -3933,6 +4236,20 @@ class DownloadManagerWidget(QWidget):
 
                 # Store task and create state
                 self._tasks[study_uid] = task
+                
+                # Store additional task information for display
+                if not hasattr(self, '_additional_task_info'):
+                    self._additional_task_info = {}
+                self._additional_task_info[study_uid] = {
+                    'patient_age': study_data.get('patient_age', study_data.get('age', '')),
+                    'patient_sex': study_data.get('patient_sex', study_data.get('sex', '')),
+                    'patient_birth_date': study_data.get('patient_birth_date', study_data.get('birth_date', '')),
+                    'study_time': study_data.get('study_time', study_data.get('time', '')),
+                    'body_part': study_data.get('body_part', study_data.get('body_part_examined', '')),
+                    'modality': study_data.get('modality', '')
+                }
+                logger.info(f"💾 [ADDITIONAL-INFO] Stored additional info: {self._additional_task_info[study_uid]}")
+                
                 self.state_store.create(task)
                 logger.info(f"💾 [DATABASE] Created new study {study_uid[:40]}... with priority {priority}")
 

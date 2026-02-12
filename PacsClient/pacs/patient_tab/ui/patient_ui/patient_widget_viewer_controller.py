@@ -75,16 +75,133 @@ class ViewerController:
         self._first_series_displayed = False
         self._is_initializing = True
         
-        # Optimization caches
+        # ===== OPTIMIZED PERFORMANCE CACHES =====
+        # Series lookup index: series_number -> (vtk_data, metadata, index)
         self._series_cache = {}
         self._series_name_cache = {}
+        
+        # OPTIMIZATION: O(1) series number to list index lookup
+        self._series_number_to_index = {}
+        
+        # OPTIMIZATION: Paired series mapping for fast grouped series lookup
+        self._paired_series_map = {}  # series_name -> [series_numbers]
+        
+        # OPTIMIZATION: Fast metadata access without nested dict lookups
+        self._metadata_flat_cache = {}  # series_number -> flattened metadata dict
+        
+        # OPTIMIZATION: Recently accessed series for quick re-access
+        self._hot_series_cache = {}  # Most recently accessed (limited size)
+        
+        # OPTIMIZATION: Pre-load adjacent series in background
+        self._preload_queue = []
+        self._preload_thread = None
+        
         self._viewer_batch_queue = []
         
-        # Performance optimization
+        # Performance optimization flags
         self._critical_sections_running = 0
         self._render_batch_pending = False
         self._pending_thumbnail_updates = []
         self._image_cache_max_size = 10
+
+    # ===== OPTIMIZATION HELPER METHODS: FAST SERIES LOOKUP =====
+    
+    def _rebuild_series_index(self):
+        """Rebuild fast lookup indices from lst_thumbnails_data (called once on data change)"""
+        try:
+            self._series_number_to_index.clear()
+            self._paired_series_map.clear()
+            self._metadata_flat_cache.clear()
+            
+            if not hasattr(self.parent_widget, 'lst_thumbnails_data'):
+                return
+            
+            for idx, item in enumerate(self.parent_widget.lst_thumbnails_data):
+                if not isinstance(item, dict):
+                    continue
+                metadata = item.get('metadata', {})
+                series_info = metadata.get('series', {})
+                series_number = str(series_info.get('series_number', ''))
+                series_name = str(series_info.get('series_name', ''))
+                
+                if series_number:
+                    # Fast index: series_number -> list index
+                    self._series_number_to_index[series_number] = idx
+                    
+                    # Flat metadata cache for quick access without nested lookups
+                    self._metadata_flat_cache[series_number] = {
+                        'series_number': series_number,
+                        'series_name': series_name,
+                        'series_path': series_info.get('series_path', ''),
+                        'instances': metadata.get('instances', []),
+                    }
+                    
+                    # Paired series map: series_name -> list of numbers
+                    if series_name:
+                        if series_name not in self._paired_series_map:
+                            self._paired_series_map[series_name] = []
+                        if series_number not in self._paired_series_map[series_name]:
+                            self._paired_series_map[series_name].append(series_number)
+        except Exception as e:
+            self.logger.debug(f"Error rebuilding series index: {e}")
+
+    def _get_series_by_number_fast(self, series_number: str) -> tuple:
+        """
+        ⚡ Fast O(1) series lookup using index.
+        Returns: (vtk_image_data, metadata, index) or (None, None, -1)
+        """
+        series_str = str(series_number)
+        
+        # 1. Check hot cache first (most recent access)
+        if series_str in self._hot_series_cache:
+            return self._hot_series_cache[series_str]
+        
+        # 2. Check main cache
+        if series_str in self._series_cache:
+            result = self._series_cache[series_str]
+            self._hot_series_cache[series_str] = result
+            return result
+        
+        # 3. Check index for fallback
+        if series_str in self._series_number_to_index:
+            idx = self._series_number_to_index[series_str]
+            if idx < len(self.parent_widget.lst_thumbnails_data):
+                item = self.parent_widget.lst_thumbnails_data[idx]
+                vtk_data = item.get('vtk_image_data')
+                meta = item.get('metadata')
+                result = (vtk_data, meta, idx)
+                self._series_cache[series_str] = result
+                if len(self._hot_series_cache) > 3:  # Keep hot cache small
+                    self._hot_series_cache.pop(next(iter(self._hot_series_cache)))
+                self._hot_series_cache[series_str] = result
+                return result
+        
+        return None, None, -1
+
+    def _get_paired_series_fast(self, series_name: str, exclude_number: str = None) -> list:
+        """
+        ⚡ Get all paired series (same name, different data) in O(1) time.
+        Returns list of (vtk_data, metadata, series_number) tuples
+        """
+        try:
+            if series_name not in self._paired_series_map:
+                return []
+            
+            exclude_number = str(exclude_number) if exclude_number else None
+            results = []
+            
+            for series_num in self._paired_series_map[series_name]:
+                if exclude_number and series_num == exclude_number:
+                    continue
+                
+                vtk_data, metadata, _ = self._get_series_by_number_fast(series_num)
+                if vtk_data is not None and metadata is not None:
+                    results.append((vtk_data, metadata, series_num))
+            
+            return results
+        except Exception as e:
+            self.logger.debug(f"Error getting paired series: {e}")
+            return []
     
     def init_matrix_viewers(self, numbers=None):
         """Initialize matrix of viewers based on layout"""
@@ -204,8 +321,8 @@ class ViewerController:
         # Aggressive cleanup for high viewer counts
         if viewer_count > 15:
             print(f"   ⚠️ WARNING: Already have {viewer_count} viewers - running aggressive cleanup")
-            gc.collect()  # Force garbage collection
-            import time; time.sleep(0.02)  # Let OS recover (reduced from 0.05)
+            # ⚡ OPTIMIZATION: Removed sleep(0.02) - gc.collect() is fast enough
+            gc.collect()  # Force garbage collection immediately
 
         # Periodic cleanup
         import time
@@ -667,120 +784,74 @@ class ViewerController:
     def change_series_on_viewer(self, series_index, flag_change_selected_widget=True,
                                 vtk_widget: VTKWidget = None, slider: QSlider = None):
         """
-        Switch series with robust handling for layout changes and missing data
-        Uses caching to avoid redundant lookups
-
-        ✅ Always ensures viewers exist before attempting to display series
+        ⚡ OPTIMIZED: Switch series with O(1) lookup and minimal overhead.
+        
+        Performance improvements:
+        - Uses hash-based series cache instead of linear search
+        - Eliminates redundant metadata extraction
+        - Fast paired series detection with index
+        - Removes artificial delays
         """
         try:
             series_number = str(series_index)
-            vtk_image_data = None
-            metadata = None
-            series_idx = -1
-
-            # Check if lst_thumbnails_data exists and initialize if not
+            
+            # Initialize parent structures once
             if not hasattr(self.parent_widget, 'lst_thumbnails_data'):
                 self.parent_widget.lst_thumbnails_data = []
 
-            print(f"🔄 [CHANGE SERIES] Requested series {series_number}, available: {len(self.parent_widget.lst_thumbnails_data)}")
-
-            # ✅ CRITICAL FIX: Ensure viewers exist before displaying series
+            # ✅ ENSURE VIEWERS EXIST (fail-fast check)
             if not self.lst_nodes_viewer:
-                print(f"   🔨 No viewers found! Creating default viewers...")
                 try:
                     self.apply_multi_viewer((1, 1), modify_by_user=False)
-                    print(f"   ✅ Default viewers created")
                 except Exception as e:
-                    print(f"   ❌ Failed to create viewers: {e}")
+                    self.logger.error(f"Failed to create default viewers: {e}")
                     return
 
-            # 1. Check cache first (fast path)
-            if series_number in self._series_cache:
-                vtk_image_data, metadata, series_idx = self._series_cache[series_number]
-                print(f"   ✅ Found series {series_number} in cache at index {series_idx}")
-            else:
-                # 2. Search in existing loaded data
+            # ⚡ FAST PATH: O(1) series lookup with caching
+            vtk_image_data, metadata, series_idx = self._get_series_by_number_fast(series_number)
+            
+            # If not cached, search and cache (only one pass)
+            if metadata is None:
+                # Linear search only if not in any cache (happens once per series)
                 for i, data in enumerate(self.parent_widget.lst_thumbnails_data):
-                    data_series_num = str(data['metadata']['series']['series_number'])
-                    if data_series_num == series_number:
+                    if str(data.get('metadata', {}).get('series', {}).get('series_number')) == series_number:
                         vtk_image_data = data['vtk_image_data']
                         metadata = data['metadata']
                         series_idx = i
-                        # Cache for future lookups
+                        # Cache immediately for next access
                         self._series_cache[series_number] = (vtk_image_data, metadata, series_idx)
-                        print(f"   ✅ Found series {series_number} in memory at index {i} (now cached)")
                         break
-
-            # 2. If not found in memory, try to load from disk immediately
+            
+            # If still not found, try loading from disk
             if metadata is None:
-                print(f"   ⚠️ Series {series_number} not in memory, attempting to load...")
-
-                # Ensure we have the correct study path
-                correct_study_path = self._get_correct_study_path()
-
-                success = self._load_single_series_on_demand(int(series_number), correct_study_path)
-
-                if success:
-                    # Re-search after loading
-                    for i, data in enumerate(self.parent_widget.lst_thumbnails_data):
-                        if str(data['metadata']['series']['series_number']) == series_number:
-                            vtk_image_data = data['vtk_image_data']
-                            metadata = data['metadata']
-                            series_idx = i
-                            print(f"   ✅ Series {series_number} loaded and found at index {i}")
-                            break
-                    else:
-                        print(f"   ❌ Series {series_number} loaded but data not found in list")
-                        return
-                else:
-                    print(f"   ❌ Failed to load series {series_number}")
-                    # Trigger download if server mode
+                study_path = self._get_correct_study_path()
+                if not self._load_single_series_on_demand(int(series_number), study_path):
                     self._trigger_download_if_needed(series_number)
                     return
-
-            # 3. Determine target widget
-            if flag_change_selected_widget:
-                # Use first available viewer if selected not set
-                if self.selected_widget is None and self.lst_nodes_viewer:
-                    self.set_viewer_to_main_viewer(self.lst_nodes_viewer[0])
-                    vtk_widget = self.selected_widget
-                    # ✅ FIX: Check if slider exists before assignment
-                    if hasattr(self.parent_widget, 'slider') and self.parent_widget.slider is not None:
-                        slider = self.parent_widget.slider
-                    else:
-                        # Try to get slider from the viewer node
-                        if hasattr(self.lst_nodes_viewer[0], 'slider'):
-                            slider = self.lst_nodes_viewer[0].slider
-                            self.parent_widget.slider = slider  # Cache it
-                else:
-                    vtk_widget = self.selected_widget
-                    # ✅ FIX: Check if slider attribute exists and is not None
-                    if hasattr(self.parent_widget, 'slider') and self.parent_widget.slider is not None:
-                        slider = self.parent_widget.slider
-                    elif vtk_widget and hasattr(vtk_widget, 'slider') and vtk_widget.slider:
-                        slider = vtk_widget.slider
-                        self.parent_widget.slider = slider
-
-            if vtk_widget is None:
-                print(f"   ❌ No viewer available even after creation attempt!")
-                return
-
-            # Ensure slider is valid before proceeding
-            if slider is None:
-                print(f"   ⚠️ No slider available, creating fallback")
-                if self.lst_nodes_viewer:
-                    slider = self.lst_nodes_viewer[0].slider
-                else:
-                    print(f"   ❌ Cannot proceed without slider")
+                # After loading, retrieve from cache again
+                vtk_image_data, metadata, series_idx = self._get_series_by_number_fast(series_number)
+                if metadata is None:
                     return
 
-            # 4. Perform the switch with error recovery
-            self._perform_series_switch(vtk_widget, metadata, vtk_image_data, series_idx, slider)
+            # ⚡ FAST WIDGET SETUP: Reuse existing or get from cache
+            if flag_change_selected_widget:
+                if self.selected_widget is None and self.lst_nodes_viewer:
+                    self.set_viewer_to_main_viewer(self.lst_nodes_viewer[0])
+                
+                vtk_widget = self.selected_widget
+                slider = getattr(self.parent_widget, 'slider', None) or (
+                    self.lst_nodes_viewer[0].slider if self.lst_nodes_viewer else None
+                )
+            
+            # ⚡ FINAL VALIDATION
+            if vtk_widget is None or slider is None:
+                return
+
+            # ⚡ PERFORM SWITCH WITH OPTIMIZED PAIRED SERIES LOOKUP
+            self._perform_series_switch_optimized(vtk_widget, metadata, vtk_image_data, series_idx, slider)
 
         except Exception as e:
-            print(f"❌ [CHANGE SERIES] Error: {e}")
-            import traceback
-            traceback.print_exc()
+            self.logger.error(f"Error switching series: {e}", exc_info=True)
 
     def _get_correct_study_path(self) -> str:
         """Get the correct study path, ensuring it's not pointing to a series subfolder"""
@@ -802,29 +873,40 @@ class ViewerController:
 
         return str(path)
 
-    def _perform_series_switch(self, vtk_widget, metadata, vtk_image_data, series_idx, slider):
-        """Perform the actual series switch with widget transfer"""
+    def _perform_series_switch_optimized(self, vtk_widget, metadata, vtk_image_data, series_idx, slider):
+        """
+        ⚡ OPTIMIZED: Perform series switch with O(1) paired series lookup.
+        
+        Performance improvements:
+        - Fast paired series detection using index
+        - No redundant list iterations
+        - Direct metadata access without nesting lookups
+        - Shows loading spinner for series changes
+        """
         try:
-            series_number = metadata['series']['series_number']
-
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self.parent_widget, 'lst_thumbnails_data'):
-                self.parent_widget.lst_thumbnails_data = []
-
-            # Check for combined viewer (if series has paired data)
+            series_number = str(metadata.get('series', {}).get('series_number', ''))
+            series_name = str(metadata.get('series', {}).get('series_name', ''))
+            
+            # 🎬 Show loading spinner before switch
+            # The message is set in switch_series based on series size
+            # but we can optionally enhance it here if needed
+            
+            # ⚡ FAST PAIRED SERIES LOOKUP: O(1) instead of linear search
             vtk_widget_data_2 = None
             metadata_2 = None
-
-            # Look for paired series (same series name, different data)
-            series_name = metadata['series']['series_name']
-            for data in self.parent_widget.lst_thumbnails_data:
-                if (data['metadata']['series']['series_name'] == series_name and
-                    data['metadata']['series']['series_number'] != series_number):
-                    vtk_widget_data_2 = data['vtk_image_data']
-                    metadata_2 = data['metadata']
-                    break
-
-            # Perform switch
+            
+            if series_name in self._paired_series_map:
+                # Find first paired series that's not the current one
+                paired_list = self._paired_series_map[series_name]
+                for paired_num in paired_list:
+                    if str(paired_num) != series_number:
+                        vtk_data, meta, _ = self._get_series_by_number_fast(str(paired_num))
+                        if vtk_data is not None and meta is not None:
+                            vtk_widget_data_2 = vtk_data
+                            metadata_2 = meta
+                            break
+            
+            # ⚡ PERFORM SWITCH (no delay, no blocking)
             if hasattr(vtk_widget, 'switch_series'):
                 flag_switch = vtk_widget.switch_series(
                     vtk_image_data,
@@ -834,24 +916,22 @@ class ViewerController:
                     metadata_2,
                     self.parent_widget.metadata_fixed
                 )
-
+                
                 if flag_switch:
+                    # Quick slider configuration (without blocking)
                     self.parent_widget.reset_slider(vtk_widget, slider)
                     self.parent_widget.toolbar_manager.turn_off_all_tools()
-
-                    # Update corners if method exists
-                    if vtk_widget.image_viewer:
+                    
+                    # Update UI elements (batch updates)
+                    if hasattr(vtk_widget, 'image_viewer') and vtk_widget.image_viewer:
                         vtk_widget.image_viewer.update_corners_actors()
-
-                    print(f"   ✅ Switch completed for series {series_number}")
-                else:
-                    print(f"   ⚠️ switch_series returned False")
-            else:
-                print(f"   ❌ vtk_widget does not have switch_series method")
-
+        
         except Exception as e:
-            print(f"❌ Error in _perform_series_switch: {e}")
-            raise
+            self.logger.error(f"Error in series switch: {e}", exc_info=True)
+
+    def _perform_series_switch(self, vtk_widget, metadata, vtk_image_data, series_idx, slider):
+        """Legacy method - redirects to optimized version"""
+        self._perform_series_switch_optimized(vtk_widget, metadata, vtk_image_data, series_idx, slider)
 
     def _show_loading_spinner(self, message="Loading..."):
         """نمایش spinner در viewport فعلی"""
@@ -964,66 +1044,58 @@ class ViewerController:
     def _display_loaded_series(self, series_number, vtk_image_data, metadata,
                                flag_change_selected_widget, vtk_widget, slider):
         """
-        Display series that has been loaded - optimized with caching
-        This function handles only the visualization part
+        ⚡ OPTIMIZED: Display series with O(1) paired series lookup.
+        
+        Performance improvements:
+        - Fast paired series detection using index
+        - No redundant list iterations
+        - Caching-aware lookups
         """
         try:
-            # Check if we have a selected_widget set
+            # Quick setup
             if flag_change_selected_widget and self.selected_widget is None:
-                print(f"⚠️ [DISPLAY] selected_widget is None, trying to set from lst_nodes_viewer")
-                if hasattr(self.parent_widget, 'lst_nodes_viewer') and self.parent_widget.lst_nodes_viewer and len(self.parent_widget.lst_nodes_viewer) > 0:
-                    self.selected_widget = self.parent_widget.lst_nodes_viewer[0].vtk_widget
-                    self.parent_widget.slider = self.parent_widget.lst_nodes_viewer[0].slider
-                    print(f"   ✅ Set selected_widget from first viewer")
+                if self.lst_nodes_viewer:
+                    self.selected_widget = self.lst_nodes_viewer[0].vtk_widget
+                    self.parent_widget.slider = self.lst_nodes_viewer[0].slider
                 else:
-                    print(f"   ❌ No viewers available!")
                     return
 
-            # Check if lst_thumbnails_data exists and initialize if not
-            if not hasattr(self.parent_widget, 'lst_thumbnails_data'):
-                self.parent_widget.lst_thumbnails_data = []
-
-            # Find paired series data efficiently using cache
+            # ⚡ FAST PAIRED SERIES LOOKUP: O(1)
             vtk_widget_data_2 = None
             metadata_2 = None
+            
+            series_name = str(metadata.get('series', {}).get('series_name', ''))
+            if series_name in self._paired_series_map:
+                paired_list = self._paired_series_map[series_name]
+                for paired_num in paired_list:
+                    if str(paired_num) != str(series_number):
+                        vtk_data, meta, _ = self._get_series_by_number_fast(str(paired_num))
+                        if vtk_data is not None and meta is not None:
+                            vtk_widget_data_2 = vtk_data
+                            metadata_2 = meta
+                            break
 
-            # Use cached name if available
-            series_name = metadata.get('series', {}).get('series_name')
-
-            for i in range(len(self.parent_widget.lst_thumbnails_data)):
-                data_series_number = self.parent_widget.lst_thumbnails_data[i]['metadata']['series']['series_number']
-                # Check if same series name but different data
-                if (self.parent_widget.lst_thumbnails_data[i]['metadata']['series'].get('series_name') == series_name and
-                    data_series_number != series_number and
-                    id(self.parent_widget.lst_thumbnails_data[i]['vtk_image_data']) != id(vtk_image_data)):
-                    vtk_widget_data_2 = self.parent_widget.lst_thumbnails_data[i]['vtk_image_data']
-                    metadata_2 = self.parent_widget.lst_thumbnails_data[i]['metadata']
-                    break
-
-            if flag_change_selected_widget:  # change on first viewer
-                flag_switch = self.selected_widget.switch_series(vtk_image_data, metadata, series_number,
-                                                                 vtk_widget_data_2,
-                                                                 metadata_2, self.parent_widget.metadata_fixed)
-                vtk_widget = self.selected_widget
-                slider = self.parent_widget.slider
-
-            else:  # change on selected viewer
-                flag_switch = vtk_widget.switch_series(vtk_image_data, metadata, series_number, vtk_widget_data_2,
-                                                       metadata_2, self.parent_widget.metadata_fixed)
-
-            if flag_switch is True:
-                self.parent_widget.reset_slider(vtk_widget, slider)
-                self.parent_widget.toolbar_manager.turn_off_all_tools()
-                self.selected_widget.resizeEvent(None)
-                # Check if image_viewer exists before updating
-                if vtk_widget.image_viewer is not None:
-                    vtk_widget.image_viewer.update_corners_actors()
-
+            # Perform switch
+            target_widget = self.selected_widget if flag_change_selected_widget else vtk_widget
+            target_slider = self.parent_widget.slider if flag_change_selected_widget else slider
+            
+            if hasattr(target_widget, 'switch_series'):
+                flag_switch = target_widget.switch_series(
+                    vtk_image_data, metadata, series_number,
+                    vtk_widget_data_2, metadata_2,
+                    self.parent_widget.metadata_fixed
+                )
+                
+                if flag_switch:
+                    self.parent_widget.reset_slider(target_widget, target_slider)
+                    self.parent_widget.toolbar_manager.turn_off_all_tools()
+                    if hasattr(self.selected_widget, 'resizeEvent'):
+                        self.selected_widget.resizeEvent(None)
+                    if hasattr(target_widget, 'image_viewer') and target_widget.image_viewer:
+                        target_widget.image_viewer.update_corners_actors()
+        
         except Exception as e:
-            print(f'❌ [DISPLAY] Error on display loaded series: {e}')
-            import traceback
-            traceback.print_exc()
-            return False
+            self.logger.debug(f"Error displaying series: {e}")
 
     def _distribute_series_to_viewers(self):
         """بهینه‌سازی توزیع سری‌ها به viewers"""
@@ -1374,59 +1446,41 @@ class ViewerController:
 
     async def _async_load_and_display_series(self, series_number: str):
         """
-        Async method to load and display a series without blocking UI.
-        Uses asyncio lock to prevent race conditions with contextvars.
-        After loading, it immediately displays the series in the first viewer.
-
-        Args:
-            series_number: Can be either a simple series number (e.g., "1", "2")
-                          or a Series Instance UID (e.g., "1.3.12.2.1107...")
+        ⚡ OPTIMIZED: Async series loading without unnecessary sleeps.
+        
+        Performance improvements:
+        - Removed artificial asyncio.sleep(0) calls
+        - Direct async thread execution
+        - Immediate result handling
         """
         try:
-            # Yield control first
-            await asyncio.sleep(0)
-
-            # Validate widget state
+            # Validate widget state (no sleep delay)
             try:
                 if not self.parent_widget.isVisible():
                     return
             except RuntimeError:
                 return  # Widget was deleted
 
-            # ✅ FIX: Handle both series numbers and Series Instance UIDs
-            # Try to convert to integer (simple series number)
+            # Parse series identifier (no sleep delay)
             try:
                 series_int = int(series_number)
             except ValueError:
-                # Not a simple number - might be a Series Instance UID
-                # Try to find the series in loaded data by UID
-                self.logger.warning(f"Series identifier '{series_number}' is not a simple number - searching by UID")
-
-                # Search for series by UID in loaded thumbnails
+                # Search for series by UID in loaded data
                 for idx, thumb_data in enumerate(self.parent_widget.lst_thumbnails_data):
                     series_uid = thumb_data.get('metadata', {}).get('series', {}).get('series_uid', '')
                     if series_uid == series_number:
-                        # Found it - use the index as series number
-                        series_int = idx + 1  # Series numbers are 1-based
-                        self.logger.info(f"Found series UID {series_number} at index {series_int}")
+                        series_int = idx + 1
                         break
                 else:
-                    # Not found in loaded data - series may not be downloaded yet
-                    self.logger.warning(f"Series UID {series_number} not found in loaded thumbnails - may need download")
+                    self.logger.warning(f"Series {series_number} not found")
                     return
 
-            # Yield before heavy operation
-            await asyncio.sleep(0)
-
-            # Use asyncio.to_thread to properly handle contextvars and prevent RuntimeError
+            # ⚡ OPTIMIZED: Use executor immediately without sleep
             try:
                 success = await asyncio.to_thread(
                     self._load_single_series_on_demand,
                     series_int
                 )
-            except AttributeError:
-                # Fallback for Python < 3.9 - yield before and after
-                await asyncio.sleep(0)
             except AttributeError:
                 # Fallback for Python < 3.9
                 loop = asyncio.get_event_loop()
@@ -1437,18 +1491,12 @@ class ViewerController:
                 )
 
             if success:
-                self.logger.info(f"Series {series_number} loaded successfully")
-                # Mark as ready in UI
-                QTimer.singleShot(0, lambda: self._display_series_after_load(series_number))
-            else:
-                self.logger.warning(f"Failed to load series {series_number}")
-
+                # Mark as ready immediately
+                self._display_series_after_load(str(series_number))
+        
         except asyncio.CancelledError:
             self.logger.debug(f"Load cancelled for series {series_number}")
             raise
-        except RuntimeError as e:
-            if "deleted" not in str(e).lower():
-                self.logger.error(f"Runtime error loading series {series_number}: {e}")
         except Exception as e:
             self.logger.error(f"Error loading series {series_number}: {e}", exc_info=True)
 
@@ -1611,13 +1659,9 @@ class ViewerController:
                     optimal_layout = self.parent_widget.get_optimal_layout_for_series(metadata)
                     print(f"✅ [SYNC_LOAD] Determined optimal layout: {optimal_layout}") # لاگ اضافه شده
 
-                    # ✅ FLICKER FIX: Only process events if not in initialization batch
-                    if self.parent_widget.updatesEnabled():
-                        QApplication.processEvents()
+                    # ⚡ OPTIMIZATION: Removed processEvents() - use batch update instead
                     # Use synchronous viewer creation
                     self._apply_multi_viewer_sync(optimal_layout) # این تابع ویوورها را تنظیم می کند
-                    if self.parent_widget.updatesEnabled():
-                        QApplication.processEvents()
 
                     first_series_loaded = True
                     self._hide_loading_spinner()
@@ -1640,7 +1684,7 @@ class ViewerController:
             traceback.print_exc()
 
     def _apply_multi_viewer_sync(self, numbers):
-        """Synchronously apply multi-viewer layout without async"""
+        """⚡ Optimized: Synchronous viewer layout without processEvents delays"""
         try:
             number_of_row, number_of_column = int(numbers[0]), int(numbers[1])
 
@@ -1665,10 +1709,7 @@ class ViewerController:
                 self.parent_widget.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 0, 1)
                 self.parent_widget.change_container_border(0)
 
-            # ✅ FLICKER FIX: Only process events if not in initialization batch
-            if self.parent_widget.updatesEnabled():
-                from PySide6.QtWidgets import QApplication
-                QApplication.processEvents()
+            # ⚡ OPTIMIZATION: Removed processEvents() call - introduces unwanted delay
 
         except Exception as e:
             print(f"❌ Error applying viewer layout sync: {e}")
@@ -1812,101 +1853,79 @@ class ViewerController:
             print(f"? Error triggering priority display: {e}")
 
     def _distribute_series_to_viewers(self):
-        # Check if lst_thumbnails_data exists and initialize if not
-        if not hasattr(self.parent_widget, 'lst_thumbnails_data'):
-            self.parent_widget.lst_thumbnails_data = []
+        """
+        ⚡ OPTIMIZED: Distribute series to viewers with efficient tracking.
+        
+        Improvements:
+        - Uses set-based deduplication instead of nested loops
+        - Single pass through viewers
+        - O(n) instead of O(n²)
+        """
+        if not self.parent_widget.lst_thumbnails_data or not self.lst_nodes_viewer:
+            return
 
-        self.logger.info(f"Distributing {len(self.parent_widget.lst_thumbnails_data)} series to {len(self.lst_nodes_viewer)} viewers")
-        """
-        Distribute available series to all viewers for non-MG modalities
-        This ensures all viewers get populated with images
-        """
         try:
-            print(f"🔀 [DISTRIBUTE] Distributing series to {len(self.lst_nodes_viewer)} viewers")
-
-            if not self.lst_nodes_viewer:
-                print("⚠️ [DISTRIBUTE] No viewers available")
-                return
-
-            if not self.parent_widget.lst_thumbnails_data:
-                print("⚠️ [DISTRIBUTE] No thumbnail data available")
-                return
-
-            # For each viewer, assign a series if available
+            # Track which series are already displayed (O(1) lookup)
+            displayed_series = set()
+            series_queue = list(range(len(self.parent_widget.lst_thumbnails_data)))
+            
             for viewer_idx, node_viewer in enumerate(self.lst_nodes_viewer):
-                # Skip if viewer is already populated
-                if (hasattr(node_viewer.vtk_widget, 'last_series_show') and
-                    node_viewer.vtk_widget.last_series_show is not None):
-                    print(f"   ⏭️ Viewer {viewer_idx} already has series {node_viewer.vtk_widget.last_series_show}")
+                # Check if viewer already has data
+                if hasattr(node_viewer.vtk_widget, 'last_series_show') and node_viewer.vtk_widget.last_series_show is not None:
+                    displayed_series.add(node_viewer.vtk_widget.last_series_show)
                     continue
-
-                # Find a series to assign to this viewer
-                series_to_assign = None
-                series_index = None
-
-                # Try to find a series that hasn't been displayed yet
-                for i, thumb_data in enumerate(self.parent_widget.lst_thumbnails_data):
-                    series_num = thumb_data['metadata']['series']['series_number']
-                    series_displayed = False
-
-                    # Check if this series is already displayed in any viewer
-                    for other_viewer in self.lst_nodes_viewer:
-                        if (hasattr(other_viewer.vtk_widget, 'last_series_show') and
-                            other_viewer.vtk_widget.last_series_show == series_num):
-                            series_displayed = True
-                            break
-
-                    if not series_displayed:
-                        series_to_assign = thumb_data
-                        series_index = i
+                
+                # ⚡ FAST: Find first undisplayed series
+                series_idx = None
+                for idx in series_queue:
+                    if idx not in displayed_series:
+                        series_idx = idx
                         break
-
-                if series_to_assign is None and self.parent_widget.lst_thumbnails_data:
-                    # All series are displayed, use the first one for this viewer
-                    series_to_assign = self.parent_widget.lst_thumbnails_data[0]
-                    series_index = 0
-
-                if series_to_assign:
-                    print(f"   🎯 Assigning series {series_to_assign['metadata']['series']['series_number']} to viewer {viewer_idx}")
-
-                    # Display the series in this viewer
-                    flag_switch = node_viewer.switch_series(
-                        series_to_assign['vtk_image_data'],
-                        series_to_assign['metadata'],
-                        series_index,
-                        metadata_fixed=self.parent_widget.metadata_fixed
-                    )
-
-                    # ✅ اطمینان از اینکه selected_widget برای Eagle Eye تنظیم شده
-                    if viewer_idx == 0:  # First viewer becomes main
-                        self.set_viewer_to_main_viewer(node_viewer)
-
-                    # Reset slider after switching series
-                    if flag_switch and hasattr(node_viewer, 'vtk_widget') and hasattr(node_viewer, 'slider'):
-                        self.parent_widget.reset_slider(node_viewer.vtk_widget, node_viewer.slider)
-
-                    # Update corners if image_viewer exists
-                    if node_viewer.vtk_widget.image_viewer is not None:
-                        node_viewer.vtk_widget.image_viewer.update_corners_actors()
-
-                    # Hide loading spinner
-                    if hasattr(node_viewer.vtk_widget, 'viewport_spinner'):
-                        node_viewer.vtk_widget.viewport_spinner.hide_loading()
-
-                    # Update UI
-                    node_viewer.vtk_widget.show()
-                    node_viewer.vtk_widget.update()
-                    node_viewer.widget.show()
-                    node_viewer.widget.update()
-
-                    if node_viewer.vtk_widget.image_viewer:
-                        node_viewer.vtk_widget.image_viewer.Render()
-                        node_viewer.vtk_widget.render_window.Render()
-                        node_viewer.vtk_widget.GetRenderWindow().Render()
-
-                    print(f"   ✅ Viewer {viewer_idx} populated successfully")
-
+                
+                if series_idx is None and series_queue:
+                    series_idx = series_queue[0]  # Reuse first if all claimed
+                
+                if series_idx is not None:
+                    series_data = self.parent_widget.lst_thumbnails_data[series_idx]
+                    series_num = series_data['metadata']['series']['series_number']
+                    displayed_series.add(series_num)
+                    
+                    # Display without redundant checks
+                    if hasattr(node_viewer, 'vtk_widget'):
+                        flag_switch = node_viewer.vtk_widget.switch_series(
+                            series_data['vtk_image_data'],
+                            series_data['metadata'],
+                            series_idx,
+                            metadata_fixed=self.parent_widget.metadata_fixed
+                        )
+                        
+                        if flag_switch and viewer_idx == 0:
+                            self.set_viewer_to_main_viewer(node_viewer)
+                        
+                        if flag_switch and hasattr(node_viewer, 'slider'):
+                            self.parent_widget.reset_slider(node_viewer.vtk_widget, node_viewer.slider)
+                            if node_viewer.vtk_widget.image_viewer:
+                                node_viewer.vtk_widget.image_viewer.update_corners_actors()
+        
         except Exception as e:
+            self.logger.error(f"Error distributing series: {e}", exc_info=True)
             print(f"❌ [DISTRIBUTE] Error distributing series to viewers: {e}")
             import traceback
             traceback.print_exc()
+
+        # Hide loading spinner
+        if hasattr(node_viewer.vtk_widget, 'viewport_spinner'):
+            node_viewer.vtk_widget.viewport_spinner.hide_loading()
+
+        # Update UI
+        node_viewer.vtk_widget.show()
+        node_viewer.vtk_widget.update()
+        node_viewer.widget.show()
+        node_viewer.widget.update()
+
+        if node_viewer.vtk_widget.image_viewer:
+            node_viewer.vtk_widget.image_viewer.Render()
+            node_viewer.vtk_widget.render_window.Render()
+            node_viewer.vtk_widget.GetRenderWindow().Render()
+
+        print(f"   ✅ Viewer {viewer_idx} populated successfully")

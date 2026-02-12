@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout,
                                QMainWindow, QStackedWidget)
 
 from PacsClient.utils.config import JSON_PATH, ICON_PATH
-from PacsClient.utils.db_manager import init_database
+from PacsClient.utils.db_manager import init_database, migrate_fix_null_study_paths
 from . import settings_ui
 from . import home_ui
 from .web_browser_ui import WebBrowserWidget
@@ -51,6 +51,8 @@ class ControlPanelInterface(QMainWindow):
         """)
 
         init_database()
+        # ✅ Migration: Fix studies with NULL study_path by checking disk
+        migrate_fix_null_study_paths()
         self.showMaximized()
 
     def __add_AIPacs_tab(self):

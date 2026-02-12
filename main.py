@@ -51,6 +51,8 @@ import os
 
 if sys.platform == 'win32':
     # Use software rendering for maximum compatibility
+    # NOTE: GPU-related errors in console during startup are expected and harmless when using software OpenGL
+    # Examples: "Failed to create GLES3 context", "ContextResult::kFatalFailure"
     os.environ["QT_OPENGL"] = "software"
     os.environ["QSG_RHI_BACKEND"] = "d3d11"  # Use Direct3D 11 instead of software
     # Additional flags to handle GPU context creation issues

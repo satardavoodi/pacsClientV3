@@ -79,31 +79,49 @@ class DatabaseManager:
         Initialize database records for study
         
         Args:
-            task: Download task
+            task: Download task (contains complete patient information)
             metadata: Study metadata from server
             
         Returns:
             Dict with created PKs (patient_pk, study_pk, series_pks)
         """
         try:
-            # Insert patient
+            # Use patient information from task (preferred) or metadata (fallback)
+            patient_birth_date = task.patient_birth_date or metadata.patient_info.birth_date
+            patient_sex = task.patient_sex or metadata.patient_info.sex
+            patient_age = task.patient_age or metadata.patient_info.age
+            
+            # Insert patient with complete information
             patient_pk = insert_patient(
                 patient_id=task.patient_id,
                 name=task.patient_name,
-                birth_date=metadata.patient_info.birth_date,
-                sex=metadata.patient_info.sex,
-                age=metadata.patient_info.age
+                birth_date=patient_birth_date,
+                sex=patient_sex,
+                age=patient_age
             )
             
-            # Insert study
+            # Use study_time from task (preferred) or metadata (fallback)
+            study_time = task.study_time or metadata.study_time
+            
+            # Use body_part from task or series (fallback)
+            body_part = task.body_part
+            if not body_part and metadata.series_list:
+                # Try to get body_part from first series with body_part_examined
+                for series in metadata.series_list:
+                    if series.body_part_examined:
+                        body_part = series.body_part_examined
+                        break
+            
+            # Insert study with complete information
             study_pk = insert_study(
                 study_uid=task.study_uid,
                 patient_fk=patient_pk,
                 study_date=task.study_date,
-                study_time=metadata.study_time,
+                study_time=study_time,
                 study_description=task.description,
                 institution_name=metadata.patient_info.patient_name,  # Use from metadata if available
                 modality=task.modality,
+                body_part=body_part,
                 number_of_series=len(metadata.series_list),
                 number_of_instances=metadata.total_image_count,
                 study_path=str(task.output_dir) if task.output_dir else None
@@ -129,7 +147,11 @@ class DatabaseManager:
             
             logger.info(
                 f"💾 DB initialized: Patient PK={patient_pk}, Study PK={study_pk}, "
-                f"{len(series_pks)} series"
+                f"{len(series_pks)} series with complete patient information"
+            )
+            logger.info(
+                f"💾 Patient info: Age={patient_age}, Sex={patient_sex}, "
+                f"Birth Date={patient_birth_date}, Body Part={body_part}"
             )
             
             return {
@@ -142,10 +164,16 @@ class DatabaseManager:
             # Handle UNIQUE constraint error when study already exists
             import sqlite3
             if isinstance(e, sqlite3.IntegrityError) and 'UNIQUE constraint failed' in str(e):
-                logger.warning(f"⚠️ Study already exists in database: {task.study_uid}, querying existing records")
+                logger.warning(f"⚠️ Study already exists in database: {task.study_uid}, updating existing records")
                 try:
-                    # Query existing records
+                    # Import update functions
+                    from PacsClient.utils.db_manager import (
+                        update_patient_missing_fields,
+                        update_study_missing_fields,
+                        update_series_missing_fields
+                    )
                     from PacsClient.utils.database import get_connection_database
+                    
                     conn = get_connection_database()
                     cur = conn.cursor()
                     
@@ -154,22 +182,51 @@ class DatabaseManager:
                     patient_row = cur.fetchone()
                     patient_pk = patient_row[0] if patient_row else None
                     
+                    # Update patient with missing fields
+                    if patient_pk:
+                        update_patient_missing_fields(
+                            patient_pk,
+                            birth_date=patient_birth_date,
+                            sex=patient_sex,
+                            age=patient_age
+                        )
+                        logger.info(f"💾 Updated patient {patient_pk} with complete information")
+                    
                     # Get study_pk
                     cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (task.study_uid,))
                     study_row = cur.fetchone()
                     study_pk = study_row[0] if study_row else None
                     
-                    # Get series_pks
+                    # Update study with missing fields
+                    if study_pk:
+                        update_study_missing_fields(
+                            study_pk,
+                            study_time=study_time,
+                            study_description=task.description,
+                            modality=task.modality,
+                            body_part=body_part,
+                            study_path=str(task.output_dir) if task.output_dir else None
+                        )
+                        logger.info(f"💾 Updated study {study_pk} with complete information (body_part={body_part})")
+                    
+                    # Get series_pks and update each with body_part_examined
                     series_pks = {}
                     for series_info in metadata.series_list:
                         cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_info.series_uid,))
                         series_row = cur.fetchone()
                         if series_row:
-                            series_pks[series_info.series_uid] = series_row[0]
+                            series_pk = series_row[0]
+                            series_pks[series_info.series_uid] = series_pk
+                            # Update series with missing body_part_examined
+                            if series_info.body_part_examined:
+                                update_series_missing_fields(
+                                    series_pk,
+                                    body_part_examined=series_info.body_part_examined
+                                )
                     
                     logger.info(
-                        f"💾 DB records found: Patient PK={patient_pk}, Study PK={study_pk}, "
-                        f"{len(series_pks)} series"
+                        f"💾 DB records updated: Patient PK={patient_pk}, Study PK={study_pk}, "
+                        f"{len(series_pks)} series with complete information"
                     )
                     
                     return {
@@ -178,8 +235,8 @@ class DatabaseManager:
                         'series_pks': series_pks
                     }
                 except Exception as query_error:
-                    logger.error(f"❌ Failed to query existing records: {query_error}")
-                    raise DatabaseError(f"Study exists but failed to query records: {query_error}")
+                    logger.error(f"❌ Failed to update existing records: {query_error}")
+                    raise DatabaseError(f"Study exists but failed to update records: {query_error}")
             else:
                 logger.error(f"❌ Database initialization failed: {e}")
                 raise DatabaseError(f"Failed to initialize study: {e}")

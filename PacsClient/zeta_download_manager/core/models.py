@@ -115,6 +115,12 @@ class DownloadTask:
     study_time: Optional[str] = None
     institution_name: Optional[str] = None
     
+    # Complete patient information (captured during download)
+    patient_age: Optional[str] = None
+    patient_sex: Optional[str] = None
+    patient_birth_date: Optional[str] = None
+    body_part: Optional[str] = None
+    
     @property
     def total_image_count(self) -> int:
         """Total images to download"""

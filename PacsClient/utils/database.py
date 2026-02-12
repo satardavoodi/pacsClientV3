@@ -901,6 +901,108 @@ def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_
     return study_pk
 
 
+def migrate_fix_null_study_paths() -> dict:
+    """
+    Migration function to fix studies with NULL study_path by checking disk.
+    
+    When studies are imported from Socket/PACS, they may have study_path=NULL in the database.
+    This function:
+    1. Finds all studies with study_path IS NULL
+    2. Checks if files exist on disk at SOURCE_PATH/{study_uid}
+    3. Updates database with correct study_path if files exist
+    
+    Returns:
+        dict: {'updated': count, 'checked': count, 'not_found': count}
+    """
+    from PacsClient.utils.config import SOURCE_PATH
+    from pathlib import Path
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    # Silent migration - only reports summary at end
+    logger.debug("=" * 80)
+    logger.debug("🔧 [MIGRATION] Starting study_path NULL fix migration...")
+    logger.debug("=" * 80)
+    
+    try:
+        conn = get_connection_database()
+        cur = conn.cursor()
+        
+        # Find all studies with NULL study_path
+        cur.execute("""
+            SELECT s.study_pk, s.study_uid, s.patient_fk, p.patient_name
+            FROM studies s
+            LEFT JOIN patients p ON s.patient_fk = p.patient_pk
+            WHERE s.study_path IS NULL
+            ORDER BY s.study_pk
+        """)
+        
+        null_studies = cur.fetchall()
+        logger.debug(f"📋 Found {len(null_studies)} studies with NULL study_path")
+        
+        if not null_studies:
+            logger.debug("✅ No studies with NULL study_path found")
+            return {'updated': 0, 'checked': 0, 'not_found': 0}
+        
+        updated = 0
+        not_found = 0
+        
+        for study_pk, study_uid, patient_fk, patient_name in null_studies:
+            try:
+                # Check if study files exist on disk
+                if study_uid:
+                    potential_path = Path(SOURCE_PATH) / study_uid
+                    if potential_path.exists():
+                        # Update study_path in database
+                        cur.execute("""
+                            UPDATE studies
+                            SET study_path = ?
+                            WHERE study_pk = ?
+                        """, (str(potential_path), study_pk))
+                        
+                        logger.debug(f"✅ Updated: {patient_name} ({study_uid[:40]}...)")
+                        logger.debug(f"   Path: {potential_path}")
+                        updated += 1
+                    else:
+                        # Silently count missing studies - they may be archived or deleted
+                        logger.debug(f"❌ Not found: {patient_name} ({study_uid[:40]}...)")
+                        logger.debug(f"   Expected path: {potential_path}")
+                        not_found += 1
+                else:
+                    logger.debug(f"❌ No study_uid for study_pk={study_pk}")
+                    not_found += 1
+                    
+            except Exception as e:
+                logger.error(f"❌ Error processing study_pk={study_pk}: {e}")
+                not_found += 1
+        
+        # Commit all changes
+        conn.commit()
+        
+        # Only show summary if there were changes or issues
+        if updated > 0 or not_found > 0:
+            logger.info("-" * 80)
+            logger.info(f"📊 Migration Summary:")
+            if updated > 0:
+                logger.info(f"   ✅ Updated: {updated}")
+            if not_found > 0:
+                logger.info(f"   ⚠️  Not found on disk: {not_found}")
+            logger.info(f"   📋 Total checked: {len(null_studies)}")
+            logger.info("=" * 80)
+        
+        return {
+            'updated': updated,
+            'checked': len(null_studies),
+            'not_found': not_found
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Migration error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'updated': 0, 'checked': 0, 'not_found': 0, 'error': str(e)}
+
+
 def insert_series(series_uid: str, study_fk: int, series_name: str = None, series_number: str = None,
                   series_thk: str = None, series_description: str = None, orientation: str = None,
                   modality: str = None, image_count: int = 0, protocol_name: str = None,
