@@ -274,6 +274,17 @@ class ToolbarManager:
         self._position_update_timer.timeout.connect(self._update_soundbox_position)
         self._mic_button_ref = None  # رفرنس به دکمه میکروفون
 
+        # Inline mic UI (no popup)
+        self._mic_controls_widget = None
+        self._mic_pause_btn = None
+        self._mic_send_btn = None
+        self._mic_cancel_btn = None
+        self._mic_record_timer = QTimer(patient_widget)
+        self._mic_record_timer.setInterval(250)
+        self._mic_record_timer.setSingleShot(False)
+        self._mic_record_timer.timeout.connect(self._update_mic_record_ui)
+        self._mic_default_min_width = 45
+
         # Target debug (first-run tracing)
         self._target_debug_count = 0
 
@@ -1981,26 +1992,14 @@ class ToolbarManager:
         """Handle microphone button click - runs on main Qt thread"""
         selected_widget = self.patient_widget.selected_widget
 
-        # 1. ابتدا فریم ویس را بررسی کن
+        # Inline mode: no popups
         soundbox = self.get_soundbox()
-        
-        # ❌ تغییر: اگر در حال نمایش است و کاربر دوباره کلیک کرد، فقط hide کن
-        if soundbox.isVisible():
-            # Stop position update timer (CRITICAL: ensure it exists and is active)
-            if hasattr(self, '_position_update_timer') and self._position_update_timer is not None:
-                try:
-                    if self._position_update_timer.isActive():
-                        self._position_update_timer.stop()
-                except RuntimeError:
-                    pass  # Timer already deleted
-            soundbox.hide()
-            self.turn_on_off_mic_btn(False)
-            # تغییر آیکون به حالت عادی
-            mic_btn.setIcon(QIcon(f"{ICON_PATH}/mic.png"))
-            self._mic_button_ref = None
+        soundbox.set_inline_mode(True)
+
+        if soundbox.is_recording():
             return
 
-        # 2. چک میکروفون
+        # Check microphone
         if not soundbox.check_microphone_available():
             self.tools_button[self.tool_access.MICROPHONE].setChecked(False)
             from PySide6.QtWidgets import QMessageBox
@@ -2008,49 +2007,12 @@ class ToolbarManager:
                                 "No microphone device found. Please connect a microphone and try again.")
             return
 
-        # 3. نمایش دیالوگ تأیید
-        from PySide6.QtWidgets import QMessageBox
-        reply = QMessageBox.question(
-            self.patient_widget,
-            'Start Voice Recording',
-            'Do you want to start recording audio?',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.No:
+        started = soundbox.start_recording_inline(selected_widget)
+        if not started:
             mic_btn.setChecked(False)
             return
 
-        # 4. ذخیره رفرنس دکمه برای به‌روزرسانی موقعیت
-        self._mic_button_ref = mic_btn
-        
-        # 5. تنظیم موقعیت فریم و نمایش
-        soundbox.show_under(mic_btn)
-        soundbox.activateWindow()
-        soundbox.raise_()
-        
-        # تغییر آیکون به حالت ضبط (قرمز)
-        mic_btn.setIcon(qta.icon('fa5s.microphone', color='#ef4444'))
-        
-        # شروع تایمر به‌روزرسانی موقعیت (ensure timer exists and is on main thread)
-        if hasattr(self, '_position_update_timer') and self._position_update_timer is not None:
-            try:
-                if not self._position_update_timer.isActive():
-                    self._position_update_timer.start()
-            except RuntimeError as e:
-                print(f"[TIMER WARNING] Could not start position timer: {e}")
-
-        # 6. شروع/توقف ضبط
-        soundbox.toggle_recording(selected_widget)
-
-        # 7. وضعیت دکمه
-        if self.tool_selected == self.tool_access.MICROPHONE:
-            self.tool_selected = None
-            self.update_audio_counter()
-        else:
-            self.tool_selected = self.tool_access.MICROPHONE
-            self.handle_buttons_checked()
+        self._set_mic_recording_ui(True)
 
     def toggle_microphone(self, selected_widget, mic_btn):
         if self.tool_selected == self.tool_access.MICROPHONE:
@@ -2132,6 +2094,78 @@ class ToolbarManager:
             else:
                 mic_btn.setChecked(False)
                 self.tool_selected = None
+
+        if status is False:
+            self._set_mic_recording_ui(False)
+
+    def _set_mic_recording_ui(self, active: bool):
+        mic_btn: BadgeButton = self.tools_button[self.tool_access.MICROPHONE]
+
+        if active:
+            mic_btn.setChecked(True)
+            mic_btn.setIcon(QIcon())
+            mic_btn.setText("00:00")
+            mic_btn.setMinimumWidth(80)
+
+            if self._mic_controls_widget is not None:
+                self._mic_controls_widget.setVisible(True)
+
+            if not self._mic_record_timer.isActive():
+                self._mic_record_timer.start()
+
+            self.tool_selected = self.tool_access.MICROPHONE
+            self.handle_buttons_checked()
+            return
+
+        # Reset to idle
+        if self._mic_record_timer.isActive():
+            self._mic_record_timer.stop()
+
+        mic_btn.setChecked(False)
+        mic_btn.setText("")
+        mic_btn.setIcon(QIcon(f"{ICON_PATH}/mic.png"))
+        mic_btn.setMinimumWidth(self._mic_default_min_width)
+
+        if self._mic_controls_widget is not None:
+            self._mic_controls_widget.setVisible(False)
+
+        self.tool_selected = None
+        self.handle_buttons_checked()
+
+    def _update_mic_record_ui(self):
+        soundbox = self.get_soundbox()
+        if not soundbox.is_recording():
+            self._set_mic_recording_ui(False)
+            self.update_audio_counter()
+            return
+
+        mic_btn: BadgeButton = self.tools_button[self.tool_access.MICROPHONE]
+        mic_btn.setText(soundbox.get_elapsed_label())
+
+        if self._mic_pause_btn is not None:
+            if soundbox.is_paused():
+                self._mic_pause_btn.setIcon(qta.icon('fa5s.play', color='#fbbf24'))
+                self._mic_pause_btn.setToolTip('Resume Recording')
+            else:
+                self._mic_pause_btn.setIcon(qta.icon('fa5s.pause', color='#fbbf24'))
+                self._mic_pause_btn.setToolTip('Pause Recording')
+
+    def _on_mic_cancel(self):
+        soundbox = self.get_soundbox()
+        soundbox.cancel_recording_inline()
+        self._set_mic_recording_ui(False)
+        self.update_audio_counter()
+
+    def _on_mic_send(self):
+        soundbox = self.get_soundbox()
+        soundbox.stop_and_save_inline()
+        self._set_mic_recording_ui(False)
+        self.update_audio_counter()
+
+    def _on_mic_pause_toggle(self):
+        soundbox = self.get_soundbox()
+        soundbox.toggle_pause_inline()
+        self._update_mic_record_ui()
 
     def _get_study_uid(self):
         """Get study UID from selected widget"""
@@ -5567,6 +5601,65 @@ class ToolbarManager:
         mic_layout.addWidget(mic_menu_btn)
         mic_layout.addWidget(mic_btn)
         toolbar_layout.addWidget(mic_widget)
+
+        # Inline mic controls: cancel / send / pause
+        mic_controls_widget = QWidget(self.patient_widget)
+        mic_controls_layout = QHBoxLayout(mic_controls_widget)
+        mic_controls_layout.setContentsMargins(0, 0, 0, 0)
+        mic_controls_layout.setSpacing(2)
+
+        def _mic_ctrl_style(border_color: str) -> str:
+            return f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #374151, stop:1 #1f2937);
+                    border: 1px solid {border_color};
+                    border-radius: 6px;
+                    padding: 4px;
+                    min-width: 28px;
+                    min-height: 28px;
+                    max-width: 28px;
+                    max-height: 28px;
+                }}
+                QPushButton:hover {{
+                    background: {border_color};
+                }}
+            """
+
+        mic_cancel_btn = QPushButton()
+        mic_cancel_btn.setToolTip('Cancel Recording')
+        mic_cancel_btn.setCursor(Qt.PointingHandCursor)
+        mic_cancel_btn.setIcon(qta.icon('fa5s.times', color='#ef4444'))
+        mic_cancel_btn.setIconSize(QSize(16, 16))
+        mic_cancel_btn.setStyleSheet(_mic_ctrl_style('#ef4444'))
+        mic_cancel_btn.clicked.connect(self._on_mic_cancel)
+
+        mic_send_btn = QPushButton()
+        mic_send_btn.setToolTip('Send and Finish')
+        mic_send_btn.setCursor(Qt.PointingHandCursor)
+        mic_send_btn.setIcon(qta.icon('fa5s.check', color='#22c55e'))
+        mic_send_btn.setIconSize(QSize(16, 16))
+        mic_send_btn.setStyleSheet(_mic_ctrl_style('#22c55e'))
+        mic_send_btn.clicked.connect(self._on_mic_send)
+
+        mic_pause_btn = QPushButton()
+        mic_pause_btn.setToolTip('Pause Recording')
+        mic_pause_btn.setCursor(Qt.PointingHandCursor)
+        mic_pause_btn.setIcon(qta.icon('fa5s.pause', color='#fbbf24'))
+        mic_pause_btn.setIconSize(QSize(16, 16))
+        mic_pause_btn.setStyleSheet(_mic_ctrl_style('#fbbf24'))
+        mic_pause_btn.clicked.connect(self._on_mic_pause_toggle)
+
+        mic_controls_layout.addWidget(mic_cancel_btn)
+        mic_controls_layout.addWidget(mic_send_btn)
+        mic_controls_layout.addWidget(mic_pause_btn)
+        mic_controls_widget.setVisible(False)
+
+        toolbar_layout.addWidget(mic_controls_widget)
+        self._mic_controls_widget = mic_controls_widget
+        self._mic_cancel_btn = mic_cancel_btn
+        self._mic_send_btn = mic_send_btn
+        self._mic_pause_btn = mic_pause_btn
 
         self.tools_button[self.tool_access.MICROPHONE] = mic_btn
         self.update_audio_counter()
