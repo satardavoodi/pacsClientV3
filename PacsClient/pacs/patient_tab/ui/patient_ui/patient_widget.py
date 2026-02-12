@@ -1798,6 +1798,10 @@ class PatientWidget(QWidget):
             series_no = str(metadata['series']['series_number'])
             # حالا این سری آماده است
             self.thumbnail_manager.set_series_ready(series_no)
+            
+            # ⚡ OPTIMIZATION: Rebuild indices after data change for fast lookups
+            # This is a O(n) one-time cost when new series is added
+            self.viewer_controller._rebuild_series_index()
         except Exception as e:
             print("set ready border failed:", e)
 

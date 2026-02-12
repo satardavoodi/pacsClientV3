@@ -493,6 +493,44 @@ class DownloadManagerWidget(QWidget):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+            QScrollBar:vertical {
+                border: 1px solid #4b5563;
+                background: #1f2937;
+                width: 12px;
+                margin: 12px 0px 12px 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #374151;
+                min-height: 40px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #4b5563;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
+                height: 0px;
+            }
+        """)
         
         details_content = QWidget()
         details_content_layout = QVBoxLayout(details_content)
@@ -789,6 +827,38 @@ class DownloadManagerWidget(QWidget):
                 background: #1a202c;
                 border: 1px solid #374151;
                 border-radius: 4px;
+            }
+            QScrollBar:vertical {
+                border: 1px solid #4b5563;
+                background: #1f2937;
+                width: 12px;
+                margin: 12px 0px 12px 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #374151;
+                min-height: 40px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #4b5563;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
+                height: 0px;
             }
         """)
         
@@ -2593,22 +2663,40 @@ class DownloadManagerWidget(QWidget):
             }
             
             QScrollBar:vertical {
-                background: #1a202c;
+                border: 1px solid #4b5563;
+                background: #1f2937;
                 width: 12px;
-                border: none;
+                margin: 12px 0px 12px 0px;
+                border-radius: 6px;
             }
             
             QScrollBar::handle:vertical {
                 background: #374151;
-                border-radius: 6px;
-                min-height: 30px;
+                min-height: 40px;
+                border-radius: 5px;
             }
             
             QScrollBar::handle:vertical:hover {
                 background: #4b5563;
             }
             
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
                 height: 0px;
             }
         """)
