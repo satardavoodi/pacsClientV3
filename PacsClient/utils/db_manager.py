@@ -35,7 +35,7 @@ def insert_series(series_uid: str, study_fk: int, series_name: str = None, serie
 
 
 def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_number: int = None, rows: int = None,
-                    columns: int = None, window_width: float = 127.5, window_center: float = 255.0,
+                    columns: int = None, window_width: float = None, window_center: float = None,
                     is_rgb: bool = False, group_id=0, image_position_patient=None, image_orientation_patient=None,
                     pixel_spacing=None, direction=None) -> int:
     return database.insert_instance(sop_uid, series_fk, instance_path, instance_number, rows, columns, window_width,

@@ -493,6 +493,19 @@ class SeriesDownloader:
                     rows = dcm.get('Rows', 0)
                     columns = dcm.get('Columns', 0)
                     
+                    # Extract window/level from DICOM tags
+                    window_width = None
+                    window_center = None
+                    try:
+                        ww = dcm.get('WindowWidth', None)
+                        wc = dcm.get('WindowCenter', None)
+                        if ww is not None and wc is not None:
+                            # Handle multi-value WW/WC (take first value)
+                            window_width = float(ww[0]) if hasattr(ww, '__iter__') and not isinstance(ww, str) else float(ww)
+                            window_center = float(wc[0]) if hasattr(wc, '__iter__') and not isinstance(wc, str) else float(wc)
+                    except (ValueError, TypeError, IndexError):
+                        pass
+                    
                     # Create instance record
                     instance_record = {
                         'sop_uid': str(sop_uid),
@@ -500,7 +513,9 @@ class SeriesDownloader:
                         'instance_path': str(dcm_file),
                         'instance_number': int(instance_number),
                         'rows': int(rows),
-                        'columns': int(columns)
+                        'columns': int(columns),
+                        'window_width': window_width,
+                        'window_center': window_center
                     }
                     
                     instances_to_insert.append(instance_record)

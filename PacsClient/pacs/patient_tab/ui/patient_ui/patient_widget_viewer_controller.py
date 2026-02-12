@@ -424,52 +424,72 @@ class ViewerController:
 
             raise
 
-        # Configure slider styling
+        # Configure slider styling - Chrome-style minimalist scrollbar
         try:
             slider.setStyleSheet("""
                 QSlider {
-                    background: rgba(0, 0, 0, 1);
-                    border-radius: 0px;
+                    background: transparent;
                     border: none;
-                    padding-top: 50px;
-                    padding-bottom: 50px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    padding-left: 0px;
+                    padding-right: 0px;
+                    min-width: 10px;
+                    max-width: 10px;
                 }
+                /* نوار عمودی (track) - سبک Chrome */
                 QSlider::groove:vertical {
-                    background: #90caf9;
-                    width: 6px;
-                    border-radius: 3px;
-                }
-                QSlider::handle:vertical {
-                    background: #90caf9;
+                    background: rgba(0, 0, 0, 0.1);
+                    width: 10px;
+                    border-radius: 5px;
+                    margin: 0px 0px;
                     border: none;
-                    width: 0;
-                    height: 0;
-                    border-radius: 0;
-                    margin: 0;
                 }
+                /* دسته (thumb) - مستطیلی با گوشه گرد مثل Chrome */
+                QSlider::handle:vertical {
+                    background: rgba(128, 128, 128, 0.5);
+                    width: 10px;
+                    min-height: 40px;
+                    border-radius: 5px;
+                    margin: 0px 0px;
+                    border: none;
+                }
+                /* حالت hover - تیره‌تر می‌شود */
                 QSlider::handle:vertical:hover {
-                    background: #5d99c6;
+                    background: rgba(128, 128, 128, 0.7);
                 }
+                /* حالت فشرده شدن - خیلی تیره */
+                QSlider::handle:vertical:pressed {
+                    background: rgba(96, 96, 96, 0.9);
+                }
+                /* قسمت بالای thumb - شفاف */
                 QSlider::sub-page:vertical {
-                    background: #90caf9;
-                    border-radius: 3px;
+                    background: transparent;
+                    border: none;
                 }
+                /* قسمت پایین thumb - شفاف */
                 QSlider::add-page:vertical {
-                    background: rgba(0,0,0,0.5);
-                    border-radius: 3px;
+                    background: transparent;
+                    border: none;
                 }
             """)
-            print("   ✅ Slider styling applied")
+            
+            # Force visibility and z-order
+            slider.setVisible(True)
+            slider.setAttribute(Qt.WA_TranslucentBackground, True)
+            
+            print("   ✅ Chrome-style scrollbar applied")
         except Exception as e:
             print(f"   ⚠️ Warning: Could not apply slider styling: {e}")
 
         try:
             print("   📍 Adding widgets to layout...")
+            # Add VTK widget to layout
             layout.addWidget(vtk_widget, 0, 0)
-            layout.addWidget(slider, 0, 0, alignment=Qt.AlignRight)
-            print("   ✅ Widgets added to layout")
+            
+            print("   ✅ VTK widget added to layout")
         except Exception as e:
-            print(f"   ❌ ERROR adding widgets to layout: {e}")
+            print(f"   ❌ ERROR adding vtk widget to layout: {e}")
             self.logger.error(f"Error adding widgets to layout: {e}", exc_info=True)
             raise
 
@@ -490,6 +510,49 @@ class ViewerController:
                 }
             """)
             print("   ✅ Container created")
+            
+            # CRITICAL: Add slider as DIRECT CHILD of VTK widget (not container)
+            # This ensures slider is ALWAYS on top of the image
+            print("   📍 Adding Chrome-style slider overlay on VTK widget...")
+            slider.setParent(vtk_widget)
+            slider.setGeometry(
+                vtk_widget.width() - 15,  # 15px from right edge (Chrome-style)
+                5,  # 5px from top
+                10,  # width (Chrome-style - 10px)
+                vtk_widget.height() - 10  # height minus margins
+            )
+            
+            # Force slider to be on top of everything with maximum z-order
+            slider.raise_()
+            slider.setVisible(True)
+            slider.show()
+            slider.update()
+            
+            # Connect resize event to reposition slider on VTK widget
+            def reposition_slider():
+                if slider and vtk_widget:
+                    try:
+                        slider.setGeometry(
+                            vtk_widget.width() - 15,  # Chrome-style positioning
+                            5,
+                            10,
+                            vtk_widget.height() - 10
+                        )
+                        slider.raise_()
+                        slider.update()
+                    except RuntimeError:
+                        pass  # Widget might be deleted
+            
+            # Store original resizeEvent of VTK widget
+            if hasattr(vtk_widget, 'resizeEvent'):
+                original_vtk_resize = vtk_widget.resizeEvent
+                def new_vtk_resize_event(event):
+                    original_vtk_resize(event)
+                    reposition_slider()
+                vtk_widget.resizeEvent = new_vtk_resize_event
+            
+            print("   ✅ Thin slider added as OVERLAY directly on VTK widget (ALWAYS on top)")
+            
         except Exception as e:
             print(f"   ❌ ERROR creating container: {e}")
             self.logger.error(f"Error creating container: {e}", exc_info=True)
@@ -531,6 +594,21 @@ class ViewerController:
         try:
             print("   🎚️ Configuring slider...")
 
+            # FORCE SLIDER VISIBILITY - critical for always showing slider
+            slider.setOrientation(Qt.Vertical)
+            slider.setInvertedAppearance(False)
+            slider.setInvertedControls(False)
+            slider.setTickPosition(QSlider.NoTicks)  # CRITICAL: No tick marks!
+            slider.setTickInterval(0)  # No ticks
+            slider.setSingleStep(1)
+            slider.setPageStep(1)
+            slider.setTracking(True)
+            slider.setFocusPolicy(Qt.StrongFocus)
+            slider.setMouseTracking(True)
+            slider.setVisible(True)
+            slider.show()
+            slider.setEnabled(True)
+
             # Check if methods exist
             if not hasattr(vtk_widget, 'set_slider'):
                 print("   ⚠️ VTK widget doesn't have set_slider yet (placeholder mode)")
@@ -538,7 +616,7 @@ class ViewerController:
                 slider.setMinimum(0)
                 slider.setMaximum(0)
                 slider.setValue(0)
-                print("   ✅ Slider configured in placeholder mode (0 slices)")
+                print("   ✅ Slider configured in placeholder mode (0 slices) - VISIBLE")
             else:
                 vtk_widget.set_slider(slider)
 
@@ -552,7 +630,7 @@ class ViewerController:
                 slider.setMinimum(0)
                 slider.setMaximum(last_slices)
                 slider.setValue(mid_slices)
-                print(f"   ✅ Slider configured (slices: {count_slices}, current: {mid_slices})")
+                print(f"   ✅ Slider configured (slices: {count_slices}, current: {mid_slices}) - VISIBLE")
         except Exception as e:
             print(f"   ❌ ERROR configuring slider: {e}")
             # Don't raise - allow viewer creation to continue

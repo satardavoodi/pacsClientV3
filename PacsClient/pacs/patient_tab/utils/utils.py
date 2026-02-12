@@ -611,6 +611,24 @@ def get_or_create_instance(files, itk_image: sitk.Image, series_pk, group_id):
         image_orientation_patient = _to_json(meta_dicom.get('ImageOrientationPatient', None))
         pixel_spacing = _to_json(meta_dicom.get('PixelSpacing', None))
 
+        # ✅ IMPROVED: Better fallback defaults for medical imaging
+        # Use None instead of 8-bit defaults - let viewer auto-calculate from pixel data
+        # Old defaults (127.5/255) were causing black images for CT scans
+        if window_width is None:
+            # Try to determine modality for better defaults
+            modality = meta_dicom.get('Modality', None)
+            if modality == 'CT':
+                window_width = 400  # CT soft tissue
+            else:
+                window_width = None  # Let viewer auto-calculate
+        
+        if window_center is None:
+            modality = meta_dicom.get('Modality', None)
+            if modality == 'CT':
+                window_center = 40  # CT soft tissue
+            else:
+                window_center = None  # Let viewer auto-calculate
+
         instance_data = {
             'sop_uid': sop_uid,
             'series_fk': series_pk,
@@ -618,8 +636,8 @@ def get_or_create_instance(files, itk_image: sitk.Image, series_pk, group_id):
             'instance_number': instance_number,
             'rows': rows,
             'columns': columns,
-            'window_width': window_width if window_width is not None else 127.5,
-            'window_center': window_center if window_center is not None else 255.0,
+            'window_width': window_width,
+            'window_center': window_center,
             'is_rgb': is_rgb,
             'group_id': group_id,
             'image_position_patient': image_position_patient,
