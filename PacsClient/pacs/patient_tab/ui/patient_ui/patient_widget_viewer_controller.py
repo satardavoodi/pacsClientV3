@@ -389,6 +389,10 @@ class ViewerController:
             if vtk_widget is None:
                 raise RuntimeError("vtk_widget is None after creation")
 
+            # Ensure toolbar context is available for tool auto-deactivation
+            if getattr(vtk_widget, 'patient_widget', None) is None:
+                vtk_widget.patient_widget = self.parent_widget
+
             if not isinstance(vtk_widget, QWidget):
                 raise RuntimeError(f"vtk_widget is not a QWidget, got {type(vtk_widget)}")
 
@@ -588,7 +592,7 @@ class ViewerController:
         """Create a lightweight VTK widget that defers rendering until data is loaded"""
         try:
             height = self.parent_widget.sidebar.height() if hasattr(self.parent_widget, 'sidebar') and self.parent_widget.sidebar else 480
-            vtk_widget = VTKWidget(height_viewer=height)
+            vtk_widget = VTKWidget(height_viewer=height, patient_widget=self.parent_widget)
 
             if vtk_widget is None:
                 raise RuntimeError("VTKWidget constructor returned None")
@@ -713,7 +717,7 @@ class ViewerController:
     def creator_vtk_widget(self):
         try:
             height = self.parent_widget.sidebar.height() if hasattr(self.parent_widget, 'sidebar') and self.parent_widget.sidebar else 480
-            return VTKWidget(height_viewer=height)
+            return VTKWidget(height_viewer=height, patient_widget=self.parent_widget)
         except Exception as e:
             print(f"❌ Error in creator_vtk_widget: {e}")
             self.logger.error(f"Error in creator_vtk_widget: {e}", exc_info=True)
@@ -1176,20 +1180,18 @@ class ViewerController:
                 for node in list(self.lst_nodes_viewer):  # Use list() to avoid modification during iteration
                     try:
                         node: NodeViewer
-                        # CRITICAL: Check if vtk_widget attribute exists before accessing
-                        if hasattr(node, 'vtk_widget'):
-                            vtk_widget: VTKWidget = node.vtk_widget
-                            if hasattr(vtk_widget, 'cleanup_image_viewer'):
-                                try:
-                                    vtk_widget.cleanup_image_viewer()
-                                except:
-                                    pass
+                        vtk_widget: VTKWidget = getattr(node, 'vtk_widget', None)
+                        if vtk_widget is not None and hasattr(vtk_widget, 'cleanup_image_viewer'):
+                            try:
+                                vtk_widget.cleanup_image_viewer()
+                            except:
+                                pass
 
-                        # Safe deletion
+                        # Safe cleanup: keep attributes but null them out to avoid AttributeError races
                         for attr in ('vtk_widget', 'widget', 'slider'):
                             try:
                                 if hasattr(node, attr):
-                                    delattr(node, attr)
+                                    setattr(node, attr, None)
                             except:
                                 pass
                     except Exception as e:
@@ -1204,6 +1206,12 @@ class ViewerController:
                 self._viewer_batch_queue.clear()
 
             self._render_batch_pending = False
+
+            # Ensure stale nodes are cleared after cleanup
+            try:
+                self.lst_nodes_viewer.clear()
+            except Exception:
+                pass
 
             print("✅ cleanup_all_viewers completed")
         except Exception as e:

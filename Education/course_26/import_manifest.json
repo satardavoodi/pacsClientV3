@@ -1,0 +1,12 @@
+{
+  "schema": "education-folder-import-v1",
+  "source_folder": "C:\\ai-pacs\\INO-POOYAN Viewer\\Storage\\Learn\\Course-1010",
+  "course_pk": 26,
+  "warnings": [
+    "Item-1070: encrypted items detected (7 files).",
+    "Item-1071: encrypted items detected (1 files).",
+    "Item-1072: encrypted items detected (9 files).",
+    "Item-1073: encrypted items detected (6 files).",
+    "Item-1074: encrypted items detected (7 files)."
+  ]
+}

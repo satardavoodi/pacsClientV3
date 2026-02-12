@@ -1,6 +1,16 @@
 import sys
 import os
 
+# ── Ensure the project venv is being used ────────────────────────────
+_expected_venv = os.path.normcase(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv"))
+if os.path.isdir(_expected_venv) and _expected_venv not in os.path.normcase(sys.executable):
+    print(
+        f"ERROR: You are running with {sys.executable}\n"
+        f"       This project requires its own virtual environment.\n"
+        f"       Please run:  .venv\\Scripts\\python.exe main.py"
+    )
+    sys.exit(1)
+
 # Fix Windows console encoding for emoji support
 if sys.platform == 'win32':
     try:

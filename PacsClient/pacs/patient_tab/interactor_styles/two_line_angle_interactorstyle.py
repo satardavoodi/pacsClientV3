@@ -146,6 +146,7 @@ class TwoLineAngleInteractorStyle(AbstractInteractorStyle):
             self.line2_widget = None
             self.text_actor = None
             self.auto_deactivate_tool()
+            return
 
         self.image_viewer.Render()
 

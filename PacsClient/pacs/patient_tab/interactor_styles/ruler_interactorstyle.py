@@ -66,10 +66,10 @@ class RulerInteractorStyle(AbstractInteractorStyle):
             self.is_active = False
             self.active_widget = self.create_widget()
             self.auto_deactivate_tool()
-        else:
-            self.emit_interaction()
-            self.set_widget_repr(self.active_widget, self.color, self.title + self.title_format)
+            return
 
+        self.emit_interaction()
+        self.set_widget_repr(self.active_widget, self.color, self.title + self.title_format)
         self.image_viewer.renderer.Render()
 
     def set_widget_repr(self, widget, color, title):

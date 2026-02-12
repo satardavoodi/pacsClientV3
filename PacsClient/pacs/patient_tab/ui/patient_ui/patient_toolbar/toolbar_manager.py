@@ -45,7 +45,8 @@ def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa'):
         else:  # file icon
             icon = QIcon(f"{ICON_PATH}/{icon_name}")
             btn.setIcon(icon)
-        btn.setIconSize(QSize(18, 18))
+        # Toolbar scale: +25%
+        btn.setIconSize(QSize(34, 34))
     
     btn.setCursor(Qt.PointingHandCursor)
     btn.setStyleSheet("""
@@ -83,7 +84,7 @@ def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa'):
     return btn
 
 
-def create_tool_btn(parent, name, icon_name=None, text_icon=None, icon_size: QSize | tuple[int, int] | int = 20):
+def create_tool_btn(parent, name, icon_name=None, text_icon=None, icon_size: QSize | tuple[int, int] | int = 25):
     """
     icon_size:
       - عدد (مثلاً 28) → 28x28
@@ -98,7 +99,7 @@ def create_tool_btn(parent, name, icon_name=None, text_icon=None, icon_size: QSi
     elif isinstance(icon_size, QSize):
         w, h = icon_size.width(), icon_size.height()
     else:
-        w = h = 28
+        w = h = 25
 
     btn = QPushButton(parent)
     btn.setCheckable(True)
@@ -110,8 +111,8 @@ def create_tool_btn(parent, name, icon_name=None, text_icon=None, icon_size: QSi
     else:
         icon = QIcon(f"{ICON_PATH}/{icon_name}")
         btn.setIcon(icon)
-        # اگر نمی‌خواهی به setIconSize دست بزنی، این خط را می‌توانی حذف کنی
-        btn.setIconSize(QSize(20, 20))  # این مقدار با qproperty-iconSize override می‌شود
+        # Keep this consistent with qproperty-iconSize.
+        btn.setIconSize(QSize(w, h))
 
     btn.setStyleSheet(f"""
         QPushButton {{
@@ -123,8 +124,8 @@ def create_tool_btn(parent, name, icon_name=None, text_icon=None, icon_size: QSi
             border-radius: 6px;
             padding: 4px 6px;
             margin: 1px;
-            min-width: 36px;
-            min-height: 36px;
+            min-width: 45px;
+            min-height: 45px;
             font-size: 13px;
             font-family: 'Roboto', sans-serif;
             font-weight: 500;
@@ -1310,6 +1311,7 @@ class ToolbarManager:
             self.tool_selected = None
             # Restore default interactor style
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             self.check_and_deactivate_tools()
@@ -1843,7 +1845,7 @@ class ToolbarManager:
 
             lock_sync_btn = QPushButton()
             lock_sync_btn.setIcon(qta.icon(lock_icon_name, color=lock_color))
-            lock_sync_btn.setIconSize(QSize(18, 18))
+            lock_sync_btn.setIconSize(QSize(22, 22))
             lock_sync_btn.setText(lock_label)
             lock_sync_btn.setCursor(Qt.PointingHandCursor)
             lock_sync_btn.setStyleSheet(f"""
@@ -2466,7 +2468,7 @@ class ToolbarManager:
                 if not flip_pixmap.isNull():
                     rotated = flip_pixmap.transformed(QTransform().rotate(-90))
                     flip_lr_btn.setIcon(QIcon(rotated))
-                    flip_lr_btn.setIconSize(QSize(18, 18))
+                    flip_lr_btn.setIconSize(QSize(22, 22))
             except Exception:
                 pass
             flip_lr_btn.clicked.connect(lambda: [
@@ -4547,6 +4549,8 @@ class ToolbarManager:
 
     def handle_buttons_checked(self):
         def _is_tool_active(tool_name: str) -> bool:
+            if self.tool_selected is None:
+                return False
             if self.tool_selected == tool_name:
                 return True
             if isinstance(self.tool_selected, str):
@@ -4554,24 +4558,55 @@ class ToolbarManager:
                 return tool_name in parts
             return False
 
+        stale_keys = []
+        changed_btns = []
         for tool_name, tool_btn in self.tools_button.items():
             try:
                 tool_btn: QPushButton
-                tool_btn.setChecked(_is_tool_active(tool_name))
+                tool_btn.isChecked()  # throws RuntimeError if deleted
+                should_be_checked = _is_tool_active(tool_name)
+                was_checked = tool_btn.isChecked()
+                if was_checked != should_be_checked:
+                    tool_btn.setChecked(should_be_checked)
+                    changed_btns.append(tool_btn)
+            except RuntimeError:
+                stale_keys.append(tool_name)
+            except Exception:
+                pass
+
+        for key in stale_keys:
+            try:
+                del self.tools_button[key]
             except Exception:
                 pass
 
         try:
             if hasattr(self, '_measurement_menu_btn'):
                 is_measurement_active = any(_is_tool_active(tool) for tool in self.measurement_tools)
-                self._measurement_menu_btn.setChecked(is_measurement_active)
+                was = self._measurement_menu_btn.isChecked()
+                if was != is_measurement_active:
+                    self._measurement_menu_btn.setChecked(is_measurement_active)
+                    changed_btns.append(self._measurement_menu_btn)
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, '_sync_menu_btn'):
+                is_sync_active = _is_tool_active(self.tool_access.TARGET)
+                was = self._sync_menu_btn.isChecked()
+                if was != is_sync_active:
+                    self._sync_menu_btn.setChecked(is_sync_active)
+                    changed_btns.append(self._sync_menu_btn)
         except Exception:
             pass
 
         try:
             if hasattr(self, '_mpr_menu_btn'):
                 is_mpr_dropdown_active = any(_is_tool_active(tool) for tool in self.mpr_dropdown_tools)
-                self._mpr_menu_btn.setChecked(is_mpr_dropdown_active)
+                was = self._mpr_menu_btn.isChecked()
+                if was != is_mpr_dropdown_active:
+                    self._mpr_menu_btn.setChecked(is_mpr_dropdown_active)
+                    changed_btns.append(self._mpr_menu_btn)
         except Exception:
             pass
 
@@ -4582,6 +4617,16 @@ class ToolbarManager:
                 mpr_btn.setChecked(_is_tool_active(self.tool_access.MPR) or self._is_any_mpr_open())
         except Exception:
             pass
+
+        # Force SYNCHRONOUS repaint for every button that changed state.
+        for btn in changed_btns:
+            try:
+                ss = btn.styleSheet()
+                if ss:
+                    btn.setStyleSheet(ss)
+                btn.repaint()
+            except Exception:
+                pass
 
     def _is_any_mpr_open(self):
         try:
@@ -4815,14 +4860,14 @@ class ToolbarManager:
         
         # بخش 1: محتوای toolbar
         content_widget = QWidget()
-        content_widget.setMinimumHeight(48)
+        content_widget.setMinimumHeight(60)
         content_layout = QHBoxLayout(content_widget)
         content_layout.setContentsMargins(5, 2, 5, 2)
         content_layout.setSpacing(4)
         
         # بخش 2: اسکرول‌بار (جداگانه)
         scrollbar_widget = QWidget()
-        scrollbar_widget.setFixedHeight(16)  # ارتفاع ثابت برای اسکرول‌بار
+        scrollbar_widget.setFixedHeight(20)  # +25%
         scrollbar_widget.setStyleSheet("background: transparent;")
         
         # ایجاد QScrollArea برای بخش محتوا
@@ -4851,13 +4896,13 @@ class ToolbarManager:
             QScrollBar:horizontal {
                 border: none;
                 background: #1f2937;
-                height: 12px;
+                height: 15px;
                 border-radius: 6px;
                 margin: 0px;
             }
             QScrollBar::handle:horizontal {
                 background: #4b5563;
-                min-width: 40px;
+                min-width: 50px;
                 border-radius: 6px;
             }
             QScrollBar::handle:horizontal:hover {
@@ -4885,7 +4930,7 @@ class ToolbarManager:
         # ایجاد یک ویجت container برای تمام محتوای نوار ابزار
         toolbar_container = QWidget()
         toolbar_container.setStyleSheet("background: transparent;")
-        toolbar_container.setMinimumHeight(48)  # ارتفاع container
+        toolbar_container.setMinimumHeight(60)  # +25%
         
         # ایجاد یک layout افقی برای کل نوار ابزار
         toolbar_layout = QHBoxLayout(toolbar_container)
@@ -4906,51 +4951,21 @@ class ToolbarManager:
         # ============================================================
         logo_widget = QWidget()
         logo_widget.setFixedWidth(250)
-        logo_widget.setFixedHeight(38)
+        logo_widget.setFixedHeight(48)
         logo_layout = QHBoxLayout(logo_widget)
         logo_layout.setContentsMargins(8, 1, 8, 1)
         logo_layout.setSpacing(8)
         logo_layout.setAlignment(Qt.AlignCenter)
 
-        # AI Logo
-        logo_label = QLabel()
-        logo_pixmap = QPixmap("PacsClient/login/images/aiLogo.png")
-        if not logo_pixmap.isNull():
-            logo_pixmap = logo_pixmap.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            logo_label.setPixmap(logo_pixmap)
-        logo_label.setAlignment(Qt.AlignCenter)
-        logo_label.setStyleSheet("""
+        # Branding (requested): remove “AI PACS” and show only the tagline.
+        tagline_label = QLabel("Intelligent Medical Imaging")
+        tagline_label.setAlignment(Qt.AlignCenter)
+        tagline_label.setStyleSheet("""
             QLabel {
-                background: transparent;
-                border: none;
-                padding: 0px;
-            }
-        """)
-
-        # AI PACS Text
-        ai_text_label = QLabel("AI PACS")
-        ai_text_label.setAlignment(Qt.AlignCenter)
-        ai_text_label.setStyleSheet("""
-            QLabel {
-                color: #f7fafc;
-                font-size: 12px;
+                color: #cbd5e1;
+                font-size: 11px;  /* +25% from previous 9px */
                 font-family: 'Roboto', sans-serif;
-                font-weight: 600;
-                background: transparent;
-                border: none;
-                padding: 0px;
-            }
-        """)
-
-        # Description text
-        desc_label = QLabel("Intelligent Medical Imaging")
-        desc_label.setAlignment(Qt.AlignCenter)
-        desc_label.setStyleSheet("""
-            QLabel {
-                color: #a0aec0;
-                font-size: 9px;
-                font-family: 'Roboto', sans-serif;
-                font-weight: 400;
+                font-weight: 500;
                 background: transparent;
                 border: none;
                 padding: 0px;
@@ -4972,9 +4987,7 @@ class ToolbarManager:
             }
         """)
 
-        logo_layout.addWidget(logo_label)
-        logo_layout.addWidget(ai_text_label)
-        logo_layout.addWidget(desc_label)
+        logo_layout.addWidget(tagline_label)
         toolbar_layout.addWidget(logo_widget)
         toolbar_layout.addWidget(self._create_separator())
 
@@ -4993,7 +5006,7 @@ class ToolbarManager:
         series_layout_btn.setToolTip('Series Layout')
         icon = QIcon(f"{ICON_PATH}/series-layout.png")
         series_layout_btn.setIcon(icon)
-        series_layout_btn.setIconSize(QSize(20, 20))
+        series_layout_btn.setIconSize(QSize(25, 25))
         series_layout_btn.setPopupMode(QToolButton.InstantPopup)
 
         menu_matrix = QMenu(toolbar)
@@ -5014,8 +5027,8 @@ class ToolbarManager:
                 border-radius: 6px;
                 padding: 4px 6px;
                 margin: 1px;
-                min-width: 36px;
-                min-height: 36px;
+                min-width: 45px;
+                min-height: 45px;
                 font-size: 11px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5045,7 +5058,7 @@ class ToolbarManager:
         measurements_menu_btn = QPushButton()
         measurements_menu_btn.setCheckable(True)
         measurements_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        measurements_menu_btn.setIconSize(QSize(14, 14))
+        measurements_menu_btn.setIconSize(QSize(18, 18))
         measurements_menu_btn.setToolTip('View Angle/Arrow/Text/ROI')
         measurements_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5060,9 +5073,9 @@ class ToolbarManager:
                 border-right: none;
                 padding: 4px 2px;
                 margin: 0px;
-                min-width: 11px;
-                min-height: 36px;
-                max-width: 11px;
+                min-width: 14px;
+                min-height: 45px;
+                max-width: 14px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5103,8 +5116,8 @@ class ToolbarManager:
                 border-bottom-right-radius: 6px;
                 padding: 4px 6px;
                 margin: 0px;
-                min-width: 36px;
-                min-height: 36px;
+                min-width: 45px;
+                min-height: 45px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5188,7 +5201,7 @@ class ToolbarManager:
 
         rotate_menu_btn = QPushButton()
         rotate_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        rotate_menu_btn.setIconSize(QSize(14, 14))
+        rotate_menu_btn.setIconSize(QSize(18, 18))
         rotate_menu_btn.setToolTip('Rotate / Flip')
         rotate_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5203,9 +5216,9 @@ class ToolbarManager:
                 border-right: none;
                 padding: 4px 2px;
                 margin: 0px;
-                min-width: 11px;
-                min-height: 36px;
-                max-width: 11px;
+                min-width: 14px;
+                min-height: 45px;
+                max-width: 14px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5238,8 +5251,8 @@ class ToolbarManager:
                 border-bottom-right-radius: 6px;
                 padding: 4px 6px;
                 margin: 0px;
-                min-width: 36px;
-                min-height: 36px;
+                min-width: 45px;
+                min-height: 45px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5275,7 +5288,7 @@ class ToolbarManager:
 
         sync_menu_btn = QPushButton()
         sync_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        sync_menu_btn.setIconSize(QSize(14, 14))
+        sync_menu_btn.setIconSize(QSize(18, 18))
         sync_menu_btn.setToolTip('Sync Options (Lock Sync)')
         sync_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5290,9 +5303,9 @@ class ToolbarManager:
                 border-right: none;
                 padding: 4px 2px;
                 margin: 0px;
-                min-width: 11px;
-                min-height: 36px;
-                max-width: 11px;
+                min-width: 14px;
+                min-height: 45px;
+                max-width: 14px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5316,7 +5329,7 @@ class ToolbarManager:
         sync_btn.setToolTip('Sync Images')
         sync_btn.setCursor(Qt.PointingHandCursor)
         sync_btn.setIcon(qta.icon('fa5s.crosshairs', color='#e5e7eb'))
-        sync_btn.setIconSize(QSize(20, 20))
+        sync_btn.setIconSize(QSize(25, 25))
         sync_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -5330,8 +5343,8 @@ class ToolbarManager:
                 border-left: none;
                 padding: 4px 6px;
                 margin: 0px;
-                min-width: 36px;
-                min-height: 36px;
+                min-width: 45px;
+                min-height: 45px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5374,7 +5387,7 @@ class ToolbarManager:
 
         capture_menu_btn = QPushButton()
         capture_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        capture_menu_btn.setIconSize(QSize(14, 14))
+        capture_menu_btn.setIconSize(QSize(18, 18))
         capture_menu_btn.setToolTip('View Captured Images')
         capture_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5389,9 +5402,9 @@ class ToolbarManager:
                 border-right: none;
                 padding: 4px 2px;
                 margin: 0px;
-                min-width: 11px;
-                min-height: 36px;
-                max-width: 11px;
+                min-width: 14px;
+                min-height: 45px;
+                max-width: 14px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5414,7 +5427,7 @@ class ToolbarManager:
         capture_btn.setToolTip('Capture Screenshot')
         icon = QIcon(f"{ICON_PATH}/camera.png")
         capture_btn.setIcon(icon)
-        capture_btn.setIconSize(QSize(20, 20))
+        capture_btn.setIconSize(QSize(25, 25))
         capture_btn.setCursor(Qt.PointingHandCursor)
         capture_btn.setStyleSheet("""
             QPushButton {
@@ -5429,8 +5442,8 @@ class ToolbarManager:
                 border-bottom-right-radius: 6px;
                 padding: 4px 6px;
                 margin: 0px;
-                min-width: 36px;
-                min-height: 36px;
+                min-width: 45px;
+                min-height: 45px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5470,7 +5483,7 @@ class ToolbarManager:
 
         mic_menu_btn = QPushButton()
         mic_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        mic_menu_btn.setIconSize(QSize(14, 14))
+        mic_menu_btn.setIconSize(QSize(18, 18))
         mic_menu_btn.setToolTip('View Audio Recordings')
         mic_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5485,9 +5498,9 @@ class ToolbarManager:
                 border-right: none;
                 padding: 4px 2px;
                 margin: 0px;
-                min-width: 11px;
-                min-height: 36px;
-                max-width: 11px;
+                min-width: 14px;
+                min-height: 45px;
+                max-width: 14px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5510,7 +5523,7 @@ class ToolbarManager:
         mic_btn.setToolTip('Record Audio')
         icon = QIcon(f"{ICON_PATH}/mic.png")
         mic_btn.setIcon(icon)
-        mic_btn.setIconSize(QSize(20, 20))
+        mic_btn.setIconSize(QSize(25, 25))
         mic_btn.setCursor(Qt.PointingHandCursor)
         mic_btn.setStyleSheet("""
             QPushButton {
@@ -5525,8 +5538,8 @@ class ToolbarManager:
                 border-bottom-right-radius: 6px;
                 padding: 4px 6px;
                 margin: 0px;
-                min-width: 36px;
-                min-height: 36px;
+                min-width: 45px;
+                min-height: 45px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5560,7 +5573,7 @@ class ToolbarManager:
         toolbar_layout.addWidget(self._create_separator())
 
         # AI Chat button
-        ai_chat_btn = create_tool_btn(self.patient_widget, 'AI Analyze', 'eagle.png', icon_size=30)
+        ai_chat_btn = create_tool_btn(self.patient_widget, 'AI Analyze', 'eagle.png')
         ai_chat_btn.clicked.connect(lambda: self.toggle_ai_chat(self.patient_widget.selected_widget))
         toolbar_layout.addWidget(ai_chat_btn)
         self.tools_button[self.tool_access.AI_CHAT] = ai_chat_btn
@@ -5579,7 +5592,7 @@ class ToolbarManager:
         mpr_menu_btn = QPushButton()
         mpr_menu_btn.setCheckable(True)
         mpr_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        mpr_menu_btn.setIconSize(QSize(14, 14))
+        mpr_menu_btn.setIconSize(QSize(18, 18))
         mpr_menu_btn.setToolTip('View MIP/MinIP/Thick Slab')
         mpr_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5594,9 +5607,9 @@ class ToolbarManager:
                 border-right: none;
                 padding: 4px 2px;
                 margin: 0px;
-                min-width: 11px;
-                min-height: 36px;
-                max-width: 11px;
+                min-width: 14px;
+                min-height: 45px;
+                max-width: 14px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5635,8 +5648,8 @@ class ToolbarManager:
                 border-bottom-right-radius: 6px;
                 padding: 4px 6px;
                 margin: 0px;
-                min-width: 36px;
-                min-height: 36px;
+                min-width: 45px;
+                min-height: 45px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5678,7 +5691,7 @@ class ToolbarManager:
 
         upload_menu_btn = QPushButton()
         upload_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        upload_menu_btn.setIconSize(QSize(14, 14))
+        upload_menu_btn.setIconSize(QSize(18, 18))
         upload_menu_btn.setToolTip('Select status')
         upload_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5693,9 +5706,9 @@ class ToolbarManager:
                 border-right: none;
                 padding: 4px 2px;
                 margin: 0px;
-                min-width: 11px;
-                min-height: 36px;
-                max-width: 11px;
+                min-width: 14px;
+                min-height: 45px;
+                max-width: 14px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;
@@ -5724,7 +5737,7 @@ class ToolbarManager:
         try:
             icon = qta.icon('fa5s.cloud-upload-alt', color='#60a5fa')
             sync_btn.setIcon(icon)
-            sync_btn.setIconSize(QSize(20, 20))
+            sync_btn.setIconSize(QSize(25, 25))
         except Exception:
             sync_btn.setText("🔄")
         
@@ -5738,8 +5751,8 @@ class ToolbarManager:
                 border-radius: 6px;
                 padding: 4px 6px;
                 margin: 1px;
-                min-width: 36px;
-                min-height: 36px;
+                min-width: 45px;
+                min-height: 45px;
                 font-size: 13px;
                 font-family: 'Roboto', sans-serif;
                 font-weight: 500;

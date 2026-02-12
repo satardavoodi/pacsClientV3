@@ -48,14 +48,17 @@ class LightViewerSettingsWidget(QWidget):
                 margin-top: 10px;
                 font-weight: bold;
                 color: #e2e8f0;
+                font-size: 15px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px;
+                font-size: 15px;
             }
             QLabel {
                 color: #e2e8f0;
+                font-size: 14px;
             }
             QLineEdit {
                 background-color: #2d3748;
@@ -63,7 +66,7 @@ class LightViewerSettingsWidget(QWidget):
                 border: 1px solid #4a5568;
                 border-radius: 4px;
                 padding: 8px;
-                font-size: 13px;
+                font-size: 17px;
             }
             QLineEdit:focus {
                 border: 1px solid #3182ce;
@@ -77,7 +80,7 @@ class LightViewerSettingsWidget(QWidget):
                 border: none;
                 border-radius: 6px;
                 padding: 8px 16px;
-                font-size: 13px;
+                font-size: 17px;
             }
             QPushButton:hover {
                 background-color: #2c5aa0;
@@ -94,7 +97,7 @@ class LightViewerSettingsWidget(QWidget):
         # Title
         title_label = QLabel("Light Viewer Settings")
         title_label.setStyleSheet(
-            "font-size: 18px; font-weight: 800; padding: 10px; color: #e2e8f0;"
+            "font-size: 23px; font-weight: 800; padding: 10px; color: #e2e8f0;"
         )
         main_layout.addWidget(title_label)
         
@@ -104,7 +107,7 @@ class LightViewerSettingsWidget(QWidget):
             "when burning CDs. The viewer allows patients to view their images\n"
             "on any Windows computer without installing additional software."
         )
-        desc_label.setStyleSheet("color: #a0aec0; padding: 5px 10px;")
+        desc_label.setStyleSheet("color: #a0aec0; padding: 5px 10px; font-size: 14px;")
         desc_label.setWordWrap(True)
         main_layout.addWidget(desc_label)
         
@@ -138,7 +141,7 @@ class LightViewerSettingsWidget(QWidget):
         
         # Status label
         self.viewer_status_label = QLabel("")
-        self.viewer_status_label.setStyleSheet("color: #a0aec0; font-size: 12px; padding: 5px;")
+        self.viewer_status_label.setStyleSheet("color: #a0aec0; font-size: 16px; padding: 5px;")
         viewer_layout.addWidget(self.viewer_status_label)
         
         # Clear button
@@ -191,7 +194,7 @@ class LightViewerSettingsWidget(QWidget):
             "• Horos - Full-featured viewer (macOS only)\n\n"
             "Make sure to use the portable/standalone version of the viewer."
         )
-        info_text.setStyleSheet("color: #a0aec0; font-size: 12px; padding: 10px;")
+        info_text.setStyleSheet("color: #a0aec0; font-size: 16px; padding: 10px;")
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
         
