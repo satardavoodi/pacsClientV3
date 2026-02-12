@@ -424,94 +424,61 @@ class ViewerController:
 
             raise
 
-        # Configure slider styling - PACS-style vertical scrollbar with ALWAYS VISIBLE design
+        # Configure slider styling - Chrome-style minimalist scrollbar
         try:
             slider.setStyleSheet("""
                 QSlider {
-                    background: rgba(20, 20, 30, 0.7);
-                    border-left: 1px solid rgba(144, 202, 249, 0.3);
-                    border-radius: 4px;
-                    padding-top: 20px;
-                    padding-bottom: 20px;
-                    padding-left: 4px;
-                    padding-right: 4px;
-                    min-width: 32px;
-                    max-width: 32px;
+                    background: transparent;
+                    border: none;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    padding-left: 0px;
+                    padding-right: 0px;
+                    min-width: 10px;
+                    max-width: 10px;
                 }
-                /* خط عمودی نازک (groove) - همیشه قابل مشاهده */
+                /* نوار عمودی (track) - سبک Chrome */
                 QSlider::groove:vertical {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 rgba(144, 202, 249, 0.5),
-                        stop:0.5 rgba(144, 202, 249, 0.8),
-                        stop:1 rgba(144, 202, 249, 0.5));
-                    width: 6px;
-                    border-radius: 3px;
+                    background: rgba(0, 0, 0, 0.1);
+                    width: 10px;
+                    border-radius: 5px;
                     margin: 0px 0px;
-                    border: 1px solid rgba(144, 202, 249, 0.6);
+                    border: none;
                 }
-                /* مهره/دسته اسکرول - دایره‌ای و برجسته - بسیار قابل مشاهده */
+                /* دسته (thumb) - مستطیلی با گوشه گرد مثل Chrome */
                 QSlider::handle:vertical {
-                    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
-                        fx:0.3, fy:0.3,
-                        stop:0 rgba(255, 255, 255, 1),
-                        stop:0.5 rgba(144, 202, 249, 1),
-                        stop:1 rgba(93, 153, 198, 1));
-                    border: 3px solid rgba(255, 255, 255, 1);
-                    width: 22px;
-                    height: 22px;
-                    border-radius: 13px;
-                    margin: 0px -8px;
+                    background: rgba(128, 128, 128, 0.5);
+                    width: 10px;
+                    min-height: 40px;
+                    border-radius: 5px;
+                    margin: 0px 0px;
+                    border: none;
                 }
-                /* حالت hover - مهره بزرگتر و روشن‌تر */
+                /* حالت hover - تیره‌تر می‌شود */
                 QSlider::handle:vertical:hover {
-                    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
-                        fx:0.3, fy:0.3,
-                        stop:0 rgba(255, 255, 255, 1),
-                        stop:0.5 rgba(180, 230, 255, 1),
-                        stop:1 rgba(120, 200, 240, 1));
-                    border: 3px solid rgba(255, 255, 255, 1);
-                    width: 24px;
-                    height: 24px;
-                    border-radius: 14px;
-                    margin: 0px -9px;
+                    background: rgba(128, 128, 128, 0.7);
                 }
-                /* حالت فشرده شدن */
+                /* حالت فشرده شدن - خیلی تیره */
                 QSlider::handle:vertical:pressed {
-                    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
-                        fx:0.3, fy:0.3,
-                        stop:0 rgba(255, 255, 255, 1),
-                        stop:0.4 rgba(120, 210, 255, 1),
-                        stop:1 rgba(80, 170, 220, 1));
-                    border: 3px solid rgba(255, 255, 255, 1);
+                    background: rgba(96, 96, 96, 0.9);
                 }
-                /* قسمت بالای مهره (sub-page) - رنگ روشن */
+                /* قسمت بالای thumb - شفاف */
                 QSlider::sub-page:vertical {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 rgba(144, 202, 249, 0.6),
-                        stop:0.5 rgba(144, 202, 249, 0.9),
-                        stop:1 rgba(144, 202, 249, 0.6));
-                    border-radius: 3px;
-                    width: 6px;
-                    margin: 0px 0px;
+                    background: transparent;
+                    border: none;
                 }
-                /* قسمت پایین مهره (add-page) - رنگ کمرنگ */
+                /* قسمت پایین thumb - شفاف */
                 QSlider::add-page:vertical {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 rgba(144, 202, 249, 0.25),
-                        stop:0.5 rgba(144, 202, 249, 0.4),
-                        stop:1 rgba(144, 202, 249, 0.25));
-                    border-radius: 3px;
-                    width: 6px;
-                    margin: 0px 0px;
+                    background: transparent;
+                    border: none;
                 }
             """)
             
             # Force visibility and z-order
             slider.setVisible(True)
-            slider.setAttribute(Qt.WA_TranslucentBackground, False)
-            slider.setWindowOpacity(1.0)
+            slider.setAttribute(Qt.WA_TranslucentBackground, True)
             
-            print("   ✅ PACS-style slider styling applied (ALWAYS VISIBLE)")
+            print("   ✅ Chrome-style scrollbar applied")
         except Exception as e:
             print(f"   ⚠️ Warning: Could not apply slider styling: {e}")
 
@@ -544,41 +511,47 @@ class ViewerController:
             """)
             print("   ✅ Container created")
             
-            # CRITICAL: Add slider as DIRECT CHILD of container (not in layout)
-            # This ensures slider overlays on top of VTK widget
-            print("   📍 Adding slider as overlay...")
-            slider.setParent(container)
+            # CRITICAL: Add slider as DIRECT CHILD of VTK widget (not container)
+            # This ensures slider is ALWAYS on top of the image
+            print("   📍 Adding Chrome-style slider overlay on VTK widget...")
+            slider.setParent(vtk_widget)
             slider.setGeometry(
-                container.width() - 40,  # 40px from right edge
-                10,  # 10px from top
-                32,  # width
-                container.height() - 20  # height minus margins
+                vtk_widget.width() - 15,  # 15px from right edge (Chrome-style)
+                5,  # 5px from top
+                10,  # width (Chrome-style - 10px)
+                vtk_widget.height() - 10  # height minus margins
             )
             
-            # Force slider to be on top of everything
+            # Force slider to be on top of everything with maximum z-order
             slider.raise_()
             slider.setVisible(True)
             slider.show()
+            slider.update()
             
-            # Connect resize event to reposition slider
+            # Connect resize event to reposition slider on VTK widget
             def reposition_slider():
-                if slider and container:
-                    slider.setGeometry(
-                        container.width() - 40,
-                        10,
-                        32,
-                        container.height() - 20
-                    )
-                    slider.raise_()
+                if slider and vtk_widget:
+                    try:
+                        slider.setGeometry(
+                            vtk_widget.width() - 15,  # Chrome-style positioning
+                            5,
+                            10,
+                            vtk_widget.height() - 10
+                        )
+                        slider.raise_()
+                        slider.update()
+                    except RuntimeError:
+                        pass  # Widget might be deleted
             
-            # Store original resizeEvent
-            original_resize = container.resizeEvent
-            def new_resize_event(event):
-                original_resize(event)
-                reposition_slider()
-            container.resizeEvent = new_resize_event
+            # Store original resizeEvent of VTK widget
+            if hasattr(vtk_widget, 'resizeEvent'):
+                original_vtk_resize = vtk_widget.resizeEvent
+                def new_vtk_resize_event(event):
+                    original_vtk_resize(event)
+                    reposition_slider()
+                vtk_widget.resizeEvent = new_vtk_resize_event
             
-            print("   ✅ Slider added as OVERLAY on container")
+            print("   ✅ Thin slider added as OVERLAY directly on VTK widget (ALWAYS on top)")
             
         except Exception as e:
             print(f"   ❌ ERROR creating container: {e}")
@@ -625,8 +598,8 @@ class ViewerController:
             slider.setOrientation(Qt.Vertical)
             slider.setInvertedAppearance(False)
             slider.setInvertedControls(False)
-            slider.setTickPosition(QSlider.NoTicks)
-            slider.setTickInterval(1)
+            slider.setTickPosition(QSlider.NoTicks)  # CRITICAL: No tick marks!
+            slider.setTickInterval(0)  # No ticks
             slider.setSingleStep(1)
             slider.setPageStep(1)
             slider.setTracking(True)
