@@ -139,7 +139,13 @@ class PrintingWidget(QWidget):
         adjustments_group = QGroupBox("Adjustments")
         adjustments_layout = QFormLayout(adjustments_group)
         self.left_drag_mode = QComboBox()
-        self.left_drag_mode.addItems(["Pan", "Window Level / Window Width", "Zoom"])
+        self.left_drag_mode.addItems([
+            "Default",
+            "Pan",
+            "Window Level / Window Width",
+            "Zoom",
+        ])
+        self.left_drag_mode.setCurrentIndex(1)
         self.left_drag_mode.currentTextChanged.connect(self._on_left_drag_mode_changed)
         adjustments_layout.addRow("Left Mouse Function", self.left_drag_mode)
 
@@ -604,7 +610,9 @@ class PrintingWidget(QWidget):
             return
         from printing.ui.print_tools import PrintToolManager
         
-        if text == "Pan":
+        if text == "Default":
+            tool_mode = PrintToolManager.DEFAULT
+        elif text == "Pan":
             tool_mode = PrintToolManager.PAN
         elif text == "Window Level / Window Width":
             tool_mode = PrintToolManager.WINDOW_LEVEL

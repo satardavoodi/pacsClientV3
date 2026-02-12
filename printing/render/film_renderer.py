@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
@@ -28,6 +28,7 @@ def render_film(
     dpi: int = 150,
     background: QColor | None = None,
     overlay_info: Optional[Dict[str, str]] = None,
+    start_cell_index: int = 0,
 ) -> QPixmap:
     """
     Render film sheet with images in strict grid layout.
@@ -56,11 +57,14 @@ def render_film(
     grid = GridLayoutEngine()
     cells = grid.compute_cells(film_area, layout)
 
-    # Render images into grid cells
-    for idx, cell in enumerate(cells):
-        if idx >= len(images):
+    # Render images into grid cells (optionally offset by start_cell_index)
+    for cell_idx, cell in enumerate(cells):
+        image_idx = cell_idx - start_cell_index
+        if image_idx < 0:
+            continue
+        if image_idx >= len(images):
             break
-        render = images[idx]
+        render = images[image_idx]
         x_in, y_in, w_in, h_in = grid.map_image_to_cell(cell, render.aspect)
         x_px = int(x_in * dpi)
         y_px = int((y_in + header_height_in) * dpi)
@@ -121,7 +125,7 @@ def _draw_grid_lines(
     # Vertical grid lines (including left/right borders)
     x_positions_in = [0.0]
     for col in range(1, layout.cols):
-        x_positions_in.append(col * cell_w + (col - 1) * line_in + cell_w)
+        x_positions_in.append(col * cell_w + (col - 1) * line_in)
     x_positions_in.append(max(0.0, film_size.width_in - line_in))
 
     for x_in in x_positions_in:
@@ -131,7 +135,7 @@ def _draw_grid_lines(
     # Horizontal grid lines (including top/bottom borders)
     y_positions_in = [0.0]
     for row in range(1, layout.rows):
-        y_positions_in.append(row * cell_h + (row - 1) * line_in + cell_h)
+        y_positions_in.append(row * cell_h + (row - 1) * line_in)
     y_positions_in.append(max(0.0, film_size.height_in - line_in))
 
     for y_in in y_positions_in:

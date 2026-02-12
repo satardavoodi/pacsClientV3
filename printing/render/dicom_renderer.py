@@ -14,11 +14,122 @@ except Exception:  # fallback for older pydicom
 from PySide6.QtGui import QImage, QPixmap
 
 from printing.core.models import ViewportState
+from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import reference_line
 
 
 def _safe_dcmread(path: str):
     from PacsClient.pacs.patient_tab.utils.utils import _safe_dcmread as safe
     return safe(path, stop_before_pixels=False)
+
+
+def _safe_dcmread_header(path: str):
+    from PacsClient.pacs.patient_tab.utils.utils import _safe_dcmread as safe
+    return safe(path, stop_before_pixels=True)
+
+
+def _is_scout_dataset(ds) -> bool:
+    try:
+        image_type = getattr(ds, "ImageType", None)
+        if image_type:
+            if isinstance(image_type, (list, tuple)):
+                image_type_str = "\\".join([str(x).upper() for x in image_type])
+            else:
+                image_type_str = str(image_type).upper()
+            if "LOCALIZER" in image_type_str or "SCOUT" in image_type_str:
+                return True
+
+        series_desc = str(getattr(ds, "SeriesDescription", "")).upper()
+        if "LOCALIZER" in series_desc or "SCOUT" in series_desc:
+            return True
+
+        protocol_name = str(getattr(ds, "ProtocolName", "")).upper()
+        if "LOCALIZER" in protocol_name or "SCOUT" in protocol_name:
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def find_scout_and_slices(paths: List[str]) -> Tuple[Optional[str], List[str]]:
+    """
+    Find scout/localizer image path among the provided DICOM paths.
+    Returns (scout_path, slice_paths). If no scout found, uses first path as scout.
+    """
+    if not paths:
+        return None, []
+
+    scout_path = None
+    for path in paths:
+        try:
+            ds = _safe_dcmread_header(path)
+            if _is_scout_dataset(ds):
+                scout_path = path
+                break
+        except Exception:
+            continue
+
+    if scout_path is None:
+        scout_path = paths[0]
+
+    slice_paths = [p for p in paths if p != scout_path]
+    return scout_path, slice_paths
+
+
+def compute_scout_reference_lines(
+    scout_path: str,
+    slice_paths: List[str],
+) -> Tuple[int, int, List[Tuple[float, float, float, float]]]:
+    """
+    Compute reference lines for slice planes on the scout image.
+    Returns (rows, cols, lines) where lines are (x0, y0, x1, y1) in scout pixel coords.
+    """
+    lines: List[Tuple[float, float, float, float]] = []
+    try:
+        scout_ds = _safe_dcmread_header(scout_path)
+        iop_s = getattr(scout_ds, "ImageOrientationPatient", None)
+        ipp_s = getattr(scout_ds, "ImagePositionPatient", None)
+        ps_s = getattr(scout_ds, "PixelSpacing", None)
+        rows_s = int(getattr(scout_ds, "Rows", 0) or 0)
+        cols_s = int(getattr(scout_ds, "Columns", 0) or 0)
+        if not iop_s or not ipp_s or not ps_s or rows_s <= 0 or cols_s <= 0:
+            return 0, 0, []
+
+        row_s = np.asarray(iop_s[3:6], dtype=float)
+        col_s = np.asarray(iop_s[0:3], dtype=float)
+        pos_s = np.asarray(ipp_s, dtype=float)
+        sy = float(ps_s[0])
+        sx = float(ps_s[1])
+
+        quad = reference_line.rl_quad_corners_lps(rows_s, cols_s, pos_s, row_s, col_s, sy, sx)
+
+        for path in slice_paths:
+            try:
+                ds = _safe_dcmread_header(path)
+                iop = getattr(ds, "ImageOrientationPatient", None)
+                ipp = getattr(ds, "ImagePositionPatient", None)
+                if not iop or not ipp:
+                    continue
+
+                row = np.asarray(iop[3:6], dtype=float)
+                col = np.asarray(iop[0:3], dtype=float)
+                n = np.cross(row, col)
+                n = n / (np.linalg.norm(n) + reference_line.rl_eps())
+                p = np.asarray(ipp, dtype=float)
+
+                ok, seg = reference_line.rl_clip_plane_with_quad(p, n, quad)
+                if not ok:
+                    continue
+                P0_lps, P1_lps = seg
+
+                I0 = reference_line.rl_lps_to_target_index(P0_lps, pos_s, col_s, row_s, sx, sy, 0)
+                I1 = reference_line.rl_lps_to_target_index(P1_lps, pos_s, col_s, row_s, sx, sy, 0)
+                lines.append((float(I0[0]), float(I0[1]), float(I1[0]), float(I1[1])))
+            except Exception:
+                continue
+
+        return rows_s, cols_s, lines
+    except Exception:
+        return 0, 0, []
 
 
 def _apply_window_level(pixel_array: np.ndarray, window_width: float, window_level: float) -> np.ndarray:
@@ -85,25 +196,35 @@ def _apply_viewport(arr: np.ndarray, viewport: ViewportState) -> np.ndarray:
     crop_h = int(height / zoom)
 
     # Uniform pan translation: pan values move viewport in normalized [-1, 1] range
-    # Clamp pan to keep viewport within image bounds
-    max_pan_x = (width - crop_w) / crop_w
-    max_pan_y = (height - crop_h) / crop_h
-    pan_x = max(min(pan_x, max_pan_x), -max_pan_x) if crop_w < width else 0
-    pan_y = max(min(pan_y, max_pan_y), -max_pan_y) if crop_h < height else 0
+    # Do not clamp to image bounds; allow pan beyond the viewport (fills with black)
 
     # Calculate crop origin based on normalized pan translation
     center_x = width // 2 + int(pan_x * crop_w // 2)
     center_y = height // 2 + int(pan_y * crop_h // 2)
 
-    x0 = max(center_x - crop_w // 2, 0)
-    y0 = max(center_y - crop_h // 2, 0)
-    x1 = min(x0 + crop_w, width)
-    y1 = min(y0 + crop_h, height)
+    x0 = center_x - crop_w // 2
+    y0 = center_y - crop_h // 2
+    x1 = x0 + crop_w
+    y1 = y0 + crop_h
 
-    cropped = arr[y0:y1, x0:x1]
-    if cropped.size == 0:
-        return arr
-    return cropped
+    # Create output canvas and copy overlapping region
+    output = np.zeros((crop_h, crop_w), dtype=arr.dtype)
+
+    src_x0 = max(0, x0)
+    src_y0 = max(0, y0)
+    src_x1 = min(width, x1)
+    src_y1 = min(height, y1)
+
+    if src_x1 <= src_x0 or src_y1 <= src_y0:
+        return output
+
+    dst_x0 = max(0, -x0)
+    dst_y0 = max(0, -y0)
+    dst_x1 = dst_x0 + (src_x1 - src_x0)
+    dst_y1 = dst_y0 + (src_y1 - src_y0)
+
+    output[dst_y0:dst_y1, dst_x0:dst_x1] = arr[src_y0:src_y1, src_x0:src_x1]
+    return output
 
 
 @dataclass
