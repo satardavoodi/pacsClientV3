@@ -141,11 +141,30 @@ class SeriesDownloader:
         study_output_dir = self.base_output_dir / study_uid
         study_output_dir.mkdir(parents=True, exist_ok=True)
         
+        # ✅ FIX: Create a SINGLE persistent socket connection for ALL series in the study
+        # This avoids the disconnect/reconnect overhead when downloading multiple series
+        logger.info(f"🔌 Creating persistent socket connection for study download...")
+        socket_client = SocketDicomClient(cancel_check=self.cancel_check)
+        
+        # Verify authentication before starting series download
+        if not socket_client.ensure_authenticated():
+            logger.error(f"❌ FAILED: No authentication for study {study_uid[:40]}...")
+            socket_client.disconnect()
+            return DownloadResult(
+                success=False,
+                study_uid=study_uid,
+                error_message="No authentication token available"
+            )
+        logger.info(f"✅ Socket connection authenticated and ready")
+        
         # Download each series SEQUENTIALLY (one at a time)
         for idx, series_info in enumerate(series_list):
             # R25: Check for cancellation via cancel_check callback (worker preemption)
             if self.cancel_check and self.cancel_check():
                 logger.info(f"⏸️ Download cancelled (preemption) - pausing after {idx} series")
+                
+                # Disconnect socket before returning
+                socket_client.disconnect()
                 
                 # Mark as auto-paused for auto-resume later
                 self.state.update(
@@ -173,6 +192,9 @@ class SeriesDownloader:
             
             if current_state and self.rules.should_interrupt_for_priority(current_state, waiting_downloads):
                 logger.info(f"⚡ Higher priority download waiting - pausing current download")
+                
+                # Disconnect socket before returning
+                socket_client.disconnect()
                 
                 # Mark as auto-paused for auto-resume later
                 self.state.update(
@@ -258,18 +280,26 @@ class SeriesDownloader:
                 logger.info(f"═══ Completed Series {idx + 1}/{len(series_list)}: {series_number} (SKIPPED) ═══")
                 continue
             
-            # Create authenticated socket client with cancel check for preemption
-            # Token is automatically retrieved from global token manager
-            socket_client = SocketDicomClient(cancel_check=self.cancel_check)
+            # ✅ FIX: Use the persistent socket connection created at the start of download_all_series
+            # This avoids creating a new connection for each series, which causes server issues
+            # when downloading multiple series
             
-            # Verify authentication before download
-            if not socket_client.ensure_authenticated():
-                logger.error(f"    ❌ FAILED: No authentication for series {series_number}")
-                failed_series.append(series_number)
-                state.failed_series.append(series_number)
-                continue
+            # ✅ CONNECTION HEALTH CHECK: Verify socket is still connected before each series
+            if not socket_client.connected:
+                logger.warning(f"    ⚠️ Socket connection lost, attempting to reconnect...")
+                if not socket_client.connect():
+                    logger.error(f"    ❌ FAILED: Could not reconnect for series {series_number}")
+                    failed_series.append(series_info.series_uid)
+                    if state:
+                        updated_failed = list(state.failed_series or [])
+                        if series_info.series_uid not in updated_failed:
+                            updated_failed.append(series_info.series_uid)
+                            self.state.update(study_uid, failed_series=updated_failed)
+                    self._update_progress(study_uid, series_list, idx + 1, total_downloaded, total_skipped)
+                    continue
+                logger.info(f"    ✅ Socket reconnected successfully")
             
-            logger.info(f"    📥 Downloading series {series_number}...")
+            logger.info(f"    📥 Downloading series {series_number} (reusing persistent connection)...")
             
             series_result = await socket_client.download_series(
                 study_uid=study_uid,
@@ -277,8 +307,6 @@ class SeriesDownloader:
                 output_dir=series_output_dir,
                 progress_callback=self.progress_callback
             )
-            
-            socket_client.disconnect()
             
             if series_result.success:
                 completed_series.append(series_info.series_uid)
@@ -360,6 +388,11 @@ class SeriesDownloader:
         logger.info(f"   Images: {total_downloaded} downloaded + {total_skipped} skipped")
         logger.info(f"   Time: {elapsed:.1f}s")
         logger.info("=" * 70)
+        
+        # ✅ FIX: Disconnect socket after all series are downloaded
+        logger.info(f"🔌 Closing persistent socket connection...")
+        socket_client.disconnect()
+        logger.info(f"✅ Socket disconnected")
         
         return result
     

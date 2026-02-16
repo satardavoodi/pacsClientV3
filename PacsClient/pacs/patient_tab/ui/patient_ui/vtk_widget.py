@@ -597,25 +597,20 @@ class VTKWidget(QVTKRenderWindowInteractor):
     def cleanup_image_viewer(self):
         # Check if image_viewer exists before cleanup (for progressive download dummy viewers)
         if self.image_viewer is not None:
+            # 🎯 CRITICAL FIX: Remove old renderer from render_window BEFORE cleanup
+            # This prevents old series from accumulating in the render_window
+            try:
+                old_renderer = self.image_viewer.GetRenderer()
+                if old_renderer is not None:
+                    self.render_window.RemoveRenderer(old_renderer)
+                    print(f"✅ Removed old renderer from render_window")
+            except Exception as e:
+                print(f"⚠️  Failed to remove old renderer: {e}")
+            
+            # Now cleanup the viewer itself (which removes actors from the renderer)
             self.image_viewer.cleanup()
             del self.image_viewer
             self.image_viewer = None
-
-        # delete old renderers
-        # old_renderer = self.image_viewer.GetRenderer()
-        # self.render_window.RemoveRenderer(old_renderer)
-
-        # old_renderer = self.image_viewer.GetRenderer()
-        # if old_renderer:
-        #     self.render_window.RemoveRenderer(old_renderer)
-
-        # Call cleanup to release everything
-
-        # del self.style
-        # self.style = None
-
-        # del self.current_style
-        # self.current_style = None
 
         # REMOVED: gc.collect() was running on UI thread causing stop-the-world
         # freezes visible to the user during series switching. Python's refcount
@@ -717,6 +712,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
             # Create new viewer (first time or fallback)
             # ⚡ BATCHED CREATION: All operations grouped together
+            # 🎯 KEY POINT: At this stage, cleanup_image_viewer() has already:
+            #    1. Removed the old renderer from render_window (CRITICAL FIX)
+            #    2. Cleaned up all actors from the old series
+            #    3. Deleted the old image_viewer instance
+            # This ensures no overlapping/accumulated images from previous series
+            
             if (vtk_image_data_2 is not None) and (metadata_2 is not None):
                 self.image_viewer = CustomCombineImageViewers(
                     self.render_window, self.interactor, self.height_viewer, vtk_image_data1=vtk_image_data,

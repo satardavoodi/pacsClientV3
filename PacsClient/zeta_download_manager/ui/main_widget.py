@@ -11,6 +11,7 @@ Modern, polished download manager interface with:
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional
+from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -105,6 +106,7 @@ class DownloadManagerWidget(QWidget):
         self.status_label = None
         self.status_summary = None
         self.download_rows: Dict[str, int] = {}  # study_uid -> table row index
+        self._speed_label_widgets: Dict[str, QLabel] = {}  # study_uid -> speed QLabel widget in table
         
     # Task storage - keep original tasks for worker creation
         self._tasks: Dict[str, DownloadTask] = {}  # study_uid -> DownloadTask
@@ -187,6 +189,12 @@ class DownloadManagerWidget(QWidget):
         
         # Store pending progress updates to batch them
         self._pending_progress: Dict[str, Dict] = {}
+        
+        # Speed update timer - updates speed and ETA labels every second
+        self._speed_update_timer = QTimer(self)
+        self._speed_update_timer.timeout.connect(self._update_speed_display)
+        self._speed_update_timer.setInterval(1000)  # Update every 1 second
+        self._speed_update_timer.start()
         
         logger.info("✅ DownloadManagerWidget initialized (v1.0.6 UI style)")
         logger.info("=" * 80)
@@ -1538,6 +1546,11 @@ class DownloadManagerWidget(QWidget):
     def remove_download_row(self, study_uid: str) -> None:
         """Remove download row (called by UIObserver) - triggers full refresh"""
         logger.debug(f"🗑️ remove_download_row for {study_uid[:40]}...")
+        
+        # Clean up speed label widget reference
+        if study_uid in self._speed_label_widgets:
+            del self._speed_label_widgets[study_uid]
+        
         # Refresh entire table to maintain priority grouping
         QTimer.singleShot(0, self._refresh_table_order)
         
@@ -1613,18 +1626,19 @@ class DownloadManagerWidget(QWidget):
     
     def _on_play(self) -> None:
         """
-        Global Play - Resume/restart entire download system
+        Global Play/Resume - Resume paused downloads or restart cancelled ones
         
         Behavior:
-        - Retries failed downloads
-        - Resumes paused downloads
-        - Continues suspended/incomplete downloads
-        - Checks server for new content
-        - Only skips if complete AND no new content on server
+        - Resumes PAUSED downloads (keeps their current progress)
+        - Restarts CANCELLED downloads (resets progress to 0%)
+        - Does NOT restart completed or failed downloads
+        
+        Note: Use Retry button to restart a specific download from the beginning
+        Note: Use Reset All button to restart all downloads from the beginning
         """
         logger.info("=" * 80)
-        logger.info("🔵 [BUTTON CLICK] Start All button clicked")
-        logger.info("▶ PLAY PRESSED - Starting global resume/restart")
+        logger.info("🔵 [BUTTON CLICK] Play/Resume button clicked")
+        logger.info("▶ PLAY PRESSED - Resuming paused & restarting cancelled downloads")
         logger.info("=" * 80)
         
         try:
@@ -1645,51 +1659,58 @@ class DownloadManagerWidget(QWidget):
                 status_breakdown[status_key] = status_breakdown.get(status_key, 0) + 1
             logger.info(f"[PLAY-2] Status breakdown: {status_breakdown}")
             
-            # Step 3: Filter downloads that need action
-            logger.info(f"[PLAY-3] Filtering downloads that need processing...")
-            to_process = [
+            # Step 3: Filter paused and cancelled downloads
+            logger.info(f"[PLAY-3] Filtering paused and cancelled downloads...")
+            paused_downloads = [
                 state for state in all_downloads
-                if state.status in [
-                    DownloadStatus.PAUSED,
-                    DownloadStatus.FAILED,
-                    DownloadStatus.PENDING,
-                    DownloadStatus.CANCELLED,
-                    DownloadStatus.COMPLETED  # ⭐ Allow restarting completed downloads
-                ]
+                if state.status == DownloadStatus.PAUSED
             ]
-            logger.info(f"[PLAY-3] Downloads to process: {len(to_process)}")
+            cancelled_downloads = [
+                state for state in all_downloads
+                if state.status == DownloadStatus.CANCELLED
+            ]
+            logger.info(f"[PLAY-3] Paused downloads to resume: {len(paused_downloads)}")
+            logger.info(f"[PLAY-3] Cancelled downloads to restart: {len(cancelled_downloads)}")
+            
+            to_process = paused_downloads + cancelled_downloads
             
             if not to_process:
-                logger.info("✅ [PLAY-3] No downloads need resuming")
+                logger.info("✅ [PLAY-3] No downloads to resume or restart")
+                self.log_message("ℹ️ No paused or cancelled downloads")
                 self._update_status_label()
                 logger.info("=" * 80)
                 return
             
-            # Step 4: Set all downloads to PENDING (they'll be queued)
-            logger.info(f"[PLAY-4] Setting {len(to_process)} downloads to PENDING status...")
-            for i, state in enumerate(to_process):
-                logger.info(f"[PLAY-4.{i}] {state.patient_name or 'Unknown'} - Status: {state.status.value}")
+            # Step 4: Process paused downloads (WITHOUT resetting progress)
+            logger.info(f"[PLAY-4] Processing {len(paused_downloads)} paused downloads (resume)...")
+            for i, state in enumerate(paused_downloads):
+                logger.info(f"[PLAY-4.{i}] {state.patient_name or 'Unknown'} - Status: PAUSED")
                 try:
-                    # For terminal states (COMPLETED, CANCELLED), use force reset
-                    # For non-terminal states, use normal update
-                    if state.status in [DownloadStatus.COMPLETED, DownloadStatus.CANCELLED]:
-                        logger.info(f"[PLAY-4.{i}] ⭐ FORCE RESET from terminal state {state.status.value}")
-                        self.state_store.reset(state.study_uid)
-                    else:
-                        self.state_store.update(
-                            state.study_uid,
-                            status=DownloadStatus.PENDING,
-                            error_message=None,
-                            is_auto_paused=False
-                        )
+                    # IMPORTANT: Only set status to PENDING, do NOT reset progress
+                    logger.info(f"[PLAY-4.{i}] 📤 Resuming download (keeping current progress)")
+                    self.state_store.update(
+                        state.study_uid,
+                        status=DownloadStatus.PENDING,
+                        is_auto_paused=False
+                    )
                 except Exception as e:
-                    logger.error(f"[PLAY-4.{i}] ❌ Error updating status: {e}")
+                    logger.error(f"[PLAY-4.{i}] ❌ Error resuming download: {e}")
+            
+            # Step 4b: Process cancelled downloads (WITH reset - restart from beginning)
+            logger.info(f"[PLAY-4b] Processing {len(cancelled_downloads)} cancelled downloads (restart)...")
+            for i, state in enumerate(cancelled_downloads):
+                logger.info(f"[PLAY-4b.{i}] {state.patient_name or 'Unknown'} - Status: CANCELLED")
+                try:
+                    # IMPORTANT: Reset cancelled downloads to start from beginning
+                    logger.info(f"[PLAY-4b.{i}] 🔄 Restarting cancelled download from 0%")
+                    self.state_store.reset(state.study_uid)
+                except Exception as e:
+                    logger.error(f"[PLAY-4b.{i}] ❌ Error restarting download: {e}")
             
             # Step 5: Start workers up to pool capacity
-            # The rest will be started automatically by _start_next_pending() as workers complete
             logger.info(f"[PLAY-5] Starting workers up to pool capacity...")
             max_workers = self.worker_pool.max_workers
-            logger.info(f"[PLAY-5] Pool capacity: {max_workers}, Pending downloads: {len(to_process)}")
+            logger.info(f"[PLAY-5] Pool capacity: {max_workers}, Downloads to process: {len(to_process)}")
             
             success_count = 0
             error_count = 0
@@ -1725,7 +1746,7 @@ class DownloadManagerWidget(QWidget):
             logger.info(f"[PLAY-6]   ✅ Workers started: {started_count}")
             logger.info(f"[PLAY-6]   ⏳ Queued (will auto-start): {len(to_process) - started_count - error_count}")
             logger.info(f"[PLAY-6]   ❌ Errors: {error_count}")
-            logger.info(f"[PLAY-6]   📊 Total downloads: {len(to_process)}")
+            logger.info(f"[PLAY-6]   📊 Total downloads: {len(to_process)} ({len(paused_downloads)} paused, {len(cancelled_downloads)} cancelled)")
             
             # Step 7: Check final worker pool state
             active_workers_after = self.worker_pool.get_active_count()
@@ -1742,13 +1763,13 @@ class DownloadManagerWidget(QWidget):
 
             logger.info("=" * 80)
             logger.info("▶ PLAY COMPLETED")
-            logger.info("🟢 [BUTTON SUCCESS] Start All operation completed successfully")
+            logger.info("🟢 [BUTTON SUCCESS] Play/Resume operation completed successfully")
             logger.info("=" * 80)
         
         except Exception as e:
             logger.error("=" * 80)
             logger.error(f"❌ CRITICAL ERROR IN _on_play()")
-            logger.error(f"🔴 [BUTTON FAILURE] Start All operation failed")
+            logger.error(f"🔴 [BUTTON FAILURE] Play/Resume operation failed")
             logger.error(f"Error type: {type(e).__name__}")
             logger.error(f"Error message: {str(e)}")
             import traceback
@@ -1864,6 +1885,93 @@ class DownloadManagerWidget(QWidget):
             logger.error(f"🔴 [BUTTON FAILURE] Clear Completed operation failed: {e}")
             raise
     
+    def _reconstruct_task_from_database(self, study_uid: str) -> Optional[DownloadTask]:
+        """
+        Reconstruct a DownloadTask from server when it's not in memory.
+        
+        This happens when:
+        - App is restarted and user wants to retry a download
+        - Task was removed from memory but state persists in database
+        
+        Args:
+            study_uid: Study UID to reconstruct
+            
+        Returns:
+            DownloadTask if successful, None otherwise
+        """
+        try:
+            logger.info(f"🔄 [TASK-RECONSTRUCT] Reconstructing task for {study_uid[:40]}...")
+            
+            # Get state from state_store for patient info
+            state = self.state_store.get(study_uid)
+            if not state:
+                logger.error(f"🔄 [TASK-RECONSTRUCT] ❌ No state found for {study_uid[:40]}...")
+                return None
+            
+            logger.info(f"🔄 [TASK-RECONSTRUCT] Found state for {state.patient_name}")
+            
+            # Fetch metadata from server (most reliable source)
+            try:
+                logger.info(f"🔄 [TASK-RECONSTRUCT] Fetching metadata from server via gRPC...")
+                metadata = self.grpc_client.fetch_study_metadata(study_uid)
+                
+                if not metadata or not metadata.series:
+                    logger.error(f"🔄 [TASK-RECONSTRUCT] ❌ No metadata or series returned from server")
+                    return None
+                
+                logger.info(f"🔄 [TASK-RECONSTRUCT] ✅ Fetched metadata with {len(metadata.series)} series from server")
+                
+            except Exception as e:
+                logger.error(f"🔄 [TASK-RECONSTRUCT] ❌ Failed to fetch metadata from server: {e}")
+                import traceback
+                logger.error(f"🔄 [TASK-RECONSTRUCT] Traceback:\n{traceback.format_exc()}")
+                return None
+            
+            # Build study data dict from metadata and state
+            study_data = {
+                'study_uid': study_uid,
+                'patient_id': state.patient_id or metadata.patient_info.patient_id,
+                'patient_name': state.patient_name or metadata.patient_info.name,
+                'study_date': metadata.study_date or '',
+                'study_time': metadata.study_time or '',
+                'modality': metadata.modality or '',
+                'study_description': metadata.description or '',
+                'patient_age': metadata.patient_info.age or '',
+                'patient_sex': metadata.patient_info.sex or '',
+                'patient_birth_date': metadata.patient_info.birth_date or '',
+                'body_part': '',
+                'series': []
+            }
+            
+            # Convert SeriesInfo objects to dicts for _create_task_from_dict
+            for series in metadata.series:
+                series_dict = {
+                    'series_number': series.series_number,
+                    'series_uid': series.series_uid,
+                    'series_description': series.description,
+                    'modality': series.modality,
+                    'image_count': series.instance_count
+                }
+                study_data['series'].append(series_dict)
+            
+            logger.info(f"🔄 [TASK-RECONSTRUCT] Prepared study data with {len(study_data['series'])} series")
+            
+            # Create task from dict (same method used in add_downloads)
+            task = self._create_task_from_dict(study_data)
+            
+            logger.info(f"🔄 [TASK-RECONSTRUCT] ✅ Task reconstructed successfully")
+            logger.info(f"🔄 [TASK-RECONSTRUCT] Patient: {task.patient_name}")
+            logger.info(f"🔄 [TASK-RECONSTRUCT] Series: {len(task.series_list)}")
+            logger.info(f"🔄 [TASK-RECONSTRUCT] Total images: {task.total_image_count}")
+            
+            return task
+            
+        except Exception as e:
+            logger.error(f"🔄 [TASK-RECONSTRUCT] ❌ Failed to reconstruct task: {e}")
+            import traceback
+            logger.error(f"🔄 [TASK-RECONSTRUCT] Traceback:\n{traceback.format_exc()}")
+            return None
+    
     def _start_download_worker(self, study_uid: str) -> bool:
         """
         Start a download worker for given study
@@ -1896,16 +2004,27 @@ class DownloadManagerWidget(QWidget):
 
             logger.info(f"🚀 [WORKER-START] State found: {state.patient_name}, Status: {state.status.value}")
 
-            # Get the original task from storage
+            # Get the original task from storage (or reconstruct from database)
             logger.info(f"🚀 [WORKER-START] Getting original DownloadTask from storage...")
             task = self._tasks.get(study_uid)
 
             if not task:
-                logger.error(f"🚀 [WORKER-START] ❌ Original task not found for {study_uid[:40]}...")
-                logger.error(f"🚀 [WORKER-START] Available tasks: {list(self._tasks.keys())}")
-                return False
+                logger.warning(f"🚀 [WORKER-START] ⚠️ Task not in memory, attempting to reconstruct from database...")
+                logger.warning(f"🚀 [WORKER-START] Available tasks in memory: {list(self._tasks.keys())}")
+                
+                # Try to reconstruct task from database
+                task = self._reconstruct_task_from_database(study_uid)
+                
+                if task:
+                    logger.info(f"🚀 [WORKER-START] ✅ Task reconstructed from database with {len(task.series_list)} series")
+                    # Store it for future use
+                    self._tasks[study_uid] = task
+                else:
+                    logger.error(f"🚀 [WORKER-START] ❌ Failed to reconstruct task from database")
+                    logger.error(f"🚀 [WORKER-START] Cannot start download without task information")
+                    return False
 
-            logger.info(f"🚀 [WORKER-START] Found original task with {len(task.series_list)} series")
+            logger.info(f"🚀 [WORKER-START] Found task with {len(task.series_list)} series")
 
             # Create worker
             logger.info(f"🚀 [WORKER-START] Creating DownloadWorker instance...")
@@ -2180,14 +2299,31 @@ class DownloadManagerWidget(QWidget):
         would accumulate indefinitely without cleanup. This method removes cached data
         after a download completes to maintain stable memory footprint.
         
+        ⚠️  IMPORTANT: Do NOT delete self._tasks[study_uid] - it's needed for retry operations!
+        Keep the original task so users can retry the download after it completes.
+        
         Args:
             study_uid: Study UID to clean up
         """
         try:
-            # Remove from task cache (prevents accumulation over 1000+ cycles)
-            if study_uid in self._tasks:
-                del self._tasks[study_uid]
-                logger.debug(f"🗑️ Cleaned up _tasks entry for {study_uid[:40]}...")
+            # Clean up speed label widget reference
+            if study_uid in self._speed_label_widgets:
+                del self._speed_label_widgets[study_uid]
+                logger.debug(f"   Cleared speed label widget for {study_uid[:40]}...")
+            
+            # Clean up speed tracking data
+            if hasattr(self, '_last_speed_check_per_study') and study_uid in self._last_speed_check_per_study:
+                del self._last_speed_check_per_study[study_uid]
+            if hasattr(self, '_last_progress_per_study') and study_uid in self._last_progress_per_study:
+                del self._last_progress_per_study[study_uid]
+            
+            # Continue with existing cleanup...
+            # ✅ CRITICAL FIX: KEEP self._tasks for retry operations!
+            # After a download completes, users may click "Retry" to re-download the same study.
+            # If we delete the task, the retry operation fails silently because the task data is lost.
+            # The task dictionary is the SOURCE OF TRUTH for download configuration.
+            # It has no memory bloat - its size is proportional to series count, not loop iterations.
+            # The actual memory bloat comes from intermediate caches below, which we DO clean up.
             
             # Remove from additional task info cache
             if study_uid in self._additional_task_info:
@@ -2204,7 +2340,17 @@ class DownloadManagerWidget(QWidget):
                 del self._pending_progress[study_uid]
                 logger.debug(f"🗑️ Cleaned up _pending_progress for {study_uid[:40]}...")
             
-            logger.info(f"✅ Task state cleanup complete for {study_uid[:40]}... (preserves memory in high-freq loops)")
+            # Remove completed series tracking (no longer needed after download)
+            if study_uid in self._completed_series_emitted:
+                del self._completed_series_emitted[study_uid]
+                logger.debug(f"🗑️ Cleaned up _completed_series_emitted for {study_uid[:40]}...")
+            
+            # Remove last series number tracking
+            if study_uid in self._last_series_number_by_study:
+                del self._last_series_number_by_study[study_uid]
+                logger.debug(f"🗑️ Cleaned up _last_series_number_by_study for {study_uid[:40]}...")
+            
+            logger.info(f"✅ Task state cleanup complete for {study_uid[:40]}... (preserved task for retry, cleaned intermediate caches)")
             
         except Exception as e:
             logger.warning(f"⚠️ Error during task state cleanup: {e}")
@@ -2634,9 +2780,137 @@ class DownloadManagerWidget(QWidget):
             import traceback
             traceback.print_exc()
     
+    def _on_series_retry(self, study_uid: str, series_number: str = None, series_uid: str = None) -> None:
+        """
+        Per-series Retry - Retry download for a specific series only
+
+        Args:
+            study_uid: Study UID
+            series_number: Series number to retry
+            series_uid: Series UID to retry (optional)
+        """
+        logger.info(f"🔄🔄 [SERIES RETRY] Series-specific retry requested")
+        logger.info(f"   Study UID: {study_uid[:40] if study_uid else 'None'}")
+        logger.info(f"   Series Number: {series_number}")
+        logger.info(f"   Series UID: {series_uid[:40] if series_uid else 'None'}")
+
+        try:
+            # Check state
+            state = self.state_store.get(study_uid)
+            if not state:
+                logger.error(f"❌ [SERIES RETRY] State not found for study {study_uid[:40]}")
+                return
+
+            logger.info(f"📊 [SERIES RETRY] Current study state: {state.status.value}")
+            logger.info(f"📊 [SERIES RETRY] Completed series: {state.completed_series}")
+            logger.info(f"📊 [SERIES RETRY] Failed series: {state.failed_series}")
+
+            # Remove series from completed/failed lists if present
+            series_removed = False
+            
+            # Try to remove by series_number first
+            if series_number:
+                if series_number in state.completed_series:
+                    state.completed_series.remove(series_number)
+                    logger.info(f"✅ [SERIES RETRY] Removed series {series_number} from completed_series")
+                    series_removed = True
+                if series_number in state.failed_series:
+                    state.failed_series.remove(series_number)
+                    logger.info(f"✅ [SERIES RETRY] Removed series {series_number} from failed_series")
+                    series_removed = True
+            
+            # Try to remove by series_uid if provided
+            if series_uid:
+                if series_uid in state.completed_series:
+                    state.completed_series.remove(series_uid)
+                    logger.info(f"✅ [SERIES RETRY] Removed series UID {series_uid[:40]} from completed_series")
+                    series_removed = True
+                if series_uid in state.failed_series:
+                    state.failed_series.remove(series_uid)
+                    logger.info(f"✅ [SERIES RETRY] Removed series UID {series_uid[:40]} from failed_series")
+                    series_removed = True
+            
+            if not series_removed:
+                logger.warning(f"⚠️ [SERIES RETRY] Series {series_number} not found in completed/failed lists")
+            
+            # CRITICAL: Delete series files from disk to force re-download
+            # Otherwise downloader will skip the series thinking it's already complete
+            try:
+                from PacsClient.utils.config import SOURCE_PATH
+                from pathlib import Path
+                import shutil
+                
+                series_path = Path(SOURCE_PATH) / study_uid / str(series_number)
+                if series_path.exists():
+                    logger.info(f"🗑️ [SERIES RETRY] Deleting existing series files from disk: {series_path}")
+                    shutil.rmtree(series_path)
+                    logger.info(f"✅ [SERIES RETRY] Series files deleted successfully")
+                else:
+                    logger.info(f"ℹ️ [SERIES RETRY] No existing files found at {series_path}")
+            except Exception as e:
+                logger.error(f"❌ [SERIES RETRY] Error deleting series files: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # FORCE change state - bypass terminal state protection
+            # We need to directly modify the state object for terminal states
+            logger.info(f"🔄 [SERIES RETRY] Current status: {state.status.value}")
+            
+            if state.status == DownloadStatus.COMPLETED:
+                logger.info(f"💪 [SERIES RETRY] FORCING status change from COMPLETED to DOWNLOADING (bypass protection)")
+                # Directly modify state object to bypass terminal state check
+                state.status = DownloadStatus.DOWNLOADING
+                state.error_message = None
+                # Notify observers about the change
+                self.state_store._notify_observers('updated', study_uid, state)
+                logger.info(f"✅ [SERIES RETRY] Status forcefully changed to DOWNLOADING")
+                
+            elif state.status == DownloadStatus.FAILED:
+                logger.info(f"🔄 [SERIES RETRY] Study was FAILED, changing to PENDING")
+                state.status = DownloadStatus.PENDING
+                state.error_message = None
+                self.state_store._notify_observers('updated', study_uid, state)
+                
+            elif state.status in [DownloadStatus.PAUSED, DownloadStatus.CANCELLED]:
+                logger.info(f"🔄 [SERIES RETRY] Study was {state.status.value}, changing to PENDING")
+                state.status = DownloadStatus.PENDING
+                state.error_message = None
+                state.is_auto_paused = False
+                self.state_store._notify_observers('updated', study_uid, state)
+            else:
+                logger.info(f"ℹ️ [SERIES RETRY] Study status is {state.status.value}, no status change needed")
+
+            # Start/resume the download worker
+            logger.info(f"🚀 [SERIES RETRY] Starting download worker for series retry")
+            logger.info(f"🚀 [SERIES RETRY] Study UID: {study_uid}")
+            logger.info(f"🚀 [SERIES RETRY] Target series: {series_number}")
+            logger.info(f"🚀 [SERIES RETRY] Completed series before retry: {state.completed_series}")
+            logger.info(f"🚀 [SERIES RETRY] Failed series before retry: {state.failed_series}")
+            self._start_download_worker(study_uid)
+
+            # Refresh UI
+            logger.info(f"🔄 [SERIES RETRY] Refreshing UI after series retry")
+            self._refresh_table_order()
+
+            # Update button states
+            updated_state = self.state_store.get(study_uid)
+            if updated_state and self._selected_study_uid == study_uid:
+                self._update_button_states(updated_state)
+
+            # Update details panel if selected
+            if self._selected_study_uid == study_uid:
+                QTimer.singleShot(0, lambda: self._update_details_panel(study_uid))
+
+            logger.info(f"✅✅ [SERIES RETRY] Series retry completed successfully for series {series_number}")
+
+        except Exception as e:
+            logger.error(f"❌ [SERIES RETRY] Error in series retry: {e}")
+            import traceback
+            traceback.print_exc()
+    
     def _on_per_patient_retry(self, study_uid: str) -> None:
         """
-        Per-patient Retry - Retry failed download
+        Per-patient Retry - Retry failed download (entire study)
 
         Args:
             study_uid: Study UID to retry
@@ -3134,6 +3408,31 @@ class DownloadManagerWidget(QWidget):
             f"{display_percent:.1f}% ({display_downloaded}/{display_total} images)"
         )
 
+        # Update speed and ETA
+        speed_mb_per_sec = state.speed_mb_per_sec
+        speed_kb_per_sec = speed_mb_per_sec * 1024
+        eta_seconds = state.eta_seconds
+        
+        if speed_mb_per_sec > 0:
+            self.speed_label.setText(f"Speed: {speed_kb_per_sec:.1f} KB/s")
+        else:
+            self.speed_label.setText("Speed: 0 KB/s")
+        
+        if eta_seconds and eta_seconds > 0:
+            # Convert seconds to human readable format
+            minutes = int(eta_seconds // 60)
+            seconds = int(eta_seconds % 60)
+            if minutes > 60:
+                hours = minutes // 60
+                minutes = minutes % 60
+                self.eta_label.setText(f"ETA: {hours}h {minutes}m {seconds}s")
+            elif minutes > 0:
+                self.eta_label.setText(f"ETA: {minutes}m {seconds}s")
+            else:
+                self.eta_label.setText(f"ETA: {seconds}s")
+        else:
+            self.eta_label.setText("ETA: Unknown")
+
         # Series count
         series_count = len(task.series_list) if task else 0
         self.size_label.setText(f"Series: {series_count} | Images: {display_total}")
@@ -3405,7 +3704,7 @@ class DownloadManagerWidget(QWidget):
             raise
     
     def _on_start_selected(self):
-        """Start selected download"""
+        """Start/Resume selected download - resumes PAUSED or restarts CANCELLED"""
         logger.info("🔵 [BUTTON CLICK] Start Selected button clicked")
         if self._selected_study_uid:
             logger.info(f"Starting download for selected study: {self._selected_study_uid[:40]}...")
@@ -3415,9 +3714,10 @@ class DownloadManagerWidget(QWidget):
             if state:
                 logger.info(f"📊 Current state: {state.status.value}, changing to PENDING")
                 
-                # Only proceed if the current state allows starting
-                if state.status in [DownloadStatus.PAUSED, DownloadStatus.FAILED, DownloadStatus.CANCELLED]:
+                # Resume PAUSED downloads OR restart CANCELLED downloads
+                if state.status == DownloadStatus.PAUSED:
                     # Update the state to PENDING and start the download
+                    logger.info(f"📤 Resuming paused download (keeping current progress)")
                     self.state_store.update(
                         self._selected_study_uid,
                         status=DownloadStatus.PENDING,
@@ -3435,30 +3735,46 @@ class DownloadManagerWidget(QWidget):
                         logger.info(f"✅ Download worker started successfully for {self._selected_study_uid[:40]}...")
                     else:
                         logger.warning(f"⚠️ Failed to start download worker for {self._selected_study_uid[:40]}...")
-                elif state.status == DownloadStatus.COMPLETED:
-                    # For COMPLETED (terminal state), use force reset and restart
-                    logger.info(f"💾 Force resetting COMPLETED download: {self._selected_study_uid[:40]}...")
+                    
+                    # Refresh the table to reflect the status change
+                    logger.info(f"🔄 Refreshing table after resume selected for {self._selected_study_uid[:40]}...")
+                    self._refresh_table_order()
+                    
+                    # Update button states after status change
+                    updated_state = self.state_store.get(self._selected_study_uid)
+                    if updated_state:
+                        logger.info(f"🔄 Updating button states for resumed study {self._selected_study_uid[:40]}...")
+                        self._update_button_states(updated_state)
+                        
+                elif state.status == DownloadStatus.CANCELLED:
+                    # Restart cancelled download from beginning
+                    logger.info(f"🔄 Restarting cancelled download from 0%")
                     self.state_store.reset(self._selected_study_uid)
                     logger.info(f"💾 Database update: {self._selected_study_uid[:40]}... status reset to PENDING")
                     
                     # Start the download worker
-                    logger.info(f"🚀 Starting download worker for reset study: {self._selected_study_uid[:40]}...")
+                    logger.info(f"🚀 Starting download worker for restarted study: {self._selected_study_uid[:40]}...")
                     started = self._start_download_worker(self._selected_study_uid)
                     
                     if started:
                         logger.info(f"✅ Download worker started successfully for {self._selected_study_uid[:40]}...")
                     else:
                         logger.warning(f"⚠️ Failed to start download worker for {self._selected_study_uid[:40]}...")
+                    
+                    # Refresh the table to reflect the status change
+                    logger.info(f"🔄 Refreshing table after restart selected for {self._selected_study_uid[:40]}...")
+                    self._refresh_table_order()
+                    
+                    # Update button states after status change
+                    updated_state = self.state_store.get(self._selected_study_uid)
+                    if updated_state:
+                        logger.info(f"🔄 Updating button states for restarted study {self._selected_study_uid[:40]}...")
+                        self._update_button_states(updated_state)
                         
-                # Refresh the table to reflect the status change
-                logger.info(f"🔄 Refreshing table after start selected for {self._selected_study_uid[:40]}...")
-                self._refresh_table_order()
-                
-                # Update button states after status change
-                updated_state = self.state_store.get(self._selected_study_uid)
-                if updated_state:
-                    logger.info(f"🔄 Updating button states for started study {self._selected_study_uid[:40]}...")
-                    self._update_button_states(updated_state)
+                else:
+                    # Not paused or cancelled - cannot resume/restart with this button
+                    logger.warning(f"⚠️ Cannot resume: download status is {state.status.value}, not PAUSED or CANCELLED")
+                    self.log_message(f"ℹ️ Can only resume PAUSED or restart CANCELLED downloads. Use Retry to restart from beginning.")
             else:
                 logger.warning(f"⚠️ No state found for study {self._selected_study_uid[:40]}...")
             
@@ -3971,6 +4287,7 @@ class DownloadManagerWidget(QWidget):
             self.download_rows.clear()
             self._priority_group_widgets.clear()
             self._priority_group_rows.clear()
+            self._speed_label_widgets.clear()  # Clear speed label widget references
 
             # Add priority groups to table
             for priority_name in ["Critical", "High", "Normal", "Low"]:
@@ -4153,7 +4470,23 @@ class DownloadManagerWidget(QWidget):
             }
         """)
         self.download_table.setCellWidget(row, 3, progress_widget)
-        self.download_table.setItem(row, 4, QTableWidgetItem("0 KB/s"))  # Speed placeholder
+        
+        # Speed - use QLabel widget so we can update it dynamically
+        speed_label = QLabel("0 KB/s")
+        speed_label.setAlignment(Qt.AlignCenter)
+        speed_label.setStyleSheet("""
+            QLabel {
+                color: #a0aec0;
+                font-size: 11px;
+                font-family: 'Consolas', monospace;
+                background: transparent;
+            }
+        """)
+        self.download_table.setCellWidget(row, 4, speed_label)
+        
+        # Store speed label reference for later updates
+        self._speed_label_widgets[state.study_uid] = speed_label
+        
         self.download_table.setItem(row, 5, QTableWidgetItem(state.priority.display_name))
         logger.info(f"📥 [ROW-ADD] Populated all cells for row {row}")
 
@@ -4391,6 +4724,81 @@ class DownloadManagerWidget(QWidget):
             logger.error(f"❌ [PAUSE-ALL] Error pausing downloads: {e}")
             import traceback
             logger.error(traceback.format_exc())
+    
+    def _update_speed_display(self) -> None:
+        """
+        Update speed and ETA displays for all downloading studies
+        
+        Called every 1 second to:
+        1. Update speed labels in the table for ALL downloading studies
+        2. Update details panel speed/ETA for the selected study
+        """
+        try:
+            # Get all downloading studies and update their speed labels in the table
+            all_states = self.state_store.get_all()
+            downloading_states = [
+                state for state in all_states 
+                if state.status == DownloadStatus.DOWNLOADING
+            ]
+            
+            # Update speed label in table for each downloading study
+            for state in downloading_states:
+                study_uid = state.study_uid
+                speed_mb_per_sec = state.speed_mb_per_sec
+                speed_kb_per_sec = speed_mb_per_sec * 1024
+                
+                # Format speed text
+                if speed_mb_per_sec >= 1.0:
+                    speed_text = f"{speed_mb_per_sec:.1f} MB/s"
+                elif speed_kb_per_sec > 0:
+                    speed_text = f"{speed_kb_per_sec:.0f} KB/s"
+                else:
+                    speed_text = "0 KB/s"
+                
+                # Update speed label in table
+                if study_uid in self._speed_label_widgets:
+                    speed_label = self._speed_label_widgets[study_uid]
+                    if speed_label and not speed_label.isHidden():
+                        speed_label.setText(speed_text)
+            
+            # Update details panel for selected study
+            if not self._selected_study_uid:
+                return
+            
+            state = self.state_store.get(self._selected_study_uid)
+            if not state:
+                return
+            
+            # Update speed label in details panel
+            speed_mb_per_sec = state.speed_mb_per_sec
+            speed_kb_per_sec = speed_mb_per_sec * 1024
+            
+            if speed_mb_per_sec >= 1.0:
+                self.speed_label.setText(f"Speed: {speed_mb_per_sec:.1f} MB/s")
+            elif speed_kb_per_sec > 0:
+                self.speed_label.setText(f"Speed: {speed_kb_per_sec:.0f} KB/s")
+            else:
+                self.speed_label.setText("Speed: 0 KB/s")
+            
+            # Update ETA label in details panel
+            eta_seconds = state.eta_seconds
+            if eta_seconds and eta_seconds > 0:
+                # Convert seconds to human readable format
+                minutes = int(eta_seconds // 60)
+                seconds = int(eta_seconds % 60)
+                if minutes > 60:
+                    hours = minutes // 60
+                    minutes = minutes % 60
+                    self.eta_label.setText(f"ETA: {hours}h {minutes}m {seconds}s")
+                elif minutes > 0:
+                    self.eta_label.setText(f"ETA: {minutes}m {seconds}s")
+                else:
+                    self.eta_label.setText(f"ETA: {seconds}s")
+            else:
+                self.eta_label.setText("ETA: Unknown")
+        
+        except Exception as e:
+            logger.debug(f"Error in _update_speed_display: {e}")
     
     def log_message(self, message: str):
         """Add message to download log"""

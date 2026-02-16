@@ -611,6 +611,7 @@ QWidget:hover {
 class ThumbnailManager(QObject):
     # تعریف سیگنال‌ها
     priority_download_requested = Signal(str, str)  # series_number, study_uid
+    retry_download_requested = Signal(str, str, str)  # series_number, study_uid, series_uid
     thumbnail_image_ready = Signal(str, QImage)  # series_number, QImage
 
     def __init__(self, method_change_series):
@@ -1177,6 +1178,68 @@ class ThumbnailManager(QObject):
                     self.apply_border_states_new()
 
             image_button.clicked.connect(on_thumb_clicked)
+            
+            # ✅ ADD RETRY BUTTON (emoji style) at top-right corner
+            retry_button = QPushButton(widget)
+            retry_button.setText("🔄")
+            retry_button.setFixedSize(28, 28)
+            retry_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #2d3748;
+                    border: 1px solid #4a5568;
+                    border-radius: 4px;
+                    color: #ffffff;
+                    font-size: 14px;
+                    font-weight: bold;
+                    padding: 2px;
+                }
+                QPushButton:hover {
+                    background-color: #3d4758;
+                    border: 1px solid #6b7ba8;
+                }
+                QPushButton:pressed {
+                    background-color: #1d2638;
+                    border: 1px solid #2b3e5f;
+                }
+            """)
+            retry_button.setToolTip("Retry download for this series")
+            
+            # Position retry button at top-left corner
+            retry_button.move(4, 4)  # 4px padding from top-left
+            retry_button.raise_()  # Ensure it's on top
+            
+            # Extract series_uid from series_info
+            series_uid = None
+            if series_info and isinstance(series_info, dict):
+                if 'series_uid' in series_info:
+                    series_uid = series_info['series_uid']
+                elif 'series' in series_info and isinstance(series_info['series'], dict):
+                    series_uid = series_info['series'].get('series_uid')
+            
+            # Store series info in button for later use
+            retry_button.series_number = str(thumbnail_index)
+            retry_button.series_uid = series_uid
+            retry_button.series_info = series_info
+            
+            # Connect retry button to emission signal
+            def on_retry_clicked():
+                try:
+                    study_uid = ''
+                    if series_info and 'study_uid' in series_info:
+                        study_uid = series_info.get('study_uid', '')
+                    elif self.current_study_uid:
+                        study_uid = self.current_study_uid
+                    
+                    series_number = str(thumbnail_index)
+                    print(f"🔄 [ThumbnailManager] Retry download requested for series {series_number} (UID: {series_uid}), study {study_uid}")
+                    
+                    # Emit retry signal with series info
+                    if hasattr(self, 'retry_download_requested'):
+                        self.retry_download_requested.emit(series_number, study_uid, series_uid)
+                except Exception as e:
+                    print(f"❌ Error in retry button click: {e}")
+            
+            retry_button.clicked.connect(on_retry_clicked)
             
             # Clean main widget styling
             widget.setStyleSheet("""

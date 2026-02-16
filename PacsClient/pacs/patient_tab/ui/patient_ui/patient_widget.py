@@ -220,6 +220,10 @@ class PatientWidget(QWidget):
         self.reception_panel = self.reception_layout_ui()
         self.thumbnail_manager = ThumbnailManager(self.change_series_on_viewer)
         self.thumbnail_manager.parent_widget = self
+        
+        # ✅ Connect retry signal for series download retry
+        self.thumbnail_manager.retry_download_requested.connect(self._on_retry_series_download)
+        
         # Lazy load heavy panels (created when needed)
         self.reception_data_tab = None
         self.advanced_tools_panel = None
@@ -5655,6 +5659,93 @@ class PatientWidget(QWidget):
             logging.getLogger(__name__).error(
                 f"Failed to add mask ({tool_name}) to viewer", exc_info=True
             )
+
+    def _on_retry_series_download(self, series_number: str, study_uid: str, series_uid: str = None):
+        """
+        Handle retry download request from the retry button on a series thumbnail.
+        
+        Args:
+            series_number: Series number (string)
+            study_uid: Study UID 
+            series_uid: Series UID (optional)
+        """
+        try:
+            print(f"🔄🔄 [PatientWidget] ========== RETRY DOWNLOAD TRIGGERED ==========")
+            print(f"   Series Number: {series_number}")
+            print(f"   Study UID: {study_uid}")
+            print(f"   Series UID: {series_uid}")
+            print(f"🔄🔄 [PatientWidget] ====================================================")
+            
+            # Get the download manager widget from home_ui
+            try:
+                from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
+                
+                home_widget = get_home_widget()
+                print(f"🔍 [PatientWidget] home_widget found: {home_widget is not None}")
+                
+                if home_widget and hasattr(home_widget, '_get_or_create_download_manager_tab'):
+                    print(f"🔍 [PatientWidget] home_widget has _get_or_create_download_manager_tab method")
+                    # Get the download manager (don't activate the tab)
+                    download_manager = home_widget._get_or_create_download_manager_tab(activate_tab=False)
+                    print(f"🔍 [PatientWidget] download_manager obtained: {download_manager is not None}")
+                    
+                    if download_manager:
+                        print(f"✅ [PatientWidget] Found download manager, triggering SERIES-SPECIFIC retry")
+                        
+                        # Call the download manager's SERIES retry method (not full study retry)
+                        if hasattr(download_manager, '_on_series_retry'):
+                            print(f"🚀 [PatientWidget] Calling _on_series_retry with series_number={series_number}, series_uid={series_uid}")
+                            download_manager._on_series_retry(study_uid, series_number, series_uid)
+                            print(f"✅✅ [PatientWidget] Series retry initiated for series {series_number}")
+                        else:
+                            print(f"⚠️ [PatientWidget] Download manager doesn't have _on_series_retry method")
+                            print(f"⚠️ [PatientWidget] Falling back to full study retry")
+                            if hasattr(download_manager, '_on_per_patient_retry'):
+                                download_manager._on_per_patient_retry(study_uid)
+                                print(f"✅ [PatientWidget] Full study retry initiated")
+                            else:
+                                from PySide6.QtWidgets import QMessageBox
+                                QMessageBox.warning(
+                                    self, 
+                                    "Retry Download",
+                                    "Download retry method not found.\n"
+                                    "Please use the Download Manager tab to retry downloads."
+                                )
+                    else:
+                        print(f"⚠️ [PatientWidget] Could not get download manager widget")
+                        from PySide6.QtWidgets import QMessageBox
+                        QMessageBox.information(
+                            self,
+                            "Download Manager",
+                            "Download manager is not available.\n"
+                            "Please open the Download Manager tab to retry downloads."
+                        )
+                else:
+                    print(f"⚠️ [PatientWidget] Could not get home_widget or _get_or_create_download_manager_tab method")
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.information(
+                        self,
+                        "Retry Download",
+                        "Download manager is not available.\n"
+                        "Please open the Download Manager tab to retry downloads."
+                    )
+                    
+            except Exception as e:
+                print(f"⚠️ [PatientWidget] Error accessing download manager: {e}")
+                import traceback
+                traceback.print_exc()
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self, 
+                    "Download Manager",
+                    f"Error accessing download manager: {str(e)}\n"
+                    "Please use the Download Manager tab to retry downloads."
+                )
+        
+        except Exception as e:
+            print(f"❌ Error in _on_retry_series_download: {e}")
+            import traceback
+            traceback.print_exc()
 
     def apply_filters_to_all_series_of_modality(self, modality: str, filter_params: dict):
         """
