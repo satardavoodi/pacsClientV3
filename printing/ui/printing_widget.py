@@ -140,13 +140,15 @@ class PrintingWidget(QWidget):
         adjustments_layout = QFormLayout(adjustments_group)
         self.left_drag_mode = QComboBox()
         self.left_drag_mode.addItems([
-            "Default",
+            "Select Function",
             "Pan",
             "Window Level / Window Width",
             "Zoom",
         ])
-        self.left_drag_mode.setCurrentIndex(1)
         self.left_drag_mode.currentTextChanged.connect(self._on_left_drag_mode_changed)
+        self.left_drag_mode.blockSignals(True)
+        self.left_drag_mode.setCurrentIndex(0)
+        self.left_drag_mode.blockSignals(False)
         adjustments_layout.addRow("Left Mouse Function", self.left_drag_mode)
 
         self.delete_tiles_btn = QPushButton("Delete Selected Images")
@@ -610,8 +612,8 @@ class PrintingWidget(QWidget):
             return
         from printing.ui.print_tools import PrintToolManager
         
-        if text == "Default":
-            tool_mode = PrintToolManager.DEFAULT
+        if text == "Select Function":
+            return
         elif text == "Pan":
             tool_mode = PrintToolManager.PAN
         elif text == "Window Level / Window Width":

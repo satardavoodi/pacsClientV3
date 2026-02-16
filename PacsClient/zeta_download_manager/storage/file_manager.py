@@ -7,8 +7,9 @@ Handles file operations with filesystem caching to avoid repeated scans.
 import logging
 import os
 from pathlib import Path
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Tuple
 import threading
+import time
 
 from ..core.constants import DICOM_FILE_EXTENSION
 
@@ -20,17 +21,25 @@ class FileManager:
     File system operations manager
     
     Features:
-    - Filesystem caching (R38: scan once per series)
+    - Filesystem caching (R38: scan once per series) with TTL eviction
     - Thread-safe operations
     - Automatic directory creation
     - File validation
     """
     
-    def __init__(self):
-        """Initialize file manager"""
+    def __init__(self, cache_ttl_seconds: int = 3600):
+        """
+        Initialize file manager
+        
+        Args:
+            cache_ttl_seconds: Cache time-to-live in seconds (default: 1 hour)
+        """
+        # CRITICAL FIX: Add TTL to cache to prevent unbounded growth in high-frequency loops
         self._cache: Dict[str, Set[str]] = {}  # dir_path -> set of filenames
+        self._cache_timestamps: Dict[str, float] = {}  # dir_path -> timestamp
+        self._cache_ttl = cache_ttl_seconds
         self._cache_lock = threading.Lock()
-        logger.info("✅ FileManager initialized")
+        logger.info(f"✅ FileManager initialized (cache TTL: {cache_ttl_seconds}s)")
     
     def scan_directory(
         self,
@@ -48,13 +57,21 @@ class FileManager:
             List of DICOM filenames
         """
         dir_str = str(directory)
+        current_time = time.time()
         
-        # Check cache
+        # Check cache (with TTL expiration)
         if use_cache:
             with self._cache_lock:
                 if dir_str in self._cache:
-                    logger.debug(f"📋 Cache hit: {directory.name}")
-                    return list(self._cache[dir_str])
+                    cache_age = current_time - self._cache_timestamps.get(dir_str, 0)
+                    if cache_age < self._cache_ttl:
+                        logger.debug(f"📋 Cache hit: {directory.name} (age: {cache_age:.1f}s)")
+                        return list(self._cache[dir_str])
+                    else:
+                        # Cache expired, remove it
+                        logger.debug(f"🗑️ Cache expired for {directory.name} (age: {cache_age:.1f}s > {self._cache_ttl}s)")
+                        del self._cache[dir_str]
+                        del self._cache_timestamps[dir_str]
         
         # Scan directory
         if not directory.exists():
@@ -66,9 +83,10 @@ class FileManager:
                 if f.endswith(DICOM_FILE_EXTENSION)
             ]
             
-            # Cache results
+            # Cache results with timestamp for TTL tracking
             with self._cache_lock:
                 self._cache[dir_str] = set(files)
+                self._cache_timestamps[dir_str] = time.time()
             
             logger.debug(f"📁 Scanned: {directory.name} ({len(files)} files)")
             

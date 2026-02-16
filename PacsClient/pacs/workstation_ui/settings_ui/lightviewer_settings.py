@@ -11,7 +11,6 @@ import os
 import json
 from pathlib import Path
 
-
 class LightViewerSettingsWidget(QWidget):
     """Settings widget for Light Viewer configuration"""
     
@@ -182,7 +181,7 @@ class LightViewerSettingsWidget(QWidget):
         
         cd_group.setLayout(cd_layout)
         main_layout.addWidget(cd_group)
-        
+
         # Recommended Viewers Group
         info_group = QGroupBox("Recommended DICOM Viewers")
         info_layout = QVBoxLayout()

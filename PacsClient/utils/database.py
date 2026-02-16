@@ -7,33 +7,90 @@ from typing import Optional
 import hashlib
 # from typing import Optional, Dict, Any
 
-# Thread-local storage for database connections
+# Thread-local storage for database connections (for per-thread reuse)
 _local = threading.local()
 
 # Global lock for database operations
 _db_lock = threading.Lock()
 
-# Connection pool for better performance
-_connection_pool = {}
+# Connection pool - reusable connections for high-frequency loops 
+# CRITICAL FIX: Actually use the pool to prevent connection accumulation
+_connection_pool = {}  # thread_id -> sqlite3.Connection
 _pool_lock = threading.Lock()
+_max_pool_size = 5  # Max connections per thread
 
 
 @contextlib.contextmanager
 def get_db_connection():
-    """Context manager for database connections with automatic cleanup."""
+    """Context manager for database connections with automatic cleanup and pooling."""
     conn = None
     try:
-        conn = get_connection_database()
+        # Get connection from pool or create new one
+        conn = _get_pooled_connection()
         yield conn
+    except Exception as e:
+        print(f"⚠️ Database error in transaction: {e}")
+        if conn:
+            try:
+                conn.rollback()  # Rollback on error for data integrity
+            except:
+                pass
+        raise
     finally:
         if conn:
             try:
-                # Commit any pending transactions
-                conn.commit()
-                # Close the connection
-                conn.close()
+                # Return connection to pool instead of closing (for reuse)
+                _return_to_pool(conn)
             except Exception as e:
-                print(f"⚠️ Error closing database connection: {e}")
+                print(f"⚠️ Error returning connection to pool: {e}")
+
+
+def _get_pooled_connection():
+    """Get a reusable connection from pool or create new one."""
+    thread_id = threading.current_thread().ident
+    
+    with _pool_lock:
+        if thread_id in _connection_pool:
+            conns = _connection_pool[thread_id]
+            if conns:
+                conn = conns.pop()
+                # Validate connection is still open
+                try:
+                    conn.execute("SELECT 1")
+                    return conn
+                except sqlite3.OperationalError:
+                    # Connection is dead, create new one
+                    pass
+        
+        # Create new connection if pool is empty or invalid
+        return get_connection_database()
+
+
+def _return_to_pool(conn):
+    """Return connection to pool for reuse (or close if pool is full)."""
+    thread_id = threading.current_thread().ident
+    
+    with _pool_lock:
+        if thread_id not in _connection_pool:
+            _connection_pool[thread_id] = []
+        
+        conns = _connection_pool[thread_id]
+        if len(conns) < _max_pool_size:
+            # Add back to pool for reuse
+            try:
+                conn.rollback()  # Ensure clean state
+                conns.append(conn)
+            except:
+                # If rollback fails, close the connection
+                try:
+                    conn.close()
+                except:
+                    pass
+        else:
+            # Pool is full, close this connection
+            try:
+                conn.close()
+            except:
                 pass
 
 
@@ -48,22 +105,23 @@ def get_connection_database():
     for attempt in range(max_retries):
         try:
             # Use longer timeout and better connection parameters
+            # CRITICAL: Using DEFERRED isolation level ensures data integrity for medical data
             conn = sqlite3.connect(
                 db, 
                 timeout=300.0,  # Increased timeout to 300 seconds
-                check_same_thread=False,  # Allow multi-threading
-                isolation_level=None  # Autocommit mode to reduce locking
+                check_same_thread=False,  # Allow multi-threading with proper locking
+                isolation_level="DEFERRED"  # FIXED: Use DEFERRED transactions (safe default)
             )
-            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute("PRAGMA foreign_keys = ON;")  # Enforce referential integrity
             conn.execute("PRAGMA journal_mode = WAL;")  # Enable WAL mode for better concurrency
-            conn.execute("PRAGMA synchronous = NORMAL;")  # Faster writes
+            conn.execute("PRAGMA synchronous = NORMAL;")  # Balanced safety/performance
             conn.execute("PRAGMA busy_timeout = 120000;")  # 120 second busy timeout
             conn.execute("PRAGMA temp_store = MEMORY;")  # Use memory for temp tables
-            conn.execute("PRAGMA cache_size = 20000;")  # Increase cache size
-            conn.execute("PRAGMA mmap_size = 536870912;")  # 512MB memory mapping
+            conn.execute("PRAGMA cache_size = -10000;")  # FIXED: 10MB cache (negative = KB)
+            conn.execute("PRAGMA mmap_size = 104857600;")  # FIXED: 100MB mmap (was 512MB)
             conn.execute("PRAGMA wal_autocheckpoint = 500;")  # Checkpoint every 500 pages
             conn.execute("PRAGMA locking_mode = NORMAL;")  # Normal locking mode
-            conn.execute("PRAGMA read_uncommitted = 1;")  # Allow dirty reads
+            # REMOVED: PRAGMA read_uncommitted = 1 (CRITICAL: This was allowing dirty reads on medical data!)
             return conn
         except sqlite3.OperationalError as e:
             if "database is locked" in str(e) and attempt < max_retries - 1:
@@ -78,6 +136,20 @@ def get_connection_database():
             
     
     raise sqlite3.OperationalError("Failed to connect to database after all retries")
+
+
+def cleanup_connection_pools():
+    """Close all pooled connections (for app shutdown or testing)."""
+    global _connection_pool
+    with _pool_lock:
+        for thread_id, conns in _connection_pool.items():
+            for conn in conns:
+                try:
+                    conn.close()
+                except:
+                    pass
+        _connection_pool.clear()
+        print("✅ All pooled database connections closed")
 
 
 
@@ -265,6 +337,35 @@ def init_database():
                 needs_attention INTEGER DEFAULT 0,
                 import_source_path TEXT DEFAULT '',
                 import_manifest_path TEXT DEFAULT ''
+            )
+        """)
+
+        # Case of the Day (My Course) tables
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS case_of_day_entries (
+                case_pk INTEGER PRIMARY KEY AUTOINCREMENT,
+                saved_by TEXT NOT NULL,
+                modality TEXT NOT NULL,
+                body_part TEXT NOT NULL,
+                diagnosis TEXT NOT NULL,
+                anatomical_classification TEXT DEFAULT '',
+                protocol_details TEXT DEFAULT '',
+                description TEXT DEFAULT '',
+                differential_diagnosis TEXT DEFAULT '',
+                dicom_folder_path TEXT NOT NULL,
+                original_source_path TEXT DEFAULT '',
+                source_type TEXT DEFAULT 'manual',
+                patient_id TEXT DEFAULT '',
+                study_uid TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS case_of_day_body_parts (
+                body_part TEXT PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
@@ -2776,10 +2877,16 @@ def bulk_insert_instances(instances_data: list):
     # Prepare values for executemany
     values = []
     for inst in instances_data:
+        instance_path = inst.get('instance_path')
+        if instance_path is not None:
+            try:
+                instance_path = str(instance_path)
+            except Exception:
+                instance_path = None
         values.append((
             inst['sop_uid'],
             inst['series_fk'],
-            inst['instance_path'],
+            instance_path,
             inst['instance_number'],
             inst['rows'],
             inst['columns'],
@@ -2832,9 +2939,15 @@ def bulk_update_instances(instances_data: list):
     # Prepare values for executemany
     values = []
     for inst in instances_data:
+        instance_path = inst.get('instance_path')
+        if instance_path is not None:
+            try:
+                instance_path = str(instance_path)
+            except Exception:
+                instance_path = None
         values.append((
             inst['series_fk'],
-            inst['instance_path'],
+            instance_path,
             inst['instance_number'],
             inst['rows'],
             inst['columns'],

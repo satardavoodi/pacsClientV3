@@ -30,7 +30,7 @@ from pynetdicom.sop_class import (
     Verification
 )
 # # واردکردن کلاینت gRPC
-from PacsClient.components import DicomGrpcClient, DicomDownloader
+from PacsClient.components import DicomGrpcClient
 from PacsClient.components import dicom_service_pb2, dicom_service_pb2_grpc
 # Zeta Download Manager - Primary download system
 from PacsClient.components.zeta_adapter import (
@@ -110,6 +110,8 @@ class HomePanelWidget(QWidget):
         self._search_task = None  # آخرین تسک جستجو برای جلوگیری از موازی‌سازی ناخواسته
         self._cancel_search_requested = False
         self.source_of_patient_load = None
+        # Cache for series info to avoid repeated server fetches
+        self._series_info_cache = {}
         
         # ✅ رفع خطای اصلی: ایجاد ویژگی _background_tasks
         self._background_tasks = set()  # مجموعه‌ای برای مدیریت تسک‌های پس‌زمینه
@@ -282,6 +284,8 @@ class HomePanelWidget(QWidget):
             self.data_access_panel_widget.refresh_local_button.clicked.connect(
                 lambda: asyncio.create_task(self.search_patients_from_local_async())
             )
+        # Auto-trigger search when switching between tabs (Local/Server/Import)
+        self.data_access_panel_widget.tabs.currentChanged.connect(self._on_server_tab_changed)
         # self.data_access_panel_widget.set_method_select_folder(self.select_folder)
         server_layout.addWidget(self.data_access_panel_widget)
 
@@ -554,6 +558,12 @@ class HomePanelWidget(QWidget):
         except Exception as e:
             print(f"Error in default search: {str(e)}")
 
+    def _on_server_tab_changed(self, index):
+        """Auto-trigger search when the user switches tabs in Server Selection."""
+        tab_name = self.data_access_panel_widget.tabs.tabText(index).lower()
+        if tab_name == 'local':
+            self.patient_list_function_identifier('local')
+
     def patient_list_function_identifier(self, tab_selected: str):
         tab_selected = tab_selected.lower()
 
@@ -641,19 +651,82 @@ class HomePanelWidget(QWidget):
         except Exception as _:
             pass
 
+    def _trace_action_start(self, action_type: str, context: dict = None) -> str:
+        """Create a deterministic action marker and return action_id."""
+        try:
+            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget
+            return VTKWidget.register_action_start(action_type, context=context or {})
+        except Exception:
+            return ""
+
+    def _trace_action_done(self, action_id: str, phase: str, extra: dict = None):
+        """Close an action marker (used for early-exit paths with no viewer switch)."""
+        try:
+            if not action_id:
+                return
+            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget
+            VTKWidget.register_action_done(action_id, phase=phase, extra=extra or {})
+        except Exception:
+            pass
+
+    def _attach_action_to_widget(self, widget, action_id: str, series_number: str = None):
+        """Attach a pending action id to patient widget and its viewers for completion in switch_series."""
+        try:
+            if not widget or not action_id:
+                return
+
+            setattr(widget, '_pending_action_id', action_id)
+            if series_number is not None:
+                setattr(widget, '_pending_action_series', str(series_number))
+
+            viewer_controller = getattr(widget, 'viewer_controller', None)
+            if not viewer_controller:
+                return
+
+            selected_widget = getattr(viewer_controller, 'selected_widget', None)
+            if selected_widget is not None:
+                selected_widget._pending_action_id = action_id
+                if series_number is not None:
+                    selected_widget._pending_action_series = str(series_number)
+            else:
+                # Fallback: attach only to first viewport (avoid broadcasting to all viewers)
+                nodes = getattr(viewer_controller, 'lst_nodes_viewer', []) or []
+                if nodes:
+                    vtk_w = getattr(nodes[0], 'vtk_widget', None)
+                    if vtk_w is not None:
+                        vtk_w._pending_action_id = action_id
+                        if series_number is not None:
+                            vtk_w._pending_action_series = str(series_number)
+        except Exception:
+            pass
+
     def _on_patient_double_clicked(self, patient_id, patient_name, study_uid, report_status='pending'):
         # run the async flow without blocking UI
         import asyncio
-        asyncio.create_task(self._on_patient_double_clicked_async(patient_id, patient_name, study_uid, report_status))
+        action_id = self._trace_action_start(
+            "double_click",
+            context={
+                'patient_id': str(patient_id),
+                'patient_name': str(patient_name),
+                'study_uid': str(study_uid),
+            }
+        )
+        asyncio.create_task(
+            self._on_patient_double_clicked_async(
+                patient_id,
+                patient_name,
+                study_uid,
+                report_status,
+                action_id=action_id,
+            )
+        )
 
-    async def _on_patient_double_clicked_async(self, patient_id, patient_name, study_uid, report_status='pending'):
+    async def _on_patient_double_clicked_async(self, patient_id, patient_name, study_uid, report_status='pending', action_id=None):
         """
         FAST patient opening - tab opens immediately, background loading for everything else
         """
         from pathlib import Path
-        from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget, QFrame
         from PySide6.QtCore import Qt
-        from PySide6.QtGui import QFont, QMovie
         from PacsClient.pacs.patient_tab.utils.utils import check_study_complete
 
         try:
@@ -682,6 +755,12 @@ class HomePanelWidget(QWidget):
                                     self.custom_tab_manager.set_tab_active(idx)
                                 else:
                                     self.tab_widget.setCurrentIndex(idx)
+
+                                self._trace_action_done(
+                                    action_id,
+                                    phase='already_open_tab',
+                                    extra={'study_uid': str(study_uid)}
+                                )
                                 
                                 # Ensure the loading is hidden
                                 self.hide_loading()
@@ -705,6 +784,12 @@ class HomePanelWidget(QWidget):
                                     self.custom_tab_manager.set_tab_active(idx)
                                 else:
                                     self.tab_widget.setCurrentIndex(idx)
+
+                                self._trace_action_done(
+                                    action_id,
+                                    phase='already_open_tab',
+                                    extra={'study_uid': str(study_uid)}
+                                )
                                 
                                 # Ensure the loading is hidden
                                 self.hide_loading()
@@ -727,34 +812,6 @@ class HomePanelWidget(QWidget):
 
             self._opening_studies.add(study_uid)
 
-            # ✅ Show blocking loading dialog to prevent UI interaction
-            loading_dialog = QProgressDialog("Loading patient data...", None, 0, 0, self)
-            loading_dialog.setWindowTitle("Please Wait")
-            loading_dialog.setWindowModality(Qt.WindowModal)
-            loading_dialog.setMinimumDuration(0)
-            loading_dialog.setCancelButton(None)
-            loading_dialog.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
-            loading_dialog.setStyleSheet("""
-                QProgressDialog {
-                    background-color: #1a1a2e;
-                    color: white;
-                    font-size: 13px;
-                }
-                QProgressBar {
-                    border: 2px solid #4a5568;
-                    border-radius: 5px;
-                    background-color: #2d3748;
-                    text-align: center;
-                    color: white;
-                }
-                QProgressBar::chunk {
-                    background-color: #3b82f6;
-                    border-radius: 3px;
-                }
-            """)
-            loading_dialog.show()
-            QApplication.processEvents()
-
             # Track loading state: keep until first series is displayed
             self._double_click_loading_active = True
             self._double_click_first_series_loaded = False
@@ -774,16 +831,8 @@ class HomePanelWidget(QWidget):
                 # Create output directory path
                 output_dir = str(SOURCE_PATH / study_uid)
                 
-            # Update loading dialog
-            loading_dialog.setLabelText("Checking study data...")
-            QApplication.processEvents()
-
-            # --- STEP 3: Open tab but DON'T show yet ---
+            # --- STEP 3: Open tab immediately (UI first) ---
             caller = CallerTypes.IMPORT if is_local else CallerTypes.SERVER
-
-            # Update loading dialog
-            loading_dialog.setLabelText("Opening patient tab...")
-            QApplication.processEvents()
 
             widget = self.add_new_tab_widget(
                 patient_id=patient_id,
@@ -796,25 +845,14 @@ class HomePanelWidget(QWidget):
             )
 
             if not widget:
+                self._trace_action_done(action_id, phase='open_widget_failed', extra={'study_uid': str(study_uid)})
                 self._double_click_first_series_loaded = True
                 self._maybe_hide_double_click_loading()
-                
-                # Close loading dialog
-                loading_dialog.close()
                 return
 
-            # ✅ CRITICAL: Wait for UI to be ready before showing the tab
-            # This prevents showing empty viewers before they are prepared
-            loading_dialog.setLabelText("Preparing viewer...")
-            QApplication.processEvents()
-            print("⏳ [TAB] Waiting for UI to be ready...")
-            await asyncio.sleep(0.3)  # 300ms delay to allow viewer setup
-            print("✅ [TAB] UI ready, activating tab...")
+            self._attach_action_to_widget(widget, action_id)
             
-            # Close loading dialog before showing tab
-            loading_dialog.close()
-            
-            # NOW activate the tab after UI is ready
+            # Activate tab immediately; loading indicators live inside the viewer
             if self.custom_tab_manager:
                 try:
                     tab_index = self.custom_tab_manager.find_tab_by_study_uid(study_uid)
@@ -829,6 +867,14 @@ class HomePanelWidget(QWidget):
                     print("✅ [TAB] Activated tab via setCurrentWidget")
                 except Exception as e:
                     print(f"⚠️ [TAB] Error setting current widget: {e}")
+
+            # Ensure lifecycle hook runs for initial open even if currentChanged is not emitted.
+            try:
+                if hasattr(widget, 'on_tab_activated') and (not getattr(widget, '_is_active_patient_tab', False)):
+                    widget.on_tab_activated()
+                    print(f"✅ [TAB] Forced on_tab_activated for study {study_uid}")
+            except Exception as e:
+                print(f"⚠️ [TAB] Failed forced on_tab_activated: {e}")
 
             # Connect to first-series displayed signal (to hide loading)
             try:
@@ -873,7 +919,7 @@ class HomePanelWidget(QWidget):
                         else:
                             # Fetch series info from server if not available
                             try:
-                                study_info = self.get_series_info_from_server(study_uid, patient_id)
+                                study_info = self._get_or_fetch_series_info(study_uid, patient_id)
                                 if study_info:
                                     series_list = study_info.get('series', [])
                                     series_count = study_info.get('count_of_series', len(series_list))
@@ -986,6 +1032,7 @@ class HomePanelWidget(QWidget):
             # Everything is handled in the fast path above
         except Exception as e:
             print(f"Error in patient double-click handler: {str(e)}")
+            self._trace_action_done(action_id, phase='double_click_error', extra={'study_uid': str(study_uid), 'error': str(e)})
             # Hide loading on error
             self.hide_loading()
             self._double_click_first_series_loaded = True
@@ -1028,40 +1075,27 @@ class HomePanelWidget(QWidget):
     
     async def _download_series_on_demand(self, widget, study_uid, series_list, base_output_dir, server, clicked_series=None):
         """
-        DEPRECATED: This function used legacy RobustSeriesDownloader.
-        Use Zeta Download Manager instead via start_zeta_download() or the Download Manager UI.
+        DEPRECATED: This function has been removed as part of Phase 1 refactoring.
+        All downloads must now route through Zeta Download Manager via _get_or_create_download_manager_tab().
         
-        Legacy download series with priority - clicked series downloads first
+        Raises NotImplementedError to force use of Zeta Download Manager.
         """
-        print(f"\n{'='*60}")
-        print(f"⚠️ LEGACY FUNCTION CALLED: _download_series_on_demand")
-        print(f"🔄 This function has been deprecated. Use Zeta Download Manager instead.")
-        print(f"📋 Study: {study_uid}, Series count: {len(series_list)}")
-        print(f"{'='*60}\n")
-        
-        # Delegate to Zeta Download Manager
-        try:
-            from pathlib import Path
-            
-            # Use Zeta Download Manager instead of legacy downloader
-            print("🚀 Using Zeta Download Manager for priority download...")
-            
-            # TODO: Implement priority download via Zeta Download Manager
-            # For now, just log that this needs to be implemented
-            print("⚠️ Priority download via Zeta not yet implemented")
-            print("💡 Please use the Download Manager UI to download studies")
-            return
-            
-        except Exception as e:
-            print(f"⚠️ Error in _download_series_on_demand: {e}")
+        raise NotImplementedError(
+            "Legacy _download_series_on_demand has been removed. "
+            "Please use Zeta Download Manager via _get_or_create_download_manager_tab().add_downloads() instead."
+        )
     
     async def _download_series_fallback(self, widget, study_uid, series_list, base_output_dir, server):
         """
-        DEPRECATED: Legacy fallback download method.
-        Use Zeta Download Manager instead.
+        DEPRECATED: This function has been removed as part of Phase 1 refactoring.
+        All downloads must now route through Zeta Download Manager.
+        
+        Raises NotImplementedError to force use of Zeta Download Manager.
         """
-        print("⚠️ DEPRECATED: _download_series_fallback called")
-        print("💡 Use Zeta Download Manager for all download operations")
+        raise NotImplementedError(
+            "Legacy _download_series_fallback has been removed. "
+            "Please use Zeta Download Manager via _get_or_create_download_manager_tab().add_downloads() instead."
+        )
 
     def close_tab(self, index):
         """Safely close a tab and clean up references"""
@@ -1106,9 +1140,8 @@ class HomePanelWidget(QWidget):
             print(f"⚠️ Error emitting series_downloaded signal: {e}")
 
     def _on_patient_double_clicked__bb(self, patient_id, patient_name, study_uid):
-        """Handle patient double-click event from PatientTableWidget"""
+        """Handle patient double-click event from PatientTableWidget - uses Zeta Download Manager"""
         try:
-
             # First, check if study already exists locally
             output_dir, have_subfolders = get_study_source_path(study_uid)
 
@@ -1119,36 +1152,45 @@ class HomePanelWidget(QWidget):
                     patient_name=patient_name,
                     folder_path=output_dir,
                     caller=CallerTypes.SERVER,
-                    study_uid=study_uid  # Pass study_uid for duplicate prevention
+                    study_uid=study_uid
                 )
             else:
-                # Study doesn't exist - open tab immediately and download in background
-
-                # Open tab first with empty folder
+                # Study doesn't exist - open tab immediately and queue for download via Zeta
                 widget = self.add_new_tab_widget(
                     patient_id=patient_id,
                     patient_name=patient_name,
-                    folder_path=None,  # Will be set after download
+                    folder_path=None,
                     caller=CallerTypes.SERVER,
-                    study_uid=study_uid  # Pass study_uid for duplicate prevention
+                    study_uid=study_uid
                 )
 
-                # Ensure patient_id is available in the widget for thumbnail fetching
+                # Ensure patient_id is available in the widget
                 if hasattr(widget, 'patient_id'):
                     widget.patient_id = patient_id
                 elif hasattr(widget, 'set_patient_info'):
                     widget.set_patient_info(patient_id, patient_name, study_uid)
 
-                # Start download in background
+                # Route through Zeta Download Manager
                 server = self.data_access_panel_widget.get_server_selected()
                 if server:
-                    dicom_downloader = DicomDownloader(host=server['host'], port=50051)
-                    if dicom_downloader.connect():
-                        asyncio.create_task(self.download_and_update_tab(
-                            dicom_downloader, study_uid, output_dir, widget
-                        ))
+                    # Create study dict for Zeta
+                    study_dict = {
+                        'patient_id': patient_id,
+                        'patient_name': patient_name,
+                        'study_uid': study_uid
+                    }
+                    # Get or create Zeta Download Manager
+                    zeta_manager = self._get_or_create_download_manager_tab()
+                    if zeta_manager:
+                        # Fetch series info first
+                        study_info = self._get_or_fetch_series_info(study_uid, patient_id)
+                        if study_info:
+                            study_dict['series'] = study_info.get('series', [])
+                            study_dict['series_count'] = study_info.get('count_of_series', len(study_dict.get('series', [])))
+                        # Add to Zeta with high priority
+                        zeta_manager.add_downloads([study_dict], start_immediately=True)
                     else:
-                        print("Failed to connect to DICOM downloader")
+                        print("Failed to create Zeta Download Manager")
                 else:
                     print("No server selected")
 
@@ -1218,11 +1260,13 @@ class HomePanelWidget(QWidget):
     def _on_patient_single_clicked(self, patient_id, patient_name, study_uid):
         """Handle patient single-click event - Show detailed series information"""
         try:
+            _t0 = time.perf_counter()
             # Show loading dialog immediately
             self.show_loading("Loading Series Info", f"Retrieving information for {patient_name}...")
             
             # Load asynchronously to avoid blocking UI
             asyncio.create_task(self._load_and_display_series_info_async(patient_id, patient_name, study_uid))
+            print(f"[PROFILE] single-click: scheduled series info load for {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
             
         except Exception as e:
             print(f"Error in _on_patient_single_clicked: {str(e)}")
@@ -1272,7 +1316,7 @@ class HomePanelWidget(QWidget):
                         patient_id = study.get('patient_id')
                         if study_uid:
                             print(f"[Old Download] Fetching series info for {study.get('patient_name')}...")
-                            study_info = self.get_series_info_from_server(study_uid, patient_id)
+                            study_info = self._get_or_fetch_series_info(study_uid, patient_id)
                             if study_info:
                                 study['series'] = study_info.get('series', [])
                                 study['series_count'] = study_info.get('count_of_series', len(study.get('series', [])))
@@ -1332,7 +1376,7 @@ class HomePanelWidget(QWidget):
                         study_uid = study.get('study_uid')
                         patient_id = study.get('patient_id')
                         if study_uid:
-                            study_info = self.get_series_info_from_server(study_uid, patient_id)
+                            study_info = self._get_or_fetch_series_info(study_uid, patient_id)
                             if study_info:
                                 study['series'] = study_info.get('series', [])
                                 study['series_count'] = study_info.get('count_of_series', len(study.get('series', [])))
@@ -1477,6 +1521,9 @@ class HomePanelWidget(QWidget):
                         series_number = _resolve_series_number(series_uid)
                         if hasattr(widget, 'thumbnail_manager'):
                             widget.thumbnail_manager.start_series_download(series_number)
+                        # Pipeline: signal that a download session is active
+                        if hasattr(widget, 'viewer_controller') and hasattr(widget.viewer_controller, 'pipeline'):
+                            widget.viewer_controller.pipeline.on_series_download_started(series_number)
                     except Exception:
                         pass
             
@@ -1557,6 +1604,15 @@ class HomePanelWidget(QWidget):
             
             # ✅ Save study info to database when download is complete
             if status == 'complete':
+                # ── Pipeline orchestrator: definitive study-complete signal ──
+                # This unlocks ZetaBoost warmup on the viewer controller.
+                try:
+                    widget = self._find_widget_by_study_uid(study_uid)
+                    if widget and hasattr(widget, 'viewer_controller'):
+                        widget.viewer_controller.on_study_download_completed(study_uid)
+                        print(f"[PIPELINE] ✅ Signaled viewer controller: study download complete")
+                except Exception as pipe_err:
+                    print(f"[PIPELINE] ⚠️ Failed to signal viewer controller: {pipe_err}")
                 try:
                     print(f"[SAVE_TO_DB] Retrieving study info for {study_uid}...")
                     study_info = self._get_study_info_for_completed_download(study_uid)
@@ -1790,9 +1846,11 @@ class HomePanelWidget(QWidget):
     async def _load_and_display_series_info(self, patient_id, patient_name, study_uid):
         """Load and display detailed series information in right panel - Optimized for speed"""
         try:
+            _t0 = time.perf_counter()
 
             # First check if we have complete series info in database
             if check_study_complete(study_uid) or self.source_of_patient_load == SourceOfPatientLoad.DB:
+                _t_db = time.perf_counter()
 
                 # Get series info from database
                 from PacsClient.utils.db_manager import find_study_pk_with_study_uid, get_series_by_study_pk
@@ -1828,15 +1886,17 @@ class HomePanelWidget(QWidget):
                             study_info['series'].append(series_info)
 
                         self._display_series_info_in_right_panel(study_info)
+                        print(f"[PROFILE] single-click: DB series info loaded for {study_uid} in {(time.perf_counter() - _t_db)*1000:.1f}ms")
 
-                        # Load thumbnails from database/cache for downloaded studies
-                        # await self._load_thumbnails_for_downloaded_study(study_uid, series_list)
+                        # Load thumbnails from cache for downloaded studies (local, no regeneration)
+                        await self._load_thumbnails_for_downloaded_study(study_uid, series_list)
+                        print(f"[PROFILE] single-click: thumbnails loaded for {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
                         return
 
             # Server request only if not cached
 
             # Get detailed series information from server
-            study_info = self.get_series_info_from_server(study_uid, patient_id)
+            study_info = self._get_or_fetch_series_info(study_uid, patient_id)
 
             print('study_info:', study_info)
             if study_info:
@@ -1848,6 +1908,7 @@ class HomePanelWidget(QWidget):
                 if success:
                     # Clear cache to ensure fresh data
                     clear_study_cache(study_uid)
+                print(f"[PROFILE] single-click: server series info loaded for {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
             else:
                 QMessageBox.information(self, "No Information",
                                         f"No detailed series information available for study: {study_uid}")
@@ -1864,6 +1925,7 @@ class HomePanelWidget(QWidget):
         OPTIMIZED: Fast loading with minimal blocking
         """
         try:
+            _t0 = time.perf_counter()
             from PacsClient.pacs.patient_tab.utils.utils import THUMBNAIL_PATH
             from pathlib import Path
             
@@ -1915,13 +1977,34 @@ class HomePanelWidget(QWidget):
             if thumbnails and hasattr(self, 'right_panel_widget'):
                 # Use await to yield control and prevent blocking
                 await asyncio.sleep(0)
-                self.right_panel_widget.display_thumbnails(thumbnails)
+                # Show immediately for downloaded studies (no progressive delay)
+                self.right_panel_widget.display_thumbnails(thumbnails, progressive=False)
                 print(f"[OK] Displayed {len(thumbnails)} cached thumbnails for study {study_uid}")
+                print(f"[PROFILE] thumbnails cache display: {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
             
         except Exception as e:
             print(f"[ERROR] Error loading thumbnails for downloaded study: {str(e)}")
             import traceback
             traceback.print_exc()
+
+    def _get_or_fetch_series_info(self, study_uid, patient_id):
+        """
+        Get series info from cache or fetch from server.
+
+        This reduces repeated network calls across download requests and
+        patient open flows in the same session.
+        """
+        if not study_uid:
+            return None
+
+        cached = self._series_info_cache.get(study_uid)
+        if cached:
+            return cached
+
+        study_info = self.get_series_info_from_server(study_uid, patient_id)
+        if study_info:
+            self._series_info_cache[study_uid] = study_info
+        return study_info
     
     def get_series_statistics_from_list(self, series_list):
         """Get statistics from series list"""
@@ -1983,248 +2066,23 @@ class HomePanelWidget(QWidget):
         # finally:
         #     self.hide_loading()
 
-    async def download_and_update_tab(self, dicom_downloader, study_uid, output_dir, widget):
+    async def download_and_update_tab(self, *args, **kwargs):
         """
-        PRIORITY WORKFLOW: Display thumbnails FIRST, then download DICOM files
-        اولویت: نمایش تامب‌نیل‌ها اول، سپس دانلود فایل‌های DICOM
+        DEPRECATED: This function has been removed as part of Phase 1 refactoring.
+        
+        The legacy download_and_update_tab function used DicomDownloader gRPC calls
+        and bypassed Zeta Download Manager state tracking.
+        
+        All downloads must now route through Zeta Download Manager.
+        
+        Raises NotImplementedError to force use of Zeta Download Manager.
         """
-        try:
-
-            # STEP 1: FETCH AND DISPLAY THUMBNAILS IMMEDIATELY (HIGHEST PRIORITY)
-            try:
-
-                # Show thumbnail loading indicator
-                if hasattr(widget, 'show_loading_indicator'):
-                    widget.show_loading_indicator("Loading thumbnails...")
-
-                # Get server configuration
-                server = self.data_access_panel_widget.get_server_selected()
-                if server:
-                    # Fetch thumbnails using gRPC client
-                    from PacsClient.components.grpc_client import DicomGrpcClient
-                    grpc_client = DicomGrpcClient(host=server['host'], port=50051)
-
-                    # Get patient info from the widget or extract from study_uid
-                    patient_id = getattr(widget, 'patient_id', None) or study_uid.split('.')[-1]  # Fallback
-
-                    thumbnails = grpc_client.get_thumbnails(patient_id, study_uid)
-                    grpc_client.close()
-
-                    if thumbnails:
-
-                        # Save thumbnails locally for immediate display
-                        thumbnails = self.save_thumbnail(thumbnails)
-
-                        if thumbnails and 'thumbnails' in thumbnails:
-                            # Save series info to database
-                            self.save_series_info_to_database(study_uid, thumbnails['thumbnails'])
-
-                            # Clear cache to ensure fresh data
-                            from PacsClient.pacs.patient_tab.utils.utils import clear_study_cache
-                            clear_study_cache(study_uid)
-
-                            # IMMEDIATELY display thumbnails in the widget
-                            if hasattr(widget, 'display_thumbnails_immediately'):
-                                widget.display_thumbnails_immediately(thumbnails.get('thumbnails', []))
-                            elif hasattr(widget, 'load_thumbnails_from_cache'):
-                                # Use thumbnail cache path for immediate loading
-                                from PacsClient.pacs.patient_tab.utils.utils import THUMBNAIL_PATH
-                                thumbnail_dir = THUMBNAIL_PATH / study_uid
-                                if thumbnail_dir.exists():
-                                    widget.load_thumbnails_from_cache(str(thumbnail_dir))
-
-                        else:
-                            print("[WARNING] No thumbnail data in response")
-                    else:
-                        print("[WARNING] No thumbnails received from server")
-                else:
-                    print("[WARNING] No server configuration available")
-
-            except Exception as thumbnail_error:
-                print(f"[WARNING] Thumbnail fetch error (continuing with DICOM download): {str(thumbnail_error)}")
-                # Continue with DICOM download even if thumbnails fail
-
-            # Update loading indicator for DICOM download
-            if hasattr(widget, 'show_loading_indicator'):
-                widget.show_loading_indicator("Downloading DICOM files...")
-
-            # STEP 2: DOWNLOAD DICOM FILES IN BACKGROUND (SECONDARY PRIORITY)
-
-            # Create thread-safe progress callback with throttling
-            import time
-            last_update_time = {}  # Track last update time per series
-
-            # Create a simple signal-based approach for thread safety
-            from PySide6.QtCore import QObject, Signal, QTimer
-            from PySide6.QtWidgets import QApplication
-
-            # Create progress signaler as instance attribute to prevent garbage collection
-            # Always create a new signaler for each download to ensure fresh connections
-            class ProgressSignaler(QObject):
-                progress_update = Signal(str, str, float, int, int)  # event_type, series_number, progress_percent, current_count, total_count
-
-                def __init__(self, widget_ref):
-                    super().__init__()
-                    self.widget_ref = widget_ref
-                    self.progress_update.connect(self.handle_progress_update)
-
-                def handle_progress_update(self, event_type, series_number, progress_percent, current_count=0, total_count=0):
-                    try:
-                        if hasattr(self.widget_ref, 'thumbnail_manager'):
-                            if event_type == 'series_started':
-                                self.widget_ref.thumbnail_manager.start_series_download(series_number)
-                            elif event_type == 'series_progress':
-                                # Format: "current/total" without "Downloading" word
-                                status_text = f"{current_count}/{total_count}" if total_count > 0 else ""
-                                self.widget_ref.thumbnail_manager.update_series_progress(
-                                    series_number, progress_percent, status_text
-                                )
-                            elif event_type == 'series_complete':
-                                self.widget_ref.thumbnail_manager.complete_series_download(series_number)
-
-                                # Handle first series completion in signaler too
-                                nonlocal first_series_displayed, completed_series
-                                completed_series.add(series_number)
-
-                                # If this is the first series to complete, just log it but don't display yet
-                                if not first_series_displayed and len(completed_series) == 1:
-                                    first_series_displayed = True
-                                    print(
-                                        f"[TARGET] [Signaler] First series {series_number} completed! (Will display after all series are done)")
-                                    # Don't display immediately to avoid clearing existing thumbnails
-
-                    except Exception as ui_error:
-                        print(f"[WARNING] UI update error: {ui_error}")
-                        import traceback
-                        traceback.print_exc()
-
-            # Always create a fresh signaler for each download
-            # Store reference to prevent garbage collection during download
-            self.progress_signaler = ProgressSignaler(widget)
-            # Keep a strong reference to prevent Qt from destroying the signaler
-            self._active_signalers = getattr(self, '_active_signalers', [])
-            self._active_signalers.append(self.progress_signaler)
-
-            # Track if first series has been displayed
-            first_series_displayed = False
-            completed_series = set()
-
-            def progress_callback(event_type, series_number, progress_percent, current_count=0, total_count=0):
-                """Handle download progress updates - THREAD SAFE WITH THROTTLING"""
-                try:
-
-                    # Reduce throttling - allow more frequent updates for better UX
-                    current_time = time.time()
-                    series_key = f"{event_type}_{series_number}"
-
-                    # Only throttle series_progress, not series_started or series_complete
-                    if (event_type == 'series_progress' and
-                            series_key in last_update_time and
-                            current_time - last_update_time[series_key] < 0.3):  # Reduced from 1.0 to 0.3 seconds
-                        return  # Skip this update to prevent UI overload
-
-                    # Always allow series_started and series_complete through
-
-                    last_update_time[series_key] = current_time
-
-                    # Emit signal for thread-safe UI update
-
-                    # Check if widget and signaler still exist
-                    if hasattr(widget, 'thumbnail_manager') and hasattr(self,
-                                                                        'progress_signaler') and self.progress_signaler:
-                        self.progress_signaler.progress_update.emit(event_type, series_number, progress_percent, current_count, total_count)
-                    else:
-                        # Direct UI update as fallback when tab is closed
-                        try:
-                            if hasattr(widget, 'thumbnail_manager'):
-                                if event_type == 'series_started':
-                                    widget.thumbnail_manager.start_series_download(series_number)
-                                elif event_type == 'series_progress':
-                                    # Format: "current/total" without "Downloading" word
-                                    status_text = f"{current_count}/{total_count}" if total_count > 0 else ""
-                                    widget.thumbnail_manager.update_series_progress(
-                                        series_number, progress_percent, status_text
-                                    )
-                                elif event_type == 'series_complete':
-                                    widget.thumbnail_manager.complete_series_download(series_number)
-                        except Exception as direct_error:
-                            print(f"Direct UI update failed: {direct_error}")
-
-                    # Handle first series completion - display immediately
-                    nonlocal first_series_displayed, completed_series
-                    if event_type == 'series_complete':
-                        completed_series.add(series_number)
-
-                        # If this is the first series to complete, display immediately
-                        if not first_series_displayed and len(completed_series) == 1:
-                            first_series_displayed = True
-                            print(f"[TARGET] First series {series_number} completed! Displaying immediately...")
-
-                            # Display the first series immediately without clearing existing data
-                            try:
-                                print(f"[OK] First series {series_number} completed! Loading into viewer...")
-
-                                # Use the load_first_series_only method
-                                if hasattr(widget, 'load_first_series_only'):
-                                    print("[LOAD] Loading first series only...")
-                                    widget.load_first_series_only(output_dir, series_number)
-                                else:
-                                    print("[WARNING] Widget doesn't have load_first_series_only method")
-
-                            except Exception as first_series_error:
-                                print(f"[ERROR] Error displaying first series: {first_series_error}")
-                                import traceback
-                                traceback.print_exc()
-
-                except Exception as callback_error:
-                    print(f"[WARNING] Progress callback error: {callback_error}")
-
-            await asyncio.to_thread(
-                dicom_downloader.download_study_dicom_files_streaming,
-                study_uid, output_dir, 0, progress_callback
-            )
-
-            # Always update the widget with the downloaded folder path to ensure fresh data
-            print("[FOLDER] All series completed - loading full study...")
-
-            # Clear cache to ensure fresh data loading
-            from PacsClient.pacs.patient_tab.utils.utils import clear_study_cache
-            clear_study_cache(study_uid)
-
-            # Force refresh the widget with new data - with error handling
-            try:
-                if hasattr(widget, 'update_folder_path'):
-                    print("[LOAD] Calling update_folder_path...")
-                    widget.update_folder_path(output_dir)
-                elif hasattr(widget, 'load_study_from_folder'):
-                    print("[LOAD] Calling load_study_from_folder...")
-                    widget.load_study_from_folder(output_dir)
-
-                # Force UI refresh
-                if hasattr(widget, 'refresh_ui_after_download'):
-                    print("[LOAD] Calling refresh_ui_after_download...")
-                    widget.refresh_ui_after_download()
-
-            except Exception as refresh_error:
-                print(f"[ERROR] Error refreshing widget after download: {refresh_error}")
-                import traceback
-                traceback.print_exc()
-                # Continue execution instead of crashing
-
-            # Hide loading indicator
-            if hasattr(widget, 'hide_loading_indicator'):
-                widget.hide_loading_indicator()
-        except Exception as e:
-            print(f"❌ Error in priority download workflow: {str(e)}")
-
-            # Hide loading indicator on error
-            if hasattr(widget, 'hide_loading_indicator'):
-                widget.hide_loading_indicator()
-
-            # Show error message to user
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Download Error",
-                                f"Error downloading DICOM files:\n{str(e)}")
+        raise NotImplementedError(
+            "Legacy download_and_update_tab has been removed (bypassed Zeta state). "
+            "Please use Zeta Download Manager instead: "
+            "zeta_manager = self._get_or_create_download_manager_tab(); "
+            "zeta_manager.add_downloads(studies, start_immediately=True)"
+        )
 
     # ---------- 2) نسخه‌ی جدید Async با قابلیت Cancel برای جستجوی لوکال ----------
     async def search_patients_from_local_async(self):
@@ -2265,12 +2123,16 @@ class HomePanelWidget(QWidget):
             search_data = self.patient_search_widget.get_search_data()
             print(f"\n[LOCAL_SEARCH] 📋 Search criteria from UI:\n{search_data}")
             
-            # For Local tab: Remove date filters to show ALL downloaded studies regardless of date
-            # Users want to see all locally downloaded files, not just today's
+            # For Local tab: Remove date AND modality filters so ALL downloaded
+            # studies appear regardless of what the user typed on the Server tab.
+            # Studies downloaded from the server may have modality='Unknown' (the
+            # PACS push often omits per-study modality), so keeping modality would
+            # silently hide them.
             search_data_local = search_data.copy()
             search_data_local['date_from'] = None
             search_data_local['date_to'] = None
-            print(f"[LOCAL_SEARCH] 📋 Modified search_data for local (date filters removed):\n{search_data_local}")
+            search_data_local['modality'] = None
+            print(f"[LOCAL_SEARCH] 📋 Modified search_data for local (date+modality filters removed):\n{search_data_local}")
             
             # مرحله‌ی نسبتاً سنگین: جستجوی بیماران با فیلتر از DB
             # (داخل executor تا UI قفل نشود)
@@ -2345,13 +2207,54 @@ class HomePanelWidget(QWidget):
                         continue
 
                     # مقادیر لازم
+                    # Backfill missing modality / study_date from first DICOM on disk
+                    _disp_modality = patient.get('modality')
+                    _disp_date = patient.get('study_date')
+                    if (_disp_modality in (None, '', 'Unknown') or _disp_date in (None, '', 'Unknown')):
+                        try:
+                            _sp = Path(study_path)
+                            _first_dcm = None
+                            for _sub in sorted(_sp.iterdir()):
+                                if _sub.is_dir():
+                                    for _f in sorted(_sub.iterdir()):
+                                        if _f.suffix.lower() in ('.dcm', '.dicom'):
+                                            _first_dcm = _f
+                                            break
+                                if _first_dcm:
+                                    break
+                            if _first_dcm:
+                                import pydicom
+                                _ds = pydicom.dcmread(str(_first_dcm), stop_before_pixels=True, force=True)
+                                if _disp_modality in (None, '', 'Unknown'):
+                                    _raw_mod = _ds.get('Modality', None)
+                                    if _raw_mod:
+                                        _disp_modality = str(_raw_mod)
+                                        patient['modality'] = _disp_modality
+                                if _disp_date in (None, '', 'Unknown'):
+                                    _raw_date = _ds.get('StudyDate', None)
+                                    if _raw_date:
+                                        _disp_date = str(_raw_date)
+                                        patient['study_date'] = _disp_date
+                                # Persist to DB so next local load is instant
+                                _s_uid = patient.get('study_uid')
+                                if _s_uid:
+                                    _s_pk = find_study_pk_with_study_uid(_s_uid)
+                                    if _s_pk:
+                                        update_study_missing_fields(
+                                            _s_pk,
+                                            modality=_disp_modality if _disp_modality not in (None, '', 'Unknown') else None,
+                                            study_date=_disp_date if _disp_date not in (None, '', 'Unknown') else None,
+                                        )
+                        except Exception as _bf_err:
+                            print(f"[LOCAL_SEARCH]   ⚠️ modality/date backfill error: {_bf_err}")
+
                     print(f"[LOCAL_SEARCH]   ✅ Adding to table: {patient.get('patient_name')}")
                     self.add_data2patient_list_table(
                         patient_id=patient.get('patient_id'),
                         patient_name=patient.get('patient_name'),
-                        study_date=patient.get('study_date'),
+                        study_date=_disp_date,
                         description=patient.get('study_description'),
-                        modality=patient.get('modality'),
+                        modality=_disp_modality,
                         study_uid=patient.get('study_uid'),
                         series_count=patient.get('number_of_series'),
                         images_count=patient.get('number_of_instances'),
@@ -3287,6 +3190,10 @@ class HomePanelWidget(QWidget):
 
     def _on_right_panel_thumbnail_clicked(self, series_number):
         """Handle thumbnail click - prioritize this series for download"""
+        action_id = self._trace_action_start(
+            "thumbnail_click",
+            context={'series_number': str(series_number)}
+        )
         print(f"\n{'='*80}")
         print(f"🎯 [HIGH PRIORITY] User clicked series {series_number} - IMMEDIATE DOWNLOAD REQUEST")
         print(f"{'='*80}\n")
@@ -3315,14 +3222,17 @@ class HomePanelWidget(QWidget):
         # Find the widget for this study
         widget = self._find_widget_by_study_uid(study_uid)
         if not widget:
+            self._trace_action_done(action_id, phase='thumbnail_widget_not_found', extra={'study_uid': str(study_uid)})
             print(f"❌ Widget not found for study {study_uid}")
             return
         
         print(f"✅ Widget found: {type(widget).__name__}")
+        self._attach_action_to_widget(widget, action_id, series_number=str(series_number))
         
         # Get server connection
         server = self.data_access_panel_widget.get_server_selected()
         if not server:
+            self._trace_action_done(action_id, phase='thumbnail_no_server', extra={'study_uid': str(study_uid)})
             print(f"❌ No server selected")
             return
         
@@ -3528,208 +3438,33 @@ class HomePanelWidget(QWidget):
         except Exception as e:
             print(f"⚠️ Error cancelling background downloads: {e}")
 
-    async def _download_with_fast_downloader(self, widget, series_uid, series_number, series_dir, expected_count, server):
+    async def _download_with_fast_downloader(self, *args, **kwargs):
         """
-        Use fast SeriesDownloader for immediate downloads
+        DEPRECATED: This function has been removed as part of Phase 1 refactoring.
+        Uses missing SeriesDownloader module and bypasses Zeta state.
+        All downloads must route through Zeta Download Manager.
+        
+        Raises NotImplementedError.
         """
-        try:
-            from PacsClient.components.series_downloader import SeriesDownloader
-            from pathlib import Path
-            
-            print(f"⚡ Starting fast download for series {series_number}...")
-            
-            # Create downloader
-            downloader = SeriesDownloader(host=server['host'], port=50052)
-            
-            # Connect with timeout
-            print(f"🔗 Connecting to {server['host']}:50052...")
-            if not downloader.connect():
-                print(f"❌ Failed to connect to downloader")
-                return False
-            
-            print(f"✅ Connected successfully")
-            
-            # Progress tracking
-            downloaded_files = 0
-            start_time = time.time()
-            
-            def progress_callback(event_type, series_num, progress_percent, current=0, total=0):
-                """Progress callback for immediate download"""
-                try:
-                    current_time = time.time()
-                    elapsed = current_time - start_time
-                    
-                    if event_type == 'series_started':
-                        print(f"📥 [IMMEDIATE] Started downloading series {series_num}")
-                        if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.start_series_download(str(series_num))
-                            
-                    elif event_type == 'series_progress':
-                        # Update every 10% or when count changes
-                        if progress_percent % 10 == 0 or (current > 0 and current != downloaded_files):
-                            downloaded_files = current
-                            print(f"📊 [IMMEDIATE] Series {series_num}: {progress_percent:.1f}% ({current}/{total}) - {elapsed:.1f}s")
-                            
-                        if hasattr(widget, 'thumbnail_manager'):
-                            status_text = f"{current}/{total}" if total > 0 else ""
-                            widget.thumbnail_manager.update_series_progress(
-                                series_number=str(series_num),
-                                progress_percent=progress_percent,
-                                status_text=f"⚡ {status_text}"
-                            )
-                            
-                    elif event_type == 'series_complete':
-                        print(f"✅ [IMMEDIATE] Series {series_num} completed in {elapsed:.1f}s")
-                        if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.complete_series_download(str(series_num))
-                        
-                        # Load immediately after download
-                        QTimer.singleShot(500, lambda sn=series_num, wr=widget: 
-                            self._trigger_immediate_load(wr, str(sn), str(series_dir)))
-                        
-                except Exception as e:
-                    print(f"⚠️ Progress callback error: {e}")
-            
-            # Download the series
-            print(f"📥 Downloading series {series_number} (UID: {series_uid[:20]}...)")
-            success = await asyncio.to_thread(
-                downloader.download_series,
-                series_uid,
-                str(series_dir),
-                progress_callback
-            )
-            
-            downloader.disconnect()
-            
-            if success:
-                # Hide loading spinner
-                self._hide_loading_spinner()
+        raise NotImplementedError(
+            "Legacy _download_with_fast_downloader has been removed (used missing SeriesDownloader). "
+            "Please use Zeta Download Manager instead."
+        )
 
-                # ✅ Critical fix: Mark series as ready in thumbnail manager
-                # Mark as ready in thumbnail manager
-                if hasattr(self, 'thumbnail_manager'):
-                    self.thumbnail_manager.set_series_ready(str(series_number))
-                    self.thumbnail_manager.apply_border_states_new()
-                print(f"✅ Marked series {series_number} as ready in thumbnail manager")            
-                print(f"🎉 SUCCESS: Series {series_number} downloaded immediately!")
-                
-                # Check downloaded files
-                dicom_files = list(Path(series_dir).glob("*.dcm"))
-                print(f"📂 Downloaded {len(dicom_files)} DICOM files")
-                
-                # Load immediately
-                await self._load_series_immediate(widget, series_number, str(series_dir))
-                return True
-            else:
-                print(f"❌ FAILED: Could not download series {series_number}")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Error in fast downloader: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
 
-    def _trigger_immediate_load(self, widget_ref, series_number, series_dir):
-        """Trigger immediate load after download"""
-        try:
-            print(f"🔄 Triggering immediate load for series {series_number}...")
-            
-            # Use QTimer to ensure we're in main thread
-            QTimer.singleShot(100, lambda: self._safe_load_series(widget_ref, series_number, series_dir))
-        except Exception as e:
-            print(f"⚠️ Error triggering load: {e}")
 
-    def _safe_load_series(self, widget_ref, series_number, series_dir):
-        """Safely load series with error handling"""
-        try:
-            if widget_ref and hasattr(widget_ref, 'load_series_immediately'):
-                widget_ref.load_series_immediately(series_number, series_dir)
-            elif widget_ref and hasattr(widget_ref, 'load_single_series'):
-                widget_ref.load_single_series(series_number)
-            else:
-                print(f"⚠️ Widget doesn't have immediate load method")
-        except Exception as e:
-            print(f"❌ Error loading series: {e}")
-
-    async def _download_with_robust_downloader_fallback(self, widget, study_uid, series_list, base_output_dir, server, target_series):
+    async def _download_with_robust_downloader_fallback(self, *args, **kwargs):
         """
-        Fallback to robust downloader if fast downloader fails
+        DEPRECATED: This function has been removed as part of Phase 1 refactoring.
+        Uses missing RobustSeriesDownloader module and bypasses Zeta state.
+        All downloads must route through Zeta Download Manager.
+        
+        Raises NotImplementedError.
         """
-        try:
-            print(f"🔄 Using Zeta download for series {target_series}...")
-            
-            # Use Zeta download manager instead of RobustSeriesDownloader
-            from PacsClient.components.zeta_adapter import start_zeta_download
-            
-            # TODO: Convert this to use Zeta's task-based download system
-            # For now, keep legacy RobustSeriesDownloader as fallback
-            from PacsClient.components.robust_series_downloader import RobustSeriesDownloader
-            
-            robust_downloader = RobustSeriesDownloader(
-                host=server['host'],
-                port=50052,
-                max_retries=3,
-                retry_delay=2.0
-            )
-            
-            # Progress callback for robust downloader
-            def progress_callback(event_type, series_num, progress_percent, current=0, total=0):
-                try:
-                    if event_type == 'series_started':
-                        print(f"🔄 [ROBUST FALLBACK] Started series {series_num}")
-                        if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.start_series_download(str(series_num))
-                            
-                    elif event_type == 'series_progress':
-                        if hasattr(widget, 'thumbnail_manager'):
-                            status_text = f"{current}/{total}" if total > 0 else ""
-                            status_text = f"🔄 {status_text}"  # Fallback indicator
-                            widget.thumbnail_manager.update_series_progress(
-                                series_number=str(series_num),
-                                progress_percent=progress_percent,
-                                status_text=status_text
-                            )
-                            
-                    elif event_type == 'series_complete':
-                        print(f"✅ [ROBUST FALLBACK] Series {series_num} completed")
-                        if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.complete_series_download(str(series_num))
-                        
-                        # Load if this is our target series
-                        if str(series_num) == str(target_series):
-                            QTimer.singleShot(500, lambda sn=series_num: 
-                                self._trigger_immediate_load(widget, str(sn), str(base_output_dir / str(sn))))
-                        
-                except Exception as e:
-                    print(f"⚠️ Robust progress callback error: {e}")
-            
-            # Download with priority
-            print(f"🎯 Prioritizing series {target_series} in robust downloader...")
-            results = await asyncio.to_thread(
-                robust_downloader.prioritize_and_download_series,
-                target_series,
-                series_list,
-                base_output_dir,
-                progress_callback,
-                widget
-            )
-            
-            # Check results
-            completed = results.get('completed', [])
-            if target_series in completed:
-                print(f"✅ Fallback successful: Series {target_series} downloaded")
-            else:
-                print(f"❌ Fallback failed for series {target_series}")
-            
-            # Cleanup
-            robust_downloader.disconnect()
-            
-        except Exception as e:
-            print(f"❌ Error in robust downloader fallback: {e}")
-            import traceback
-            traceback.print_exc()
-            
+        raise NotImplementedError(
+            "Legacy _download_with_robust_downloader_fallback has been removed (used missing RobustSeriesDownloader). "
+            "Please use Zeta Download Manager instead."
+        )
 
     async def _download_single_series_with_priority(self, widget, study_uid, series_list, base_output_dir, server, clicked_series):
         """

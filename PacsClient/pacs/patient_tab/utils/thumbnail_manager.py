@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QFrame
 from PySide6.QtWidgets import QWidget, QLabel, QProgressBar
 from PySide6.QtCore import Qt
 import math
+import time
 
 
 class CircularProgressborder(QFrame):
@@ -201,16 +202,16 @@ class CircularProgressborder(QFrame):
 
 
     def _hide_ready_label(self):
-        """Hide the ready label with safety checks"""
+        """Hide the ready/progress label with safety checks"""
         try:
-            # ✅ FIX: Check if object still exists before calling update
-            if not hasattr(self, '_ready_label') or self._ready_label is None:
+            # ✅ FIX: Use _progress_label (the actual attribute) instead of _ready_label
+            if not hasattr(self, '_progress_label') or self._progress_label is None:
                 return
                 
             # Check if the underlying C++ object still exists
             try:
-                self._ready_label.hide()
-                self._ready_label.update()
+                self._progress_label.hide()
+                self._progress_label.update()
             except RuntimeError:
                 # Object already deleted, ignore
                 pass
@@ -622,6 +623,10 @@ class ThumbnailManager(QObject):
         self.ready_series = set()
         self.current_study_uid = None  # برای ذخیره study_uid فعلی
         self._placeholder_cache = None
+        # Coalesce frequent border refresh requests to avoid UI repaint storms.
+        self._border_state_update_pending = False
+        self._last_border_apply_ts = 0.0
+        self._set_ready_reentrant_guard = False
         self.thumbnail_image_ready.connect(self._apply_thumbnail_image)
 
     def create_placeholder_pixmap(self, size: QSize = None, text: str = "Loading...") -> QPixmap:
@@ -796,11 +801,29 @@ class ThumbnailManager(QObject):
         except Exception as e:
             print(f"⚠️ apply_border_states error: {e}")
     
-    def apply_border_states_new(self):
+    def apply_border_states_new(self, immediate: bool = False):
         """
         Apply border states using new CircularProgressborder - OPTIMIZED VERSION
         """
         try:
+            # Coalesce frequent update calls into one apply per frame.
+            if not immediate:
+                if self._border_state_update_pending:
+                    return
+
+                now = time.perf_counter()
+                elapsed_ms = (now - self._last_border_apply_ts) * 1000.0
+                frame_budget_ms = 150.0  # Coalesce updates during bulk downloads
+                delay_ms = 0 if elapsed_ms >= frame_budget_ms else int(frame_budget_ms - elapsed_ms)
+
+                self._border_state_update_pending = True
+                QTimer.singleShot(delay_ms, lambda: self.apply_border_states_new(immediate=True))
+                return
+
+            # We are executing the coalesced update now.
+            self._border_state_update_pending = False
+            self._last_border_apply_ts = time.perf_counter()
+
             # Skip if no widgets
             if not self.series_widgets:
                 return
@@ -890,6 +913,8 @@ class ThumbnailManager(QObject):
             print(f"✅ [ThumbnailManager] Border states applied")
             
         except Exception as e:
+            if immediate:
+                self._border_state_update_pending = False
             if "deleted" not in str(e).lower():
                 print(f"⚠️ apply_border_states_new error: {e}")
                 
@@ -1214,8 +1239,7 @@ class ThumbnailManager(QObject):
                     if series_key in self.series_widgets:
                         del self.series_widgets[series_key]
 
-            # Also update old style for backward compatibility
-            self.apply_border_states()
+            # Apply unified border state update (coalesced)
             self.apply_border_states_new()
         except Exception as e:
             print(f"⚠️ set_series_pending error: {e}")
@@ -1223,6 +1247,14 @@ class ThumbnailManager(QObject):
     def set_series_ready(self, series_number: str):
         try:
             series_key = str(series_number)
+            if self._set_ready_reentrant_guard:
+                return
+
+            # Fast no-op: already ready and no widget state transition required.
+            if series_key in self.ready_series:
+                return
+
+            self._set_ready_reentrant_guard = True
             self.ready_series.add(series_key)  # مهم: این مجموعه تعیین‌کننده "کادر سبز" است
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
@@ -1238,13 +1270,14 @@ class ThumbnailManager(QObject):
             self.apply_border_states_new()
         except Exception as e:
             print(f"⚠️ set_series_ready error: {e}")
+        finally:
+            self._set_ready_reentrant_guard = False
 
 
     def update_widget_borders(self, selected_widget=None):
         # اگر selected_widget داریم از parentش سری را حدس بزنیم
         if selected_widget and hasattr(selected_widget, "series_number"):
             self.selected_series = str(selected_widget.series_number)
-        self.apply_border_states()
         self.apply_border_states_new()
 
     def highlight_priority_series(self, series_number):
@@ -1685,8 +1718,8 @@ class ThumbnailManager(QObject):
                 except Exception as e:
                     print(f"⚠️ Error triggering priority display: {e}")
 
-            # 3. به‌روزرسانی border
-            self.apply_border_states_new()
+            # 3. به‌روزرسانی border — handled by _trigger_priority_display, no
+            #    separate call needed (reduces UI thread work during bulk downloads).
 
             print(f"✅ [PRIORITY COMPLETE] Series {series_key} ready for immediate display")
 

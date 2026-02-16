@@ -2,6 +2,7 @@ import os
 import gc
 import time
 import warnings
+import sys
 
 import SimpleITK as sitk
 import pydicom
@@ -22,6 +23,15 @@ from .utils import find_series_folder_by_series_number
 
 # Suppress noisy ResourceWarning from external libraries during GC
 warnings.filterwarnings("ignore", category=ResourceWarning)
+
+# Guard against Windows codepage print failures (e.g., cp1256) in debug logs.
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(errors="replace")
+except Exception:
+    pass
 
 
 def get_orientation(itk_image):
@@ -58,12 +68,12 @@ def get_itk_image(dicom_names):
             del reader
             
             _elapsed = time.time() - _start
-            print(f"         ⚡ Parallel DICOM read: {len(dicom_names)} files in {_elapsed:.3f}s ({len(dicom_names)/_elapsed:.0f} fps)")
+            print(f"         Parallel DICOM read: {len(dicom_names)} files in {_elapsed:.3f}s ({len(dicom_names)/_elapsed:.0f} fps)")
             
             return itk_image
             
         except Exception as e:
-            print(f"         ⚠️ Parallel read failed ({e}), using standard method")
+            print(f"         WARN: Parallel read failed ({e}), using standard method")
             # Fall back to standard method
     
     # Standard method for small series
@@ -79,6 +89,163 @@ def get_itk_image(dicom_names):
 # ✅ NEW: Cache for series metadata to avoid redundant DB queries
 _series_metadata_cache = {}
 _cache_max_size = 100  # Maximum number of cached series
+_LAST_GC_TS = 0.0
+_GC_INTERVAL_SEC = 120.0  # was 20s → 120s: gc.collect is stop-the-world and freezes ALL threads (UI included)
+
+
+def _list_unique_dicom_files(folder: Path) -> list:
+    """Return unique DICOM files under folder (case-insensitive), naturally sorted."""
+    raw = list(folder.glob("*.dcm")) + list(folder.glob("*.DCM"))
+    uniq = []
+    seen = set()
+    for p in raw:
+        key = str(p).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(p)
+    return natsorted(uniq)
+
+
+def _maybe_collect_gc(force: bool = False):
+    """Avoid frequent gc.collect() in hot paths; run very rarely.
+    
+    gc.collect() is a STOP-THE-WORLD operation that freezes ALL Python
+    threads including the UI thread. During image loading (which runs in
+    background threads), calling gc.collect() causes the user to perceive
+    micro-freezes in the viewer. We increase the interval drastically and
+    only force-collect on explicit cleanup paths (tab close).
+    """
+    global _LAST_GC_TS
+    now = time.time()
+    if force or (now - _LAST_GC_TS) >= _GC_INTERVAL_SEC:
+        gc.collect(generation=0)  # generation=0 is MUCH faster than full gc.collect()
+        _LAST_GC_TS = now
+
+
+def _backfill_instance_orientation(instances):
+    """Backfill NULL IOP/IPP in instances by reading DICOM headers.
+
+    When instances were inserted during initial download without IOP/IPP
+    (e.g. server-side metadata push without header extraction), reference-line
+    computation breaks because manage_reference_line() silently skips NULL IOP.
+
+    This reads only the DICOM header (no pixel data) for each instance
+    where IOP or IPP is missing, populates the metadata dict in-place,
+    and updates the DB so the fix is persisted once per series.
+
+    Returns True if any values were backfilled.
+    """
+    import json as _json
+
+    needs_backfill = any(
+        inst.get('image_orientation_patient') is None or inst.get('image_position_patient') is None
+        for inst in instances
+    )
+    if not needs_backfill:
+        return False
+
+    backfilled = 0
+    for inst in instances:
+        iop = inst.get('image_orientation_patient')
+        ipp = inst.get('image_position_patient')
+        if iop is not None and ipp is not None:
+            continue  # already populated
+
+        fpath = inst.get('instance_path')
+        if not fpath or not Path(fpath).exists():
+            continue
+
+        try:
+            ds = pydicom.dcmread(str(fpath), stop_before_pixels=True, force=True)
+
+            if iop is None:
+                raw_iop = ds.get('ImageOrientationPatient', None)
+                if raw_iop is not None:
+                    inst['image_orientation_patient'] = [float(v) for v in raw_iop]
+                    iop = inst['image_orientation_patient']
+
+            if ipp is None:
+                raw_ipp = ds.get('ImagePositionPatient', None)
+                if raw_ipp is not None:
+                    inst['image_position_patient'] = [float(v) for v in raw_ipp]
+                    ipp = inst['image_position_patient']
+
+            if inst.get('pixel_spacing') is None:
+                raw_ps = ds.get('PixelSpacing', None)
+                if raw_ps is not None:
+                    inst['pixel_spacing'] = [float(v) for v in raw_ps]
+
+            # Persist to DB so this only runs once per series
+            inst_pk = inst.get('instance_pk')
+            if inst_pk is not None and (iop is not None or ipp is not None):
+                try:
+                    conn = get_connection_database()
+                    cur = conn.cursor()
+                    cur.execute(
+                        """UPDATE instances
+                           SET image_orientation_patient = COALESCE(image_orientation_patient, ?),
+                               image_position_patient    = COALESCE(image_position_patient, ?),
+                               pixel_spacing             = COALESCE(pixel_spacing, ?)
+                           WHERE instance_pk = ?""",
+                        (
+                            _json.dumps(inst['image_orientation_patient']) if inst.get('image_orientation_patient') else None,
+                            _json.dumps(inst['image_position_patient']) if inst.get('image_position_patient') else None,
+                            _json.dumps(inst['pixel_spacing']) if inst.get('pixel_spacing') else None,
+                            inst_pk,
+                        ),
+                    )
+                    conn.commit()
+                except Exception as _db_err:
+                    print(f"      WARN: backfill DB update failed for pk={inst_pk}: {_db_err}")
+
+            backfilled += 1
+        except Exception as _e:
+            print(f"      WARN: backfill read failed for {fpath}: {_e}")
+
+    if backfilled:
+        print(f"      🔧 [BACKFILL] populated IOP/IPP for {backfilled}/{len(instances)} instances")
+
+    return backfilled > 0
+
+
+def _get_instances_from_best_group(series_pk: int):
+    """
+    Return instances from the best-populated group for a series.
+
+    Why: some studies store instances under group_id != 0. If we only query
+    group 0, we incorrectly fall back to expensive filesystem regrouping.
+    """
+    try:
+        conn = get_connection_database()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT group_id, COUNT(*) AS cnt
+            FROM instances
+            WHERE series_fk = ?
+            GROUP BY group_id
+            ORDER BY cnt DESC, group_id ASC
+            """,
+            (int(series_pk),)
+        )
+        rows = cur.fetchall() or []
+        conn.close()
+
+        for group_id, cnt in rows:
+            if int(cnt or 0) <= 0:
+                continue
+            try:
+                gid = int(group_id or 0)
+            except Exception:
+                gid = 0
+            instances = get_instances_by_series_pk(series_pk, gid) or []
+            if instances:
+                return gid, instances
+    except Exception:
+        pass
+
+    return None, []
 
 def _get_cached_metadata(series_pk, instances):
     """
@@ -135,7 +302,7 @@ def get_itk_image_fast_first(dicom_names):
                 raise
 
     except Exception as e:
-        print(f"⚠️ Fast first series loading failed: {e}, using standard method")
+        print(f"WARN: Fast first series loading failed: {e}, using standard method")
         # fallback به روش معمولی
         return get_itk_image(dicom_names)
 
@@ -170,7 +337,6 @@ def read_segment_nifti(file):
     vtk_image_data = utils.convert_itk2vtk(itk_image)
 
     itk_image = None
-    gc.collect()
     return vtk_image_data
 
 
@@ -183,7 +349,7 @@ def load_images_from_server(folder_path, patient_pk=None, study_pk=None, study_u
         if study_data and isinstance(study_data, dict):
             number_of_instances_on_db = study_data.get('number_of_instances', None)
         else:
-            print(f"⚠️ [load_images_from_server] study_data is None or invalid for study_uid: {study_uid}")
+            print(f"WARN [load_images_from_server] study_data is None or invalid for study_uid: {study_uid}")
             number_of_instances_on_db = None
 
     # print('number_of_instances_on_db!!!!!!', number_of_instances_on_db)
@@ -221,7 +387,7 @@ def load_images_from_server(folder_path, patient_pk=None, study_pk=None, study_u
                 if last_checked_file == last_added_file:
                     same_file_count += 1
                     if same_file_count > 20:  # Same file for 10 seconds (20 * 0.5)
-                        print(f'⚠️ Stuck on same file for too long: {last_added_file}')
+                        print(f'WARN: Stuck on same file for too long: {last_added_file}')
                         # Check if download is actually complete
                         if number_of_instances_on_db:
                             number_of_instances_on_source = utils.get_count_dicom_files_exist(folder_path)
@@ -263,14 +429,14 @@ def load_images_from_server(folder_path, patient_pk=None, study_pk=None, study_u
                         return load_images(series_updating, patient_pk, study_pk), lst_series_downloaded, True
 
         except Exception as e:
-            print(f'⚠️ Error in download wait loop: {e}')
+            print(f'WARN: Error in download wait loop: {e}')
             pass
 
         iteration_count += 1
         time.sleep(0.5)
 
     # Timeout reached
-    print(f'⚠️ Download wait timeout reached ({max_iterations * 0.5} seconds)')
+    print(f'WARN: Download wait timeout reached ({max_iterations * 0.5} seconds)')
     if series_updating:
         return load_images(series_updating, patient_pk, study_pk), lst_series_downloaded, True
     return None, lst_series_downloaded, False
@@ -349,10 +515,8 @@ def load_vtk_from_dicom_paths(dicom_paths):
         vtk_image_data = utils.convert_itk2vtk(itk_image)
         _convert_time = time.time() - _convert_start
         
-        # Cleanup
+        # Cleanup - do NOT call gc.collect(), it freezes UI thread
         itk_image = None
-        del itk_image
-        gc.collect()
         
         _total = time.time() - _start
         print(f"[LOAD_VTK] ✓ Loaded in {_total:.3f}s (DICOM={_dicom_time:.3f}s, Convert={_convert_time:.3f}s)")
@@ -385,8 +549,7 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
             return None
 
         # Get all DICOM files in the series folder
-        dicom_files = list(series_folder.glob("*.dcm"))
-        dicom_files = natsorted(dicom_files)
+        dicom_files = _list_unique_dicom_files(series_folder)
 
         if not dicom_files:
             print(f"[FILESYSTEM LOAD] No DICOM files found in {series_folder}")
@@ -476,10 +639,8 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
 
         _meta_time = time.time() - _meta_start
 
-        # پاکسازی حافظه
+        # Cleanup - do NOT call gc.collect(), it freezes threads
         itk_image = None
-        del itk_image
-        gc.collect()
 
         _total = time.time() - _start
         print(
@@ -495,7 +656,7 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
 
 
 def load_single_series_by_number(study_path, series_number, patient_pk=None, study_pk=None,
-                                 ordering_by_instances_number=None):
+                                 ordering_by_instances_number=None, skip_fs_validation=False):
     """
     ✅ OPTIMIZED: Load a single series by number with detailed timing
     """
@@ -517,7 +678,7 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                 # Check if directory name contains the series number
                 if str(series_number) in item.name:
                     # Check if it has DICOM files
-                    dicom_files = list(item.glob("*.dcm")) + list(item.glob("*.DCM"))
+                    dicom_files = _list_unique_dicom_files(item)
                     if dicom_files:
                         potential_series_folders.append(item)
         
@@ -525,7 +686,7 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
             # Sort by folder name and take the first one
             potential_series_folders.sort()
             series_path = potential_series_folders[0]
-            print(f"      🔍 Found series folder: {series_path.name} (looking for series {series_number})")
+            print(f"      Found series folder: {series_path.name} (looking for series {series_number})")
         else:
             # Fallback: get series path from DB
             series_path_from_db = None
@@ -533,11 +694,11 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                 try:
                     series_path_from_db = get_series_path_with_study_pk_and_series_number(study_pk, series_number)
                 except Exception as e:
-                    print(f"      ⚠️ Error getting series path from DB: {e}")
+                    print(f"      WARN: Error getting series path from DB: {e}")
             
             if series_path_from_db and Path(series_path_from_db).exists():
                 series_path = Path(series_path_from_db)
-                print(f"      🔍 Using series path from DB: {series_path}")
+                print(f"      Using series path from DB: {series_path}")
             else:
                 # Last fallback: try to find series folder by number pattern
                 series_name = find_series_folder_by_series_number(study_path, series_number)
@@ -545,19 +706,19 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     series_path = Path(f'{study_path}/{series_name}')
                 else:
                     error_msg = f'Series {series_number} not found in study {study_path}'
-                    print(f'❌ {error_msg}')
+                    print(f'ERROR: {error_msg}')
                     # Instead of raising error, return None
                     return
     
     _path_time = time.time() - _path_start
-    print(f"      ⏱️  Path resolution: {_path_time:.3f}s")
+    print(f"      Path resolution: {_path_time:.3f}s")
     
     # Check if series_path exists after all attempts
     if not series_path or not series_path.exists():
-        print(f"      ❌ Series folder not found after all attempts: series {series_number}")
+        print(f"      ERROR: Series folder not found after all attempts: series {series_number}")
         return
     
-    print(f"      📁 Loading from: {series_path}")
+    print(f"      Loading from: {series_path}")
     
     # ✅ OPTIMIZATION: Try to load directly from DB first (much faster!)
     if study_pk:
@@ -568,62 +729,139 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
             
             if series_pk:
                 # Series exists in DB - load directly without file grouping!
-                print(f"      ✅ Series found in DB (series_pk={series_pk}), skipping file grouping...")
+                print(f"      Series found in DB (series_pk={series_pk}), skipping file grouping...")
                 
                 instances = get_instances_by_series_pk(series_pk, group_id=0)
+                selected_group_id = 0
+                if not instances:
+                    selected_group_id, instances = _get_instances_from_best_group(series_pk)
+                    if instances:
+                        print(
+                            f"      DB group fallback: using group_id={selected_group_id} "
+                            f"with {len(instances)} instances"
+                        )
                 if instances and len(instances) > 0:
+                    # Validate DB instance completeness against filesystem to avoid
+                    # partial-stack bug (e.g., only first image loaded).
+                    # skip_fs_validation=True: warmup/background callers trust DB
+                    # paths — if wrong, ITK reader fails gracefully.  Skipping
+                    # the glob + per-file exists() saves 0.1–0.5s per series
+                    # under disk contention.
+                    if not skip_fs_validation:
+                        try:
+                            on_disk = _list_unique_dicom_files(series_path)
+                            # Windows is case-insensitive; avoid double-counting same files.
+                            on_disk_unique = {str(p).lower() for p in on_disk}
+                            on_disk_count = len(on_disk_unique)
+                        except Exception:
+                            on_disk_count = 0
+
+                        db_count = len(instances)
+                        missing_paths = 0
+                        try:
+                            for inst in instances:
+                                p = inst.get('instance_path')
+                                if not p or not Path(p).exists():
+                                    missing_paths += 1
+                        except Exception:
+                            missing_paths = 0
+
+                        db_incomplete = (
+                            (on_disk_count > 1 and db_count < on_disk_count) or
+                            (on_disk_count > 1 and db_count <= 1) or
+                            (missing_paths > 0)
+                        )
+
+                        if db_incomplete:
+                            print(
+                                f"      WARN: DB instances incomplete for series {series_number}: "
+                                f"db={db_count}, disk={on_disk_count}, missing_paths={missing_paths} -> "
+                                f"fallback to filesystem full load"
+                            )
+                            fs_result = _load_series_from_filesystem(study_path, series_number, patient_pk, study_pk)
+                            if fs_result:
+                                yield fs_result
+                                return
+
                     # We have instances in DB - use them directly
                     _db_check_time = time.time() - _db_check_start
-                    print(f"      ⏱️  DB check: {_db_check_time:.3f}s")
+                    print(f"      DB check: {_db_check_time:.3f}s")
                     
                     # Load DICOM files from instance paths
                     _dicom_start = time.time()
-                    dicom_files = [Path(inst['instance_path']) for inst in instances]
-                    from natsort import natsorted
-                    dicom_files = natsorted(dicom_files)
+                    # DB query is already ordered by instance_number; avoid extra filesystem sorting.
+                    dicom_files = [str(inst.get('instance_path')) for inst in instances if inst.get('instance_path')]
                     
                     itk_image = get_itk_image(dicom_files)
                     _dicom_time = time.time() - _dicom_start
-                    print(f"      ⏱️  DICOM load (from DB paths): {_dicom_time:.3f}s")
+                    print(f"      DICOM load (from DB paths): {_dicom_time:.3f}s")
+
+                    # ── CPU yield: CRITICAL for UI responsiveness ──
+                    # DICOM reading holds GIL during C++ marshalling.
+                    # Yield generously so UI thread can process events.
+                    time.sleep(0.05)
                     
                     # Get metadata (cached) - needed before filters
                     _meta_start = time.time()
                     metadata = _get_cached_metadata(series_pk, instances)
                     _meta_time = time.time() - _meta_start
-                    print(f"      ⏱️  Metadata: {_meta_time:.3f}s")
-                    
+                    print(f"      Metadata: {_meta_time:.3f}s")
+
+                    # Backfill NULL IOP/IPP from DICOM headers (fixes
+                    # reference-line failure for series imported without
+                    # per-instance orientation metadata).
+                    try:
+                        if _backfill_instance_orientation(metadata.get('instances', [])):
+                            # Invalidate metadata cache so next load uses corrected data
+                            _cache_key = f"series_{series_pk}"
+                            _series_metadata_cache.pop(_cache_key, None)
+                    except Exception as _bf_err:
+                        print(f"      WARN: IOP/IPP backfill error: {_bf_err}")
+
                     # Apply ITK filters before conversion
                     _filter_start = time.time()
                     from PacsClient.pacs.patient_tab.utils.image_filters import apply_filters
                     itk_image = apply_filters(itk_image, metadata)
                     _filter_time = time.time() - _filter_start
-                    print(f"      ⏱️  ITK filters: {_filter_time:.3f}s")
+                    print(f"      ITK filters: {_filter_time:.3f}s")
+
+                    # ── CPU yield: CRITICAL for UI responsiveness ──
+                    # ITK filter chain is CPU-intensive and holds GIL during
+                    # numpy/SimpleITK data marshalling. Yield generously.
+                    time.sleep(0.05)
                     
                     # Convert to VTK
                     _convert_start = time.time()
                     vtk_image_data = utils.convert_itk2vtk(itk_image)
                     _convert_time = time.time() - _convert_start
-                    print(f"      ⏱️  ITK->VTK convert: {_convert_time:.3f}s")
+                    print(f"      ITK->VTK convert: {_convert_time:.3f}s")
                     
-                    # Cleanup
+                    # Cleanup - do NOT call gc.collect() here, it freezes UI thread
                     itk_image = None
                     del itk_image
-                    gc.collect()
+                    # _maybe_collect_gc removed: convert_itk2vtk now frees ITK early
                     
                     _func_total = time.time() - _func_start
-                    print(f"      ⏱️  TOTAL (DB path): {_func_total:.3f}s")
+                    print(f"      TOTAL (DB path): {_func_total:.3f}s")
                     
                     yield vtk_image_data, metadata, (patient_pk, study_pk)
                     return
         except Exception as e:
-            print(f"      ⚠️  DB fast path failed: {e}, falling back to file grouping")
+            print(f"      WARN: DB fast path failed: {e}, falling back to file grouping")
 
-    # Fallback: Group images by size (slower)
+    # Fallback: fast single-series enumeration (avoid expensive regroup scan).
     _group_start = time.time()
-    size_dict = utils.group_images_base_on_size(series_path,
-                                                ordering_by_instance_number=ordering_by_instances_number)
+    dicom_files = _list_unique_dicom_files(series_path)
+    size_dict = {}
+    if dicom_files:
+        # process_series_groups iterates values only; key is placeholder.
+        size_dict = {("single_series", len(dicom_files)): dicom_files}
     _group_time = time.time() - _group_start
-    print(f"      ⏱️  Group images: {_group_time:.3f}s")
+    print(f"      Group images: {_group_time:.3f}s")
+
+    if not size_dict:
+        print(f"      ERROR: No DICOM files found for series {series_number}")
+        return
 
     # Process series groups
     _process_start = time.time()
@@ -632,184 +870,122 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
     _process_time = time.time() - _process_start
     
     _func_total = time.time() - _func_start
-    print(f"      ⏱️  Process groups: {_process_time:.3f}s")
-    print(f"      ⏱️  TOTAL load_single_series: {_func_total:.3f}s")
+    print(f"      Process groups: {_process_time:.3f}s")
+    print(f"      TOTAL load_single_series: {_func_total:.3f}s")
 
-def load_single_series_by_number_old(study_path, series_number, patient_pk=None, study_pk=None):
+
+def load_series_preview(study_path, series_number, patient_pk=None, study_pk=None, max_files: int = 1):
     """
-    بارگذاری فقط یک سری خاص بر اساس series_number.
-    این تابع مستقیماً از دیتابیس می‌خواند و فقط همان سری را لود می‌کند.
-    OPTIMIZED: Direct database query, no file system scanning
-    FALLBACK: If DB has no instances, load directly from filesystem
+    Load a lightweight preview (first slice) for a series to enable instant display.
+    Returns (vtk_image_data, metadata, (patient_pk, study_pk), total_files) or None.
     """
     import time
-    from PacsClient.utils.database import find_series_pk_by_number
+    _start = time.time()
+
+    series_path = Path(f'{study_path}/{series_number}')
+
+    if not series_path.exists():
+        study_path_obj = Path(study_path)
+        potential_series_folders = []
+        for item in study_path_obj.iterdir():
+            if item.is_dir() and str(series_number) in item.name:
+                dicom_files = _list_unique_dicom_files(item)
+                if dicom_files:
+                    potential_series_folders.append(item)
+        if potential_series_folders:
+            potential_series_folders.sort()
+            series_path = potential_series_folders[0]
+        else:
+            series_name = find_series_folder_by_series_number(study_path, series_number)
+            if series_name:
+                series_path = Path(f'{study_path}/{series_name}')
+            else:
+                return None
+
+    if not series_path.exists():
+        return None
+
+    dicom_files = _list_unique_dicom_files(series_path)
+    if not dicom_files:
+        return None
+    total_files = len(dicom_files)
+    preview_files = dicom_files[: max(1, int(max_files or 1))]
 
     try:
-        _start = time.time()
+        if len(preview_files) == 1:
+            itk_image = sitk.ReadImage(str(preview_files[0]))
+        else:
+            itk_image = get_itk_image_fast_first([str(p) for p in preview_files])
+    except Exception:
+        itk_image = get_itk_image([str(p) for p in preview_files])
 
-        # پیدا کردن series_pk از دیتابیس با series_number و study_pk
-        series_pk = find_series_pk_by_number(series_number, study_pk)
-        print('series_pk:', series_pk)
-        print(study_path, series_number, patient_pk, study_pk)
+    vtk_image_data = utils.convert_itk2vtk(itk_image)
 
-        if not series_pk:
-            print(f"[LOAD SINGLE] Series {series_number} not found in DB for study_pk={study_pk}")
-            # FALLBACK: Try loading from filesystem
-            return _load_series_from_filesystem(study_path, series_number, patient_pk, study_pk)
-
-        _db_lookup = time.time() - _start
-
-        # دریافت اطلاعات سری از دیتابیس
-        series_data = get_series_by_series_pk(series_pk)
-        if not series_data:
-            print(f"[LOAD SINGLE] No data for series_pk {series_pk}")
-            return _load_series_from_filesystem(study_path, series_number, patient_pk, study_pk)
-
-        # دریافت لیست اینستنس‌های این سری
-        # Try with group_id=0 first (most common case)
+    series_meta = None
+    instances = []
+    if study_pk:
         try:
-            instances = get_instances_by_series_pk(series_pk, group_id=0)
-        except:
-            # Fallback: get all instances for this series without group_id filter
-            conn = get_connection_database()
-            cur = conn.cursor()
-            cur.execute("SELECT * FROM instances WHERE series_fk = ? ORDER BY instance_number", (series_pk,))
-            rows = cur.fetchall()
-            conn.close()
+            from PacsClient.utils.database import find_series_pk_by_number
+            series_pk = find_series_pk_by_number(series_number, study_pk)
+            if series_pk:
+                series_meta = get_series_by_series_pk(series_pk)
+                instances_full = get_instances_by_series_pk(series_pk, group_id=0) or []
+                instances = instances_full[: len(preview_files)]
+                # Backfill NULL IOP/IPP for preview (same fix as full load path)
+                try:
+                    _backfill_instance_orientation(instances)
+                except Exception:
+                    pass
+        except Exception:
+            series_meta = None
 
-            if not rows:
-                print(f"[LOAD SINGLE] No instances in DB for series {series_number}, trying filesystem...")
-                # FALLBACK: Try loading from filesystem
-                return _load_series_from_filesystem(study_path, series_number, patient_pk, study_pk)
+    if not instances:
+        try:
+            first_dcm = utils._safe_dcmread(preview_files[0], stop_before_pixels=True)
+            _iop_raw = first_dcm.get('ImageOrientationPatient', None)
+            _ipp_raw = first_dcm.get('ImagePositionPatient', None)
+            _ps_raw = first_dcm.get('PixelSpacing', None)
+            instances = [
+                {
+                    'instance_number': 1,
+                    'instance_path': str(preview_files[0]),
+                    'rows': int(first_dcm.get('Rows', 512)),
+                    'columns': int(first_dcm.get('Columns', 512)),
+                    'window_width': first_dcm.get('WindowWidth', None),
+                    'window_center': first_dcm.get('WindowCenter', None),
+                    'is_rgb': first_dcm.get('PhotometricInterpretation', '') in ['RGB', 'YBR_FULL', 'YBR_FULL_422'],
+                    'image_orientation_patient': [float(v) for v in _iop_raw] if _iop_raw is not None else None,
+                    'image_position_patient': [float(v) for v in _ipp_raw] if _ipp_raw is not None else None,
+                    'pixel_spacing': [float(v) for v in _ps_raw] if _ps_raw is not None else None,
+                }
+            ]
+            if not series_meta:
+                series_meta = {
+                    'series_number': str(series_number),
+                    'series_name': str(series_number),
+                    'series_description': first_dcm.get('SeriesDescription', f'Series {series_number}'),
+                    'series_thk': str(first_dcm.get('SliceThickness', '1.0')),
+                    'modality': first_dcm.get('Modality', 'CT'),
+                    'protocol_name': first_dcm.get('ProtocolName', ''),
+                    'body_part_examined': first_dcm.get('BodyPartExamined', ''),
+                    'main_thumbnail': True,
+                }
+        except Exception:
+            pass
 
-            keys = ['instance_pk', 'sop_uid', 'series_fk', 'instance_path', 'instance_number',
-                    'rows', 'columns', 'window_width', 'window_center', 'is_rgb', 'group_id',
-                    'image_position_patient', 'image_orientation_patient', 'pixel_spacing', 'direction']
-            instances = [dict(zip(keys, row)) for row in rows]
+    metadata = {
+        'series': series_meta or {'series_number': str(series_number), 'series_name': str(series_number)},
+        'instances': instances or [],
+        'preview_only': True,
+        'preview_total_instances': total_files,
+    }
 
-        print('instances:', instances)
-        if not instances:
-            print(f"[LOAD SINGLE] No instances in DB for series {series_number}, trying filesystem...")
-            # FALLBACK: Try loading from filesystem
-            return _load_series_from_filesystem(study_path, series_number, patient_pk, study_pk)
+    itk_image = None
 
-        # استخراج مسیرهای فایل‌های DICOM
-        dicom_files = [Path(inst['instance_path']) for inst in instances]
-        dicom_files = natsorted(dicom_files)
+    _elapsed = time.time() - _start
+    print(f"      Preview load: series {series_number} with {len(preview_files)}/{total_files} files in {_elapsed:.3f}s")
 
-        print(
-            f"[LOAD SINGLE] Loading series {series_number} with {len(dicom_files)} instances (DB lookup: {_db_lookup:.3f}s)")
-
-        # بارگذاری DICOM با SimpleITK
-        _dicom_start = time.time()
-        itk_image = get_itk_image(dicom_files)
-        _dicom_time = time.time() - _dicom_start
-
-        # تبدیل به VTK
-        _convert_start = time.time()
-        vtk_image_data = utils.convert_itk2vtk(itk_image)
-        _convert_time = time.time() - _convert_start
-
-        # ساخت metadata
-        _meta_start = time.time()
-        metadata = read_series_instances_metadata(series_pk, instances)
-        _meta_time = time.time() - _meta_start
-
-        # پاکسازی حافظه
-        itk_image = None
-        del itk_image
-        gc.collect()
-
-        _total = time.time() - _start
-        print(
-            f"[LOAD SINGLE] ✓ Series {series_number}: {_total:.3f}s (DICOM={_dicom_time:.3f}s, Convert={_convert_time:.3f}s, Meta={_meta_time:.3f}s)")
-
-        return vtk_image_data, metadata, (patient_pk, study_pk)
-
-    except Exception as e:
-        print(f"[LOAD SINGLE ERROR] Failed to load series {series_number}: {e}")
-
-
-# def load_single_series_by_number(study_path, series_number, patient_pk=None, study_pk=None, ordering_by_instance_number=None):
-#     """
-#     Load a single series by its series number from a study folder.
-#     Used for lazy loading - loads only the requested series instead of all series.
-#
-#     Args:
-#         study_path: Path to the study folder
-#         series_number: Series number to load
-#         patient_pk: Patient primary key (optional)
-#         study_pk: Study primary key (optional)
-#         ordering_by_instance_number: Whether to order by instance number
-#
-#     Returns:
-#         Tuple of (vtk_image_data, metadata, (patient_pk, study_pk)) or None if not found
-#     """
-#     try:
-#         study_path = Path(study_path)
-#
-#         # Find the series subfolder by number
-#         series_folder = study_path / str(series_number)
-#
-#         if not series_folder.exists() or not series_folder.is_dir():
-#             print(f"[LOAD_SINGLE_SERIES] Series folder not found: {series_folder}")
-#             return None
-#
-#         # Check if folder has DICOM files
-#         if not utils.check_folder_has_dicom(series_folder):
-#             print(f"[LOAD_SINGLE_SERIES] No DICOM files in: {series_folder}")
-#             return None
-#
-#         # Group images by size
-#         size_dict = utils.group_images_base_on_size(series_folder, ordering_by_instance_number=ordering_by_instance_number)
-#
-#         if not size_dict:
-#             print(f"[LOAD_SINGLE_SERIES] No valid images found in: {series_folder}")
-#             return None
-#
-#         # Get patient/study PKs if not provided
-#         if (patient_pk is None) and (study_pk is None):
-#             first_file = list(size_dict.values())[0][0]
-#             patient_pk = utils.get_or_create_patient(first_file)
-#             study_pk = utils.get_or_create_study(first_file, patient_pk, str(study_path))
-#
-#         # Process the first (and typically only) group in the series folder
-#         files = list(size_dict.values())[0]
-#
-#         # Create ITK image
-#         itk_image = get_itk_image(files)
-#
-#         # Get or create series record in DB
-#         main_thumbnail = (int(series_number) == 1)
-#         series_pk = utils.get_or_create_series(
-#             files[0], study_pk, itk_image, main_thumbnail, study_path
-#         )
-#
-#         # Get or create instances
-#         utils.get_or_create_instance(files, itk_image, series_pk, group_id=0)
-#
-#         # Get metadata
-#         instances = get_instances_by_series_pk(series_pk, group_id=0)
-#         metadata = read_series_instances_metadata(series_pk, instances)
-#
-#         # Convert to VTK
-#         vtk_image_data = utils.convert_itk2vtk(itk_image)
-#
-#         # Clean up
-#         itk_image = None
-#         gc.collect()
-#
-#         print(f"✅ [LOAD_SINGLE_SERIES] Successfully loaded series {series_number}")
-#         return vtk_image_data, metadata, (patient_pk, study_pk)
-#
-#     except Exception as e:
-#         print(f"❌ [LOAD_SINGLE_SERIES] Error loading series {series_number}: {e}")
-# >>>>>>> develop_tools
-#         import traceback
-#         traceback.print_exc()
-#         return None
-
+    return vtk_image_data, metadata, (patient_pk, study_pk), total_files
 
 def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_pk):
     """
@@ -860,7 +1036,7 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             _series_start = time.time()
             main_thumbnail = (i == 0)
             
-            print(f"         📦 Processing group {i+1}/{len(size_groups)} with {len(files)} files...")
+            print(f"         Processing group {i+1}/{len(size_groups)} with {len(files)} files...")
 
             # TIMING: Load DICOM
             _dicom_start = time.time()
@@ -870,7 +1046,7 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             else:
                 itk_image = get_itk_image(files)
             _dicom_time = time.time() - _dicom_start
-            print(f"            ⏱️  DICOM load: {_dicom_time:.3f}s")
+            print(f"            DICOM load: {_dicom_time:.3f}s")
 
             # TIMING: Database operations
             _db_start = time.time()
@@ -879,16 +1055,16 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             _series_lookup_start = time.time()
             # Create/update series record
             series_pk = utils.get_or_create_series(
-                files[0], study_pk_local, itk_image, main_thumbnail, base_path
+                files[0], study_pk_local, itk_image, main_thumbnail, str(base_path)
             )
             _series_lookup_time = time.time() - _series_lookup_start
-            print(f"               • Series lookup/create: {_series_lookup_time:.3f}s")
+            print(f"               - Series lookup/create: {_series_lookup_time:.3f}s")
 
             # Insert new instances (only new ones are registered; duplicates are skipped)
             _instance_start = time.time()
             utils.get_or_create_instance(files, itk_image, series_pk, group_id=i)
             _instance_time = time.time() - _instance_start
-            print(f"               • Instance create: {_instance_time:.3f}s")
+            print(f"               - Instance create: {_instance_time:.3f}s")
 
             # Metadata + generate vtkImageData
             _metadata_start = time.time()
@@ -897,29 +1073,35 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             # Use cached metadata for better performance
             metadata = _get_cached_metadata(series_pk, instances)
             _metadata_time = time.time() - _metadata_start
-            print(f"               • Metadata fetch: {_metadata_time:.3f}s")
+            print(f"               - Metadata fetch: {_metadata_time:.3f}s")
             
             _db_time = time.time() - _db_start
-            print(f"            ⏱️  Database operations: {_db_time:.3f}s")
+            print(f"            Database operations: {_db_time:.3f}s")
+
+            # ── CPU yield: let UI/download threads breathe after DB + DICOM I/O ──
+            time.sleep(0.05)
 
             # Apply ITK filters before conversion
             _filter_start = time.time()
             from PacsClient.pacs.patient_tab.utils.image_filters import apply_filters
             itk_image = apply_filters(itk_image, metadata)
             _filter_time = time.time() - _filter_start
-            print(f"            ⏱️  ITK filters: {_filter_time:.3f}s")
+            print(f"            ITK filters: {_filter_time:.3f}s")
+
+            # ── CPU yield: let UI/download threads breathe after ITK filters ──
+            time.sleep(0.05)
 
             # Convert to VTK
             _convert_start = time.time()
             vtk_image_data = utils.convert_itk2vtk(itk_image)
             _convert_time = time.time() - _convert_start
-            print(f"            ⏱️  ITK->VTK convert: {_convert_time:.3f}s")
+            print(f"            ITK->VTK convert: {_convert_time:.3f}s")
             
             itk_image = None
             del itk_image
 
             _total_group = time.time() - _series_start
-            print(f"         ✅ Group {i+1} completed in {_total_group:.3f}s\n")
+            print(f"         Group {i+1} completed in {_total_group:.3f}s\n")
             
             yield vtk_image_data, metadata, (patient_pk_local, study_pk_local)
 

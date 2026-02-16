@@ -36,6 +36,8 @@ THUMBNAIL_PATH = BASE_PATH / 'thumbnails'
 ATTACHMENT_PATH = BASE_PATH / 'attachment'
 EDUCATION_ASSETS_PATH = BASE_PATH / 'education_assets'
 EDUCATION_STORAGE_PATH = BASE_PATH / 'Education'
+EDUCATION_MY_COURSE_PATH = EDUCATION_STORAGE_PATH / 'MyCourse'
+CASE_OF_DAY_STORAGE_PATH = EDUCATION_MY_COURSE_PATH / 'CaseOfTheDay'
 
 SOURCE_PATH = BASE_PATH / 'source'
 SOCKET_CONFIG_PATH = BASE_PATH / 'config'
@@ -45,6 +47,8 @@ SEGMENTS_PATH.mkdir(parents=True, exist_ok=True)
 
 EDUCATION_ASSETS_PATH.mkdir(parents=True, exist_ok=True)
 EDUCATION_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+EDUCATION_MY_COURSE_PATH.mkdir(parents=True, exist_ok=True)
+CASE_OF_DAY_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
 
 CLINICAL_CSV_PATH = PROJECT_ROOT / "data" / "clinical_notes.csv"
 server_ip=str(get_server_url('segmentation'))

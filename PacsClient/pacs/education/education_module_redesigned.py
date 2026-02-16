@@ -1165,9 +1165,10 @@ class LibraryPage(QWidget):
 
 class MyCoursesPage(QWidget):
     """My Courses tab with Downloaded, Created, and Imported sections."""
-    
+     
     course_opened = Signal(dict)
     course_edited = Signal(dict)
+    case_of_day_opened = Signal(dict)
     GRID_COLUMNS = 2
     CARD_HEIGHT = 350
     GRID_SPACING = 20
@@ -1386,20 +1387,23 @@ class MyCoursesPage(QWidget):
         title.setStyleSheet("color: #f7fafc;")
         header_layout.addWidget(title)
         header_layout.addStretch()
-
+ 
         self.created_btn = QPushButton("Created by Me")
         self.downloaded_btn = QPushButton("Downloaded (from Library)")
         self.imported_btn = QPushButton("Imported")
-        for btn in [self.downloaded_btn, self.created_btn, self.imported_btn]:
+        self.case_of_day_btn = QPushButton("Case of the Day")
+        for btn in [self.downloaded_btn, self.created_btn, self.imported_btn, self.case_of_day_btn]:
             btn.setFixedHeight(36)
             btn.setMinimumWidth(150)
             btn.setCursor(Qt.PointingHandCursor)
         self.downloaded_btn.clicked.connect(lambda: self.switch_view('downloaded'))
         self.created_btn.clicked.connect(lambda: self.switch_view('created'))
         self.imported_btn.clicked.connect(lambda: self.switch_view('imported'))
+        self.case_of_day_btn.clicked.connect(lambda: self.switch_view('case_of_day'))
         header_layout.addWidget(self.downloaded_btn)
         header_layout.addWidget(self.created_btn)
         header_layout.addWidget(self.imported_btn)
+        header_layout.addWidget(self.case_of_day_btn)
         self.center_layout.addLayout(header_layout)
 
         import_row = QHBoxLayout()
@@ -1505,8 +1509,9 @@ class MyCoursesPage(QWidget):
         self.left_stack.addWidget(self.downloaded_filter_panel)  # index 1
         self.left_stack.setFixedWidth(380)
         root.addWidget(self.left_stack)
-
-        root.addWidget(center_widget, stretch=1)
+ 
+        self.standard_center_widget = center_widget
+        root.addWidget(self.standard_center_widget, stretch=1)
 
         self.downloaded_details_panel = CourseDetailsPanel(
             parent=self,
@@ -1517,12 +1522,18 @@ class MyCoursesPage(QWidget):
         self.downloaded_details_panel.action_requested.connect(self._on_downloaded_detail_action)
         self.downloaded_details_panel.hide()
         root.addWidget(self.downloaded_details_panel)
-
+ 
+        from PacsClient.pacs.education.case_of_day_widget import CaseOfDayPage
+        self.case_of_day_page = CaseOfDayPage(self)
+        self.case_of_day_page.case_opened.connect(self._on_case_of_day_opened)
+        self.case_of_day_page.hide()
+        root.addWidget(self.case_of_day_page, stretch=1)
+ 
         self._reset_personal_panel()
         self.switch_view('created')
     
     def switch_view(self, view):
-        """Switch between downloaded/created/imported views."""
+        """Switch between downloaded/created/imported/case-of-day views."""
         self.current_view = view
         
         # Update button styles
@@ -1550,6 +1561,19 @@ class MyCoursesPage(QWidget):
         self.downloaded_btn.setStyleSheet(active_style if view == 'downloaded' else inactive_style)
         self.created_btn.setStyleSheet(active_style if view == 'created' else inactive_style)
         self.imported_btn.setStyleSheet(active_style if view == 'imported' else inactive_style)
+        self.case_of_day_btn.setStyleSheet(active_style if view == 'case_of_day' else inactive_style)
+
+        if view == 'case_of_day':
+            self.left_stack.hide()
+            self.standard_center_widget.hide()
+            self.downloaded_details_panel.hide()
+            self.case_of_day_page.show()
+            self.case_of_day_page.refresh()
+            return
+        else:
+            self.case_of_day_page.hide()
+            self.left_stack.show()
+            self.standard_center_widget.show()
 
         if view == 'downloaded':
             self.left_stack.setCurrentIndex(1)
@@ -1567,6 +1591,9 @@ class MyCoursesPage(QWidget):
                 self.personal_edit_btn.setEnabled(False)
         
         self.load_courses()
+
+    def _on_case_of_day_opened(self, payload: Dict[str, Any]):
+        self.case_of_day_opened.emit(payload)
     
     def _on_search_changed(self, text):
         self.current_search = text
@@ -3362,6 +3389,7 @@ class EducationModuleRedesigned(QWidget):
         self.library_page.course_edited.connect(self.on_course_edited)
         self.mycourses_page.course_opened.connect(self.on_course_opened)
         self.mycourses_page.course_edited.connect(self.on_course_edited)
+        self.mycourses_page.case_of_day_opened.connect(self.on_case_of_day_opened)
         self.build_page.course_created.connect(self.on_course_created)
     
     def on_course_opened(self, course_data):
@@ -3438,6 +3466,47 @@ class EducationModuleRedesigned(QWidget):
             "Course Created",
             f"Course '{course_data['course_name']}' has been created!\n\nYou can now add slides and content in the editor."
         )
+
+    def on_case_of_day_opened(self, payload: Dict[str, Any]):
+        try:
+            from PacsClient.pacs.education.case_of_day_database import get_case
+            from PacsClient.pacs.education.case_of_day_viewer_widget import CaseOfDayViewerWidget
+
+            case_pk = int(payload.get("case_pk"))
+            entry = get_case(case_pk)
+            if not entry:
+                QMessageBox.warning(self, "Case Not Found", "Could not find selected Case of the Day entry.")
+                return
+
+            case_data = {
+                "case_pk": entry.case_pk,
+                "saved_by": entry.saved_by,
+                "modality": entry.modality,
+                "body_part": entry.body_part,
+                "diagnosis": entry.diagnosis,
+                "anatomical_classification": entry.anatomical_classification,
+                "protocol_details": entry.protocol_details,
+                "description": entry.description,
+                "differential_diagnosis": entry.differential_diagnosis,
+                "dicom_folder_path": entry.dicom_folder_path,
+                "patient_id": entry.patient_id,
+                "study_uid": entry.study_uid,
+            }
+
+            host_tab_widget, _, host_owner = self._resolve_tab_host()
+            viewer = CaseOfDayViewerWidget(case_data, parent=host_owner if host_owner else self)
+            tab_title = f"Case - {entry.diagnosis or entry.body_part or entry.modality}"
+
+            if host_tab_widget is not None:
+                tab_index = host_tab_widget.addTab(viewer, tab_title)
+                host_tab_widget.setCurrentIndex(tab_index)
+            else:
+                viewer.setWindowTitle(tab_title)
+                viewer.showMaximized()
+        except Exception as exc:
+            print(f"Error opening Case of the Day: {exc}")
+            import traceback
+            traceback.print_exc()
 
 
 # ==================== DEMO ENTRY POINT ====================

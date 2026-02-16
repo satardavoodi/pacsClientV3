@@ -5,9 +5,13 @@ from typing import Dict
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGridLayout, QComboBox, QMessageBox,
-    QToolButton, QFrame, QSizePolicy
+    QToolButton, QFrame, QSizePolicy, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal
+from PacsClient.utils.boost_viewer_config import (
+    load_boost_viewer_enabled,
+    save_boost_viewer_enabled,
+)
 
 try:
     from PacsClient.utils.config import SOCKET_CONFIG_PATH
@@ -207,6 +211,30 @@ class ModalityGridConfigWidget(QWidget):
 
         card_layout.addLayout(add_row)
 
+        # ---------- Boost Viewer ----------
+        boost_row = QVBoxLayout()
+        boost_title = QLabel("Boost Viewer")
+        boost_title.setStyleSheet("font-weight: 600;")
+        boost_row.addWidget(boost_title)
+
+        self.boostviewer_toggle = QCheckBox("Enable BoostViewer")
+        self.boostviewer_toggle.setChecked(True)
+        self.boostviewer_toggle.setToolTip(
+            "When enabled, automatic ZetaBoost warm-up runs on patient tab activation.\n"
+            "When disabled, no automatic warm-up; only manually viewed series are cached."
+        )
+        boost_row.addWidget(self.boostviewer_toggle)
+
+        boost_desc = QLabel(
+            "ON: Automatic boost/warm-up on patient open.\n"
+            "OFF: Manual-only mode (cache only what user drags/views)."
+        )
+        boost_desc.setStyleSheet("color: #9ca3af; font-size: 12px;")
+        boost_desc.setWordWrap(True)
+        boost_row.addWidget(boost_desc)
+
+        card_layout.addLayout(boost_row)
+
         # ---------- Bottom ----------
         bottom = QHBoxLayout()
 
@@ -234,6 +262,9 @@ class ModalityGridConfigWidget(QWidget):
             k: {"rows": v[0], "cols": v[1]}
             for k, v in self.DEFAULT_LAYOUTS.items()
         }
+
+        # Load BoostViewer setting independently from modality grid config
+        self.boostviewer_toggle.setChecked(load_boost_viewer_enabled(default=True))
         
         # اگر فایل کانفیگ وجود داشت، مقادیر آن را override می‌کنیم
         if self.config_path.exists():
@@ -317,6 +348,8 @@ class ModalityGridConfigWidget(QWidget):
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(self.config_data, f, indent=2)
+
+        save_boost_viewer_enabled(self.boostviewer_toggle.isChecked())
 
         self.configChanged.emit()
         QMessageBox.information(self, "Saved", "Grid configuration saved.")

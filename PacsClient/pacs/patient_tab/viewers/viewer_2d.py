@@ -1,4 +1,5 @@
 from math import sqrt
+import sys
 
 import vtkmodules.all as vtk
 from PySide6.QtCore import QTimer
@@ -11,6 +12,7 @@ from PySide6.QtCore import Qt
 import time
 from PacsClient.pacs.patient_tab.curved_mpr_module import CurvedMPRModule
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,13 @@ def create_text_actor(world_position, text: str):
 
 
 class ImageViewer2D(vtk.vtkResliceImageViewer):
+    # Shared cache for preprocessed display volumes across viewers.
+    _global_preprocess_cache = {}
+    _global_preprocess_cache_order = []
+    _global_preprocess_cache_max = 8
+    _global_preprocess_cache_max_slices = 160
+    _global_preprocess_cache_lock = threading.Lock()  # Thread safety for class-level cache
+
     def __init__(self, render_window, interactor, height, vtk_image_data: vtk.vtkImageData, metadata,
                  metadata_fixed, apply_default_filter, vtk_widget):
         super().__init__()
@@ -155,6 +164,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         self.metadata = metadata
         self.metadata_fixed = metadata_fixed
+        self._local_preprocess_cache = {}
+        self._skip_upsample_slice_threshold = 160
+        self._skip_preprocess_cache_slice_threshold = 160
         
         # Store image properties for curved MPR
         self.origin = self.vtk_image_data.GetOrigin()
@@ -226,6 +238,28 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.load_bottom_left_actors()
         self.load_bottom_right_actors()
 
+    @classmethod
+    def _cache_get_preprocessed(cls, key):
+        try:
+            with cls._global_preprocess_cache_lock:
+                return cls._global_preprocess_cache.get(key)
+        except Exception:
+            return None
+
+    @classmethod
+    def _cache_put_preprocessed(cls, key, vtk_img):
+        try:
+            with cls._global_preprocess_cache_lock:
+                cls._global_preprocess_cache[key] = vtk_img
+                cls._global_preprocess_cache_order.append(key)
+                # Drop oldest entries if cache is too large
+                while len(cls._global_preprocess_cache_order) > cls._global_preprocess_cache_max:
+                    old = cls._global_preprocess_cache_order.pop(0)
+                    if old in cls._global_preprocess_cache:
+                        del cls._global_preprocess_cache[old]
+        except Exception:
+            pass
+
     def __get_factor_upsample(self, vtk_image_data: vtk.vtkImageData, viewer_height):
         # self.renderer.ResetCamera()
         camera = self.renderer.GetActiveCamera()
@@ -280,6 +314,15 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     def _preprocess_vtk_image_data(self, vtk_image_data):
         # vtk_image_data = flip_image_y(vtk_image_data)
+
+        # Large stacks: skip expensive XY upsample to keep interaction smooth and stable.
+        try:
+            dims = vtk_image_data.GetDimensions() if vtk_image_data is not None else (0, 0, 0)
+            z_slices = int(dims[2]) if len(dims) > 2 else 1
+            if z_slices >= int(self._skip_upsample_slice_threshold):
+                return vtk_image_data
+        except Exception:
+            pass
 
         if self.apply_default_filter:
             factor = self.__get_factor_upsample(vtk_image_data, self.viewer_height)
@@ -509,58 +552,6 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             except:
                 pass
 
-    def grow_input_image_inplace_old(self, new_vtk_image_data, new_metadata=None):
-        """
-        بدون تعویض actor/mapper:
-        - همان vtkImageData ورودیِ ImageReslice را بزرگ‌تر می‌کنیم
-        - سپس Reslice و نمایش را Update می‌کنیم
-        """
-        old_input = self.image_reslice.vtk_image_data  # همان ورودیِ فعلی Reslice
-        ox, oy, oz = old_input.GetDimensions()
-        nx, ny, nz = new_vtk_image_data.GetDimensions()
-
-        # print('ox, oy, oz:', ox, oy, oz)
-        # print('nx, ny, nz:', nx, ny, nz)
-
-        if (nx, ny, nz) <= (ox, oy, oz):
-            # چیزی اضافه نشده؛ فقط Modified تا رندر نرم بماند
-            # print('NOT CHANGED!!!!!!!!!!!')
-            old_input.Modified()
-            self.image_reslice.Modified()
-            self.UpdateDisplayExtent()
-            self.Render()
-            return False
-
-        # هم‌راستا بودن spacing/origin با سریِ فعلی (در عمل باید یکسان باشند)
-        old_input.SetSpacing(new_vtk_image_data.GetSpacing())
-        old_input.SetOrigin(new_vtk_image_data.GetOrigin())
-
-        # extent/dimensions جدید
-        old_input.SetDimensions(nx, ny, nz)
-        old_input.SetExtent(0, nx - 1, 0, ny - 1, 0, nz - 1)
-
-        # کپی محتوای اسکالرها (بدون تعویض actor/mapper)
-        new_scalars = new_vtk_image_data.GetPointData().GetScalars()
-        old_scalars = old_input.GetPointData().GetScalars()
-        if old_scalars is None or old_scalars.GetNumberOfTuples() == 0:
-            old_input.GetPointData().SetScalars(new_scalars)
-        else:
-            old_scalars.DeepCopy(new_scalars)
-
-        # متادیتا (اختیاری) – برای سایز/WW/WL اسلایس‌های جدید
-        if new_metadata is not None:
-            self.metadata = new_metadata
-
-        # رفرش نرم
-        old_input.GetPointData().Modified()
-        old_input.Modified()
-        self.image_reslice.Modified()
-        self.image_reslice.Update()
-        self.UpdateDisplayExtent()
-        self.update_corners_actors()  # متن گوشه‌ها (تعداد اسلایس و…)
-        self.Render()
-        return True
-
     def grow_input_image_inplace(self, new_vtk_image_data, new_metadata=None):
         """
         رشد درجا با کمترین هزینه:
@@ -700,8 +691,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             current_slice = self.GetSlice()
             # meta = self.metadata['meta_changed'][current_slice]
 
-            study_date = self.metadata_fixed['study_date']
-            series_time = self.metadata_fixed['study_time']
+            study_date = self.metadata_fixed.get('study_date', 'N/A')
+            series_time = self.metadata_fixed.get('study_time', 'N/A')
 
             series_name = self.metadata['series']['series_name']
             series_desc = self.metadata['series']['series_description']
@@ -730,42 +721,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_series_window_level,
                                                      f'WW:{window_width} WL:{(window_center)}')
 
-    def load_top_right_actors(self):
+    def load_top_right_actors(self, render=True):
         """
             these actors belong to image information
         """
-        top = 0.98
-        right = 0.96
-        gap = 0.02
-
-        # changeable
-        current_slice = self.GetSlice()
-        study_date = self.metadata_fixed['study_date']
-        series_time = self.metadata_fixed['study_time']
-
-        series_name = self.metadata['series']['series_name']
-        series_desc = self.metadata['series']['series_description']
-
-        self.dicom_tags_actors.im_slice_actor = make_corner_actor(
-            f'{current_slice + self.skip_slices} / {self.get_count_of_slices()}', right, top, 'right', 'top')
-        self.dicom_tags_actors.im_study_date_actor = make_corner_actor(study_date, right, top - (1 * gap), 'right',
-                                                                       'top')
-        self.dicom_tags_actors.im_series_time_actor = make_corner_actor(series_time, right, top - (2 * gap), 'right',
-                                                                        'top')
-        self.dicom_tags_actors.im_series_name_actor = make_corner_actor(series_name, right, top - (3 * gap), 'right',
-                                                                        'top')
-        self.dicom_tags_actors.im_series_desc_actor = make_corner_actor(series_desc, right, top - (4 * gap), 'right',
-                                                                        'top')
-
-        self.renderer.AddViewProp(self.dicom_tags_actors.im_slice_actor)
-        self.renderer.AddViewProp(self.dicom_tags_actors.im_study_date_actor)
-        self.renderer.AddViewProp(self.dicom_tags_actors.im_series_time_actor)
-        self.renderer.AddViewProp(self.dicom_tags_actors.im_series_name_actor)
-        self.renderer.AddViewProp(self.dicom_tags_actors.im_series_desc_actor)
-        self.Render()
-
-    def load_top_right_actors_no_render(self):
-        """Load top right actors without render call"""
         top = 0.98
         right = 0.96
         gap = 0.02
@@ -794,31 +753,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.renderer.AddViewProp(self.dicom_tags_actors.im_series_time_actor)
         self.renderer.AddViewProp(self.dicom_tags_actors.im_series_name_actor)
         self.renderer.AddViewProp(self.dicom_tags_actors.im_series_desc_actor)
+        if render:
+            self.Render()
 
-    def load_top_left_actors(self):
-        top = 0.98
-        left = 0.02
-        gap = 0.02
+    def load_top_right_actors_no_render(self):
+        """Backward-compatible wrapper — calls load_top_right_actors(render=False)."""
+        self.load_top_right_actors(render=False)
 
-        # fixed
-        p_name = self.metadata_fixed['patient_name']
-        p_id = self.metadata_fixed['patient_id']
-        p_sex = self.metadata_fixed['patient_sex']
-        p_age = self.metadata_fixed['patient_age']
-
-        self.dicom_tags_actors.p_name_actor = make_corner_actor(p_name, left, top, 'left', 'top')
-        self.dicom_tags_actors.p_id_actor = make_corner_actor(f'PID:{p_id}', left, (top - 1 * gap), 'left', 'top')
-        self.dicom_tags_actors.p_age_actor = make_corner_actor(f'Age:{p_age}', left, (top - 2 * gap), 'left', 'top')
-        self.dicom_tags_actors.p_sex_actor = make_corner_actor(f'Sex:{p_sex}', left, (top - 3 * gap), 'left', 'top')
-
-        self.renderer.AddViewProp(self.dicom_tags_actors.p_name_actor)
-        self.renderer.AddViewProp(self.dicom_tags_actors.p_id_actor)
-        self.renderer.AddViewProp(self.dicom_tags_actors.p_sex_actor)
-        self.renderer.AddViewProp(self.dicom_tags_actors.p_age_actor)
-        self.Render()
-
-    def load_top_left_actors_no_render(self):
-        """Load top left actors without render call"""
+    def load_top_left_actors(self, render=True):
         top = 0.98
         left = 0.02
         gap = 0.02
@@ -838,8 +780,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.renderer.AddViewProp(self.dicom_tags_actors.p_id_actor)
         self.renderer.AddViewProp(self.dicom_tags_actors.p_sex_actor)
         self.renderer.AddViewProp(self.dicom_tags_actors.p_age_actor)
+        if render:
+            self.Render()
 
-    def load_bottom_left_actors(self):
+    def load_top_left_actors_no_render(self):
+        """Backward-compatible wrapper — calls load_top_left_actors(render=False)."""
+        self.load_top_left_actors(render=False)
+
+    def load_bottom_left_actors(self, render=True):
         bottom = 0.02
         left = 0.02
         gap = 0.02
@@ -871,64 +819,28 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.renderer.AddViewProp(self.dicom_tags_actors.im_scale_zoom_actor)
         self.renderer.AddViewProp(self.dicom_tags_actors.im_series_size_actor)
         self.renderer.AddViewProp(self.dicom_tags_actors.im_series_thk_actor)
-        self.Render()
+        if render:
+            self.Render()
 
     def load_bottom_left_actors_no_render(self):
-        """Load bottom left actors without render call"""
-        bottom = 0.02
-        left = 0.02
-        gap = 0.02
+        """Backward-compatible wrapper — calls load_bottom_left_actors(render=False)."""
+        self.load_bottom_left_actors(render=False)
 
-        current_slice = self.GetSlice()
-        series_thk = self.metadata['series']['series_thk']
-
-        rows = self.metadata['instances'][current_slice]['rows']
-        columns = self.metadata['instances'][current_slice]['columns']
-        series_size = f"{rows} * {columns}"
-        window_width, window_center = self.get_window_level()
-
-        im_h = self.vtk_image_data.GetDimensions()[1]
-        win_h = self.image_render_window.GetSize()[1]
-        scale_zoom = win_h / im_h
-        scale_zoom = f'{scale_zoom:.2f}'
-
-        self.dicom_tags_actors.im_series_window_level = make_corner_actor(f'WW:{window_width} WL:{window_center}', left,
-                                          bottom, 'left', 'bottom')
-        self.dicom_tags_actors.im_scale_zoom_actor = make_corner_actor(f'Scale:{scale_zoom}', left, bottom + (1 * gap),
-                                           'left', 'bottom')
-        self.dicom_tags_actors.im_series_size_actor = make_corner_actor(series_size, left, bottom + (2 * gap), 'left',
-                                        'bottom')
-        self.dicom_tags_actors.im_series_thk_actor = make_corner_actor(series_thk, left, bottom + (3 * gap), 'left',
-                                           'bottom')
-
-        self.renderer.AddViewProp(self.dicom_tags_actors.im_series_window_level)
-        self.renderer.AddViewProp(self.dicom_tags_actors.im_scale_zoom_actor)
-        self.renderer.AddViewProp(self.dicom_tags_actors.im_series_size_actor)
-        self.renderer.AddViewProp(self.dicom_tags_actors.im_series_thk_actor)
-
-    def load_bottom_right_actors(self):
+    def load_bottom_right_actors(self, render=True):
         bottom = 0.02
         right = 0.96
-        gap = 0.02
-
-        hospital_name = self.metadata_fixed['institution_name']
-
-        self.dicom_tags_actors.im_hospital_name_actor = make_corner_actor(hospital_name, right, bottom, 'right',
-                                                                          'bottom')
-        self.renderer.AddViewProp(self.dicom_tags_actors.im_hospital_name_actor)
-        self.Render()
-
-    def load_bottom_right_actors_no_render(self):
-        """Load bottom right actors without render call"""
-        bottom = 0.02
-        right = 0.96
-        gap = 0.02
 
         hospital_name = self.metadata_fixed.get('institution_name', 'N/A')
 
         self.dicom_tags_actors.im_hospital_name_actor = make_corner_actor(hospital_name, right, bottom, 'right',
                                                                           'bottom')
         self.renderer.AddViewProp(self.dicom_tags_actors.im_hospital_name_actor)
+        if render:
+            self.Render()
+
+    def load_bottom_right_actors_no_render(self):
+        """Backward-compatible wrapper — calls load_bottom_right_actors(render=False)."""
+        self.load_bottom_right_actors(render=False)
 
     def reset_image_viewer(self, vtk_image_data, metadata):
         import time
@@ -945,22 +857,100 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # If the vtk_image_data is the same (same series), skip reslice creation
         current_series_uid = metadata.get('series', {}).get('series_uid', None)
         cached_series_uid = getattr(self, '_cached_series_uid', None)
-        
+
+        old_preview_only = False
+        try:
+            old_preview_only = bool(getattr(self, 'metadata', {}).get('preview_only', False))
+        except Exception:
+            old_preview_only = False
+
+        new_preview_only = bool(metadata.get('preview_only', False))
+
+        dims_changed = False
+        try:
+            old_dims = self.vtk_image_data.GetDimensions() if hasattr(self, 'vtk_image_data') and self.vtk_image_data else None
+            new_dims = vtk_image_data.GetDimensions() if vtk_image_data else None
+            if old_dims and new_dims and tuple(old_dims) != tuple(new_dims):
+                dims_changed = True
+        except Exception:
+            dims_changed = True
+
         can_reuse_reslice = (
-            current_series_uid is not None and 
+            current_series_uid is not None and
             current_series_uid == cached_series_uid and
-            hasattr(self, 'image_reslice') and 
-            self.image_reslice is not None
+            hasattr(self, 'image_reslice') and
+            self.image_reslice is not None and
+            not old_preview_only and
+            not new_preview_only and
+            not dims_changed
         )
+
+        # Shared cache key for preprocessed display data
+        # IMPORTANT: include source volume dimensions so preview(1-slice)
+        # cache entries never overwrite/reuse full-stack entries.
+        series_cache_key = current_series_uid or str(metadata.get('series', {}).get('series_number', ''))
+        src_dims = None
+        try:
+            if vtk_image_data is not None and hasattr(vtk_image_data, 'GetDimensions'):
+                src_dims = tuple(vtk_image_data.GetDimensions())
+        except Exception:
+            src_dims = None
+        preprocess_cache_key = (
+            str(series_cache_key),
+            int(self.viewer_height),
+            bool(self.apply_default_filter),
+            src_dims,
+        )
+
+        src_z = 1
+        try:
+            if src_dims is not None and len(src_dims) > 2:
+                src_z = int(src_dims[2])
+        except Exception:
+            src_z = 1
+        allow_preprocess_cache = src_z < int(self._skip_preprocess_cache_slice_threshold)
+
+        # Try cached preprocessed display volume first
+        cached_preprocessed = None
+        if allow_preprocess_cache:
+            cached_preprocessed = self._local_preprocess_cache.get(preprocess_cache_key)
+            if cached_preprocessed is None:
+                cached_preprocessed = self._cache_get_preprocessed(preprocess_cache_key)
+                if cached_preprocessed is not None:
+                    self._local_preprocess_cache[preprocess_cache_key] = cached_preprocessed
+
+        # Extra guard: if cached volume dimensions don't match incoming source dimensions,
+        # ignore cache and force rebuild.
+        if cached_preprocessed is not None and src_dims is not None:
+            try:
+                cached_dims = tuple(cached_preprocessed.GetDimensions())
+                if cached_dims != src_dims:
+                    cached_preprocessed = None
+            except Exception:
+                cached_preprocessed = None
         
         if can_reuse_reslice:
             print(f"      ✅ Reusing cached reslice")
         else:
-            # Need to create new reslice
-            if hasattr(self, 'image_reslice'):
-                del self.image_reslice
-            vtk_image_data = self._preprocess_vtk_image_data(vtk_image_data)
-            self.image_reslice = ImageReslice(vtk_image_data, metadata)
+            # Need to rebuild or rebind reslice input
+            if cached_preprocessed is not None:
+                vtk_image_data = cached_preprocessed
+                print(f"      ✅ Reusing cached preprocessed display volume")
+            else:
+                vtk_image_data = self._preprocess_vtk_image_data(vtk_image_data)
+                if allow_preprocess_cache:
+                    self._local_preprocess_cache[preprocess_cache_key] = vtk_image_data
+                    self._cache_put_preprocessed(preprocess_cache_key, vtk_image_data)
+
+            # Reuse existing ImageReslice instance when possible to reduce object churn
+            if hasattr(self, 'image_reslice') and self.image_reslice is not None:
+                self.image_reslice.vtk_image_data = vtk_image_data
+                self.image_reslice.metadata = metadata
+                self.image_reslice.SetInputData(vtk_image_data)
+                self.image_reslice.Update()
+            else:
+                self.image_reslice = ImageReslice(vtk_image_data, metadata)
+
             # Cache the series UID
             self._cached_series_uid = current_series_uid
             
@@ -1004,6 +994,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         _update_display_time = time.time() - _update_display_start
         print(f"         • UpdateDisplayExtent: {_update_display_time:.3f}s")
         
+        # Flush before VTK Render — if VTK segfaults the above lines are preserved.
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+
         _render_call_start = time.time()
         self.Render()
         _render_call_time = time.time() - _render_call_start
@@ -1019,6 +1015,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         
         _reset_total = time.time() - _reset_start
         print(f"      ⏱️  TOTAL reset_image_viewer: {_reset_total:.3f}s")
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
 
     def set_slice(self, slice_index):
         """
@@ -1097,49 +1097,6 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.set_window_level(window_width, window_center, flag_default=True)
 
     def set_window_level(self, window_width, window_center, flag_default=False):
-
-        # print(f'width: {window_width}\t center: {window_center}')
-
-        # # create color mapper
-        # color_mapper = vtk.vtkImageMapToWindowLevelColors()
-        # color_mapper.SetInputConnection(self.image_reslice.GetOutputPort())
-        #
-        # color_mapper.SetWindow(window_width)
-        # color_mapper.SetLevel(window_center)
-        #
-        # color_mapper.Update()
-        # self.GetImageActor().GetMapper().SetInputConnection(color_mapper.GetOutputPort())
-
-        # ###################################################################################
-        # self.SetColorWindow(window_width)
-        #
-        # if flag_default is True:
-        #     self.SetColorLevel(window_center / 2.0)
-        # else:
-        #     self.SetColorLevel(window_center)
-        #     self.update_corners_actors()
-
-        # self.SetColorWindow(window_width)
-        # self.SetColorLevel(window_center)
-
-        # if flag_default:
-        #     # create color mapper
-        #     # color_mapper = vtk.vtkImageMapToWindowLevelColors()
-        #     # color_mapper.SetInputConnection(self.image_reslice.GetOutputPort())
-        #
-        #     self.color_mapper.SetWindow(window_width)
-        #     self.color_mapper.SetLevel(window_center)
-        #
-        #     self.color_mapper.Update()
-        #     # self.GetImageActor().GetMapper().SetInputConnection(color_mapper.GetOutputPort())
-        #
-        # else:
-        #     self.color_mapper.SetWindow(window_width)
-        #     self.color_mapper.SetLevel(window_center)
-        #
-        #
-        #     self.color_mapper.Update()
-        # is_rgb = self.metadata['meta_changed'][self.GetSlice()]['is_rgb']
         is_rgb = self.metadata['instances'][self.GetSlice()]['is_rgb']
         if is_rgb:
             return
@@ -1150,8 +1107,6 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.update_corners_actors()
 
     def get_window_level(self):
-        # window_width = self.GetColorWindow()
-        # window_center = self.GetColorLevel()
         window_width = self.color_mapper.GetWindow()
         window_center = self.color_mapper.GetLevel()
 
@@ -1838,6 +1793,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             # تنظیم به None برای کمک به GC
             self.metadata = None
             self.metadata_fixed = None
+            self._local_preprocess_cache = {}
 
         except Exception as e:
             print(f"Error in cleanup: {e}")

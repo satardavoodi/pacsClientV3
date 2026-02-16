@@ -4,6 +4,7 @@ Thumbnail Panel Component
 """
 
 import os
+import time
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
@@ -164,6 +165,13 @@ class ThumbnailPanel(QWidget):
     def change_series_on_viewer(self, series_index):
         """Callback for when a thumbnail is clicked"""
         if self.parent_widget and hasattr(self.parent_widget, 'change_series_on_viewer'):
+            try:
+                # Mark explicit user-intent click/double-click for controller policy decisions.
+                action_id = f"thumb_click-{series_index}-{int(time.time() * 1000)}"
+                self.parent_widget._pending_action_id = action_id
+                self.parent_widget._pending_action_series = str(series_index)
+            except Exception:
+                pass
             self.parent_widget.change_series_on_viewer(series_index)
     
     def load_thumbnails_sync(self):

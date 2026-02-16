@@ -44,3 +44,6 @@ config/servers_address.json
 config/patient_table_columns.json
 
 config/
+generated-files/zeta_boost_cache/
+generated-files/zeta_boost.log
+generated-files/zeta_boost_*.log

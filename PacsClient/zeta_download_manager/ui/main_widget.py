@@ -148,6 +148,7 @@ class DownloadManagerWidget(QWidget):
         
         # Currently selected download
         self._selected_study_uid = None
+        self._suppressing_selection_signals = False
 
         # Reception data service/cache
         self._reception_service = ReceptionDataService()
@@ -2122,6 +2123,10 @@ class DownloadManagerWidget(QWidget):
                 )
                 logger.info(f"💾 [DATABASE] Updated study {study_uid[:40]}... to COMPLETED status")
                 
+                # CRITICAL FIX: Clean up task state to prevent memory accumulation in high-frequency loops
+                # (1000+ cycles with no cleanup = 1000+ dict entries accumulating)
+                self._cleanup_task_state(study_uid)
+                
                 # Log completion to UI
                 state = self.state_store.get(study_uid)
                 patient_name = getattr(state, 'patient_name', 'Unknown') if state else 'Unknown'
@@ -2166,6 +2171,43 @@ class DownloadManagerWidget(QWidget):
             logger.error(f"❌ Error in _on_worker_completed: {e}")
             import traceback
             logger.error(traceback.format_exc())
+    
+    def _cleanup_task_state(self, study_uid: str) -> None:
+        """
+        CRITICAL: Clean up task state to prevent memory accumulation in high-frequency loops.
+        
+        Over 1000+ repeated cycles (select → download → view → send), state dictionaries
+        would accumulate indefinitely without cleanup. This method removes cached data
+        after a download completes to maintain stable memory footprint.
+        
+        Args:
+            study_uid: Study UID to clean up
+        """
+        try:
+            # Remove from task cache (prevents accumulation over 1000+ cycles)
+            if study_uid in self._tasks:
+                del self._tasks[study_uid]
+                logger.debug(f"🗑️ Cleaned up _tasks entry for {study_uid[:40]}...")
+            
+            # Remove from additional task info cache
+            if study_uid in self._additional_task_info:
+                del self._additional_task_info[study_uid]
+                logger.debug(f"🗑️ Cleaned up _additional_task_info for {study_uid[:40]}...")
+            
+            # Remove from series image count cache
+            if study_uid in self._series_image_count_cache:
+                del self._series_image_count_cache[study_uid]
+                logger.debug(f"🗑️ Cleaned up _series_image_count_cache for {study_uid[:40]}...")
+            
+            # Remove pending progress tracking
+            if study_uid in self._pending_progress:
+                del self._pending_progress[study_uid]
+                logger.debug(f"🗑️ Cleaned up _pending_progress for {study_uid[:40]}...")
+            
+            logger.info(f"✅ Task state cleanup complete for {study_uid[:40]}... (preserves memory in high-freq loops)")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Error during task state cleanup: {e}")
     
     def _on_worker_error(self, study_uid: str, error_message: str) -> None:
         """
@@ -2768,6 +2810,9 @@ class DownloadManagerWidget(QWidget):
     
     def _on_selection_changed(self):
         """Handle table row selection — update details panel"""
+        if self._suppressing_selection_signals:
+            return
+
         # ✅ WIDGET VALIDITY: Check if table still exists
         if not self.download_table or not hasattr(self, 'download_table'):
             logger.debug("⚠️ download_table not available")
@@ -2807,6 +2852,8 @@ class DownloadManagerWidget(QWidget):
 
     def _select_study_row(self, study_uid: str, ensure_visible: bool = True) -> None:
         """Select a study row by study_uid and sync details panel."""
+        # finally: suppression flag is always reset at method exit
+        self._suppressing_selection_signals = True
         try:
             # ✅ WIDGET VALIDITY: Check if table still exists before accessing
             if not self.download_table or not hasattr(self, 'download_table'):
@@ -2849,6 +2896,8 @@ class DownloadManagerWidget(QWidget):
             logger.error(f"❌ Error selecting study row: {e}")
             import traceback
             logger.error(f"Traceback:\n{traceback.format_exc()}")
+        finally:
+            self._suppressing_selection_signals = False
 
     def _on_table_cell_clicked(self, row: int, column: int) -> None:
         """Ensure row selection updates even when clicking cell widgets."""
@@ -3583,7 +3632,7 @@ class DownloadManagerWidget(QWidget):
                 logger.error(f"🔴 [CONTROL FAILURE] Priority change failed for {study_uid[:40]}...: {e}")
                 raise
         else:
-            logger.warning("⚠️ [CONTROL WARNING] Priority changed but no study selected")
+            logger.debug("[CONTROL] Priority changed with no active study selection; ignoring")
 
     def _load_reception_data(self, patient_id: str, study_uid: str = None) -> None:
         """Load reception data for the selected patient - always fetch fresh data from server."""
@@ -3647,6 +3696,16 @@ class DownloadManagerWidget(QWidget):
         logger.info("=" * 120)
 
         logger.info(f"   💾 Caching fresh reception data for patient: {patient_id}")
+        
+        # CRITICAL FIX: Implement LRU eviction for reception cache to prevent unbounded memory growth
+        # in high-frequency loops (1000+ cycles = potentially 1000+ patient entries)
+        max_cache_size = 50  # Keep last 50 patients only
+        if len(self._reception_cache) >= max_cache_size:
+            # Remove oldest entry (FIFO since we're using dict which maintains insertion order in Python 3.7+)
+            oldest_patient_id = next(iter(self._reception_cache))
+            del self._reception_cache[oldest_patient_id]
+            logger.debug(f"🗑️ Evicted oldest reception cache entry for patient: {oldest_patient_id}")
+        
         self._reception_cache[patient_id] = patient_data
         self._last_reception_patient_id = patient_id
         
@@ -3869,6 +3928,8 @@ class DownloadManagerWidget(QWidget):
     
     def _refresh_table_order(self):
         """Refresh table with priority grouping - shows all 4 priority groups"""
+        # finally: suppression flag is always reset at method exit
+        self._suppressing_selection_signals = True
         try:
             # ✅ WIDGET VALIDITY: Check if table still exists before accessing
             if not self.download_table or not hasattr(self, 'download_table'):
@@ -3942,6 +4003,8 @@ class DownloadManagerWidget(QWidget):
             logger.error(f"❌ [TABLE-REFRESH] Error refreshing table order: {e}")
             import traceback
             logger.error(traceback.format_exc())
+        finally:
+            self._suppressing_selection_signals = False
     
     def _add_priority_group_header(self, priority_name: str, count: int):
         """Add priority group header to table"""

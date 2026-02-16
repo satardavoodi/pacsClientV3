@@ -8,6 +8,7 @@ from . import database
 json_file = 'servers.json'
 CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
 SERVERS_FILE = CONFIG_DIR / "servers_address.json"
+_SERVERS_FILE_MISSING_WARNED = False
 
 
 
@@ -119,8 +120,11 @@ def get_server_url(name: str) -> str | None:
       2) [{"name":"breast","url":"..."} , ...]
     Adds http:// prefix automatically if missing.
     """
+    global _SERVERS_FILE_MISSING_WARNED
     if not SERVERS_FILE.exists():
-        print("servers_address.json not found:", SERVERS_FILE)
+        if not _SERVERS_FILE_MISSING_WARNED:
+            print("servers_address.json not found:", SERVERS_FILE)
+            _SERVERS_FILE_MISSING_WARNED = True
         return None
 
     try:

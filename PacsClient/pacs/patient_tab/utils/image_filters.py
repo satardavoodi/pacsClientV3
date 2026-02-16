@@ -555,6 +555,8 @@ def apply_multiscale_sharpening(
 
     # اعمال تیز کردن در هر مقیاس - sigmas are already in mm, so we can use them directly
     for sigma, amount in zip(sigmas, amounts):
+        # ── GIL yield between multiscale iterations ──
+        time.sleep(0.01)
         # محاسبه جزئیات در این مقیاس - sigma is already in mm, so we can use it directly
         blurred = sitk.SmoothingRecursiveGaussian(sharpened, sigma=sigma)
         details = sitk.Subtract(sharpened, blurred)
@@ -564,180 +566,6 @@ def apply_multiscale_sharpening(
 
     return sitk.Cast(sharpened, orig_type)
 
-# def apply_filters(
-#     itk_image: sitk.Image,
-#     metadata: dict,
-#     filter_settings_path: Path = FILTER_CONFIG_PATH
-# ) -> sitk.Image:
-#     """
-#     Unified medical image filtering pipeline.
-#     CT and MR are processed identically using MR-grade filters.
-#     """
-
-#     # ------------------------------------------------------------------
-#     # Default filter configuration (MR is the reference, CT = MR)
-#     # ------------------------------------------------------------------
-#     DEFAULT_FILTERS = {
-#         "MR": {
-#             "enabled": True,
-#             "min_slices": 4,
-
-#             "noise_reduction": {
-#                 "sigma": 0.25,
-#                 "mild_sigma": 0.30
-#             },
-
-#             "multiscale_sharpening": {
-#                 "enabled": True,
-#                 "sigmas": [0.5, 1.0, 2.0],
-#                 "amounts": [0.25, 0.12, 0.06],
-#                 "mild_sigmas": [0.5, 1.0, 2.0, 4.0],
-#                 "mild_amounts": [0.20, 0.10, 0.05, 0.025]
-#             },
-
-#             "laplacian_sharpening": {
-#                 "enabled": True,
-#                 "alpha": 0.12,
-#                 "mild_alpha": 0.10
-#             },
-
-#             "adaptive_sharpening": {
-#                 "enabled": True,
-#                 "base_amount": 0.12,
-#                 "edge_boost": 0.90,
-#                 "sigma": 0.70,
-#                 "mild_base_amount": 0.10,
-#                 "mild_edge_boost": 0.80,
-#                 "mild_sigma": 0.80
-#             }
-#         }
-#     }
-
-#     # CT behaves EXACTLY like MR
-#     DEFAULT_FILTERS["CT"] = DEFAULT_FILTERS["MR"]
-
-#     # ------------------------------------------------------------------
-#     # Timing start
-#     # ------------------------------------------------------------------
-#     t0 = time.time()
-
-#     modality = metadata["series"]["modality"].upper()
-#     series_name = metadata["series"].get("series_name", "Unknown")
-
-#     print(
-#         f"series: {series_name} | "
-#         f"modality: {modality} | "
-#         f"spacing: {itk_image.GetSpacing()}"
-#     )
-
-#     # ------------------------------------------------------------------
-#     # Load external filter overrides (optional)
-#     # ------------------------------------------------------------------
-#     filter_settings = {}
-#     try:
-#         if filter_settings_path.exists():
-#             with open(filter_settings_path, "r", encoding="utf-8") as f:
-#                 filter_settings = json.load(f)
-#     except Exception as e:
-#         print(f"   ⚠️ Failed to load filter settings: {e}")
-
-#     modality_settings = DEFAULT_FILTERS.get(modality)
-#     if modality_settings is None:
-#         print(f"   ℹ️ No filters defined for modality '{modality}'")
-#         return itk_image
-
-#     # merge external overrides
-#     if modality in filter_settings:
-#         for k, v in filter_settings[modality].items():
-#             if isinstance(v, dict) and isinstance(modality_settings.get(k), dict):
-#                 modality_settings[k].update(v)
-#             else:
-#                 modality_settings[k] = v
-
-#     if not modality_settings.get("enabled", True):
-#         print(f"   ℹ️ Filters disabled for {modality}")
-#         return itk_image
-
-#     # ------------------------------------------------------------------
-#     # Sanity checks
-#     # ------------------------------------------------------------------
-#     nx, ny, nz = itk_image.GetSize()
-#     min_slices = modality_settings.get("min_slices", 4)
-
-#     if nz < min_slices:
-#         print(f"   ⚠️ Not enough slices ({nz} < {min_slices}), skipping filters")
-#         return itk_image
-
-#     spacing = itk_image.GetSpacing()
-#     max_spacing = max(spacing)
-#     mild_mode = max_spacing > 1.5
-
-#     if mild_mode:
-#         print(f"   ⚠️ Large spacing detected ({max_spacing:.2f} mm) → mild mode")
-
-#     print(f"   🔧 Applying MR-grade filters to {modality} ({nx}×{ny}×{nz})")
-
-#     # ------------------------------------------------------------------
-#     # Noise reduction
-#     # ------------------------------------------------------------------
-#     noise_cfg = modality_settings["noise_reduction"]
-#     sigma = noise_cfg["mild_sigma"] if mild_mode else noise_cfg["sigma"]
-
-#     itk_image = sitk.SmoothingRecursiveGaussian(itk_image, sigma=sigma)
-#     print(f"   ├── Noise reduction (sigma={sigma} mm)")
-
-#     # ------------------------------------------------------------------
-#     # Multiscale sharpening
-#     # ------------------------------------------------------------------
-#     ms_cfg = modality_settings["multiscale_sharpening"]
-#     if ms_cfg.get("enabled", True):
-#         sigmas = ms_cfg["mild_sigmas"] if mild_mode else ms_cfg["sigmas"]
-#         amounts = ms_cfg["mild_amounts"] if mild_mode else ms_cfg["amounts"]
-
-#         itk_image = apply_multiscale_sharpening(
-#             itk_image,
-#             sigmas=sigmas,
-#             amounts=amounts
-#         )
-#         print(f"   ├── Multiscale sharpening ({len(sigmas)} scales)")
-
-#     # ------------------------------------------------------------------
-#     # Laplacian sharpening
-#     # ------------------------------------------------------------------
-#     lap_cfg = modality_settings["laplacian_sharpening"]
-#     if lap_cfg.get("enabled", True):
-#         alpha = lap_cfg["mild_alpha"] if mild_mode else lap_cfg["alpha"]
-#         itk_image = apply_laplacian_sharpening(itk_image, alpha=alpha)
-#         print(f"   ├── Laplacian sharpening (alpha={alpha})")
-
-#     # ------------------------------------------------------------------
-#     # Adaptive sharpening
-#     # ------------------------------------------------------------------
-#     ad_cfg = modality_settings["adaptive_sharpening"]
-#     if ad_cfg.get("enabled", True):
-#         base_amount = ad_cfg["mild_base_amount"] if mild_mode else ad_cfg["base_amount"]
-#         edge_boost = ad_cfg["mild_edge_boost"] if mild_mode else ad_cfg["edge_boost"]
-#         sigma_val = ad_cfg["mild_sigma"] if mild_mode else ad_cfg["sigma"]
-
-#         itk_image = apply_adaptive_sharpening(
-#             itk_image,
-#             base_amount=base_amount,
-#             edge_boost=edge_boost,
-#             sigma=sigma_val
-#         )
-#         print(
-#             f"   └── Adaptive sharpening "
-#             f"(base={base_amount}, boost={edge_boost}, sigma={sigma_val})"
-#         )
-
-#     # ------------------------------------------------------------------
-#     # Timing end
-#     # ------------------------------------------------------------------
-#     dt = time.time() - t0
-#     print(f"   ✅ Filters applied successfully")
-#     print(f"   ⏱️ Total filter time: {dt:.3f}s")
-
-#     return itk_image
 
 def apply_filters(
     itk_image: sitk.Image,
@@ -880,7 +708,22 @@ def apply_filters(
     noise_cfg = modality_settings.get("noise_reduction", {})
     if noise_cfg.get("enabled", True):
         sigma = noise_cfg.get("mild_sigma", noise_cfg.get("sigma", 0.25)) if mild_mode else noise_cfg.get("sigma", 0.25)
-        itk_image = sitk.SmoothingRecursiveGaussian(itk_image, sigma=float(sigma))
+        # High-slice CT fast path:
+        # For deep stacks (e.g., 350-600 slices), full 3D smoothing spends a lot
+        # of time in Z-processing. Use XY-only recursive smoothing to preserve
+        # in-plane denoising with lower latency.
+        ct_high_slice_threshold = int(noise_cfg.get("ct_high_slice_threshold", 320))
+        if modality == "CT" and int(nz) >= ct_high_slice_threshold:
+            itk_image = _smooth_xy_recursive(
+                itk_image,
+                sigma_xy=float(sigma),
+                sigma_z=0.0,
+            )
+        else:
+            itk_image = sitk.SmoothingRecursiveGaussian(itk_image, sigma=float(sigma))
+    
+    # ── GIL yield: let UI thread process events between filter stages ──
+    time.sleep(0.05)
 
     # ------------------------------------------------------------------
     # Multiscale sharpening
@@ -892,6 +735,9 @@ def apply_filters(
             amounts = ms_cfg.get("mild_amounts", ms_cfg.get("amounts", [0.25, 0.12, 0.06])) if mild_mode else ms_cfg.get("amounts", [0.25, 0.12, 0.06])
             itk_image = apply_multiscale_sharpening(itk_image, sigmas=sigmas, amounts=amounts)
 
+        # ── GIL yield: let UI thread process events between filter stages ──
+        time.sleep(0.05)
+
     # ------------------------------------------------------------------
     # Laplacian sharpening
     # ------------------------------------------------------------------
@@ -899,6 +745,9 @@ def apply_filters(
         if lap_cfg.get("enabled", True):
             alpha = lap_cfg.get("mild_alpha", lap_cfg.get("alpha", 0.12)) if mild_mode else lap_cfg.get("alpha", 0.12)
             itk_image = apply_laplacian_sharpening(itk_image, alpha=float(alpha))
+
+        # ── GIL yield: let UI thread process events between filter stages ──
+        time.sleep(0.05)
 
     # ------------------------------------------------------------------
     # Adaptive sharpening

@@ -1,5 +1,10 @@
 import sys
 import os
+import faulthandler
+
+# Enable faulthandler so C-level segfaults (e.g. in VTK) dump a Python
+# traceback instead of silently terminating the process.
+faulthandler.enable()
 
 # ── Ensure the project venv is being used ────────────────────────────
 _expected_venv = os.path.normcase(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv"))
@@ -28,6 +33,7 @@ from PacsClient import AppHandler
 from PacsClient.utils.font_manager import load_fonts, setup_font_rendering
 from PacsClient.utils import LicenseManager, LicenseDialog
 import vtkmodules.vtkCommonCore as vtkCommonCore
+from pathlib import Path
 
 vtkCommonCore.vtkObject.GlobalWarningDisplayOff()
 from qasync import QEventLoop
@@ -370,6 +376,10 @@ if __name__ == "__main__":
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
 
+    # Initialize module execution framework (safe, optional integration)
+    module_manager = None
+    pipeline_orchestrator = None
+
     # === CRITICAL: Application-level cleanup handler ===
     # Ensures all download state is cleared on app shutdown
     # This runs even if individual widget closeEvents aren't called
@@ -377,6 +387,23 @@ if __name__ == "__main__":
         """Clean up all download state when application is about to quit"""
         try:
             print("🧹 Application shutting down - preserving download history...")
+
+            # CRITICAL FIX: Clean up database connection pools to prevent resource leaks
+            # in high-frequency loop scenarios (1000+ cycles would accumulate connections)
+            try:
+                from PacsClient.utils.database import cleanup_connection_pools
+                cleanup_connection_pools()
+                print("   ✅ Cleaned up database connection pools")
+            except Exception as e:
+                print(f"⚠️ Error cleaning up database pools: {e}")
+
+            # Shutdown module execution framework if initialized
+            try:
+                if module_manager:
+                    module_manager.shutdown()
+                    print("   ✅ Module Execution Framework shut down")
+            except Exception as e:
+                print(f"⚠️ Error shutting down module framework: {e}")
 
             # Stop any active download workers before closing event loop
             try:
@@ -456,6 +483,44 @@ if __name__ == "__main__":
     # === END cleanup handler ===
 
     window = AppHandler()
+
+    # Bootstrap module framework and attach to runtime window
+    try:
+        from PacsClient.components.pipeline_orchestrator import PipelineOrchestrator
+        from PacsClient.components.module_manager import ModuleManager
+        from PacsClient.components.example_modules import (
+            MPRModule,
+            EagleEyeModule,
+            ToolbarModule,
+            MeasurementModule,
+            ReportGeneratorModule,
+        )
+
+        project_root = Path(__file__).resolve().parent
+        db_path = project_root / "database" / "pacs.db"
+        db_path_str = str(db_path) if db_path.exists() else ":memory:"
+
+        pipeline_orchestrator = PipelineOrchestrator(max_cache_mb=500)
+        module_manager = ModuleManager(
+            pipeline_orchestrator=pipeline_orchestrator,
+            db_path=db_path_str,
+            max_concurrent=5,
+        )
+
+        module_manager.register_module(MPRModule("mpr_0"))
+        module_manager.register_module(EagleEyeModule("eagle_eye_0"))
+        module_manager.register_module(ToolbarModule("toolbar_0"))
+        module_manager.register_module(MeasurementModule("measurement_0"))
+        module_manager.register_module(ReportGeneratorModule("report_0"))
+
+        # Attach to app runtime for access by downstream UI/pages
+        window.pipeline_orchestrator = pipeline_orchestrator
+        window.module_manager = module_manager
+
+        print("✅ Module Execution Framework initialized (5 modules registered)")
+    except Exception as e:
+        print(f"⚠️ Module framework initialization skipped: {e}")
+
     window.show()
     # sys.exit(app.exec())
     with loop:

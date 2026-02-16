@@ -5193,12 +5193,6 @@ class ToolbarManager:
         # ============================================================
         # CATEGORY 4: VIEW MANIPULATION TOOLS
         # ============================================================
-        # Zoom to fit button
-        zoom_to_fit_btn = create_tool_btn(self.patient_widget, 'Zoom to Fit', 'fit.png')
-        zoom_to_fit_btn.clicked.connect(lambda: self.toggle_zoom_to_fit(self.patient_widget.selected_widget))
-        toolbar_layout.addWidget(zoom_to_fit_btn)
-        self.tools_button[self.tool_access.ZOOM_TO_FIT] = zoom_to_fit_btn
-
         # Zoom button
         zoom_btn = create_tool_btn(self.patient_widget, 'Zoom', 'zoom-in.png')
         zoom_btn.clicked.connect(lambda: self.toggle_zoom(self.patient_widget.selected_widget))
@@ -5670,6 +5664,20 @@ class ToolbarManager:
         ai_chat_btn.clicked.connect(lambda: self.toggle_ai_chat(self.patient_widget.selected_widget))
         toolbar_layout.addWidget(ai_chat_btn)
         self.tools_button[self.tool_access.AI_CHAT] = ai_chat_btn
+
+        # Case of the Day (export current study folder) - position next to Eagle/Eye AI button
+        case_btn = create_tool_btn(self.patient_widget, 'Save as Case of the Day', icon_name=None, text_icon="", icon_size=20)
+        case_btn.setCheckable(False)
+        case_btn.setToolTip("Save current study as Case of the Day")
+        try:
+            # Use qtawesome icon for education transfer.
+            case_btn.setIcon(qta.icon('fa5s.graduation-cap', color='#e5e7eb'))
+            case_btn.setIconSize(QSize(20, 20))
+        except Exception:
+            case_btn.setText("COTD")
+        case_btn.clicked.connect(self._save_case_of_day_from_patient)
+        toolbar_layout.addWidget(case_btn)
+
         toolbar_layout.addWidget(self._create_separator())
 
         # ============================================================
@@ -6035,6 +6043,100 @@ class ToolbarManager:
             traceback.print_exc()
             # Fallback to active layout only
             self._capture_active_layout()
+
+    def _save_case_of_day_from_patient(self):
+        """
+        Export the current study folder into Education/MyCourse/CaseOfTheDay storage
+        and create a Case-of-Day entry (metadata-only in DB, files on disk).
+        """
+        try:
+            from pathlib import Path
+            from PySide6.QtCore import Qt
+            from PySide6.QtWidgets import QApplication
+            from PacsClient.pacs.patient_tab.utils.utils import get_quickly_series_info
+            from PacsClient.pacs.patient_tab.utils.utils import get_study_source_path
+            from PacsClient.pacs.education.case_of_day_database import copy_dicom_folder_to_case_storage
+            from PacsClient.pacs.education.case_of_day_widget import CaseOfDayEntryDialog
+
+            source_folder = getattr(self.patient_widget, "import_folder_path", None)
+            study_uid = getattr(self.patient_widget, "study_uid", None)
+            patient_id = getattr(self.patient_widget, "patient_id", None)
+
+            if not source_folder and study_uid:
+                folder_path, _ = get_study_source_path(str(study_uid))
+                source_folder = str(folder_path)
+
+            if not source_folder or not Path(source_folder).exists():
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No Local DICOM Folder",
+                    "This study does not have a local DICOM folder available to export."
+                )
+                return
+            # Ensure there is at least one DICOM file available locally
+            def _has_dicom_files(folder: Path) -> bool:
+                # Fast path: .dcm extension
+                try:
+                    for p in folder.rglob("*.dcm"):
+                        if p.is_file():
+                            return True
+                except Exception:
+                    pass
+
+                # Fallback: DICOM "DICM" magic at offset 128 (not guaranteed, but common).
+                checked = 0
+                try:
+                    for p in folder.rglob("*"):
+                        if not p.is_file():
+                            continue
+                        checked += 1
+                        if checked > 50:
+                            break
+                        try:
+                            with p.open("rb") as f:
+                                hdr = f.read(132)
+                            if len(hdr) >= 132 and hdr[128:132] == b"DICM":
+                                return True
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                return False
+
+            has_dicom = _has_dicom_files(Path(source_folder))
+            if not has_dicom:
+                QMessageBox.warning(
+                    self.patient_widget,
+                    "No DICOM Files Found",
+                    "No local DICOM files were found for this study (nothing to export)."
+                )
+                return
+
+            info = get_quickly_series_info(source_folder) or {}
+            modality = str(info.get("modality") or "").strip()
+
+            # Transfer files immediately: copy into Case-of-Day storage, then open the entry form.
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                dest_folder = copy_dicom_folder_to_case_storage(source_folder, case_hint=str(patient_id or study_uid or "case"))
+            finally:
+                QApplication.restoreOverrideCursor()
+
+            dlg = CaseOfDayEntryDialog(
+                parent=self.patient_widget,
+                prefill={
+                    "dicom_folder_path": dest_folder,
+                    "original_source_path": source_folder,
+                    "cleanup_on_cancel": True,
+                    "source_type": "patient_export",
+                    "modality": modality,
+                    "patient_id": str(patient_id or ""),
+                    "study_uid": str(study_uid or info.get("study_uid") or ""),
+                },
+            )
+            dlg.exec()
+        except Exception as exc:
+            QMessageBox.warning(self.patient_widget, "Export Failed", str(exc))
 
     def _capture_active_layout(self):
         """Capture only the currently active layout (original behavior)"""

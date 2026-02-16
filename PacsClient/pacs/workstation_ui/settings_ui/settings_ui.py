@@ -54,7 +54,7 @@ class SettingsTabWidget(QTabWidget):
         self.addTab(self.tools_settings, 'Tools Settings')
         self.addTab(self.servers_config, "Server Config")
         #self.addTab(self.tab2, 'Tab 2')
-        self.addTab(self.viewer_config,"Viewer Config")
+        self.addTab(self.viewer_config,"Viewer Configuration")
         self.addTab(self.image_filter,"Image Filter")
         self.addTab(self.lightviewer_settings, "Light Viewer")
         # start ui

@@ -434,7 +434,7 @@ def _build_update_if_missing_clause(fields: dict[str, object]) -> tuple[str, lis
     fields: mapping column -> new_value
     خروجی: (sql_set_clause, params)
     هر ستون به‌شکل:
-      col = CASE WHEN (col IS NULL OR col='' OR col='N/A') THEN ? ELSE col END   -- برای رشته‌ها
+      col = CASE WHEN (col IS NULL OR col='' OR col='N/A' OR col='Unknown') THEN ? ELSE col END   -- برای رشته‌ها
       col = CASE WHEN (col IS NULL) THEN ? ELSE col END                         -- برای عددی/غیررشته‌ای
     """
     sets = []
@@ -444,7 +444,7 @@ def _build_update_if_missing_clause(fields: dict[str, object]) -> tuple[str, lis
             # اگر مقدار جدید نداریم، از آپدیت آن ستون صرف‌نظر کن
             continue
         if _is_textlike(val):
-            sets.append(f"{col} = CASE WHEN {col} IS NULL OR {col}='' OR {col}='N/A' THEN ? ELSE {col} END")
+            sets.append(f"{col} = CASE WHEN {col} IS NULL OR {col}='' OR {col}='N/A' OR {col}='Unknown' THEN ? ELSE {col} END")
         else:
             sets.append(f"{col} = CASE WHEN {col} IS NULL THEN ? ELSE {col} END")
         params.append(val)

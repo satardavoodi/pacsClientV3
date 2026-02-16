@@ -1,6 +1,8 @@
 from .grpc_client import DicomGrpcClient
 from .dicom_downloader import DicomDownloader
 from .socket_service import get_socket_service, SocketService
+from .pipeline_orchestrator import PipelineOrchestrator
+from .module_manager import ModuleManager, BaseModule, ModuleContext, ModuleResult, ModuleStatus
 
 # Zeta Download Manager - Primary implementation
 from .zeta_adapter import (
@@ -26,6 +28,13 @@ __all__ = [
     'DicomDownloader',
     'get_socket_service',
     'SocketService',
+    # Module execution and multi-pipeline exports
+    'PipelineOrchestrator',
+    'ModuleManager',
+    'BaseModule',
+    'ModuleContext',
+    'ModuleResult',
+    'ModuleStatus',
     # Zeta exports
     'get_zeta_download_manager_widget',
     'get_zeta_executor',

@@ -725,6 +725,13 @@ class AppHandler(QDialog):
                 auth_user=self.auth_user,
                 auth_token=self.auth_token
             )
+
+            # Propagate optional runtime framework objects
+            if hasattr(self, 'pipeline_orchestrator'):
+                self.main_page.pipeline_orchestrator = self.pipeline_orchestrator
+            if hasattr(self, 'module_manager'):
+                self.main_page.module_manager = self.module_manager
+
             self.main_page.showMaximized()  # Show maximized for better visibility
             self.close()
         except Exception as e:

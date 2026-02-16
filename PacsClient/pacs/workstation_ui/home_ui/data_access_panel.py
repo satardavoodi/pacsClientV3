@@ -221,17 +221,6 @@ class DataAccessPanelWidget(QWidget):
                 width: 24px;
                 background: transparent;
             }
-            QComboBox::down-arrow {
-                image: none;
-                border: none;
-                background: transparent;
-            }
-            QComboBox::down-arrow:after {
-                content: "▼";
-                color: #3182ce;
-                font-size: 13px;
-                font-weight: bold;
-            }
             QComboBox QAbstractItemView {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #2d3748, stop:1 #1a202c);

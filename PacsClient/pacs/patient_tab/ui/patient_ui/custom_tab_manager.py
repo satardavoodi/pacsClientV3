@@ -619,9 +619,15 @@ class CustomTabManager:
         """Handle tab change events"""
         
         # Set all tabs as inactive first
-        for tab_data in self.patient_tabs.values():
+        for tab_idx, tab_data in self.patient_tabs.items():
             if hasattr(tab_data['custom_tab'], 'set_active'):
                 tab_data['custom_tab'].set_active(False)
+            try:
+                widget = tab_data.get('widget')
+                if widget is not None and hasattr(widget, 'on_tab_deactivated'):
+                    widget.on_tab_deactivated()
+            except Exception:
+                pass
         
         # Set current tab as active
         if index in self.patient_tabs:
@@ -630,6 +636,13 @@ class CustomTabManager:
                 tab_data['custom_tab'].set_active(True)
                 # Set logo button as inactive when patient tab is selected
                 self.set_logo_active(False)
+
+            try:
+                widget = tab_data.get('widget')
+                if widget is not None and hasattr(widget, 'on_tab_activated'):
+                    widget.on_tab_activated()
+            except Exception:
+                pass
             
             # Legacy priority manager removed - Zeta handles priority internally
             # if study_uid and PRIORITY_MANAGER_AVAILABLE:
