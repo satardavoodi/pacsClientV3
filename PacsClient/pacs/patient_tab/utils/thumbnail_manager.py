@@ -657,6 +657,57 @@ class ThumbnailManager(QObject):
         except Exception:
             return
 
+    def update_series_image_count(self, series_number: str, image_count: int):
+        """Update the image count label for a series thumbnail (GUI thread only)."""
+        try:
+            series_key = str(series_number)
+            widget = self.series_widgets.get(series_key)
+            if widget is None:
+                return
+
+            try:
+                _ = widget.isVisible()
+            except RuntimeError:
+                return
+
+            if image_count is None:
+                return
+            try:
+                image_count = int(image_count)
+            except Exception:
+                return
+            if image_count <= 0:
+                return
+
+            count_label = getattr(widget, "count_label", None)
+            if count_label is None:
+                content_layout = getattr(widget, "content_layout", None)
+                if content_layout is None:
+                    return
+                count_label = QLabel(f"{image_count} images")
+                count_label.setFixedHeight(20)
+                count_label.setAlignment(Qt.AlignCenter)
+                count_label.setStyleSheet("""
+                    QLabel {
+                        font-size: 12px;
+                        font-weight: bold;
+                        color: #3b82f6;
+                        background: transparent;
+                        border: none;
+                        padding: 2px;
+                    }
+                """)
+                content_layout.addWidget(count_label)
+                widget.count_label = count_label
+                widget.update()
+                return
+
+            count_label.setText(f"{image_count} images")
+            count_label.update()
+            widget.update()
+        except Exception:
+            return
+
     def _apply_thumbnail_image(self, series_number: str, image: QImage):
         """Apply image to existing thumbnail widget on GUI thread."""
         try:
@@ -1055,6 +1106,7 @@ class ThumbnailManager(QObject):
                         }
                     """)
                     content_layout.addWidget(count_label)
+                    widget.count_label = count_label
                 elif not desc or not desc.strip():
                     # If no count and no desc, show series number
                     series_number = series_info.get('series_number', '')
@@ -1254,6 +1306,7 @@ class ThumbnailManager(QObject):
             widget.progress_overlay = progress_overlay
             widget.glass_overlay = glass_overlay
             widget.content_widget = content_widget
+            widget.content_layout = content_layout
             widget.image_button = image_button
             widget.series_number = str(thumbnail_index)
             widget.thumbnail_index = thumbnail_index

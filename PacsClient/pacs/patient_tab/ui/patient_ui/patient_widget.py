@@ -1877,6 +1877,16 @@ class PatientWidget(QWidget):
             series_no = str(metadata['series']['series_number'])
             # حالا این سری آماده است
             self.thumbnail_manager.set_series_ready(series_no)
+
+            # Update thumbnail image count from actual loaded instances
+            try:
+                actual_count = len(metadata.get('instances', []) or [])
+            except Exception:
+                actual_count = 0
+            if actual_count > 0:
+                if hasattr(self, '_server_series_info') and series_no in self._server_series_info:
+                    self._server_series_info[series_no]['image_count'] = actual_count
+                self.thumbnail_manager.update_series_image_count(series_no, actual_count)
             
             # ⚡ OPTIMIZATION: Rebuild indices after data change for fast lookups
             # This is a O(n) one-time cost when new series is added
@@ -1906,6 +1916,14 @@ class PatientWidget(QWidget):
                     self.viewer_controller._series_name_cache[series_number_str] = series_name
                     try:
                         self.thumbnail_manager.set_series_ready(series_number_str)
+                        try:
+                            actual_count = len(metadata.get('instances', []) or [])
+                        except Exception:
+                            actual_count = 0
+                        if actual_count > 0:
+                            if hasattr(self, '_server_series_info') and series_number_str in self._server_series_info:
+                                self._server_series_info[series_number_str]['image_count'] = actual_count
+                            self.thumbnail_manager.update_series_image_count(series_number_str, actual_count)
                     except Exception:
                         pass
                     self.viewer_controller._rebuild_series_index()
