@@ -4,7 +4,26 @@ import faulthandler
 
 # Enable faulthandler so C-level segfaults (e.g. in VTK) dump a Python
 # traceback instead of silently terminating the process.
-faulthandler.enable()
+try:
+    _faulthandler_stream = sys.stderr or sys.__stderr__
+    if _faulthandler_stream:
+        faulthandler.enable(file=_faulthandler_stream)
+except (RuntimeError, AttributeError, TypeError):
+    # Gracefully skip faulthandler if stderr is not available (e.g., pythonw.exe)
+    pass
+
+
+def _safe_print(*args, **kwargs):
+    stream = sys.stdout or sys.__stdout__
+    if not stream or getattr(stream, "closed", False):
+        return
+    try:
+        __builtins__["print"](*args, **kwargs)
+    except Exception:
+        pass
+
+
+print = _safe_print
 
 # ── Ensure the project venv is being used ────────────────────────────
 _expected_venv = os.path.normcase(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv"))
@@ -21,8 +40,16 @@ if sys.platform == 'win32':
     try:
         import codecs
 
-        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'ignore')
-        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'ignore')
+        # Reattach stderr/stdout if running as GUI app (pythonw.exe)
+        if sys.stderr is None:
+            sys.stderr = open(os.devnull, 'w', encoding='utf-8')
+        if sys.stdout is None:
+            sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+
+        if hasattr(sys.stdout, 'buffer'):
+            sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'ignore')
+        if hasattr(sys.stderr, 'buffer'):
+            sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'ignore')
     except:
         pass
 

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
 )
 from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QIcon
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup, QThread, Signal
 import os
 import qtawesome as qta
 from .pacs.workstation_ui.mainwindow_ui import MainWindowWidget
@@ -25,6 +25,103 @@ from PacsClient.utils.socket_config import get_socket_config
 from PacsClient.utils.socket_token_manager import get_socket_token_manager
 from PacsClient.utils.license_manager import LicenseManager
 from PacsClient.utils.database import ai_ensure_schema
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Authentication Worker Thread - Handles socket/demo auth without blocking UI
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class AuthenticationWorker(QThread):
+    """Worker thread for non-blocking authentication"""
+    authentication_done = Signal(bool, str, str, dict)  # success, message, token, user_info
+    
+    def __init__(self, socket_service, username: str, password: str):
+        super().__init__()
+        self.socket_service = socket_service
+        self.username = username
+        self.password = password
+        self.daemon = True
+    
+    def run(self):
+        """Run authentication in background thread"""
+        try:
+            # Try socket authentication with a short timeout
+            success, message = self._authenticate_with_socket(self.username, self.password)
+            
+            if success:
+                # Extract token and user from message/stored auth
+                # Token was stored in the socket response
+                token = getattr(self, '_auth_token', None)
+                user = getattr(self, '_auth_user', None)
+                self.authentication_done.emit(True, message, token, user or {})
+            else:
+                # Try demo mode as fallback
+                if self._authenticate_user(self.username, self.password):
+                    self.authentication_done.emit(True, "Login successful (Demo Mode)", None, {"full_name": self.username, "role": "demo"})
+                else:
+                    self.authentication_done.emit(False, message, None, {})
+                    
+        except Exception as e:
+            print(f"❌ Authentication worker error: {e}")
+            self.authentication_done.emit(False, f"Authentication error: {str(e)}", None, {})
+    
+    def _authenticate_with_socket(self, username: str, password: str) -> tuple:
+        """Try to authenticate with socket server"""
+        try:
+            # Get socket client
+            client = self.socket_service._ensure_client()
+            if not client:
+                return False, "Could not create socket client"
+
+            # Try to connect
+            if not client.connected:
+                if not client.connect():
+                    return False, "Could not connect to server"
+
+            # Attempt login
+            success, message, token, user = client.login(username, password)
+
+            if success:
+                self._auth_token = token
+                self._auth_user = user
+                print(f"✅ Authenticated as: {user.get('full_name')} ({user.get('role')})")
+                print(f"✅ Token stored in TokenManager for socket requests")
+                return True, message
+            else:
+                return False, message
+
+        except Exception as e:
+            print(f"❌ Socket authentication error: {e}")
+            error_msg = str(e)
+            if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+                print("⏰ Socket connection timed out - falling back to demo mode")
+                return False, "Server not available (timeout)"
+            return False, f"Authentication error: {str(e)}"
+    
+    def _authenticate_user(self, username, password):
+        """Demo mode authentication"""
+        # Allow empty credentials for testing
+        if username.strip() == "" and password.strip() == "":
+            return True
+            
+        # Prevent single empty field
+        if not username.strip() or not password.strip():
+            return False
+            
+        # Valid demo credentials
+        valid_credentials = [
+            ("admin", "admin"),
+            ("user", "user"),
+            ("doctor", "doctor"),
+            ("radiologist", "password"),
+            ("test", "test")
+        ]
+        
+        for valid_user, valid_pass in valid_credentials:
+            if username.lower() == valid_user and password == valid_pass:
+                return True
+        
+        return False
 
 
 class AppHandler(QDialog):
@@ -39,7 +136,7 @@ class AppHandler(QDialog):
 
         # Get the absolute path to the icon
         # icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "login", "images", "favicon.ico")
-        icon_path = fr"{IMAGES_LOGIN_PATH}/'favicon.ico'"
+        icon_path = str(IMAGES_LOGIN_PATH / "favicon.ico")
 
         self.setWindowIcon(QIcon(icon_path))
         self.resize(1000, 640)
@@ -598,37 +695,39 @@ class AppHandler(QDialog):
         if self.error_label.isVisible():
             self._hide_error()
 
-        # Set loading state
-        self._set_loading_state(True)
-
-        # Simulate login process with timer (replace with actual authentication)
-        QTimer.singleShot(1500, lambda: self._complete_login(username, password))
-
-    def _complete_login(self, username, password):
-        """Complete the login process after authentication"""
-        self._set_loading_state(False)
-
-        # Validate that both fields are filled before attempting authentication
-        if not username.strip() or not password.strip():
+        # Validate that both fields are filled
+        if not username or not password:
             self._show_error("Login failed: Username and password are required")
             return
 
-        # Try socket authentication first
-        success, message = self._authenticate_with_socket(username, password)
+        # Set loading state
+        self._set_loading_state(True)
 
-        # If socket fails, try demo mode
-        if not success:
-            success = self._authenticate_user(username, password)
-            if success:
-                message = "Login successful (Demo Mode)"
+        # Start authentication in background thread (non-blocking)
+        self.auth_worker = AuthenticationWorker(self.socket_service, username, password)
+        self.auth_worker.authentication_done.connect(self._on_authentication_done)
+        self.auth_worker.start()
 
+    def _on_authentication_done(self, success: bool, message: str, token: str, user: dict):
+        """Handle authentication result from worker thread"""
+        self._set_loading_state(False)
+        
         if success:
             # Save credentials if "Remember Me" is checked
-            self.save_credentials(username, password)
+            self.save_credentials(self.line_edit_username.text(), self.line_edit_password.text())
+            
+            # Store auth info
+            self.auth_token = token
+            self.auth_user = user
+            
+            # Store token in TokenManager
+            if token:
+                token_manager = get_socket_token_manager()
+                token_manager.set_token(token, user)
             
             # Success - fade out and open main window
             fade_out = QPropertyAnimation(self, b"windowOpacity")
-            fade_out.setDuration(300)  # Shorter duration
+            fade_out.setDuration(300)
             fade_out.setStartValue(1.0)
             fade_out.setEndValue(0.0)
             fade_out.setEasingCurve(QEasingCurve.OutCubic)
@@ -640,83 +739,6 @@ class AppHandler(QDialog):
         else:
             # Show error
             self._show_error(f"Login failed: {message}")
-    
-    def _authenticate_with_socket(self, username: str, password: str) -> tuple:
-        """
-        Authenticate user with Socket server
-
-        Returns:
-            tuple: (success: bool, message: str)
-        """
-        try:
-            # Get socket client
-            client = self.socket_service._ensure_client()
-            if not client:
-                return False, "Could not create socket client"
-
-            # Try to connect
-            if not client.connected:
-                if not client.connect():
-                    return False, "Could not connect to server"
-
-            # Attempt login
-            success, message, token, user = client.login(username, password)
-
-            if success:
-                self.auth_token = token
-                self.auth_user = user
-
-                # Store token in TokenManager for use in all socket requests
-                token_manager = get_socket_token_manager()
-                token_manager.set_token(token, user)
-
-                print(f"✅ Authenticated as: {user.get('full_name')} ({user.get('role')})")
-                print(f"✅ Token stored in TokenManager for socket requests")
-                return True, message
-            else:
-                return False, message
-
-        except Exception as e:
-            print(f"❌ Socket authentication error: {e}")
-            # Return a more specific message for connection issues to enable faster fallback
-            error_msg = str(e)
-            if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
-                print("⏰ Socket connection timed out - falling back to demo mode quickly")
-                return False, "Server not available (timeout)"
-            return False, f"Authentication error: {str(e)}"
-    
-    def _authenticate_user(self, username, password):
-        """Authenticate user credentials - Replace with actual authentication logic"""
-        
-        # Demo mode: Allow empty credentials for testing
-        if username.strip() == "" and password.strip() == "":
-            return True
-            
-        # Prevent single empty field (both must be empty or both must be filled)
-        if not username.strip() or not password.strip():
-            return False
-            
-        # Add your authentication logic here
-        # For now, accepting common demo credentials or you can integrate with your auth system
-        valid_credentials = [
-            ("admin", "admin"),
-            ("user", "user"),
-            ("doctor", "doctor"),
-            ("radiologist", "password"),
-            ("test", "test")
-        ]
-        
-        # Check against valid credentials
-        for valid_user, valid_pass in valid_credentials:
-            if username.lower() == valid_user and password == valid_pass:
-                return True
-                
-        # TODO: Replace this with actual authentication system
-        # For example: database lookup, LDAP, OAuth, etc.
-        # return self.authenticate_with_database(username, password)
-        # return self.authenticate_with_ldap(username, password)
-        
-        return False
 
     def _open_main_window(self):
         """Open the main application window"""
