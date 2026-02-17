@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
 )
 from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QIcon
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup, QThread, Signal
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
 import os
 import qtawesome as qta
 from .pacs.workstation_ui.mainwindow_ui import MainWindowWidget
@@ -24,119 +24,18 @@ from PacsClient.components.socket_service import SocketService
 from PacsClient.utils.socket_config import get_socket_config
 from PacsClient.utils.socket_token_manager import get_socket_token_manager
 from PacsClient.utils.license_manager import LicenseManager
-from PacsClient.utils.database import ai_ensure_schema
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Authentication Worker Thread - Handles socket/demo auth without blocking UI
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class AuthenticationWorker(QThread):
-    """Worker thread for non-blocking authentication"""
-    authentication_done = Signal(bool, str, str, dict)  # success, message, token, user_info
-    
-    def __init__(self, socket_service, username: str, password: str):
-        super().__init__()
-        self.socket_service = socket_service
-        self.username = username
-        self.password = password
-        self.daemon = True
-    
-    def run(self):
-        """Run authentication in background thread"""
-        try:
-            # Try socket authentication with a short timeout
-            success, message = self._authenticate_with_socket(self.username, self.password)
-            
-            if success:
-                # Extract token and user from message/stored auth
-                # Token was stored in the socket response
-                token = getattr(self, '_auth_token', None)
-                user = getattr(self, '_auth_user', None)
-                self.authentication_done.emit(True, message, token, user or {})
-            else:
-                # Try demo mode as fallback
-                if self._authenticate_user(self.username, self.password):
-                    self.authentication_done.emit(True, "Login successful (Demo Mode)", None, {"full_name": self.username, "role": "demo"})
-                else:
-                    self.authentication_done.emit(False, message, None, {})
-                    
-        except Exception as e:
-            print(f"❌ Authentication worker error: {e}")
-            self.authentication_done.emit(False, f"Authentication error: {str(e)}", None, {})
-    
-    def _authenticate_with_socket(self, username: str, password: str) -> tuple:
-        """Try to authenticate with socket server"""
-        try:
-            # Get socket client
-            client = self.socket_service._ensure_client()
-            if not client:
-                return False, "Could not create socket client"
-
-            # Try to connect
-            if not client.connected:
-                if not client.connect():
-                    return False, "Could not connect to server"
-
-            # Attempt login
-            success, message, token, user = client.login(username, password)
-
-            if success:
-                self._auth_token = token
-                self._auth_user = user
-                print(f"✅ Authenticated as: {user.get('full_name')} ({user.get('role')})")
-                print(f"✅ Token stored in TokenManager for socket requests")
-                return True, message
-            else:
-                return False, message
-
-        except Exception as e:
-            print(f"❌ Socket authentication error: {e}")
-            error_msg = str(e)
-            if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
-                print("⏰ Socket connection timed out - falling back to demo mode")
-                return False, "Server not available (timeout)"
-            return False, f"Authentication error: {str(e)}"
-    
-    def _authenticate_user(self, username, password):
-        """Demo mode authentication"""
-        # Allow empty credentials for testing
-        if username.strip() == "" and password.strip() == "":
-            return True
-            
-        # Prevent single empty field
-        if not username.strip() or not password.strip():
-            return False
-            
-        # Valid demo credentials
-        valid_credentials = [
-            ("admin", "admin"),
-            ("user", "user"),
-            ("doctor", "doctor"),
-            ("radiologist", "password"),
-            ("test", "test")
-        ]
-        
-        for valid_user, valid_pass in valid_credentials:
-            if username.lower() == valid_user and password == valid_pass:
-                return True
-        
-        return False
 
 
 class AppHandler(QDialog):
     def __init__(self):
         super(AppHandler, self).__init__()
-        
-        # Ensure AI reception reports schema is initialized
-        ai_ensure_schema()
 
         # self.setWindowTitle("AIPacs - Professional Medical Imaging Suite")
         self.setWindowTitle("")
 
         # Get the absolute path to the icon
         # icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "login", "images", "favicon.ico")
-        icon_path = str(IMAGES_LOGIN_PATH / "favicon.ico")
+        icon_path = fr"{IMAGES_LOGIN_PATH}/'favicon.ico'"
 
         self.setWindowIcon(QIcon(icon_path))
         self.resize(1000, 640)
@@ -488,9 +387,6 @@ class AppHandler(QDialog):
         self.checkbox_remember = self.checkbox_button  # For compatibility
         self._update_checkbox_icon()
         
-        # Load saved credentials if available
-        self.load_saved_credentials()
-
         options_row.addLayout(self.checkbox_container)
         options_row.addWidget(self.license_info_label)
         
@@ -695,43 +591,33 @@ class AppHandler(QDialog):
         if self.error_label.isVisible():
             self._hide_error()
 
-        # Validate that both fields are filled
-        if not username or not password:
-            self._show_error("Login failed: Username and password are required")
-            return
-
         # Set loading state
         self._set_loading_state(True)
 
-        # Start authentication in background thread (non-blocking)
-        self.auth_worker = AuthenticationWorker(self.socket_service, username, password)
-        self.auth_worker.authentication_done.connect(self._on_authentication_done)
-        self.auth_worker.start()
+        # Simulate login process with timer (replace with actual authentication)
+        QTimer.singleShot(1500, lambda: self._complete_login(username, password))
 
-    def _on_authentication_done(self, success: bool, message: str, token: str, user: dict):
-        """Handle authentication result from worker thread"""
+    def _complete_login(self, username, password):
+        """Complete the login process after authentication"""
         self._set_loading_state(False)
         
+        # Try socket authentication first
+        success, message = self._authenticate_with_socket(username, password)
+        
+        # If socket fails, try demo mode
+        if not success:
+            success = self._authenticate_user(username, password)
+            if success:
+                message = "Login successful (Demo Mode)"
+        
         if success:
-            # Save credentials if "Remember Me" is checked
-            self.save_credentials(self.line_edit_username.text(), self.line_edit_password.text())
-            
-            # Store auth info
-            self.auth_token = token
-            self.auth_user = user
-            
-            # Store token in TokenManager
-            if token:
-                token_manager = get_socket_token_manager()
-                token_manager.set_token(token, user)
-            
             # Success - fade out and open main window
             fade_out = QPropertyAnimation(self, b"windowOpacity")
-            fade_out.setDuration(300)
+            fade_out.setDuration(300)  # Shorter duration
             fade_out.setStartValue(1.0)
             fade_out.setEndValue(0.0)
             fade_out.setEasingCurve(QEasingCurve.OutCubic)
-
+            
             # Store animation reference to prevent garbage collection
             self.fade_animation = fade_out
             fade_out.finished.connect(self._open_main_window)
@@ -739,6 +625,78 @@ class AppHandler(QDialog):
         else:
             # Show error
             self._show_error(f"Login failed: {message}")
+    
+    def _authenticate_with_socket(self, username: str, password: str) -> tuple:
+        """
+        Authenticate user with Socket server
+        
+        Returns:
+            tuple: (success: bool, message: str)
+        """
+        try:
+            # Get socket client
+            client = self.socket_service._ensure_client()
+            if not client:
+                return False, "Could not create socket client"
+            
+            # Try to connect
+            if not client.connected:
+                if not client.connect():
+                    return False, "Could not connect to server"
+            
+            # Attempt login
+            success, message, token, user = client.login(username, password)
+            
+            if success:
+                self.auth_token = token
+                self.auth_user = user
+                
+                # Store token in TokenManager for use in all socket requests
+                token_manager = get_socket_token_manager()
+                token_manager.set_token(token, user)
+                
+                print(f"✅ Authenticated as: {user.get('full_name')} ({user.get('role')})")
+                print(f"✅ Token stored in TokenManager for socket requests")
+                return True, message
+            else:
+                return False, message
+                
+        except Exception as e:
+            print(f"❌ Socket authentication error: {e}")
+            return False, f"Authentication error: {str(e)}"
+    
+    def _authenticate_user(self, username, password):
+        """Authenticate user credentials - Replace with actual authentication logic"""
+        
+        # Demo mode: Allow empty credentials for testing
+        if username.strip() == "" and password.strip() == "":
+            return True
+            
+        # Prevent single empty field (both must be empty or both must be filled)
+        if not username.strip() or not password.strip():
+            return False
+            
+        # Add your authentication logic here
+        # For now, accepting common demo credentials or you can integrate with your auth system
+        valid_credentials = [
+            ("admin", "admin"),
+            ("user", "user"),
+            ("doctor", "doctor"),
+            ("radiologist", "password"),
+            ("test", "test")
+        ]
+        
+        # Check against valid credentials
+        for valid_user, valid_pass in valid_credentials:
+            if username.lower() == valid_user and password == valid_pass:
+                return True
+                
+        # TODO: Replace this with actual authentication system
+        # For example: database lookup, LDAP, OAuth, etc.
+        # return self.authenticate_with_database(username, password)
+        # return self.authenticate_with_ldap(username, password)
+        
+        return False
 
     def _open_main_window(self):
         """Open the main application window"""
@@ -747,13 +705,6 @@ class AppHandler(QDialog):
                 auth_user=self.auth_user,
                 auth_token=self.auth_token
             )
-
-            # Propagate optional runtime framework objects
-            if hasattr(self, 'pipeline_orchestrator'):
-                self.main_page.pipeline_orchestrator = self.pipeline_orchestrator
-            if hasattr(self, 'module_manager'):
-                self.main_page.module_manager = self.module_manager
-
             self.main_page.showMaximized()  # Show maximized for better visibility
             self.close()
         except Exception as e:
@@ -785,61 +736,3 @@ class AppHandler(QDialog):
             elif self.line_edit_password.hasFocus():
                 self.login()
         super().keyPressEvent(event)
-
-    def save_credentials(self, username: str, password: str):
-        """Save credentials if 'Remember Me' is checked"""
-        try:
-            if self.checkbox_button.isChecked():
-                import os
-                import json
-                config_dir = os.path.expanduser("~/.aipacs")
-                os.makedirs(config_dir, exist_ok=True)
-                config_file = os.path.join(config_dir, "login_config.json")
-
-                # Store username and password when "Remember Me" is checked
-                config = {
-                    "username": username,
-                    "password": password,
-                    "remember_me": True
-                }
-                
-                with open(config_file, 'w') as f:
-                    json.dump(config, f)
-            else:
-                # Remove saved credentials if unchecked
-                import os
-                config_dir = os.path.expanduser("~/.aipacs")
-                config_file = os.path.join(config_dir, "login_config.json")
-                if os.path.exists(config_file):
-                    os.remove(config_file)
-        except Exception as e:
-            print(f"Error saving credentials: {e}")
-
-    def load_saved_credentials(self):
-        """Load saved credentials if 'Remember Me' was checked previously"""
-        try:
-            import os
-            import json
-            config_dir = os.path.expanduser("~/.aipacs")
-            os.makedirs(config_dir, exist_ok=True)
-            config_file = os.path.join(config_dir, "login_config.json")
-
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    config = json.load(f)
-                    if config.get("remember_me"):
-                        self.line_edit_username.setText(config.get("username", ""))
-                        self.line_edit_password.setText(config.get("password", ""))
-                        self.checkbox_button.setChecked(True)
-                        self._update_checkbox_icon()
-        except Exception as e:
-            print(f"Error loading saved credentials: {e}")
-
-    def closeEvent(self, event):
-        # Ensure cleanup when window is closed
-        if self.socket_service:
-            try:
-                self.socket_service.cleanup()
-            except Exception as e:
-                print(f"Warning: Error during socket service cleanup: {e}")
-        event.accept()
