@@ -1804,9 +1804,8 @@ class ViewerController:
             # ✅ CRITICAL: Set solid background FIRST to prevent any flash
             if hasattr(vtk_widget, 'renderer'):
                 vtk_widget.renderer.SetBackground(0.10, 0.10, 0.18)  # #1a1a2e in RGB
-                # Force immediate render of background
-                if hasattr(vtk_widget, 'render_window'):
-                    vtk_widget.render_window.Render()
+                # ❌ FLICKER FIX: DO NOT call Render() here - it causes initial flash
+                # The background will be set when the widget is first shown
 
             # Minimize rendering updates until real data is loaded
             if hasattr(vtk_widget, 'render_window'):
