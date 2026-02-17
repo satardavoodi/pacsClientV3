@@ -2156,16 +2156,12 @@ class HomePanelWidget(QWidget):
             search_data = self.patient_search_widget.get_search_data()
             print(f"\n[LOCAL_SEARCH] 📋 Search criteria from UI:\n{search_data}")
             
-            # For Local tab: Remove date AND modality filters so ALL downloaded
-            # studies appear regardless of what the user typed on the Server tab.
-            # Studies downloaded from the server may have modality='Unknown' (the
-            # PACS push often omits per-study modality), so keeping modality would
-            # silently hide them.
+            # For Local tab: Remove date filters so downloaded studies appear even
+            # if the user last searched a narrow date range on the Server tab.
             search_data_local = search_data.copy()
             search_data_local['date_from'] = None
             search_data_local['date_to'] = None
-            search_data_local['modality'] = None
-            print(f"[LOCAL_SEARCH] 📋 Modified search_data for local (date+modality filters removed):\n{search_data_local}")
+            print(f"[LOCAL_SEARCH] 📋 Modified search_data for local (date filters removed):\n{search_data_local}")
             
             # مرحله‌ی نسبتاً سنگین: جستجوی بیماران با فیلتر از DB
             # (داخل executor تا UI قفل نشود)
