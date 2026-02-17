@@ -1944,14 +1944,16 @@ class DownloadManagerWidget(QWidget):
             )
 
             # Build study data dict from metadata and state
+            # Get modality from first series (study-level modality may not exist)
+            study_modality = metadata.series_list[0].modality if metadata.series_list else ''
             study_data = {
                 'study_uid': study_uid,
                 'patient_id': patient_id or '',
                 'patient_name': patient_name or '',
                 'study_date': metadata.study_date or '',
                 'study_time': metadata.study_time or '',
-                'modality': metadata.modality or '',
-                'study_description': metadata.description or '',
+                'modality': study_modality,
+                'study_description': metadata.study_description or '',
                 'patient_age': _first_truthy_attr(patient_info, 'age') or '',
                 'patient_sex': _first_truthy_attr(patient_info, 'sex') or '',
                 'patient_birth_date': _first_truthy_attr(patient_info, 'birth_date') or '',

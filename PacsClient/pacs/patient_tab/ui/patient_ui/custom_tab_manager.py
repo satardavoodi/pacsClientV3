@@ -81,6 +81,19 @@ class CustomTabManager:
         
         # Add some spacing after the logo
         self.title_bar_layout.addSpacing(10)
+
+        # Dedicated container for tab buttons so the logo stays fixed on the left.
+        self.title_bar_tabs_container = QWidget(self.title_bar_tab_area)
+        self.title_bar_tabs_container.setObjectName("TitleBarTabsContainer")
+        self.title_bar_tabs_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self.title_bar_tabs_layout = QHBoxLayout(self.title_bar_tabs_container)
+        self.title_bar_tabs_layout.setContentsMargins(0, 0, 0, 0)
+        self.title_bar_tabs_layout.setSpacing(4)
+        self.title_bar_tabs_layout.addStretch(1)
+
+        self.title_bar_layout.addWidget(self.title_bar_tabs_container, 1)
+        self.title_bar_layout.addStretch(1)
         
         # Hide the original tab bar
         self.tab_widget.tabBar().setVisible(False)
@@ -98,6 +111,15 @@ class CustomTabManager:
         if hasattr(self, 'logo_button'):
             self.logo_button.updateGeometry()
             self.logo_button.update()
+
+    def _add_title_bar_tab_widget(self, widget: QWidget) -> None:
+        """Insert a custom tab widget after the logo, before the stretch spacer."""
+        if not hasattr(self, "title_bar_tabs_layout") or self.title_bar_tabs_layout is None:
+            self.title_bar_layout.addWidget(widget)
+            return
+
+        insert_index = max(0, self.title_bar_tabs_layout.count() - 1)
+        self.title_bar_tabs_layout.insertWidget(insert_index, widget)
 
     def _build_logo_logotype_contents(self):
         """Create the text-only "AI-Pacs" mark using child labels.
@@ -460,7 +482,7 @@ class CustomTabManager:
         custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
         
         # Add to title bar layout
-        self.title_bar_layout.addWidget(custom_tab)
+        self._add_title_bar_tab_widget(custom_tab)
         
         # Store reference
         self.title_bar_tabs[tab_index] = custom_tab
@@ -877,7 +899,7 @@ class CustomTabManager:
         
         if self.title_bar_tab_area:
             # Add to title bar
-            self.title_bar_layout.addWidget(tab_button)
+            self._add_title_bar_tab_widget(tab_button)
             tab_button.clicked.connect(lambda: self.set_tab_active_simple(tab_index))
             self.title_bar_tabs[tab_index] = tab_button
         else:
@@ -957,7 +979,7 @@ class CustomTabManager:
         if self.title_bar_tab_area:
             # Add to title bar
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self.title_bar_layout.addWidget(custom_tab)
+            self._add_title_bar_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button
@@ -1016,7 +1038,7 @@ class CustomTabManager:
         if self.title_bar_tab_area:
             # Add to title bar
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self.title_bar_layout.addWidget(custom_tab)
+            self._add_title_bar_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button
@@ -1072,7 +1094,7 @@ class CustomTabManager:
         if self.title_bar_tab_area:
             # Add to title bar
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self.title_bar_layout.addWidget(custom_tab)
+            self._add_title_bar_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button
@@ -1128,7 +1150,7 @@ class CustomTabManager:
         if self.title_bar_tab_area:
             # Add to title bar
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self.title_bar_layout.addWidget(custom_tab)
+            self._add_title_bar_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button
@@ -1188,7 +1210,7 @@ class CustomTabManager:
 
         if self.title_bar_tab_area:
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self.title_bar_layout.addWidget(custom_tab)
+            self._add_title_bar_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             self.tab_widget.tabBar().setTabButton(tab_index, QTabBar.ButtonPosition.LeftSide, custom_tab)
