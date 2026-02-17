@@ -19,9 +19,11 @@ class CustomTabManager:
     Prevents duplicate tabs for the same patient using study_uid
     """
     
-    def __init__(self, tab_widget: QTabWidget, title_bar_tab_area=None):
+    def __init__(self, tab_widget: QTabWidget, title_bar_tab_area=None, right_tab_area=None):
         self.tab_widget = tab_widget
         self.title_bar_tab_area = title_bar_tab_area
+        self.right_tab_area = right_tab_area
+        self.right_tab_layout = None
         self.patient_tabs = {}  # Store patient tab widgets
         self.title_bar_tabs = {}  # Store title bar tab widgets
         self.study_uid_to_tab = {}  # Map study_uid to tab_index to prevent duplicates
@@ -112,14 +114,39 @@ class CustomTabManager:
             self.logo_button.updateGeometry()
             self.logo_button.update()
 
-    def _add_title_bar_tab_widget(self, widget: QWidget) -> None:
-        """Insert a custom tab widget after the logo, before the stretch spacer."""
+        # Optional: setup a right-side tab strip near the user/admin area.
+        if self.right_tab_area:
+            self.right_tab_layout = QHBoxLayout(self.right_tab_area)
+            self.right_tab_layout.setContentsMargins(0, 5, 0, 5)
+            self.right_tab_layout.setSpacing(4)
+
+    def _add_title_bar_tab_widget(self, widget: QWidget, insert_at_start: bool = False) -> None:
+        """Insert a custom tab widget either at the start (right after logo) or before the stretch spacer.
+        
+        Args:
+            widget: The tab widget to add
+            insert_at_start: If True, insert at position 0 (right after logo). If False, insert before stretch.
+        """
         if not hasattr(self, "title_bar_tabs_layout") or self.title_bar_tabs_layout is None:
             self.title_bar_layout.addWidget(widget)
             return
 
-        insert_index = max(0, self.title_bar_tabs_layout.count() - 1)
+        if insert_at_start:
+            # Insert at the beginning (right after logo, at the right side)
+            insert_index = 0
+        else:
+            # Insert before the stretch spacer (default behavior)
+            insert_index = max(0, self.title_bar_tabs_layout.count() - 1)
+        
         self.title_bar_tabs_layout.insertWidget(insert_index, widget)
+
+    def _add_title_bar_right_tab_widget(self, widget: QWidget) -> None:
+        """Insert a custom tab widget into the right-side tab area (near admin/user info)."""
+        if self.right_tab_layout is not None:
+            self.right_tab_layout.addWidget(widget)
+            return
+        # Fallback to the main title bar tabs area.
+        self._add_title_bar_tab_widget(widget)
 
     def _build_logo_logotype_contents(self):
         """Create the text-only "AI-Pacs" mark using child labels.
@@ -977,9 +1004,9 @@ class CustomTabManager:
         custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
         
         if self.title_bar_tab_area:
-            # Add to title bar
+            # Add to right-side area (near admin/user info)
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self._add_title_bar_tab_widget(custom_tab)
+            self._add_title_bar_right_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button
@@ -1092,9 +1119,9 @@ class CustomTabManager:
         custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
         
         if self.title_bar_tab_area:
-            # Add to title bar
+            # Add to right-side area (near admin/user info)
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self._add_title_bar_tab_widget(custom_tab)
+            self._add_title_bar_right_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button

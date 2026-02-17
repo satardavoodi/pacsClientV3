@@ -91,7 +91,7 @@ class HomePanelWidget(QWidget):
     # Signal for robust download progress - THREAD SAFE
     _download_progress_signal = Signal(str, str, float, int, int)  # event_type, series_number, progress_percent, current_count, total_count
 
-    def __init__(self, parent=None, tab_widget: QTabWidget = None, title_bar_tab_area=None):
+    def __init__(self, parent=None, tab_widget: QTabWidget = None, title_bar_tab_area=None, right_tab_area=None):
         super(HomePanelWidget, self).__init__(parent)
         # Store globals reference
         global _home_widget_instance
@@ -99,6 +99,7 @@ class HomePanelWidget(QWidget):
         self.dict_tabs_widget = {}
         self.tab_widget = tab_widget
         self.title_bar_tab_area = title_bar_tab_area
+        self.right_tab_area = right_tab_area
         
         # Initialize loading message attribute
         self.loading_message = None
@@ -119,7 +120,7 @@ class HomePanelWidget(QWidget):
         self._opening_studies = set()
         
         # Initialize custom tab manager with title bar integration
-        self.custom_tab_manager = CustomTabManager(tab_widget, title_bar_tab_area) if tab_widget else None
+        self.custom_tab_manager = CustomTabManager(tab_widget, title_bar_tab_area, right_tab_area) if tab_widget else None
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)

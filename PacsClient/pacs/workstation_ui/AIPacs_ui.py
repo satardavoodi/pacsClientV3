@@ -417,15 +417,19 @@ class ControlPanelWindow(object):
 
         # Get title bar tab area
         title_bar_tab_area = None
+        right_tab_area = None
         if hasattr(self.MainWindow.tab_widget, 'parent'):
             tab_widget_parent = self.MainWindow.tab_widget.parent()
             if hasattr(tab_widget_parent, 'get_tab_area'):
                 title_bar_tab_area = tab_widget_parent.get_tab_area()
+            if hasattr(tab_widget_parent, 'get_right_tab_area'):
+                right_tab_area = tab_widget_parent.get_right_tab_area()
 
         # Home widget
         self.home_widget = home_ui.HomePanelWidget(
             tab_widget=self.MainWindow.tab_widget,
-            title_bar_tab_area=title_bar_tab_area
+            title_bar_tab_area=title_bar_tab_area,
+            right_tab_area=right_tab_area
         )
         self.home_widget.set_mainwindow(self.MainWindow)
         self.mainPages.addWidget(self.home_widget)
