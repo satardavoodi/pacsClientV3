@@ -220,6 +220,10 @@ class PatientWidget(QWidget):
         self.reception_panel = self.reception_layout_ui()
         self.thumbnail_manager = ThumbnailManager(self.change_series_on_viewer)
         self.thumbnail_manager.parent_widget = self
+        
+        # ✅ Connect retry signal for series download retry
+        self.thumbnail_manager.retry_download_requested.connect(self._on_retry_series_download)
+        
         # Lazy load heavy panels (created when needed)
         self.reception_data_tab = None
         self.advanced_tools_panel = None
@@ -257,6 +261,8 @@ class PatientWidget(QWidget):
         self._is_initializing = True
         # Prevent non-user reception auto-switch during load (can cause flicker)
         self._block_reception_autoswitch = True
+        # Prevent thumbnail scroll reset on retry downloads
+        self._suppress_thumb_scroll_reset = False
 
         # Defer VTK initialization to let the window paint first
         # Use longer delay to ensure window is fully painted
@@ -828,7 +834,10 @@ class PatientWidget(QWidget):
 
             # Scroll to top so the first (smallest) series is visible
             if hasattr(self, 'thumb_scroll') and self.thumb_scroll:
-                QTimer.singleShot(0, lambda: self.thumb_scroll.verticalScrollBar().setValue(0))
+                if not getattr(self, '_suppress_thumb_scroll_reset', False):
+                    QTimer.singleShot(0, lambda: self.thumb_scroll.verticalScrollBar().setValue(0))
+                else:
+                    self._suppress_thumb_scroll_reset = False
         return thumb_index
 
     async def enable_progressive_display(self):
@@ -897,14 +906,17 @@ class PatientWidget(QWidget):
                 return
             if not getattr(self, '_progressive_display_enabled', False):
                 return
-            
+
             # Reset thumbnails flag to allow refresh
             self._thumbnails_shown = False
-            
+
             # Refresh thumbnails
             self.show_exist_thumbnails()
         except Exception:
             pass
+        finally:
+            if getattr(self, '_suppress_thumb_scroll_reset', False):
+                self._suppress_thumb_scroll_reset = False
 
     def _load_first_series_sync(self, size_init_viewers=(1, 1)):
         """
@@ -1865,6 +1877,16 @@ class PatientWidget(QWidget):
             series_no = str(metadata['series']['series_number'])
             # حالا این سری آماده است
             self.thumbnail_manager.set_series_ready(series_no)
+
+            # Update thumbnail image count from actual loaded instances
+            try:
+                actual_count = len(metadata.get('instances', []) or [])
+            except Exception:
+                actual_count = 0
+            if actual_count > 0:
+                if hasattr(self, '_server_series_info') and series_no in self._server_series_info:
+                    self._server_series_info[series_no]['image_count'] = actual_count
+                self.thumbnail_manager.update_series_image_count(series_no, actual_count)
             
             # ⚡ OPTIMIZATION: Rebuild indices after data change for fast lookups
             # This is a O(n) one-time cost when new series is added
@@ -1894,6 +1916,14 @@ class PatientWidget(QWidget):
                     self.viewer_controller._series_name_cache[series_number_str] = series_name
                     try:
                         self.thumbnail_manager.set_series_ready(series_number_str)
+                        try:
+                            actual_count = len(metadata.get('instances', []) or [])
+                        except Exception:
+                            actual_count = 0
+                        if actual_count > 0:
+                            if hasattr(self, '_server_series_info') and series_number_str in self._server_series_info:
+                                self._server_series_info[series_number_str]['image_count'] = actual_count
+                            self.thumbnail_manager.update_series_image_count(series_number_str, actual_count)
                     except Exception:
                         pass
                     self.viewer_controller._rebuild_series_index()
@@ -5655,6 +5685,96 @@ class PatientWidget(QWidget):
             logging.getLogger(__name__).error(
                 f"Failed to add mask ({tool_name}) to viewer", exc_info=True
             )
+
+    def _on_retry_series_download(self, series_number: str, study_uid: str, series_uid: str = None):
+        """
+        Handle retry download request from the retry button on a series thumbnail.
+        
+        Args:
+            series_number: Series number (string)
+            study_uid: Study UID 
+            series_uid: Series UID (optional)
+        """
+        try:
+            print(f"🔄🔄 [PatientWidget] ========== RETRY DOWNLOAD TRIGGERED ==========")
+            print(f"   Series Number: {series_number}")
+            print(f"   Study UID: {study_uid}")
+            print(f"   Series UID: {series_uid}")
+            print(f"🔄🔄 [PatientWidget] ====================================================")
+            
+            # Avoid scroll-to-top on thumbnail refresh for retry downloads
+            self._suppress_thumb_scroll_reset = True
+
+            # Get the download manager widget from home_ui
+            try:
+                from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
+                
+                home_widget = get_home_widget()
+                print(f"🔍 [PatientWidget] home_widget found: {home_widget is not None}")
+                
+                if home_widget and hasattr(home_widget, '_get_or_create_download_manager_tab'):
+                    print(f"🔍 [PatientWidget] home_widget has _get_or_create_download_manager_tab method")
+                    # Get the download manager (don't activate the tab)
+                    download_manager = home_widget._get_or_create_download_manager_tab(activate_tab=False)
+                    print(f"🔍 [PatientWidget] download_manager obtained: {download_manager is not None}")
+                    
+                    if download_manager:
+                        print(f"✅ [PatientWidget] Found download manager, triggering SERIES-SPECIFIC retry")
+                        
+                        # Call the download manager's SERIES retry method (not full study retry)
+                        if hasattr(download_manager, '_on_series_retry'):
+                            print(f"🚀 [PatientWidget] Calling _on_series_retry with series_number={series_number}, series_uid={series_uid}")
+                            download_manager._on_series_retry(study_uid, series_number, series_uid)
+                            print(f"✅✅ [PatientWidget] Series retry initiated for series {series_number}")
+                        else:
+                            print(f"⚠️ [PatientWidget] Download manager doesn't have _on_series_retry method")
+                            print(f"⚠️ [PatientWidget] Falling back to full study retry")
+                            if hasattr(download_manager, '_on_per_patient_retry'):
+                                download_manager._on_per_patient_retry(study_uid)
+                                print(f"✅ [PatientWidget] Full study retry initiated")
+                            else:
+                                from PySide6.QtWidgets import QMessageBox
+                                QMessageBox.warning(
+                                    self, 
+                                    "Retry Download",
+                                    "Download retry method not found.\n"
+                                    "Please use the Download Manager tab to retry downloads."
+                                )
+                    else:
+                        print(f"⚠️ [PatientWidget] Could not get download manager widget")
+                        from PySide6.QtWidgets import QMessageBox
+                        QMessageBox.information(
+                            self,
+                            "Download Manager",
+                            "Download manager is not available.\n"
+                            "Please open the Download Manager tab to retry downloads."
+                        )
+                else:
+                    print(f"⚠️ [PatientWidget] Could not get home_widget or _get_or_create_download_manager_tab method")
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.information(
+                        self,
+                        "Retry Download",
+                        "Download manager is not available.\n"
+                        "Please open the Download Manager tab to retry downloads."
+                    )
+                    
+            except Exception as e:
+                print(f"⚠️ [PatientWidget] Error accessing download manager: {e}")
+                import traceback
+                traceback.print_exc()
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self, 
+                    "Download Manager",
+                    f"Error accessing download manager: {str(e)}\n"
+                    "Please use the Download Manager tab to retry downloads."
+                )
+        
+        except Exception as e:
+            print(f"❌ Error in _on_retry_series_download: {e}")
+            import traceback
+            traceback.print_exc()
 
     def apply_filters_to_all_series_of_modality(self, modality: str, filter_params: dict):
         """

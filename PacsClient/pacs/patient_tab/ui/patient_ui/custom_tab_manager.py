@@ -81,6 +81,19 @@ class CustomTabManager:
         
         # Add some spacing after the logo
         self.title_bar_layout.addSpacing(10)
+
+        # Dedicated container for tab buttons so the logo stays fixed on the left.
+        self.title_bar_tabs_container = QWidget(self.title_bar_tab_area)
+        self.title_bar_tabs_container.setObjectName("TitleBarTabsContainer")
+        self.title_bar_tabs_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self.title_bar_tabs_layout = QHBoxLayout(self.title_bar_tabs_container)
+        self.title_bar_tabs_layout.setContentsMargins(0, 0, 0, 0)
+        self.title_bar_tabs_layout.setSpacing(4)
+        self.title_bar_tabs_layout.addStretch(1)
+
+        self.title_bar_layout.addWidget(self.title_bar_tabs_container, 1)
+        self.title_bar_layout.addStretch(1)
         
         # Hide the original tab bar
         self.tab_widget.tabBar().setVisible(False)
@@ -98,6 +111,15 @@ class CustomTabManager:
         if hasattr(self, 'logo_button'):
             self.logo_button.updateGeometry()
             self.logo_button.update()
+
+    def _add_title_bar_tab_widget(self, widget: QWidget) -> None:
+        """Insert a custom tab widget after the logo, before the stretch spacer."""
+        if not hasattr(self, "title_bar_tabs_layout") or self.title_bar_tabs_layout is None:
+            self.title_bar_layout.addWidget(widget)
+            return
+
+        insert_index = max(0, self.title_bar_tabs_layout.count() - 1)
+        self.title_bar_tabs_layout.insertWidget(insert_index, widget)
 
     def _build_logo_logotype_contents(self):
         """Create the text-only "AI-Pacs" mark using child labels.
@@ -460,7 +482,7 @@ class CustomTabManager:
         custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
         
         # Add to title bar layout
-        self.title_bar_layout.addWidget(custom_tab)
+        self._add_title_bar_tab_widget(custom_tab)
         
         # Store reference
         self.title_bar_tabs[tab_index] = custom_tab
@@ -694,7 +716,7 @@ class CustomTabManager:
                 del self.study_uid_to_tab[study_uid]
 
             # Remove from our tracking
-            tab_data = self.patient_tabs.pop(tab_index)
+            self.patient_tabs.pop(tab_index)
 
             # Remove from title bar if using title bar tabs
             if self.title_bar_tab_area and tab_index in self.title_bar_tabs:
@@ -702,26 +724,105 @@ class CustomTabManager:
                 title_bar_tab.setParent(None)
                 title_bar_tab.deleteLater()
 
-            # # Remove from tab widget
-            # self.tab_widget.removeTab(tab_index)
-            self.tab_widget.tabCloseRequested.emit(tab_index)
+            # Remove from tab widget
+            self.tab_widget.removeTab(tab_index)
 
             # Update remaining tab indices and study_uid mappings
             self.update_tab_indices()
+
+            # Switch to another available tab if exists, otherwise go to home
+            self._switch_to_remaining_tab_after_close(tab_index)
+
+    def _switch_to_remaining_tab_after_close(self, closed_index):
+        """
+        After closing a tab, switch to another available tab.
+        
+        Args:
+            closed_index: The index of the tab that was closed
+        """
+        # Check if there are any patient/service tabs remaining (excluding home tab at index 0)
+        if self.patient_tabs:
+            # Find a suitable tab to switch to
+            # Prefer tabs with lower index than the closed one, or the next available tab
+            target_index = None
             
-            # After closing, activate logo button (Home tab)
-            self.set_logo_active(True)
+            # First, try to find a tab at a lower index than the closed one
+            for idx in sorted(self.patient_tabs.keys()):
+                if idx < closed_index:
+                    target_index = idx
+                    break
+            
+            # If no lower index found, use the first available tab (could be higher index)
+            if target_index is None:
+                target_index = min(self.patient_tabs.keys())
+            
+            # Activate the target tab
+            if target_index is not None:
+                self.set_tab_active(target_index)
+                return
+        
+        # No tabs available, go to home
+        self.set_logo_active(True)
+        if self.tab_widget.count() > 0:
+            self.tab_widget.setCurrentIndex(0)
 
     def update_tab_indices(self):
         """Update tab indices after closing a tab"""
-        # Rebuild study_uid to tab mapping with correct indices
+        # Rebuild patient_tabs dictionary with correct indices
+        # This is necessary because after removing a tab, all higher indices shift down
+        new_patient_tabs = {}
         new_study_uid_to_tab = {}
-        for tab_index, tab_data in self.patient_tabs.items():
-            study_uid = tab_data.get('study_uid')
-            if study_uid:
-                new_study_uid_to_tab[study_uid] = tab_index
         
+        # Get all items sorted by old index
+        sorted_tabs = sorted(self.patient_tabs.items(), key=lambda x: x[0])
+        
+        for old_index, tab_data in sorted_tabs:
+            # New index is one less than old index if old index > closed tab index
+            # But since we already removed the tab and called removeTab,
+            # we need to recalculate based on position in the sorted list
+            # Actually, we need to iterate through the actual tab_widget to get correct indices
+            pass
+        
+        # Better approach: iterate through actual tab widget and rebuild mappings
+        for i in range(self.tab_widget.count()):
+            widget = self.tab_widget.widget(i)
+            # Find matching tab_data from old patient_tabs
+            for old_index, tab_data in sorted_tabs:
+                if tab_data.get('widget') == widget:
+                    new_patient_tabs[i] = tab_data
+                    study_uid = tab_data.get('study_uid')
+                    if study_uid:
+                        new_study_uid_to_tab[study_uid] = i
+                    break
+        
+        self.patient_tabs = new_patient_tabs
         self.study_uid_to_tab = new_study_uid_to_tab
+
+        if self.title_bar_tab_area:
+            new_title_bar_tabs = {}
+            for idx, tab_data in self.patient_tabs.items():
+                custom_tab = tab_data.get('custom_tab')
+                if custom_tab is None:
+                    continue
+                new_title_bar_tabs[idx] = custom_tab
+
+                if isinstance(custom_tab, QPushButton):
+                    try:
+                        custom_tab.clicked.disconnect()
+                    except Exception:
+                        pass
+                    custom_tab.clicked.connect(lambda checked=False, i=idx: self.set_tab_active_simple(i))
+                else:
+                    custom_tab.mousePressEvent = lambda event, i=idx: self.on_title_bar_tab_clicked(i)
+
+                if hasattr(custom_tab, 'close_requested'):
+                    try:
+                        custom_tab.close_requested.disconnect()
+                    except Exception:
+                        pass
+                    custom_tab.close_requested.connect(lambda i=idx: self.close_patient_tab(i))
+
+            self.title_bar_tabs = new_title_bar_tabs
     
     def set_tab_active(self, tab_index):
         """
@@ -798,7 +899,7 @@ class CustomTabManager:
         
         if self.title_bar_tab_area:
             # Add to title bar
-            self.title_bar_layout.addWidget(tab_button)
+            self._add_title_bar_tab_widget(tab_button)
             tab_button.clicked.connect(lambda: self.set_tab_active_simple(tab_index))
             self.title_bar_tabs[tab_index] = tab_button
         else:
@@ -878,7 +979,7 @@ class CustomTabManager:
         if self.title_bar_tab_area:
             # Add to title bar
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self.title_bar_layout.addWidget(custom_tab)
+            self._add_title_bar_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button
@@ -937,7 +1038,7 @@ class CustomTabManager:
         if self.title_bar_tab_area:
             # Add to title bar
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self.title_bar_layout.addWidget(custom_tab)
+            self._add_title_bar_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button
@@ -993,7 +1094,7 @@ class CustomTabManager:
         if self.title_bar_tab_area:
             # Add to title bar
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self.title_bar_layout.addWidget(custom_tab)
+            self._add_title_bar_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button
@@ -1049,7 +1150,7 @@ class CustomTabManager:
         if self.title_bar_tab_area:
             # Add to title bar
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self.title_bar_layout.addWidget(custom_tab)
+            self._add_title_bar_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button
@@ -1109,7 +1210,7 @@ class CustomTabManager:
 
         if self.title_bar_tab_area:
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self.title_bar_layout.addWidget(custom_tab)
+            self._add_title_bar_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             self.tab_widget.tabBar().setTabButton(tab_index, QTabBar.ButtonPosition.LeftSide, custom_tab)

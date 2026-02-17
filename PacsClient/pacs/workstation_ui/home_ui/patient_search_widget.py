@@ -13,9 +13,12 @@ class PatientSearchWidget(QWidget):
 
     # Signal emitted when search button is clicked
     searchRequested = Signal()
+    # Signal emitted when cancel search button is clicked
+    cancelSearchRequested = Signal()
 
     def __init__(self, parent=None):
         super(PatientSearchWidget, self).__init__(parent)
+        self._is_searching = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -67,9 +70,13 @@ class PatientSearchWidget(QWidget):
         search_group.setLayout(self.search_layout)
         main_layout.addWidget(search_group, stretch=1)  # stretch=1 برای پر کردن ارتفاع
 
-        # Create search button
+        # Create search button and cancel button layout
         self._create_search_button()
-        main_layout.addWidget(self.search_btn)
+        # Create a wrapper widget for the button layout
+        self.search_buttons_widget = QWidget()
+        self.search_buttons_widget.setLayout(self.search_button_layout)
+        self.search_buttons_widget.setStyleSheet("background: transparent;")
+        main_layout.addWidget(self.search_buttons_widget)
 
         self._apply_field_styling()
         self._apply_date_field_styling()
@@ -143,7 +150,13 @@ class PatientSearchWidget(QWidget):
         self.search_layout.addWidget(widget)
 
     def _create_search_button(self):
-        """Create the search button"""
+        """Create the search button and cancel button"""
+        # Button layout to hold both search and cancel buttons
+        self.search_button_layout = QHBoxLayout()
+        self.search_button_layout.setSpacing(6)
+        self.search_button_layout.setContentsMargins(0, 6, 0, 6)
+
+        # Search button
         self.search_btn = QPushButton(qta.icon('fa5s.search', color='white'), " Search Patients")
         self.search_btn.setStyleSheet("""
             QPushButton {
@@ -155,7 +168,7 @@ class PatientSearchWidget(QWidget):
                 padding: 8px 14px;
                 font-size: 13pt;
                 font-family: 'Roboto', sans-serif;
-                margin: 6px 0px;
+                margin: 0px;
                 letter-spacing: 0.5px;
             }
             QPushButton:hover {
@@ -168,8 +181,49 @@ class PatientSearchWidget(QWidget):
                     stop:0 #065f46, stop:1 #064e3b);
             }
         """)
-        self.search_btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.search_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_btn.clicked.connect(self._on_search_clicked)
+        self.search_button_layout.addWidget(self.search_btn)
+
+        # Cancel search button (hidden by default)
+        self.cancel_search_btn = QPushButton(qta.icon('fa5s.stop-circle', color='white'), " Cancel Search")
+        self.cancel_search_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #dc2626, stop:1 #b91c1c);
+                color: #ffffff;
+                border: 1px solid #dc2626;
+                border-radius: 7px;
+                padding: 8px 14px;
+                font-size: 13pt;
+                font-family: 'Roboto', sans-serif;
+                margin: 0px;
+                letter-spacing: 0.5px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #b91c1c, stop:1 #991b1b);
+                border-color: #b91c1c;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #991b1b, stop:1 #7f1d1d);
+            }
+        """)
+        self.cancel_search_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.cancel_search_btn.setVisible(False)
+        self.cancel_search_btn.clicked.connect(self._on_cancel_search_clicked)
+        self.search_button_layout.addWidget(self.cancel_search_btn)
+
+    def _on_cancel_search_clicked(self):
+        """Handle cancel search button click"""
+        self.cancelSearchRequested.emit()
+
+    def set_searching_state(self, is_searching: bool):
+        """Toggle between search and cancel button visibility"""
+        self._is_searching = is_searching
+        self.search_btn.setVisible(not is_searching)
+        self.cancel_search_btn.setVisible(is_searching)
 
     def _create_search_fields(self):
         """Create all search input fields"""

@@ -17,6 +17,30 @@ IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform == "linux"
 
+
+class _PinnedHomeTabBar(QTabBar):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._block_drag = False
+
+    def mousePressEvent(self, event):
+        self._block_drag = (self.tabAt(event.pos()) == 0)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._block_drag:
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._block_drag = False
+        super().mouseReleaseEvent(event)
+
+    def moveTab(self, from_index, to_index):
+        if from_index == 0 or to_index == 0:
+            return
+        super().moveTab(from_index, to_index)
+
 class MainWindowWidget(QWidget):
     def __init__(self, auth_user=None, auth_token=None):
         super().__init__()
@@ -421,8 +445,14 @@ class MainWindowWidget(QWidget):
         self.setup_title_bar(main_layout)
 
         self.tab_widget = QTabWidget()
+        self.tab_widget.setTabBar(_PinnedHomeTabBar())
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.setMovable(True)
+
+        try:
+            self.tab_widget.tabBar().tabMoved.connect(self._ensure_home_tab_pinned)
+        except Exception:
+            pass
 
         # ✅ robust: هم از خود QTabWidget و هم QTabBar وصل کن
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
@@ -650,6 +680,22 @@ class MainWindowWidget(QWidget):
 
         return 0
 
+    def _ensure_home_tab_pinned(self, *_args) -> None:
+        if getattr(self, "_pinning_home_tab", False):
+            return
+        if not hasattr(self, "tab_widget") or self.tab_widget is None:
+            return
+        if self.tab_widget.count() == 0:
+            return
+
+        home_i = self._find_home_tab_index()
+        if 0 <= home_i < self.tab_widget.count() and home_i != 0:
+            self._pinning_home_tab = True
+            try:
+                self.tab_widget.tabBar().moveTab(home_i, 0)
+            finally:
+                self._pinning_home_tab = False
+
     def _go_home_tab(self) -> None:
         """همیشه به Home برگرد."""
         try:
@@ -674,8 +720,26 @@ class MainWindowWidget(QWidget):
         if not widget:
             return
 
+        # Determine which tab to select after closing
+        # If closing the current tab, select the previous tab (or home if none)
+        current_i = self.tab_widget.currentIndex()
+        should_go_home = (current_i == index)
+
         self.tab_widget.removeTab(index)
-        QTimer.singleShot(0, self._go_home_tab)
+
+        if should_go_home:
+            # If we closed the current tab, go to home or previous tab
+            if self.tab_widget.count() > 1:
+                # There are other tabs besides home, select the previous one
+                new_index = min(index, self.tab_widget.count() - 1)
+                if new_index != home_i:
+                    self.tab_widget.setCurrentIndex(new_index)
+                else:
+                    self.tab_widget.setCurrentIndex(home_i)
+            else:
+                # Only home tab remains
+                self.tab_widget.setCurrentIndex(home_i)
+        # If we closed a background tab, keep current selection unchanged
 
         def _cleanup():
             try:
@@ -707,6 +771,7 @@ class MainWindowWidget(QWidget):
             print("✓ Shortcut Manager connected to Control Panel")
 
         self._enable_mouse_tracking_recursive()
+        self._ensure_home_tab_pinned()
 
     # ---------------- Window buttons ----------------
     def window_buttons(self):

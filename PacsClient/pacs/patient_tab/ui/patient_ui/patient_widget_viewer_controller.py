@@ -2354,25 +2354,82 @@ class ViewerController:
             metadata = self._clone_metadata_for_switch(metadata)
             series_number = str(metadata.get('series', {}).get('series_number', ''))
             series_name = str(metadata.get('series', {}).get('series_name', ''))
+
+            # --- DEBUG: log series image counts (thumbnail vs viewer) ---
+            try:
+                dims = vtk_image_data.GetDimensions() if vtk_image_data is not None else (0, 0, 0)
+                vtk_slice_count = int(dims[2]) if dims and len(dims) > 2 else 0
+            except Exception:
+                vtk_slice_count = 0
+
+            expected_instances = 0
+            try:
+                expected_instances = len(metadata.get('instances', []) or [])
+            except Exception:
+                expected_instances = 0
+
+            server_image_count = None
+            try:
+                series_info = getattr(self.parent_widget, '_server_series_info', {}).get(series_number)
+                if series_info is not None:
+                    server_image_count = series_info.get('image_count')
+            except Exception:
+                server_image_count = None
+
+            print(
+                f"🔎 [SERIES COUNT] req_series={series_number} name='{series_name}' "
+                f"instances={expected_instances} vtk_slices={vtk_slice_count} "
+                f"thumb_image_count={server_image_count}"
+            )
             
             # 🎬 Show loading spinner before switch
             # The message is set in switch_series based on series size
             # but we can optionally enhance it here if needed
             
             # ⚡ FAST PAIRED SERIES LOOKUP: O(1) instead of linear search
+            # ✅ CRITICAL FIX: Only pair series for MG (Mammography) modality
+            # For other modalities, series with same name should NOT be combined
             vtk_widget_data_2 = None
             metadata_2 = None
             
-            if allow_paired and series_name in self._paired_series_map:
+            # Check if current series is MG modality
+            current_modality = metadata.get('series', {}).get('modality', '').upper() if metadata else ''
+            is_mg_modality = current_modality == 'MG'
+            
+            # Only pair series for MG modality
+            if allow_paired and is_mg_modality and series_name in self._paired_series_map:
                 # Find first paired series that's not the current one
                 paired_list = self._paired_series_map[series_name]
                 for paired_num in paired_list:
                     if str(paired_num) != series_number:
                         vtk_data, meta, _ = self._get_series_by_number_fast(str(paired_num))
                         if vtk_data is not None and meta is not None:
-                            vtk_widget_data_2 = vtk_data
-                            metadata_2 = self._clone_metadata_for_switch(meta)
-                            break
+                            # Double-check that paired series is also MG modality
+                            paired_modality = meta.get('series', {}).get('modality', '').upper() if meta else ''
+                            if paired_modality == 'MG':
+                                vtk_widget_data_2 = vtk_data
+                                metadata_2 = self._clone_metadata_for_switch(meta)
+                                break
+            
+            # Log debug info when pairing is skipped
+            if allow_paired and not is_mg_modality and series_name in self._paired_series_map:
+                print(
+                    f"ℹ️ [PAIRED SKIP] series={series_number} modality={current_modality} - "
+                    f"Skipping pairing (only MG modality uses paired series)"
+                )
+
+            if metadata_2 is not None:
+                try:
+                    paired_series_number = str(metadata_2.get('series', {}).get('series_number', ''))
+                    paired_instances = len(metadata_2.get('instances', []) or [])
+                    paired_dims = vtk_widget_data_2.GetDimensions() if vtk_widget_data_2 is not None else (0, 0, 0)
+                    paired_slices = int(paired_dims[2]) if paired_dims and len(paired_dims) > 2 else 0
+                    print(
+                        f"🔗 [SERIES COUNT] paired_series={paired_series_number} "
+                        f"instances={paired_instances} vtk_slices={paired_slices}"
+                    )
+                except Exception:
+                    pass
             
             # ⚡ PERFORM SWITCH (no delay, no blocking)
             if hasattr(vtk_widget, 'switch_series'):
@@ -2389,6 +2446,24 @@ class ViewerController:
                     # Quick slider configuration (without blocking)
                     self.parent_widget.reset_slider(vtk_widget, slider)
                     self.parent_widget.toolbar_manager.turn_off_all_tools()
+
+                    # --- DEBUG: verify viewer count after switch ---
+                    try:
+                        viewer = getattr(vtk_widget, 'image_viewer', None)
+                        viewer_type = type(viewer).__name__ if viewer is not None else 'None'
+                        viewer_count = viewer.get_count_of_slices() if viewer is not None else 0
+                        viewer_skip = getattr(viewer, 'skip_slices', None)
+                        print(
+                            f"✅ [SERIES COUNT] viewer={viewer_type} series={series_number} "
+                            f"viewer_slices={viewer_count} skip={viewer_skip}"
+                        )
+                        if metadata_2 is None and expected_instances and viewer_count and viewer_count != expected_instances:
+                            print(
+                                f"⚠️ [SERIES COUNT MISMATCH] series={series_number} "
+                                f"instances={expected_instances} viewer_slices={viewer_count}"
+                            )
+                    except Exception:
+                        pass
 
                     # Independence contract: every successful viewer switch should
                     # opportunistically retain full-volume data for reuse, regardless

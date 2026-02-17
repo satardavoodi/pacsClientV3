@@ -86,9 +86,20 @@ class DatabaseObserver(StateObserver):
                 logger.debug(f"💾 DB: Created progress record for {study_uid[:40]}...")
             
             elif event == 'updated':
-                # Update specific fields that changed
+                # Handle case where args may be empty (direct state modification)
+                if len(args) < 3:
+                    # Fallback: update key fields without field-level granularity
+                    self.db.update_download_progress(
+                        study_uid=study_uid,
+                        status=state.status.value,
+                        progress_percent=state.progress_percent,
+                        downloaded_count=state.downloaded_count
+                    )
+                    logger.debug(f"💾 DB: Bulk update for {study_uid[:40]}... (no field details)")
+                    return
+
                 field_name, old_value, new_value = args
-                
+
                 # Only update database for relevant fields
                 if field_name in ['status', 'progress_percent', 'downloaded_count', 'error_message']:
                     self.db.update_download_progress(
@@ -96,7 +107,7 @@ class DatabaseObserver(StateObserver):
                         **{field_name: new_value}
                     )
                     logger.debug(f"💾 DB: Updated {field_name} for {study_uid[:40]}...")
-                
+
                 # Mark as completed if status changed to COMPLETED
                 if field_name == 'status' and new_value == DownloadStatus.COMPLETED:
                     self.db.complete_download_progress(study_uid)
@@ -144,8 +155,15 @@ class UIObserver(StateObserver):
                 logger.debug(f"🎨 UI: Added row for {study_uid[:40]}...")
             
             elif event == 'updated':
+                # Handle case where args may be empty (direct state modification)
+                if len(args) < 3:
+                    # Full refresh when field-level details not available
+                    self.ui.refresh_table_order()
+                    logger.debug(f"🎨 UI: Full refresh for {study_uid[:40]}... (no field details)")
+                    return
+
                 field_name, old_value, new_value = args
-                
+
                 # Update specific UI elements based on field changed
                 if field_name == 'progress_percent':
                     self.ui.update_progress_bar(study_uid, new_value)
@@ -164,7 +182,7 @@ class UIObserver(StateObserver):
                     'current_series_progress'
                 }:
                     self.ui.update_current_series(study_uid)
-                
+
                 logger.debug(f"🎨 UI: Updated {field_name} for {study_uid[:40]}...")
             
             elif event == 'removed':
@@ -209,8 +227,15 @@ class PriorityObserver(StateObserver):
                 logger.debug(f"🎯 Priority: Registered {study_uid[:40]}...")
             
             elif event == 'updated':
+                # Handle case where args may be empty (direct state modification)
+                if len(args) < 3:
+                    # Fallback: sync key fields without field-level granularity
+                    self.priority_mgr.update_study_priority(study_uid, state.priority)
+                    logger.debug(f"🎯 Priority: Bulk sync for {study_uid[:40]}... (no field details)")
+                    return
+
                 field_name, old_value, new_value = args
-                
+
                 if field_name == 'priority':
                     # Update priority tracking
                     self.priority_mgr.update_study_priority(study_uid, new_value)
@@ -267,8 +292,17 @@ class LoggingObserver(StateObserver):
                 )
             
             elif event == 'updated':
+                # Handle case where args may be empty (direct state modification)
+                if len(args) < 3:
+                    # Log generic update without field-level details
+                    self.audit_logger.log(
+                        self.log_level,
+                        f"📝 [UPDATED] {study_uid[:40]}... (bulk update)"
+                    )
+                    return
+
                 field_name, old_value, new_value = args
-                
+
                 # Log important field changes
                 if field_name in ['status', 'priority', 'progress_percent']:
                     self.audit_logger.log(

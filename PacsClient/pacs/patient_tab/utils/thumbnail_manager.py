@@ -611,6 +611,7 @@ QWidget:hover {
 class ThumbnailManager(QObject):
     # تعریف سیگنال‌ها
     priority_download_requested = Signal(str, str)  # series_number, study_uid
+    retry_download_requested = Signal(str, str, str)  # series_number, study_uid, series_uid
     thumbnail_image_ready = Signal(str, QImage)  # series_number, QImage
 
     def __init__(self, method_change_series):
@@ -653,6 +654,57 @@ class ThumbnailManager(QObject):
             if image is None or image.isNull():
                 return
             self.thumbnail_image_ready.emit(str(series_number), image)
+        except Exception:
+            return
+
+    def update_series_image_count(self, series_number: str, image_count: int):
+        """Update the image count label for a series thumbnail (GUI thread only)."""
+        try:
+            series_key = str(series_number)
+            widget = self.series_widgets.get(series_key)
+            if widget is None:
+                return
+
+            try:
+                _ = widget.isVisible()
+            except RuntimeError:
+                return
+
+            if image_count is None:
+                return
+            try:
+                image_count = int(image_count)
+            except Exception:
+                return
+            if image_count <= 0:
+                return
+
+            count_label = getattr(widget, "count_label", None)
+            if count_label is None:
+                content_layout = getattr(widget, "content_layout", None)
+                if content_layout is None:
+                    return
+                count_label = QLabel(f"{image_count} images")
+                count_label.setFixedHeight(20)
+                count_label.setAlignment(Qt.AlignCenter)
+                count_label.setStyleSheet("""
+                    QLabel {
+                        font-size: 12px;
+                        font-weight: bold;
+                        color: #3b82f6;
+                        background: transparent;
+                        border: none;
+                        padding: 2px;
+                    }
+                """)
+                content_layout.addWidget(count_label)
+                widget.count_label = count_label
+                widget.update()
+                return
+
+            count_label.setText(f"{image_count} images")
+            count_label.update()
+            widget.update()
         except Exception:
             return
 
@@ -1054,6 +1106,7 @@ class ThumbnailManager(QObject):
                         }
                     """)
                     content_layout.addWidget(count_label)
+                    widget.count_label = count_label
                 elif not desc or not desc.strip():
                     # If no count and no desc, show series number
                     series_number = series_info.get('series_number', '')
@@ -1178,6 +1231,68 @@ class ThumbnailManager(QObject):
 
             image_button.clicked.connect(on_thumb_clicked)
             
+            # ✅ ADD RETRY BUTTON (emoji style) at top-right corner
+            retry_button = QPushButton(widget)
+            retry_button.setText("🔄")
+            retry_button.setFixedSize(28, 28)
+            retry_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #2d3748;
+                    border: 1px solid #4a5568;
+                    border-radius: 4px;
+                    color: #ffffff;
+                    font-size: 14px;
+                    font-weight: bold;
+                    padding: 2px;
+                }
+                QPushButton:hover {
+                    background-color: #3d4758;
+                    border: 1px solid #6b7ba8;
+                }
+                QPushButton:pressed {
+                    background-color: #1d2638;
+                    border: 1px solid #2b3e5f;
+                }
+            """)
+            retry_button.setToolTip("Retry download for this series")
+            
+            # Position retry button at top-left corner
+            retry_button.move(4, 4)  # 4px padding from top-left
+            retry_button.raise_()  # Ensure it's on top
+            
+            # Extract series_uid from series_info
+            series_uid = None
+            if series_info and isinstance(series_info, dict):
+                if 'series_uid' in series_info:
+                    series_uid = series_info['series_uid']
+                elif 'series' in series_info and isinstance(series_info['series'], dict):
+                    series_uid = series_info['series'].get('series_uid')
+            
+            # Store series info in button for later use
+            retry_button.series_number = str(thumbnail_index)
+            retry_button.series_uid = series_uid
+            retry_button.series_info = series_info
+            
+            # Connect retry button to emission signal
+            def on_retry_clicked():
+                try:
+                    study_uid = ''
+                    if series_info and 'study_uid' in series_info:
+                        study_uid = series_info.get('study_uid', '')
+                    elif self.current_study_uid:
+                        study_uid = self.current_study_uid
+                    
+                    series_number = str(thumbnail_index)
+                    print(f"🔄 [ThumbnailManager] Retry download requested for series {series_number} (UID: {series_uid}), study {study_uid}")
+                    
+                    # Emit retry signal with series info
+                    if hasattr(self, 'retry_download_requested'):
+                        self.retry_download_requested.emit(series_number, study_uid, series_uid)
+                except Exception as e:
+                    print(f"❌ Error in retry button click: {e}")
+            
+            retry_button.clicked.connect(on_retry_clicked)
+            
             # Clean main widget styling
             widget.setStyleSheet("""
                 QWidget {
@@ -1191,6 +1306,7 @@ class ThumbnailManager(QObject):
             widget.progress_overlay = progress_overlay
             widget.glass_overlay = glass_overlay
             widget.content_widget = content_widget
+            widget.content_layout = content_layout
             widget.image_button = image_button
             widget.series_number = str(thumbnail_index)
             widget.thumbnail_index = thumbnail_index
