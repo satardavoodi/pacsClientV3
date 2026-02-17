@@ -346,6 +346,8 @@ class HomePanelWidget(QWidget):
                 self.data_access_panel_widget.get_result()
             )
         )
+        # Connect cancel search signal
+        self.patient_search_widget.cancelSearchRequested.connect(self.cancel_search)
         left_layout.addWidget(self.patient_search_widget)
 
         # Auto-search with today's date when page loads
@@ -573,6 +575,10 @@ class HomePanelWidget(QWidget):
                 self._search_task.cancel()
         except Exception:
             pass
+
+        # Set searching state and update UI
+        self.patient_search_widget.set_searching_state(True)
+        self._cancel_search_requested = False
 
         if tab_selected == 'local':
             self.source_of_patient_load = SourceOfPatientLoad.DB
@@ -2069,12 +2075,12 @@ class HomePanelWidget(QWidget):
     async def download_and_update_tab(self, *args, **kwargs):
         """
         DEPRECATED: This function has been removed as part of Phase 1 refactoring.
-        
+
         The legacy download_and_update_tab function used DicomDownloader gRPC calls
         and bypassed Zeta Download Manager state tracking.
-        
+
         All downloads must now route through Zeta Download Manager.
-        
+
         Raises NotImplementedError to force use of Zeta Download Manager.
         """
         raise NotImplementedError(
@@ -2083,6 +2089,33 @@ class HomePanelWidget(QWidget):
             "zeta_manager = self._get_or_create_download_manager_tab(); "
             "zeta_manager.add_downloads(studies, start_immediately=True)"
         )
+
+    def cancel_search(self):
+        """Cancel the current search operation"""
+        print(f"\n[CANCEL_SEARCH] 🛑 Cancel search requested by user")
+        self._cancel_search_requested = True
+        
+        # Cancel the current search task if it exists
+        if self._search_task and not self._search_task.done():
+            self._search_task.cancel()
+            print(f"[CANCEL_SEARCH] ✅ Search task cancelled")
+        
+        # Reset UI state
+        self.patient_search_widget.set_searching_state(False)
+        
+        # Hide loading indicators
+        self.hide_loading()
+        self.search_progress.setVisible(False)
+        
+        # Reset connection indicator
+        self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#6b7280').pixmap(12, 12))
+        self.connection_indicator.setText(" Search Cancelled")
+        self.connection_indicator.setStyleSheet("""
+            QLabel { font-size: 14px; color: #6b7280; padding: 4px 8px;
+                     background: rgba(107,114,128,.1); border:1px solid rgba(107,114,128,.3); border-radius:8px; }
+        """)
+        
+        print(f"[CANCEL_SEARCH] ✅ UI state reset")
 
     # ---------- 2) نسخه‌ی جدید Async با قابلیت Cancel برای جستجوی لوکال ----------
     async def search_patients_from_local_async(self):
@@ -2101,7 +2134,7 @@ class HomePanelWidget(QWidget):
             print(f"\n{'='*70}")
             print(f"[LOCAL_SEARCH] Starting local database search...")
             print(f"{'='*70}")
-            
+
             # دیالوگ لودینگ و نوار پیشرفت شبیه سرور (قابل کنسل)
             self.show_loading("Local Search", "Searching local database...", cancellable=True)
             self.search_progress.setVisible(True)
@@ -2300,6 +2333,8 @@ class HomePanelWidget(QWidget):
         finally:
             self.search_progress.setVisible(False)
             self.hide_loading()
+            # Reset searching state
+            self.patient_search_widget.set_searching_state(False)
 
     async def search_patients_from_server_async(self):
         """
@@ -2416,6 +2451,8 @@ class HomePanelWidget(QWidget):
         finally:
             self.search_progress.setVisible(False)
             self.hide_loading()
+            # Reset searching state
+            self.patient_search_widget.set_searching_state(False)
 
     def _convert_search_data_to_socket_params(self, search_data):
         """

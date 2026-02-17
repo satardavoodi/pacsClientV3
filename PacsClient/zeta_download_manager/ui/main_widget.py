@@ -1909,48 +1909,64 @@ class DownloadManagerWidget(QWidget):
                 return None
             
             logger.info(f"🔄 [TASK-RECONSTRUCT] Found state for {state.patient_name}")
-            
+
             # Fetch metadata from server (most reliable source)
             try:
                 logger.info(f"🔄 [TASK-RECONSTRUCT] Fetching metadata from server via gRPC...")
-                metadata = self.grpc_client.fetch_study_metadata(study_uid)
-                
-                if not metadata or not metadata.series:
+                metadata = self.grpc_client.fetch_study_metadata_sync(study_uid)
+
+                if not metadata or not metadata.series_list:
                     logger.error(f"🔄 [TASK-RECONSTRUCT] ❌ No metadata or series returned from server")
                     return None
-                
-                logger.info(f"🔄 [TASK-RECONSTRUCT] ✅ Fetched metadata with {len(metadata.series)} series from server")
-                
+
+                logger.info(f"🔄 [TASK-RECONSTRUCT] ✅ Fetched metadata with {len(metadata.series_list)} series from server")
+
             except Exception as e:
                 logger.error(f"🔄 [TASK-RECONSTRUCT] ❌ Failed to fetch metadata from server: {e}")
                 import traceback
                 logger.error(f"🔄 [TASK-RECONSTRUCT] Traceback:\n{traceback.format_exc()}")
                 return None
             
+            patient_info = getattr(metadata, 'patient_info', None)
+
+            def _first_truthy_attr(obj, *names):
+                if obj is None:
+                    return None
+                for name in names:
+                    value = getattr(obj, name, None)
+                    if value:
+                        return value
+                return None
+
+            patient_id = getattr(state, 'patient_id', None) or _first_truthy_attr(patient_info, 'patient_id', 'id')
+            patient_name = getattr(state, 'patient_name', None) or _first_truthy_attr(
+                patient_info, 'patient_name', 'name', 'full_name'
+            )
+
             # Build study data dict from metadata and state
             study_data = {
                 'study_uid': study_uid,
-                'patient_id': state.patient_id or metadata.patient_info.patient_id,
-                'patient_name': state.patient_name or metadata.patient_info.name,
+                'patient_id': patient_id or '',
+                'patient_name': patient_name or '',
                 'study_date': metadata.study_date or '',
                 'study_time': metadata.study_time or '',
                 'modality': metadata.modality or '',
                 'study_description': metadata.description or '',
-                'patient_age': metadata.patient_info.age or '',
-                'patient_sex': metadata.patient_info.sex or '',
-                'patient_birth_date': metadata.patient_info.birth_date or '',
+                'patient_age': _first_truthy_attr(patient_info, 'age') or '',
+                'patient_sex': _first_truthy_attr(patient_info, 'sex') or '',
+                'patient_birth_date': _first_truthy_attr(patient_info, 'birth_date') or '',
                 'body_part': '',
                 'series': []
             }
             
             # Convert SeriesInfo objects to dicts for _create_task_from_dict
-            for series in metadata.series:
+            for series in metadata.series_list:
                 series_dict = {
                     'series_number': series.series_number,
                     'series_uid': series.series_uid,
-                    'series_description': series.description,
+                    'series_description': series.series_description,
                     'modality': series.modality,
-                    'image_count': series.instance_count
+                    'image_count': series.image_count
                 }
                 study_data['series'].append(series_dict)
             
@@ -2859,24 +2875,27 @@ class DownloadManagerWidget(QWidget):
             if state.status == DownloadStatus.COMPLETED:
                 logger.info(f"💪 [SERIES RETRY] FORCING status change from COMPLETED to DOWNLOADING (bypass protection)")
                 # Directly modify state object to bypass terminal state check
+                old_status = state.status
                 state.status = DownloadStatus.DOWNLOADING
                 state.error_message = None
                 # Notify observers about the change
-                self.state_store._notify_observers('updated', study_uid, state)
+                self.state_store._notify_observers('updated', study_uid, state, 'status', old_status, DownloadStatus.DOWNLOADING)
                 logger.info(f"✅ [SERIES RETRY] Status forcefully changed to DOWNLOADING")
-                
+
             elif state.status == DownloadStatus.FAILED:
                 logger.info(f"🔄 [SERIES RETRY] Study was FAILED, changing to PENDING")
+                old_status = state.status
                 state.status = DownloadStatus.PENDING
                 state.error_message = None
-                self.state_store._notify_observers('updated', study_uid, state)
-                
+                self.state_store._notify_observers('updated', study_uid, state, 'status', old_status, DownloadStatus.PENDING)
+
             elif state.status in [DownloadStatus.PAUSED, DownloadStatus.CANCELLED]:
                 logger.info(f"🔄 [SERIES RETRY] Study was {state.status.value}, changing to PENDING")
+                old_status = state.status
                 state.status = DownloadStatus.PENDING
                 state.error_message = None
                 state.is_auto_paused = False
-                self.state_store._notify_observers('updated', study_uid, state)
+                self.state_store._notify_observers('updated', study_uid, state, 'status', old_status, DownloadStatus.PENDING)
             else:
                 logger.info(f"ℹ️ [SERIES RETRY] Study status is {state.status.value}, no status change needed")
 

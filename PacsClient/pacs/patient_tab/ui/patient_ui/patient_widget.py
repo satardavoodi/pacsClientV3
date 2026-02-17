@@ -261,6 +261,8 @@ class PatientWidget(QWidget):
         self._is_initializing = True
         # Prevent non-user reception auto-switch during load (can cause flicker)
         self._block_reception_autoswitch = True
+        # Prevent thumbnail scroll reset on retry downloads
+        self._suppress_thumb_scroll_reset = False
 
         # Defer VTK initialization to let the window paint first
         # Use longer delay to ensure window is fully painted
@@ -832,7 +834,10 @@ class PatientWidget(QWidget):
 
             # Scroll to top so the first (smallest) series is visible
             if hasattr(self, 'thumb_scroll') and self.thumb_scroll:
-                QTimer.singleShot(0, lambda: self.thumb_scroll.verticalScrollBar().setValue(0))
+                if not getattr(self, '_suppress_thumb_scroll_reset', False):
+                    QTimer.singleShot(0, lambda: self.thumb_scroll.verticalScrollBar().setValue(0))
+                else:
+                    self._suppress_thumb_scroll_reset = False
         return thumb_index
 
     async def enable_progressive_display(self):
@@ -901,14 +906,17 @@ class PatientWidget(QWidget):
                 return
             if not getattr(self, '_progressive_display_enabled', False):
                 return
-            
+
             # Reset thumbnails flag to allow refresh
             self._thumbnails_shown = False
-            
+
             # Refresh thumbnails
             self.show_exist_thumbnails()
         except Exception:
             pass
+        finally:
+            if getattr(self, '_suppress_thumb_scroll_reset', False):
+                self._suppress_thumb_scroll_reset = False
 
     def _load_first_series_sync(self, size_init_viewers=(1, 1)):
         """
@@ -5676,6 +5684,9 @@ class PatientWidget(QWidget):
             print(f"   Series UID: {series_uid}")
             print(f"🔄🔄 [PatientWidget] ====================================================")
             
+            # Avoid scroll-to-top on thumbnail refresh for retry downloads
+            self._suppress_thumb_scroll_reset = True
+
             # Get the download manager widget from home_ui
             try:
                 from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget

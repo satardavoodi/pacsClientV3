@@ -109,7 +109,128 @@ class GrpcMetadataClient:
     def _channel_state_change(self, connectivity):
         """Callback for channel state changes"""
         logger.debug(f"📡 gRPC channel state changed to: {connectivity}")
-    
+
+    def fetch_study_metadata_sync(self, study_uid: str) -> Optional[StudyMetadata]:
+        """
+        Synchronous version of fetch_study_metadata for use in non-async contexts.
+        
+        Fetch complete study metadata including thumbnails
+
+        Args:
+            study_uid: Study Instance UID
+
+        Returns:
+            StudyMetadata or None on error
+        """
+        if not self.stub:
+            logger.error("❌ gRPC stub not initialized")
+            return None
+
+        # Retry logic for robustness
+        max_retries = 3
+        retry_delay = 2.0  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                # Check channel connectivity before making call
+                if self.channel:
+                    try:
+                        import grpc
+                        from grpc import ChannelConnectivity
+
+                        # Check if get_state method exists before using it
+                        if hasattr(self.channel, 'get_state'):
+                            state = self.channel.get_state(False)
+                            if state != ChannelConnectivity.READY:
+                                logger.warning(f"⚠️ gRPC channel not READY (state: {state}), reconnecting...")
+                                self._connect()
+                        else:
+                            # If get_state is not available, skip state checking
+                            pass
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not check channel state: {e}")
+
+                # Import protobuf messages
+                from PacsClient.components import dicom_service_pb2
+
+                # Create request
+                request = dicom_service_pb2.StudyThumbnailsRequest(
+                    study_instance_uid=study_uid,
+                    include_image_data=True,
+                    include_base64=False
+                )
+
+                # Call with timeout
+                response = self.stub.GetStudyThumbnails(request, timeout=self.timeout)
+
+                # Parse response
+                patient_info = PatientInfo(
+                    patient_id=response.patient_id,
+                    patient_name=response.patient_name
+                )
+
+                series_list = []
+                thumbnails = {}
+
+                for series in response.series_thumbnails:
+                    series_info = SeriesInfo(
+                        series_uid=series.series_uid,
+                        series_number=str(series.series_number),
+                        series_description=series.series_description,
+                        modality=series.modality,
+                        image_count=series.image_count,
+                        protocol_name=getattr(series, 'protocol_name', ''),
+                        body_part_examined=getattr(series, 'body_part_examined', ''),
+                        thumbnail_data=series.thumbnail_data if series.thumbnail_data else None
+                    )
+                    series_list.append(series_info)
+
+                    # Store thumbnail
+                    if series.thumbnail_data:
+                        thumbnails[str(series.series_number)] = bytes(series.thumbnail_data)
+
+                metadata = StudyMetadata(
+                    study_uid=study_uid,
+                    patient_info=patient_info,
+                    study_date=response.study_date,
+                    series_list=series_list,
+                    thumbnails=thumbnails
+                )
+
+                logger.info(
+                    f"✅ Fetched metadata: {len(series_list)} series, "
+                    f"{metadata.total_image_count} images"
+                )
+
+                return metadata
+
+            except grpc.RpcError as e:
+                if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+                    logger.warning(f"⏰ gRPC timeout after {self.timeout}s (attempt {attempt + 1}/{max_retries})")
+                elif e.code() == grpc.StatusCode.UNAVAILABLE:
+                    logger.warning(f"🔌 gRPC service unavailable (attempt {attempt + 1}/{max_retries}): {e.details()}")
+                    # Reconnect on service unavailable
+                    self._connect()
+                else:
+                    logger.warning(f"❌ gRPC error (attempt {attempt + 1}/{max_retries}): {e.code()}, {e.details()}")
+
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(retry_delay * (attempt + 1))  # Exponential backoff (sync version)
+                else:
+                    logger.error(f"❌ Failed to fetch metadata after {max_retries} attempts")
+                    return None
+
+            except Exception as e:
+                logger.warning(f"❌ Error fetching metadata (attempt {attempt + 1}/{max_retries}): {e}")
+
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(retry_delay * (attempt + 1))  # Exponential backoff (sync version)
+                else:
+                    logger.error(f"❌ Failed to fetch metadata after {max_retries} attempts: {e}")
+                    return None
+
     async def fetch_study_metadata(self, study_uid: str) -> Optional[StudyMetadata]:
         """
         Fetch complete study metadata including thumbnails

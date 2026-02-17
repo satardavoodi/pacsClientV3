@@ -674,8 +674,26 @@ class MainWindowWidget(QWidget):
         if not widget:
             return
 
+        # Determine which tab to select after closing
+        # If closing the current tab, select the previous tab (or home if none)
+        current_i = self.tab_widget.currentIndex()
+        should_go_home = (current_i == index)
+
         self.tab_widget.removeTab(index)
-        QTimer.singleShot(0, self._go_home_tab)
+
+        if should_go_home:
+            # If we closed the current tab, go to home or previous tab
+            if self.tab_widget.count() > 1:
+                # There are other tabs besides home, select the previous one
+                new_index = min(index, self.tab_widget.count() - 1)
+                if new_index != home_i:
+                    self.tab_widget.setCurrentIndex(new_index)
+                else:
+                    self.tab_widget.setCurrentIndex(home_i)
+            else:
+                # Only home tab remains
+                self.tab_widget.setCurrentIndex(home_i)
+        # If we closed a background tab, keep current selection unchanged
 
         def _cleanup():
             try:
