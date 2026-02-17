@@ -1,11 +1,14 @@
 # Z‑MPR (Zeta MPR) – Pipeline & Tools Reference
 
 **Version:** 1.08.9.8.3  
-**Last Updated:** 2026‑02‑09
+**Last Updated:** 2026‑02‑17
 
 **Location**: `PacsClient/pacs/patient_tab/zeta mpr/`
-**Scope**: Standard MPR (orthogonal), cross‑lines, tools/measurements, and input orientation handling
-**Generated**: 2026‑02‑09
+**Scope**: Standard MPR (orthogonal + oblique), cross‑lines, tools/measurements, and input orientation handling  
+**Sister docs:**  
+- `ZETA_MPR_ENGINEERING_JOURNAL.md` — learning diary, research log, open questions, wrong assumptions  
+- `ZETA_MPR_ROTATION_ITK_VTK_STATUS.md` — rotation version log (R0–R1.2)  
+- `docs/IMAGE_PIPELINE_REFERENCE.md` — full DICOM → screen coordinate pipeline
 
 ---
 
@@ -80,11 +83,16 @@
 - This synchronizes axial/sagittal/coronal planes to the crosshair center.
 
 ### 3.3 Rotation: **visual vs. oblique**
-- Oblique reslicing is controlled by `StandardMPRViewer.oblique_enabled`.
+- Oblique reslicing is controlled by `StandardMPRViewer.oblique_enabled` (default: `True`).
 - When `oblique_enabled` is `False`, rotations are visual only and `_update_oblique_reslicing()`
    exits early.
-- When `oblique_enabled` is `True`, oblique reslice transforms are applied via
-   `vtkImageReslice` for the affected views.
+- When `oblique_enabled` is `True` and any view’s crosshair angle exceeds 0.01 rad,
+  the 9-point camera-plane oblique path activates:
+  - `_update_oblique_reslicing()` computes oblique normals via cross products.
+  - `_set_oblique_camera()` repositions the target view’s camera along the oblique normal.
+  - `_synchronize_oblique_views()` is the final call in every interaction handler.
+- Baseline camera state (`_baseline_camera_state`) is captured after view creation and
+  used for sign-consistent normals and stable view-up.  See `ZETA_MPR_ENGINEERING_JOURNAL.md` §5 for details.
 
 ### 3.4 Interaction rules (mouse)
 Implemented in the custom VTK interactor style inside `_add_click_handler()`:
@@ -95,10 +103,11 @@ Implemented in the custom VTK interactor style inside `_add_click_handler()`:
 - **Wheel**: scroll slices (direction from `_get_scroll_direction()`)
 
 ### 3.5 Improving cross‑lines / cross‑plane logic
-If true oblique reslicing is re‑enabled, revisit:
-- `_update_oblique_reslicing()` and `_apply_oblique_transform()`
-- Interaction feedback vs. actual reslice axis
-- Coordinate space consistency after pre‑orientation transform (see section 7)
+See `ZETA_MPR_ENGINEERING_JOURNAL.md` for:
+- Full root-cause analysis of the coronal flip bug (§5).
+- Open questions about compound multi-view rotation (§6 Q3).
+- Research on how 3D Slicer and Cornerstone3D handle oblique MPR (§10).
+- The recommended `SliceToRAS` matrix approach for R2 (§8.2).
 
 ---
 
@@ -222,9 +231,12 @@ Z‑MPR receives data that behaves like routine scans.
 
 **Crosshair logic**
 - `StandardMPRViewer._add_click_handler()`
-- `StandardMPRViewer._update_all_crosshairs()`
-- `StandardMPRViewer._update_slice_positions()`
-- `StandardMPRViewer._update_oblique_reslicing()` (currently disabled)
+- `StandardMPRViewer._update_all_crosshairs()` — visual line updates only
+- `StandardMPRViewer._update_slice_positions()` — focal point / camera positioning
+- `StandardMPRViewer._synchronize_oblique_views()` — final oblique reposition (must be last)
+- `StandardMPRViewer._update_oblique_reslicing()` — 9-point oblique normal computation
+- `StandardMPRViewer._set_oblique_camera()` — repositions camera along oblique normal
+- `StandardMPRViewer._capture_baseline_camera_state()` — snapshots reference camera state
 
 **Measurements**
 - `MPRMeasurementTools.activate_ruler_tool()`
@@ -247,10 +259,11 @@ Z‑MPR receives data that behaves like routine scans.
 ---
 
 ## 11) Summary (current state)
-- Z‑MPR uses **orthogonal** reslicing only.
-- Crosshair rotation is **visual** only (no oblique slicing).
-- Measurements are widget‑based and interactive; deactivation is incomplete.
-- Oblique input requires a **pre‑pipeline canonicalization** layer.
+- Z-MPR uses **orthogonal** reslicing by default; **camera-plane oblique** reslicing activates when crosshair rotation angle > 0.01 rad.
+- Crosshair rotation drives 9-point oblique reconstruction (R1.2, 2026-02-16).
+- Baseline camera state is captured after view creation (`_capture_baseline_camera_state`) and used to guarantee consistent oblique normals and view-up stability.
+- Interaction call order: `_update_all_crosshairs` → `_update_slice_positions` → `_synchronize_oblique_views` (always last).
+- Measurements are widget-based and interactive; deactivation is incomplete.
 
 This document is the baseline reference for improvements and architectural changes.
 
@@ -259,7 +272,10 @@ This document is the baseline reference for improvements and architectural chang
 ## 🧠 AI Notes (Explicit Guidance)
 
 1. **Do not mix Orthogonal MPR and Zeta MPR internals.** They are separate modules.
-2. **If you change crosshair/oblique behavior**, update this document and note
-   whether `oblique_enabled` defaults changed.
+2. **If you change crosshair/oblique behavior**, update this document, the
+   Engineering Journal, and the Rotation Status doc.
 3. **If you modify input orientation handling**, also update
    `docs/IMAGE_PIPELINE_REFERENCE.md`.
+4. **Read the Engineering Journal first** (`ZETA_MPR_ENGINEERING_JOURNAL.md`) — it
+   contains the open questions, wrong assumptions, and research log that prevent
+   repeating past mistakes.

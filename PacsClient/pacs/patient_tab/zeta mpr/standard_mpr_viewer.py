@@ -126,6 +126,7 @@ from .surface_reconstruction import SurfaceReconstructor
 from .curved_mpr import CurvedMPRGenerator, InteractiveCurvedMPR
 from .mpr_measurement_tools import MPRMeasurementTools
 from PacsClient.pacs.patient_tab.interactor_styles.tools_object_manager import ToolAccess
+from .mpr_diagnostic_validator import MPRDiagnosticValidator, DIAG_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +202,7 @@ class MPRToolbarInteractorStyle(vtk.vtkInteractorStyleImage):
         self.parent._clamp_current_position()
         self.parent._update_all_crosshairs()
         self.parent._update_slice_positions()
+        self.parent._synchronize_oblique_views()
         self.parent._update_slice_info_texts()
         self.parent._update_coordinates_label()
         self.parent._render_immediately(self.view_name)
@@ -583,6 +585,12 @@ class StandardMPRViewer(QWidget):
         self.reslice_transforms = {}  # vtkTransform for each view
         self.oblique_enabled = True
         self._oblique_cameras_active = False  # Track if oblique camera repositioning is active
+
+        # Baseline camera state — captured once after view creation + CT corrections.
+        # Used by oblique code to guarantee sign-consistent normals and stable view-up.
+        # Keys: 'axial', 'sagittal', 'coronal'; values are dicts with:
+        #   position, focal, view_up, direction (unit), distance, parallel_scale
+        self._baseline_camera_state = {}
         
         # Auto-rotation state
         self.auto_rotation_active = False
@@ -651,6 +659,48 @@ class StandardMPRViewer(QWidget):
         
         logger.info("StandardMPRViewer created successfully!")
         logger.info("=" * 80)
+
+    # ── Baseline camera state helpers ──────────────────────────────
+
+    def _capture_baseline_camera_state(self):
+        """Snapshot every 2-D view camera AFTER creation + CT corrections.
+
+        This is the single source of truth for oblique computations.
+        Must be called once at end of _setup_ui and again after a full
+        reset (_reset_rendering) so that the oblique code always has a
+        clean reference.
+        """
+        import numpy as np
+
+        for view_name in ['axial', 'sagittal', 'coronal']:
+            if view_name not in self.viewers:
+                continue
+            renderer = self.viewers[view_name]['renderer']
+            camera   = renderer.GetActiveCamera()
+
+            pos   = np.array(camera.GetPosition(),  dtype=float)
+            focal = np.array(camera.GetFocalPoint(), dtype=float)
+            up    = np.array(camera.GetViewUp(),     dtype=float)
+
+            direction = focal - pos
+            dist = float(np.linalg.norm(direction))
+            if dist < 1e-6:
+                dist = 500.0
+                direction = np.array([0.0, 0.0, -1.0])
+            else:
+                direction = direction / dist
+
+            self._baseline_camera_state[view_name] = {
+                'position':       pos.tolist(),
+                'focal':          focal.tolist(),
+                'view_up':        up.tolist(),
+                'direction':      direction.tolist(),   # unit focal-pos
+                'distance':       dist,
+                'parallel_scale': camera.GetParallelScale(),
+            }
+
+        logger.info("Baseline camera state captured for %s",
+                    list(self._baseline_camera_state.keys()))
 
     def _apply_window_level(self, window, level):
         """Apply window/level to all 2D MPR views (axial/sagittal/coronal)."""
@@ -1277,6 +1327,16 @@ class StandardMPRViewer(QWidget):
         main_layout.addWidget(content_container)
         
         self.setLayout(main_layout)
+
+        # Capture baseline camera state AFTER all views created + CT corrections applied
+        self._capture_baseline_camera_state()
+
+        # ── Diagnostic Validator (activate with ZETA_MPR_DIAG=1) ──────
+        self._diag = MPRDiagnosticValidator(self, auto_validate=True)
+        self._diag.capture_baseline()
+        if DIAG_ENABLED:
+            self._diag.install_corner_markers()
+            self._diag.install_diag_overlays()
     
     def _create_toolbar(self):
         """Create clean, minimal toolbar like professional DICOM viewers"""
@@ -1704,9 +1764,12 @@ class StandardMPRViewer(QWidget):
                 
                 self._request_render(view_name)
             
+            # Capture fresh baseline after camera recreation
+            self._capture_baseline_camera_state()
             # Update crosshairs
             self._update_all_crosshairs()
             self._update_slice_positions()
+            self._synchronize_oblique_views()
             self._update_slice_info_texts()
             
             logger.info("✓ MPR reloaded with new series")
@@ -2756,6 +2819,7 @@ class StandardMPRViewer(QWidget):
                 self.parent._clamp_current_position()
                 self.parent._update_all_crosshairs()
                 self.parent._update_slice_positions()
+                self.parent._synchronize_oblique_views()
                 self.parent._update_slice_info_texts()
                 self.parent._update_coordinates_label()
                 self.parent._render_immediately(self.view_name)
@@ -3153,6 +3217,7 @@ class StandardMPRViewer(QWidget):
                     
                     # Update crosshairs
                     self.parent._update_all_crosshairs()
+                    self.parent._synchronize_oblique_views()
                     return
                 
                 # Update position during drag from line (with offset)
@@ -3188,6 +3253,7 @@ class StandardMPRViewer(QWidget):
                     # Update all views
                     self.parent._update_all_crosshairs()
                     self.parent._update_slice_positions()
+                    self.parent._synchronize_oblique_views()
                     self.parent._update_slice_info_texts()
                     return
                 
@@ -3211,6 +3277,7 @@ class StandardMPRViewer(QWidget):
                     # Update all views
                     self.parent._update_all_crosshairs()
                     self.parent._update_slice_positions()
+                    self.parent._synchronize_oblique_views()
                     self.parent._update_slice_info_texts()
                     return
 
@@ -3317,6 +3384,7 @@ class StandardMPRViewer(QWidget):
                 
                 # Update crosshairs in all views (now uses batch rendering)
                 self.parent._update_all_crosshairs()
+                self.parent._synchronize_oblique_views()
                 self.parent._update_slice_info_texts()
                 self.parent._update_coordinates_label()
                 
@@ -3352,6 +3420,7 @@ class StandardMPRViewer(QWidget):
                 
                 # Update crosshairs in all views (now uses batch rendering)
                 self.parent._update_all_crosshairs()
+                self.parent._synchronize_oblique_views()
                 self.parent._update_slice_info_texts()
                 self.parent._update_coordinates_label()
                 
@@ -3366,7 +3435,14 @@ class StandardMPRViewer(QWidget):
         self.crosshair_styles[view_name] = style
     
     def _update_all_crosshairs(self):
-        """Update crosshair positions in all views (optimized)"""
+        """Update crosshair visual positions in all views (optimized).
+
+        NOTE (v1.08 fix): oblique reslicing is NO LONGER triggered from
+        here.  It is handled by _synchronize_oblique_views() which must
+        be called as the LAST step in every interaction path.  This
+        prevents _update_slice_positions from overwriting the oblique
+        camera state that was set here.
+        """
         if not self.crosshairs_enabled:
             return
         
@@ -3399,24 +3475,37 @@ class StandardMPRViewer(QWidget):
             
             # Request batched render (optimization: batch all view renders)
             self._request_render(view_name)
-        
-        # Apply oblique reslicing when rotation exists
-        self._update_oblique_reslicing()
+
+        # NOTE: oblique reslicing intentionally removed from here.
+        # Call _synchronize_oblique_views() as the final step instead.
     
     def _update_slice_positions(self):
         """Update slice positions to follow crosshair.
-        Moves camera + focal point together to preserve viewing direction."""
+
+        Orthogonal mode: moves camera + focal point together to preserve
+        viewing direction (original behavior).
+
+        Oblique mode (v1.09 fix): updates the focal point to fully match
+        current_position so that the oblique slice plane always passes
+        through the crosshair center.  Camera position is NOT touched
+        here; _synchronize_oblique_views() will recompute it correctly.
+
+        Previous v1.08 only updated the through-plane axis, causing the
+        oblique slice to drift when the crosshair center moved in-plane.
+        """
         for view_name in ['axial', 'sagittal', 'coronal']:
             if view_name not in self.viewers:
                 continue
-            
+
             renderer = self.viewers[view_name]['renderer']
             camera = renderer.GetActiveCamera()
-            
-            # Move camera AND focal point together (preserves direction vector)
+
             current_focal = list(camera.GetFocalPoint())
             current_pos = list(camera.GetPosition())
-            
+
+            # ── v1.09.Fix-E: always use orthogonal-style through-plane
+            # tracking for the camera (in BOTH orthogonal and oblique
+            # modes).  This keeps the viewport centre stable.
             if view_name == 'axial':
                 delta = self.current_position[2] - current_focal[2]
                 current_focal[2] = self.current_position[2]
@@ -3429,11 +3518,32 @@ class StandardMPRViewer(QWidget):
                 delta = self.current_position[1] - current_focal[1]
                 current_focal[1] = self.current_position[1]
                 current_pos[1] += delta
-            
+
             camera.SetFocalPoint(current_focal)
             camera.SetPosition(current_pos)
+
+            # In oblique mode, also update the explicit slice plane
+            # origin so the oblique cut tracks the crosshair centre.
+            if self._oblique_cameras_active:
+                mapper = self.viewers[view_name].get('mapper')
+                if mapper is not None:
+                    plane = mapper.GetSlicePlane()
+                    if plane is not None:
+                        plane.SetOrigin(self.current_position)
+                        mapper.Modified()
+
             # Request batched render (optimization)
             self._request_render(view_name)
+
+    def _synchronize_oblique_views(self):
+        """Final step after any crosshair / slice update.
+
+        Re-applies oblique camera repositioning if any view has rotation.
+        Safe to call even when no rotation exists (fast early-return).
+        Must be called AFTER both _update_all_crosshairs and
+        _update_slice_positions so that the focal points are correct.
+        """
+        self._update_oblique_reslicing()
     
     def _update_slice_info_texts(self):
         """Update slice info text in all views (optimized)"""
@@ -3698,6 +3808,8 @@ class StandardMPRViewer(QWidget):
         
         # Update crosshairs in all views (visual only)
         self._update_all_crosshairs()
+        # If oblique was active, this will detect 0° angles and reset cameras
+        self._synchronize_oblique_views()
         
         logger.info("Crosshair rotation reset to 0°")
     
@@ -3827,23 +3939,43 @@ class StandardMPRViewer(QWidget):
             v_dir = self._best_line_direction(v_q1, v_q2, v_s1, v_s2, bounds)
 
             # ── source slice normal & target mapping ──────────────────
+            # v1.09: Use the baseline camera direction as the slice
+            # normal instead of hardcoded axis vectors.  This is correct
+            # for non-identity direction matrices and after CT camera
+            # corrections.  Falls back to axis-aligned defaults when
+            # baseline state is unavailable.
+            #
             # In each source view the horizontal crosshair line is the
             # trace of one target plane and the vertical line is the
             # trace of the other.
+            baseline = self._baseline_camera_state.get(source_view)
+            if baseline is not None:
+                # baseline['direction'] is unit vector: focal − pos
+                # The slice normal is the viewing direction (camera looks
+                # perpendicular to the slice plane).
+                slice_normal = np.array(baseline['direction'], dtype=float)
+            else:
+                # Fallback to axis-aligned defaults
+                if source_view == 'axial':
+                    slice_normal = np.array([0.0, 0.0, 1.0])
+                elif source_view == 'sagittal':
+                    slice_normal = np.array([1.0, 0.0, 0.0])
+                elif source_view == 'coronal':
+                    slice_normal = np.array([0.0, 1.0, 0.0])
+                else:
+                    continue
+
             if source_view == 'axial':
-                slice_normal = np.array([0.0, 0.0, 1.0])
                 targets = [
                     ('sagittal', v_dir),   # vertical line → sagittal trace
                     ('coronal',  h_dir),   # horizontal line → coronal trace
                 ]
             elif source_view == 'sagittal':
-                slice_normal = np.array([1.0, 0.0, 0.0])
                 targets = [
                     ('axial',   h_dir),
                     ('coronal', v_dir),
                 ]
             elif source_view == 'coronal':
-                slice_normal = np.array([0.0, 1.0, 0.0])
                 targets = [
                     ('axial',    h_dir),
                     ('sagittal', v_dir),
@@ -3900,61 +4032,77 @@ class StandardMPRViewer(QWidget):
 
     def _set_oblique_camera(self, target_view, oblique_normal):
         """
-        Reposition the camera of *target_view* so that
-        vtkImageResliceMapper slices along the oblique plane whose normal
-        is *oblique_normal*.
+        Set an oblique slice plane on *target_view*'s mapper.
 
-        Only the camera POSITION changes (to alter the viewing direction).
-        The focal point is kept unchanged so the image stays centered
-        in the viewport (prevents shift).  The view-up is taken from the
-        camera's current state (which already has CT Roll baked in from
-        view creation) so no additional Azimuth/Roll corrections are
-        needed (prevents flip).
+        v1.09.Fix-E — camera-stable oblique slicing:
+
+        Instead of repositioning the camera (which shifts the viewport
+        centre and makes the displayed image appear to move), we switch
+        the vtkImageResliceMapper from camera-driven slicing to an
+        explicit vtkPlane.  The camera stays in its original orthogonal
+        position, so the viewport is perfectly stable.
+
+        The explicit plane:
+            origin = self.current_position   (crosshair centre)
+            normal = oblique_normal          (sign-corrected)
+
+        When the crosshair centre moves later (_update_slice_positions),
+        only the plane origin is updated — the camera still only tracks
+        the through-plane axis, identical to orthogonal behaviour.
         """
         import numpy as np
 
         if target_view not in self.viewers:
             return
 
-        renderer = self.viewers[target_view]['renderer']
-        camera   = renderer.GetActiveCamera()
+        viewer   = self.viewers[target_view]
+        mapper   = viewer['mapper']
+        renderer = viewer['renderer']
 
-        # Preserve current state
-        parallel_scale = camera.GetParallelScale()
-        old_pos   = np.array(camera.GetPosition(), dtype=float)
-        old_focal = np.array(camera.GetFocalPoint(), dtype=float)
-        old_up    = np.array(camera.GetViewUp(), dtype=float)
+        # --- baseline reference (for sign consistency) --------------------
+        baseline = self._baseline_camera_state.get(target_view)
+        if baseline is not None:
+            baseline_dir = np.array(baseline['direction'], dtype=float)
+        else:
+            # Axis-aligned fallback
+            _defaults = {
+                'axial':    np.array([0., 0., -1.]),
+                'sagittal': np.array([-1., 0., 0.]),
+                'coronal':  np.array([0., -1., 0.]),
+            }
+            baseline_dir = _defaults.get(target_view, np.array([0., 0., -1.]))
 
-        distance  = float(np.linalg.norm(old_pos - old_focal))
-        if distance < 1.0:
-            distance = 500.0
+        oblique_normal = np.array(oblique_normal, dtype=float)
 
-        # Keep focal point unchanged — only reposition camera along
-        # the oblique normal to change the slice plane direction.
-        new_pos = old_focal + oblique_normal * distance
+        # Sign consistency: keep normal in the same hemisphere as the
+        # baseline camera→focal direction so back-face orientation matches.
+        if float(np.dot(oblique_normal, -baseline_dir)) < 0:
+            oblique_normal = -oblique_normal
 
-        # Reuse the camera's current view-up (already has CT Roll from
-        # view creation).  Only adjust if near-degenerate.
-        cam_dir = old_focal - new_pos
-        cam_dir_n = cam_dir / np.linalg.norm(cam_dir)
-        view_up = old_up.copy()
-        if abs(float(np.dot(cam_dir_n, view_up))) > 0.99:
-            # Degenerate — pick an alternative that isn't parallel
-            for candidate in [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]:
-                c = np.array(candidate, dtype=float)
-                if abs(float(np.dot(cam_dir_n, c))) < 0.99:
-                    view_up = c
-                    break
+        # --- Switch mapper to explicit-plane mode -------------------------
+        mapper.SliceFacesCameraOff()
+        mapper.SliceAtFocalPointOff()
 
-        camera.SetPosition(new_pos.tolist())
-        # focal point intentionally NOT changed
-        camera.SetViewUp(view_up.tolist())
-        camera.SetParallelScale(parallel_scale)
-        # No CT Azimuth/Roll — view-up already contains the correct
-        # orientation from view creation; only camera direction changes.
+        # Get-or-create the vtkPlane attached to this mapper
+        plane = mapper.GetSlicePlane()
+        if plane is None:
+            plane = vtk.vtkPlane()
+
+        plane.SetOrigin(self.current_position)
+        plane.SetNormal(oblique_normal.tolist())
+        mapper.SetSlicePlane(plane)
+        mapper.Modified()
+
+        # Camera stays UNTOUCHED — no viewport shift.
+        # Just fix clipping in case the oblique plane extends differently.
+        renderer.ResetCameraClippingRange()
 
         self._oblique_cameras_active = True
         self._request_render(target_view)
+
+        # --- diagnostic validation ----------------------------------------
+        if hasattr(self, '_diag'):
+            self._diag.validate_after_oblique(target_view, oblique_normal)
 
     def _clamp_to_fov(self, center, endpoint, bounds):
         """
@@ -4016,6 +4164,13 @@ class StandardMPRViewer(QWidget):
             # Preserve zoom
             parallel_scale = camera.GetParallelScale()
 
+            # ── v1.09.Fix-E: restore mapper to camera-driven slicing ──
+            mapper = self.viewers[view_name].get('mapper')
+            if mapper is not None:
+                mapper.SliceFacesCameraOn()
+                mapper.SliceAtFocalPointOn()
+                mapper.Modified()
+
             # Standard camera vectors from direction matrix
             position, focal, view_up = self._get_camera_vectors_for_view(view_name)
 
@@ -4049,9 +4204,27 @@ class StandardMPRViewer(QWidget):
             self._request_render(view_name)
             logger.debug(f"Reset {view_name} to orthogonal")
 
+        # ── v1.09.Fix-C: switch to orthogonal BEFORE repositioning ──
+        # Must clear flag first so _update_slice_positions uses the
+        # orthogonal code path (moves both position + focal together,
+        # preserving camera direction).  Previously the flag was cleared
+        # AFTER, causing the oblique path (focal-only) to leave the
+        # camera direction slightly off after reset.
+        self._oblique_cameras_active = False
+
         # Reposition cameras to current crosshair position
         self._update_slice_positions()
-        self._oblique_cameras_active = False
+
+        # ── v1.09.Fix-D: re-capture baseline after reset ──
+        # ResetCamera() may have shifted pos/focal slightly from the
+        # original setup.  Refresh baseline so subsequent oblique
+        # computations reference the actual clean state.
+        self._capture_baseline_camera_state()
+
+        # Diagnostic: verify reset returned to clean state
+        if hasattr(self, '_diag'):
+            self._diag.capture_baseline()  # sync diag baselines too
+            self._diag.validate_after_reset()
     
     def get_current_volume(self, view_name):
         """Get current volume for a view (for stack tools)"""
@@ -4351,6 +4524,9 @@ class StandardMPRViewer(QWidget):
             
             # Reset to orthogonal slicing (remove any oblique transforms)
             self._reset_all_to_orthogonal()
+            
+            # Re-capture baseline after full view reset
+            self._capture_baseline_camera_state()
             
             # Update all crosshairs to current position
             self._update_all_crosshairs()
