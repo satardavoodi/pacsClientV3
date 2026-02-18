@@ -4292,6 +4292,30 @@ class PatientWidget(QWidget):
 
         ✅ Always ensures viewers exist before attempting to display series
         """
+        # ✅ OPTIMIZATION: موقع drag & drop، اولویت interactive را افزایش دهید
+        try:
+            if hasattr(self, 'viewer_controller') and hasattr(self.viewer_controller, 'zeta_boost'):
+                # Signal ZetaBoost: این یک user-interactive action است
+                self.viewer_controller._set_zeta_external_interactive_busy(
+                    True, 
+                    reason="user_drag_drop_active"
+                )
+                
+                # استفاده از timer برای release کردن بعد از عملیات
+                def release_interactive():
+                    try:
+                        if hasattr(self, 'viewer_controller'):
+                            self.viewer_controller._set_zeta_external_interactive_busy(
+                                False,
+                                reason="drag_drop_complete"
+                            )
+                    except Exception:
+                        pass
+                
+                QTimer.singleShot(1500, release_interactive)  # Release بعد از 1.5 ثانیه
+        except Exception as e:
+            print(f"⚠️ [INTERACTIVE_BOOST] error: {e}")
+        
         # Delegate to viewer controller
         self.viewer_controller.change_series_on_viewer(series_index, flag_change_selected_widget, vtk_widget, slider,
                                    allow_paired)
