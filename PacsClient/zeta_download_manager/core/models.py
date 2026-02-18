@@ -37,7 +37,7 @@ class SeriesInfo:
     Series metadata (immutable)
     """
     series_uid: str
-    series_number: str
+    series_number: int
     series_description: str
     modality: str
     image_count: int

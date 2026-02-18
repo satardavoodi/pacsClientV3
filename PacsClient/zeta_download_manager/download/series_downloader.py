@@ -216,7 +216,7 @@ class SeriesDownloader:
                     error_message="Paused for higher priority download"
                 )
             
-            series_number = series_info.series_number
+            series_number = str(series_info.series_number)
             series_output_dir = study_output_dir / series_number
             
             # Enhanced sequential progress logging

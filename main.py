@@ -100,53 +100,59 @@ if __name__ == "__main__":
     # Load Roboto fonts
     load_fonts()
     
-    # Set global stylesheet for dialogs and message boxes (dark theme)
+    # Set global stylesheet for dialogs and message boxes (gray theme)
     app.setStyleSheet("""
         QMessageBox {
-            background-color: #1a202c;
+            background-color: #2b2f33;
         }
         QMessageBox QLabel {
-            color: #e2e8f0;
+            color: #f0f3f6;
             font-size: 13px;
         }
         QMessageBox QPushButton {
-            background-color: #3182ce;
-            color: #ffffff;
-            border: none;
+            background-color: #3a4148;
+            color: #f7f9fb;
+            border: 1px solid #1f2226;
             border-radius: 6px;
-            padding: 8px 20px;
+            padding: 6px 18px;
             font-size: 13px;
-            min-width: 80px;
+            min-width: 90px;
         }
         QMessageBox QPushButton:hover {
-            background-color: #2c5aa0;
+            background-color: #485057;
         }
         QMessageBox QPushButton:pressed {
-            background-color: #1e4a8a;
+            background-color: #343b41;
         }
         QInputDialog {
-            background-color: #1a202c;
+            background-color: #2b2f33;
         }
         QInputDialog QLabel {
-            color: #e2e8f0;
+            color: #f0f3f6;
             font-size: 13px;
         }
         QInputDialog QLineEdit {
-            background-color: #2d3748;
-            color: #e2e8f0;
-            border: 1px solid #4a5568;
+            background-color: #3a4148;
+            color: #f7f9fb;
+            border: 1px solid #1f2226;
             border-radius: 4px;
-            padding: 8px;
+            padding: 6px 8px;
             font-size: 13px;
         }
         QInputDialog QPushButton {
-            background-color: #3182ce;
-            color: #ffffff;
-            border: none;
+            background-color: #3a4148;
+            color: #f7f9fb;
+            border: 1px solid #1f2226;
             border-radius: 6px;
-            padding: 8px 20px;
+            padding: 6px 18px;
             font-size: 13px;
-            min-width: 80px;
+            min-width: 90px;
+        }
+        QInputDialog QPushButton:hover {
+            background-color: #485057;
+        }
+        QInputDialog QPushButton:pressed {
+            background-color: #343b41;
         }
         QInputDialog QPushButton:hover {
             background-color: #2c5aa0;

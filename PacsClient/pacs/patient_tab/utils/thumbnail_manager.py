@@ -624,6 +624,7 @@ class ThumbnailManager(QObject):
         self.ready_series = set()
         self.current_study_uid = None  # برای ذخیره study_uid فعلی
         self._placeholder_cache = None
+        self._series_uid_to_number = {}
         # Coalesce frequent border refresh requests to avoid UI repaint storms.
         self._border_state_update_pending = False
         self._last_border_apply_ts = 0.0
@@ -746,6 +747,7 @@ class ThumbnailManager(QObject):
 
         # Clear all ready series
         self.ready_series.clear()
+        self._series_uid_to_number.clear()
 
         # Clear selected series
         self.selected_series = None
@@ -1294,6 +1296,13 @@ class ThumbnailManager(QObject):
                     series_uid = series_info['series_uid']
                 elif 'series' in series_info and isinstance(series_info['series'], dict):
                     series_uid = series_info['series'].get('series_uid')
+
+            if series_uid:
+                try:
+                    series_uid = str(series_uid)
+                    self._series_uid_to_number[series_uid] = series_key
+                except Exception:
+                    pass
             
             # Store series info in button for later use
             retry_button.series_number = series_key
@@ -1338,6 +1347,7 @@ class ThumbnailManager(QObject):
             # ✅ Use real series_number as the key, NOT thumbnail_index
             widget.series_number = series_key
             widget.thumbnail_index = thumbnail_index
+            widget.series_uid = series_uid
             
             # Register button
             self.register_button(image_button, label_text)
@@ -1356,11 +1366,41 @@ class ThumbnailManager(QObject):
             error_label.setStyleSheet("color: red; font-size: 8px;")
             error_layout.addWidget(error_label)
             return error_widget
+
+
+    def _resolve_series_key(self, series_identifier) -> str:
+        """Resolve series identifier (number or UID) to an existing widget key."""
+        series_key = str(series_identifier)
+        if series_key in self.series_widgets:
+            return series_key
+
+        if hasattr(self, 'parent_widget') and self.parent_widget and hasattr(self.parent_widget, 'resolve_series_key'):
+            try:
+                mapped = str(self.parent_widget.resolve_series_key(series_key))
+                if mapped in self.series_widgets:
+                    return mapped
+            except Exception:
+                pass
+
+        mapped = self._series_uid_to_number.get(series_key)
+        if mapped:
+            mapped_key = str(mapped)
+            if mapped_key in self.series_widgets:
+                return mapped_key
+
+        for key, widget in list(self.series_widgets.items()):
+            try:
+                if getattr(widget, "series_uid", None) == series_key:
+                    return key
+            except Exception:
+                continue
+
+        return series_key
     
 
     def set_series_pending(self, series_number: str):
         try:
-            series_key = str(series_number)
+            series_key = self._resolve_series_key(series_number)
             self.ready_series.discard(series_key)
 
             # Update new border style
@@ -1390,7 +1430,7 @@ class ThumbnailManager(QObject):
 
     def set_series_ready(self, series_number: str):
         try:
-            series_key = str(series_number)
+            series_key = self._resolve_series_key(series_number)
             if self._set_ready_reentrant_guard:
                 return
 
@@ -1430,7 +1470,7 @@ class ThumbnailManager(QObject):
         سری را با استایل خاص اولویت هایلایت کن
         """
         try:
-            series_key = str(series_number)
+            series_key = self._resolve_series_key(series_number)
             print(f"🎨 Applying priority styling to series {series_key}")
 
             if series_key in self.series_widgets:
@@ -1502,7 +1542,7 @@ class ThumbnailManager(QObject):
         Update download progress with PRIORITY indicator
         """
         try:
-            series_key = str(series_number)
+            series_key = self._resolve_series_key(series_number)
             
             # Add priority indicator if this is a high priority download
             is_priority = "⚡" in status_text or "🎯" in status_text or "🔄" in status_text
@@ -1740,7 +1780,7 @@ class ThumbnailManager(QObject):
         علامت‌گذاری شروع دانلود سری - thread safe
         """
         try:
-            series_key = str(series_number)
+            series_key = self._resolve_series_key(series_number)
             
             # DEBUG: Print available keys
             print(f"🔍 [ThumbnailManager] start_series_download called for series: {series_key}")
@@ -1842,7 +1882,7 @@ class ThumbnailManager(QObject):
         Mark series as download complete AND ready for display - با سیستم اولویت‌دار
         """
         try:
-            series_key = str(series_number)
+            series_key = self._resolve_series_key(series_number)
             print(f"🎯 [PRIORITY COMPLETE] Completing download for series {series_key}")
 
             # 1. علامت‌گذاری به عنوان آماده

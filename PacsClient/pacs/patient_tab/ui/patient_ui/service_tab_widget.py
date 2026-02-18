@@ -30,13 +30,13 @@ class ServiceTabWidget(QWidget):
         """Setup the main layout and widgets"""
         # Create main layout
         main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(4, 4, 4, 4)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins to fit inside logo area
+        main_layout.setSpacing(1)  # Minimal spacing
         
         # Create icon container (same size as reduced thumbnail)
         self.icon_container = QFrame()
         self.icon_container.setObjectName("IconContainer")
-        self.icon_container.setFixedSize(52, 63)
+        self.icon_container.setFixedSize(48, 60)  # Slightly reduced for compact design
         
         # Create icon label
         self.icon_label = QLabel()
@@ -93,7 +93,7 @@ class ServiceTabWidget(QWidget):
         # Add close button with minimal space (reduced by 30%)
         self.close_button = QLabel("×")
         self.close_button.setObjectName("CloseButton")
-        self.close_button.setFixedSize(18, 18)
+        self.close_button.setFixedSize(14, 14)  # Even more compact for close button
         self.close_button.setCursor(Qt.PointingHandCursor)
         self.close_button.setToolTip("Close tab")
         self.close_button.mousePressEvent = self.close_button_clicked
@@ -101,10 +101,10 @@ class ServiceTabWidget(QWidget):
         # Add close button with better spacing
         main_layout.addWidget(self.close_button, 0, Qt.AlignRight | Qt.AlignmentFlag.AlignTop)
 
-        # Set size policy - Reduced width since we only show icon (no text)
+        # Set size policy - Minimal width to fit inside logo area
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.setFixedWidth(90)  # Reduced from 252 to fit icon + close button only
-        self.setFixedHeight(70)  # Keep same height
+        self.setFixedWidth(70)  # Compact size to fit multiple tabs inside logo area
+        self.setFixedHeight(70)  # Keep same height as logo
         
     def apply_styling(self):
         """Apply beautiful styling to the tab widget"""

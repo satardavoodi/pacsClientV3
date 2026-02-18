@@ -12,11 +12,15 @@ PRIORITY_MANAGER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of patient tabs allowed
+MAX_PATIENT_TABS = 4
+
 
 class CustomTabManager:
     """
     Manages custom patient tabs with beautiful UI integrated into title bar
     Prevents duplicate tabs for the same patient using study_uid
+    Limits patient tabs to MAX_PATIENT_TABS and enables tab reordering
     """
     
     def __init__(self, tab_widget: QTabWidget, title_bar_tab_area=None, right_tab_area=None):
@@ -27,6 +31,12 @@ class CustomTabManager:
         self.patient_tabs = {}  # Store patient tab widgets
         self.title_bar_tabs = {}  # Store title bar tab widgets
         self.study_uid_to_tab = {}  # Map study_uid to tab_index to prevent duplicates
+
+        # Enable tab bar features: movable tabs for reordering, document mode for better layout
+        tab_bar = self.tab_widget.tabBar()
+        tab_bar.setMovable(True)  # Allow dragging tabs to reorder
+        tab_bar.setDocumentMode(True)  # Enable document mode to prevent overlap
+        tab_bar.setUsesScrollButtons(True)  # Show scroll buttons if tabs exceed space
 
         if title_bar_tab_area:
             self.setup_title_bar_tabs()
@@ -117,8 +127,8 @@ class CustomTabManager:
         # Optional: setup a right-side tab strip near the user/admin area.
         if self.right_tab_area:
             self.right_tab_layout = QHBoxLayout(self.right_tab_area)
-            self.right_tab_layout.setContentsMargins(0, 5, 0, 5)
-            self.right_tab_layout.setSpacing(4)
+            self.right_tab_layout.setContentsMargins(2, 3, 2, 3)  # Minimal margins to fit inside logo area
+            self.right_tab_layout.setSpacing(2)  # Tight spacing between tabs
 
     def _add_title_bar_tab_widget(self, widget: QWidget, insert_at_start: bool = False) -> None:
         """Insert a custom tab widget either at the start (right after logo) or before the stretch spacer.
@@ -170,7 +180,12 @@ class CustomTabManager:
         container.setObjectName("AIPacsBrandContainer")
         container.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
-        row = QHBoxLayout(container)
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(2)
+        outer.setAlignment(Qt.AlignCenter)
+
+        row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
 
@@ -204,6 +219,21 @@ class CustomTabManager:
         row.addWidget(ai)
         row.addWidget(dash)
         row.addWidget(pacs)
+
+        tagline = QLabel("", container)
+        tagline.setObjectName("AIPacsBrandTagline")
+        tagline.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        tagline.setLayoutDirection(Qt.RightToLeft)
+        tagline.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        f_tag = QFont("IRANYekan")
+        f_tag.setFamilies(["IRANYekan", "Tahoma", "Segoe UI"])
+        f_tag.setPixelSize(13)
+        f_tag.setWeight(QFont.Medium)
+        tagline.setFont(f_tag)
+        tagline.setMinimumHeight(16)
+
+        outer.addLayout(row)
+        outer.addWidget(tagline)
 
         # Mount into the button.
         btn_layout = self.logo_button.layout()
@@ -337,6 +367,10 @@ class CustomTabManager:
                 color: rgba(226, 232, 240, 0.96);
             }
 
+            QPushButton#LogoButton QLabel#AIPacsBrandTagline {
+                color: rgba(148, 163, 184, 0.95);
+            }
+
             QPushButton#LogoButton[active="true"] {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #1a2240, stop:1 #0f172a);
@@ -377,9 +411,15 @@ class CustomTabManager:
             print(f"[CustomTabManager] Failed to apply logo logotype stylesheet: {e}")
     
     def setup_custom_tab_bar(self):
-        """Setup custom tab bar styling"""
+        """Setup custom tab bar styling and behavior"""
         self.tab_widget.setTabBarAutoHide(False)
         self.tab_widget.setElideMode(Qt.ElideRight)
+        
+        # Enable movable tabs and document mode to prevent overlap
+        tab_bar = self.tab_widget.tabBar()
+        tab_bar.setMovable(True)
+        tab_bar.setDocumentMode(True)
+        tab_bar.setUsesScrollButtons(True)
         
         # Apply custom styling to tab widget - allow custom tab widgets to show their styling
         self.tab_widget.setStyleSheet("""
@@ -434,6 +474,7 @@ class CustomTabManager:
         """
         Add a new patient tab with custom UI
         Prevents duplicate tabs for the same patient using study_uid
+        Limits total patient tabs to MAX_PATIENT_TABS (3)
         
         Args:
             patient_name: Name of the patient
@@ -442,6 +483,9 @@ class CustomTabManager:
             widget: The widget to display in the tab
             study_uid: Study Instance UID to prevent duplicates
             activate: Whether to activate (switch to) the tab immediately
+            
+        Returns:
+            Tab index on success, or -1 if max patient tabs limit reached
         """
         # Check if a tab already exists for this study_uid
         if study_uid and study_uid in self.study_uid_to_tab:
@@ -457,6 +501,18 @@ class CustomTabManager:
                 self.update_patient_tab(existing_tab_index, patient_name, patient_id, thumbnail_path)
             
             return existing_tab_index
+        
+        # Count current patient tabs (exclude service tabs like download manager, education, etc.)
+        current_patient_tabs = sum(1 for tab_data in self.patient_tabs.values() 
+                                   if tab_data.get('is_patient_tab', True) and 
+                                   not tab_data.get('is_download_manager_tab', False) and 
+                                   not tab_data.get('is_education_tab', False) and
+                                   not tab_data.get('is_web_browser_tab', False))
+        
+        # Enforce maximum patient tabs limit
+        if current_patient_tabs >= MAX_PATIENT_TABS:
+            logger.warning(f"Cannot add more patient tabs. Maximum limit of {MAX_PATIENT_TABS} reached.")
+            return -1
         
         # Create custom tab widget
         custom_tab = PatientTabWidget(
@@ -485,7 +541,8 @@ class CustomTabManager:
             'patient_name': patient_name,
             'patient_id': patient_id,
             'study_uid': study_uid,
-            'widget': widget
+            'widget': widget,
+            'is_patient_tab': True
         }
         
         # Store study_uid to tab mapping for duplicate prevention
@@ -1063,9 +1120,9 @@ class CustomTabManager:
         custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
         
         if self.title_bar_tab_area:
-            # Add to title bar
+            # Add to right-side area (near admin/user info)
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self._add_title_bar_tab_widget(custom_tab)
+            self._add_title_bar_right_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button

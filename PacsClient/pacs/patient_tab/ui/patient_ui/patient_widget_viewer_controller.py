@@ -2935,11 +2935,12 @@ class ViewerController:
             for sn in candidates:
                 if not sn:
                     continue
-                if primary_series and sn == primary_series:
+                sn_str = str(sn)  # Ensure string comparison
+                if primary_series and sn_str == primary_series:
                     skipped_primary += 1
                     _filter_details.append(f"{sn}:primary")
                     continue
-                if sn == selected_series:
+                if sn_str == selected_series:
                     skipped_active += 1
                     _filter_details.append(f"{sn}:active")
                     continue
@@ -2954,12 +2955,12 @@ class ViewerController:
                 try:
                     if not self._is_series_header_consistent_for_warmup(sn):
                         skipped_corrupt += 1
-                        self._warmup_corrupt_skip_counts[sn] = int(self._warmup_corrupt_skip_counts.get(sn, 0)) + 1
+                        self._warmup_corrupt_skip_counts[sn_str] = int(self._warmup_corrupt_skip_counts.get(sn_str, 0)) + 1
                         _filter_details.append(f"{sn}:corrupt")
                         continue
                 except Exception:
                     pass
-                if sn in self._zeta_boost_failed_series:
+                if sn_str in self._zeta_boost_failed_series:
                     skipped_failed += 1
                     _filter_details.append(f"{sn}:failed")
                     continue
