@@ -1,6 +1,5 @@
 import time
 import logging
-import uuid
 
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
@@ -22,7 +21,6 @@ logger = logging.getLogger(__name__)
 _RENDER_THROTTLE_MS = 16  # ~60fps max render rate
 _SPINNER_HIDE_DELAY_MS = 50  # Delay before hiding spinner to allow final render
 _SYNC_MOVE_THROTTLE_MS = 16  # min interval between sync mouse move processing (~60fps)
-
 
 
 def grow_vtk_inplace(old_input, new_vtk_image_data):
@@ -73,46 +71,6 @@ def grow_vtk_inplace(old_input, new_vtk_image_data):
 
 
 class VTKWidget(QVTKRenderWindowInteractor):
-    _action_traces = {}
-
-    @classmethod
-    def register_action_start(cls, action_type: str, context: dict = None, action_id: str = None) -> str:
-        """Register a user action start and return action_id for later completion tracing."""
-        try:
-            action_id = action_id or f"{action_type}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
-            start_perf = time.perf_counter()
-            trace = {
-                'action_type': action_type,
-                'start_perf': start_perf,
-                'start_wall': time.time(),
-                'context': context or {}
-            }
-            cls._action_traces[action_id] = trace
-            print(f"[ACTION_START] id={action_id} type={action_type} context={trace['context']}")
-            return action_id
-        except Exception:
-            return action_id or f"{action_type}-{int(time.time() * 1000)}"
-
-    @classmethod
-    def register_action_done(cls, action_id: str, phase: str = "image_loaded", extra: dict = None):
-        """Register a completed action and print end-to-end latency."""
-        if not action_id:
-            return
-        try:
-            trace = cls._action_traces.pop(action_id, None)
-            if not trace:
-                print(f"[ACTION_DONE] id={action_id} phase={phase} elapsed_ms=unknown")
-                return
-            elapsed_ms = (time.perf_counter() - float(trace.get('start_perf', time.perf_counter()))) * 1000.0
-            action_type = trace.get('action_type', 'unknown')
-            context = trace.get('context', {})
-            print(
-                f"[ACTION_DONE] id={action_id} type={action_type} phase={phase} "
-                f"elapsed_ms={elapsed_ms:.1f} context={context} extra={extra or {}}"
-            )
-        except Exception:
-            pass
-
     def __init__(self, parent=None, height_viewer=480, patient_widget=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
@@ -130,6 +88,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._render_pending = False
         self._last_render_time = 0
         self._render_timer = None
+        
+        # =====================================================
+        # ZOOM PROTECTION: Track camera zoom to prevent unwanted changes
+        # =====================================================
+        self._protected_parallel_scale = None
+        self._wheel_event_count = 0
 
         self.render_window = self.GetRenderWindow()
         self.interactor = self.render_window.GetInteractor()
@@ -171,30 +135,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._target_cursor = None
         self._sync_last_move_time = 0.0  # throttle mouse-move events
         self._on_slice_changed_cb = None  # Lock Sync callback
-
-        # Action tracing (set by UI event handlers)
-        self._pending_action_id = None
-        self._pending_action_series = None
-
-    def _finalize_pending_action(self, series_index, phase: str = "image_loaded"):
-        """Finalize pending action once the intended series is fully applied to this viewport."""
-        try:
-            action_id = getattr(self, '_pending_action_id', None)
-            if not action_id:
-                return
-
-            self.register_action_done(
-                action_id,
-                phase=phase,
-                extra={
-                    'viewer_id': getattr(self, 'id_vtk_widget', None),
-                    'series_index': str(series_index),
-                }
-            )
-            self._pending_action_id = None
-            self._pending_action_series = None
-        except Exception:
-            pass
 
     def _schedule_render(self, delay_ms=None):
         """
@@ -443,11 +383,26 @@ class VTKWidget(QVTKRenderWindowInteractor):
             if grown:
                 self._schedule_render(1)
 
-                # ✅ FIX: Update slider maximum so user can scroll to new slices
-                if hasattr(self, "slider") and self.slider is not None:
-                    max_slice = self.get_count_of_slices() - 1
-                    if self.slider.maximum() != max_slice:
-                        self.slider.setMaximum(max_slice)
+            # print('after grow')
+            # if grown and hasattr(self, "slider"):
+            #     # print('after grow and has slider')
+            #     # Only update slider maximum; keep current value unchanged
+            #     max_slice = self.get_count_of_slices() - 1
+            #     cur = self.slider.value()
+            #     self.slider.setMaximum(max_slice)
+            #
+            #     # If the user was on the last slice and a new slice is added, decide whether to auto-advance
+            #     if cur > max_slice:
+            #         print('CURRRR')
+            #         self.slider.setValue(max_slice)
+
+            # self._schedule_render(1)
+            # if grown and hasattr(self, "slider"):
+            # max_slice = self.get_count_of_slices() - 1
+            # print('max_slice:', max_slice)
+            # self.slider.setMaximum(999)
+            # if self.slider.maximum() != max_slice:
+            #     self.slider.setMaximum(max_slice)
 
         except Exception as e:
             print(f"[WARN] grow_current_series_inplace failed: {e}")
@@ -597,27 +552,83 @@ class VTKWidget(QVTKRenderWindowInteractor):
     def cleanup_image_viewer(self):
         # Check if image_viewer exists before cleanup (for progressive download dummy viewers)
         if self.image_viewer is not None:
-            # 🎯 CRITICAL FIX: Remove old renderer from render_window BEFORE cleanup
-            # This prevents old series from accumulating in the render_window
-            try:
-                old_renderer = self.image_viewer.GetRenderer()
-                if old_renderer is not None:
-                    self.render_window.RemoveRenderer(old_renderer)
-                    print(f"✅ Removed old renderer from render_window")
-            except Exception as e:
-                print(f"⚠️  Failed to remove old renderer: {e}")
-            
-            # Now cleanup the viewer itself (which removes actors from the renderer)
             self.image_viewer.cleanup()
             del self.image_viewer
             self.image_viewer = None
 
-        # REMOVED: gc.collect() was running on UI thread causing stop-the-world
-        # freezes visible to the user during series switching. Python's refcount
-        # collector handles immediate cleanup; cyclic GC runs automatically.
-        # gc.collect()
+        # delete old renderers
+        # old_renderer = self.image_viewer.GetRenderer()
+        # self.render_window.RemoveRenderer(old_renderer)
 
-    # NOTE: switch_series_backup was removed — dead code superseded by optimized switch_series
+        # old_renderer = self.image_viewer.GetRenderer()
+        # if old_renderer:
+        #     self.render_window.RemoveRenderer(old_renderer)
+
+        # Call cleanup to release everything
+
+        # del self.style
+        # self.style = None
+
+        # del self.current_style
+        # self.current_style = None
+
+        # Run garbage collection to help free memory
+        gc.collect()
+
+    def switch_series_backup(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
+                      metadata_fixed=None):
+        """
+        ANTI-FLICKERING: Series switch without processEvents
+        """
+        # Check this series has showed
+        if self.last_series_show == series_index:
+            return False
+
+        # Show loading spinner (non-blocking)
+        self.viewport_spinner.show_loading("Switching series...")
+        
+        # =====================================================
+        # ANTI-FLICKERING: Disable updates during switch
+        # =====================================================
+        self.setUpdatesEnabled(False)
+
+        self.cleanup_image_viewer()
+
+        if (vtk_image_data_2 is not None) and (metadata_2 is not None):
+            self.image_viewer = CustomCombineImageViewers(
+                self.render_window, self.interactor, self.height_viewer, vtk_image_data1=vtk_image_data,
+                metadata1=metadata,
+                vtk_image_data2=vtk_image_data_2, metadata2=metadata_2, metadata_fixed=metadata_fixed,
+                apply_default_filter=self.apply_default_filter, vtk_widget=self)
+
+        else:
+            self.image_viewer = ImageViewer2D(self.render_window, self.interactor, self.height_viewer, vtk_image_data,
+                                              metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
+
+        self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
+        # add new renderer
+        new_renderer = self.image_viewer.GetRenderer()
+        self.render_window.AddRenderer(new_renderer)
+
+        # set interactor style again
+        self.style = AbstractInteractorStyle(self.image_viewer)
+        self.interactor.SetInteractorStyle(self.style)
+        # self.style.interactionOccurred.connect(self.change_container_border)
+        self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
+
+        self.image_viewer.UpdateDisplayExtent()
+        # Single render call (not both viewer and window)
+        self.render_window.Render()
+
+        self.last_series_show = series_index
+        self.save_status_camera(self.image_viewer)
+        
+        # =====================================================
+        # ANTI-FLICKERING: Re-enable updates and hide spinner
+        # =====================================================
+        self.setUpdatesEnabled(True)
+        QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
+        return True
 
     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
                       metadata_fixed=None):
@@ -633,7 +644,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
         - Smart spinner messaging based on series size
         - Batched rendering operations
         """
-        _t0 = time.perf_counter()
         # Check this series has showed
         if self.last_series_show == series_index:
             return False
@@ -652,28 +662,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
             if self.image_viewer is not None:
                 # Viewer already exists - just update the image data
                 try:
-                    # Guardrail: preview(1-slice) -> full-stack transition can leave
-                    # vtkResliceImageViewer in stale single-slice state on fast reset.
-                    # Force full recreate for this transition to guarantee scrollability.
-                    force_recreate = False
-                    try:
-                        old_meta = getattr(self.image_viewer, 'metadata', {}) if self.image_viewer is not None else {}
-                        old_preview_only = bool(old_meta.get('preview_only', False)) if isinstance(old_meta, dict) else False
-                        new_preview_only = bool(metadata.get('preview_only', False)) if isinstance(metadata, dict) else False
-
-                        old_dims = self.image_viewer.vtk_image_data.GetDimensions() if getattr(self.image_viewer, 'vtk_image_data', None) is not None else (0, 0, 0)
-                        new_dims = vtk_image_data.GetDimensions() if vtk_image_data is not None else (0, 0, 0)
-                        old_z = int(old_dims[2]) if len(old_dims) > 2 else 0
-                        new_z = int(new_dims[2]) if len(new_dims) > 2 else 0
-
-                        # Any transition that grows stack depth from <=1 to >1 should recreate.
-                        # Also recreate when moving from preview metadata to full metadata.
-                        if (old_z <= 1 and new_z > 1) or (old_preview_only and not new_preview_only):
-                            force_recreate = True
-                            print(f"🔁 [SWITCH GUARD] forcing recreate for stack transition old_z={old_z} new_z={new_z} old_preview={old_preview_only} new_preview={new_preview_only}")
-                    except Exception:
-                        force_recreate = False
-
                     # Check if switching between single/combined viewer types
                     is_combined_new = (vtk_image_data_2 is not None) and (metadata_2 is not None)
                     is_combined_current = isinstance(self.image_viewer, CustomCombineImageViewers)
@@ -683,7 +671,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
                         self.current_style.delete_all_widgets()
 
                     # If viewer type doesn't match, we need to recreate
-                    if force_recreate or (is_combined_new != is_combined_current):
+                    if is_combined_new != is_combined_current:
                         self.cleanup_image_viewer()
                     else:
                         # Same viewer type - just reset the image data (FAST!)
@@ -698,12 +686,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
                             
                             self.last_series_show = series_index
                             self.save_status_camera(self.image_viewer)
-                            self._finalize_pending_action(series_index, phase="switch_series_fast")
                             
                             # Re-enable updates and hide spinner
                             self.setUpdatesEnabled(True)
                             QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
-                            print(f"[PROFILE] switch_series: fast reset path series={series_index} in {(time.perf_counter() - _t0)*1000:.1f}ms")
                             return True
                             
                 except Exception as e:
@@ -712,12 +698,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
             # Create new viewer (first time or fallback)
             # ⚡ BATCHED CREATION: All operations grouped together
-            # 🎯 KEY POINT: At this stage, cleanup_image_viewer() has already:
-            #    1. Removed the old renderer from render_window (CRITICAL FIX)
-            #    2. Cleaned up all actors from the old series
-            #    3. Deleted the old image_viewer instance
-            # This ensures no overlapping/accumulated images from previous series
-            
             if (vtk_image_data_2 is not None) and (metadata_2 is not None):
                 self.image_viewer = CustomCombineImageViewers(
                     self.render_window, self.interactor, self.height_viewer, vtk_image_data1=vtk_image_data,
@@ -745,8 +725,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
             self.last_series_show = series_index
             self.save_status_camera(self.image_viewer)
-            self._finalize_pending_action(series_index, phase="switch_series_recreate")
-            print(f"[PROFILE] switch_series: recreate path series={series_index} in {(time.perf_counter() - _t0)*1000:.1f}ms")
             
         finally:
             # =====================================================
@@ -801,8 +779,30 @@ class VTKWidget(QVTKRenderWindowInteractor):
     def set_slice(self, slice_index):
         if self.image_viewer is None:
             return
+        
+        # ✅ Save current camera zoom before slice change
+        try:
+            camera = self.image_viewer.renderer.GetActiveCamera()
+            if camera:
+                self._protected_parallel_scale = camera.GetParallelScale()
+                logger.debug(f"[set_slice] Protected scale={self._protected_parallel_scale}")
+        except:
+            pass
+        
         self.image_viewer.set_slice(slice_index)
         self.image_viewer.last_index_slice_saved = slice_index
+        
+        # ✅ Revert camera zoom if it was changed
+        try:
+            camera = self.image_viewer.renderer.GetActiveCamera()
+            if self._protected_parallel_scale is not None and camera:
+                current_scale = camera.GetParallelScale()
+                if abs(current_scale - self._protected_parallel_scale) > 0.01:  # Tolerance
+                    logger.warning(f"[set_slice] Zoom change detected! scale={current_scale} → reverting to {self._protected_parallel_scale}")
+                    camera.SetParallelScale(self._protected_parallel_scale)
+                    self.image_viewer.Render()
+        except:
+            pass
 
         # Notify interactor style if it's a ruler style
         try:
@@ -811,7 +811,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
                 style.update_slice()
 
         except Exception as e:
-            print(f"Error updating on slice change: {e}")
+            logger.debug(f"Error updating on slice change: {e}")
 
         self._update_overlay_extent()
 
@@ -841,37 +841,45 @@ class VTKWidget(QVTKRenderWindowInteractor):
     #####################################################################################
 
     def wheelEvent(self, event):
+        """
+        Handle mouse wheel scrolling for slice navigation within current series.
+        CRITICAL: Prevents VTK zoom by consuming the event and NOT calling super().wheelEvent()
+        """
+        # ✅ ALWAYS log to confirm this method is being called
+        logger.info(f"[wheelEvent] Called - image_viewer={'present' if self.image_viewer else 'None'}, slider={'present' if self.slider else 'None'}")
+        
         try:
-            # Check if image_viewer exists
-            if self.image_viewer is None:
-                super().wheelEvent(event)
+            # Check if image_viewer exists with valid slider
+            if self.image_viewer is None or self.slider is None:
+                # No image or slider - consume event to prevent VTK zoom
+                logger.debug("[wheelEvent] No image_viewer or slider - consuming event")
+                event.accept()
                 return
-                
+            
             delta = event.angleDelta().y()
             max_slice = self.get_count_of_slices()
             
-            # Smooth and proportional scrolling based on stack size
+            logger.debug(f"[wheelEvent] delta={delta}, max_slice={max_slice}")
+            
+            # Nothing to scroll through - still consume to prevent VTK zoom
             if max_slice <= 1:
-                return  # Nothing to scroll
+                logger.debug("[wheelEvent] max_slice <= 1 - consuming event")
+                event.accept()
+                return
             
             # Calculate adaptive step based on number of slices
             N = max_slice
             
             if N < 50:
-                # Small stacks: show all slices, step = 1
                 step = 1
             elif N < 300:
-                # Medium stacks: interpolate between 1 and higher steps
                 # Linear interpolation: step = 1 + (N - 50) / 250 * 4
-                # This gives step ≈ 1-5 as N goes from 50 to 300
                 step = max(1, int(1 + (N - 50) / 250 * 4))
             else:
-                # Large stacks: dynamically skip slices
-                # Target: show approximately 300 "visible" slices
+                # Large stacks: target ~300 visible slices
                 step = max(1, int(N / 300))
             
             # Invert direction for natural scrolling
-            # step = 1 if delta > 0 else -1 if delta < 0 else 0  # determine increase/decrease slice
             if delta > 0:
                 step = -step
             elif delta < 0:
@@ -879,28 +887,38 @@ class VTKWidget(QVTKRenderWindowInteractor):
             else:
                 step = 0
             
-            next_slice = self.image_viewer.GetSlice() + self.image_viewer.skip_slices + step
+            # Calculate next slice index
+            current_slice = self.image_viewer.GetSlice()
+            skip_slices = getattr(self.image_viewer, 'skip_slices', 0)
+            next_slice = current_slice + skip_slices + step
             
             # Clamp to valid range [0, N-1]
             next_slice = max(0, min(next_slice, max_slice - 1))
             
-            # print('max slice:', max_slice, 'next slice:', next_slice, 'step:', step)
+            logger.debug(f"[wheelEvent] current={current_slice}, next={next_slice}, step={step}")
+            
+            # Update slider (triggers rendering via signal)
             self.slider.setValue(next_slice)
             
-            # Additional check for ruler style
+            # Update ruler/measurement visibility
             try:
                 style = self.interactor.GetInteractorStyle()
                 if hasattr(style, 'update_slice'):
                     style.update_slice()
-
             except Exception as e:
-                print(f"Error updating ruler on wheel event: {e}")
+                logger.debug(f"[wheelEvent] Error updating ruler: {e}")
 
-            # Update container border
+            # Update container border state
             self.change_container_border()
-
-        except:
-            super().wheelEvent(event)
+            
+            # ✅ CRITICAL: CONSUME the event - DO NOT let parent handle it
+            logger.debug("[wheelEvent] Accepting event (slice changed)")
+            event.accept()
+            
+        except Exception as e:
+            # ✅ Even on error, CONSUME the event to prevent VTK zoom fallback
+            logger.warning(f"[wheelEvent] Exception (consuming to prevent zoom): {e}")
+            event.accept()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():
@@ -963,16 +981,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         try:
             data = int(data)
-            _t0 = time.perf_counter()
-            action_id = self.register_action_start(
-                "drag_drop",
-                context={
-                    'series_number': str(data),
-                    'viewer_id': getattr(self, 'id_vtk_widget', None)
-                }
-            )
-            self._pending_action_id = action_id
-            self._pending_action_series = str(data)
             # Dropped from thumbnails series
             # Change series with drag and drop - async for smooth UI
             self.change_container_border()
@@ -988,10 +996,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
                 series_index=int(data), 
                 flag_change_selected_widget=False,
                 vtk_widget=self, 
-                slider=self.slider,
-                allow_paired=False
+                slider=self.slider
             ))
-            print(f"[PROFILE] drag-drop: scheduled series switch for {data} in {(time.perf_counter() - _t0)*1000:.1f}ms")
             
         except Exception as e:
             # Dropped segmentation out of app

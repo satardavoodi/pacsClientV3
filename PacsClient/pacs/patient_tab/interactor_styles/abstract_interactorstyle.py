@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import vtkmodules.all as vtk
 from vtkmodules.all import vtkInteractorStyleImage
@@ -5,6 +6,8 @@ from PySide6.QtCore import QObject, Signal
 from .tools_object_manager import ToolAccess
 from PacsClient.pacs.patient_tab.viewers.viewer_2d import ImageViewer2D
 from .tools_object_manager import ToolObjectAbstract
+
+logger = logging.getLogger(__name__)
 
 class InteractionSignal(QObject):
     interactionOccurred = Signal()
@@ -17,6 +20,14 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
         self.image_viewer: ImageViewer2D = image_viewer
         self.signal_emitter: InteractionSignal = InteractionSignal()  # signal for interaction
 
+        # ✅ CRITICAL: Completely disable mouse wheel zoom in VTK
+        # Set motion factor to 0 to prevent any zoom from wheel events
+        self.SetMouseWheelMotionFactor(0.0)
+        
+        # Also try to disable auto-adjust for safety
+        if hasattr(self, 'SetAutoAdjustCameraClippingRange'):
+            self.SetAutoAdjustCameraClippingRange(True)
+        
         # left click
         self.AddObserver("LeftButtonPressEvent", self.on_left_button_press)
         self.AddObserver("LeftButtonReleaseEvent", self.on_left_button_release)
@@ -31,6 +42,16 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
 
         # moving mouse
         self.AddObserver("MouseMoveEvent", self.on_mouse_move)
+
+        # mouse wheel - disable default zoom behavior to allow Qt wheelEvent to handle slice navigation
+        self.AddObserver("MouseWheelForwardEvent", self.on_mouse_wheel_forward)
+        self.AddObserver("MouseWheelBackwardEvent", self.on_mouse_wheel_backward)
+        
+        # Also observe the generic MouseWheelEvent if it exists
+        try:
+            self.AddObserver("MouseWheelEvent", self.on_mouse_wheel_event)
+        except:
+            pass
 
         self.left_button_down = False
         self.right_button_down = False
@@ -274,6 +295,62 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
             self.right_button_down = False
             self.turn_off_pan()
 
+    ###################################################################
+    # Mouse wheel event handlers - prevent default VTK zoom behavior
+    ###################################################################
+    def on_mouse_wheel_forward(self, obj, event):
+        """
+        Override default VTK wheel forward behavior (zoom in).
+        Do nothing here - let Qt wheelEvent handle slice navigation.
+        """
+        # ✅ Critical: Abort processing to prevent default zoom
+        obj.AbortFlagOn()
+        pass
+
+    def on_mouse_wheel_backward(self, obj, event):
+        """
+        Override default VTK wheel backward behavior (zoom out).
+        Do nothing here - let Qt wheelEvent handle slice navigation.
+        """
+        # ✅ Critical: Abort processing to prevent default zoom
+        obj.AbortFlagOn()
+        pass
+    
+    def on_mouse_wheel_event(self, obj, event):
+        """
+        Generic mouse wheel event handler to catch any wheel events.
+        """
+        # ✅ Critical: Abort processing to prevent any zoom
+        obj.AbortFlagOn()
+        pass
+    
+    def OnMouseWheelForward(self):
+        """
+        Override VTK's OnMouseWheelForward method to prevent zoom.
+        This is called by VTK internally.
+        """
+        # Block default behavior - Qt wheelEvent will handle slice changes
+        logger.debug("[OnMouseWheelForward] Blocked")
+        pass
+    
+    def OnMouseWheelBackward(self):
+        """
+        Override VTK's OnMouseWheelBackward method to prevent zoom.
+        This is called by VTK internally.
+        """
+        # Block default behavior - Qt wheelEvent will handle slice changes
+        logger.debug("[OnMouseWheelBackward] Blocked")
+        pass
+    
+    def OnMouseWheel(self):
+        """
+        Override generic OnMouseWheel to also prevent any zoom.
+        """
+        # Block all wheel events at VTK level
+        logger.debug("[OnMouseWheel] Blocked")
+        pass
+
+    ###################################################################
     def turn_off_pan(self):
         self.pan_active = False
         super().OnMiddleButtonUp()
