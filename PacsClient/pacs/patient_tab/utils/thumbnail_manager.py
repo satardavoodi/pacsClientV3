@@ -1179,6 +1179,8 @@ class ThumbnailManager(QObject):
                     border-radius: 8px;
                 }
             """)
+            # Allow clicks to reach retry button and thumbnail.
+            glass_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             glass_overlay.setVisible(False)
             
             # Add frosted glass blur effect
@@ -1203,6 +1205,7 @@ class ThumbnailManager(QObject):
                     line-height: 1.3;
                 }
             """)
+            progress_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             progress_overlay.setText("0%")
             
             # Position progress label

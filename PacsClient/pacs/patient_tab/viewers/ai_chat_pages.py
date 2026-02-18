@@ -3006,13 +3006,32 @@ class OneChatPage(QWidget):
                 print(f"❌ Error fetching patient: {e}")
                 logger.error(f"❌ Error fetching patient: {e}")
 
-        if not patient_id:
-            default_value = (self.study_uid or "").strip()
+        manual_patient_id = False
+        if patient_id:
+            choice_box = QMessageBox(self)
+            choice_box.setWindowTitle("Send To Reception")
+            choice_box.setText(
+                f"Current patient ID: {patient_id}\n"
+                "Do you want to send to this patient or another patient?"
+            )
+            use_current_btn = choice_box.addButton("Use current patient", QMessageBox.AcceptRole)
+            use_other_btn = choice_box.addButton("Other patient...", QMessageBox.ActionRole)
+            cancel_btn = choice_box.addButton(QMessageBox.StandardButton.Cancel)
+            choice_box.exec()
+
+            clicked = choice_box.clickedButton()
+            if clicked == cancel_btn:
+                logger.info("Send to reception canceled by user.")
+                return
+            if clicked == use_other_btn:
+                manual_patient_id = True
+
+        if manual_patient_id or not patient_id:
+            default_value = "" if manual_patient_id else (self.study_uid or "").strip()
             patient_id, ok = QInputDialog.getText(
                 self,
                 "Patient ID Required",
-                "Automatic access to the patient ID is not available.\n"
-                "Please enter the patient ID directly to send.",
+                "Please enter the patient ID to send.",
                 QLineEdit.Normal,
                 default_value,
             )

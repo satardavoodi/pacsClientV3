@@ -1343,7 +1343,7 @@ class ReceptionDataTab(QWidget):
                 
                 reports = U.ai_get_reception_reports(
                     patient_id=str(search_id),
-                    status=None,  # Get all statuses
+                    status="pending",  # Only merge once to avoid repeated appends
                     limit=10  # Get up to 10 most recent
                 )
                 

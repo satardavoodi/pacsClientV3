@@ -1,5 +1,5 @@
 from PySide6.QtCore import QSize, Qt, QPoint, QTimer
-from PySide6.QtGui import QIcon, QPixmap, QTransform
+from PySide6.QtGui import QIcon, QPixmap, QTransform, QGuiApplication
 from PySide6.QtWidgets import QPushButton, QToolBar, QToolButton, QMenu, QWidgetAction, QHBoxLayout, QVBoxLayout, \
     QLabel, QWidget, \
     QGroupBox, QApplication, QProgressDialog,QScrollArea,QFrame
@@ -2433,10 +2433,26 @@ class ToolbarManager:
 
             # Note: Zeta MPR removed from dropdown - now the main MPR button
 
-            # Position dropdown below the button
-            button_pos = button.mapToGlobal(QPoint(0, button.height()))
-            dropdown.move(button_pos)
+            # Position dropdown inside visible screen bounds
             dropdown.setFixedWidth(280)
+            dropdown.adjustSize()
+
+            button_center = button.mapToGlobal(QPoint(button.width() // 2, button.height() // 2))
+            screen = QGuiApplication.screenAt(button_center)
+            if screen is None:
+                screen = QGuiApplication.primaryScreen()
+
+            avail = screen.availableGeometry() if screen else QApplication.primaryScreen().availableGeometry()
+            desired = button.mapToGlobal(QPoint(0, button.height()))
+
+            x = min(max(desired.x(), avail.left() + 4), avail.right() - dropdown.width() - 4)
+            y = desired.y()
+            if y + dropdown.height() > avail.bottom():
+                y = button.mapToGlobal(QPoint(0, 0)).y() - dropdown.height()
+            if y < avail.top():
+                y = avail.top() + 4
+
+            dropdown.move(QPoint(x, y))
             dropdown.raise_()
             dropdown.activateWindow()
 
@@ -5828,7 +5844,6 @@ class ToolbarManager:
         upload_menu_btn.clicked.connect(lambda: self._show_status_upload_dropdown(upload_menu_btn))
 
         upload_layout.addWidget(upload_menu_btn)
-        toolbar_layout.addWidget(upload_container)
 
         # Sync button
         sync_btn = QPushButton(self.patient_widget)
@@ -5849,9 +5864,13 @@ class ToolbarManager:
                     stop:0 #374151, stop:1 #1f2937);
                 color: #e5e7eb;
                 border: 1px solid #4b5563;
-                border-radius: 6px;
+                border-left: none;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
                 padding: 4px 6px;
-                margin: 1px;
+                margin: 0px;
                 min-width: 45px;
                 min-height: 45px;
                 font-size: 13px;
@@ -5877,7 +5896,8 @@ class ToolbarManager:
         
         sync_btn.clicked.connect(self._start_patient_sync)
         self.sync_button = sync_btn
-        toolbar_layout.addWidget(sync_btn)
+        upload_layout.addWidget(sync_btn)
+        toolbar_layout.addWidget(upload_container)
         
 
         
@@ -6429,10 +6449,26 @@ class ToolbarManager:
             sync_btn.clicked.connect(lambda: [dropdown.close(), self._sync_and_go_home()])
             layout.addWidget(sync_btn)
             
-            # Position dropdown below the button
-            button_pos = button.mapToGlobal(QPoint(0, button.height()))
-            dropdown.move(button_pos)
+            # Position dropdown inside visible screen bounds
             dropdown.setFixedWidth(280)
+            dropdown.adjustSize()
+
+            button_center = button.mapToGlobal(QPoint(button.width() // 2, button.height() // 2))
+            screen = QGuiApplication.screenAt(button_center)
+            if screen is None:
+                screen = QGuiApplication.primaryScreen()
+
+            avail = screen.availableGeometry() if screen else QApplication.primaryScreen().availableGeometry()
+            desired = button.mapToGlobal(QPoint(0, button.height()))
+
+            x = min(max(desired.x(), avail.left() + 4), avail.right() - dropdown.width() - 4)
+            y = desired.y()
+            if y + dropdown.height() > avail.bottom():
+                y = button.mapToGlobal(QPoint(0, 0)).y() - dropdown.height()
+            if y < avail.top():
+                y = avail.top() + 4
+
+            dropdown.move(QPoint(x, y))
             dropdown.raise_()
             dropdown.activateWindow()
             
