@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel, 
+from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, 
                                QFrame, QSizePolicy, QGraphicsDropShadowEffect)
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal
 from PySide6.QtGui import QPixmap, QPainter, QColor, QFont, QPen
@@ -31,7 +31,7 @@ class ServiceTabWidget(QWidget):
         # Create main layout
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins to fit inside logo area
-        main_layout.setSpacing(1)  # Minimal spacing
+        main_layout.setSpacing(0)  # No extra spacing for icon-only tabs
         
         # Create icon container (same size as reduced thumbnail)
         self.icon_container = QFrame()
@@ -56,10 +56,20 @@ class ServiceTabWidget(QWidget):
         pixmap = icon.pixmap(40, 40)
         self.icon_label.setPixmap(pixmap)
         
-        # Add icon to container
-        icon_layout = QVBoxLayout(self.icon_container)
-        icon_layout.setContentsMargins(0, 0, 0, 0)
-        icon_layout.addWidget(self.icon_label, alignment=Qt.AlignCenter)
+        # Add icon + close button to container (overlay close on icon)
+        icon_layout = QGridLayout(self.icon_container)
+        icon_layout.setContentsMargins(2, 2, 2, 2)
+        icon_layout.setSpacing(0)
+        icon_layout.addWidget(self.icon_label, 0, 0, alignment=Qt.AlignCenter)
+
+        # Add close button over the icon (top-right)
+        self.close_button = QLabel("×")
+        self.close_button.setObjectName("CloseButton")
+        self.close_button.setFixedSize(14, 14)
+        self.close_button.setCursor(Qt.PointingHandCursor)
+        self.close_button.setToolTip("Close tab")
+        self.close_button.mousePressEvent = self.close_button_clicked
+        icon_layout.addWidget(self.close_button, 0, 0, alignment=Qt.AlignTop | Qt.AlignRight)
         
         main_layout.addWidget(self.icon_container)
         
@@ -88,22 +98,10 @@ class ServiceTabWidget(QWidget):
         
         # Add widgets to main layout (info_container is hidden)
         main_layout.addWidget(info_container)
-        main_layout.addStretch()
-        
-        # Add close button with minimal space (reduced by 30%)
-        self.close_button = QLabel("×")
-        self.close_button.setObjectName("CloseButton")
-        self.close_button.setFixedSize(14, 14)  # Even more compact for close button
-        self.close_button.setCursor(Qt.PointingHandCursor)
-        self.close_button.setToolTip("Close tab")
-        self.close_button.mousePressEvent = self.close_button_clicked
-        
-        # Add close button with better spacing
-        main_layout.addWidget(self.close_button, 0, Qt.AlignRight | Qt.AlignmentFlag.AlignTop)
 
         # Set size policy - Minimal width to fit inside logo area
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.setFixedWidth(70)  # Compact size to fit multiple tabs inside logo area
+        self.setFixedWidth(52)  # Tight width for icon-only tabs
         self.setFixedHeight(70)  # Keep same height as logo
         
     def apply_styling(self):

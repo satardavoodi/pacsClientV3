@@ -1216,6 +1216,16 @@ class DownloadManagerWidget(QWidget):
                 logger.error(f"   ❌ Error converting series: {e}")
                 continue
         
+        # Order series by numeric series_number when possible to keep download order consistent
+        if series_list:
+            def _series_sort_key(item):
+                raw = str(item.series_number) if item.series_number is not None else ""
+                if raw.isdigit():
+                    return (0, int(raw), raw)
+                return (1, raw)
+
+            series_list = sorted(series_list, key=_series_sort_key)
+
         # If no series after conversion, log warning
         if not series_list:
             logger.warning(f"⚠️ No valid series for {data.get('patient_name', 'Unknown')} - validation will fail!")
