@@ -417,7 +417,18 @@ class ZetaBoostEngine:
 
         return None
 
-    def put(self, series_number: str, vtk_image_data, metadata, persist_disk: bool = True):
+    def put(self, series_number: str, vtk_image_data, metadata, persist_disk: bool = True, promote_immediately: bool = False):
+        """
+        Put series into cache with optional immediate promotion.
+        
+        Args:
+            series_number: Series identifier
+            vtk_image_data: VTK image data
+            metadata: Series metadata
+            persist_disk: Whether to persist to disk cache (default True)
+            promote_immediately: If True, prioritize memory over disk write latency
+                                 (used during user-initiated drag & drop)
+        """
         key = str(series_number)
         est_bytes = 0
         try:
@@ -447,9 +458,12 @@ class ZetaBoostEngine:
             self._log_info(f"CACHED series={key} {self._cache_summary()}")
             self._maybe_log_health_locked(force=False)
 
+        # ✅ OPTIMIZATION: Aggressive disk persistence for better next-load performance
         if persist_disk and self._disk_cache is not None:
-            # Avoid expensive compression/IO for oversized stacks (protect latency + RAM).
-            if est_bytes <= self._disk_persist_max_bytes:
+            # معیار: برای interactive lane (user drag & drop)، بیشتر series ها را persist کن
+            persist_threshold = self._disk_persist_max_bytes * 1.5 if promote_immediately else self._disk_persist_max_bytes
+            
+            if est_bytes <= persist_threshold:
                 # Offload np.savez_compressed + SQLite write to a daemon thread so
                 # callers (especially the Qt UI thread during priming) are never
                 # blocked by heavy I/O.  The in-memory cache was already updated
@@ -468,6 +482,7 @@ class ZetaBoostEngine:
                     except Exception as _exc:
                         _log(f"DISK_WRITE_ERR series={key} error={_exc}")
 
+                # ✅ OPTIMIZATION: اگر promote_immediately، disk write را بیس‌تر اولویت دهید
                 threading.Thread(
                     target=_async_disk_write,
                     daemon=True,
@@ -475,7 +490,7 @@ class ZetaBoostEngine:
                 ).start()
             else:
                 self._log_info(
-                    f"DISK_SKIP_LARGE series={key} est_bytes={est_bytes} threshold={self._disk_persist_max_bytes}"
+                    f"DISK_SKIP_LARGE series={key} est_bytes={est_bytes} threshold={persist_threshold}"
                 )
 
     def trim_keep(self, keep_entries: int):

@@ -523,6 +523,14 @@ class ViewerController:
                         continue
                     self._full_cache_put(sn, vtk_image_data, metadata)
                     cached_ok = True
+                    
+                    # ✅ OPTIMIZATION: بعد از cache put، prefetch سریز مجاور بلافاصله
+                    threading.Thread(
+                        target=self._prefetch_adjacent_series,
+                        args=(sn,),
+                        daemon=True
+                    ).start()
+                    
                     break
             except Exception as iter_err:
                 print(f"⚠️ [WARMUP_CB] series={sn} iteration error: {iter_err}")
@@ -1735,6 +1743,9 @@ class ViewerController:
             slider.show()
             slider.setEnabled(True)
 
+            # ✅ CRITICAL: Block signals during slider setup to prevent image number flickering
+            slider.blockSignals(True)
+
             # Check if methods exist
             if not hasattr(vtk_widget, 'set_slider'):
                 print("   ⚠️ VTK widget doesn't have set_slider yet (placeholder mode)")
@@ -1765,6 +1776,9 @@ class ViewerController:
             slider.setMaximum(0)
             slider.setValue(0)
             print("   ⚠️ Slider set to default values after error")
+        finally:
+            # ✅ CRITICAL: Unblock signals after all slider configuration is complete
+            slider.blockSignals(False)
 
         # Connect signals
         try:
@@ -1804,9 +1818,8 @@ class ViewerController:
             # ✅ CRITICAL: Set solid background FIRST to prevent any flash
             if hasattr(vtk_widget, 'renderer'):
                 vtk_widget.renderer.SetBackground(0.10, 0.10, 0.18)  # #1a1a2e in RGB
-                # Force immediate render of background
-                if hasattr(vtk_widget, 'render_window'):
-                    vtk_widget.render_window.Render()
+                # ❌ FLICKER FIX: DO NOT call Render() here - it causes initial flash
+                # The background will be set when the widget is first shown
 
             # Minimize rendering updates until real data is loaded
             if hasattr(vtk_widget, 'render_window'):
@@ -3459,6 +3472,102 @@ class ViewerController:
         except Exception as e:
             self.logger.error(f"Error in cleanup_all_viewers: {e}")
 
+    def _load_series_preview_async(self, series_number: str, study_path: str) -> tuple:
+        """
+        Load preview (5-10 slices) for rapid display on drag & drop.
+        
+        Returns: (vtk_preview_data, metadata) or (None, None) on failure
+        
+        فایده: نمایش فوری toggle٪20ms تا حالی که full volume موازی بارگذاری می‌شود
+        """
+        try:
+            _preview_start = time.perf_counter()
+            
+            # سریع محاسبه: آیا قبلاً ثابت کاش داریم؟
+            try:
+                vtk_full, meta_full, _ = self._get_series_by_number_fast(str(series_number))
+                if vtk_full is not None and isinstance(meta_full, dict):
+                    dims = vtk_full.GetDimensions() if hasattr(vtk_full, 'GetDimensions') else (0, 0, 0)
+                    if int(dims[2]) > 1:  # full volume موجود
+                        _ms = (time.perf_counter() - _preview_start) * 1000
+                        print(f"⚡ [PREVIEW] series={series_number} cached_full {_ms:.0f}ms")
+                        return vtk_full, meta_full
+            except Exception:
+                pass
+            
+            # سریز از disk کش یا source بارگذاری کن
+            from PacsClient.pacs.patient_tab.utils.image_io import load_series_preview
+            
+            vtk_preview, metadata = load_series_preview(
+                study_path=study_path,
+                series_number=int(series_number),
+                max_slices=8  # max 8 slice برای preview
+            )
+            
+            _elapsed = (time.perf_counter() - _preview_start) * 1000
+            if vtk_preview is not None:
+                print(f"⚡ [PREVIEW] series={series_number} loaded {_elapsed:.0f}ms")
+                return vtk_preview, metadata
+            else:
+                print(f"⚠️ [PREVIEW] series={series_number} failed {_elapsed:.0f}ms")
+                return None, None
+                
+        except Exception as e:
+            print(f"⚠️ [PREVIEW] exception: {e}")
+            return None, None
+
+    def _prefetch_adjacent_series(self, current_series_number: str):
+        """
+        پیش‌بینی سریز‌های مجاور و queue برای warmup lane.
+        
+        این متد موازی‌طوری اجرا می‌شود، بنابراین drag & drop بعدی
+        < 50ms (cache hit) خواهد بود.
+        """
+        try:
+            current_idx = None
+            thumbs = getattr(self.parent_widget, 'lst_thumbnails_data', []) or []
+            
+            # پیدا کردن index سریز جاری
+            for idx, item in enumerate(thumbs):
+                sn = str(item.get('metadata', {}).get('series', {}).get('series_number', '') or '')
+                if sn == str(current_series_number):
+                    current_idx = idx
+                    break
+            
+            if current_idx is None:
+                return
+            
+            # Prefetch 3 سریز بعدی + 1 سریز قبلی (اگر موجود باشند)
+            prefetch_indices = []
+            for offset in [-1, 1, 2, 3]:
+                candidate_idx = current_idx + offset
+                if 0 <= candidate_idx < len(thumbs):
+                    prefetch_indices.append(candidate_idx)
+            
+            queued_count = 0
+            for idx in prefetch_indices:
+                item = thumbs[idx]
+                sn = str(item.get('metadata', {}).get('series', {}).get('series_number', '') or '')
+                if not sn or sn in {str(current_series_number)}:
+                    continue
+                
+                # Skip اگر قبلاً queued یا in-memory
+                if self.zeta_boost.has_in_memory(sn):
+                    continue
+                
+                # Queue برای warmup lane (بدون blocking interactive)
+                try:
+                    self.zeta_boost.queue_load(sn, lane="warmup")
+                    queued_count += 1
+                except Exception:
+                    pass
+            
+            if queued_count > 0:
+                print(f"🔥 [PREFETCH] series={current_series_number} queued={queued_count} adjacent")
+                
+        except Exception as e:
+            print(f"⚠️ [PREFETCH] error: {e}")
+
     def _any_viewer_empty(self) -> bool:
         """Return True if any viewer has not been initialized with image data."""
         try:
@@ -4050,13 +4159,43 @@ class ViewerController:
                 self.parent_widget._event_loop = loop
 
                 async def _safe_async_load():
-                    """Load series asynchronously without locks"""
+                    """Load series asynchronously without locks - preview-first strategy"""
                     try:
+                        # ✅ OPTIMIZATION: مرحله 1 - Preview سریع (100-200ms)
+                        study_path = self._get_correct_study_path()
+                        if study_path:
+                            vtk_preview, meta_preview = self._load_series_preview_async(
+                                series_number_str, 
+                                study_path
+                            )
+                            if vtk_preview is not None and meta_preview is not None:
+                                # Display preview فوری
+                                try:
+                                    self._apply_loaded_series_data_threadsafe(
+                                        series_number_str,
+                                        vtk_preview,
+                                        meta_preview,
+                                        self.parent_widget.metadata_fixed.get('patient_pk', None),
+                                        self.parent_widget.metadata_fixed.get('study_pk', None),
+                                        refresh_viewer=False
+                                    )
+                                    print(f"📺 [PREVIEW] displayed for series={series_number_str}")
+                                except Exception as e:
+                                    print(f"⚠️ [PREVIEW_APPLY] error: {e}")
+                        
                         # Yield immediately to prevent blocking
                         await asyncio.sleep(0)
 
-                        # Load and display the series
+                        # ✅ OPTIMIZATION: مرحله 2 - Full volume بارگذاری موازی
                         await self._async_load_and_display_series(series_number_str)
+                        
+                        # ✅ OPTIMIZATION: مرحله 3 - Prefetch سریز‌های مجاور
+                        # Run prefetch در background (non-blocking)
+                        threading.Thread(
+                            target=self._prefetch_adjacent_series,
+                            args=(series_number_str,),
+                            daemon=True
+                        ).start()
 
                     except asyncio.CancelledError:
                         self.logger.debug(f"Load cancelled for series {series_number_str}")

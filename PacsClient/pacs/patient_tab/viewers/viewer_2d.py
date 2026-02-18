@@ -217,7 +217,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.renderer.UseFXAAOn()
 
         self.UpdateDisplayExtent()
-        self.Render()
+        # ❌ FLICKER FIX: Skip initial render - will render once after all setup is complete
+        # self.Render()
 
         # self.last_index_slice_saved = self.get_count_of_slices() // 2
 
@@ -231,12 +232,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # self._baseline_scale = self.renderer.GetActiveCamera().GetParallelScale()
         # print('self.base_zoom_scale:', self.base_zoom_scale)
 
-        self.base_zoom_scale = self.zoom_to_fit()
+        self.base_zoom_scale = self.zoom_to_fit(skip_render=True)
 
-        self.load_top_right_actors()
-        self.load_top_left_actors()
-        self.load_bottom_left_actors()
-        self.load_bottom_right_actors()
+        # ❌ FLICKER FIX: Load actors without rendering - will render once at the end
+        self.load_top_right_actors(render=False)
+        self.load_top_left_actors(render=False)
+        self.load_bottom_left_actors(render=False)
+        self.load_bottom_right_actors(render=False)
+        
+        # ✅ FLICKER FIX: Single render after all initialization is complete
+        self.image_render_window.Render()
 
     @classmethod
     def _cache_get_preprocessed(cls, key):
@@ -988,28 +993,32 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         print(f"      • Setup pipeline: {_setup_time:.3f}s")
 
         _render_start = time.time()
-        
+
         _update_display_start = time.time()
         self.UpdateDisplayExtent()
         _update_display_time = time.time() - _update_display_start
         print(f"         • UpdateDisplayExtent: {_update_display_time:.3f}s")
-        
+
         # Flush before VTK Render — if VTK segfaults the above lines are preserved.
         try:
             sys.stdout.flush()
         except Exception:
             pass
 
-        _render_call_start = time.time()
-        self.Render()
-        _render_call_time = time.time() - _render_call_start
-        print(f"         • Render: {_render_call_time:.3f}s")
-        
+        # ❌ FLICKER FIX: Skip render here - will render once after zoom_to_fit
+        # _render_call_start = time.time()
+        # self.Render()
+        # _render_call_time = time.time() - _render_call_start
+        # print(f"         • Render: {_render_call_time:.3f}s")
+
         _zoom_start = time.time()
-        self.zoom_to_fit()
+        # ✅ FLICKER FIX: Use skip_render=True, then render once at the end
+        self.zoom_to_fit(skip_render=True)
+        # Single render after both UpdateDisplayExtent and zoom_to_fit
+        self.image_render_window.Render()
         _zoom_time = time.time() - _zoom_start
         print(f"         • zoom_to_fit: {_zoom_time:.3f}s")
-        
+
         _render_time = time.time() - _render_start
         print(f"      • Render + zoom: {_render_time:.3f}s")
         
@@ -1132,7 +1141,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.Render()
         return parallel_scale
 
-    def zoom_to_fit(self):
+    def zoom_to_fit(self, skip_render=False):
         try:
             self.renderer.ResetCamera()
             camera = self.renderer.GetActiveCamera()
@@ -1176,7 +1185,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             # print(f"Aspect ratios - Image: {image_aspect}, Window: {window_aspect}")
 
             camera.SetParallelScale(new_scale)
-            self.Render()
+            if not skip_render:
+                self.Render()
 
             return new_scale
             # zoom = self.base_zoom_scale / camera.GetParallelScale()
@@ -2165,7 +2175,10 @@ class CustomCombineImageViewers(ImageViewer2D):
         self.set_color_mapper()
 
         self.flag_set_custom_window_level = False
-        self.zoom_to_fit()
+        # ❌ FLICKER FIX: Skip render here, caller will render
+        self.zoom_to_fit(skip_render=True)
+        # Single render after all changes
+        self.image_render_window.Render()
 
     def reset_image_viewer(self, vtk_image_data, metadata):
         self.series_showed = None

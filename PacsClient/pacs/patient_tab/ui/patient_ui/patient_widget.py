@@ -3482,6 +3482,11 @@ class PatientWidget(QWidget):
 
             series_name = str(metadata['series']['series_number'])
             series_info = metadata['series']
+            
+            # ✅ CRITICAL: Ensure series_info has the correct image_count from loaded instances
+            if 'image_count' not in series_info or not series_info['image_count']:
+                series_info['image_count'] = len(metadata.get('instances', []))
+                
         elif series_info:
             # Use series_info from server (passed as parameter)
             series_name = str(series_info.get('series_number', cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))))
@@ -4045,6 +4050,9 @@ class PatientWidget(QWidget):
         try:
             print("   🎚️ Configuring slider...")
             
+            # ✅ CRITICAL: Block signals during slider setup to prevent image number flickering
+            slider.blockSignals(True)
+            
             # Check if methods exist
             if not hasattr(vtk_widget, 'set_slider'):
                 print("   ⚠️ VTK widget doesn't have set_slider yet (placeholder mode)")
@@ -4075,6 +4083,9 @@ class PatientWidget(QWidget):
             slider.setMaximum(0)
             slider.setValue(0)
             print("   ⚠️ Slider set to default values after error")
+        finally:
+            # ✅ CRITICAL: Unblock signals after all slider configuration is complete
+            slider.blockSignals(False)
 
         # Connect signals
         try:
@@ -4281,6 +4292,30 @@ class PatientWidget(QWidget):
 
         ✅ Always ensures viewers exist before attempting to display series
         """
+        # ✅ OPTIMIZATION: موقع drag & drop، اولویت interactive را افزایش دهید
+        try:
+            if hasattr(self, 'viewer_controller') and hasattr(self.viewer_controller, 'zeta_boost'):
+                # Signal ZetaBoost: این یک user-interactive action است
+                self.viewer_controller._set_zeta_external_interactive_busy(
+                    True, 
+                    reason="user_drag_drop_active"
+                )
+                
+                # استفاده از timer برای release کردن بعد از عملیات
+                def release_interactive():
+                    try:
+                        if hasattr(self, 'viewer_controller'):
+                            self.viewer_controller._set_zeta_external_interactive_busy(
+                                False,
+                                reason="drag_drop_complete"
+                            )
+                    except Exception:
+                        pass
+                
+                QTimer.singleShot(1500, release_interactive)  # Release بعد از 1.5 ثانیه
+        except Exception as e:
+            print(f"⚠️ [INTERACTIVE_BOOST] error: {e}")
+        
         # Delegate to viewer controller
         self.viewer_controller.change_series_on_viewer(series_index, flag_change_selected_widget, vtk_widget, slider,
                                    allow_paired)
@@ -4932,13 +4967,13 @@ class PatientWidget(QWidget):
             return
 
         try:
-            # Block signals to avoid redundant updates
+            # ✅ CRITICAL: Block signals DURING the entire slider update to prevent image number flickering
             slider.blockSignals(True)
 
             vtk_widget.set_slider(slider)
             count_slices = vtk_widget.get_count_of_slices()
 
-            # اگر فقط یک slice است، بلاک کن
+            # اگر فقط یک slice است، بلاک را رفع کن و بیرون برو
             if count_slices <= 1:
                 slider.blockSignals(False)
                 return
@@ -4946,12 +4981,16 @@ class PatientWidget(QWidget):
             mid_slices = 0  # Always start at first slice for speed
             last_slices = max(0, count_slices - 1)
 
-            # Set range and value together to minimize updates
+            # ✅ Set range and value WHILE signals are blocked
             slider.setRange(0, last_slices)
             slider.setValue(mid_slices)
 
-            # Unblock signals and apply window/level
+            # ✅ CRITICAL: Unblock signals AFTER all slider updates are complete
             slider.blockSignals(False)
+            
+            # ✅ Now manually trigger the value changed handler with the correct value
+            # This ensures image number display is updated with the final value
+            self.on_slider_value_changed(vtk_widget, mid_slices)
 
             if hasattr(vtk_widget, 'image_viewer') and vtk_widget.image_viewer is not None:
                 vtk_widget.image_viewer.apply_default_window_level(mid_slices)

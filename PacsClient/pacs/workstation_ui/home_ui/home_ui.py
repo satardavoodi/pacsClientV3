@@ -91,7 +91,7 @@ class HomePanelWidget(QWidget):
     # Signal for robust download progress - THREAD SAFE
     _download_progress_signal = Signal(str, str, float, int, int)  # event_type, series_number, progress_percent, current_count, total_count
 
-    def __init__(self, parent=None, tab_widget: QTabWidget = None, title_bar_tab_area=None):
+    def __init__(self, parent=None, tab_widget: QTabWidget = None, title_bar_tab_area=None, right_tab_area=None):
         super(HomePanelWidget, self).__init__(parent)
         # Store globals reference
         global _home_widget_instance
@@ -99,6 +99,7 @@ class HomePanelWidget(QWidget):
         self.dict_tabs_widget = {}
         self.tab_widget = tab_widget
         self.title_bar_tab_area = title_bar_tab_area
+        self.right_tab_area = right_tab_area
         
         # Initialize loading message attribute
         self.loading_message = None
@@ -119,7 +120,7 @@ class HomePanelWidget(QWidget):
         self._opening_studies = set()
         
         # Initialize custom tab manager with title bar integration
-        self.custom_tab_manager = CustomTabManager(tab_widget, title_bar_tab_area) if tab_widget else None
+        self.custom_tab_manager = CustomTabManager(tab_widget, title_bar_tab_area, right_tab_area) if tab_widget else None
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
@@ -2156,16 +2157,12 @@ class HomePanelWidget(QWidget):
             search_data = self.patient_search_widget.get_search_data()
             print(f"\n[LOCAL_SEARCH] 📋 Search criteria from UI:\n{search_data}")
             
-            # For Local tab: Remove date AND modality filters so ALL downloaded
-            # studies appear regardless of what the user typed on the Server tab.
-            # Studies downloaded from the server may have modality='Unknown' (the
-            # PACS push often omits per-study modality), so keeping modality would
-            # silently hide them.
+            # For Local tab: Remove date filters so downloaded studies appear even
+            # if the user last searched a narrow date range on the Server tab.
             search_data_local = search_data.copy()
             search_data_local['date_from'] = None
             search_data_local['date_to'] = None
-            search_data_local['modality'] = None
-            print(f"[LOCAL_SEARCH] 📋 Modified search_data for local (date+modality filters removed):\n{search_data_local}")
+            print(f"[LOCAL_SEARCH] 📋 Modified search_data for local (date filters removed):\n{search_data_local}")
             
             # مرحله‌ی نسبتاً سنگین: جستجوی بیماران با فیلتر از DB
             # (داخل executor تا UI قفل نشود)

@@ -520,6 +520,11 @@ class MainWindowWidget(QWidget):
 
         title_layout.addStretch()
 
+        # Right-side tab area (next to admin/user info)
+        self.right_tab_area = QFrame()
+        self.right_tab_area.setObjectName("RightTabArea")
+        title_layout.addWidget(self.right_tab_area)
+
         if self.auth_user:
             self.setup_user_info(title_layout)
 
@@ -595,6 +600,9 @@ class MainWindowWidget(QWidget):
     def get_tab_area(self):
         return self.tab_area
 
+    def get_right_tab_area(self):
+        return self.right_tab_area
+
     def apply_modern_styling(self):
         self.setStyleSheet("""
             MainWindowWidget {
@@ -608,6 +616,7 @@ class MainWindowWidget(QWidget):
                 border-bottom: 1px solid #4a5568;
             }
             QFrame#TabArea { background: transparent; border: none; }
+            QFrame#RightTabArea { background: transparent; border: none; }
 
             QTabWidget { background: transparent; border: none; }
             QTabWidget::pane { border: none; background: #1a202c; }

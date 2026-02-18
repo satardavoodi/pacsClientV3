@@ -777,6 +777,86 @@ def get_series_path_with_study_pk_and_series_number(study_fk: int, series_number
 
 
 # ============================================================================
+# Filming Folder Metadata Management
+# ============================================================================
+
+def ensure_filming_columns() -> None:
+    """
+    Ensure filming metadata columns exist on studies table.
+
+    Columns:
+      - has_filming: INTEGER (0/1)
+      - filming_folder_path: TEXT
+    """
+    conn = get_connection_database()
+    cur = conn.cursor()
+    try:
+        cur.execute("PRAGMA table_info(studies)")
+        columns = [info[1] for info in cur.fetchall()]
+
+        if 'has_filming' not in columns:
+            cur.execute("ALTER TABLE studies ADD COLUMN has_filming INTEGER DEFAULT 0")
+        if 'filming_folder_path' not in columns:
+            cur.execute("ALTER TABLE studies ADD COLUMN filming_folder_path TEXT DEFAULT NULL")
+
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ [DB] Error ensuring filming columns: {e}")
+
+
+def set_filming_folder_for_study(study_uid: str, folder_path: str) -> bool:
+    """
+    Mark study as having Filming data and store folder path.
+    """
+    if not study_uid or not folder_path:
+        return False
+
+    conn = get_connection_database()
+    cur = conn.cursor()
+    try:
+        ensure_filming_columns()
+        cur.execute(
+            """
+            UPDATE studies
+            SET has_filming = 1,
+                filming_folder_path = ?
+            WHERE study_uid = ?
+            """,
+            (folder_path, study_uid),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception as e:
+        print(f"⚠️ [DB] Error setting filming folder: {e}")
+        return False
+
+
+def get_filming_folder_for_study(study_uid: str) -> str | None:
+    """
+    Return filming folder path for a study if present.
+    """
+    if not study_uid:
+        return None
+
+    conn = get_connection_database()
+    cur = conn.cursor()
+    try:
+        ensure_filming_columns()
+        cur.execute(
+            """
+            SELECT filming_folder_path
+            FROM studies
+            WHERE study_uid = ? AND COALESCE(has_filming, 0) = 1
+            """,
+            (study_uid,),
+        )
+        row = cur.fetchone()
+        return row[0] if row and row[0] else None
+    except Exception:
+        return None
+
+
+# ============================================================================
 # Visit Status Management
 # ============================================================================
 

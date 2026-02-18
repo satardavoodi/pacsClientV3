@@ -63,7 +63,7 @@ class ServiceTabWidget(QWidget):
         
         main_layout.addWidget(self.icon_container)
         
-        # Service info container
+        # Service info container - HIDDEN (only show icon, no text)
         info_container = QFrame()
         info_container.setObjectName("InfoContainer")
         info_layout = QVBoxLayout(info_container)
@@ -83,7 +83,10 @@ class ServiceTabWidget(QWidget):
         info_layout.addWidget(self.name_label)
         info_layout.addWidget(self.desc_label)
         
-        # Add widgets to main layout
+        # Hide the info container to show only icon
+        info_container.hide()
+        
+        # Add widgets to main layout (info_container is hidden)
         main_layout.addWidget(info_container)
         main_layout.addStretch()
         
@@ -98,10 +101,10 @@ class ServiceTabWidget(QWidget):
         # Add close button with better spacing
         main_layout.addWidget(self.close_button, 0, Qt.AlignRight | Qt.AlignmentFlag.AlignTop)
 
-        # Set size policy - Fixed width for tabs (same as reduced patient tabs)
+        # Set size policy - Reduced width since we only show icon (no text)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.setFixedWidth(252)  # Same as reduced PatientTabWidget
-        self.setFixedHeight(70)  # Same as reduced PatientTabWidget
+        self.setFixedWidth(90)  # Reduced from 252 to fit icon + close button only
+        self.setFixedHeight(70)  # Keep same height
         
     def apply_styling(self):
         """Apply beautiful styling to the tab widget"""
