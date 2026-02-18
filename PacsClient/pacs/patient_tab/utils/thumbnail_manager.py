@@ -1001,6 +1001,22 @@ class ThumbnailManager(QObject):
     def create_thumbnail_widget(self, pixmap: QPixmap, label_text: str, sop_instance_uid='test uid', thumbnail_index=0, series_info=None, show_progress=False):
         """Create unified and consistent thumbnail widget for all scenarios"""
         try:
+            # ✅ CRITICAL FIX: Extract real series_number from series_info, NOT from thumbnail_index
+            # thumbnail_index is just 0,1,2... but we need the actual series number (e.g., 5, 10, 15...)
+            series_number = None
+            if series_info and isinstance(series_info, dict):
+                if 'series' in series_info and isinstance(series_info['series'], dict):
+                    series_number = series_info['series'].get('series_number')
+                elif 'series_number' in series_info:
+                    series_number = series_info['series_number']
+            
+            # Fallback to label_text if series_number not found
+            if series_number is None:
+                series_number = label_text
+            
+            # Use series_number as the key (NOT thumbnail_index)
+            series_key = str(series_number)
+            
             # Main container widget - SQUARE dimensions
             widget = QWidget()
             widget.setFixedSize(190, 190)
@@ -1028,8 +1044,8 @@ class ThumbnailManager(QObject):
             content_layout.setContentsMargins(6, 6, 6, 6)
             content_layout.setSpacing(3)
             
-            # Simple header - text only
-            header_label = QLabel(f"Series {label_text}")
+            # Simple header - text only with REAL series number
+            header_label = QLabel(f"Series {series_number}")
             header_label.setFixedHeight(18)
             header_label.setAlignment(Qt.AlignCenter)
             header_label.setStyleSheet("""
@@ -1046,10 +1062,7 @@ class ThumbnailManager(QObject):
             
             # Create draggable button for the image
             scaled_pixmap = pixmap.scaled(160, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            # ✅ Extract series_number from series_info for proper drag-and-drop
-            series_number = None
-            if series_info and 'series' in series_info:
-                series_number = series_info['series'].get('series_number')
+            # ✅ Use real series_number for drag-and-drop
             image_button = DraggableButton(scaled_pixmap, thumbnail_index=thumbnail_index, series_number=series_number)
             image_button.setFixedSize(160, 120)
             image_button.setIconSize(QSize(160, 120))
@@ -1071,7 +1084,13 @@ class ThumbnailManager(QObject):
             # Series info with description and image count
             if series_info:
                 # Description label
-                desc = series_info.get('series_description', '')
+                # ✅ Check both nested 'series' dict and top-level
+                desc = ''
+                if 'series' in series_info and isinstance(series_info['series'], dict):
+                    desc = series_info['series'].get('series_description', '')
+                if not desc:
+                    desc = series_info.get('series_description', '')
+                    
                 if desc and desc.strip() and desc not in ['No description', 'Unknown']:
                     if len(desc) > 20:
                         desc = desc[:17] + "..."
@@ -1109,9 +1128,15 @@ class ThumbnailManager(QObject):
                     widget.count_label = count_label
                 elif not desc or not desc.strip():
                     # If no count and no desc, show series number
-                    series_number = series_info.get('series_number', '')
-                    if series_number:
-                        fallback_label = QLabel(f"Series {series_number}")
+                    # ✅ Get series_number from nested 'series' dict first
+                    series_num_display = ''
+                    if 'series' in series_info and isinstance(series_info['series'], dict):
+                        series_num_display = series_info['series'].get('series_number', '')
+                    if not series_num_display:
+                        series_num_display = series_info.get('series_number', '')
+                    
+                    if series_num_display:
+                        fallback_label = QLabel(f"Series {series_num_display}")
                         fallback_label.setFixedHeight(18)
                         fallback_label.setAlignment(Qt.AlignCenter)
                         fallback_label.setStyleSheet("""
@@ -1204,29 +1229,31 @@ class ThumbnailManager(QObject):
             
             # Setup drag functionality
             def on_drag_started(_btn):
-                self.selected_series = str(thumbnail_index)
+                # ✅ Use real series_number, NOT thumbnail_index
+                self.selected_series = series_key
                 self.apply_border_states_new()
 
             image_button.dragStarted.connect(on_drag_started)
             
-            # Setup click functionality - با افزودن انتشار سیگنال
-            # Setup click functionality - با افزودن انتشار سیگنال
+            # Setup click functionality
             def on_thumb_clicked():
                 if image_button.isChecked():
-                    self.selected_series = str(thumbnail_index)
+                    # ✅ Use real series_number, NOT thumbnail_index
+                    self.selected_series = series_key
 
-                    # 🔥 انتشار سیگنال برای دانلود اولویت‌دار
+                    # 🔥 Emit priority download for series
                     study_uid = ''
                     if series_info and 'study_uid' in series_info:
                         study_uid = series_info.get('study_uid', '')
                     elif self.current_study_uid:
                         study_uid = self.current_study_uid
 
-                    print(f"🔥 [ThumbnailManager] Emitting priority download for series {thumbnail_index}, study {study_uid}")
-                    self.priority_download_requested.emit(str(thumbnail_index), study_uid)
+                    print(f"🔥 [ThumbnailManager] Emitting priority download for series {series_number}, study {study_uid}")
+                    self.priority_download_requested.emit(series_key, study_uid)
 
                     # First try to change series normally (this will trigger loading if needed)
-                    self.method_change_series(thumbnail_index)
+                    # ✅ Pass series_number, NOT thumbnail_index
+                    self.method_change_series(int(series_number) if isinstance(series_number, str) and series_number.isdigit() else series_number)
                     self.apply_border_states_new()
 
             image_button.clicked.connect(on_thumb_clicked)
@@ -1269,7 +1296,7 @@ class ThumbnailManager(QObject):
                     series_uid = series_info['series'].get('series_uid')
             
             # Store series info in button for later use
-            retry_button.series_number = str(thumbnail_index)
+            retry_button.series_number = series_key
             retry_button.series_uid = series_uid
             retry_button.series_info = series_info
             
@@ -1282,12 +1309,12 @@ class ThumbnailManager(QObject):
                     elif self.current_study_uid:
                         study_uid = self.current_study_uid
                     
-                    series_number = str(thumbnail_index)
+                    # ✅ Use real series_number, NOT thumbnail_index
                     print(f"🔄 [ThumbnailManager] Retry download requested for series {series_number} (UID: {series_uid}), study {study_uid}")
                     
                     # Emit retry signal with series info
                     if hasattr(self, 'retry_download_requested'):
-                        self.retry_download_requested.emit(series_number, study_uid, series_uid)
+                        self.retry_download_requested.emit(series_key, study_uid, series_uid)
                 except Exception as e:
                     print(f"❌ Error in retry button click: {e}")
             
@@ -1308,14 +1335,15 @@ class ThumbnailManager(QObject):
             widget.content_widget = content_widget
             widget.content_layout = content_layout
             widget.image_button = image_button
-            widget.series_number = str(thumbnail_index)
+            # ✅ Use real series_number as the key, NOT thumbnail_index
+            widget.series_number = series_key
             widget.thumbnail_index = thumbnail_index
             
             # Register button
             self.register_button(image_button, label_text)
 
-            # Store widget in series_widgets
-            self.series_widgets[str(thumbnail_index)] = widget
+            # ✅ Store widget using real series_number as key, NOT thumbnail_index
+            self.series_widgets[series_key] = widget
 
             return widget
             

@@ -257,39 +257,60 @@ class ThumbnailPanel(QWidget):
         series_info = None
         if metadata:
             series_info = {
+                'series': {
+                    'series_number': metadata['series'].get('series_number', series_name),
+                    'modality': metadata['series'].get('modality', 'Unknown'),
+                    'series_description': metadata['series'].get('series_description', ''),
+                    'protocol_name': metadata['series'].get('protocol_name', ''),
+                    'body_part_examined': metadata['series'].get('body_part_examined', '')
+                },
                 'series_number': metadata['series'].get('series_number', series_name),
-                'modality': metadata['series'].get('modality', 'Unknown'),
-                'series_description': metadata['series'].get('series_description', ''),
                 'image_count': len(metadata.get('instances', [])),
-                'protocol_name': metadata['series'].get('protocol_name', ''),
-                'body_part_examined': metadata['series'].get('body_part_examined', '')
             }
         else:
             # For cached thumbnails, try to get series info from database
             print(f"🔍 DEBUG: Processing cached thumbnail for series {series_name}")
             try:
-                series_info = self.get_cached_series_metadata(series_name)
-                print(f"🔍 DEBUG: Got series_info from database: {series_info}")
-                if not series_info:  # If database lookup fails, create basic info
+                cached_info = self.get_cached_series_metadata(series_name)
+                print(f"🔍 DEBUG: Got cached_info from database: {cached_info}")
+                if cached_info:  # If database lookup succeeds
+                    series_info = {
+                        'series': {
+                            'series_number': cached_info.get('series_number', series_name),
+                            'modality': cached_info.get('modality', 'Unknown'),
+                            'series_description': cached_info.get('series_description', ''),
+                            'protocol_name': cached_info.get('protocol_name', ''),
+                            'body_part_examined': cached_info.get('body_part_examined', '')
+                        },
+                        'series_number': cached_info.get('series_number', series_name),
+                        'image_count': cached_info.get('image_count', 0),
+                    }
+                else:
                     print(f"🔍 DEBUG: Database lookup failed, creating fallback info")
                     series_info = {
+                        'series': {
+                            'series_number': series_name,
+                            'modality': 'Unknown',
+                            'series_description': f'Series {series_name}',
+                            'protocol_name': '',
+                            'body_part_examined': ''
+                        },
                         'series_number': series_name,
-                        'modality': 'Unknown',
-                        'series_description': f'Series {series_name}',
                         'image_count': 0,
-                        'protocol_name': '',
-                        'body_part_examined': ''
                     }
             except Exception as e:
                 print(f"Error getting cached series info: {str(e)}")
                 # Fallback to basic info
                 series_info = {
+                    'series': {
+                        'series_number': series_name,
+                        'modality': 'Unknown', 
+                        'series_description': f'Series {series_name}',
+                        'protocol_name': '',
+                        'body_part_examined': ''
+                    },
                     'series_number': series_name,
-                    'modality': 'Unknown', 
-                    'series_description': f'Series {series_name}',
                     'image_count': 0,
-                    'protocol_name': '',
-                    'body_part_examined': ''
                 }
 
         print('After if')
