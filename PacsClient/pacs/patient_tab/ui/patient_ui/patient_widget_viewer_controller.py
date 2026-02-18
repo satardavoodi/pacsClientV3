@@ -1735,6 +1735,9 @@ class ViewerController:
             slider.show()
             slider.setEnabled(True)
 
+            # ✅ CRITICAL: Block signals during slider setup to prevent image number flickering
+            slider.blockSignals(True)
+
             # Check if methods exist
             if not hasattr(vtk_widget, 'set_slider'):
                 print("   ⚠️ VTK widget doesn't have set_slider yet (placeholder mode)")
@@ -1765,6 +1768,9 @@ class ViewerController:
             slider.setMaximum(0)
             slider.setValue(0)
             print("   ⚠️ Slider set to default values after error")
+        finally:
+            # ✅ CRITICAL: Unblock signals after all slider configuration is complete
+            slider.blockSignals(False)
 
         # Connect signals
         try:

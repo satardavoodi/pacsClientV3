@@ -653,8 +653,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.viewport_spinner.show_loading(spinner_message)
         
         # =====================================================
-        # ANTI-FLICKERING: Disable widget updates during switch
+        # ANTI-FLICKERING: Block slider signals AND disable widget updates during switch
         # =====================================================
+        if hasattr(self, 'slider') and self.slider is not None:
+            self.slider.blockSignals(True)
         self.setUpdatesEnabled(False)
         
         try:
@@ -687,8 +689,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
                             self.last_series_show = series_index
                             self.save_status_camera(self.image_viewer)
                             
-                            # Re-enable updates and hide spinner
+                            # Re-enable updates and unblock slider signals, then hide spinner
                             self.setUpdatesEnabled(True)
+                            if hasattr(self, 'slider') and self.slider is not None:
+                                self.slider.blockSignals(False)
                             QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
                             return True
                             
@@ -728,9 +732,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
             
         finally:
             # =====================================================
-            # ANTI-FLICKERING: Re-enable updates in finally block
+            # ANTI-FLICKERING: Re-enable updates AND unblock slider signals in finally block
             # =====================================================
             self.setUpdatesEnabled(True)
+            if hasattr(self, 'slider') and self.slider is not None:
+                self.slider.blockSignals(False)
             
         # Hide spinner with delay to allow render to complete
         QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
