@@ -379,7 +379,7 @@ class ModePickerPage(QWidget):
             dlg = QInputDialog(self)
             dlg.setWindowTitle("🔑 API Key Required")
             dlg.setLabelText(
-                "Please enter your IRANNOBAT API key:\n\n"
+                "Please enter your API key:\n\n"
                 "This key will be used for all AI features\n"
                 "(Chat, Reports, Assistant, etc.)."
             )

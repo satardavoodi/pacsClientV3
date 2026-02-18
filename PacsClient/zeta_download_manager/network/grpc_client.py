@@ -175,7 +175,7 @@ class GrpcMetadataClient:
                 for series in response.series_thumbnails:
                     series_info = SeriesInfo(
                         series_uid=series.series_uid,
-                        series_number=int(series.series_number),
+                        series_number=str(series.series_number),
                         series_description=series.series_description,
                         modality=series.modality,
                         image_count=series.image_count,
@@ -185,17 +185,9 @@ class GrpcMetadataClient:
                     )
                     series_list.append(series_info)
 
-                    # Store thumbnail with int key
+                    # Store thumbnail
                     if series.thumbnail_data:
-                        thumbnails[int(series.series_number)] = bytes(series.thumbnail_data)
-
-                # ✅ FIX: Sort series by numeric series_number to ensure correct download order
-                # Series numbers are now integers, so sorting is straightforward: (1, 2, 101, 201, 1452514, ...)
-                try:
-                    series_list = sorted(series_list, key=lambda s: s.series_number)
-                    logger.info(f"✅ Series sorted by numeric order: {[s.series_number for s in series_list]}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not sort series numerically: {e}")
+                        thumbnails[str(series.series_number)] = bytes(series.thumbnail_data)
 
                 metadata = StudyMetadata(
                     study_uid=study_uid,
@@ -302,7 +294,7 @@ class GrpcMetadataClient:
                 for series in response.series_thumbnails:
                     series_info = SeriesInfo(
                         series_uid=series.series_uid,
-                        series_number=int(series.series_number),
+                        series_number=str(series.series_number),
                         series_description=series.series_description,
                         modality=series.modality,
                         image_count=series.image_count,
@@ -312,17 +304,9 @@ class GrpcMetadataClient:
                     )
                     series_list.append(series_info)
 
-                    # Store thumbnail with int key
+                    # Store thumbnail
                     if series.thumbnail_data:
-                        thumbnails[int(series.series_number)] = bytes(series.thumbnail_data)
-
-                # ✅ FIX: Sort series by numeric series_number to ensure correct download order
-                # Series numbers are now integers, so sorting is straightforward: (1, 2, 101, 201, 1452514, ...)
-                try:
-                    series_list = sorted(series_list, key=lambda s: s.series_number)
-                    logger.info(f"✅ Series sorted by numeric order: {[s.series_number for s in series_list]}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not sort series numerically: {e}")
+                        thumbnails[str(series.series_number)] = bytes(series.thumbnail_data)
 
                 metadata = StudyMetadata(
                     study_uid=study_uid,
@@ -348,7 +332,7 @@ class GrpcMetadataClient:
                     self._connect()
                 else:
                     logger.warning(f"❌ gRPC error (attempt {attempt + 1}/{max_retries}): {e.code()}, {e.details()}")
-
+                
                 if attempt < max_retries - 1:
                     import asyncio
                     await asyncio.sleep(retry_delay * (attempt + 1))  # Exponential backoff
