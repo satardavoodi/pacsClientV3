@@ -43,7 +43,7 @@ import os
 if sys.platform == 'win32':
     # Use software rendering for maximum compatibility
     os.environ["QT_OPENGL"] = "software"
-    os.environ["QSG_RHI_BACKEND"] = "software"
+    os.environ["QT_QUICK_BACKEND"] = "software"
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream"
 
 

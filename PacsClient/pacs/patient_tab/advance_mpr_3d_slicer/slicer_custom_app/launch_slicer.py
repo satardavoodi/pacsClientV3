@@ -172,12 +172,40 @@ def _resolve_qt_bin_dir() -> Optional[Path]:
     return None
 
 
+def _load_slicer_config() -> dict:
+    """
+    Load slicer_config.json from the project config directory.
+
+    Returns a dict with keys ``slicer_build_dir`` and ``slicer_exe_path``
+    (both may be empty strings).  Returns an empty dict on any error.
+    """
+    try:
+        # config/ lives at the project root, two parents above utils/config.py
+        # but this file lives deeper – walk up to project root dynamically.
+        config_file = Path(__file__).resolve().parents[5] / "config" / "slicer_config.json"
+        if not config_file.exists():
+            return {}
+        import json as _json
+        with open(config_file, "r", encoding="utf-8") as fh:
+            return _json.load(fh)
+    except Exception as exc:
+        print(f"[AIPACS_LAUNCH] Warning: could not read slicer_config.json: {exc}")
+        return {}
+
+
 def find_slicer_executable(prefer_custom: bool = True) -> Optional[Path]:
     """
     Locate the AIPacsAdvancedViewer.exe custom application LAUNCHER.
     
     IMPORTANT: This function ONLY accepts the custom AI-PACS Advanced Viewer.
     Stock Slicer.exe is NEVER used as a fallback.
+    
+    Discovery order (first match wins):
+      1. ``AIPACS_ADVANCED_VIEWER_EXE`` environment variable (full exe path)
+      2. ``AIPACS_SLICER_BUILD_DIR`` environment variable (build dir)
+      3. ``config/slicer_config.json`` – ``slicer_exe_path`` key
+      4. ``config/slicer_config.json`` – ``slicer_build_dir`` key
+      5. Relative paths next to this script / project root (portable)
     
     NOTE: The launcher executable (at the root of Slicer-build) should be used,
     NOT the direct executable in bin/Release. The launcher sets up proper DLL paths
@@ -191,12 +219,17 @@ def find_slicer_executable(prefer_custom: bool = True) -> Optional[Path]:
     """
     # Get the directory containing this script
     script_dir = Path(__file__).parent.resolve()
+    # Project root (contains config/, PacsClient/, main.py, …)
+    # script_dir = slicer_custom_app, parents: [0]=advance_mpr_3d_slicer, [1]=patient_tab,
+    #   [2]=pacs, [3]=PacsClient, [4]=PacsClientV2 (project root)
+    project_root = script_dir.parents[4]
     
     print(f"[AIPACS_LAUNCH] Searching for AIPacsAdvancedViewer.exe...")
     print(f"[AIPACS_LAUNCH] Script directory: {script_dir}")
+    print(f"[AIPACS_LAUNCH] Project root: {project_root}")
     
     # ============================================================
-    # PRIORITY 1: Launcher discovery (environment + local/sibling builds)
+    # PRIORITY 1: Environment variables (highest precedence)
     # ============================================================
     candidate_launchers = []
 
@@ -208,10 +241,25 @@ def find_slicer_executable(prefer_custom: bool = True) -> Optional[Path]:
     if env_build:
         candidate_launchers.append(Path(env_build) / "AIPacsAdvancedViewer.exe")
 
+    # ============================================================
+    # PRIORITY 2: config/slicer_config.json (per-developer, git-ignored)
+    # ============================================================
+    cfg = _load_slicer_config()
+    cfg_exe = cfg.get("slicer_exe_path", "").strip()
+    cfg_build = cfg.get("slicer_build_dir", "").strip()
+    if cfg_exe:
+        candidate_launchers.append(Path(cfg_exe))
+    if cfg_build:
+        candidate_launchers.append(Path(cfg_build) / "AIPacsAdvancedViewer.exe")
+
+    # ============================================================
+    # PRIORITY 3: Portable / relative paths (no hardcoded drive letters)
+    # ============================================================
     candidate_launchers.extend([
         script_dir / "NewMPR2Slicer" / "build" / "AIPacsAdvancedViewer.exe",
         script_dir / "Slicer-build" / "AIPacsAdvancedViewer.exe",
         script_dir.parent / "Slicer-build" / "AIPacsAdvancedViewer.exe",
+        project_root / "Slicer-build" / "AIPacsAdvancedViewer.exe",
         Path.cwd() / "Slicer-build" / "AIPacsAdvancedViewer.exe",
     ])
 

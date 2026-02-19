@@ -38,6 +38,7 @@ env/
 ENV/
 
 config/servers_address.json
+config/slicer_config.json
 config/patient_table_columns.json
 generated-files/zeta_boost_cache/
 generated-files/zeta_boost.log
