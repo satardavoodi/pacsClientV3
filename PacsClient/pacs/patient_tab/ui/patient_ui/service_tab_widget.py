@@ -323,4 +323,3 @@ class ServiceTabWidget(QWidget):
         self.style().unpolish(self)
         self.style().polish(self)
         self.update()
-
