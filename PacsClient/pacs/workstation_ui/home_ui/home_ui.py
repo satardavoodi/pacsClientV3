@@ -1450,8 +1450,8 @@ class HomePanelWidget(QWidget):
 
             # Create new Download Manager tab (Zeta with v1.0.6 UI)
             print("[Download Manager] Creating new Download Manager tab (Zeta with v1.0.6 UI)")
-            
-            download_manager = DownloadManagerWidget(base_output_dir=Path(SOURCE_PATH))
+
+            download_manager = get_zeta_download_manager_widget(base_output_dir=Path(SOURCE_PATH))
             
             # Add to tab widget with standard name "Download Manager"
             if self.custom_tab_manager:
@@ -3859,37 +3859,11 @@ Study UID: {study_uid}
         """Open download manager - switches to existing tab if available, otherwise creates new one - Uses Zeta with v1.0.6 UI"""
         print("[HomePanelWidget] open_download_manager called (Zeta Download Manager with v1.0.6 UI)")
         try:
-            from PacsClient.utils.config import SOURCE_PATH
-            
-            # Check if download manager tab already exists
-            for i in range(self.tab_widget.count()):
-                widget = self.tab_widget.widget(i)
-                if isinstance(widget, DownloadManagerWidget):
-                    # Tab exists, just switch to it
-                    self.tab_widget.setCurrentIndex(i)
-                    print(f"[HomePanelWidget] Switched to existing Download Manager tab at index {i}")
-                    return
-            
-            # No existing tab found, create a new one
-            print("[HomePanelWidget] Creating new Download Manager tab (Zeta with v1.0.6 UI)")
-            print(f"[HomePanelWidget] DownloadManagerWidget module: {DownloadManagerWidget.__module__}")
-            print(f"[HomePanelWidget] DownloadManagerWidget file: {DownloadManagerWidget.__module__.replace('.', '/')}.py")
-            
-            # Create Zeta Download Manager with base_output_dir parameter
-            download_manager = DownloadManagerWidget(base_output_dir=Path(SOURCE_PATH))
-            print(f"[HomePanelWidget] Widget created - type: {type(download_manager).__name__}")
-            
-            # Use custom tab manager if available
-            if self.custom_tab_manager:
-                print("[HomePanelWidget] Using custom tab manager")
-                tab_index = self.custom_tab_manager.add_download_manager_tab(widget=download_manager)
-                print(f"[HomePanelWidget] Download Manager tab added at index: {tab_index}")
-            else:
-                print("[HomePanelWidget] Using default tab widget")
-                # Fallback to normal tab
-                self.tab_widget.addTab(download_manager, "Download Manager")
-                self.tab_widget.setCurrentWidget(download_manager)
-            
+            download_manager = self._get_or_create_download_manager_tab(activate_tab=True)
+            if download_manager is None:
+                print("[HomePanelWidget] Error: Download Manager widget not available")
+                return
+
             print("[HomePanelWidget] Download Manager opened successfully (Zeta with v1.0.6 UI)")
         except Exception as e:
             print(f"[HomePanelWidget] Error opening download manager: {str(e)}")
@@ -4227,6 +4201,20 @@ Study UID: {study_uid}
                     study_uid=study_uid,
                     activate=False
                 )
+                
+                # Check if tab addition failed due to max patient tabs limit
+                if tab_index == -1:
+                    # Show error message
+                    QMessageBox.warning(
+                        self,
+                        "Maximum Patient Tabs Reached",
+                        f"You can only open a maximum of 3 patient tabs at once.\n\n"
+                        f"Please close one of the existing patient tabs before opening a new one."
+                    )
+                    # Clean up the widget
+                    widget.deleteLater()
+                    return
+                
                 widget.set_tab_manager(self.custom_tab_manager)
                 widget.update_tab_manager(patient_name=patient_name, patient_id=patient_id)
             else:

@@ -533,21 +533,23 @@ class MainWindowWidget(QWidget):
     def setup_user_info(self, title_layout):
         user_container = QFrame()
         user_container.setObjectName("UserInfoContainer")
+        user_container.setFixedHeight(70)
+        user_container.setMinimumWidth(170)
         user_container.setStyleSheet("""
             QFrame#UserInfoContainer {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 rgba(59, 130, 246, 0.15),
-                    stop:1 rgba(99, 102, 241, 0.15));
-                border: 1px solid rgba(59, 130, 246, 0.4);
-                border-radius: 12px;
-                padding: 8px 16px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(59, 130, 246, 0.22),
+                    stop:1 rgba(99, 102, 241, 0.18));
+                border: 2px solid rgba(99, 102, 241, 0.4);
+                border-radius: 10px;
+                padding: 6px 14px;
                 margin-right: 10px;
             }
             QFrame#UserInfoContainer:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 rgba(59, 130, 246, 0.25),
-                    stop:1 rgba(99, 102, 241, 0.25));
-                border: 1px solid rgba(59, 130, 246, 0.6);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(59, 130, 246, 0.34),
+                    stop:1 rgba(99, 102, 241, 0.28));
+                border: 2px solid rgba(148, 163, 184, 0.7);
             }
             QLabel#UserNameLabel {
                 color: #ffffff;
@@ -568,12 +570,12 @@ class MainWindowWidget(QWidget):
         """)
 
         lay = QHBoxLayout(user_container)
-        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setContentsMargins(10, 8, 10, 8)
         lay.setSpacing(12)
 
         user_icon_label = QLabel()
         user_icon = qta.icon('fa5s.user', color='#60a5fa')
-        user_icon_label.setPixmap(user_icon.pixmap(32, 32))
+        user_icon_label.setPixmap(user_icon.pixmap(36, 36))
         user_icon_label.setAlignment(Qt.AlignCenter)
         lay.addWidget(user_icon_label)
 
@@ -784,53 +786,65 @@ class MainWindowWidget(QWidget):
 
     # ---------------- Window buttons ----------------
     def window_buttons(self):
-        # Minimize Button - Windows 10 Style
+        # Minimize Button - Windows 10 Style with visible border
         self.minimize_button = QPushButton("─")
         self.minimize_button.setObjectName("MinimizeButton")
         self.minimize_button.setToolTip("Minimize")
         self.minimize_button.setFixedSize(46, 32)
         self.minimize_button.setStyleSheet("""
             QPushButton#MinimizeButton {
-                background: transparent;
-                border: none;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(30, 41, 59, 0.25), stop:1 rgba(15, 23, 42, 0.25));
+                border: 1px solid rgba(148, 163, 184, 0.45);
+                border-radius: 5px;
                 color: #ffffff;
                 font-size: 16px;
                 font-weight: normal;
             }
             QPushButton#MinimizeButton:hover {
-                background: rgba(255, 255, 255, 0.1);
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(59, 130, 246, 0.18), stop:1 rgba(15, 23, 42, 0.2));
+                border: 1px solid rgba(226, 232, 240, 0.7);
                 color: #ffffff;
             }
             QPushButton#MinimizeButton:pressed {
-                background: rgba(255, 255, 255, 0.05);
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(15, 23, 42, 0.6), stop:1 rgba(2, 6, 23, 0.7));
+                border: 1px solid rgba(148, 163, 184, 0.6);
             }
         """)
         self.minimize_button.clicked.connect(self.showMinimized)
 
-        # Maximize/Restore Button - Windows 10 Style
+        # Maximize/Restore Button - Windows 10 Style with visible border
         self.maximize_button = QPushButton("□")
         self.maximize_button.setObjectName("MaximizeButton")
         self.maximize_button.setToolTip("Maximize")
         self.maximize_button.setFixedSize(46, 32)
         self.maximize_button.setStyleSheet("""
             QPushButton#MaximizeButton {
-                background: transparent;
-                border: none;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(30, 41, 59, 0.25), stop:1 rgba(15, 23, 42, 0.25));
+                border: 1px solid rgba(148, 163, 184, 0.45);
+                border-radius: 5px;
                 color: #ffffff;
                 font-size: 16px;
                 font-weight: normal;
             }
             QPushButton#MaximizeButton:hover {
-                background: rgba(255, 255, 255, 0.1);
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(59, 130, 246, 0.18), stop:1 rgba(15, 23, 42, 0.2));
+                border: 1px solid rgba(226, 232, 240, 0.7);
                 color: #ffffff;
             }
             QPushButton#MaximizeButton:pressed {
-                background: rgba(255, 255, 255, 0.05);
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(15, 23, 42, 0.6), stop:1 rgba(2, 6, 23, 0.7));
+                border: 1px solid rgba(148, 163, 184, 0.6);
             }
         """)
         self.maximize_button.clicked.connect(self._toggle_max_restore)
 
-        # Close Button - Windows 10 Style (Red on hover)
+        # Close Button - Windows 10 Style (Red on hover) with visible border
         self.close_button = QPushButton("✕")
         self.close_button.setObjectName("CloseButton")
         self.close_button.setToolTip("Close")
@@ -838,17 +852,20 @@ class MainWindowWidget(QWidget):
         self.close_button.setStyleSheet("""
             QPushButton#CloseButton {
                 background: transparent;
-                border: none;
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 4px;
                 color: #ffffff;
                 font-size: 16px;
                 font-weight: normal;
             }
             QPushButton#CloseButton:hover {
                 background: #e81123;
+                border: 1px solid #e81123;
                 color: #ffffff;
             }
             QPushButton#CloseButton:pressed {
                 background: rgba(232, 17, 35, 0.8);
+                border: 1px solid rgba(232, 17, 35, 0.8);
             }
         """)
         self.close_button.clicked.connect(self.close)

@@ -487,6 +487,7 @@ class ZetaBoostEngine:
                     target=_async_disk_write,
                     daemon=True,
                     name=f"ZB-DiskW-{key[:20]}",
+                    priority=-1 if promote_immediately else None,  # Higher priority for drag & drop
                 ).start()
             else:
                 self._log_info(

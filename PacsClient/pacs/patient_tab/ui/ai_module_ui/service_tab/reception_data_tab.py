@@ -1228,19 +1228,25 @@ class ReceptionDataTab(QWidget):
         if ai_report_content:
             logger.info("[AI_REPORT_LOAD] ✅ AI report found and loaded successfully")
             logger.info(f"[AI_REPORT_LOAD] AI report length: {len(ai_report_content)} characters")
-            
-            # Merge AI report with existing report
+
+            # Merge AI report with existing report only once
             existing_content = report.get("content", "") or report.get("findings", "")
-            
+            ai_merge_marker = "<!-- AI_REPORT_MERGED -->"
+
             if existing_content:
-                logger.info("[AI_REPORT_LOAD] Merging AI report with existing report")
-                # Add AI report before existing content
-                merged_content = f"{ai_report_content}<hr><h3>Previous Report:</h3>{existing_content}"
-                report["content"] = merged_content
-                logger.info(f"[AI_REPORT_LOAD] Merged report length: {len(merged_content)} characters")
+                if ai_merge_marker in existing_content or ai_report_content in existing_content:
+                    logger.info("[AI_REPORT_LOAD] AI report already merged; skipping merge")
+                else:
+                    logger.info("[AI_REPORT_LOAD] Merging AI report with existing report")
+                    merged_content = (
+                        f"{ai_merge_marker}{ai_report_content}"
+                        f"<hr><h3>Previous Report:</h3>{existing_content}"
+                    )
+                    report["content"] = merged_content
+                    logger.info(f"[AI_REPORT_LOAD] Merged report length: {len(merged_content)} characters")
             else:
                 logger.info("[AI_REPORT_LOAD] No existing report, using AI report only")
-                report["content"] = ai_report_content
+                report["content"] = f"{ai_merge_marker}{ai_report_content}"
         else:
             logger.info("[AI_REPORT_LOAD] ❌ No AI report found for this patient")
         
@@ -1337,7 +1343,7 @@ class ReceptionDataTab(QWidget):
                 
                 reports = U.ai_get_reception_reports(
                     patient_id=str(search_id),
-                    status=None,  # Get all statuses
+                    status="pending",  # Only merge once to avoid repeated appends
                     limit=10  # Get up to 10 most recent
                 )
                 

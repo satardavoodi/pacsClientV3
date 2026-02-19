@@ -133,7 +133,7 @@ class DatabaseManager:
                 series_pk = insert_series(
                     series_uid=series_info.series_uid,
                     study_fk=study_pk,
-                    series_number=series_info.series_number,
+                    series_number=str(series_info.series_number),
                     series_description=series_info.series_description,
                     modality=series_info.modality,
                     image_count=series_info.image_count,

@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel, 
+from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, 
                                QFrame, QSizePolicy, QGraphicsDropShadowEffect)
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal
 from PySide6.QtGui import QPixmap, QPainter, QColor, QFont, QPen
@@ -30,13 +30,13 @@ class ServiceTabWidget(QWidget):
         """Setup the main layout and widgets"""
         # Create main layout
         main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(4, 4, 4, 4)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins to fit inside logo area
+        main_layout.setSpacing(0)  # No extra spacing for icon-only tabs
         
         # Create icon container (same size as reduced thumbnail)
         self.icon_container = QFrame()
         self.icon_container.setObjectName("IconContainer")
-        self.icon_container.setFixedSize(52, 63)
+        self.icon_container.setFixedSize(48, 60)  # Compact icon frame
         
         # Create icon label
         self.icon_label = QLabel()
@@ -56,10 +56,20 @@ class ServiceTabWidget(QWidget):
         pixmap = icon.pixmap(40, 40)
         self.icon_label.setPixmap(pixmap)
         
-        # Add icon to container
-        icon_layout = QVBoxLayout(self.icon_container)
-        icon_layout.setContentsMargins(0, 0, 0, 0)
-        icon_layout.addWidget(self.icon_label, alignment=Qt.AlignCenter)
+        # Add icon + close button to container (overlay close on icon)
+        icon_layout = QGridLayout(self.icon_container)
+        icon_layout.setContentsMargins(3, 3, 3, 3)
+        icon_layout.setSpacing(0)
+        icon_layout.addWidget(self.icon_label, 0, 0, alignment=Qt.AlignCenter)
+
+        # Add close button over the icon (top-right)
+        self.close_button = QLabel("×")
+        self.close_button.setObjectName("CloseButton")
+        self.close_button.setFixedSize(18, 18)
+        self.close_button.setCursor(Qt.PointingHandCursor)
+        self.close_button.setToolTip("Close tab")
+        self.close_button.mousePressEvent = self.close_button_clicked
+        icon_layout.addWidget(self.close_button, 0, 0, alignment=Qt.AlignTop | Qt.AlignRight)
         
         main_layout.addWidget(self.icon_container)
         
@@ -88,23 +98,11 @@ class ServiceTabWidget(QWidget):
         
         # Add widgets to main layout (info_container is hidden)
         main_layout.addWidget(info_container)
-        main_layout.addStretch()
-        
-        # Add close button with minimal space (reduced by 30%)
-        self.close_button = QLabel("×")
-        self.close_button.setObjectName("CloseButton")
-        self.close_button.setFixedSize(18, 18)
-        self.close_button.setCursor(Qt.PointingHandCursor)
-        self.close_button.setToolTip("Close tab")
-        self.close_button.mousePressEvent = self.close_button_clicked
-        
-        # Add close button with better spacing
-        main_layout.addWidget(self.close_button, 0, Qt.AlignRight | Qt.AlignmentFlag.AlignTop)
 
-        # Set size policy - Reduced width since we only show icon (no text)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.setFixedWidth(90)  # Reduced from 252 to fit icon + close button only
-        self.setFixedHeight(70)  # Keep same height
+    # Set size policy - compact icon-only width to fit inside right-side logo area.
+    self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+    self.setFixedWidth(56)  # Tight width for icon + close button only
+    self.setFixedHeight(70)  # Keep same height as logo/tab strip
         
     def apply_styling(self):
         """Apply beautiful styling to the tab widget"""
@@ -112,31 +110,36 @@ class ServiceTabWidget(QWidget):
         # Styling similar to PatientTabWidget
         stylesheet = """
             ServiceTabWidget {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-                border: 2px solid #4a5568 !important;
-                border-radius: 8px !important;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #1f2937, stop:1 #111827) !important;
+                border: 1px solid rgba(148, 163, 184, 0.35) !important;
+                border-radius: 10px !important;
                 min-height: 45px !important;
                 max-width: 170px !important;
                 color: #ffffff !important;
             }
             
             ServiceTabWidget:hover {
-                background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%) !important;
-                border: 2px solid #3182ce !important;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #273449, stop:1 #16202f) !important;
+                border: 1px solid rgba(129, 140, 248, 0.5) !important;
             }
             
             ServiceTabWidget.active {
-                background: linear-gradient(135deg, #4c51bf 0%, #553c9a 100%) !important;
-                border: 2px solid #2b6cb0 !important;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #1e3a8a, stop:1 #1e293b) !important;
+                border: 1px solid rgba(99, 102, 241, 0.7) !important;
             }
             
             QFrame#IconContainer {
-                background: rgba(255, 255, 255, 0.2);
-                border-radius: 6px;
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
             }
             
             ServiceTabWidget.active QFrame#IconContainer {
-                background: rgba(255, 255, 255, 0.3);
+                background: rgba(255, 255, 255, 0.14);
+                border: 1px solid rgba(255, 255, 255, 0.18);
             }
             
             QLabel#IconLabel {
@@ -181,19 +184,19 @@ class ServiceTabWidget(QWidget):
             }
             
             QLabel#CloseButton {
-                background: rgba(239, 68, 68, 0.7);
-                border: 1px solid rgba(239, 68, 68, 0.8);
-                border-radius: 5px;
+                background: rgba(239, 68, 68, 0.88);
+                border: 1px solid rgba(239, 68, 68, 1.0);
+                border-radius: 9px;
                 color: white;
-                font-size: 12px;
-                font-weight: bold;
+                font-size: 13px;
+                font-weight: 700;
                 margin: 0px;
                 padding-bottom: 1px;
             }
             
             QLabel#CloseButton:hover {
-                background: rgba(239, 68, 68, 0.9);
-                border: 1px solid rgba(239, 68, 68, 1.0);
+                background: rgba(239, 68, 68, 1.0);
+                border: 1px solid rgba(248, 113, 113, 1.0);
             }
         """
         
@@ -320,4 +323,3 @@ class ServiceTabWidget(QWidget):
         self.style().unpolish(self)
         self.style().polish(self)
         self.update()
-

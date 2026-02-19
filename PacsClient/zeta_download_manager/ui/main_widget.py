@@ -9,6 +9,7 @@ Modern, polished download manager interface with:
 """
 
 import logging
+from types import SimpleNamespace
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -198,6 +199,19 @@ class DownloadManagerWidget(QWidget):
         
         logger.info("✅ DownloadManagerWidget initialized (v1.0.6 UI style)")
         logger.info("=" * 80)
+
+    @property
+    def study_downloads(self):
+        """Compatibility for legacy callers expecting a study_downloads list."""
+        try:
+            states = self.state_store.get_all()
+        except Exception:
+            return []
+
+        return [
+            SimpleNamespace(study_uid=state.study_uid, status=state.status.value)
+            for state in states
+        ]
         logger.info("🎯 ZETA DOWNLOAD MANAGER WITH V1.0.6 UI - VERIFIED LOADED")
         logger.info(f"   Has toolbar: {hasattr(self, 'start_all_btn')}")
         logger.info(f"   Has details panel: {hasattr(self, 'patient_name_label')}")
@@ -1202,6 +1216,16 @@ class DownloadManagerWidget(QWidget):
                 logger.error(f"   ❌ Error converting series: {e}")
                 continue
         
+        # Order series by numeric series_number when possible to keep download order consistent
+        if series_list:
+            def _series_sort_key(item):
+                raw = str(item.series_number) if item.series_number is not None else ""
+                if raw.isdigit():
+                    return (0, int(raw), raw)
+                return (1, raw)
+
+            series_list = sorted(series_list, key=_series_sort_key)
+
         # If no series after conversion, log warning
         if not series_list:
             logger.warning(f"⚠️ No valid series for {data.get('patient_name', 'Unknown')} - validation will fail!")
@@ -2816,8 +2840,76 @@ class DownloadManagerWidget(QWidget):
             # Check state
             state = self.state_store.get(study_uid)
             if not state:
-                logger.error(f"❌ [SERIES RETRY] State not found for study {study_uid[:40]}")
-                return
+                logger.warning(f"⚠️ [SERIES RETRY] State not found in store for study {study_uid[:40]}")
+                logger.info(f"ℹ️ [SERIES RETRY] Attempting to auto-create state from database...")
+                
+                # Try to fetch study metadata from database and create state
+                try:
+                    from PacsClient.utils.db_manager import get_patient_by_study_uid
+                    db_info = get_patient_by_study_uid(study_uid)
+                    
+                    if db_info:
+                        logger.info(f"✅ [SERIES RETRY] Found study in database, creating state...")
+                        
+                        # Create task and state from DB info
+                        task = self._create_task_from_dict({
+                            'study_uid': study_uid,
+                            'patient_id': db_info.get('patient_id', ''),
+                            'patient_name': db_info.get('patient_name', ''),
+                            'study_date': db_info.get('study_date', ''),
+                            'study_description': db_info.get('study_description', ''),
+                            'modality': db_info.get('modality', ''),
+                            'series_count': db_info.get('series_count', 0),
+                            'images_count': 0,
+                            'series': []
+                        })
+                        
+                        # Create state in store
+                        state = self.state_store.create(task)
+                        logger.info(f"✅ [SERIES RETRY] Auto-created state for study {study_uid[:40]}")
+                    else:
+                        logger.warning(f"⚠️ [SERIES RETRY] Study not found in database")
+                        logger.info(f"ℹ️ [SERIES RETRY] Performing simple cleanup (deleting cached files)")
+                        
+                        # Fallback: Just delete local files
+                        try:
+                            from PacsClient.utils.config import SOURCE_PATH
+                            from pathlib import Path
+                            import shutil
+                            
+                            series_path = Path(SOURCE_PATH) / study_uid / str(series_number)
+                            if series_path.exists():
+                                logger.info(f"🗑️ [SERIES RETRY] Deleting existing series files from disk: {series_path}")
+                                shutil.rmtree(series_path)
+                                logger.info(f"✅ [SERIES RETRY] Series files deleted successfully")
+                        except Exception as e:
+                            logger.error(f"❌ [SERIES RETRY] Error deleting series files: {e}")
+                        
+                        return
+                
+                except Exception as e:
+                    logger.error(f"❌ [SERIES RETRY] Error auto-creating state: {e}")
+                    logger.info(f"ℹ️ [SERIES RETRY] Performing simple cleanup (deleting cached files)")
+                    
+                    # Fallback: Just delete local files
+                    try:
+                        from PacsClient.utils.config import SOURCE_PATH
+                        from pathlib import Path
+                        import shutil
+                        
+                        series_path = Path(SOURCE_PATH) / study_uid / str(series_number)
+                        if series_path.exists():
+                            logger.info(f"🗑️ [SERIES RETRY] Deleting existing series files from disk: {series_path}")
+                            shutil.rmtree(series_path)
+                            logger.info(f"✅ [SERIES RETRY] Series files deleted successfully")
+                    except Exception as e2:
+                        logger.error(f"❌ [SERIES RETRY] Error deleting series files: {e2}")
+                    
+                    return
+                
+                # If we still don't have state here, return
+                if not state:
+                    return
 
             logger.info(f"📊 [SERIES RETRY] Current study state: {state.status.value}")
             logger.info(f"📊 [SERIES RETRY] Completed series: {state.completed_series}")
@@ -2942,7 +3034,20 @@ class DownloadManagerWidget(QWidget):
             # Check state
             state = self.state_store.get(study_uid)
             if not state:
-                logger.error(f"❌ State not found for {study_uid[:40] if study_uid else 'None'}...")
+                logger.warning(f"⚠️ State not found for {study_uid[:40] if study_uid else 'None'}...")
+                logger.warning(f"⚠️ Study may not be in download queue - unable to retry from here")
+                logger.info(f"💡 Please add the study to download queue using the main Download Manager interface")
+                
+                # Fallback: Show user message
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    None,
+                    "Download State Not Found",
+                    f"Study not found in download queue.\n\n"
+                    f"Please:\n"
+                    f"1. Add the study to downloads first\n"
+                    f"2. Then retry the download"
+                )
                 return
 
             logger.info(f"📊 Current state before retry: {state.status.value}, Retry count: {state.retry_count}")
