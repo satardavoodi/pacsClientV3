@@ -30,6 +30,7 @@ import asyncio
 #     window.show()
 #     sys.exit(app.exec())
 from PacsClient.utils import IMAGES_LOGIN_PATH
+from PacsClient.utils.disk_alert_service import DiskUsageAlertService
 
 import os
 
@@ -44,6 +45,7 @@ if sys.platform == 'win32':
     os.environ["QT_OPENGL"] = "software"
     os.environ["QSG_RHI_BACKEND"] = "software"
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream"
+
 
 if __name__ == "__main__":
     # Set working directory to _internal for PyInstaller builds
@@ -68,7 +70,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationVersion("2.2.2")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -355,6 +357,15 @@ if __name__ == "__main__":
 
     window = AppHandler()
     window.show()
+
+    # Global disk usage alert checks (modular service)
+    app._disk_alert_service = DiskUsageAlertService(
+        parent_widget=window,
+        threshold_percent=90.0,
+        interval_ms=5 * 60 * 1000,
+    )
+    app._disk_alert_service.start(initial_delay_ms=2000)
+
     # sys.exit(app.exec())
     with loop:
         loop.run_forever()

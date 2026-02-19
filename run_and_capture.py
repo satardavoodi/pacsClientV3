@@ -2,8 +2,10 @@ import subprocess
 import sys
 import time
 import os
+from pathlib import Path
 
-os.chdir('D:\\New folder\\PacsClientV2')
+project_root = Path(__file__).resolve().parent
+os.chdir(project_root)
 
 # Run the app and redirect to file
 with open('app_output.log', 'w') as f:

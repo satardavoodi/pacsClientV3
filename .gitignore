@@ -18,9 +18,6 @@ cbct-sample/
 **/*.db
 **/*.db-shm
 **/*.db-wal
-*.md
-!.github/copilot-instructions.md
-!PacsClient/pacs/patient_tab/zeta mpr/ZETA_MPR_PIPELINE_REFERENCE.md
 backups/
 data/
 Segments/
@@ -42,8 +39,6 @@ ENV/
 
 config/servers_address.json
 config/patient_table_columns.json
-
-config/
 generated-files/zeta_boost_cache/
 generated-files/zeta_boost.log
 generated-files/zeta_boost_*.log

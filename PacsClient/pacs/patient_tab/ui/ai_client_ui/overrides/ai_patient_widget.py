@@ -1,4 +1,6 @@
 from PySide6.QtWidgets import QSlider, QWidget, QGroupBox, QVBoxLayout
+import os
+from pathlib import Path
 from PacsClient.pacs.patient_tab.ui import PatientWidget
 from PacsClient.pacs.patient_tab.utils import NodeViewer
 
@@ -6,9 +8,17 @@ from PacsClient.pacs.patient_tab.utils import NodeViewer
 class AiPatientWidget(PatientWidget):
     def __init__(self, parent=None, import_folder_path: str = None):
         if import_folder_path is None:
-            # import_folder_path = r'sample_files/sample dicom/1.3.46.670589.11.63286.5.0.15220.2024082210022481008/1.3.12.2.1107.5.2.30.27105.2024090807314525073321420.0.0.0'
-            # import_folder_path = r'C:\Users\Salari\Desktop\copy\1.3.12.2.1107.5.2.46.174759.30000025052504001894800000053'
-            import_folder_path = r'/USERS/mac/SR05'
+            # Prefer environment override for local testing:
+            #   AIPACS_SAMPLE_IMPORT_DIR=/path/to/study
+            import_folder_path = os.getenv("AIPACS_SAMPLE_IMPORT_DIR")
+
+            if not import_folder_path:
+                project_root = Path(__file__).resolve().parents[6]
+                sample_dir = project_root / "sample_files" / "sample dicom"
+                if sample_dir.exists():
+                    import_folder_path = str(sample_dir)
+
+            # If still None, PatientWidget will initialize without auto-import path.
         super().__init__(parent, import_folder_path, size_init_viewers=(1, 2))
 
     def header_layout_ui(self):
