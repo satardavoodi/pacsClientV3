@@ -716,7 +716,7 @@ def reporter(
                 """
             )
         elif modality_lower == "mammography":
-            specific_instructions = ("""
+            specific_instructions = (r"""
                 ====================================================================
                 SECTION 0 — REGEX-LOCKED JSON SCHEMA (HARD ENFORCEMENT)
                 ====================================================================

@@ -58,7 +58,6 @@ import re
 match = re.search(r'http://(\d+\.\d+\.\d+\.\d+):\d+', server_ip)
 if match:
     ip = match.group(1)
-    print(ip)  
 server_config = {
     # "SERVER_IP": "80.210.31.214",
     # "SERVER_IP": "81.16.117.196",

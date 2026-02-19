@@ -2,6 +2,7 @@ import json
 import os
 import json
 import re
+import sys
 from pathlib import Path
 from . import database
 
@@ -9,6 +10,16 @@ json_file = 'servers.json'
 CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
 SERVERS_FILE = CONFIG_DIR / "servers_address.json"
 _SERVERS_FILE_MISSING_WARNED = False
+
+
+def _safe_print(*args, **kwargs):
+    stream = sys.stdout or sys.__stdout__
+    if not stream or getattr(stream, "closed", False):
+        return
+    try:
+        print(*args, **kwargs)
+    except Exception:
+        pass
 
 
 
@@ -123,7 +134,7 @@ def get_server_url(name: str) -> str | None:
     global _SERVERS_FILE_MISSING_WARNED
     if not SERVERS_FILE.exists():
         if not _SERVERS_FILE_MISSING_WARNED:
-            print("servers_address.json not found:", SERVERS_FILE)
+            _safe_print("servers_address.json not found:", SERVERS_FILE)
             _SERVERS_FILE_MISSING_WARNED = True
         return None
 
@@ -170,7 +181,7 @@ def get_server_url(name: str) -> str | None:
         return url
 
     except Exception as e:
-        print("Error reading servers_address.json:", e)
+        _safe_print("Error reading servers_address.json:", e)
         return None
 
 
