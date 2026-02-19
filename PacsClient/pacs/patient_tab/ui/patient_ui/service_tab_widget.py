@@ -99,10 +99,10 @@ class ServiceTabWidget(QWidget):
         # Add widgets to main layout (info_container is hidden)
         main_layout.addWidget(info_container)
 
-    # Set size policy - compact icon-only width to fit inside right-side logo area.
-    self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-    self.setFixedWidth(56)  # Tight width for icon + close button only
-    self.setFixedHeight(70)  # Keep same height as logo/tab strip
+        # Set size policy - compact icon-only width to fit inside right-side logo area.
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setFixedWidth(56)  # Tight width for icon + close button only
+        self.setFixedHeight(70)  # Keep same height as logo/tab strip
         
     def apply_styling(self):
         """Apply beautiful styling to the tab widget"""
