@@ -1,0 +1,27 @@
+secretary_actions:
+  list_patients:
+    description: Get filtered patient rows from the active source tab.
+    adapter_calls:
+      - get_active_source
+      - search
+      - list_rows
+    notes:
+      - For local source, date filtering is validated on returned table rows.
+      - MRI synonyms map to DICOM modality MR.
+  open_patient:
+    description: Resolve patient code and open by existing double-click behavior.
+    adapter_calls:
+      - list_rows
+      - search
+      - open_patient
+    safety:
+      - Always requires explicit confirmation.
+  download_patient:
+    description: Resolve current/explicit patient and queue download.
+    adapter_calls:
+      - list_rows
+      - get_selected_row
+      - download_studies
+    safety:
+      - Always requires explicit confirmation.
+

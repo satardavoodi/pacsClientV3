@@ -47,10 +47,17 @@ from .ai_chat_helpers import _set_icon, _safe_fa_connection_error, extract_plain
 from .ai_chat_api import ChatApiClient, ChatController, ApiWorker
 from .ai_chat_widgets import ChatHistory, UnifiedComposer, MessageBubble, PATIENT_SCROLLBAR_QSS
 from .ai_chat_config import CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT,URL_GEN_TRANSCRIPT,URL_GEN_REPORT,URL_CHAT,URL_GEN_ASSISTANT,URL_STATUS,URL_SESSIONS,URL_HEALTH,URL_EXPORT_ALL,URL_SEARCH,URL_SESSION_GET
+from .settings_store import get_echomind_api_key
+try:
+    from .secretary.orchestrator import SecretaryOrchestrator
+    from .secretary.stt.router import SttRouter
+except Exception:
+    SecretaryOrchestrator = None  # type: ignore[assignment]
+    SttRouter = None  # type: ignore[assignment]
 
 
 class ModePickerPage(QWidget):
-    chosen = Signal(str)  # "Chat" | "Report" | "Assist" | "ChatGPT"
+    chosen = Signal(str)  # "Chat" | "Report" | "Assist" | "Secretary" | "ChatGPT"
 
     def __init__(self, parent=None, *, left_offset: int = 85, top_offset: int = 129, gap: int = 32):
         super().__init__(parent)
@@ -112,9 +119,10 @@ class ModePickerPage(QWidget):
             b.clicked.connect(lambda: self.chosen.emit(text))
             return b
 
-        self.btn_chat   = mk_btn("Chat")
+        self.btn_chat = mk_btn("Chat")
         self.btn_report = mk_btn("Report")
         self.btn_assist = mk_btn("Assist")
+        self.btn_secretary = mk_btn("Secretary")
         self.btn_chatgpt = mk_btn("ChatGPT")
 
         # --- فاصله‌ها و ترتیب ---
@@ -122,6 +130,7 @@ class ModePickerPage(QWidget):
         self.gap_1 = QWidget(self.left_wrap); self.gap_1.setFixedHeight(self._gap_px)
         self.gap_2 = QWidget(self.left_wrap); self.gap_2.setFixedHeight(self._gap_px)
         self.gap_3 = QWidget(self.left_wrap); self.gap_3.setFixedHeight(self._gap_px)
+        self.gap_4 = QWidget(self.left_wrap); self.gap_4.setFixedHeight(self._gap_px)
 
         self.left.addWidget(self.spacer_top)
         self.left.addWidget(self.btn_chat)
@@ -130,8 +139,21 @@ class ModePickerPage(QWidget):
         self.left.addWidget(self.gap_2)
         self.left.addWidget(self.btn_assist)
         self.left.addWidget(self.gap_3)
+        self.left.addWidget(self.btn_secretary)
+        self.left.addWidget(self.gap_4)
         self.left.addWidget(self.btn_chatgpt)
         self.left.addStretch(1)
+        self._mode_buttons = [
+            self.btn_chat,
+            self.btn_report,
+            self.btn_assist,
+            self.btn_secretary,
+            self.btn_chatgpt,
+        ]
+        self._secretary_runtime_available = SecretaryOrchestrator is not None
+        if not self._secretary_runtime_available:
+            self.btn_secretary.setEnabled(False)
+            self.btn_secretary.setToolTip("Secretary mode is unavailable in this runtime.")
 
         # راست: پیام قفل/راهنما
         right_spacer = QWidget(self)
@@ -254,7 +276,7 @@ class ModePickerPage(QWidget):
         - all AI modes are locked (disabled)
         - the lock reason message is shown
         """
-        for btn in (self.btn_chat, self.btn_report, self.btn_assist, self.btn_chatgpt):
+        for btn in (self.btn_chat, self.btn_report, self.btn_assist, self.btn_secretary, self.btn_chatgpt):
             try:
                 btn.setEnabled(bool(enabled))
             except Exception:
@@ -313,171 +335,40 @@ class ModePickerPage(QWidget):
 
 
     def _prompt_api_key(self):
-        """Prompt user for API key if not validated (NO infinite loop; limited retries; HARD LOCK on cancel/fail)."""
-        from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
-        from PySide6.QtCore import QTimer
+        """Load and validate API key from Settings (no popup in EchoMind flow)."""
         from .api_manager import APIKeyManager
 
-        # --- anti-loop / anti re-entry guards ---
-        if getattr(self, "_api_prompt_cancelled", False):
+        manager = APIKeyManager.instance()
+
+        # already validated in current runtime
+        if manager.is_validated():
+            self._set_ai_enabled(True)
             return
-        if getattr(self, "_api_prompt_inflight", False):
-            return
-        self._api_prompt_inflight = True
 
-        try:
-            manager = APIKeyManager.instance()
-
-            # If already validated: unlock UI and show welcome
-            if manager.is_validated():
-                self._set_ai_enabled(True)
-                center = manager.get_current_center()
-                api_key = None
-                try:
-                    for attr in (
-                        "get_current_key", "get_current_api_key", "current_key",
-                        "api_key", "_current_key", "_api_key"
-                    ):
-                        if hasattr(manager, attr):
-                            v = getattr(manager, attr)
-                            api_key = v() if callable(v) else v
-                            if api_key:
-                                break
-                except Exception:
-                    api_key = None
-
-                self._show_welcome(center, api_key=api_key)
-                return
-
-            # Keep UI locked until validated
-            self._set_ai_enabled(False, "🔑 Please enter a valid API key to enable AI features.")
-
-            MAX_RETRIES = 3
-            self._api_retry_count = int(getattr(self, "_api_retry_count", 0))
-
-            # If retries already exceeded: hard lock
-            if self._api_retry_count >= MAX_RETRIES:
-                mb = QMessageBox(self)
-                mb.setIcon(QMessageBox.Critical)
-                mb.setWindowTitle("❌ Too Many Attempts")
-                mb.setText(
-                    "You have reached the maximum number of retry attempts.\n\n"
-                    "AI features are now locked.\n"
-                    "Please return to the login page and enter a valid API key, or contact support."
-                )
-                mb.exec()
-
-                self._api_prompt_cancelled = True
-                self._set_ai_enabled(
-                    False,
-                    "🔒 AI features are locked due to 3 invalid attempts.\n"
-                    "Please go back to the login page and set a valid API key."
-                )
-                return
-
-            # Show dialog
-            dlg = QInputDialog(self)
-            dlg.setWindowTitle("🔑 API Key Required")
-            dlg.setLabelText(
-                "Please enter your API key:\n\n"
-                "This key will be used for all AI features\n"
-                "(Chat, Reports, Assistant, etc.)."
-            )
-            dlg.setTextEchoMode(QLineEdit.Password)
-            dlg.resize(420, 210)
-
-            ok = bool(dlg.exec())
-            if not ok:
-                # Cancel => hard lock until a valid key is set through the proper flow
-                mb = QMessageBox(self)
-                mb.setIcon(QMessageBox.Warning)
-                mb.setWindowTitle("API Key Required")
-                mb.setText(
-                    "You cancelled API key entry.\n\n"
-                    "AI features are locked until a valid key is set."
-                )
-                mb.exec()
-
-                self._api_prompt_cancelled = True
-                self._set_ai_enabled(
-                    False,
-                    "🔒 You cancelled API key entry.\n"
-                    "Reports/Chat/Assistant are disabled until a valid API key is set."
-                )
-                return
-
-            api_key = (dlg.textValue() or "").strip()
-            if not api_key:
-                self._api_retry_count += 1
-                remaining = max(0, MAX_RETRIES - self._api_retry_count)
-
-                mb = QMessageBox(self)
-                mb.setIcon(QMessageBox.Warning)
-                mb.setWindowTitle("⚠️ Empty API Key")
-                mb.setText(
-                    f"No API key was entered.\n\n"
-                    f"Please try again. ({remaining} attempt(s) remaining)"
-                )
-                btn_retry = mb.addButton("🔁 Try again", QMessageBox.AcceptRole)
-                mb.exec()
-
-                if mb.clickedButton() == btn_retry and remaining > 0:
-                    QTimer.singleShot(0, self._prompt_api_key)
-                elif remaining <= 0:
-                    self._api_prompt_cancelled = True
-                    self._set_ai_enabled(
-                        False,
-                        "🔒 AI features are locked due to 3 invalid/empty attempts.\n"
-                        "Please go back to the login page and set a valid API key."
-                    )
-                return
-
-            success, center, error = manager.validate_key(api_key)
-            if success:
-                self._api_retry_count = 0
-                self._api_prompt_cancelled = False
-                self._set_ai_enabled(True)
-                self._show_welcome(center, api_key=api_key)
-                return
-
-            # Invalid key
-            self._api_retry_count += 1
-            remaining = max(0, MAX_RETRIES - self._api_retry_count)
-
-            mb = QMessageBox(self)
-            mb.setIcon(QMessageBox.Critical)
-            mb.setWindowTitle("❌ Invalid API Key")
-
-            if remaining > 0:
-                mb.setText(
-                    f"{error}\n\n"
-                    f"Please try again. ({remaining} attempt(s) remaining)\n\n"
-                    "If you have forgotten your API key, please contact support."
-                )
-                btn_retry = mb.addButton("🔁 Try again", QMessageBox.AcceptRole)
-                mb.exec()
-                if mb.clickedButton() == btn_retry:
-                    QTimer.singleShot(0, self._prompt_api_key)
-                return
-
-            # Retries exhausted => hard lock
-            mb.setText(
-                f"{error}\n\n"
-                "You have reached the maximum number of retry attempts.\n\n"
-                "AI features are now locked.\n"
-                "Please return to the login page and enter a valid API key, or contact support."
-            )
-            mb.exec()
-
-            self._api_prompt_cancelled = True
+        saved_key = (get_echomind_api_key() or "").strip()
+        if not saved_key:
             self._set_ai_enabled(
                 False,
-                "🔒 AI features are locked due to 3 invalid attempts.\n"
-                "Please go back to the login page and set a valid API key."
+                "🔒 EchoMind access key is not configured.\n"
+                "Please set it in Settings → EchoMind."
             )
+            return
 
-        finally:
-            self._api_prompt_inflight = False
+        success, center, error = manager.validate_key(saved_key)
+        if success:
+            self._api_retry_count = 0
+            self._api_prompt_cancelled = False
+            self._set_ai_enabled(True)
+            try:
+                Manage.instance().detect_center(saved_key)
+            except Exception:
+                pass
+            return
+
+        self._set_ai_enabled(
+            False,
+            (error or "❌ Invalid API key.") + "\nPlease update it in Settings → EchoMind."
+        )
 
     def _show_welcome(self, center: str, api_key: t.Optional[str] = None):
         from PySide6.QtWidgets import QMessageBox
@@ -529,6 +420,7 @@ class ModePickerPage(QWidget):
             f"<li>💬 Chat</li>"
             f"<li>📄 Report Generation</li>"
             f"<li>🤖 Assistant</li>"
+            f"<li>🧑 Secretary</li>"
             f"<li>🔍 Search</li>"
             f"<li>🌟 ChatGPT</li>"
             f"</ul>"
@@ -550,6 +442,8 @@ class ModePickerPage(QWidget):
         self.spacer_top.setFixedHeight(top_h)
         self.gap_1.setFixedHeight(gap_h)
         self.gap_2.setFixedHeight(gap_h)
+        self.gap_3.setFixedHeight(gap_h)
+        self.gap_4.setFixedHeight(gap_h)
 
         m = self._root.contentsMargins()
         self._root.setContentsMargins(left_m, m.top(), m.right(), m.bottom())
@@ -557,10 +451,11 @@ class ModePickerPage(QWidget):
 class OneChatPage(QWidget):
     """
     Locked-to-mode page:
-      page_mode in {"Chat","Report","Assist"}
+      page_mode in {"Chat","Report","Assist","Secretary"}
       - Chat: send => Chat
       - Report: send => Report
       - Assist: send => small menu [Assist | Search]
+      - Secretary: send => command parse/execute against PACS modules
     """
 
     # ✅ سیگنال درست در سطح کلاس
@@ -583,6 +478,8 @@ class OneChatPage(QWidget):
             pm = "Report"
         elif pm_l in ("assist", "assistant"):
             pm = "Assist"
+        elif pm_l in ("secretary", "secretory"):
+            pm = "Secretary"
         elif pm_l == "search":
             pm = "Search"
         else:
@@ -639,6 +536,7 @@ class OneChatPage(QWidget):
             "Chat":   "Write your message…",
             "Report": "Write/paste report text",
             "Assist": "Write clinical text to analyze or search…",
+            "Secretary": "Type command (e.g., bring today's patient list)…",
         }.get(self.page_mode, "Write your message…")
 
         self.composer = UnifiedComposer(ph)
@@ -664,6 +562,7 @@ class OneChatPage(QWidget):
             
         # نمایش دکمه مودالیتی فقط در حالت Report
         self.composer.btn_modality.setVisible(self.page_mode in ["Report", "ChatGPT"])
+        self.composer.set_secretary_mode(self.page_mode == "Secretary")
         # تنظیم مودالیتی ذخیره شده
         if OneChatPage.last_selected_modality:
             self._set_modality_text(OneChatPage.last_selected_modality)
@@ -683,6 +582,10 @@ class OneChatPage(QWidget):
             pass
         
         self._current_modality = OneChatPage.last_selected_modality
+        self._secretary_orchestrator = None
+        self._secretary_stt_router = SttRouter() if (self.page_mode == "Secretary" and SttRouter is not None) else None
+        if self.page_mode == "Secretary":
+            self._init_secretary_runtime()
 
         self.controller.messageReady.connect(self._append_bubble)
         self.controller.sessionChanged.connect(self._on_session_changed)
@@ -701,6 +604,7 @@ class OneChatPage(QWidget):
                 "Chat":   "Ready. Type and press Send to Chat.",
                 "Report": "Ready. Paste report text then Send to generate Report.",
                 "Assist": "Ready. Type and press Send. Use the dropdown to run Assist or Search.",
+                "Secretary": "Ready. Type or dictate a command for Secretary.",
             }.get(self.page_mode, "Ready.")
             self.controller.bubble("AI ChatBot", welcome)
     # --- new: handle send depending on locked page_mode ---
@@ -1689,6 +1593,10 @@ class OneChatPage(QWidget):
             self._open_assist_menu(merged)
             return
 
+        if mode == "Secretary":
+            self._send_secretary_command(merged)
+            return
+
         if mode == "Report":
             # سیاست جدید: مستقیم همان متن را برای ساخت گزارش بفرست
             self._send_with_mode(merged, "Report")
@@ -2024,6 +1932,13 @@ class OneChatPage(QWidget):
             return
         
         # --- سایر مودها مثل قبل ---
+        if mode == "Secretary":
+            if voices:
+                self._send_secretary_with_voice(txt, voices)
+            else:
+                self._send_secretary_command(txt)
+            return
+
         if voices:
             self._upload_voices_then(
                 file_paths=voices,
@@ -2200,6 +2115,162 @@ class OneChatPage(QWidget):
 
         btn = self.composer.btn_send
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _init_secretary_runtime(self):
+        if SecretaryOrchestrator is None:
+            self.controller.bubble("AI ChatBot", "Secretary runtime is unavailable in this build.")
+            return
+        try:
+            from PacsClient.pacs.patient_tab.viewers.secretary_bridge import get_runtime_home_widget
+
+            home_widget = get_runtime_home_widget()
+        except Exception:
+            try:
+                from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
+
+                home_widget = get_home_widget()
+            except Exception:
+                home_widget = None
+        self._secretary_orchestrator = SecretaryOrchestrator(home_widget=home_widget)
+
+    def _render_secretary_result_html(self, result: dict) -> str:
+        from html import escape as esc
+
+        action = esc(str(result.get("action") or "secretary"))
+        msg = esc(str(result.get("message") or ""))
+        ok = bool(result.get("ok"))
+        status_color = "#10b981" if ok else "#f59e0b"
+
+        html = [
+            f"<div style='direction:ltr;text-align:left'>",
+            f"<div style='font-weight:700;color:{status_color};margin-bottom:4px'>Secretary · {action}</div>",
+            f"<div style='margin-bottom:6px'>{msg}</div>",
+        ]
+
+        data = result.get("data")
+        if isinstance(data, list):
+            html.append("<ol style='margin:4px 0 0 18px'>")
+            for row in data[:30]:
+                if not isinstance(row, dict):
+                    continue
+                pid = esc(str(row.get("patient_id") or ""))
+                name = esc(str(row.get("patient_name") or ""))
+                date = esc(str(row.get("date") or ""))
+                modality = esc(str(row.get("modality") or ""))
+                suid = esc(str(row.get("study_uid") or ""))
+                html.append(
+                    f"<li><b>{pid}</b> - {name} | {date} | {modality}<br><span style='color:#9ca3af'>{suid}</span></li>"
+                )
+            html.append("</ol>")
+        elif isinstance(data, dict):
+            candidate = data.get("candidate") if isinstance(data.get("candidate"), dict) else data
+            if isinstance(candidate, dict):
+                pid = esc(str(candidate.get("patient_id") or ""))
+                name = esc(str(candidate.get("patient_name") or ""))
+                suid = esc(str(candidate.get("study_uid") or ""))
+                html.append("<div style='border:1px solid #374151;border-radius:8px;padding:8px;'>")
+                html.append(f"<div><b>{pid}</b> - {name}</div>")
+                html.append(f"<div style='color:#9ca3af'>{suid}</div>")
+                html.append("</div>")
+
+        html.append("</div>")
+        return "".join(html)
+
+    def _send_secretary_command(
+        self,
+        text: str,
+        *,
+        stt_route_used: str | None = None,
+    ) -> None:
+        if self._secretary_orchestrator is None:
+            self._init_secretary_runtime()
+        if self._secretary_orchestrator is None:
+            self.controller.bubble("AI ChatBot", "Secretary is not ready.")
+            return
+
+        cmd_text = (text or "").strip()
+        if cmd_text:
+            self.controller.bubble("You (Secretary)", cmd_text)
+
+        sid = self.current_session_id or self.controller.session_id
+        if not sid:
+            sid = self._ensure_local_session("Secretary")
+            self.current_session_id = sid
+
+        stt_cfg = self.composer.get_stt_config() if hasattr(self.composer, "get_stt_config") else {}
+        requested_route = str(stt_cfg.get("route") or "native")
+        used_route = stt_route_used or requested_route
+
+        payload = {
+            "text": cmd_text,
+            "language": "auto",
+            "session_id": sid,
+            "source_scope": "active_tab",
+            "stt_route": requested_route,
+            "stt_route_used": used_route,
+            "stt_fallback": bool(stt_cfg.get("fallback", True)),
+        }
+        try:
+            result = self._secretary_orchestrator.handle(payload)  # type: ignore[arg-type]
+        except Exception as exc:
+            self.controller.bubble("AI ChatBot", f"Secretary runtime error: {exc}")
+            return
+
+        if isinstance(result, dict) and used_route:
+            base_msg = str(result.get("message") or "")
+            if used_route != requested_route:
+                result["message"] = f"{base_msg} (STT route used: {used_route})"
+        self.controller.bubble("AI ChatBot", self._render_secretary_result_html(result))
+
+    def _send_secretary_with_voice(self, user_text: str, voices: list[str]) -> None:
+        if not voices:
+            self._send_secretary_command(user_text)
+            return
+        if self._secretary_stt_router is None:
+            self.controller.bubble("AI ChatBot", "Secretary STT router is unavailable.")
+            return
+
+        stt_cfg = self.composer.get_stt_config() if hasattr(self.composer, "get_stt_config") else {}
+        route = str(stt_cfg.get("route") or "native")
+        fallback = bool(stt_cfg.get("fallback", True))
+        quality = str(stt_cfg.get("quality_mode") or "clear")
+
+        def work():
+            return self._secretary_stt_router.transcribe_files(
+                paths=voices,
+                route=route,
+                fallback=fallback,
+                quality_mode=quality,
+            )
+
+        def ok(resp: dict):
+            transcript = (resp.get("transcript") or "").strip()
+            used_route = str(resp.get("route_used") or route)
+            if transcript:
+                try:
+                    self.composer.clear_pending_voices()
+                except Exception:
+                    pass
+                merged = (user_text or "").strip()
+                if merged:
+                    merged = f"{merged}\n{transcript}"
+                else:
+                    merged = transcript
+                self._send_secretary_command(merged, stt_route_used=used_route)
+                return
+            err = resp.get("error") or "No speech recognized."
+            self.controller.bubble("AI ChatBot", f"Secretary transcription failed: {err}")
+
+        def er(msg: str):
+            self.controller.bubble("AI ChatBot", f"Secretary transcription failed: {msg}")
+
+        self._run_async(
+            work=work,
+            ok=ok,
+            err=er,
+            lock_btn=getattr(self.composer, "btn_send", None),
+            typing="Secretary transcribing voice",
+        )
 
     def _log_irannobat_usage_from_resp(self, resp: object, model_name: str = "Irannobat") -> None:
         """
@@ -4126,6 +4197,14 @@ class OneChatPage(QWidget):
             file_path = _extract_file_path(payload)
             if not file_path or not os.path.exists(file_path):
                 raise Exception("Audio file not found for transcription.")
+            if self.page_mode == "Secretary" and self._secretary_stt_router is not None:
+                stt_cfg = self.composer.get_stt_config() if hasattr(self.composer, "get_stt_config") else {}
+                return self._secretary_stt_router.transcribe_files(
+                    paths=[file_path],
+                    route=str(stt_cfg.get("route") or "native"),
+                    fallback=bool(stt_cfg.get("fallback", True)),
+                    quality_mode=str(stt_cfg.get("quality_mode") or "clear"),
+                )
             files = [("audio_files", open(file_path, "rb"))]
             data = {"quality_mode": getattr(self.composer, "_transcribe_quality_mode", "clear")}
             try:

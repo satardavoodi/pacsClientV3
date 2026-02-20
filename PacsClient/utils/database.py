@@ -1474,6 +1474,31 @@ def ai_ensure_schema():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_study ON ai_reception_reports(study_uid, status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_status ON ai_reception_reports(status, created_at)")
 
+    # Secretary action audit log
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ai_secretary_actions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at INTEGER NOT NULL,
+            sid TEXT,
+            source_tab TEXT,
+            command_text TEXT,
+            stt_route_requested TEXT,
+            stt_route_used TEXT,
+            intent TEXT,
+            entities_json TEXT,
+            action_json TEXT,
+            confirmation_required INTEGER DEFAULT 0,
+            confirmed INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'started',
+            error_code TEXT,
+            error_text TEXT,
+            result_count INTEGER DEFAULT 0,
+            latency_ms INTEGER DEFAULT 0
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_secretary_actions_sid ON ai_secretary_actions(sid, created_at DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_secretary_actions_status ON ai_secretary_actions(status, created_at DESC)")
+
     conn.commit()
 
 
@@ -1961,6 +1986,126 @@ def ai_get_last_session() -> str | None:
         cur.execute("SELECT v FROM ai_meta WHERE k='last_session'")
         row = cur.fetchone()
         return row[0] if row else None
+
+
+# -----------------------------------------------------------------------------
+# AI Secretary audit log
+# -----------------------------------------------------------------------------
+def ai_log_secretary_action_start(
+    *,
+    sid: str | None,
+    source_tab: str,
+    command_text: str,
+    stt_route_requested: str,
+    stt_route_used: str,
+    intent: str,
+    entities_json: dict | str | None,
+    action_json: dict | str | None,
+    confirmation_required: bool,
+) -> int:
+    import time
+
+    def _to_json(value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return str(value)
+
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO ai_secretary_actions(
+                created_at, sid, source_tab, command_text,
+                stt_route_requested, stt_route_used, intent,
+                entities_json, action_json,
+                confirmation_required, confirmed, status
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'started')
+            """,
+            (
+                int(time.time()),
+                sid,
+                source_tab,
+                command_text,
+                stt_route_requested,
+                stt_route_used,
+                intent,
+                _to_json(entities_json),
+                _to_json(action_json),
+                1 if confirmation_required else 0,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def ai_log_secretary_action_end(
+    *,
+    action_id: int,
+    confirmed: bool,
+    status: str,
+    error_code: str | None,
+    error_text: str | None,
+    result_count: int,
+    latency_ms: int,
+) -> None:
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE ai_secretary_actions
+            SET confirmed=?,
+                status=?,
+                error_code=?,
+                error_text=?,
+                result_count=?,
+                latency_ms=?
+            WHERE id=?
+            """,
+            (
+                1 if confirmed else 0,
+                status,
+                error_code,
+                error_text,
+                int(result_count or 0),
+                int(latency_ms or 0),
+                int(action_id),
+            ),
+        )
+        conn.commit()
+
+
+def ai_fetch_secretary_actions(sid: str | None, limit: int = 100) -> list[dict]:
+    lim = max(1, min(int(limit or 100), 2000))
+    with get_db_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        if sid:
+            cur.execute(
+                """
+                SELECT * FROM ai_secretary_actions
+                WHERE sid=?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (sid, lim),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT * FROM ai_secretary_actions
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (lim,),
+            )
+        rows = cur.fetchall() or []
+        return [dict(r) for r in rows]
 
 
 # -----------------------------------------------------------------------------

@@ -5,6 +5,7 @@ from .servers_config import ServersConfigWidget
 from .viewerconfigsetting import ModalityGridConfigWidget
 from .filter_config import FilterConfigWidget
 from .lightviewer_settings import LightViewerSettingsWidget
+from .echomind_settings import EchoMindSettingsWidget
 class SettingsTabWidget(QTabWidget):
     def __init__(self, parent=None):
         super(SettingsTabWidget, self).__init__(parent)
@@ -46,6 +47,7 @@ class SettingsTabWidget(QTabWidget):
         self.viewer_config=ModalityGridConfigWidget()
         self.image_filter=FilterConfigWidget()
         self.lightviewer_settings = LightViewerSettingsWidget()
+        self.echomind_settings = EchoMindSettingsWidget()
         self.tab2 = QWidget()
 
         self.servers_config.saved.connect(self.on_ai_servers_saved)
@@ -57,6 +59,7 @@ class SettingsTabWidget(QTabWidget):
         self.addTab(self.viewer_config,"Viewer Configuration")
         self.addTab(self.image_filter,"Image Filter")
         self.addTab(self.lightviewer_settings, "Light Viewer")
+        self.addTab(self.echomind_settings, "EchoMind")
         # start ui
         self.tab2_ui()
 

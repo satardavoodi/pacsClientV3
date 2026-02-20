@@ -48,6 +48,7 @@ from .data_access_panel import DataAccessPanelWidget
 from .patient_search_widget import PatientSearchWidget
 from .patient_table_widget import PatientTableWidget
 from .right_panel_widget import RightPanelWidget
+from .secretary_button_widget import SecretaryButtonWidget
 # UPDATED: Now using Zeta Download Manager with v1.0.6 UI design
 from PacsClient.zeta_download_manager.ui.main_widget import DownloadManagerWidget
 from PacsClient.utils import get_connection_database, get_all_patients, search_patients_local, find_patient_pk, \
@@ -346,6 +347,10 @@ class HomePanelWidget(QWidget):
         self.patient_search_widget.cancelSearchRequested.connect(self.cancel_search)
         left_layout.addWidget(self.patient_search_widget)
 
+        # EchoMind Secretary button-only UI (main sidebar)
+        self.secretary_button_widget = SecretaryButtonWidget()
+        left_layout.addWidget(self.secretary_button_widget, 1)
+
         # Auto-search with today's date when page loads
         # from PySide6.QtCore import QTimer
         # QTimer.singleShot(1000, self.perform_default_search)
@@ -384,9 +389,8 @@ class HomePanelWidget(QWidget):
         # """)
         # status_layout.addWidget(test_priority_btn)
 
-        left_layout.addWidget(self.status_widget)
-        left_layout.addStretch()
-        self.main_layout.addWidget(left_panel)
+        # Keep legacy status widgets alive for runtime updates, but do not consume sidebar layout space.
+        self.status_widget.setVisible(False)
         # Connection status
         self.connection_indicator = QLabel()
         self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#ef4444').pixmap(12, 12))
@@ -455,8 +459,6 @@ class HomePanelWidget(QWidget):
         self.socket_test_btn.clicked.connect(self.check_socket_connection_status)
         # status_layout.addWidget(self.socket_test_btn)
 
-        left_layout.addWidget(self.status_widget)
-        left_layout.addStretch()
         self.main_layout.addWidget(left_panel)
 
         # panel_layout.addWidget(left_panel)

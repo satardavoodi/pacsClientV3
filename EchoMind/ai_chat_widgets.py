@@ -26,6 +26,7 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from .ai_chat_config import (
     CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT, CLR_BUBBLE_USER, CLR_BUBBLE_BOT
 )
+from .settings_store import get_secretary_stt_route
 
 PATIENT_SCROLLBAR_QSS = """
     QScrollBar:vertical {
@@ -1188,7 +1189,9 @@ class UnifiedComposer(QWidget):
         # متغیر برای نگهداری مودالیتی انتخاب شده
         self._selected_modality = None
         self._modality_options = ["CT", "MRI", "SONOGRAPHY", "RADIOLOGY", "MAMOGRAPHY"]
-        self._transcribe_quality_mode = "clear" 
+        self._transcribe_quality_mode = "clear"
+        self._stt_route = get_secretary_stt_route()
+        self._stt_fallback = True
         # --- chip audio player (for voice chips) ---
         self._chip_player = QMediaPlayer(self)
         self._chip_audio = QAudioOutput(self)
@@ -1643,6 +1646,16 @@ class UnifiedComposer(QWidget):
         self.btn_transcribe_quality.setFixedWidth(140)
         self.btn_transcribe_quality.clicked.connect(self._show_transcribe_quality_menu)
 
+        self.btn_stt_route = QToolButton(controls)
+        self.btn_stt_route.setProperty("role", "tool")
+        self.btn_stt_route.setCursor(Qt.PointingHandCursor)
+        self.btn_stt_route.setProperty("kind", "text")
+        self.btn_stt_route.setFixedHeight(40)
+        self.btn_stt_route.setFixedWidth(150)
+        self.btn_stt_route.setVisible(False)
+        self.btn_stt_route.clicked.connect(self._show_stt_route_menu)
+        self._refresh_stt_route_label()
+
         # 📋 دکمه مودالیتی
         self.btn_modality = QToolButton(controls)
         self.btn_modality.setProperty("role", "tool")
@@ -1795,6 +1808,7 @@ class UnifiedComposer(QWidget):
         ctl.addWidget(self.btn_confirm_rec, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_mic, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_transcribe_quality, 0, Qt.AlignVCenter)
+        ctl.addWidget(self.btn_stt_route, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_modality, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_all_modality_hq, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_assist_send, 0, Qt.AlignVCenter)
@@ -2540,6 +2554,65 @@ class UnifiedComposer(QWidget):
         label = "Clear Voice" if mode == "clear" else "Noisy Voice"
         self.btn_transcribe_quality.setText(label)
 
+    def _refresh_stt_route_label(self):
+        route_label = "Native" if self._stt_route == "native" else "v2t"
+        fallback_label = "On" if self._stt_fallback else "Off"
+        self.btn_stt_route.setText(f"STT:{route_label} Fallback:{fallback_label}")
+
+    def _show_stt_route_menu(self):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            """
+            QMenu {
+                background-color: #2a2a2a;
+                border: 1px solid #4a4a4a;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 8px 16px;
+                color: #ddd;
+                background-color: transparent;
+                border-radius: 4px;
+                margin: 2px;
+            }
+            QMenu::item:selected {
+                background-color: #3a3a3a;
+                color: #fff;
+            }
+            """
+        )
+
+        native_act = QAction("Native (EchoMind API)", menu)
+        native_act.setCheckable(True)
+        native_act.setChecked(self._stt_route == "native")
+        native_act.triggered.connect(lambda: self._set_stt_route("native"))
+
+        v2t_act = QAction("v2t (Google Speech)", menu)
+        v2t_act.setCheckable(True)
+        v2t_act.setChecked(self._stt_route == "v2t")
+        v2t_act.triggered.connect(lambda: self._set_stt_route("v2t"))
+
+        fallback_act = QAction("Fallback", menu)
+        fallback_act.setCheckable(True)
+        fallback_act.setChecked(bool(self._stt_fallback))
+        fallback_act.triggered.connect(self._toggle_stt_fallback)
+
+        menu.addAction(native_act)
+        menu.addAction(v2t_act)
+        menu.addSeparator()
+        menu.addAction(fallback_act)
+
+        menu.exec(self.btn_stt_route.mapToGlobal(self.btn_stt_route.rect().bottomLeft()))
+
+    def _set_stt_route(self, route: str):
+        self._stt_route = "v2t" if str(route).lower() == "v2t" else "native"
+        self._refresh_stt_route_label()
+
+    def _toggle_stt_fallback(self):
+        self._stt_fallback = not bool(self._stt_fallback)
+        self._refresh_stt_route_label()
+
     def _toggle_pause_record(self):
         if not self._rec_running:
             return
@@ -2636,6 +2709,10 @@ class UnifiedComposer(QWidget):
         self.btn_plus.setEnabled(en);
         self.btn_mic.setEnabled(en);
         self.btn_send.setEnabled(en);
+        try:
+            self.btn_stt_route.setEnabled(en)
+        except Exception:
+            pass
         self.box.setEnabled(en)
         try:
             self.btn_all_modality_hq.setEnabled(en)
@@ -3480,6 +3557,19 @@ class UnifiedComposer(QWidget):
         self.btn_assist_send.setVisible(enabled)
         self.btn_search_send.setVisible(enabled)
         self.btn_send.setVisible(not enabled)
+
+    def set_secretary_mode(self, enabled: bool):
+        try:
+            self.btn_stt_route.setVisible(bool(enabled))
+        except Exception:
+            pass
+
+    def get_stt_config(self) -> dict[str, object]:
+        return {
+            "route": self._stt_route,
+            "fallback": bool(self._stt_fallback),
+            "quality_mode": getattr(self, "_transcribe_quality_mode", "clear"),
+        }
 
     def _emit_standardize(self):
         txt = (self.box.toPlainText() or "").strip()

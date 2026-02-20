@@ -760,12 +760,16 @@ def launch_slicer(
         
         print(f"[AIPACS_LAUNCH] Logging to: {log_file}")
         
-        # On Windows, use CREATE_NEW_CONSOLE to fully detach from parent's OpenGL context
-        # This fixes "GLEW could not be initialized: Missing GL version" when parent uses VTK
+        # On Windows, use CREATE_NO_WINDOW to silently detach from parent's
+        # OpenGL context without showing a visible console window.
         creation_flags = 0
+        startupinfo = None
         if sys.platform == 'win32':
-            creation_flags = subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
-            print("[AIPACS_LAUNCH] Using CREATE_NEW_CONSOLE for GPU context isolation")
+            creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+            print("[AIPACS_LAUNCH] Using CREATE_NO_WINDOW for silent GPU context isolation")
         
         if wait:
             # Run and wait for completion, passing env vars
@@ -785,6 +789,7 @@ def launch_slicer(
                     cwd=str(slicer_exe.parent), 
                     env=env, 
                     creationflags=creation_flags,
+                    startupinfo=startupinfo,
                     stderr=f,  # Capture stderr (geometry logs) to file
                     stdout=subprocess.PIPE  # Suppress stdout to console
                 )
@@ -822,6 +827,7 @@ def launch_slicer(
                 cwd=str(slicer_exe.parent), 
                 env=env,
                 creationflags=creation_flags,
+                startupinfo=startupinfo,
                 start_new_session=True if sys.platform != 'win32' else False,
                 stderr=log_handle,
                 stdout=subprocess.PIPE
