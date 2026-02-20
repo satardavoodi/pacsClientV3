@@ -135,12 +135,77 @@ VALID_LAYOUTS = {
 }
 
 
+def _resolve_qt_bin_dir() -> Optional[Path]:
+    """Resolve Qt bin directory from environment in a machine-independent way."""
+    candidates = []
+
+    # Direct bin dir overrides
+    for env_key in ("AIPACS_QT_BIN", "QT_BIN_DIR"):
+        value = os.getenv(env_key)
+        if value:
+            candidates.append(Path(value))
+
+    # QTDIR usually points to Qt root (contains bin)
+    qtdir = os.getenv("QTDIR")
+    if qtdir:
+        candidates.append(Path(qtdir) / "bin")
+
+    # Qt5_DIR may point to .../lib/cmake/Qt5, convert back to bin
+    qt5_dir = os.getenv("Qt5_DIR") or os.getenv("QT5_DIR")
+    if qt5_dir:
+        qt5_path = Path(qt5_dir)
+        candidates.append(qt5_path.parent.parent / "bin")
+
+    seen = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.expanduser().resolve()
+        except Exception:
+            resolved = candidate.expanduser()
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if resolved.exists() and resolved.is_dir():
+            return resolved
+
+    return None
+
+
+def _load_slicer_config() -> dict:
+    """
+    Load slicer_config.json from the project config directory.
+
+    Returns a dict with keys ``slicer_build_dir`` and ``slicer_exe_path``
+    (both may be empty strings).  Returns an empty dict on any error.
+    """
+    try:
+        # config/ lives at the project root, two parents above utils/config.py
+        # but this file lives deeper – walk up to project root dynamically.
+        config_file = Path(__file__).resolve().parents[5] / "config" / "slicer_config.json"
+        if not config_file.exists():
+            return {}
+        import json as _json
+        with open(config_file, "r", encoding="utf-8") as fh:
+            return _json.load(fh)
+    except Exception as exc:
+        print(f"[AIPACS_LAUNCH] Warning: could not read slicer_config.json: {exc}")
+        return {}
+
+
 def find_slicer_executable(prefer_custom: bool = True) -> Optional[Path]:
     """
     Locate the AIPacsAdvancedViewer.exe custom application LAUNCHER.
     
     IMPORTANT: This function ONLY accepts the custom AI-PACS Advanced Viewer.
     Stock Slicer.exe is NEVER used as a fallback.
+    
+    Discovery order (first match wins):
+      1. ``AIPACS_ADVANCED_VIEWER_EXE`` environment variable (full exe path)
+      2. ``AIPACS_SLICER_BUILD_DIR`` environment variable (build dir)
+      3. ``config/slicer_config.json`` – ``slicer_exe_path`` key
+      4. ``config/slicer_config.json`` – ``slicer_build_dir`` key
+      5. Relative paths next to this script / project root (portable)
     
     NOTE: The launcher executable (at the root of Slicer-build) should be used,
     NOT the direct executable in bin/Release. The launcher sets up proper DLL paths
@@ -154,31 +219,67 @@ def find_slicer_executable(prefer_custom: bool = True) -> Optional[Path]:
     """
     # Get the directory containing this script
     script_dir = Path(__file__).parent.resolve()
+    # Project root (contains config/, PacsClient/, main.py, …)
+    # script_dir = slicer_custom_app, parents: [0]=advance_mpr_3d_slicer, [1]=patient_tab,
+    #   [2]=pacs, [3]=PacsClient, [4]=PacsClientV2 (project root)
+    project_root = script_dir.parents[4]
     
     print(f"[AIPACS_LAUNCH] Searching for AIPacsAdvancedViewer.exe...")
     print(f"[AIPACS_LAUNCH] Script directory: {script_dir}")
+    print(f"[AIPACS_LAUNCH] Project root: {project_root}")
     
     # ============================================================
-    # PRIORITY 1: Superbuild launcher (RECOMMENDED)
-    # The launcher at the root of Slicer-build sets up all DLL paths
-    # and Python environment correctly using AIPacsAdvancedViewerLauncherSettings.ini
+    # PRIORITY 1: Environment variables (highest precedence)
     # ============================================================
-    superbuild_launcher = Path("C:/S/NB/Slicer-build/AIPacsAdvancedViewer.exe")
-    if superbuild_launcher.exists() and superbuild_launcher.is_file():
-        print(f"[AIPACS_LAUNCH] [OK] Found superbuild launcher: {superbuild_launcher}")
-        print(f"[AIPACS_LAUNCH] Selected executable: {superbuild_launcher}")
-        print(f"[AIPACS_LAUNCH] IsCustomApp: {superbuild_launcher.name.lower().startswith('aipacsadvancedviewer')}")
-        return superbuild_launcher
-    
+    candidate_launchers = []
+
+    env_exe = os.getenv("AIPACS_ADVANCED_VIEWER_EXE")
+    if env_exe:
+        candidate_launchers.append(Path(env_exe))
+
+    env_build = os.getenv("AIPACS_SLICER_BUILD_DIR")
+    if env_build:
+        candidate_launchers.append(Path(env_build) / "AIPacsAdvancedViewer.exe")
+
     # ============================================================
-    # PRIORITY 2: Local build launcher (if superbuild not available)
+    # PRIORITY 2: config/slicer_config.json (per-developer, git-ignored)
     # ============================================================
-    local_launcher = script_dir / "NewMPR2Slicer" / "build" / "AIPacsAdvancedViewer.exe"
-    if local_launcher.exists() and local_launcher.is_file():
-        print(f"[AIPACS_LAUNCH] [OK] Found local launcher: {local_launcher}")
-        print(f"[AIPACS_LAUNCH] Selected executable: {local_launcher}")
-        print(f"[AIPACS_LAUNCH] IsCustomApp: {local_launcher.name.lower().startswith('aipacsadvancedviewer')}")
-        return local_launcher
+    cfg = _load_slicer_config()
+    cfg_exe = cfg.get("slicer_exe_path", "").strip()
+    cfg_build = cfg.get("slicer_build_dir", "").strip()
+    if cfg_exe:
+        candidate_launchers.append(Path(cfg_exe))
+    if cfg_build:
+        candidate_launchers.append(Path(cfg_build) / "AIPacsAdvancedViewer.exe")
+
+    # ============================================================
+    # PRIORITY 3: Portable / relative paths (no hardcoded drive letters)
+    # ============================================================
+    candidate_launchers.extend([
+        script_dir / "NewMPR2Slicer" / "build" / "AIPacsAdvancedViewer.exe",
+        script_dir / "Slicer-build" / "AIPacsAdvancedViewer.exe",
+        script_dir.parent / "Slicer-build" / "AIPacsAdvancedViewer.exe",
+        project_root / "Slicer-build" / "AIPacsAdvancedViewer.exe",
+        Path.cwd() / "Slicer-build" / "AIPacsAdvancedViewer.exe",
+    ])
+
+    seen = set()
+    for launcher in candidate_launchers:
+        try:
+            resolved = launcher.expanduser().resolve()
+        except Exception:
+            resolved = launcher.expanduser()
+
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        if resolved.exists() and resolved.is_file():
+            print(f"[AIPACS_LAUNCH] [OK] Found launcher: {resolved}")
+            print(f"[AIPACS_LAUNCH] Selected executable: {resolved}")
+            print(f"[AIPACS_LAUNCH] IsCustomApp: {resolved.name.lower().startswith('aipacsadvancedviewer')}")
+            return resolved
     
     # ============================================================
     # FALLBACK: Direct executable (requires manual DLL setup)
@@ -236,7 +337,7 @@ def find_slicer_executable(prefer_custom: bool = True) -> Optional[Path]:
     print("[AIPACS_LAUNCH]   1. Open Developer Command Prompt for VS 2022")
     print(f"[AIPACS_LAUNCH]   2. cd {script_dir / 'NewMPR2Slicer'}")
     print("[AIPACS_LAUNCH]   3. mkdir build && cd build")
-    print("[AIPACS_LAUNCH]   4. cmake -G \"Visual Studio 17 2022\" -A x64 -DQt5_DIR=\"C:/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5\" ..")
+    print("[AIPACS_LAUNCH]   4. cmake -G \"Visual Studio 17 2022\" -A x64 -DQt5_DIR=\"<path-to-Qt5-cmake-dir>\" ..")
     print("[AIPACS_LAUNCH]   5. cmake --build . --config Release")
     print("[AIPACS_LAUNCH] ")
     print("[AIPACS_LAUNCH] After build, verify:")
@@ -262,7 +363,7 @@ To build it, run these steps:
   1. Open Developer Command Prompt for VS 2022
   2. cd {script_dir / 'NewMPR2Slicer'}
   3. mkdir build && cd build
-  4. cmake -G "Visual Studio 17 2022" -A x64 -DQt5_DIR="C:/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5" ..
+    4. cmake -G "Visual Studio 17 2022" -A x64 -DQt5_DIR="<path-to-Qt5-cmake-dir>" ..
   5. cmake --build . --config Release
 
 After build, verify:
@@ -446,10 +547,12 @@ def get_slicer_env(
     if slicer_exe:
         bin_dir = slicer_exe.parent
         lib_dir = bin_dir.parent.parent / "lib"  # build/lib
-        qt_bin = Path("C:/Qt/5.15.2/msvc2019_64/bin")
-        
+        qt_bin = _resolve_qt_bin_dir()
+
         # Prepend our directories to PATH
-        path_additions = [str(bin_dir), str(lib_dir), str(qt_bin)]
+        path_additions = [str(bin_dir), str(lib_dir)]
+        if qt_bin:
+            path_additions.append(str(qt_bin))
         current_path = env.get("PATH", "")
         env["PATH"] = ";".join(path_additions) + ";" + current_path
         print(f"[AIPACS_LAUNCH] Added to PATH: {bin_dir}")
@@ -657,12 +760,16 @@ def launch_slicer(
         
         print(f"[AIPACS_LAUNCH] Logging to: {log_file}")
         
-        # On Windows, use CREATE_NEW_CONSOLE to fully detach from parent's OpenGL context
-        # This fixes "GLEW could not be initialized: Missing GL version" when parent uses VTK
+        # On Windows, use CREATE_NO_WINDOW to silently detach from parent's
+        # OpenGL context without showing a visible console window.
         creation_flags = 0
+        startupinfo = None
         if sys.platform == 'win32':
-            creation_flags = subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
-            print("[AIPACS_LAUNCH] Using CREATE_NEW_CONSOLE for GPU context isolation")
+            creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+            print("[AIPACS_LAUNCH] Using CREATE_NO_WINDOW for silent GPU context isolation")
         
         if wait:
             # Run and wait for completion, passing env vars
@@ -682,6 +789,7 @@ def launch_slicer(
                     cwd=str(slicer_exe.parent), 
                     env=env, 
                     creationflags=creation_flags,
+                    startupinfo=startupinfo,
                     stderr=f,  # Capture stderr (geometry logs) to file
                     stdout=subprocess.PIPE  # Suppress stdout to console
                 )
@@ -719,6 +827,7 @@ def launch_slicer(
                 cwd=str(slicer_exe.parent), 
                 env=env,
                 creationflags=creation_flags,
+                startupinfo=startupinfo,
                 start_new_session=True if sys.platform != 'win32' else False,
                 stderr=log_handle,
                 stdout=subprocess.PIPE
@@ -1150,8 +1259,10 @@ def launch_slicer_standby(
     # Add Slicer bin directory to PATH for DLL loading
     bin_dir = exe.parent
     lib_dir = bin_dir.parent.parent / "lib"  # build/lib
-    qt_bin = Path("C:/Qt/5.15.2/msvc2019_64/bin")
-    path_additions = [str(bin_dir), str(lib_dir), str(qt_bin)]
+    qt_bin = _resolve_qt_bin_dir()
+    path_additions = [str(bin_dir), str(lib_dir)]
+    if qt_bin:
+        path_additions.append(str(qt_bin))
     current_path = env.get("PATH", "")
     env["PATH"] = ";".join(path_additions) + ";" + current_path
     print(f"[launch_slicer] Added to PATH: {bin_dir}")

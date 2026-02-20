@@ -2990,9 +2990,22 @@ class ViewerController:
             admitted_heavy, dropped_heavy, current_bytes, budget_bytes, reserve_bytes = self._filter_heavy_candidates_by_capacity(heavy_candidates)
             heavy_candidates = admitted_heavy
 
+            study_for_log = str(getattr(self.parent_widget, 'study_uid', '') or '').strip()
+            try:
+                import_path = str(getattr(self.parent_widget, 'import_folder_path', '') or '').strip()
+                if import_path:
+                    study_from_path = Path(import_path).name
+                    # Prefer path-derived UID when runtime value looks malformed.
+                    if (not study_for_log) or ('..' in study_for_log and '..' not in study_from_path):
+                        study_for_log = study_from_path
+            except Exception:
+                pass
+            if not study_for_log:
+                study_for_log = 'unknown'
+
             print(
-                f"ℹ️ [ZetaBoost][OPEN_WARMUP] filtered study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
-                f"tottal={total_candidates} skipped_active={skipped_active} skipped_primary={skipped_primary} "
+                f"ℹ️ [ZetaBoost][OPEN_WARMUP] filtered study={study_for_log} "
+                f"total={total_candidates} skipped_active={skipped_active} skipped_primary={skipped_primary} "
                 f"skipped_large={skipped_large} skipped_corrupt={skipped_corrupt} skipped_non_image={skipped_non_image} "
                 f"skipped_failed={skipped_failed} skipped_cached={skipped_cached} "
                 f"queued_light={len(candidates)} queued_heavy={len(heavy_candidates)}"

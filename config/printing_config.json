@@ -1,0 +1,30 @@
+{
+  "printers": [
+    {
+      "name": "Local Printer",
+      "printer_type": "os",
+      "settings": {}
+    },
+    {
+      "name": "DICOM Printer",
+      "printer_type": "dicom",
+      "settings": {
+        "ip_address": "127.0.0.1",
+        "port": "104",
+        "ae_title": "PRINTER_AE"
+      }
+    }
+  ],
+  "default_film_sizes": [
+    {"name": "14x17", "width_in": 14.0, "height_in": 17.0},
+    {"name": "11x14", "width_in": 11.0, "height_in": 14.0},
+    {"name": "8x10", "width_in": 8.0, "height_in": 10.0},
+    {"name": "A3", "width_in": 11.69, "height_in": 16.54},
+    {"name": "A4", "width_in": 8.27, "height_in": 11.69}
+  ],
+  "default_layouts": [
+    {"rows": 4, "cols": 5},
+    {"rows": 4, "cols": 4},
+    {"rows": 3, "cols": 4}
+  ]
+}

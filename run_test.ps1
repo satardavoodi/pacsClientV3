@@ -1,2 +1,2 @@
-cd 'D:\New folder\PacsClientV2'
+Set-Location -Path $PSScriptRoot
 python main.py

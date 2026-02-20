@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import numpy as np
 import vtk
-from PySide6.QtGui import QPixmap, QColor
+from PySide6.QtGui import QPixmap, QColor, QPainter, QPen
 import contextlib
 import json
 import pydicom
@@ -22,12 +22,10 @@ from PacsClient.utils import get_count_instances_in_study
 from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachment_folder, open_folder, \
     check_and_get_thumbnails, get_name_file_from_path, get_quickly_series_info
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QRect
 from PySide6.QtWidgets import QHBoxLayout, QSlider, QLabel, QScrollArea, QGridLayout, QToolBar, QPushButton, \
     QButtonGroup, QStackedWidget, QSizePolicy, QFrame, QGroupBox, QMessageBox, QListWidget, QListWidgetItem, QSplitter, \
     QGraphicsOpacityEffect
-from PySide6.QtGui import QPainter
-
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget, grow_vtk_inplace
 from PacsClient.pacs.patient_tab.utils import load_images, save_image_as_png, delete_widgets_in_layout, NodeViewer, \
@@ -3004,9 +3002,8 @@ class PatientWidget(QWidget):
             self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(True))
 
             self._refresh_advanced_analysis_series_list()
-
-            # Default behavior: open advanced viewer with current active series
-            self.launch_advanced_analysis_for_active_series()
+            
+            # NOTE: Automatic launch removed - users must click "Advanced MPR and AI segmentation" button
 
     def launch_advanced_analysis_for_active_series(self) -> bool:
         """
@@ -3113,6 +3110,11 @@ class PatientWidget(QWidget):
             return False
 
     def _build_advanced_analysis_panel(self) -> QWidget:
+        """
+        Build Advanced Analysis panel with:
+        - Top 50%: Thumbnails panel (identical to Series thumbnails)
+        - Bottom 50%: Advanced Models buttons section
+        """
         panel = QWidget()
         panel.setStyleSheet("""
             QWidget {
@@ -3128,16 +3130,134 @@ class PatientWidget(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
+        # Create vertical splitter for 50-50 split
         splitter = QSplitter(Qt.Vertical)
         splitter.setChildrenCollapsible(False)
 
+        # =====================================================================
+        # TOP HALF: Thumbnails Panel – identical to Series thumbnails
+        # =====================================================================
         top_widget = QWidget()
+        top_widget.setStyleSheet("""
+            QWidget {
+                background: #0f1419;
+                border: none;
+                border-radius: 8px;
+                margin: 0px;
+                padding: 0px;
+            }
+        """)
         top_layout = QVBoxLayout(top_widget)
-        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setContentsMargins(20, 6, 6, 6)
         top_layout.setSpacing(6)
 
-        title_label = QLabel("Advanced Analysis - Series")
-        title_label.setStyleSheet("""
+        # Header (same as Series Thumbnails header)
+        header_widget = QWidget()
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+
+        thumb_title_label = QLabel("Thumbnails")
+        thumb_title_label.setStyleSheet("""
+            QLabel {
+                font-size: 10px;
+                font-family: 'Roboto', sans-serif;
+                color: #f7fafc;
+                padding: 6px 10px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #7c3aed, stop:1 #5b21b6);
+                border: 1px solid #7c3aed;
+                border-radius: 8px;
+            }
+        """)
+        self.advanced_thumb_count_label = QLabel("0 series")
+        self.advanced_thumb_count_label.setStyleSheet("""
+            QLabel {
+                font-size: 10px;
+                font-family: 'Roboto', sans-serif;
+                color: #a0aec0;
+                padding: 4px 6px;
+                background: rgba(160, 174, 192, 0.1);
+                border: 1px solid rgba(160, 174, 192, 0.2);
+                border-radius: 8px;
+            }
+        """)
+        header_layout.addWidget(thumb_title_label)
+        header_layout.addStretch()
+        header_layout.addWidget(self.advanced_thumb_count_label)
+        top_layout.addWidget(header_widget)
+
+        # Scroll area (same style as Series scroll area)
+        thumb_scroll = QScrollArea()
+        self.advanced_thumb_scroll = thumb_scroll
+        thumb_scroll.setWidgetResizable(True)
+        thumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        thumb_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        thumb_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+            QScrollBar:vertical {
+                border: 1px solid #4b5563;
+                background: #1f2937;
+                width: 12px;
+                margin: 12px 0px 12px 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #374151;
+                min-height: 40px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #4b5563;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 12px;
+                width: 12px;
+                background: transparent;
+                border: none;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                width: 0px;
+                height: 0px;
+            }
+        """)
+
+        # Grid container (same as Series grid)
+        thumb_container = QWidget()
+        thumb_container.setStyleSheet("QWidget { background-color: transparent; }")
+        thumb_container_layout = QGridLayout(thumb_container)
+        thumb_container_layout.setContentsMargins(8, 6, 14, 6)
+        thumb_container_layout.setHorizontalSpacing(6)
+        thumb_container_layout.setVerticalSpacing(6)
+        thumb_container_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+
+        # Store for future reference
+        self.advanced_analysis_thumb_grid = thumb_container_layout
+        self.advanced_analysis_thumb_container = thumb_container
+
+        thumb_scroll.setWidget(thumb_container)
+        top_layout.addWidget(thumb_scroll)
+
+        # =====================================================================
+        # BOTTOM HALF: Advanced Models Buttons Section
+        # =====================================================================
+        bottom_widget = QWidget()
+        bottom_layout = QVBoxLayout(bottom_widget)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(6)
+
+        # Advanced Models title
+        models_title_label = QLabel("Advanced Models")
+        models_title_label.setStyleSheet("""
             QLabel {
                 font-size: 11px;
                 font-family: 'Roboto', sans-serif;
@@ -3149,70 +3269,222 @@ class PatientWidget(QWidget):
                 border-radius: 8px;
             }
         """)
-        top_layout.addWidget(title_label)
+        bottom_layout.addWidget(models_title_label)
 
-        series_list = QListWidget()
-        series_list.setObjectName("AdvancedAnalysisSeriesList")
-        series_list.setStyleSheet("""
-            QListWidget#AdvancedAnalysisSeriesList {
-                background: #0b1016;
+        # Models container (scrollable)
+        models_scroll = QScrollArea()
+        models_scroll.setWidgetResizable(True)
+        models_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        models_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        models_scroll.setStyleSheet("""
+            QScrollArea {
                 border: 1px solid #2d3748;
+                background: #0b1016;
                 border-radius: 8px;
-                padding: 4px;
-                color: #e2e8f0;
-                font-size: 12px;
             }
-            QListWidget#AdvancedAnalysisSeriesList::item {
-                padding: 6px 8px;
+            QScrollBar:vertical {
+                border: 1px solid #4b5563;
+                background: #1f2937;
+                width: 12px;
+                margin: 12px 0px 12px 0px;
                 border-radius: 6px;
             }
-            QListWidget#AdvancedAnalysisSeriesList::item:selected {
-                background: #2563eb;
-                color: #ffffff;
+            QScrollBar::handle:vertical {
+                background: #374151;
+                min-height: 40px;
+                border-radius: 5px;
             }
-        """)
-        series_list.itemClicked.connect(self._on_advanced_analysis_series_clicked)
-        self.advanced_analysis_series_list = series_list
-        top_layout.addWidget(series_list)
-
-        bottom_widget = QWidget()
-        bottom_widget.setStyleSheet("""
-            QWidget {
-                background: #0b1016;
-                border: 1px dashed #2d3748;
-                border-radius: 8px;
+            QScrollBar::handle:vertical:hover {
+                background: #4b5563;
             }
         """)
 
+        # Models container
+        models_container = QWidget()
+        models_container.setStyleSheet("QWidget { background: transparent; }")
+        models_container_layout = QVBoxLayout(models_container)
+        models_container_layout.setContentsMargins(8, 6, 8, 6)
+        models_container_layout.setSpacing(8)
+        models_container_layout.setAlignment(Qt.AlignTop)
+
+        # Advanced MPR Button
+        self.btn_advanced_mpr = QPushButton("Advanced MPR and AI segmentation")
+        self.btn_advanced_mpr.setCursor(Qt.PointingHandCursor)
+        self.btn_advanced_mpr.setMinimumHeight(48)
+        self.btn_advanced_mpr.setStyleSheet("""
+            QPushButton {
+                font-size: 12px;
+                font-family: 'Roboto', sans-serif;
+                color: #f7fafc;
+                padding: 10px 16px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #2563eb, stop:1 #1e40af);
+                border: 1px solid #1e40af;
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #1d4ed8, stop:1 #1e3a8a);
+                border: 1px solid #1e3a8a;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #1e40af, stop:1 #1e3a8a);
+            }
+        """)
+        self.btn_advanced_mpr.clicked.connect(self._on_advanced_mpr_clicked)
+        models_container_layout.addWidget(self.btn_advanced_mpr)
+
+        # Add stretch to push buttons to the top
+        models_container_layout.addStretch()
+
+        models_scroll.setWidget(models_container)
+        bottom_layout.addWidget(models_scroll)
+
+        # Add widgets to splitter
         splitter.addWidget(top_widget)
         splitter.addWidget(bottom_widget)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
 
         layout.addWidget(splitter)
+
+        # Store the series list widget for backward compatibility
+        self.advanced_analysis_series_list = None
+
         return panel
 
     def _refresh_advanced_analysis_series_list(self) -> None:
-        if self.advanced_analysis_series_list is None:
+        """
+        Populate thumbnails in the Advanced Analysis panel top section.
+        Uses the same ThumbnailManager.create_thumbnail_widget() as the
+        Series panel so thumbnails look identical.
+        """
+        if not hasattr(self, 'advanced_analysis_thumb_grid') or self.advanced_analysis_thumb_grid is None:
             return
 
+        # Clear existing thumbnails
+        while self.advanced_analysis_thumb_grid.count():
+            item = self.advanced_analysis_thumb_grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # ── Get real thumbnail image files (same source as Series panel) ──
+        thumbnails = check_and_get_thumbnails(self.import_folder_path, self.study_uid) if self.import_folder_path else None
+        if thumbnails:
+            thumbnails = sorted(thumbnails, key=lambda p: (int(p.stem) if p.stem.isdigit() else float('inf'), p.stem))
+
+        # Collect series entries for metadata
         series_entries = self._collect_advanced_analysis_series_entries()
 
-        self.advanced_analysis_series_list.clear()
-        for entry in series_entries:
-            series_number = entry.get('series_number', 'N/A')
-            series_description = entry.get('series_description')
-            if series_description:
-                label = f"{series_number} - {series_description}"
-            else:
-                label = f"{series_number}"
+        if not series_entries and not thumbnails:
+            empty_label = QLabel("No series available")
+            empty_label.setStyleSheet("QLabel { color: #a0aec0; font-size: 12px; padding: 20px; }")
+            empty_label.setAlignment(Qt.AlignCenter)
+            self.advanced_analysis_thumb_grid.addWidget(empty_label, 0, 0)
+            return
 
-            item = QListWidgetItem(label)
-            item.setData(Qt.UserRole, entry)
-            self.advanced_analysis_series_list.addItem(item)
+        # Build a quick lookup: series_number → entry
+        entry_map = {str(e.get('series_number')): e for e in series_entries}
+
+        # Build a separate ThumbnailManager for this panel so we don't
+        # interfere with the main Series panel's ThumbnailManager.
+        if not hasattr(self, '_adv_thumbnail_manager') or self._adv_thumbnail_manager is None:
+            self._adv_thumbnail_manager = ThumbnailManager(method_change_series=self._on_advanced_thumb_series_clicked)
+
+        adv_mgr = self._adv_thumbnail_manager
+        # Reset so we can repopulate
+        adv_mgr.buttons.clear()
+        adv_mgr.lst_buttons_name.clear()
+        adv_mgr.series_widgets.clear()
+
+        thumb_index = 0
+
+        # Prefer real thumbnail images; fall back to entries list
+        if thumbnails:
+            for thumbnail_file in thumbnails:
+                series_number = thumbnail_file.stem
+                entry = entry_map.get(str(series_number))
+
+                # Build series_info dict matching what ThumbnailManager expects
+                series_info = None
+                if entry:
+                    series_info = {
+                        'series_number': entry.get('series_number'),
+                        'series_description': entry.get('series_description', ''),
+                        'series_uid': entry.get('series_uid'),
+                        'series_path': entry.get('series_path'),
+                    }
+                else:
+                    # Minimal info from folder
+                    series_info = {'series_number': series_number}
+                    if self.import_folder_path:
+                        candidate = Path(self.import_folder_path) / str(series_number)
+                        if candidate.exists():
+                            from PacsClient.pacs.patient_tab.utils import get_quickly_series_info
+                            series_info = get_quickly_series_info(candidate)
+
+                pixmap = QPixmap(str(thumbnail_file))
+                thumb_widget = adv_mgr.create_thumbnail_widget(
+                    pixmap=pixmap,
+                    label_text=str(series_number),
+                    sop_instance_uid='adv_thumb',
+                    thumbnail_index=series_number,
+                    series_info=series_info,
+                )
+
+                # Add in the same 1×2-column span used by the Series panel
+                self.advanced_analysis_thumb_grid.addWidget(thumb_widget, thumb_index, 0, 1, 2)
+                thumb_index += 1
+        else:
+            # No thumbnail images available – create placeholder cards per entry
+            for entry in series_entries:
+                series_number = entry.get('series_number', 'N/A')
+                series_info = {
+                    'series_number': series_number,
+                    'series_description': entry.get('series_description', ''),
+                    'series_uid': entry.get('series_uid'),
+                    'series_path': entry.get('series_path'),
+                }
+                pixmap = QPixmap()  # empty / placeholder
+                thumb_widget = adv_mgr.create_thumbnail_widget(
+                    pixmap=pixmap,
+                    label_text=str(series_number),
+                    sop_instance_uid='adv_thumb',
+                    thumbnail_index=series_number,
+                    series_info=series_info,
+                )
+                self.advanced_analysis_thumb_grid.addWidget(thumb_widget, thumb_index, 0, 1, 2)
+                thumb_index += 1
+
+        # Update count label
+        if hasattr(self, 'advanced_thumb_count_label'):
+            self.advanced_thumb_count_label.setText(f"{thumb_index} series")
+
+        # Default selected series to the first entry
+        if series_entries:
+            self._selected_advanced_series = series_entries[0]
+
+    # ------------------------------------------------------------------
+    def _on_advanced_thumb_series_clicked(self, series_number_or_index) -> None:
+        """Callback used by the Advanced Analysis ThumbnailManager when a
+        thumbnail is clicked.  We just store the selection – we do NOT
+        switch the viewer like the main Series panel does."""
+        series_key = str(series_number_or_index)
+        # Find matching entry
+        entries = self._collect_advanced_analysis_series_entries()
+        for entry in entries:
+            if str(entry.get('series_number')) == series_key:
+                self._selected_advanced_series = entry
+                print(f"[AdvancedAnalysis] Selected series {series_key}")
+                return
+        # Fallback – store minimal info
+        self._selected_advanced_series = {'series_number': series_key}
 
     def _collect_advanced_analysis_series_entries(self) -> list:
         entries = {}
+        base_path = self.import_folder_path  # e.g. source/<study_uid>
 
         for data in getattr(self, 'lst_thumbnails_data', []) or []:
             metadata = data.get('metadata', {})
@@ -3226,7 +3498,22 @@ class PatientWidget(QWidget):
             entry['series_number'] = key
             entry.setdefault('series_description', series_meta.get('series_description') or series_meta.get('series_name'))
             entry.setdefault('series_uid', series_meta.get('series_uid'))
-            entry.setdefault('series_path', series_meta.get('series_path'))
+
+            # Resolve series_path with multiple fallbacks
+            sp = series_meta.get('series_path')
+            if not sp:
+                # Fallback 1: derive from first instance path
+                instances = metadata.get('instances', [])
+                if instances:
+                    inst_path = instances[0].get('instance_path')
+                    if inst_path:
+                        sp = os.path.dirname(inst_path)
+            if not sp and base_path:
+                # Fallback 2: <import_folder_path>/<series_number>
+                candidate = os.path.join(str(base_path), str(series_number))
+                if os.path.isdir(candidate):
+                    sp = candidate
+            entry.setdefault('series_path', sp)
 
             instances = metadata.get('instances', [])
             if instances:
@@ -3241,7 +3528,12 @@ class PatientWidget(QWidget):
             entry = entries.get(key, {'series_number': key})
             entry.setdefault('series_description', info.get('series_description') or info.get('series_name'))
             entry.setdefault('series_uid', info.get('series_uid'))
-            entry.setdefault('series_path', info.get('series_path'))
+            sp = info.get('series_path')
+            if not sp and base_path:
+                candidate = os.path.join(str(base_path), str(series_number))
+                if os.path.isdir(candidate):
+                    sp = candidate
+            entry.setdefault('series_path', sp)
             entries[key] = entry
 
         def _sort_key(item):
@@ -3252,44 +3544,177 @@ class PatientWidget(QWidget):
 
         return sorted(entries.values(), key=_sort_key)
 
-    def _on_advanced_analysis_series_clicked(self, item: QListWidgetItem) -> None:
-        entry = item.data(Qt.UserRole) if item else None
-        if not entry:
-            return
+    def _on_advanced_mpr_clicked(self) -> None:
+        """
+        Handle Advanced MPR button click.
+        Shows loading overlay immediately, then defers the actual launch so
+        the Qt event-loop has time to render the overlay before any blocking
+        work (socket timeout inside send_remote_command, etc.) happens.
+        """
+        print("[PatientWidget] Advanced MPR button clicked")
 
-        series_number = entry.get('series_number')
-        series_uid = entry.get('series_uid')
-        window_width = entry.get('window_width')
-        window_level = entry.get('window_level')
+        # ── Resolve selected series ──────────────────────────────────────
+        selected_series = getattr(self, '_selected_advanced_series', None)
+        if not selected_series:
+            try:
+                sw = self.selected_widget
+                if sw and hasattr(sw, 'image_viewer') and sw.image_viewer:
+                    md = getattr(sw.image_viewer, 'metadata', None)
+                    if md:
+                        sm = md.get('series', {})
+                        selected_series = {
+                            'series_number': sm.get('series_number'),
+                            'series_uid':    sm.get('series_uid'),
+                            'series_path':   sm.get('series_path'),
+                            'window_width':  md.get('instances', [{}])[0].get('window_width'),
+                            'window_level':  md.get('instances', [{}])[0].get('window_center'),
+                        }
+            except Exception as e:
+                print(f"[PatientWidget] Error getting active series: {e}")
 
-        dicom_directory = entry.get('series_path')
-        if not dicom_directory and series_number and self.import_folder_path:
-            candidate_path = Path(self.import_folder_path) / str(series_number)
-            if candidate_path.exists():
-                dicom_directory = str(candidate_path)
+        # Resolve dicom_directory with fallbacks (same logic as
+        # launch_advanced_analysis_for_active_series)
+        dicom_directory = (selected_series or {}).get('series_path')
+
+        if not dicom_directory and selected_series:
+            # Fallback: construct from import_folder_path + series_number
+            sn = selected_series.get('series_number')
+            if sn and self.import_folder_path:
+                candidate = os.path.join(str(self.import_folder_path), str(sn))
+                if os.path.isdir(candidate):
+                    dicom_directory = candidate
+                    selected_series['series_path'] = candidate
+
+        if not dicom_directory:
+            # Last resort: active viewer's metadata → instance_path
+            try:
+                sw = self.selected_widget
+                if sw and hasattr(sw, 'image_viewer') and sw.image_viewer:
+                    md = getattr(sw.image_viewer, 'metadata', None)
+                    if md:
+                        instances = md.get('instances', [])
+                        if instances:
+                            inst_path = instances[0].get('instance_path')
+                            if inst_path:
+                                dicom_directory = os.path.dirname(inst_path)
+            except Exception:
+                pass
 
         if not dicom_directory:
             QMessageBox.warning(
-                self,
-                "Invalid Series",
-                "Could not find DICOM directory for the selected series."
+                self, "No Series Selected",
+                "Please select a series from the thumbnails panel.\n\n"
+                "No active series available."
             )
             return
-
         if not os.path.exists(dicom_directory):
             QMessageBox.warning(
-                self,
-                "Directory Not Found",
+                self, "Directory Not Found",
                 f"DICOM directory not found:\n{dicom_directory}"
             )
             return
 
-        self._launch_advanced_analysis_with_params(
+        # ── Show the overlay NOW and force it to paint ───────────────────
+        self._show_advanced_mpr_loading_ui()
+
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()          # flush paint queue once
+        QApplication.processEvents()          # second pass for deferred paints
+
+        # ── Defer the real launch 500 ms so the overlay is fully visible ─
+        QTimer.singleShot(500, lambda: self._launch_advanced_mpr_async(
             dicom_dir=dicom_directory,
-            series_uid=series_uid,
-            window_width=window_width,
-            window_level=window_level
+            series_uid=selected_series.get('series_uid'),
+            window_width=selected_series.get('window_width'),
+            window_level=selected_series.get('window_level'),
+        ))
+
+    # ------------------------------------------------------------------
+    #  Loading overlay  (reusable AI Pacs branded component)
+    # ------------------------------------------------------------------
+    def _show_advanced_mpr_loading_ui(self) -> None:
+        """Show the global AI Pacs loading overlay."""
+        from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+        self._hide_advanced_mpr_loading_ui()  # remove stale overlay
+        top = self.window() or self
+        self._advanced_mpr_loading_overlay = AiPacsLoadingOverlay.show_overlay(
+            parent=top,
+            title="AI Pacs Image Analysis",
+            status="Loading module",
+            subtitle="Preparing Advanced MPR and AI segmentation engine",
         )
+
+    def _hide_advanced_mpr_loading_ui(self) -> None:
+        """Remove the full-screen loading overlay."""
+        from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+        overlay = getattr(self, '_advanced_mpr_loading_overlay', None)
+        if overlay is not None:
+            AiPacsLoadingOverlay.hide_overlay(overlay)
+            self._advanced_mpr_loading_overlay = None
+    def _launch_advanced_mpr_async(
+        self,
+        dicom_dir: str,
+        series_uid: str | None = None,
+        window_width: float | None = None,
+        window_level: float | None = None,
+    ) -> None:
+        """Start the 3-D Slicer worker thread.  Called from a QTimer so the
+        loading overlay is guaranteed to be painted first."""
+        try:
+            from PacsClient.pacs.patient_tab.advance_mpr_3d_slicer.slicer_launcher import get_slicer_launcher
+
+            launcher = get_slicer_launcher(parent_widget=self)
+
+            # Avoid stacking duplicate connections on the singleton.
+            # PySide6's disconnect() can raise RuntimeError *or* set an
+            # internal exception flag, so catch broadly with Exception.
+            try:
+                launcher.slicer_finished.disconnect(self._on_advanced_mpr_finished)
+            except Exception:
+                pass
+            try:
+                launcher.slicer_error.disconnect(self._on_advanced_mpr_error)
+            except Exception:
+                pass
+
+            launcher.slicer_finished.connect(self._on_advanced_mpr_finished)
+            launcher.slicer_error.connect(self._on_advanced_mpr_error)
+
+            launcher.launch_with_dicom(
+                dicom_dir=dicom_dir,
+                layout='mpr',
+                patient_id=getattr(self, 'patient_id', None),
+                study_id=getattr(self, 'study_uid', None),
+                window_width=window_width,
+                window_level=window_level,
+                series_uid=series_uid,
+                viewport_x=self.mapToGlobal(QPoint(0, 0)).x(),
+                viewport_y=self.mapToGlobal(QPoint(0, 0)).y(),
+                viewport_width=self.width(),
+                viewport_height=self.height(),
+            )
+        except Exception as e:
+            print(f"[PatientWidget] Error launching Advanced MPR: {e}")
+            import traceback
+            traceback.print_exc()
+            self._hide_advanced_mpr_loading_ui()
+            QMessageBox.critical(
+                self, "Error",
+                f"Failed to launch Advanced MPR:\n{str(e)}"
+            )
+
+    # ------------------------------------------------------------------
+    #  Completion / error handlers
+    # ------------------------------------------------------------------
+    def _on_advanced_mpr_finished(self, exit_code: int) -> None:
+        """Handle Advanced MPR process completion."""
+        print(f"[PatientWidget] Advanced MPR finished with exit code: {exit_code}")
+        self._hide_advanced_mpr_loading_ui()
+
+    def _on_advanced_mpr_error(self, error_msg: str) -> None:
+        """Handle Advanced MPR launch error."""
+        print(f"[PatientWidget] Advanced MPR error: {error_msg}")
+        self._hide_advanced_mpr_loading_ui()
 
     def _launch_advanced_analysis_with_params(
         self,

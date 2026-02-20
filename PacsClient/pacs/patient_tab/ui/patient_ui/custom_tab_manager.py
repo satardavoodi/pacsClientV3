@@ -127,7 +127,8 @@ class CustomTabManager:
         # Optional: setup a right-side tab strip near the user/admin area.
         if self.right_tab_area:
             self.right_tab_layout = QHBoxLayout(self.right_tab_area)
-            self.right_tab_layout.setContentsMargins(2, 3, 2, 3)  # Minimal margins to fit inside logo area
+            # Compact layout to fit service tabs cleanly beside user/admin controls.
+            self.right_tab_layout.setContentsMargins(2, 3, 2, 3)  # Minimal margins
             self.right_tab_layout.setSpacing(2)  # Tight spacing between tabs
 
     def _add_title_bar_tab_widget(self, widget: QWidget, insert_at_start: bool = False) -> None:

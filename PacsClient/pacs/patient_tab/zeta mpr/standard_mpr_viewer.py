@@ -317,10 +317,11 @@ class VRTInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
     """
     Custom interactor style for VRT (3D) viewport.
     LMB drag = rotate
-    RMB click = context menu
-    RMB drag = adjust appearance
+    RMB click (no drag) = preset context menu
+    RMB drag = adjust brightness/contrast (appearance)
     LMB + RMB drag = pan
-    MMB drag = zoom (dolly)
+    MMB drag = dolly (zoom)
+    Mouse wheel = zoom in/out
     """
     def __init__(self, mpr_viewer, vtk_widget):
         super().__init__()
@@ -424,6 +425,26 @@ class VRTInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
     def OnMiddleButtonUp(self):
         self.mmb_down = False
         self.EndDolly()
+
+    def OnMouseWheelForward(self):
+        """Mouse wheel scroll up → zoom in."""
+        self.parent._set_active_view('3d')
+        camera = self.GetCurrentRenderer().GetActiveCamera() if self.GetCurrentRenderer() else None
+        if camera:
+            camera.Dolly(1.1)
+            if self.GetCurrentRenderer():
+                self.GetCurrentRenderer().ResetCameraClippingRange()
+                self.GetCurrentRenderer().GetRenderWindow().Render()
+
+    def OnMouseWheelBackward(self):
+        """Mouse wheel scroll down → zoom out."""
+        self.parent._set_active_view('3d')
+        camera = self.GetCurrentRenderer().GetActiveCamera() if self.GetCurrentRenderer() else None
+        if camera:
+            camera.Dolly(0.9)
+            if self.GetCurrentRenderer():
+                self.GetCurrentRenderer().ResetCameraClippingRange()
+                self.GetCurrentRenderer().GetRenderWindow().Render()
 
     def OnMouseMove(self):
         if self.pan_active:
@@ -2085,6 +2106,9 @@ class StandardMPRViewer(QWidget):
                 background: black;
             }
         """)
+        # Prevent Qt from intercepting right-click as a context menu event;
+        # VTK's VRTInteractorStyle handles RMB click → preset menu directly.
+        vtk_widget.setContextMenuPolicy(Qt.PreventContextMenu)
         container_layout.addWidget(vtk_widget)
         
         # Renderer with simple dark background
@@ -2326,18 +2350,62 @@ class StandardMPRViewer(QWidget):
             logger.info("Auto-rotation stopped due to user interaction")
     
     def eventFilter(self, obj, event):
-        """Event filter to detect user interaction with VTK widget"""
+        """Event filter to detect user interaction with VTK widgets.
+
+        For the 3D render box, we intercept right-mouse-button events at the Qt
+        level so they are guaranteed to reach our handler regardless of how VTK
+        routes events internally.  RMB click (no drag) → preset menu, RMB drag
+        → brightness / contrast / opacity adjustment.
+        """
         view_name = self._vtk_widget_to_view.get(obj)
+
+        # ---- Double-click: expand / collapse any view ----
         if event.type() == event.Type.MouseButtonDblClick:
             if view_name:
                 self._set_active_view(view_name)
                 self._toggle_expand_view(view_name)
                 return True
-        # Stop auto-rotation on mouse press or wheel event
-        if event.type() in [event.Type.MouseButtonPress, event.Type.Wheel]:
+
+        # ---- Stop auto-rotation on any mouse press or wheel ----
+        if event.type() in (event.Type.MouseButtonPress, event.Type.Wheel):
             if view_name:
                 self._set_active_view(view_name)
             self.stop_auto_rotation()
+
+        # ---- 3D Render-box RMB handling (Qt level) ----
+        if view_name == '3d':
+            from PySide6.QtCore import Qt as QtConst
+
+            if event.type() == event.Type.MouseButtonPress and event.button() == QtConst.RightButton:
+                self._vrt_qt_rmb_down = True
+                self._vrt_qt_rmb_dragging = False
+                self._vrt_qt_rmb_start = event.pos()
+                self._capture_vrt_baseline()
+                return True  # fully consume – RMB is handled here, not in VTK
+
+            if event.type() == event.Type.MouseButtonRelease and event.button() == QtConst.RightButton:
+                was_dragging = getattr(self, '_vrt_qt_rmb_dragging', False)
+                self._vrt_qt_rmb_down = False
+                if not was_dragging:
+                    # Pure click → show preset context menu at cursor position
+                    self._show_vrt_preset_menu(obj, event.pos())
+                self._vrt_qt_rmb_dragging = False
+                self._vrt_qt_rmb_start = None
+                self._reset_vrt_rmb_state()
+                return True  # consume release so VTK doesn't double-fire
+
+            if event.type() == event.Type.MouseMove and getattr(self, '_vrt_qt_rmb_down', False):
+                start = getattr(self, '_vrt_qt_rmb_start', None)
+                if start is not None:
+                    dx = event.pos().x() - start.x()
+                    dy = -(event.pos().y() - start.y())  # invert Y for natural feel
+                    if not getattr(self, '_vrt_qt_rmb_dragging', False):
+                        if abs(dx) >= 6 or abs(dy) >= 6:
+                            self._vrt_qt_rmb_dragging = True
+                    if self._vrt_qt_rmb_dragging:
+                        self._apply_vrt_appearance_delta(dx, dy)
+                        return True  # consume move during drag
+
         return super().eventFilter(obj, event)
 
     def _register_view(self, view_name, container, vtk_widget, row, col, row_span=1, col_span=1):
@@ -4550,7 +4618,11 @@ class StandardMPRViewer(QWidget):
             QMessageBox.critical(self, "Error", f"Error resetting rendering: {str(e)}")
     
     def _show_vrt_preset_menu(self, widget, pos):
-        """Show right-click preset menu for VRT (3D) viewport."""
+        """Show a polished right-click preset menu for the 3D viewport.
+
+        Presets are grouped by category with section headers, styled to
+        match the application's dark theme (``_variables.scss`` palette).
+        """
         try:
             view_name = self._vtk_widget_to_view.get(widget)
             if view_name != '3d':
@@ -4558,57 +4630,180 @@ class StandardMPRViewer(QWidget):
 
             self.stop_auto_rotation()
 
-            from PySide6.QtWidgets import QMenu, QWidgetAction, QListWidget, QListWidgetItem, QAbstractItemView
-            menu = QMenu(self)
-            menu.setStyleSheet("""
-                QMenu {
-                    background: #2a2a2a;
-                    color: white;
-                    border: 1px solid #555;
-                    padding: 4px;
-                }
-            """)
+            from PySide6.QtWidgets import (
+                QMenu, QWidgetAction, QWidget, QVBoxLayout, QHBoxLayout,
+                QLabel, QScrollArea, QFrame, QPushButton, QGraphicsDropShadowEffect,
+            )
+            from PySide6.QtGui import QFont, QColor
 
+            # ── Collect presets grouped by category ──────────────────────
             preset_names = self.preset_manager.get_all_preset_names()
             if not preset_names:
                 return
 
-            list_widget = QListWidget()
-            list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
-            list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            list_widget.setStyleSheet("""
-                QListWidget {
-                    background: #2a2a2a;
-                    color: white;
+            # Map of category enum → display label & icon
+            _CAT_META = {
+                'CT Bone':         ('🦴', 'CT Bone'),
+                'CT Soft Tissue':  ('🫀', 'CT Soft Tissue'),
+                'CT Lung':         ('🫁', 'CT Lung'),
+                'CT Vessel':       ('🩸', 'CT Vessel'),
+                'CT Cardiac':      ('❤️', 'CT Cardiac'),
+                'CT Contrast':     ('💉', 'CT Contrast'),
+                'MRI Brain':       ('🧠', 'MRI Brain'),
+                'MRI Angiography': ('🔬', 'MRI Angiography'),
+                'Technique':       ('⚙️', 'Rendering Technique'),
+            }
+
+            from collections import OrderedDict
+            grouped: OrderedDict[str, list] = OrderedDict()
+            for name in preset_names:
+                info = self.preset_manager.get_preset_info(name) if hasattr(self.preset_manager, 'get_preset_info') else None
+                cat_val = info.get('category', 'Other') if isinstance(info, dict) else 'Other'
+                grouped.setdefault(cat_val, []).append(name)
+
+            # ── Build the floating panel ─────────────────────────────────
+            menu = QMenu(self)
+            menu.setWindowFlags(menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+            menu.setAttribute(Qt.WA_TranslucentBackground, True)
+            menu.setStyleSheet("QMenu { background: transparent; border: none; padding: 0; margin: 0; }")
+
+            # Container widget
+            container = QWidget()
+            container.setObjectName("vrtPresetPanel")
+            container.setStyleSheet("""
+                #vrtPresetPanel {
+                    background: #1a1e21;
+                    border: 1px solid #2d3235;
+                    border-radius: 10px;
+                }
+            """)
+            shadow = QGraphicsDropShadowEffect(container)
+            shadow.setBlurRadius(24)
+            shadow.setOffset(0, 4)
+            shadow.setColor(QColor(0, 0, 0, 160))
+            container.setGraphicsEffect(shadow)
+
+            root_layout = QVBoxLayout(container)
+            root_layout.setContentsMargins(10, 10, 10, 10)
+            root_layout.setSpacing(0)
+
+            # ── Title bar ────────────────────────────────────────────────
+            title = QLabel("  3D Volume Presets")
+            title.setStyleSheet("""
+                QLabel {
+                    color: #fefefe;
+                    font-size: 13px;
+                    font-weight: 600;
+                    padding: 6px 4px 8px 4px;
+                    background: transparent;
+                }
+            """)
+            root_layout.addWidget(title)
+
+            # Thin separator
+            sep = QFrame()
+            sep.setFixedHeight(1)
+            sep.setStyleSheet("background: #2d3235;")
+            root_layout.addWidget(sep)
+
+            # ── Scrollable preset area ───────────────────────────────────
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            scroll.setStyleSheet("""
+                QScrollArea {
+                    background: transparent;
                     border: none;
                 }
-                QListWidget::item {
-                    padding: 6px 12px;
+                QScrollBar:vertical {
+                    background: #14181a;
+                    width: 6px;
+                    border-radius: 3px;
+                    margin: 2px 0;
                 }
-                QListWidget::item:selected {
-                    background: #3b82f6;
+                QScrollBar::handle:vertical {
+                    background: #3a3f44;
+                    border-radius: 3px;
+                    min-height: 24px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background: #525a60;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0;
                 }
             """)
 
-            for preset_name in preset_names:
-                item = QListWidgetItem(preset_name)
-                if preset_name == self.current_3d_preset:
-                    font = item.font()
-                    font.setBold(True)
-                    item.setFont(font)
-                    item.setSelected(True)
-                list_widget.addItem(item)
+            inner = QWidget()
+            inner.setStyleSheet("background: transparent;")
+            inner_layout = QVBoxLayout(inner)
+            inner_layout.setContentsMargins(2, 6, 2, 4)
+            inner_layout.setSpacing(2)
 
-            list_widget.itemClicked.connect(
-                lambda item: (self._apply_vrt_preset(item.text()), menu.close())
-            )
+            # ── Category sections ────────────────────────────────────────
+            _ITEM_STYLE = """
+                QPushButton {{
+                    text-align: left;
+                    padding: 7px 14px 7px 28px;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    color: {fg};
+                    background: {bg};
+                    font-weight: {weight};
+                }}
+                QPushButton:hover {{
+                    background: #2a2f33;
+                    color: #fefefe;
+                }}
+                QPushButton:pressed {{
+                    background: #fba43b;
+                    color: #0f1214;
+                }}
+            """
 
-            max_height = min(self.height(), 420)
-            list_widget.setMaximumHeight(max_height)
+            for cat_val, names in grouped.items():
+                icon, label = _CAT_META.get(cat_val, ('📁', cat_val))
+                # Section header
+                header = QLabel(f"  {icon}  {label}")
+                header.setStyleSheet("""
+                    QLabel {
+                        color: #989898;
+                        font-size: 11px;
+                        font-weight: 600;
+                        padding: 8px 4px 3px 6px;
+                        background: transparent;
+                        letter-spacing: 0.5px;
+                    }
+                """)
+                inner_layout.addWidget(header)
 
+                for preset_name in names:
+                    is_active = (preset_name == getattr(self, 'current_3d_preset', None))
+                    btn = QPushButton(preset_name)
+                    btn.setCursor(Qt.PointingHandCursor)
+                    fg = "#fba43b" if is_active else "#CBCBCB"
+                    bg = "#21272a" if is_active else "transparent"
+                    weight = "600" if is_active else "400"
+                    btn.setStyleSheet(_ITEM_STYLE.format(fg=fg, bg=bg, weight=weight))
+                    btn.setFixedHeight(32)
+                    btn.clicked.connect(
+                        lambda checked=False, n=preset_name: (self._apply_vrt_preset(n), menu.close())
+                    )
+                    inner_layout.addWidget(btn)
+
+            inner_layout.addStretch()
+            scroll.setWidget(inner)
+
+            # Size the scroll area
+            max_h = min(self.height() - 40, 480)
+            scroll.setFixedWidth(240)
+            scroll.setMaximumHeight(max_h)
+            root_layout.addWidget(scroll)
+
+            # ── Embed in QMenu ───────────────────────────────────────────
             action = QWidgetAction(menu)
-            action.setDefaultWidget(list_widget)
+            action.setDefaultWidget(container)
             menu.addAction(action)
 
             global_pos = widget.mapToGlobal(pos)

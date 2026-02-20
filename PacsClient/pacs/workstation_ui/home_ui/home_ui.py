@@ -48,6 +48,7 @@ from .data_access_panel import DataAccessPanelWidget
 from .patient_search_widget import PatientSearchWidget
 from .patient_table_widget import PatientTableWidget
 from .right_panel_widget import RightPanelWidget
+from .secretary_button_widget import SecretaryButtonWidget
 # UPDATED: Now using Zeta Download Manager with v1.0.6 UI design
 from PacsClient.zeta_download_manager.ui.main_widget import DownloadManagerWidget
 from PacsClient.utils import get_connection_database, get_all_patients, search_patients_local, find_patient_pk, \
@@ -180,15 +181,10 @@ class HomePanelWidget(QWidget):
         # panel_layout = QVBoxLayout()
 
         def select_folder():
-            # path_image_sample = r'Z:\Ai-pacs v2\INO-POOYAN Viewer\Storage\DICOMFiles\20250525\266729-MOHAMAD EBRAHIM\1.3.12.2.1107.5.2.46.174759.30000025052504001894800000053\SR08'
-            # path_image_sample = r'C:\Users\Salari\Desktop\copy\1.3.12.2.1107.5.2.46.174759.30000025052504001894800000053'
-            # path_image_sample = r'Z:\Ai-pacs v2\INO-POOYAN Viewer\Storage\DICOMFiles\20250524\266721-HALIMI\1.3.12.2.1107.5.2.46.174759.30000025052403495234400000023\SR100'
-            # path_image_sample = str(Path.cwd())
-            # path_image_sample = r'Z:\Ai-pacs v2\INO-POOYAN Viewer\Storage\DICOMFiles\20250524\266721-HALIMI\1.3.12.2.1107.5.2.46.174759.30000025052403495234400000023\SR08'
-            # path_image_sample = r'/Users/euleday/mostafa/Telegram Downloads/1.2.840.1.99.1.47.1.1676784562068.62543'
-            path_image_sample = r'/Users/euleday/mostafa/python/IranNobat/PacsClient/sample_files/sample dicom/1.3.46.670589.11.63286.5.0.15220.2024082210022481008'
+            # Portable default directory for import dialog (project-configured source path or user home)
+            default_dir = Path(SOURCE_PATH) if Path(SOURCE_PATH).exists() else Path.home()
             folder_path = QFileDialog.getExistingDirectory(
-                self.data_access_panel_widget, "Select Folder", dir=path_image_sample)
+                self.data_access_panel_widget, "Select Folder", dir=str(default_dir))
             if folder_path:
                 self.data_access_panel_widget.folder_path_label.setText(folder_path)
                 self.add_new_tab_widget(folder_path=folder_path, caller=CallerTypes.IMPORT)
@@ -351,6 +347,10 @@ class HomePanelWidget(QWidget):
         self.patient_search_widget.cancelSearchRequested.connect(self.cancel_search)
         left_layout.addWidget(self.patient_search_widget)
 
+        # EchoMind Secretary button-only UI (main sidebar)
+        self.secretary_button_widget = SecretaryButtonWidget()
+        left_layout.addWidget(self.secretary_button_widget, 1)
+
         # Auto-search with today's date when page loads
         # from PySide6.QtCore import QTimer
         # QTimer.singleShot(1000, self.perform_default_search)
@@ -389,9 +389,8 @@ class HomePanelWidget(QWidget):
         # """)
         # status_layout.addWidget(test_priority_btn)
 
-        left_layout.addWidget(self.status_widget)
-        left_layout.addStretch()
-        self.main_layout.addWidget(left_panel)
+        # Keep legacy status widgets alive for runtime updates, but do not consume sidebar layout space.
+        self.status_widget.setVisible(False)
         # Connection status
         self.connection_indicator = QLabel()
         self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#ef4444').pixmap(12, 12))
@@ -460,8 +459,6 @@ class HomePanelWidget(QWidget):
         self.socket_test_btn.clicked.connect(self.check_socket_connection_status)
         # status_layout.addWidget(self.socket_test_btn)
 
-        left_layout.addWidget(self.status_widget)
-        left_layout.addStretch()
         self.main_layout.addWidget(left_panel)
 
         # panel_layout.addWidget(left_panel)

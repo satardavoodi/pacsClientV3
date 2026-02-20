@@ -24,15 +24,11 @@ from PacsClient.components.socket_service import SocketService
 from PacsClient.utils.socket_config import get_socket_config
 from PacsClient.utils.socket_token_manager import get_socket_token_manager
 from PacsClient.utils.license_manager import LicenseManager
-from PacsClient.utils.database import ai_ensure_schema
 
 
 class AppHandler(QDialog):
     def __init__(self):
         super(AppHandler, self).__init__()
-        
-        # Ensure AI reception reports schema is initialized
-        ai_ensure_schema()
 
         # self.setWindowTitle("AIPacs - Professional Medical Imaging Suite")
         self.setWindowTitle("")
@@ -391,9 +387,6 @@ class AppHandler(QDialog):
         self.checkbox_remember = self.checkbox_button  # For compatibility
         self._update_checkbox_icon()
         
-        # Load saved credentials if available
-        self.load_saved_credentials()
-
         options_row.addLayout(self.checkbox_container)
         options_row.addWidget(self.license_info_label)
         
@@ -607,26 +600,24 @@ class AppHandler(QDialog):
     def _complete_login(self, username, password):
         """Complete the login process after authentication"""
         self._set_loading_state(False)
-
-        # Validate that both fields are filled before attempting authentication
-        if not username.strip() or not password.strip():
-            self._show_error("Login failed: Username and password are required")
-            return
-
-        # Try socket authentication only (no demo fallback)
+        
+        # Try socket authentication first
         success, message = self._authenticate_with_socket(username, password)
-
+        
+        # If socket fails, try demo mode
+        if not success:
+            success = self._authenticate_user(username, password)
+            if success:
+                message = "Login successful (Demo Mode)"
+        
         if success:
-            # Save credentials if "Remember Me" is checked
-            self.save_credentials(username, password)
-            
             # Success - fade out and open main window
             fade_out = QPropertyAnimation(self, b"windowOpacity")
             fade_out.setDuration(300)  # Shorter duration
             fade_out.setStartValue(1.0)
             fade_out.setEndValue(0.0)
             fade_out.setEasingCurve(QEasingCurve.OutCubic)
-
+            
             # Store animation reference to prevent garbage collection
             self.fade_animation = fade_out
             fade_out.finished.connect(self._open_main_window)
@@ -638,7 +629,7 @@ class AppHandler(QDialog):
     def _authenticate_with_socket(self, username: str, password: str) -> tuple:
         """
         Authenticate user with Socket server
-
+        
         Returns:
             tuple: (success: bool, message: str)
         """
@@ -647,36 +638,31 @@ class AppHandler(QDialog):
             client = self.socket_service._ensure_client()
             if not client:
                 return False, "Could not create socket client"
-
+            
             # Try to connect
             if not client.connected:
                 if not client.connect():
                     return False, "Could not connect to server"
-
+            
             # Attempt login
             success, message, token, user = client.login(username, password)
-
+            
             if success:
                 self.auth_token = token
                 self.auth_user = user
-
+                
                 # Store token in TokenManager for use in all socket requests
                 token_manager = get_socket_token_manager()
                 token_manager.set_token(token, user)
-
+                
                 print(f"✅ Authenticated as: {user.get('full_name')} ({user.get('role')})")
                 print(f"✅ Token stored in TokenManager for socket requests")
                 return True, message
             else:
                 return False, message
-
+                
         except Exception as e:
             print(f"❌ Socket authentication error: {e}")
-            # Return a more specific message for connection issues to enable faster fallback
-            error_msg = str(e)
-            if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
-                print("⏰ Socket connection timed out - falling back to demo mode quickly")
-                return False, "Server not available (timeout)"
             return False, f"Authentication error: {str(e)}"
     
     def _authenticate_user(self, username, password):
@@ -722,13 +708,6 @@ class AppHandler(QDialog):
                 auth_user=self.auth_user,
                 auth_token=self.auth_token
             )
-
-            # Propagate optional runtime framework objects
-            if hasattr(self, 'pipeline_orchestrator'):
-                self.main_page.pipeline_orchestrator = self.pipeline_orchestrator
-            if hasattr(self, 'module_manager'):
-                self.main_page.module_manager = self.module_manager
-
             self.main_page.showMaximized()  # Show maximized for better visibility
             self.close()
         except Exception as e:
@@ -760,61 +739,3 @@ class AppHandler(QDialog):
             elif self.line_edit_password.hasFocus():
                 self.login()
         super().keyPressEvent(event)
-
-    def save_credentials(self, username: str, password: str):
-        """Save credentials if 'Remember Me' is checked"""
-        try:
-            if self.checkbox_button.isChecked():
-                import os
-                import json
-                config_dir = os.path.expanduser("~/.aipacs")
-                os.makedirs(config_dir, exist_ok=True)
-                config_file = os.path.join(config_dir, "login_config.json")
-
-                # Store username and password when "Remember Me" is checked
-                config = {
-                    "username": username,
-                    "password": password,
-                    "remember_me": True
-                }
-                
-                with open(config_file, 'w') as f:
-                    json.dump(config, f)
-            else:
-                # Remove saved credentials if unchecked
-                import os
-                config_dir = os.path.expanduser("~/.aipacs")
-                config_file = os.path.join(config_dir, "login_config.json")
-                if os.path.exists(config_file):
-                    os.remove(config_file)
-        except Exception as e:
-            print(f"Error saving credentials: {e}")
-
-    def load_saved_credentials(self):
-        """Load saved credentials if 'Remember Me' was checked previously"""
-        try:
-            import os
-            import json
-            config_dir = os.path.expanduser("~/.aipacs")
-            os.makedirs(config_dir, exist_ok=True)
-            config_file = os.path.join(config_dir, "login_config.json")
-
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    config = json.load(f)
-                    if config.get("remember_me"):
-                        self.line_edit_username.setText(config.get("username", ""))
-                        self.line_edit_password.setText(config.get("password", ""))
-                        self.checkbox_button.setChecked(True)
-                        self._update_checkbox_icon()
-        except Exception as e:
-            print(f"Error loading saved credentials: {e}")
-
-    def closeEvent(self, event):
-        # Ensure cleanup when window is closed
-        if self.socket_service:
-            try:
-                self.socket_service.cleanup()
-            except Exception as e:
-                print(f"Warning: Error during socket service cleanup: {e}")
-        event.accept()

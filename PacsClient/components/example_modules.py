@@ -479,7 +479,9 @@ class ReportGeneratorModule(BaseModule):
 
 if __name__ == "__main__":
     import sys
-    sys.path.insert(0, r'c:\AI-Pacs codes\PacsClient V2(5jan)\PacsClientV2')
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
     
     logging.basicConfig(
         level=logging.INFO,

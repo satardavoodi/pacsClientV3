@@ -1,20 +1,5 @@
 import sys
 import os
-import faulthandler
-
-# Enable faulthandler so C-level segfaults (e.g. in VTK) dump a Python
-# traceback instead of silently terminating the process.
-faulthandler.enable()
-
-# ── Ensure the project venv is being used ────────────────────────────
-_expected_venv = os.path.normcase(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv"))
-if os.path.isdir(_expected_venv) and _expected_venv not in os.path.normcase(sys.executable):
-    print(
-        f"ERROR: You are running with {sys.executable}\n"
-        f"       This project requires its own virtual environment.\n"
-        f"       Please run:  .venv\\Scripts\\python.exe main.py"
-    )
-    sys.exit(1)
 
 # Fix Windows console encoding for emoji support
 if sys.platform == 'win32':
@@ -33,7 +18,6 @@ from PacsClient import AppHandler
 from PacsClient.utils.font_manager import load_fonts, setup_font_rendering
 from PacsClient.utils import LicenseManager, LicenseDialog
 import vtkmodules.vtkCommonCore as vtkCommonCore
-from pathlib import Path
 
 vtkCommonCore.vtkObject.GlobalWarningDisplayOff()
 from qasync import QEventLoop
@@ -46,6 +30,7 @@ import asyncio
 #     window.show()
 #     sys.exit(app.exec())
 from PacsClient.utils import IMAGES_LOGIN_PATH
+from PacsClient.utils.disk_alert_service import DiskUsageAlertService
 
 import os
 
@@ -57,16 +42,10 @@ import os
 
 if sys.platform == 'win32':
     # Use software rendering for maximum compatibility
-    # NOTE: GPU-related errors in console during startup are expected and harmless when using software OpenGL
-    # Examples: "Failed to create GLES3 context", "ContextResult::kFatalFailure"
     os.environ["QT_OPENGL"] = "software"
-    os.environ["QSG_RHI_BACKEND"] = "d3d11"  # Use Direct3D 11 instead of software
-    # Additional flags to handle GPU context creation issues
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream --disable-features=VizDisplayCompositor,UseSkiaRenderer"
-    # Additional environment variables to handle GPU context issues
     os.environ["QT_QUICK_BACKEND"] = "software"
-    os.environ["QMLSCENE_DEVICE"] = "softwarecontext"
-    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream"
+
 
 if __name__ == "__main__":
     # Set working directory to _internal for PyInstaller builds
@@ -91,7 +70,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("1.08.9.8.3")
+    app.setApplicationVersion("2.2.2")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -382,158 +361,17 @@ if __name__ == "__main__":
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-    # Initialize module execution framework (safe, optional integration)
-    module_manager = None
-    pipeline_orchestrator = None
-
-    # === CRITICAL: Application-level cleanup handler ===
-    # Ensures all download state is cleared on app shutdown
-    # This runs even if individual widget closeEvents aren't called
-    def cleanup_on_quit():
-        """Clean up all download state when application is about to quit"""
-        try:
-            print("🧹 Application shutting down - preserving download history...")
-
-            # CRITICAL FIX: Clean up database connection pools to prevent resource leaks
-            # in high-frequency loop scenarios (1000+ cycles would accumulate connections)
-            try:
-                from PacsClient.utils.database import cleanup_connection_pools
-                cleanup_connection_pools()
-                print("   ✅ Cleaned up database connection pools")
-            except Exception as e:
-                print(f"⚠️ Error cleaning up database pools: {e}")
-
-            # Shutdown module execution framework if initialized
-            try:
-                if module_manager:
-                    module_manager.shutdown()
-                    print("   ✅ Module Execution Framework shut down")
-            except Exception as e:
-                print(f"⚠️ Error shutting down module framework: {e}")
-
-            # Stop any active download workers before closing event loop
-            try:
-                from PacsClient.components import zeta_adapter
-                worker_pool = getattr(zeta_adapter, "_zeta_worker_pool", None)
-                if worker_pool:
-                    worker_pool.stop_all()
-                dm_widget = getattr(zeta_adapter, "_zeta_download_manager_widget", None)
-                if dm_widget and hasattr(dm_widget, "worker_pool"):
-                    dm_widget.worker_pool.stop_all()
-            except Exception as e:
-                print(f"⚠️ Error stopping download workers: {e}")
-
-            # IMPORTANT: DO NOT clear database download progress records!
-            # They need to persist across app restarts so users don't re-download completed studies
-            # from PacsClient.utils.database import clear_all_download_progress
-            # cleared = clear_all_download_progress()
-            # if cleared > 0:
-            #     print(f"   ✅ Cleared {cleared} database progress records")
-            print("   ℹ️  Database history preserved (for 'Already Downloaded' checks)")
-
-            # Clear UI persistence file so Download Manager list is empty on restart
-            # (Database still remembers what was downloaded for checking)
-            import sys
-            from pathlib import Path
-
-            # Get persistence file path (same logic as in download_manager_ui.py)
-            if sys.platform == "win32":
-                import os
-                appdata_path = os.getenv('LOCALAPPDATA')
-                if appdata_path:
-                    persistence_file = Path(appdata_path) / 'AIPACS' / 'DownloadManager' / 'download_manager_state.json'
-                else:
-                    persistence_file = Path.home() / 'AppData' / 'Local' / 'AIPACS' / 'DownloadManager' / 'download_manager_state.json'
-            elif sys.platform == "darwin":
-                persistence_file = Path.home() / 'Library' / 'Application Support' / 'AIPACS' / 'DownloadManager' / 'download_manager_state.json'
-            else:
-                import os
-                config_dir = os.getenv('XDG_CONFIG_HOME', Path.home() / '.config')
-                persistence_file = Path(config_dir) / 'aipacs' / 'download_manager' / 'download_manager_state.json'
-
-            if persistence_file.exists():
-                persistence_file.unlink()
-                print(f"   ✅ Cleared UI list (Download Manager will be empty on restart)")
-
-            # Note: We also preserve progress files for resumable downloads
-            # These allow incomplete downloads to resume from where they left off
-            # try:
-            #     from PacsClient.utils.config import SOURCE_PATH
-            #     progress_dir = SOURCE_PATH / '.progress'
-            #     if progress_dir.exists():
-            #         for progress_file in progress_dir.glob('*.json'):
-            #             try:
-            #                 progress_file.unlink()
-            #             except:
-            #                 pass
-            #         print(f"   ✅ Cleared progress files from {progress_dir}")
-            # except Exception as e:
-            #     print(f"   ⚠️ Could not clear progress files: {e}")
-
-            print("✅ Shutdown complete:")
-            print("   - Database history preserved (for 'Already Downloaded' checks)")
-            print("   - UI list cleared (Download Manager will be empty on restart)")
-
-        except Exception as e:
-            print(f"⚠️ Error during shutdown cleanup: {e}")
-        finally:
-            # Only request stop here; final close happens after loop.run_forever()
-            try:
-                if loop.is_running():
-                    loop.stop()
-            except Exception as e:
-                print(f"⚠️ Error stopping event loop: {e}")
-
-    # Connect cleanup handler to aboutToQuit signal
-    app.aboutToQuit.connect(cleanup_on_quit)
-    # === END cleanup handler ===
-
     window = AppHandler()
-
-    # Bootstrap module framework and attach to runtime window
-    try:
-        from PacsClient.components.pipeline_orchestrator import PipelineOrchestrator
-        from PacsClient.components.module_manager import ModuleManager
-        from PacsClient.components.example_modules import (
-            MPRModule,
-            EagleEyeModule,
-            ToolbarModule,
-            MeasurementModule,
-            ReportGeneratorModule,
-        )
-
-        project_root = Path(__file__).resolve().parent
-        db_path = project_root / "database" / "pacs.db"
-        db_path_str = str(db_path) if db_path.exists() else ":memory:"
-
-        pipeline_orchestrator = PipelineOrchestrator(max_cache_mb=500)
-        module_manager = ModuleManager(
-            pipeline_orchestrator=pipeline_orchestrator,
-            db_path=db_path_str,
-            max_concurrent=5,
-        )
-
-        module_manager.register_module(MPRModule("mpr_0"))
-        module_manager.register_module(EagleEyeModule("eagle_eye_0"))
-        module_manager.register_module(ToolbarModule("toolbar_0"))
-        module_manager.register_module(MeasurementModule("measurement_0"))
-        module_manager.register_module(ReportGeneratorModule("report_0"))
-
-        # Attach to app runtime for access by downstream UI/pages
-        window.pipeline_orchestrator = pipeline_orchestrator
-        window.module_manager = module_manager
-
-        print("✅ Module Execution Framework initialized (5 modules registered)")
-    except Exception as e:
-        print(f"⚠️ Module framework initialization skipped: {e}")
-
     window.show()
+
+    # Global disk usage alert checks (modular service)
+    app._disk_alert_service = DiskUsageAlertService(
+        parent_widget=window,
+        threshold_percent=90.0,
+        interval_ms=5 * 60 * 1000,
+    )
+    app._disk_alert_service.start(initial_delay_ms=2000)
+
     # sys.exit(app.exec())
     with loop:
-        try:
-            loop.run_forever()
-        finally:
-            # Ensure the loop is closed when exiting
-            if not loop.is_closed():
-                loop.close()
-                print("✅ Event loop closed")
+        loop.run_forever()

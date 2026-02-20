@@ -1,0 +1,142 @@
+{
+    "MR": {
+        "enabled": true,
+        "min_slices": 4,
+        "noise_reduction": {
+            "enabled": true,
+            "sigma": 0.25,
+            "mild_sigma": 0.3
+        },
+        "gaussian_smoothing": {
+            "enabled": true,
+            "sigma": 0.5,
+            "mild_sigma": 0.3
+        },
+        "multiscale_sharpening": {
+            "enabled": true,
+            "sigmas": [
+                0.5,
+                1.0,
+                2.0
+            ],
+            "amounts": [
+                0.25,
+                0.12,
+                0.06
+            ],
+            "mild_sigmas": [
+                0.5,
+                1.0,
+                2.0,
+                4.0
+            ],
+            "mild_amounts": [
+                0.2,
+                0.1,
+                0.05,
+                0.025
+            ]
+        },
+        "laplacian_sharpening": {
+            "enabled": true,
+            "alpha": 0.12,
+            "mild_alpha": 0.1
+        },
+        "adaptive_sharpening": {
+            "enabled": true,
+            "base_amount": 0.12,
+            "edge_boost": 0.9,
+            "sigma": 0.7,
+            "mild_base_amount": 0.1,
+            "mild_edge_boost": 0.8,
+            "mild_sigma": 0.8
+        },
+        "gaussian_high_pass": {
+            "enabled": true,
+            "sigma": 1.0,
+            "mild_sigma": 1.5
+        },
+        "gaussian_low_pass": {
+            "enabled": true,
+            "sigma": 2.0,
+            "mild_sigma": 3.0
+        },
+        "gaussian_band_pass": {
+            "enabled": false,
+            "low_sigma": 1.0,
+            "high_sigma": 0.5,
+            "mild_low_sigma": 1.5,
+            "mild_high_sigma": 0.8
+        }
+    },
+    "CT": {
+        "enabled": true,
+        "min_slices": 4,
+        "noise_reduction": {
+            "enabled": true,
+            "sigma": 0.25,
+            "mild_sigma": 0.3
+        },
+        "gaussian_smoothing": {
+            "enabled": true,
+            "sigma": 0.5,
+            "mild_sigma": 0.3
+        },
+        "multiscale_sharpening": {
+            "enabled": true,
+            "sigmas": [
+                0.5,
+                1.0,
+                2.0
+            ],
+            "amounts": [
+                0.25,
+                0.12,
+                0.06
+            ],
+            "mild_sigmas": [
+                0.5,
+                1.0,
+                2.0,
+                4.0
+            ],
+            "mild_amounts": [
+                0.2,
+                0.1,
+                0.05,
+                0.025
+            ]
+        },
+        "laplacian_sharpening": {
+            "enabled": true,
+            "alpha": 0.12,
+            "mild_alpha": 0.1
+        },
+        "adaptive_sharpening": {
+            "enabled": true,
+            "base_amount": 0.12,
+            "edge_boost": 0.9,
+            "sigma": 0.7,
+            "mild_base_amount": 0.1,
+            "mild_edge_boost": 0.8,
+            "mild_sigma": 0.8
+        },
+        "gaussian_high_pass": {
+            "enabled": true,
+            "sigma": 1.0,
+            "mild_sigma": 1.5
+        },
+        "gaussian_low_pass": {
+            "enabled": true,
+            "sigma": 2.0,
+            "mild_sigma": 3.0
+        },
+        "gaussian_band_pass": {
+            "enabled": false,
+            "low_sigma": 1.0,
+            "high_sigma": 0.5,
+            "mild_low_sigma": 1.5,
+            "mild_high_sigma": 0.8
+        }
+    }
+}
