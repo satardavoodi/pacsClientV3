@@ -57,7 +57,7 @@ except Exception:
 
 
 class ModePickerPage(QWidget):
-    chosen = Signal(str)  # "Chat" | "Report" | "Assist" | "Secretary" | "ChatGPT"
+    chosen = Signal(str)  # "Chat" | "Report" | "Assist" | "ChatGPT"
 
     def __init__(self, parent=None, *, left_offset: int = 85, top_offset: int = 129, gap: int = 32):
         super().__init__(parent)
@@ -122,7 +122,6 @@ class ModePickerPage(QWidget):
         self.btn_chat = mk_btn("Chat")
         self.btn_report = mk_btn("Report")
         self.btn_assist = mk_btn("Assist")
-        self.btn_secretary = mk_btn("Secretary")
         self.btn_chatgpt = mk_btn("ChatGPT")
 
         # --- فاصله‌ها و ترتیب ---
@@ -130,7 +129,6 @@ class ModePickerPage(QWidget):
         self.gap_1 = QWidget(self.left_wrap); self.gap_1.setFixedHeight(self._gap_px)
         self.gap_2 = QWidget(self.left_wrap); self.gap_2.setFixedHeight(self._gap_px)
         self.gap_3 = QWidget(self.left_wrap); self.gap_3.setFixedHeight(self._gap_px)
-        self.gap_4 = QWidget(self.left_wrap); self.gap_4.setFixedHeight(self._gap_px)
 
         self.left.addWidget(self.spacer_top)
         self.left.addWidget(self.btn_chat)
@@ -139,21 +137,14 @@ class ModePickerPage(QWidget):
         self.left.addWidget(self.gap_2)
         self.left.addWidget(self.btn_assist)
         self.left.addWidget(self.gap_3)
-        self.left.addWidget(self.btn_secretary)
-        self.left.addWidget(self.gap_4)
         self.left.addWidget(self.btn_chatgpt)
         self.left.addStretch(1)
         self._mode_buttons = [
             self.btn_chat,
             self.btn_report,
             self.btn_assist,
-            self.btn_secretary,
             self.btn_chatgpt,
         ]
-        self._secretary_runtime_available = SecretaryOrchestrator is not None
-        if not self._secretary_runtime_available:
-            self.btn_secretary.setEnabled(False)
-            self.btn_secretary.setToolTip("Secretary mode is unavailable in this runtime.")
 
         # راست: پیام قفل/راهنما
         right_spacer = QWidget(self)
@@ -276,7 +267,7 @@ class ModePickerPage(QWidget):
         - all AI modes are locked (disabled)
         - the lock reason message is shown
         """
-        for btn in (self.btn_chat, self.btn_report, self.btn_assist, self.btn_secretary, self.btn_chatgpt):
+        for btn in (self.btn_chat, self.btn_report, self.btn_assist, self.btn_chatgpt):
             try:
                 btn.setEnabled(bool(enabled))
             except Exception:
@@ -420,7 +411,6 @@ class ModePickerPage(QWidget):
             f"<li>💬 Chat</li>"
             f"<li>📄 Report Generation</li>"
             f"<li>🤖 Assistant</li>"
-            f"<li>🧑 Secretary</li>"
             f"<li>🔍 Search</li>"
             f"<li>🌟 ChatGPT</li>"
             f"</ul>"
@@ -443,7 +433,6 @@ class ModePickerPage(QWidget):
         self.gap_1.setFixedHeight(gap_h)
         self.gap_2.setFixedHeight(gap_h)
         self.gap_3.setFixedHeight(gap_h)
-        self.gap_4.setFixedHeight(gap_h)
 
         m = self._root.contentsMargins()
         self._root.setContentsMargins(left_m, m.top(), m.right(), m.bottom())
@@ -2232,8 +2221,8 @@ class OneChatPage(QWidget):
 
         stt_cfg = self.composer.get_stt_config() if hasattr(self.composer, "get_stt_config") else {}
         route = str(stt_cfg.get("route") or "native")
-        fallback = bool(stt_cfg.get("fallback", True))
-        quality = str(stt_cfg.get("quality_mode") or "clear")
+        fallback = False
+        quality = "noisy"
 
         def work():
             return self._secretary_stt_router.transcribe_files(

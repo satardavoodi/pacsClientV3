@@ -27,6 +27,7 @@ from .widgets.report_editor_dialog import ReportEditorDialog
 from .widgets.patient_info_card import PatientInfoCard, ReceptionInfoCard
 from .widgets.attachment_viewer import AttachmentGrid, AttachmentThumbnail
 from PacsClient.utils.socket_token_manager import get_socket_token_manager
+from PacsClient.utils.scroll_style import get_scroll_area_style
 import qtawesome as qta
 import os
 import json
@@ -181,6 +182,7 @@ class ReceptionDataTab(QWidget):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setStyleSheet(get_scroll_area_style())
 
         # Create content widget for scroll area
 
@@ -979,13 +981,7 @@ class ReceptionDataTab(QWidget):
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            scroll.setStyleSheet("""
-                QScrollArea {
-                    border: 2px solid #444;
-                    border-radius: 4px;
-                    background-color: #2b2b2b;
-                }
-            """)
+            scroll.setStyleSheet(get_scroll_area_style())
             
             # Content widget for pages
             content_widget = QWidget()

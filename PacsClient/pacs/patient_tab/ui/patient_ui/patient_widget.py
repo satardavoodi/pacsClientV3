@@ -47,6 +47,7 @@ from PacsClient.pacs.patient_tab.zeta_sync import (
 )
 import asyncio
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, CallerTypes
+from PacsClient.utils.scroll_style import get_scroll_area_style
 import threading
 from PySide6.QtWidgets import QProgressDialog, QApplication
 from PacsClient.pacs.patient_tab.ui.widgets import ViewportSpinner
@@ -3192,44 +3193,7 @@ class PatientWidget(QWidget):
         thumb_scroll.setWidgetResizable(True)
         thumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         thumb_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        thumb_scroll.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background: transparent;
-            }
-            QScrollBar:vertical {
-                border: 1px solid #4b5563;
-                background: #1f2937;
-                width: 12px;
-                margin: 12px 0px 12px 0px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical {
-                background: #374151;
-                min-height: 40px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #4b5563;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 12px;
-                width: 12px;
-                background: transparent;
-                border: none;
-                subcontrol-origin: margin;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: none;
-            }
-            QScrollBar::up-arrow:vertical,
-            QScrollBar::down-arrow:vertical {
-                width: 0px;
-                height: 0px;
-            }
-        """)
+        thumb_scroll.setStyleSheet(get_scroll_area_style())
 
         # Grid container (same as Series grid)
         thumb_container = QWidget()
@@ -3276,28 +3240,7 @@ class PatientWidget(QWidget):
         models_scroll.setWidgetResizable(True)
         models_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         models_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        models_scroll.setStyleSheet("""
-            QScrollArea {
-                border: 1px solid #2d3748;
-                background: #0b1016;
-                border-radius: 8px;
-            }
-            QScrollBar:vertical {
-                border: 1px solid #4b5563;
-                background: #1f2937;
-                width: 12px;
-                margin: 12px 0px 12px 0px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical {
-                background: #374151;
-                min-height: 40px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #4b5563;
-            }
-        """)
+        models_scroll.setStyleSheet(get_scroll_area_style())
 
         # Models container
         models_container = QWidget()
@@ -3815,45 +3758,7 @@ class PatientWidget(QWidget):
         # thumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         thumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         thumb_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-        thumb_scroll.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background: transparent;
-            }
-            QScrollBar:vertical {
-                border: 1px solid #4b5563;
-                background: #1f2937;
-                width: 12px;
-                margin: 12px 0px 12px 0px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical {
-                background: #374151;
-                min-height: 40px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #4b5563;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 12px;
-                width: 12px;
-                background: transparent;
-                border: none;
-                subcontrol-origin: margin;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: none;
-            }
-            QScrollBar::up-arrow:vertical,
-            QScrollBar::down-arrow:vertical {
-                width: 0px;
-                height: 0px;
-            }
-        """)
+        thumb_scroll.setStyleSheet(get_scroll_area_style())
         # thumb_scroll.setStyleSheet("""
         #     QScrollArea {
         #         background-color: #2b2b2b;

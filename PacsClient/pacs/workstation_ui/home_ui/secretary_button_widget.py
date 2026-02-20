@@ -1,6 +1,14 @@
 import math
+import os
+import tempfile
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
+
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
 
 import qtawesome as qta
 from PySide6.QtCore import Qt, QTimer, QRectF, Signal, QSize
@@ -24,9 +32,17 @@ from PySide6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QInputDialog,
+    QMessageBox,
+    QLineEdit,
 )
 
 from PacsClient.utils import IMAGES_LOGIN_PATH
+from EchoMind.api_manager import APIKeyManager, Manage
+from EchoMind.ai_chat_api import ApiWorker
+from EchoMind.openai_reporter import chat as gapgpt_chat
+from EchoMind.secretary.stt.router import SttRouter
+from EchoMind.settings_store import get_secretary_stt_route, load_settings, get_echomind_api_key
 
 
 class SecretaryOrbButton(QToolButton):
@@ -488,6 +504,14 @@ class SecretaryButtonWidget(QWidget):
         self.setMinimumHeight(396)
         self._log_box_height = 126
         self._log_popup = None
+        self._rec_running = False
+        self._rec_thread = None
+        self._rec_frames = []
+        self._rec_fs = 44100
+        self._rec_started_at = None
+        self._last_audio_path = None
+        self._stt_router = SttRouter()
+        self._worker = None
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(2, 4, 2, 4)
@@ -516,14 +540,19 @@ class SecretaryButtonWidget(QWidget):
             "font-family: 'Consolas', 'Roboto Mono', monospace;"
             "}"
             "QScrollBar:vertical {"
-            "background: transparent;"
-            "width: 8px;"
-            "margin: 2px;"
+            "border: 1px solid #4b5563;"
+            "background: #1f2937;"
+            "width: 12px;"
+            "margin: 12px 0px 12px 0px;"
+            "border-radius: 6px;"
             "}"
             "QScrollBar::handle:vertical {"
-            "background: #3f5972;"
-            "border-radius: 4px;"
-            "min-height: 20px;"
+            "background: #374151;"
+            "border-radius: 5px;"
+            "min-height: 40px;"
+            "}"
+            "QScrollBar::handle:vertical:hover {"
+            "background: #4b5563;"
             "}"
         )
         main_layout.addWidget(self.log_box)
@@ -678,9 +707,14 @@ class SecretaryButtonWidget(QWidget):
 
     def _on_active_changed(self, active):
         if active:
+            if not self._ensure_echomind_login():
+                self._set_active_silent(False)
+                return
             self.append_log("system", "Secretary is live and listening for a command.")
+            self._start_recording()
         else:
             self.append_log("system", "Secretary listening stopped.")
+            self._stop_recording_and_process()
         self.update()
         self.listeningToggled.emit(active)
 
@@ -711,3 +745,204 @@ class SecretaryButtonWidget(QWidget):
     def _on_log_popup_closed(self):
         if self._log_popup is not None:
             self._log_popup.hide()
+
+    def _set_active_silent(self, active: bool) -> None:
+        try:
+            self.orb_button.blockSignals(True)
+            self.orb_button.setChecked(bool(active))
+        finally:
+            try:
+                self.orb_button.blockSignals(False)
+            except Exception:
+                pass
+        try:
+            self.orb_button._apply_state(bool(active))
+        except Exception:
+            pass
+
+    def _post_log(self, role: str, text: str) -> None:
+        QTimer.singleShot(0, lambda: self.append_log(role, text))
+
+    def _ensure_echomind_login(self) -> bool:
+        mgr = APIKeyManager.instance()
+        if mgr.is_validated():
+            return True
+
+        key = (get_echomind_api_key() or "").strip()
+        if not key:
+            QMessageBox.information(
+                self,
+                "EchoMind",
+                "No EchoMind key saved. Open Settings -> EchoMind to configure it.",
+            )
+            return False
+
+        success, center, error = mgr.validate_key(key)
+        if not success:
+            QMessageBox.critical(
+                self,
+                "EchoMind Authentication",
+                (error or "Invalid key.") + " Update it in Settings -> EchoMind.",
+            )
+            return False
+
+        try:
+            Manage.instance().detect_center(key)
+        except Exception:
+            pass
+        self._post_log("system", f"EchoMind login OK: {center or 'Unknown'}")
+        return True
+
+    def _start_recording(self) -> None:
+        if self._rec_running:
+            return
+        self._rec_running = True
+        self._rec_started_at = time.time()
+        self._rec_frames = []
+        self._post_log("system", "Listening started.")
+
+        def worker():
+            try:
+                with sd.InputStream(
+                    samplerate=self._rec_fs,
+                    channels=1,
+                    dtype="int16",
+                    callback=self._rec_callback,
+                ):
+                    while self._rec_running:
+                        sd.sleep(100)
+            except Exception as exc:
+                self._rec_running = False
+                self._post_log("system", f"Recording error: {exc}")
+                self._set_active_silent(False)
+
+        self._rec_thread = threading.Thread(target=worker, daemon=True)
+        self._rec_thread.start()
+
+    def _rec_callback(self, indata, frames, time_info, status):
+        del frames, time_info, status
+        if not self._rec_running:
+            return
+        try:
+            self._rec_frames.append(indata.copy())
+        except Exception:
+            pass
+
+    def _stop_recording_and_process(self) -> None:
+        if not self._rec_running:
+            return
+        self._rec_running = False
+        started_at = self._rec_started_at
+        self._rec_started_at = None
+        if self._rec_thread is not None:
+            try:
+                self._rec_thread.join(timeout=1.5)
+            except Exception:
+                pass
+            self._rec_thread = None
+
+        if not self._rec_frames:
+            self._post_log("system", "No audio captured.")
+            return
+
+        tmp = os.path.join(tempfile.gettempdir(), f"secretary_{int(time.time())}.wav")
+        try:
+            audio = np.concatenate(self._rec_frames, axis=0)
+            peak = 0
+            try:
+                peak = int(np.max(np.abs(audio))) if audio.size else 0
+            except Exception:
+                peak = 0
+            if peak < 300:
+                self._post_log("system", "Audio too quiet or muted. Check microphone input.")
+                return
+            sf.write(tmp, audio, self._rec_fs)
+            self._last_audio_path = tmp
+            duration_s = float(len(audio)) / float(self._rec_fs or 1)
+            if started_at is not None:
+                elapsed = max(0.0, time.time() - started_at)
+                self._post_log("system", f"Listening stopped. Duration: {elapsed:.2f}s")
+            self._post_log("system", f"Audio captured: {duration_s:.2f}s @ {self._rec_fs}Hz")
+        except Exception as exc:
+            self._post_log("system", f"Audio save failed: {exc}")
+            return
+
+        if self._worker is not None and self._worker.isRunning():
+            self._post_log("system", "Secretary is still processing the previous request.")
+            return
+
+        self._post_log("system", "Transcribing voice...")
+
+        def work():
+            try:
+                stt_settings = load_settings() or {}
+                stt_req = {
+                    "route": get_secretary_stt_route(),
+                    "fallback": False,
+                    "quality_mode": "noisy",
+                }
+                stt_resp = None
+                stt_resp = self._stt_router.transcribe_files(
+                    paths=[tmp],
+                    route=stt_req["route"],
+                    fallback=stt_req["fallback"],
+                    quality_mode=stt_req["quality_mode"],
+                )
+                transcript = (stt_resp.get("transcript") or "").strip()
+                if not transcript:
+                    return {
+                        "ok": False,
+                        "error": stt_resp.get("error") or "No speech recognized.",
+                        "stt_req": stt_req,
+                        "stt_resp": stt_resp,
+                    }
+
+                chat_req = {"model": "gpt-4.1-mini"}
+                chat_resp = gapgpt_chat(user_msg=transcript, model=chat_req["model"])
+                return {
+                    "ok": True,
+                    "transcript": transcript,
+                    "response": (chat_resp.get("content") or "").strip(),
+                    "stt_req": stt_req,
+                    "stt_resp": stt_resp,
+                    "chat_req": chat_req,
+                    "chat_resp": chat_resp,
+                }
+            finally:
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+
+        def done(resp: dict):
+            if not resp.get("ok"):
+                stt_req = resp.get("stt_req") or {}
+                stt_resp = resp.get("stt_resp") or {}
+                self._post_log("system", f"STT request: {stt_req}")
+                self._post_log("system", f"STT response: {stt_resp}")
+                self._post_log("system", f"Secretary failed: {resp.get('error')}")
+                return
+            transcript = (resp.get("transcript") or "").strip()
+            response = (resp.get("response") or "").strip()
+            stt_req = resp.get("stt_req") or {}
+            stt_resp = resp.get("stt_resp") or {}
+            chat_req = resp.get("chat_req") or {}
+            chat_resp = resp.get("chat_resp") or {}
+            self._post_log("system", f"STT request: {stt_req}")
+            self._post_log("system", f"STT response: {stt_resp}")
+            self._post_log("system", f"GapGPT request: {chat_req}")
+            self._post_log("system", f"GapGPT response: {chat_resp}")
+            if transcript:
+                self.append_input(transcript)
+            if response:
+                self.append_output(response)
+            else:
+                self._post_log("system", "No response received from GapGPT.")
+
+        def failed(msg: str):
+            self._post_log("system", f"Secretary failed: {msg}")
+
+        self._worker = ApiWorker(work, parent=self)
+        self._worker.done.connect(done)
+        self._worker.failed.connect(failed)
+        self._worker.start()

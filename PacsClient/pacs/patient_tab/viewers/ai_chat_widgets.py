@@ -29,36 +29,31 @@ from .ai_chat_config import (
 
 PATIENT_SCROLLBAR_QSS = """
     QScrollBar:vertical {
-        background: rgba(0, 0, 0, 0.10);
-        width: 10px;
-        margin: 0px;
-        border-radius: 5px;
-        border: none;
+        border: 1px solid #4b5563;
+        background: #1f2937;
+        width: 12px;
+        margin: 12px 0px 12px 0px;
+        border-radius: 6px;
     }
     QScrollBar::handle:vertical {
-        background: rgba(128, 128, 128, 0.50);
+        background: #374151;
         min-height: 40px;
         border-radius: 5px;
-        border: none;
     }
     QScrollBar::handle:vertical:hover {
-        background: rgba(128, 128, 128, 0.70);
-    }
-    QScrollBar::handle:vertical:pressed {
-        background: rgba(96, 96, 96, 0.90);
+        background: #4b5563;
     }
     QScrollBar::add-line:vertical,
     QScrollBar::sub-line:vertical {
-        height: 0px;
-        width: 0px;
+        height: 12px;
+        width: 12px;
         background: transparent;
         border: none;
         subcontrol-origin: margin;
     }
     QScrollBar::add-page:vertical,
     QScrollBar::sub-page:vertical {
-        background: transparent;
-        border: none;
+        background: none;
     }
     QScrollBar::up-arrow:vertical,
     QScrollBar::down-arrow:vertical {
@@ -1183,6 +1178,8 @@ class UnifiedComposer(QWidget):
         self._rec_level_smooth = 0.0
         self._agc_peak = 0.10
         self._noise_floor = 0.015
+        self._rec_device = None
+        self._rec_fs_used = None
         self._voice_src_path = None
         self._mic_mode = "record"  # "record" | "confirm"
         # متغیر برای نگهداری مودالیتی انتخاب شده
@@ -4031,6 +4028,59 @@ class UnifiedComposer(QWidget):
         else:
             self.cancelClicked.emit()
     # ---------- recording ----------
+    def _prepare_recording_stream(self):
+        device = None
+        samplerate = int(self._rec_fs or 44100)
+        try:
+            default_dev = None
+            try:
+                default_dev = sd.default.device[0]
+            except Exception:
+                default_dev = None
+
+            if default_dev is not None and int(default_dev) >= 0:
+                try:
+                    info = sd.query_devices(int(default_dev))
+                    if int(info.get("max_input_channels", 0)) > 0:
+                        device = int(default_dev)
+                        samplerate = int(info.get("default_samplerate") or samplerate)
+                except Exception:
+                    device = None
+
+            if device is None:
+                try:
+                    for i, di in enumerate(sd.query_devices()):
+                        if int(di.get("max_input_channels", 0)) > 0:
+                            device = i
+                            samplerate = int(di.get("default_samplerate") or samplerate)
+                            break
+                except Exception:
+                    device = None
+
+            if device is None:
+                raise RuntimeError("No input audio devices found")
+
+            # Prefer configured sample rate if supported, otherwise fallback.
+            try:
+                sd.check_input_settings(device=device, samplerate=int(self._rec_fs), channels=1, dtype="int16")
+                samplerate = int(self._rec_fs)
+            except Exception:
+                try:
+                    sd.check_input_settings(device=device, samplerate=int(samplerate), channels=1, dtype="int16")
+                except Exception:
+                    for fallback in (16000, 44100, 48000):
+                        try:
+                            sd.check_input_settings(device=device, samplerate=fallback, channels=1, dtype="int16")
+                            samplerate = int(fallback)
+                            break
+                        except Exception:
+                            continue
+        except Exception as e:
+            print(f"[VOICE_REC] prepare failed: {e}")
+            return None, None
+
+        return device, samplerate
+
     def _start_record(self):
         self._rec_running = True
         self._rec_paused = False  # ✅ reset pause
@@ -4046,12 +4096,28 @@ class UnifiedComposer(QWidget):
         self._apply_mic_mode("confirm")  # shows pause/confirm/cancel, hides mic
         self._apply_pause_icon(False)     # ✅ set to Pause icon
         self._rec_timer.start(100)
+        device, samplerate = self._prepare_recording_stream()
+        if device is None or samplerate is None:
+            self._rec_running = False
+            self._apply_mic_mode("record")
+            self._restore_mic_after_record()
+            return
+        self._rec_device = device
+        self._rec_fs_used = int(samplerate)
+        print(f"[VOICE_REC] start device={device} samplerate={self._rec_fs_used}")
         def worker():
             try:
-                with sd.InputStream(samplerate=self._rec_fs, channels=1, dtype='int16', callback=self._rec_callback):
+                with sd.InputStream(
+                    device=device,
+                    samplerate=int(self._rec_fs_used),
+                    channels=1,
+                    dtype="int16",
+                    callback=self._rec_callback,
+                ):
                     while self._rec_running:
                         sd.sleep(100)
-            except Exception:
+            except Exception as e:
+                print(f"[VOICE_REC] stream error: {e}")
                 self._rec_running = False
                 self._apply_mic_mode("record")
                 self._restore_mic_after_record()
@@ -4059,6 +4125,11 @@ class UnifiedComposer(QWidget):
         self._rec_thread.start()
 
     def _rec_callback(self, indata, frames, time_info, status):
+        if status:
+            try:
+                print(f"[VOICE_REC] status: {status}")
+            except Exception:
+                pass
         if self._rec_paused:
             return
         self._rec_frames.append(indata.copy())
@@ -4109,6 +4180,7 @@ class UnifiedComposer(QWidget):
             self._rec_thread = None
 
         if not getattr(self, "_rec_frames", None):
+            print("[VOICE_REC] no frames captured")
             self._apply_mic_mode("record")
             self._restore_mic_after_record()
             return
@@ -4116,7 +4188,15 @@ class UnifiedComposer(QWidget):
         tmp = os.path.join(tempfile.gettempdir(), f"rec_{int(time.time())}.wav")
         try:
             audio = np.concatenate(self._rec_frames, axis=0)
-            sf.write(tmp, audio, self._rec_fs)
+            sr = int(self._rec_fs_used or self._rec_fs)
+            target_seconds = 30
+            min_samples = int(target_seconds * sr)
+            if audio.shape[0] < min_samples:
+                pad = min_samples - audio.shape[0]
+                audio = np.pad(audio, ((0, pad), (0, 0)), mode="constant")
+                print(f"[VOICE_REC] padded to {target_seconds}s (+{pad} samples)")
+            print(f"[VOICE_REC] write wav frames={len(self._rec_frames)} samples={audio.shape[0]} sr={sr}")
+            sf.write(tmp, audio, sr)
             self.add_voice_attachment(tmp)
 
             payload = {"file_path": tmp, "filename": os.path.basename(tmp)}
