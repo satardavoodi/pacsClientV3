@@ -3621,9 +3621,15 @@ class DownloadManagerWidget(QWidget):
         self.priority_combo.setCurrentText(state.priority.display_name)
         self.priority_combo.blockSignals(False)
 
-        # Load reception data
+        # Load reception data (avoid re-fetch loops on repeated refreshes)
         if task and task.patient_id:
-            self._load_reception_data(task.patient_id, study_uid)
+            patient_id = task.patient_id
+            cached_data = self._reception_cache.get(patient_id)
+            if patient_id == self._last_reception_patient_id and cached_data:
+                logger.info(f"📋 [RECEPTION] Using cached data for patient {patient_id}")
+                self._apply_reception_data(cached_data)
+            else:
+                self._load_reception_data(patient_id, study_uid)
 
         # Update series breakdown
         if task:
@@ -4134,6 +4140,10 @@ class DownloadManagerWidget(QWidget):
         if not patient_id:
             logger.info("📋 [RECEPTION] No patient ID provided, skipping reception data load")
             return
+        # Skip duplicate in-flight requests for the same patient
+        if patient_id in self._pending_reception_requests:
+            logger.info(f"📋 [RECEPTION] Request already pending for patient {patient_id}, skipping")
+            return
 
         logger.info("=" * 120)
         logger.info(f"📋 [RECEPTION_REQUEST] 🔄 Loading reception data for patient")
@@ -4236,9 +4246,6 @@ class DownloadManagerWidget(QWidget):
                 if current_patient_id == patient_id:
                     logger.info(f"   ✅ Current selection has matching patient_id: {patient_id}")
                     should_apply = True
-                else:
-                    logger.info(f"   ℹ️ Data is for different patient (current: {current_patient_id}, received: {patient_id}). Not applying.")
-            
             if should_apply:
                 logger.info(f"   🎨 Applying reception data to UI for patient {patient_id}")
                 self._apply_reception_data(patient_data)

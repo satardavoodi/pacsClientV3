@@ -22,11 +22,14 @@ def _configure_qt_env() -> None:
     if sys.platform == "win32":
         os.environ.setdefault("QT_OPENGL", "software")
         os.environ.setdefault("QSG_RHI_BACKEND", "d3d11")
-        os.environ.setdefault(
-            "QTWEBENGINE_CHROMIUM_FLAGS",
+        chromium_flags = (
             "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream "
-            "--disable-features=VizDisplayCompositor,UseSkiaRenderer",
+            "--disable-features=VizDisplayCompositor,UseSkiaRenderer"
         )
+        if not getattr(sys, "frozen", False):
+            os.environ.setdefault("QTWEBENGINE_DISABLE_GPU", "1")
+            chromium_flags += " --use-angle=swiftshader"
+        os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", chromium_flags)
         os.environ.setdefault("QT_QUICK_BACKEND", "software")
         os.environ.setdefault("QMLSCENE_DEVICE", "softwarecontext")
         os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")

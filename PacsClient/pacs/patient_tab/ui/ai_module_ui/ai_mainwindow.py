@@ -53,6 +53,13 @@ class AiMainWindow(QMainWindow):
         w = self.tab_widget.widget(index)
         if w is self.dataset_tab:
             self.dataset_tab.refresh()
+        try:
+            if w is self.imaging_tab:
+                self.imaging_tab.patient_widget.on_tab_activated()
+            else:
+                self.imaging_tab.patient_widget.on_tab_deactivated()
+        except Exception:
+            pass
 
     def _apply_dark_theme(self):
         # بهتره برای یکنواختی QSS در ویندوز

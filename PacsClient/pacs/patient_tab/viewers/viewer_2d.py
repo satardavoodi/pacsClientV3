@@ -517,7 +517,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                                         status_abnormal=False, ijk_points=corner_ijk)
 
         # update Box Details UI
-        self.vtk_widget.update_boxes_details_ui(overlay_box_object)
+        if hasattr(self.vtk_widget, 'update_boxes_details_ui'):
+            self.vtk_widget.update_boxes_details_ui(overlay_box_object)
 
     def _schedule_render(self, delay=50):
         """Schedule a render with delay to batch multiple updates"""

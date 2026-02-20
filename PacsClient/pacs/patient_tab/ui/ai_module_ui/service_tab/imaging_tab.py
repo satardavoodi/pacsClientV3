@@ -414,6 +414,12 @@ class ImagingToolsTab(AbstractTab):
         # بارگذاری داده‌های bone age
         QTimer.singleShot(200, self._load_bone_age_feature_if_exists)
 
+        # Ensure the AI patient widget is treated as active in this window
+        try:
+            self.patient_widget.on_tab_activated()
+        except Exception:
+            pass
+
         
         # Load MG runs if needed
         if self.detect_modality() == "MG":
