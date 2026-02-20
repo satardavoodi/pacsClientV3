@@ -17,6 +17,7 @@ class AIVTKWidget(VTKWidget):
         self.csv_classification = None
 
     def start_process_series(self, vtk_image_data, metadata, series_index, id_vtk_widget, metadata_fixed):
+        print(f"[MG][VTK] start_process_series called for series={series_index} modality={metadata.get('series', {}).get('modality', 'N/A')}")
         super().start_process_series(vtk_image_data, metadata, series_index, id_vtk_widget, metadata_fixed)
 
         study_uid = self.image_viewer.metadata_fixed['study_uid']
@@ -33,10 +34,16 @@ class AIVTKWidget(VTKWidget):
                 self.csv_classification = cls_csv
                 print("[MG] CSV paths loaded from manifest")
             else:
-                # fallback (backward compatible)
-                self.csv_details_path = ATTACHMENT_PATH / study_uid / 'updated_csv_with_boxes.csv'
-                self.csv_classification = ATTACHMENT_PATH / study_uid / 'classification.csv'
-                print("[MG] CSV paths loaded from default")
+                det_csv, cls_csv = self._fallback_mg_csv_paths(study_uid)
+                if det_csv and cls_csv:
+                    self.csv_details_path = det_csv
+                    self.csv_classification = cls_csv
+                    print("[MG] CSV paths loaded from fallback")
+                else:
+                    # fallback (backward compatible)
+                    self.csv_details_path = ATTACHMENT_PATH / study_uid / 'updated_csv_with_boxes.csv'
+                    self.csv_classification = ATTACHMENT_PATH / study_uid / 'classification.csv'
+                    print("[MG] CSV paths loaded from default")
 
         # connect apply button
         try:
@@ -46,37 +53,127 @@ class AIVTKWidget(VTKWidget):
 
         self.patient_widget.imaging_tab_ui.apply_btn.clicked.connect(self.on_apply)
 
+        print(f"[MG][VTK] About to call manager_ai() for series={series_index}")
         self.manager_ai()
+        print(f"[MG][VTK] manager_ai() completed for series={series_index}")
 
     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
                       metadata_fixed=None):
-        if super().switch_series_backup(vtk_image_data, metadata, series_index, vtk_image_data_2, metadata_2,
-                                        metadata_fixed):
+        print(f"[MG][VTK] switch_series called for series={series_index} modality={metadata.get('series', {}).get('modality', 'N/A')}")
+        
+        # Load CSV paths if not already loaded (happens when viewer is created as placeholder)
+        if self.csv_details_path is None and metadata.get('series', {}).get('modality', '').upper() == 'MG':
+            print(f"[MG][VTK] CSV paths not loaded, initializing now...")
+            study_uid = metadata_fixed.get('study_uid') if metadata_fixed else None
+            if study_uid:
+                det_csv, cls_csv = load_mg_ai_manifest(
+                    study_uid=study_uid,
+                    attachments_path=ATTACHMENT_PATH
+                )
+
+                if det_csv and cls_csv:
+                    self.csv_details_path = det_csv
+                    self.csv_classification = cls_csv
+                    print("[MG][VTK] CSV paths loaded from manifest")
+                else:
+                    det_csv, cls_csv = self._fallback_mg_csv_paths(study_uid)
+                    if det_csv and cls_csv:
+                        self.csv_details_path = det_csv
+                        self.csv_classification = cls_csv
+                        print("[MG][VTK] CSV paths loaded from fallback")
+                    else:
+                        # fallback (backward compatible)
+                        self.csv_details_path = ATTACHMENT_PATH / study_uid / 'updated_csv_with_boxes.csv'
+                        self.csv_classification = ATTACHMENT_PATH / study_uid / 'classification.csv'
+                        print("[MG][VTK] CSV paths loaded from default")
+        
+        # ✅ CRITICAL FIX: Use super().switch_series() not switch_series_backup()
+        result = super().switch_series(vtk_image_data, metadata, series_index, vtk_image_data_2, metadata_2,
+                                       metadata_fixed)
+        if result:
+            print(f"[MG][VTK] About to call manager_ai() after switch for series={series_index}")
             self.manager_ai()
-            return True
-        return False
+            print(f"[MG][VTK] manager_ai() completed after switch for series={series_index}")
+        else:
+            print(f"[MG][VTK] switch_series returned False for series={series_index}")
+        return result
 
     def load_csv(self, csv_path=None):
         if csv_path is None:
             csv_path = self.csv_details_path
 
-        print('csv_path', csv_path)
+        print(f"[MG][CSV] csv_path={csv_path}")
         if csv_path is None:
-            print('csv or attachments are not exist')
+            print("[MG][CSV] csv_path is None")
             return None
 
         if not csv_path.exists():
-            print('csv or attachments are not exist')
+            print(f"[MG][CSV] file not found: {csv_path}")
             return None
 
         df = pd.read_csv(csv_path)
+        print(f"[MG][CSV] loaded rows={len(df)} cols={list(df.columns)}")
         return df
 
+    def _fallback_mg_csv_paths(self, study_uid):
+        """Pick the most recent MG CSV pair if manifest is missing/invalid."""
+        try:
+            base_dir = ATTACHMENT_PATH / study_uid
+            if not base_dir.exists():
+                return None, None
+
+            det_files = sorted(base_dir.glob('updated_csv_with_boxes_*.csv'), key=lambda p: p.stat().st_mtime, reverse=True)
+            if not det_files:
+                return None, None
+
+            det = det_files[0]
+            suffix = det.name.replace('updated_csv_with_boxes_', '')
+            cls = base_dir / f'classification_{suffix}'
+            if cls.exists():
+                return det, cls
+
+            # fallback to any classification CSV if paired file not found
+            cls_files = sorted(base_dir.glob('classification_*.csv'), key=lambda p: p.stat().st_mtime, reverse=True)
+            return det, (cls_files[0] if cls_files else None)
+
+        except Exception:
+            return None, None
+
     def get_series_ai_data_from_df(self, df: pd.DataFrame, check_all_rows=False):
-        series_uid = self.image_viewer.metadata['series']['series_uid']
+        series_uid = self.image_viewer.metadata['series'].get('series_uid')
+        series_num = self.image_viewer.metadata['series'].get('series_number', 'N/A')
         lst_dicom_path = df["dicom_full_path"]
         lst_ai_data = []
-        check_all_rows = False
+
+        instance_names = set()
+        instance_tokens = set()
+        instance_numbers = set()
+        try:
+            instances = self.image_viewer.metadata.get('instances', [])
+            for inst in instances:
+                inst_path = inst.get('instance_path')
+                if inst_path:
+                    name = Path(inst_path).name
+                    instance_names.add(name)
+                    token = self._extract_filename_token(name)
+                    if token:
+                        instance_tokens.add(token)
+                inst_num = inst.get('instance_number')
+                if inst_num is not None:
+                    try:
+                        instance_numbers.add(int(inst_num))
+                    except Exception:
+                        pass
+        except Exception:
+            instance_names = set()
+            instance_tokens = set()
+            instance_numbers = set()
+        
+        print(
+            f"[MG][MATCH] Searching series={series_num} uid={series_uid} "
+            f"names={len(instance_names)} tokens={len(instance_tokens)} numbers={len(instance_numbers)}"
+        )
+        print(f"[MG][MATCH] CSV has {len(lst_dicom_path)} rows total")
 
         if check_all_rows:  # return list of series_ai_data
             for dicom_path_str in lst_dicom_path:
@@ -87,10 +184,33 @@ class AIVTKWidget(VTKWidget):
 
                 parent_dir = p.parent
                 dicom_series_uid = parent_dir.name
+                dicom_name = p.name
+                dicom_token = self._extract_filename_token(dicom_name)
 
-                if dicom_series_uid == series_uid:
+                dicom_num = None
+                if dicom_token:
+                    try:
+                        dicom_num = int(dicom_token)
+                    except Exception:
+                        dicom_num = None
+
+                if (
+                    dicom_series_uid == series_uid
+                    or (instance_names and dicom_name in instance_names)
+                    or (instance_tokens and dicom_token in instance_tokens)
+                    or (instance_numbers and dicom_num in instance_numbers)
+                ):
                     series_ai_data = df[df["dicom_full_path"] == dicom_path_str]
                     lst_ai_data.append(series_ai_data)
+            if len(lst_ai_data) == 0:
+                print(
+                    "[MG][MATCH] no rows matched by series_uid/instance name/token/number "
+                    f"series_uid={series_uid}"
+                )
+                print(
+                    "[MG][MATCH] instance_names=%d instance_tokens=%d instance_numbers=%d"
+                    % (len(instance_names), len(instance_tokens), len(instance_numbers))
+                )
             return lst_ai_data if len(lst_ai_data) > 0 else None
 
         else:  # get first rows if series_ai_data exist
@@ -102,11 +222,51 @@ class AIVTKWidget(VTKWidget):
 
                 parent_dir = p.parent
                 dicom_series_uid = parent_dir.name
+                dicom_name = p.name
+                dicom_token = self._extract_filename_token(dicom_name)
 
-                if dicom_series_uid == series_uid:
+                dicom_num = None
+                if dicom_token:
+                    try:
+                        dicom_num = int(dicom_token)
+                    except Exception:
+                        dicom_num = None
+
+                if (
+                    dicom_series_uid == series_uid
+                    or (instance_names and dicom_name in instance_names)
+                    or (instance_tokens and dicom_token in instance_tokens)
+                    or (instance_numbers and dicom_num in instance_numbers)
+                ):
+                    print(
+                        f"[MG][MATCH] ✓ Matched CSV row: series_uid={dicom_series_uid} "
+                        f"name={dicom_name} token={dicom_token} num={dicom_num}"
+                    )
                     series_ai_data = df[df["dicom_full_path"] == dicom_path_str]
                     return series_ai_data
+            print(
+                "[MG][MATCH] ✗ NO rows matched by series_uid/instance name/token/number "
+                f"series={series_num} uid={series_uid}"
+            )
+            print(
+                "[MG][MATCH] Available: instance_names=%d instance_tokens=%d instance_numbers=%d"
+                % (len(instance_names), len(instance_tokens), len(instance_numbers))
+            )
+            if instance_names:
+                print(f"[MG][MATCH] Sample instance_names: {list(instance_names)[:3]}")
+            if instance_tokens:
+                print(f"[MG][MATCH] Sample instance_tokens: {list(instance_tokens)[:3]}")
+            if instance_numbers:
+                print(f"[MG][MATCH] Sample instance_numbers: {list(instance_numbers)[:3]}")
         return None
+
+    def _extract_filename_token(self, filename: str) -> str | None:
+        try:
+            import re
+            matches = re.findall(r"(\d+)", str(filename))
+            return matches[-1] if matches else None
+        except Exception:
+            return None
 
     def extract_value_field(self, df: pd.DataFrame, field='box') -> list:
         try:
@@ -125,7 +285,8 @@ class AIVTKWidget(VTKWidget):
         Changed from async to sync to avoid task conflicts.
         """
         try:
-            print(f'boxes_scores: {boxes_scores}\n')
+            print(f'[MG][ADD_BOXES] Called with {len(boxes_scores) if boxes_scores else 0} boxes')
+            print(f'[MG][ADD_BOXES] boxes_scores: {boxes_scores}\n')
             if boxes_scores:
                 print(f'in if')
                 self.patient_widget.toolbar_manager.check_and_deactivate_tools()
@@ -159,11 +320,15 @@ class AIVTKWidget(VTKWidget):
         self.patient_widget.update_sidebar_ui(lst_boxes_object)
 
     def manager_ai(self):
-        print('manage AI')
+        series_num = self.image_viewer.metadata.get('series', {}).get('series_number', 'N/A')
+        series_uid = self.image_viewer.metadata.get('series', {}).get('series_uid', 'N/A')
+        print(f"[MG][MANAGER_AI] START series={series_num} uid={series_uid}")
         if self.type_viewer == TYPES_VIEWER.fixed_viewer:
+            print(f"[MG][MANAGER_AI] Skipping fixed_viewer")
             return
         self.patient_widget.sidebar_clear()
         if self.image_viewer.metadata['series']['modality'].upper() == 'MG':
+            print(f"[MG][MANAGER_AI] MG modality detected, loading boxes...")
             df = self.load_csv()
             if df is not None:
                 boxes_scores = []
@@ -195,17 +360,39 @@ class AIVTKWidget(VTKWidget):
                             classification_label = self.extract_classification_label(df_classification, box)
                             boxes_scores.append({'box': box, 'score': score, 'classification': classification_label})
 
-                print('boxes_scores:', boxes_scores)
+                print(
+                    "[MG][BOXES] total=%d new=%d removed=%d final=%d"
+                    % (len(boxes), len(new_boxes), len(removed_boxes), len(boxes_scores))
+                )
+                print(f"[MG][BOXES] boxes_scores={boxes_scores}")
 
                 # boxes = [box for box in boxes if box not in removed_boxes]
                 # Use QTimer.singleShot for deferred execution to avoid async task conflicts
                 from PySide6.QtCore import QTimer
+                if not boxes_scores:
+                    print("[MG][BOXES] no boxes to render for this series")
+                    try:
+                        self.image_viewer.clear_boxes()
+                    except Exception:
+                        pass
+                else:
+                    print(f"[MG][BOXES] Scheduling render of {len(boxes_scores)} boxes in 100ms")
                 QTimer.singleShot(100, lambda: self.add_ai_boxes2viewer(boxes_scores))
+        else:
+            print(f"[MG][MANAGER_AI] Modality is not MG, skipping boxes")
+        print(f"[MG][MANAGER_AI] END series={series_num}")
 
     def extract_classification_label(self, df_classification, box_selected):
-        lst_ai_data: pd.DataFrame = self.get_series_ai_data_from_df(df_classification, check_all_rows=True)
+        lst_ai_data = self.get_series_ai_data_from_df(df_classification, check_all_rows=True)
 
         if lst_ai_data is not None:
+            # get_series_ai_data_from_df returns a list of DataFrames when check_all_rows=True
+            if isinstance(lst_ai_data, list):
+                if len(lst_ai_data) == 0:
+                    return None
+                # Concatenate all DataFrames in the list
+                lst_ai_data = pd.concat(lst_ai_data, ignore_index=True)
+            
             lst_ai_data = lst_ai_data.to_dict()
             print('lst_ai_data:lst_ai_data:', lst_ai_data)
             print('box_selected:', box_selected)

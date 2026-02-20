@@ -121,6 +121,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     def __init__(self, render_window, interactor, height, vtk_image_data: vtk.vtkImageData, metadata,
                  metadata_fixed, apply_default_filter, vtk_widget):
         super().__init__()
+        self._suppress_render = False
+        self._camera_lock_state = None
+        self._camera_lock_until = 0.0
+        self._camera_lock_observer_id = None
         self._overlays = []
         self.viewer_type = None
         self.apply_default_filter = apply_default_filter
@@ -242,6 +246,43 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         
         # ✅ FLICKER FIX: Single render after all initialization is complete
         self.image_render_window.Render()
+
+    def Render(self):
+        if getattr(self, "_suppress_render", False):
+            return
+        return super().Render()
+
+    def lock_camera_state(self, state, duration_ms=300):
+        if not state or self.renderer is None:
+            return
+        self._camera_lock_state = state
+        self._camera_lock_until = time.time() + (float(duration_ms) / 1000.0)
+        if self._camera_lock_observer_id is None:
+            try:
+                self._camera_lock_observer_id = self.renderer.AddObserver(
+                    vtk.vtkCommand.StartEvent,
+                    self._on_renderer_start
+                )
+            except Exception:
+                self._camera_lock_observer_id = None
+
+    def _on_renderer_start(self, obj, event):
+        if not self._camera_lock_state:
+            return
+        if time.time() > self._camera_lock_until:
+            self._camera_lock_state = None
+            return
+        try:
+            camera = self.renderer.GetActiveCamera()
+            if camera:
+                camera.SetParallelScale(self._camera_lock_state['parallel_scale'])
+                camera.SetPosition(self._camera_lock_state['position'])
+                camera.SetFocalPoint(self._camera_lock_state['focal_point'])
+                camera.SetViewUp(self._camera_lock_state['view_up'])
+                camera.SetClippingRange(self._camera_lock_state['clipping_range'])
+                self.renderer.ResetCameraClippingRange()
+        except Exception:
+            pass
 
     @classmethod
     def _cache_get_preprocessed(cls, key):
@@ -517,7 +558,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                                         status_abnormal=False, ijk_points=corner_ijk)
 
         # update Box Details UI
-        self.vtk_widget.update_boxes_details_ui(overlay_box_object)
+        if hasattr(self.vtk_widget, 'update_boxes_details_ui'):
+            self.vtk_widget.update_boxes_details_ui(overlay_box_object)
 
     def _schedule_render(self, delay=50):
         """Schedule a render with delay to batch multiple updates"""
@@ -851,6 +893,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         import time
         _reset_start = time.time()
         
+        # ✅ Save current camera scale before reset
+        saved_scale = None
+        try:
+            camera = self.renderer.GetActiveCamera()
+            saved_scale = camera.GetParallelScale()
+        except Exception:
+            saved_scale = None
+        
         _clear_start = time.time()
         self.clear_all_overlays()
         _clear_time = time.time() - _clear_start
@@ -1013,11 +1063,24 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         _zoom_start = time.time()
         # ✅ FLICKER FIX: Use skip_render=True, then render once at the end
-        self.zoom_to_fit(skip_render=True)
-        # Single render after both UpdateDisplayExtent and zoom_to_fit
+        # ✅ Restore saved scale instead of zoom_to_fit (which resets scale)
+        if saved_scale is not None:
+            try:
+                camera = self.renderer.GetActiveCamera()
+                camera.SetParallelScale(saved_scale)
+                logger.debug(f"[reset_image_viewer] Restored scale after reset: {saved_scale}")
+                # Optionally save to vtk_widget if it exists
+                if hasattr(self, 'vtk_widget') and self.vtk_widget:
+                    self.vtk_widget._protected_parallel_scale = saved_scale
+            except Exception as e:
+                logger.warning(f"[reset_image_viewer] Failed to restore scale: {e}, falling back to zoom_to_fit")
+                self.zoom_to_fit(skip_render=True)
+        else:
+            self.zoom_to_fit(skip_render=True)
+        # Single render after both UpdateDisplayExtent and zoom/scale restore
         self.image_render_window.Render()
         _zoom_time = time.time() - _zoom_start
-        print(f"         • zoom_to_fit: {_zoom_time:.3f}s")
+        print(f"         • zoom/scale restore: {_zoom_time:.3f}s")
 
         _render_time = time.time() - _render_start
         print(f"      • Render + zoom: {_render_time:.3f}s")

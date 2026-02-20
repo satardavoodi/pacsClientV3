@@ -413,7 +413,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if self.image_viewer is None:
             print("⚠️ Cannot set interactor style - viewer not yet initialized")
             return
-            
+
+        self._freeze_render_window()
+        _saved_camera_state = self._capture_camera_state()
+        try:
+            if _saved_camera_state is not None and hasattr(self.image_viewer, "lock_camera_state"):
+                self.image_viewer.lock_camera_state(_saved_camera_state, duration_ms=350)
+        except Exception:
+            pass
+
         interactorstyle: AbstractInteractorStyle = style(self.image_viewer)
 
         # load widgets on new interactor style
@@ -424,11 +432,124 @@ class VTKWidget(QVTKRenderWindowInteractor):
         interactorstyle.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
         self.current_style = interactorstyle
+
+        self._restore_camera_state(_saved_camera_state)
+        self._schedule_camera_restore(_saved_camera_state)
+
         self.image_viewer.Render()
+
+    def _capture_camera_state(self):
+        try:
+            if self.image_viewer is None:
+                return None
+            camera = self.image_viewer.renderer.GetActiveCamera()
+            if not camera:
+                return None
+            state = {
+                'parallel_scale': camera.GetParallelScale(),
+                'position': camera.GetPosition(),
+                'focal_point': camera.GetFocalPoint(),
+                'view_up': camera.GetViewUp(),
+                'clipping_range': camera.GetClippingRange(),
+            }
+            # ✅ Update protected scale when capturing state
+            self._protected_parallel_scale = state['parallel_scale']
+            logger.debug(f"[_capture_camera_state] Protected scale saved: {self._protected_parallel_scale}")
+            return state
+        except Exception:
+            return None
+
+    def _restore_camera_state(self, state):
+        if not state or self.image_viewer is None:
+            return
+        try:
+            camera = self.image_viewer.renderer.GetActiveCamera()
+            if camera:
+                camera.SetParallelScale(state['parallel_scale'])
+                camera.SetPosition(state['position'])
+                # ✅ Update protected scale when restoring state
+                self._protected_parallel_scale = state['parallel_scale']
+                logger.debug(f"[_restore_camera_state] Protected scale restored: {self._protected_parallel_scale}")
+                camera.SetFocalPoint(state['focal_point'])
+                camera.SetViewUp(state['view_up'])
+                camera.SetClippingRange(state['clipping_range'])
+                self.image_viewer.renderer.ResetCameraClippingRange()
+        except Exception:
+            pass
+
+    def _schedule_camera_restore(self, state):
+        if not state or self.image_viewer is None:
+            return
+
+        def _restore():
+            self._restore_camera_state(state)
+            try:
+                self.image_viewer.Render()
+            except Exception:
+                pass
+
+        try:
+            QTimer.singleShot(0, _restore)
+            QTimer.singleShot(50, _restore)
+        except Exception:
+            pass
+
+    def _freeze_render_window(self, duration_ms=200):
+        if self.image_viewer is None:
+            return
+        try:
+            render_window = self.image_viewer.image_render_window
+            interactor = self.image_viewer.image_interactor
+            self.image_viewer._suppress_render = True
+            render_window.SetAbortRender(1)
+
+            try:
+                self._prev_interactor_render = interactor.GetEnableRender()
+            except Exception:
+                self._prev_interactor_render = None
+
+            try:
+                if hasattr(interactor, "EnableRenderOff"):
+                    interactor.EnableRenderOff()
+            except Exception:
+                pass
+
+            def _unfreeze():
+                try:
+                    render_window.SetAbortRender(0)
+                    self.image_viewer._suppress_render = False
+                    try:
+                        if hasattr(interactor, "EnableRenderOn"):
+                            interactor.EnableRenderOn()
+                    except Exception:
+                        pass
+                    try:
+                        if self._prev_interactor_render is not None:
+                            interactor.SetEnableRender(self._prev_interactor_render)
+                    except Exception:
+                        pass
+                    try:
+                        self.image_viewer.Render()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            QTimer.singleShot(duration_ms, _unfreeze)
+        except Exception:
+            pass
 
     def restore_default_interactorstyle(self):
         if self.image_viewer is None:
             return
+
+        self._freeze_render_window()
+        _saved_camera_state = self._capture_camera_state()
+        try:
+            if _saved_camera_state is not None and hasattr(self.image_viewer, "lock_camera_state"):
+                self.image_viewer.lock_camera_state(_saved_camera_state, duration_ms=350)
+        except Exception:
+            pass
             
         default_interactorstyle = self.style
 
@@ -438,6 +559,9 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.interactor.SetInteractorStyle(default_interactorstyle)
         self.current_style = default_interactorstyle
         self.current_style.reset_events()  # reset events to default events
+
+        self._restore_camera_state(_saved_camera_state)
+        self._schedule_camera_restore(_saved_camera_state)
         self.image_viewer.Render()
 
     def set_widgets_on_new_interactorstyle(self, new_interactorstyle: AbstractInteractorStyle):
@@ -513,6 +637,17 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.viewport_spinner.show_reset("Applying reset...")
 
         try:
+            # ✅ Save current camera scale before reset
+            saved_scale = None
+            try:
+                if self.image_viewer and self.image_viewer.renderer:
+                    camera = self.image_viewer.renderer.GetActiveCamera()
+                    if camera:
+                        saved_scale = camera.GetParallelScale()
+                        logger.debug(f"[reset_image] Saved scale before reset: {saved_scale}")
+            except:
+                pass
+            
             # delete and set image
             self.image_viewer.reset_image_viewer(vtk_image_data, metadata)
 
@@ -537,7 +672,18 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # Reset camera and apply zoom to fit
             self.image_viewer.renderer.ResetCamera()
             self.image_viewer.renderer.ResetCameraClippingRange()
-            self.image_viewer.zoom_to_fit()
+            
+            # ✅ Restore saved scale instead of zoom_to_fit (which resets scale)
+            if saved_scale is not None:
+                try:
+                    camera.SetParallelScale(saved_scale)
+                    self._protected_parallel_scale = saved_scale
+                    logger.debug(f"[reset_image] Restored scale after reset: {saved_scale}")
+                except:
+                    # Fallback to zoom_to_fit if restore fails
+                    self.image_viewer.zoom_to_fit()
+            else:
+                self.image_viewer.zoom_to_fit()
 
             self.image_viewer.Render()
 
@@ -586,6 +732,9 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         # Show loading spinner (non-blocking)
         self.viewport_spinner.show_loading("Switching series...")
+
+        # Detect first-time load (placeholder → real series)
+        _is_first_load = (self.image_viewer is None)
         
         # =====================================================
         # ANTI-FLICKERING: Disable updates during switch
@@ -612,11 +761,25 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         # set interactor style again
         self.style = AbstractInteractorStyle(self.image_viewer)
+        self.current_style = self.style
         self.interactor.SetInteractorStyle(self.style)
         # self.style.interactionOccurred.connect(self.change_container_border)
         self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
         self.image_viewer.UpdateDisplayExtent()
+
+        # FIX: On first load (placeholder → real series), reset camera properly
+        # to prevent black screen
+        if _is_first_load:
+            self.image_viewer.renderer.ResetCamera()
+            self.image_viewer.renderer.ResetCameraClippingRange()
+            if hasattr(self.image_viewer, 'zoom_to_fit'):
+                # ✅ Save the initial scale after zoom_to_fit
+                initial_scale = self.image_viewer.zoom_to_fit()
+                if initial_scale:
+                    self._protected_parallel_scale = initial_scale
+                    logger.debug(f"[switch_series] Saved initial scale: {initial_scale}")
+
         # Single render call (not both viewer and window)
         self.render_window.Render()
 
@@ -697,7 +860,9 @@ class VTKWidget(QVTKRenderWindowInteractor):
                             return True
                             
                 except Exception as e:
-                    self.logger.debug(f"Fast path failed, falling back to recreation: {e}")
+                    print(f"[SWITCH] Fast path failed, falling back to recreation: {e}")
+                    import traceback
+                    traceback.print_exc()
                     self.cleanup_image_viewer()
 
             # Create new viewer (first time or fallback)
@@ -786,11 +951,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if self.image_viewer is None:
             return
         
-        # ✅ Save current camera zoom before slice change
+        # ✅ CRITICAL: Save current camera zoom before slice change
+        saved_scale = None
         try:
             camera = self.image_viewer.renderer.GetActiveCamera()
             if camera:
-                self._protected_parallel_scale = camera.GetParallelScale()
+                saved_scale = camera.GetParallelScale()
+                # Update protected scale only if not already set or if changed by user zoom
+                if self._protected_parallel_scale is None or abs(saved_scale - self._protected_parallel_scale) > 0.01:
+                    self._protected_parallel_scale = saved_scale
                 logger.debug(f"[set_slice] Protected scale={self._protected_parallel_scale}")
         except:
             pass
@@ -798,14 +967,16 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.image_viewer.set_slice(slice_index)
         self.image_viewer.last_index_slice_saved = slice_index
         
-        # ✅ Revert camera zoom if it was changed
+        # ✅ CRITICAL: Force restore camera zoom after slice change
         try:
             camera = self.image_viewer.renderer.GetActiveCamera()
-            if self._protected_parallel_scale is not None and camera:
+            if saved_scale is not None and camera:
                 current_scale = camera.GetParallelScale()
-                if abs(current_scale - self._protected_parallel_scale) > 0.01:  # Tolerance
-                    logger.warning(f"[set_slice] Zoom change detected! scale={current_scale} → reverting to {self._protected_parallel_scale}")
-                    camera.SetParallelScale(self._protected_parallel_scale)
+                # If scale changed at all, restore it
+                if abs(current_scale - saved_scale) > 0.001:  # Very tight tolerance
+                    logger.warning(f"[set_slice] Zoom change detected! scale={current_scale} → reverting to {saved_scale}")
+                    camera.SetParallelScale(saved_scale)
+                    self._protected_parallel_scale = saved_scale
                     self.image_viewer.Render()
         except:
             pass

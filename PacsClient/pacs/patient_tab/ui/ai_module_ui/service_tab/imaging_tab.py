@@ -414,6 +414,12 @@ class ImagingToolsTab(AbstractTab):
         # بارگذاری داده‌های bone age
         QTimer.singleShot(200, self._load_bone_age_feature_if_exists)
 
+        # Ensure the AI patient widget is treated as active in this window
+        try:
+            self.patient_widget.on_tab_activated()
+        except Exception:
+            pass
+
         
         # Load MG runs if needed
         if self.detect_modality() == "MG":
@@ -526,41 +532,6 @@ class ImagingToolsTab(AbstractTab):
             self.mg_runs_loaded = False
         finally:
             self.mg_runs_combo.blockSignals(False)
-
-
-        active = data.get("active", {})
-        available = data.get("available", [])
-
-        active_key = (
-            active.get("detection"),
-            active.get("classification")
-        )
-
-        active_index = -1
-
-        for idx, run in enumerate(available):
-            det = run.get("detection")
-            cls = run.get("classification")
-
-            thr_label = run.get("threshold_label")
-            thr = run.get("threshold")
-
-            if thr_label:
-                label = f"Threshold {thr_label}"
-            elif thr is not None:
-                label = f"Threshold {thr:.2f}"
-            else:
-                label = det
-
-            self.mg_runs_combo.addItem(label, (det, cls))
-
-            if (det, cls) == active_key:
-                active_index = idx
-
-        if active_index >= 0:
-            self.mg_runs_combo.setCurrentIndex(active_index)
-
-        self.mg_runs_combo.blockSignals(False)
 
     def _load_bone_age_feature_if_exists(self):
         """

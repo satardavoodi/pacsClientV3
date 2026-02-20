@@ -22,32 +22,44 @@ class ToolBarManager:
             self.toggle_rectangle_segment(selected_widget)
 
     def toggle_polygon_segment(self, selected_widget):
+        if selected_widget is None:
+            return
         if self.tool_selected is None:
             selected_widget.set_new_interactorstyle(PolygonSegmentationInteractorStyle)
-            selected_widget.current_style.On()
+            if getattr(selected_widget, 'current_style', None) is not None:
+                selected_widget.current_style.On()
             self.tool_selected = self.tool_access.POLYGON_SEGMENTATION
 
         else:
-            selected_widget.current_style.Off()
-            selected_widget.restore_default_interactorstyle()
+            if getattr(selected_widget, 'current_style', None) is not None:
+                selected_widget.current_style.Off()
+            if hasattr(selected_widget, 'restore_default_interactorstyle'):
+                selected_widget.restore_default_interactorstyle()
             self.tool_selected = None
 
     def toggle_rectangle_segment(self, selected_widget):
+        if selected_widget is None:
+            return
         if self.tool_selected is None:
             selected_widget.set_new_interactorstyle(RectangleSegmentationInteractorStyle)
-            selected_widget.current_style.On()
+            if getattr(selected_widget, 'current_style', None) is not None:
+                selected_widget.current_style.On()
             self.tool_selected = self.tool_access.RECTANGLE_SEGMENTATION
 
     def toggle_ai_chat(self, selected_widget):
+        if selected_widget is None:
+            return
         if self.tool_selected is None:
             selected_widget.set_new_interactorstyle(AIChatInteractorStyle)
-            selected_widget.current_style.On()
+            if getattr(selected_widget, 'current_style', None) is not None:
+                selected_widget.current_style.On()
             self.tool_selected = self.tool_access.AI_CHAT
 
         else:
-            pass
-            selected_widget.current_style.Off()
-            selected_widget.restore_default_interactorstyle()
+            if getattr(selected_widget, 'current_style', None) is not None:
+                selected_widget.current_style.Off()
+            if hasattr(selected_widget, 'restore_default_interactorstyle'):
+                selected_widget.restore_default_interactorstyle()
             self.tool_selected = None
 
     def get_tool_activated_method(self):
@@ -63,6 +75,8 @@ class ToolBarManager:
 
     def check_and_deactivate_tools(self):
         if self.tool_selected is None:  # it's mean we haven't selected tool before
+            return
+        if self.patient_widget.selected_widget is None:
             return
         elif self.tool_selected is self.tool_access.POLYGON_SEGMENTATION:
             self.toggle_polygon_segment(self.patient_widget.selected_widget)

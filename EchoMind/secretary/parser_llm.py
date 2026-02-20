@@ -96,11 +96,12 @@ def parse_command_llm(text: str, language: str = "auto", timeout: int = 45) -> S
         .replace("{{MODULE_MAP}}", module_map or "module_map unavailable")
         .replace("{{USER_TEXT}}", text or "")
     )
+    # Use the EchoMind Settings key only (no per-center override).
     api_key = (get_echomind_api_key() or "").strip()
     if not api_key:
         raise RuntimeError("EchoMind API key is not configured. Set it in Settings -> EchoMind.")
     payload = {
-        "model": "gpt-4.1-mini",
+        "model": "gpt-5.2",
         "messages": [
             {"role": "user", "content": prompt},
         ],

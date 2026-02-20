@@ -17,3 +17,5 @@ openai==1.97.0
 python-dotenv
 comtypes>=1.3.0
 SpeechRecognition>=3.10.0
+pyaudio
+webrtcvad
