@@ -1341,6 +1341,64 @@ Return ONLY the final corrected report text. No analysis, no preface.
         }
     }
 
+
+def chat_with_api_key(
+    user_msg: str,
+    api_key: str,
+    model: str = "gpt-4.1-mini",
+    system_msg: str = "",
+):
+    """Chat interface using an explicit GapGPT API key."""
+    user_msg = _to_str(user_msg)
+    api_key = _to_str(api_key).strip()
+    if not api_key:
+        raise Exception("❌ GapGPT API key is missing.")
+
+    m = Manage.instance()
+    center = "User"
+    try:
+        center = m.get_detected_center_display()
+    except Exception:
+        pass
+
+    sys_msg = (system_msg or "").strip() or (
+        "You are a helpful medical assistant. Provide a concise response to the user's transcript."
+    )
+
+    payload = {
+        "model": (_to_str(model).strip() or "Unknown"),
+        "messages": [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": user_msg},
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    url = "https://api.gapgpt.app/v1/chat/completions"
+
+    response = requests.post(url, headers=headers, json=payload)
+    result = response.json()
+    if response.status_code != 200:
+        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+
+    usage_info = result.get("usage", {})
+    prompt_tokens = usage_info.get("prompt_tokens", 0)
+    completion_tokens = usage_info.get("completion_tokens", 0)
+    _log_usage_safe(m, center, model, prompt_tokens, completion_tokens, user_msg)
+
+    return {
+        "content": result["choices"][0]["message"]["content"],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "model": (_to_str(model).strip() or "Unknown"),
+            "center": (_to_str(center).strip() or "Unknown"),
+        },
+    }
+
 def ImageQualityAnalyzer(
     user_msg: str = "",
     CENTER_Key: str = "",

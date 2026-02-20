@@ -455,6 +455,36 @@ def save_token_usage(center: str, model: str, tokens: int):
                 updated_at = CURRENT_TIMESTAMP
         """, (center, model, tokens))
 
+def _ensure_token_usage_tables(conn: sqlite3.Connection) -> None:
+    """Ensure token-usage tables exist (safe for old DBs)."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_token_usage (
+            center_name TEXT NOT NULL,
+            model_name  TEXT NOT NULL,
+            total_tokens INTEGER DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (center_name, model_name)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS api_token_usage (
+            api_hash     TEXT NOT NULL,
+            api_mask     TEXT NOT NULL,
+            center_name  TEXT DEFAULT NULL,
+            model_name   TEXT NOT NULL,
+            total_tokens INTEGER DEFAULT 0,
+            last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (api_hash, model_name)
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_api_token_usage_last_used ON api_token_usage(last_used_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_api_token_usage_mask ON api_token_usage(api_mask)")
+
 def add_token_usage_delta(center: str, model: str, tokens_delta: int) -> None:
     """Atomic increment for center+model token usage."""
     if not center or not model:
@@ -467,6 +497,7 @@ def add_token_usage_delta(center: str, model: str, tokens_delta: int) -> None:
         return
 
     with get_db_connection() as conn:
+        _ensure_token_usage_tables(conn)
         cur = conn.cursor()
         cur.execute(
             """
@@ -519,6 +550,7 @@ def add_api_token_usage_delta(
 
     api_mask = _mask_api_key(api_key)
     with get_db_connection() as conn:
+        _ensure_token_usage_tables(conn)
         cur = conn.cursor()
         cur.execute(
             """
