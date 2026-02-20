@@ -145,8 +145,20 @@ void qNewMPR2SlicerAppMainWindowPrivate::setupUi(QMainWindow * mainWindow)
 
   if (okX && okY && okW && okH && viewerWidth > 400 && viewerHeight > 300)
   {
-    mainWindow->setGeometry(vorX, vorY, viewerWidth, viewerHeight);
-    qDebug() << "[AIPACS_UI_CPP] VOR geometry applied:" << vorX << "," << vorY << "size" << viewerWidth << "x" << viewerHeight;
+    // AI-PACS: Scale to 70 % of the PACS viewer area so the Slicer
+    // window does not cover the entire screen.
+    const double scale = 0.70;
+    int scaledW = static_cast<int>(viewerWidth  * scale);
+    int scaledH = static_cast<int>(viewerHeight * scale);
+
+    // Center the scaled window inside the original VOR rectangle
+    int offsetX = vorX + (viewerWidth  - scaledW) / 2;
+    int offsetY = vorY + (viewerHeight - scaledH) / 2;
+
+    mainWindow->setGeometry(offsetX, offsetY, scaledW, scaledH);
+    qDebug() << "[AIPACS_UI_CPP] VOR geometry applied (70%):" << offsetX << "," << offsetY
+             << "size" << scaledW << "x" << scaledH
+             << "(original VOR:" << vorX << "," << vorY << viewerWidth << "x" << viewerHeight << ")";
   }
   else
   {

@@ -1,0 +1,166 @@
+# ============================================================
+#  AIPacs Module Catalog  —  Document 1
+#  Sent with EVERY user request in Phase 1 (module routing).
+#  Purpose: The LLM reads this and decides which module-specific
+#  documents it needs to answer the user's request.
+# ============================================================
+
+version: "1.0"
+description: >
+  This catalog lists every executable module available inside the
+  AIPacs DICOM workstation.  For each module you will find a short
+  description, its canonical module_id, the kinds of user intents it
+  handles, and whether it produces side-effects that require
+  confirmation.
+
+modules:
+
+  - module_id: homepage
+    display_name: "Homepage / Patient List"
+    category: navigation
+    description: >
+      Controls the main patient-list panel.  Supports searching,
+      filtering (by date, modality, patient name/code), fetching
+      fresh data from the PACS server, and navigating between the
+      local-cache tab and the server tab.
+    typical_intents:
+      - "show / list patients"
+      - "search for a patient"
+      - "filter by date or modality"
+      - "refresh the patient list"
+      - "switch to local / server tab"
+    side_effects: false
+    doc_file: "modules/homepage.md"
+
+  - module_id: patient_viewer
+    display_name: "Patient Viewer / Study Tab"
+    category: viewing
+    description: >
+      Opens a study and renders DICOM series inside a dedicated tab.
+      Handles multi-series layouts, window/level, pan/zoom, series
+      navigation, and measurement overlays.
+    typical_intents:
+      - "open / view a patient"
+      - "open a study"
+      - "switch layout"
+      - "apply window preset"
+    side_effects: true
+    confirmation_required: true
+    doc_file: "modules/patient_viewer.md"
+
+  - module_id: download
+    display_name: "Download Manager"
+    category: data_transfer
+    description: >
+      Queues and executes study downloads from the PACS server using
+      the Zeta download engine.  Supports priority, pause/resume,
+      progress reporting, and local storage management.
+    typical_intents:
+      - "download a study"
+      - "download the current patient"
+      - "download all studies for a patient"
+      - "check download progress"
+      - "pause / resume download"
+    side_effects: true
+    confirmation_required: true
+    doc_file: "modules/download.md"
+
+  - module_id: mpr_zeta
+    display_name: "Zeta MPR / 3-D Reconstruction"
+    category: imaging
+    description: >
+      Multi-planar reconstruction (MPR) and 3-D surface/volume
+      rendering for CT/MRI series.  Provides axial, coronal, and
+      sagittal views, curved MPR, advanced rendering presets, and
+      rotation/measurement tools.
+    typical_intents:
+      - "open MPR view"
+      - "show 3-D reconstruction"
+      - "switch to axial / coronal / sagittal"
+      - "apply bone / soft-tissue preset"
+      - "measure distance in MPR"
+    side_effects: true
+    confirmation_required: false
+    doc_file: "modules/mpr_zeta.md"
+
+  - module_id: advanced_analysis
+    display_name: "Advanced Image Analysis"
+    category: analysis
+    description: >
+      AI-assisted and algorithmic analysis tools: lesion detection,
+      segmentation, quantitative measurements, comparison between
+      series, and overlay rendering of analysis results on the viewer.
+    typical_intents:
+      - "run lesion detection"
+      - "segment the lung / liver / bone"
+      - "compare two series"
+      - "show analysis results"
+      - "export analysis report"
+    side_effects: false
+    doc_file: "modules/advanced_analysis.md"
+
+  - module_id: printing
+    display_name: "Print / Export"
+    category: output
+    description: >
+      Generates print layouts, exports images to PDF, and sends
+      selected series or snapshots to a DICOM print server or local
+      printer.
+    typical_intents:
+      - "print the current series"
+      - "export to PDF"
+      - "send to printer"
+      - "print selected images"
+    side_effects: true
+    confirmation_required: true
+    doc_file: "modules/printing.md"
+
+  - module_id: echomind
+    display_name: "EchoMind AI Assistant"
+    category: ai_assistant
+    description: >
+      Conversational AI layer including voice-to-text (STT), natural-
+      language command parsing, and AI chat for clinical summaries and
+      findings reporting.  The Secretary orchestrator lives here.
+    typical_intents:
+      - "use voice command"
+      - "tell me about this patient"
+      - "generate a report"
+      - "summarize findings"
+    side_effects: false
+    doc_file: "modules/echomind.md"
+
+  - module_id: eagle_ai
+    display_name: "Eagle AI"
+    category: ai_assistant
+    description: >
+      Real-time AI radiological assistant that monitors the active
+      viewer and proactively highlights findings, anomalies, and
+      critical values without requiring explicit user commands.
+    typical_intents:
+      - "activate eagle ai"
+      - "what does eagle ai see"
+      - "toggle ai overlay"
+      - "explain the highlighted finding"
+    side_effects: false
+    doc_file: "modules/eagle_ai.md"
+
+# ── Routing rules ───────────────────────────────────────────
+# These are hints to help the LLM decide. The LLM may override:
+routing_hints:
+  - pattern: "list|show|search|filter.*patient"
+    suggested_module: homepage
+  - pattern: "open|view|study|tab"
+    suggested_module: patient_viewer
+  - pattern: "download|fetch|queue"
+    suggested_module: download
+  - pattern: "mpr|3d|reconstruct|axial|coronal|sagittal"
+    suggested_module: mpr_zeta
+  - pattern: "detect|segment|analyze|analysis|lesion"
+    suggested_module: advanced_analysis
+  - pattern: "print|export|pdf"
+    suggested_module: printing
+  - pattern: "voice|chat|ai|report|summary"
+    suggested_module: echomind
+  - pattern: "eagle"
+    suggested_module: eagle_ai

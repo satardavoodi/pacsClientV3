@@ -5,10 +5,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-import requests
-
-from EchoMind.settings_store import get_echomind_api_key
+from EchoMind.llm_client import gapgpt_chat, LLMError
 from .contracts import SecretaryActionPlan
+from .prompt_context import build_prompt_context
 
 
 _ALLOWED_ACTIONS = {"list_patients", "open_patient", "download_patient"}
@@ -83,45 +82,19 @@ def _coerce_plan(obj: Any) -> SecretaryActionPlan | None:
     }
 
 
-def parse_command_llm(text: str, language: str = "auto", timeout: int = 45) -> SecretaryActionPlan | None:
-    base = Path(__file__).resolve().parent
-    prompt_template = _load_text(base / "prompts" / "secretary_action_prompt.txt")
-    module_map = _load_text(base / "module_map.yaml")
-
-    if not prompt_template:
-        return None
-
-    prompt = (
-        prompt_template.replace("{{LANGUAGE}}", language or "auto")
-        .replace("{{MODULE_MAP}}", module_map or "module_map unavailable")
-        .replace("{{USER_TEXT}}", text or "")
+def _post_chat(prompt: str, timeout: int = 45) -> Any:
+    """
+    Send a raw prompt to the LLM via the EchoMind Settings gateway.
+    Key is resolved automatically from Settings → EchoMind.
+    """
+    return gapgpt_chat(
+        messages=[{"role": "user", "content": prompt}],
+        model="gpt-4.1-mini",
+        timeout=timeout,
     )
-    api_key = (get_echomind_api_key() or "").strip()
-    if not api_key:
-        raise RuntimeError("EchoMind API key is not configured. Set it in Settings -> EchoMind.")
-    payload = {
-        "model": "gpt-4.1-mini",
-        "messages": [
-            {"role": "user", "content": prompt},
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    resp = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=timeout)
-    resp.raise_for_status()
-    body = resp.json()
-    raw = body
-    if isinstance(body, dict):
-        choices = body.get("choices")
-        if isinstance(choices, list) and choices:
-            msg = choices[0].get("message") if isinstance(choices[0], dict) else None
-            if isinstance(msg, dict) and msg.get("content"):
-                raw = msg.get("content")
-            elif isinstance(choices[0], dict) and choices[0].get("text"):
-                raw = choices[0].get("text")
 
+
+def _raw_to_plan(raw: Any) -> SecretaryActionPlan | None:
     if isinstance(raw, dict):
         return _coerce_plan(raw)
     if isinstance(raw, list):
@@ -136,4 +109,26 @@ def parse_command_llm(text: str, language: str = "auto", timeout: int = 45) -> S
     if isinstance(parsed, list):
         parsed = parsed[0] if parsed else None
     return _coerce_plan(parsed)
+
+
+def parse_command_llm_from_prompt(prompt: str, timeout: int = 45) -> SecretaryActionPlan | None:
+    """Execute a prepared prompt and parse a strict Secretary action-plan JSON."""
+    raw = _post_chat(prompt=prompt, timeout=timeout)
+    return _raw_to_plan(raw)
+
+
+def parse_command_llm(text: str, language: str = "auto", timeout: int = 45) -> SecretaryActionPlan | None:
+    base = Path(__file__).resolve().parent
+    prompt_template = _load_text(base / "prompts" / "secretary_action_prompt.txt")
+    dynamic_context = build_prompt_context(language=language)
+
+    if not prompt_template:
+        return None
+
+    prompt = (
+        prompt_template.replace("{{LANGUAGE}}", language or "auto")
+        .replace("{{MODULE_MAP}}", dynamic_context)
+        .replace("{{USER_TEXT}}", text or "")
+    )
+    return parse_command_llm_from_prompt(prompt=prompt, timeout=timeout)
 

@@ -3279,6 +3279,35 @@ class PatientWidget(QWidget):
         self.btn_advanced_mpr.clicked.connect(self._on_advanced_mpr_clicked)
         models_container_layout.addWidget(self.btn_advanced_mpr)
 
+        # Stitching Module Button
+        self.btn_stitching = QPushButton("Stitching")
+        self.btn_stitching.setCursor(Qt.PointingHandCursor)
+        self.btn_stitching.setMinimumHeight(48)
+        self.btn_stitching.setStyleSheet("""
+            QPushButton {
+                font-size: 12px;
+                font-family: 'Roboto', sans-serif;
+                color: #f7fafc;
+                padding: 10px 16px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #2563eb, stop:1 #1e40af);
+                border: 1px solid #1e40af;
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #1d4ed8, stop:1 #1e3a8a);
+                border: 1px solid #1e3a8a;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #1e40af, stop:1 #1e3a8a);
+            }
+        """)
+        self.btn_stitching.clicked.connect(self._on_stitching_clicked)
+        models_container_layout.addWidget(self.btn_stitching)
+
         # Add stretch to push buttons to the top
         models_container_layout.addStretch()
 
@@ -3426,9 +3455,24 @@ class PatientWidget(QWidget):
         self._selected_advanced_series = {'series_number': series_key}
 
     def _collect_advanced_analysis_series_entries(self) -> list:
-        entries = {}
+        """Collect ALL patient series from every available source.
+
+        Sources (merged in order — later sources fill gaps but never
+        overwrite a non-None value):
+            1. ``lst_thumbnails_data``   – series already loaded into VTK viewers
+            2. ``_server_series_info``   – full list received from server
+            3. **Disk scan**             – subdirectories of ``import_folder_path``
+               whose names are numeric and contain at least one ``.dcm`` file
+        """
+        entries: dict = {}
         base_path = self.import_folder_path  # e.g. source/<study_uid>
 
+        # -- helper: set a key only if missing or currently None ----------
+        def _set(entry: dict, key: str, value):
+            if value is not None and entry.get(key) is None:
+                entry[key] = value
+
+        # ── Source 1: lst_thumbnails_data ────────────────────────────────
         for data in getattr(self, 'lst_thumbnails_data', []) or []:
             metadata = data.get('metadata', {})
             series_meta = metadata.get('series', {})
@@ -3437,55 +3481,88 @@ class PatientWidget(QWidget):
                 continue
             key = str(series_number)
 
-            entry = entries.get(key, {})
-            entry['series_number'] = key
-            entry.setdefault('series_description', series_meta.get('series_description') or series_meta.get('series_name'))
-            entry.setdefault('series_uid', series_meta.get('series_uid'))
+            entry = entries.setdefault(key, {'series_number': key})
+            _set(entry, 'series_description',
+                 series_meta.get('series_description') or series_meta.get('series_name'))
+            _set(entry, 'series_uid', series_meta.get('series_uid'))
 
             # Resolve series_path with multiple fallbacks
             sp = series_meta.get('series_path')
             if not sp:
-                # Fallback 1: derive from first instance path
                 instances = metadata.get('instances', [])
                 if instances:
                     inst_path = instances[0].get('instance_path')
                     if inst_path:
                         sp = os.path.dirname(inst_path)
             if not sp and base_path:
-                # Fallback 2: <import_folder_path>/<series_number>
                 candidate = os.path.join(str(base_path), str(series_number))
                 if os.path.isdir(candidate):
                     sp = candidate
-            entry.setdefault('series_path', sp)
+            _set(entry, 'series_path', sp)
 
             instances = metadata.get('instances', [])
             if instances:
                 first_instance = instances[0]
-                entry.setdefault('window_width', first_instance.get('window_width'))
-                entry.setdefault('window_level', first_instance.get('window_center'))
+                _set(entry, 'window_width', first_instance.get('window_width'))
+                _set(entry, 'window_level', first_instance.get('window_center'))
 
-            entries[key] = entry
-
+        # ── Source 2: _server_series_info ────────────────────────────────
         for series_number, info in getattr(self, '_server_series_info', {}).items():
             key = str(series_number)
-            entry = entries.get(key, {'series_number': key})
-            entry.setdefault('series_description', info.get('series_description') or info.get('series_name'))
-            entry.setdefault('series_uid', info.get('series_uid'))
+            entry = entries.setdefault(key, {'series_number': key})
+            _set(entry, 'series_description',
+                 info.get('series_description') or info.get('series_name'))
+            _set(entry, 'series_uid', info.get('series_uid'))
             sp = info.get('series_path')
             if not sp and base_path:
                 candidate = os.path.join(str(base_path), str(series_number))
                 if os.path.isdir(candidate):
                     sp = candidate
-            entry.setdefault('series_path', sp)
-            entries[key] = entry
+            _set(entry, 'series_path', sp)
 
+        # ── Source 3: disk scan of import_folder_path ───────────────────
+        if base_path and os.path.isdir(str(base_path)):
+            try:
+                for child in os.listdir(str(base_path)):
+                    child_path = os.path.join(str(base_path), child)
+                    if not os.path.isdir(child_path):
+                        continue
+                    # Only consider directories whose name is numeric
+                    # (series_number convention)
+                    try:
+                        int(child)
+                    except ValueError:
+                        continue
+                    key = str(child)
+                    if key in entries and entries[key].get('series_path'):
+                        continue  # already have full info
+                    # Verify the directory has at least one .dcm file
+                    has_dcm = any(
+                        f.lower().endswith('.dcm')
+                        for f in os.listdir(child_path)
+                        if os.path.isfile(os.path.join(child_path, f))
+                    )
+                    if not has_dcm:
+                        continue
+                    entry = entries.setdefault(key, {'series_number': key})
+                    _set(entry, 'series_path', child_path)
+                    _set(entry, 'series_description', f"Series {key}")
+            except OSError:
+                pass
+
+        # ── Sort by series_number and return ────────────────────────────
         def _sort_key(item):
             try:
                 return int(item.get('series_number', 0))
             except (TypeError, ValueError):
                 return 0
 
-        return sorted(entries.values(), key=_sort_key)
+        result = sorted(entries.values(), key=_sort_key)
+        print(f"[PatientWidget] _collect_advanced_analysis_series_entries → {len(result)} series "
+              f"(thumbnails={len(getattr(self, 'lst_thumbnails_data', []) or [])}, "
+              f"server={len(getattr(self, '_server_series_info', {}))}, "
+              f"disk_scan={'yes' if base_path and os.path.isdir(str(base_path)) else 'no'})")
+        return result
 
     def _on_advanced_mpr_clicked(self) -> None:
         """
@@ -3497,23 +3574,32 @@ class PatientWidget(QWidget):
         print("[PatientWidget] Advanced MPR button clicked")
 
         # ── Resolve selected series ──────────────────────────────────────
-        selected_series = getattr(self, '_selected_advanced_series', None)
+        # Priority: use the *currently active viewer* (blue-bordered tab)
+        # so the user always gets the series they are actually viewing,
+        # not the first series in the list.
+        selected_series = None
+        try:
+            sw = self.selected_widget
+            if sw and hasattr(sw, 'image_viewer') and sw.image_viewer:
+                md = getattr(sw.image_viewer, 'metadata', None)
+                if md:
+                    sm = md.get('series', {})
+                    selected_series = {
+                        'series_number': sm.get('series_number'),
+                        'series_uid':    sm.get('series_uid'),
+                        'series_path':   sm.get('series_path'),
+                        'window_width':  md.get('instances', [{}])[0].get('window_width'),
+                        'window_level':  md.get('instances', [{}])[0].get('window_center'),
+                    }
+                    print(f"[PatientWidget] Active viewer series: {sm.get('series_number')}")
+        except Exception as e:
+            print(f"[PatientWidget] Error getting active viewer series: {e}")
+
+        # Fallback: thumbnail panel selection (if no active viewer)
         if not selected_series:
-            try:
-                sw = self.selected_widget
-                if sw and hasattr(sw, 'image_viewer') and sw.image_viewer:
-                    md = getattr(sw.image_viewer, 'metadata', None)
-                    if md:
-                        sm = md.get('series', {})
-                        selected_series = {
-                            'series_number': sm.get('series_number'),
-                            'series_uid':    sm.get('series_uid'),
-                            'series_path':   sm.get('series_path'),
-                            'window_width':  md.get('instances', [{}])[0].get('window_width'),
-                            'window_level':  md.get('instances', [{}])[0].get('window_center'),
-                        }
-            except Exception as e:
-                print(f"[PatientWidget] Error getting active series: {e}")
+            selected_series = getattr(self, '_selected_advanced_series', None)
+            if selected_series:
+                print(f"[PatientWidget] Fallback to thumbnail selection: series {selected_series.get('series_number')}")
 
         # Resolve dicom_directory with fallbacks (same logic as
         # launch_advanced_analysis_for_active_series)
@@ -3576,23 +3662,27 @@ class PatientWidget(QWidget):
     #  Loading overlay  (reusable AI Pacs branded component)
     # ------------------------------------------------------------------
     def _show_advanced_mpr_loading_ui(self) -> None:
-        """Show the global AI Pacs loading overlay."""
+        """Show the loading overlay *over the DICOM viewer area* only."""
         from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
         self._hide_advanced_mpr_loading_ui()  # remove stale overlay
-        top = self.window() or self
+        # Parent to the center viewer widget so the overlay covers only
+        # the DICOM images area, not the thumbnails column.
+        viewer_area = getattr(self, 'center_widget', None) or self
         self._advanced_mpr_loading_overlay = AiPacsLoadingOverlay.show_overlay(
-            parent=top,
+            parent=viewer_area,
             title="AI Pacs Image Analysis",
-            status="Loading module",
+            status="AI Pacs is loading 3D Slicer",
             subtitle="Preparing Advanced MPR and AI segmentation engine",
         )
 
-    def _hide_advanced_mpr_loading_ui(self) -> None:
-        """Remove the full-screen loading overlay."""
+    def _hide_advanced_mpr_loading_ui(self, *, delay_ms: int = 0) -> None:
+        """Remove the full-screen loading overlay with optional fade."""
         from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
         overlay = getattr(self, '_advanced_mpr_loading_overlay', None)
         if overlay is not None:
-            AiPacsLoadingOverlay.hide_overlay(overlay)
+            AiPacsLoadingOverlay.hide_overlay(
+                overlay, fade_ms=500, delay_ms=delay_ms,
+            )
             self._advanced_mpr_loading_overlay = None
     def _launch_advanced_mpr_async(
         self,
@@ -3611,17 +3701,16 @@ class PatientWidget(QWidget):
             # Avoid stacking duplicate connections on the singleton.
             # PySide6's disconnect() can raise RuntimeError *or* set an
             # internal exception flag, so catch broadly with Exception.
-            try:
-                launcher.slicer_finished.disconnect(self._on_advanced_mpr_finished)
-            except Exception:
-                pass
-            try:
-                launcher.slicer_error.disconnect(self._on_advanced_mpr_error)
-            except Exception:
-                pass
-
-            launcher.slicer_finished.connect(self._on_advanced_mpr_finished)
-            launcher.slicer_error.connect(self._on_advanced_mpr_error)
+            for sig, slot in (
+                (launcher.slicer_started,  self._on_advanced_mpr_started),
+                (launcher.slicer_finished, self._on_advanced_mpr_finished),
+                (launcher.slicer_error,    self._on_advanced_mpr_error),
+            ):
+                try:
+                    sig.disconnect(slot)
+                except Exception:
+                    pass
+                sig.connect(slot)
 
             launcher.launch_with_dicom(
                 dicom_dir=dicom_dir,
@@ -3649,8 +3738,18 @@ class PatientWidget(QWidget):
     # ------------------------------------------------------------------
     #  Completion / error handlers
     # ------------------------------------------------------------------
+    def _on_advanced_mpr_started(self) -> None:
+        """3D Slicer process has started — hide the loader after a brief delay
+        so the viewer has time to become visible before the overlay fades out."""
+        print("[PatientWidget] Advanced MPR started – scheduling loader fade-out")
+        # Update status text to indicate success, then fade after 1.5 s
+        overlay = getattr(self, '_advanced_mpr_loading_overlay', None)
+        if overlay is not None:
+            overlay.set_status("3D Slicer launched successfully")
+        self._hide_advanced_mpr_loading_ui(delay_ms=1500)
+
     def _on_advanced_mpr_finished(self, exit_code: int) -> None:
-        """Handle Advanced MPR process completion."""
+        """Handle Advanced MPR process completion (Slicer closed)."""
         print(f"[PatientWidget] Advanced MPR finished with exit code: {exit_code}")
         self._hide_advanced_mpr_loading_ui()
 
@@ -3658,6 +3757,174 @@ class PatientWidget(QWidget):
         """Handle Advanced MPR launch error."""
         print(f"[PatientWidget] Advanced MPR error: {error_msg}")
         self._hide_advanced_mpr_loading_ui()
+
+    # ==================================================================
+    #  Stitching Module — button handler + launcher + overlay
+    # ==================================================================
+
+    def _on_stitching_clicked(self) -> None:
+        """Handle Stitching button click — mirrors _on_advanced_mpr_clicked."""
+        print("[PatientWidget] Stitching button clicked")
+
+        # ── Resolve selected series (same logic as Advanced MPR) ─────
+        selected_series = None
+        try:
+            sw = self.selected_widget
+            if sw and hasattr(sw, 'image_viewer') and sw.image_viewer:
+                md = getattr(sw.image_viewer, 'metadata', None)
+                if md:
+                    sm = md.get('series', {})
+                    selected_series = {
+                        'series_number': sm.get('series_number'),
+                        'series_uid':    sm.get('series_uid'),
+                        'series_path':   sm.get('series_path'),
+                        'window_width':  md.get('instances', [{}])[0].get('window_width'),
+                        'window_level':  md.get('instances', [{}])[0].get('window_center'),
+                    }
+        except Exception as e:
+            print(f"[PatientWidget] Error getting active viewer series: {e}")
+
+        if not selected_series:
+            selected_series = getattr(self, '_selected_advanced_series', None)
+
+        dicom_directory = (selected_series or {}).get('series_path')
+
+        if not dicom_directory and selected_series:
+            sn = selected_series.get('series_number')
+            if sn and self.import_folder_path:
+                candidate = os.path.join(str(self.import_folder_path), str(sn))
+                if os.path.isdir(candidate):
+                    dicom_directory = candidate
+                    selected_series['series_path'] = candidate
+
+        if not dicom_directory:
+            try:
+                sw = self.selected_widget
+                if sw and hasattr(sw, 'image_viewer') and sw.image_viewer:
+                    md = getattr(sw.image_viewer, 'metadata', None)
+                    if md:
+                        instances = md.get('instances', [])
+                        if instances:
+                            inst_path = instances[0].get('instance_path')
+                            if inst_path:
+                                dicom_directory = os.path.dirname(inst_path)
+            except Exception:
+                pass
+
+        if not dicom_directory:
+            QMessageBox.warning(
+                self, "No Series Selected",
+                "Please select a series from the thumbnails panel.\n\n"
+                "No active series available."
+            )
+            return
+        if not os.path.exists(dicom_directory):
+            QMessageBox.warning(
+                self, "Directory Not Found",
+                f"DICOM directory not found:\n{dicom_directory}"
+            )
+            return
+
+        # ── Show overlay & defer launch ──────────────────────────────
+        self._show_stitching_loading_ui()
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
+        QApplication.processEvents()
+
+        QTimer.singleShot(500, lambda: self._launch_stitching_async(
+            dicom_dir=dicom_directory,
+            series_uid=(selected_series or {}).get('series_uid'),
+            window_width=(selected_series or {}).get('window_width'),
+            window_level=(selected_series or {}).get('window_level'),
+        ))
+
+    # ── Loading overlay helpers ──────────────────────────────────────
+
+    def _show_stitching_loading_ui(self) -> None:
+        from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+        self._hide_stitching_loading_ui()
+        viewer_area = getattr(self, 'center_widget', None) or self
+        self._stitching_loading_overlay = AiPacsLoadingOverlay.show_overlay(
+            parent=viewer_area,
+            title="AI Pacs Image Analysis",
+            status="Loading Stitching Module",
+            subtitle="Preparing 2D radiograph stitching engine",
+        )
+
+    def _hide_stitching_loading_ui(self, *, delay_ms: int = 0) -> None:
+        from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+        overlay = getattr(self, '_stitching_loading_overlay', None)
+        if overlay is not None:
+            AiPacsLoadingOverlay.hide_overlay(
+                overlay, fade_ms=500, delay_ms=delay_ms,
+            )
+            self._stitching_loading_overlay = None
+
+    # ── Async launcher ───────────────────────────────────────────────
+
+    def _launch_stitching_async(
+        self,
+        dicom_dir: str,
+        series_uid: str | None = None,
+        window_width: float | None = None,
+        window_level: float | None = None,
+    ) -> None:
+        """Open the Stitching window.  Called from QTimer so the
+        loading overlay is guaranteed to be painted first."""
+        try:
+            from PacsClient.pacs.patient_tab.stitching.stitching_widget import get_stitching_widget
+
+            widget = get_stitching_widget(parent_widget=self)
+
+            # Safe signal reconnect (avoid stacking on singleton)
+            for sig, slot in (
+                (widget.stitching_started,  self._on_stitching_started),
+                (widget.stitching_finished, self._on_stitching_finished),
+                (widget.stitching_error,    self._on_stitching_error),
+            ):
+                try:
+                    sig.disconnect(slot)
+                except Exception:
+                    pass
+                sig.connect(slot)
+
+            # Collect all available series entries so the stitching widget
+            # can show a multi-series selection list.
+            available_series = self._collect_advanced_analysis_series_entries()
+
+            widget.launch_with_series(
+                available_series=available_series,
+                dicom_dir=dicom_dir,
+                series_uid=series_uid,
+                window_width=window_width,
+                window_level=window_level,
+            )
+        except Exception as e:
+            print(f"[PatientWidget] Error launching Stitching: {e}")
+            import traceback
+            traceback.print_exc()
+            self._hide_stitching_loading_ui()
+            QMessageBox.critical(
+                self, "Error",
+                f"Failed to launch Stitching module:\n{str(e)}"
+            )
+
+    # ── Completion / error handlers ──────────────────────────────────
+
+    def _on_stitching_started(self) -> None:
+        print("[PatientWidget] Stitching module started")
+        overlay = getattr(self, '_stitching_loading_overlay', None)
+        if overlay is not None:
+            overlay.set_status("Stitching module launched successfully")
+        self._hide_stitching_loading_ui(delay_ms=1500)
+
+    def _on_stitching_finished(self, exit_code: int) -> None:
+        print(f"[PatientWidget] Stitching finished with exit code: {exit_code}")
+        self._hide_stitching_loading_ui()
+
+    def _on_stitching_error(self, error_msg: str) -> None:
+        print(f"[PatientWidget] Stitching error: {error_msg}")
+        self._hide_stitching_loading_ui()
 
     def _launch_advanced_analysis_with_params(
         self,

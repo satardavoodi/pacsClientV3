@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from .adapters.home_widget_adapter import HomeWidgetAdapter
@@ -19,6 +19,34 @@ class SecretaryExecutor:
         if len(s) >= 8:
             return s[:8]
         return ""
+
+    @staticmethod
+    def _normalize_date_filter(raw: str) -> tuple[str, str]:
+        """Return (date_from, date_to) in YYYYMMDD for supported tokens/ranges."""
+        v = (raw or "").strip().lower()
+        if not v:
+            return "", ""
+
+        now = datetime.now()
+        if v == "today":
+            d = now.strftime("%Y%m%d")
+            return d, d
+        if v == "yesterday":
+            d = (now - timedelta(days=1)).strftime("%Y%m%d")
+            return d, d
+
+        if ".." in v:
+            left, right = v.split("..", 1)
+            d1 = SecretaryExecutor._to_yyyymmdd(left)
+            d2 = SecretaryExecutor._to_yyyymmdd(right)
+            if d1 and d2:
+                return (d1, d2) if d1 <= d2 else (d2, d1)
+            return "", ""
+
+        d = SecretaryExecutor._to_yyyymmdd(v)
+        if d:
+            return d, d
+        return "", ""
 
     @staticmethod
     def _is_modality_match(value: str, target: str) -> bool:
@@ -42,14 +70,14 @@ class SecretaryExecutor:
 
         entities = plan.get("entities", {})
         source = str(entities.get("source") or self.adapter.get_active_source())
-        today = datetime.now().strftime("%Y%m%d")
-        date_filter = today if str(entities.get("date") or "").lower() == "today" else ""
+        date_raw = str(entities.get("date") or "")
+        date_from, date_to = self._normalize_date_filter(date_raw)
         modality_filter = str(entities.get("modality") or "").upper()
 
         criteria: dict[str, Any] = {}
-        if date_filter:
-            criteria["date_from"] = date_filter
-            criteria["date_to"] = date_filter
+        if date_from and date_to:
+            criteria["date_from"] = date_from
+            criteria["date_to"] = date_to
         if modality_filter:
             criteria["modality"] = modality_filter
 
@@ -68,8 +96,9 @@ class SecretaryExecutor:
         filtered: list[dict[str, Any]] = []
         for row in rows:
             date_ok = True
-            if date_filter:
-                date_ok = self._to_yyyymmdd(str(row.get("date") or "")) == date_filter
+            if date_from and date_to:
+                row_date = self._to_yyyymmdd(str(row.get("date") or ""))
+                date_ok = bool(row_date) and date_from <= row_date <= date_to
             modality_ok = self._is_modality_match(str(row.get("modality") or ""), modality_filter) if modality_filter else True
             if date_ok and modality_ok:
                 filtered.append(compact_patient_row(row))

@@ -47,6 +47,7 @@ class ToolAccess:
     MPR = "mpr"  # Multi-planar reconstruction
     CURVED_MPR = "curved_mpr"  # Curved MPR
     TARGET = "target"  # Sync point/cursor mode
+    LANDMARK = "landmark"  # Stitching landmark placement
 
     # Category 8: Segmentation Tools
     SEGMENTATION = "segmentation"
