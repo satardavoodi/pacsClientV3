@@ -701,6 +701,9 @@ class AppHandler(QDialog):
     def _open_main_window(self):
         """Open the main application window"""
         try:
+            if not self.auth_token:
+                self._show_error("Login required: authentication did not complete")
+                return
             self.main_page = MainWindowWidget(
                 auth_user=self.auth_user,
                 auth_token=self.auth_token
