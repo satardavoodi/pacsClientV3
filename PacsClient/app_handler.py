@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QIcon
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
+import json
 import os
 import qtawesome as qta
 from .pacs.workstation_ui.mainwindow_ui import MainWindowWidget
@@ -430,6 +431,9 @@ class AppHandler(QDialog):
         # Initialize animations
         self._setup_animations()
 
+        # Load saved credentials after UI is ready
+        self._load_saved_credentials()
+
         # Fade in animation on startup
         self.setWindowOpacity(0)
         self.fade_in_animation.start()
@@ -515,6 +519,58 @@ class AppHandler(QDialog):
         
         self.checkbox_button.setIcon(icon)
         self.checkbox_button.setIconSize(self.checkbox_button.size())
+
+    def _get_login_config_path(self) -> str:
+        if os.name == "nt":
+            base_dir = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "AIPacs")
+        else:
+            base_dir = os.path.join(os.path.expanduser("~"), ".aipacs")
+        os.makedirs(base_dir, exist_ok=True)
+        return os.path.join(base_dir, "login_config.json")
+
+    def _load_saved_credentials(self) -> None:
+        try:
+            config_file = self._get_login_config_path()
+            if not os.path.exists(config_file):
+                self.checkbox_button.setChecked(False)
+                self._update_checkbox_icon()
+                return
+
+            with open(config_file, "r") as handle:
+                config = json.load(handle)
+
+            remember_me = bool(config.get("remember_me"))
+            self.checkbox_button.setChecked(remember_me)
+            self._update_checkbox_icon()
+
+            if remember_me:
+                username = config.get("username", "")
+                password = config.get("password", "")
+                if username:
+                    self.line_edit_username.setText(username)
+                if password:
+                    self.line_edit_password.setText(password)
+        except Exception as e:
+            print(f"Error loading saved credentials: {e}")
+            self.checkbox_button.setChecked(False)
+            self._update_checkbox_icon()
+
+    def _save_credentials(self, username: str, password: str) -> None:
+        try:
+            config_file = self._get_login_config_path()
+            if self.checkbox_button.isChecked():
+                config = {
+                    "username": username,
+                    "password": password,
+                    "remember_me": True,
+                }
+                with open(config_file, "w") as handle:
+                    json.dump(config, handle)
+            else:
+                if os.path.exists(config_file):
+                    os.remove(config_file)
+        except Exception as e:
+            print(f"Error saving credentials: {e}")
     
     def _update_license_info(self):
         """Update license information display"""
@@ -611,6 +667,7 @@ class AppHandler(QDialog):
                 message = "Login successful (Demo Mode)"
         
         if success:
+            self._save_credentials(username, password)
             # Success - fade out and open main window
             fade_out = QPropertyAnimation(self, b"windowOpacity")
             fade_out.setDuration(300)  # Shorter duration

@@ -7,7 +7,7 @@ from typing import Any
 
 import requests
 
-from EchoMind.ai_chat_config import URL_GEN_ASSISTANT
+from EchoMind.settings_store import get_echomind_api_key
 from .contracts import SecretaryActionPlan
 
 
@@ -96,18 +96,31 @@ def parse_command_llm(text: str, language: str = "auto", timeout: int = 45) -> S
         .replace("{{MODULE_MAP}}", module_map or "module_map unavailable")
         .replace("{{USER_TEXT}}", text or "")
     )
-    payload = {"text": prompt}
-
-    resp = requests.post(URL_GEN_ASSISTANT, json=payload, timeout=timeout)
+    api_key = (get_echomind_api_key() or "").strip()
+    if not api_key:
+        raise RuntimeError("EchoMind API key is not configured. Set it in Settings -> EchoMind.")
+    payload = {
+        "model": "gpt-4.1-mini",
+        "messages": [
+            {"role": "user", "content": prompt},
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    resp = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=timeout)
     resp.raise_for_status()
     body = resp.json()
-    raw = (
-        body.get("assistant_output")
-        or body.get("assistant")
-        or body.get("data")
-        or body.get("response")
-        or body
-    )
+    raw = body
+    if isinstance(body, dict):
+        choices = body.get("choices")
+        if isinstance(choices, list) and choices:
+            msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+            if isinstance(msg, dict) and msg.get("content"):
+                raw = msg.get("content")
+            elif isinstance(choices[0], dict) and choices[0].get("text"):
+                raw = choices[0].get("text")
 
     if isinstance(raw, dict):
         return _coerce_plan(raw)

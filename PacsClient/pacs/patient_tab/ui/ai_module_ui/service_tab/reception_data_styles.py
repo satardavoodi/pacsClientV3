@@ -6,6 +6,7 @@ All colors, fonts, and CSS styles are defined here for consistency and maintaina
 """
 
 from PacsClient.utils.css_utils import get_roboto_font_family
+from PacsClient.utils.scroll_style import get_scroll_area_style as get_shared_scroll_area_style
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COLOR CONSTANTS
@@ -357,30 +358,43 @@ def get_text_edit_style(rtl=False):
             font-size: {FONT_SIZES['xl']}px;
         }}
         QScrollBar:vertical {{
-            background-color: #f0f0f0;
+            border: 1px solid #4b5563;
+            background: #1f2937;
             width: 12px;
+            margin: 12px 0px 12px 0px;
             border-radius: 6px;
         }}
         QScrollBar::handle:vertical {{
-            background-color: #c0c0c0;
-            border-radius: 6px;
-            min-height: 30px;
+            background: #374151;
+            border-radius: 5px;
+            min-height: 40px;
         }}
         QScrollBar::handle:vertical:hover {{
-            background-color: #a0a0a0;
+            background: #4b5563;
+        }}
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical {{
+            height: 12px;
+            width: 12px;
+            background: transparent;
+            border: none;
+            subcontrol-origin: margin;
+        }}
+        QScrollBar::add-page:vertical,
+        QScrollBar::sub-page:vertical {{
+            background: none;
+        }}
+        QScrollBar::up-arrow:vertical,
+        QScrollBar::down-arrow:vertical {{
+            width: 0px;
+            height: 0px;
         }}
     """
 
 
 def get_scroll_area_style():
     """Get styled QScrollArea CSS."""
-    return f"""
-        QScrollArea {{
-            border: 2px solid {COLORS['border_medium']};
-            border-radius: {BORDER_RADIUS['sm']}px;
-            background-color: {COLORS['bg_light']};
-        }}
-    """
+    return get_shared_scroll_area_style()
 
 
 def get_dialog_style():

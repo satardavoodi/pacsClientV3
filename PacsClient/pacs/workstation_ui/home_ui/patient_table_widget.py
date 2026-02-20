@@ -2230,10 +2230,39 @@ class PatientTableWidget(QWidget):
         QMessageBox.warning(self, "Status Change Error", f"Error: {error_msg}")
 
     def auto_resize_columns(self):
-        """Auto resize columns - disabled to maintain fixed column widths"""
-        # Disabled to keep the initial column widths set in setup_ui()
-        # Users can still manually resize columns since resize mode is set to Interactive
-        pass
+        """Auto resize columns for screen-adaptive layouts."""
+        header = self.results_table.horizontalHeader()
+        self.results_table.resizeColumnsToContents()
+
+        min_widths = {
+            COL['select']: 50,
+            COL['patient_name']: 140,
+            COL['patient_id']: 90,
+            COL['body_part']: 90,
+            COL['status']: 60,
+            COL['report']: 60,
+            COL['assign']: 60,
+            COL['time']: 75,
+            COL['date']: 90,
+            COL['images']: 70,
+            COL['modality']: 70,
+            COL['age']: 55
+        }
+
+        fixed_cols = {COL['select'], COL['status'], COL['report'], COL['assign']}
+        for col in range(self.results_table.columnCount()):
+            if self.results_table.isColumnHidden(col):
+                continue
+            if col in fixed_cols:
+                header.setSectionResizeMode(col, QHeaderView.Fixed)
+            elif col == COL['description']:
+                header.setSectionResizeMode(col, QHeaderView.Stretch)
+            else:
+                header.setSectionResizeMode(col, QHeaderView.Interactive)
+
+            min_width = min_widths.get(col)
+            if min_width is not None and self.results_table.columnWidth(col) < min_width:
+                self.results_table.setColumnWidth(col, min_width)
 
     def clear_table(self):
         """Clear all data from the table"""
