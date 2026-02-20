@@ -45,6 +45,14 @@ class LoginWindow(QWidget):
         self.setup_ui()
         self.load_saved_credentials()
 
+    def _get_login_config_path(self) -> str:
+        if os.name == "nt":
+            base_dir = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "AIPacs")
+        else:
+            base_dir = os.path.join(os.path.expanduser("~"), ".aipacs")
+        os.makedirs(base_dir, exist_ok=True)
+        return os.path.join(base_dir, "login_config.json")
+
     def setup_ui(self):
         self.setWindowTitle("Login Page")
         self.setWindowIcon(QIcon(fr"{IMAGES_LOGIN_PATH}/favicon.ico"))
@@ -67,6 +75,7 @@ class LoginWindow(QWidget):
 
         # Remember Me checkbox
         self.remember_me_checkbox = QCheckBox("Remember Me")
+        self.remember_me_checkbox.setChecked(True)
         layout.addWidget(self.remember_me_checkbox)
 
         # Login button
@@ -79,17 +88,18 @@ class LoginWindow(QWidget):
     def load_saved_credentials(self):
         """Load saved credentials if 'Remember Me' was checked previously"""
         try:
-            config_dir = os.path.expanduser("~/.aipacs")
-            os.makedirs(config_dir, exist_ok=True)
-            config_file = os.path.join(config_dir, "login_config.json")
+            config_file = self._get_login_config_path()
             
             if os.path.exists(config_file):
                 with open(config_file, 'r') as f:
                     config = json.load(f)
                     if config.get("remember_me"):
-                        self.username_input.setText(config.get("username", ""))
-                        self.password_input.setText(config.get("password", ""))
+                        username = config.get("username", "")
+                        password = config.get("password", "")
+                        self.username_input.setText(username)
+                        self.password_input.setText(password)
                         self.remember_me_checkbox.setChecked(True)
+                        self._auto_login_if_possible(username, password)
         except Exception as e:
             print(f"Error loading saved credentials: {e}")
 
@@ -150,9 +160,7 @@ class LoginWindow(QWidget):
         """Save credentials if 'Remember Me' is checked"""
         try:
             if self.remember_me_checkbox.isChecked():
-                config_dir = os.path.expanduser("~/.aipacs")
-                os.makedirs(config_dir, exist_ok=True)
-                config_file = os.path.join(config_dir, "login_config.json")
+                config_file = self._get_login_config_path()
                 
                 config = {
                     "username": username,
@@ -164,12 +172,31 @@ class LoginWindow(QWidget):
                     json.dump(config, f)
             else:
                 # Remove saved credentials if unchecked
-                config_dir = os.path.expanduser("~/.aipacs")
-                config_file = os.path.join(config_dir, "login_config.json")
+                config_file = self._get_login_config_path()
                 if os.path.exists(config_file):
                     os.remove(config_file)
         except Exception as e:
             print(f"Error saving credentials: {e}")
+
+    def _handle_successful_login(self, username: str, password: str):
+        self.save_credentials(username, password)
+        if self.parent() and hasattr(self.parent(), 'setCurrentIndex'):
+            self.parent().setCurrentIndex(1)
+        else:
+            self.close()
+
+    def _auto_login_if_possible(self, username: str, password: str):
+        if not username or not password:
+            return
+
+        success, message, token, user = self.authenticate_with_socket(username, password)
+        if success:
+            self._handle_successful_login(username, password)
+        else:
+            if "could not connect" in (message or "").lower():
+                show_error_message('connection_error', message)
+            else:
+                show_error_message('user_password', message)
 
     def on_login_clicked(self):
         # Get credentials
@@ -185,15 +212,7 @@ class LoginWindow(QWidget):
         success, message, token, user = self.authenticate_with_socket(username, password)
 
         if success:
-            # Save credentials if "Remember Me" is checked
-            self.save_credentials(username, password)
-            
-            # Move to next page/index in parent stacked widget
-            if self.parent() and hasattr(self.parent(), 'setCurrentIndex'):
-                self.parent().setCurrentIndex(1)
-            else:
-                # Close the login window if it's a standalone window
-                self.close()
+            self._handle_successful_login(username, password)
         else:
             # Determine the type of error and show appropriate message
             if "could not connect" in message.lower():

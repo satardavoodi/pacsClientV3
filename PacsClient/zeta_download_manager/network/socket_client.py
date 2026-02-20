@@ -137,7 +137,6 @@ class SocketDicomClient:
                 self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)  # 256KB
                 self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 131072)  # 128KB
-                
                 self.socket.connect((self.host, self.port))
                 self.connected = True
                 
@@ -154,6 +153,21 @@ class SocketDicomClient:
                         pass
                     self.socket = None
                 return False
+
+    def _normalize_login_error_message(self, message: str) -> str:
+        if not message:
+            return message
+
+        if "خطا در احراز هویت" in message:
+            parts = message.split(":", 1)
+            detail = parts[1].strip() if len(parts) > 1 else ""
+            return f"Authentication error: {detail}" if detail else "Authentication error"
+
+        if any(ord(ch) > 127 for ch in message):
+            ascii_only = "".join(ch for ch in message if ord(ch) < 128).strip(" :")
+            return f"Authentication error: {ascii_only}" if ascii_only else "Authentication error"
+
+        return message
     
     def disconnect(self) -> None:
         """Disconnect from server"""
@@ -295,6 +309,7 @@ class SocketDicomClient:
                     logger.error("❌ Login response missing token")
                     return False, "Login response missing token", None, None
             else:
+                message = self._normalize_login_error_message(message)
                 logger.error(f"❌ Login failed: {message}")
                 return False, message, None, None
                 

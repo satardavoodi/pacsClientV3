@@ -63,6 +63,7 @@ import warnings
 from PacsClient.utils.config import SOURCE_PATH
 from PacsClient.utils.socket_config import update_socket_server_settings, get_socket_server_settings
 from PacsClient.utils import download_attachments_for_study, download_attachments_for_study_async
+from PacsClient.utils.scroll_style import get_scroll_area_style
 
 warnings.simplefilter("error")
 
@@ -193,7 +194,9 @@ class HomePanelWidget(QWidget):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(6, 6, 6, 6)
         left_layout.setSpacing(2)
-        left_panel.setFixedWidth(280)
+        left_panel.setMinimumWidth(240)
+        left_panel.setMaximumWidth(380)
+        left_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         left_panel.setStyleSheet('''
             QWidget {
                 background: #0f1419;
@@ -268,6 +271,30 @@ class HomePanelWidget(QWidget):
                 border-color: #138d75;
             }
         ''')
+
+        # Adaptive layout button
+        self.adaptive_layout_btn = QPushButton(qta.icon('fa5s.expand-arrows-alt', color='white'), " Adaptive to Screen Size")
+        self.adaptive_layout_btn.setToolTip("Auto-fit table columns and keep controls visible on any screen size")
+        self.adaptive_layout_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2563eb, stop:1 #1d4ed8);
+                color: #ffffff;
+                border: 1px solid #2563eb;
+                border-radius: 8px;
+                padding: 6px 10px;
+                font-size: 12px;
+                font-family: 'Roboto', sans-serif;
+                margin: 2px 0px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1d4ed8, stop:1 #1e40af);
+                border-color: #1d4ed8;
+            }
+        """)
+        self.adaptive_layout_btn.clicked.connect(self.apply_adaptive_layout)
+        left_layout.addWidget(self.adaptive_layout_btn)
 
         # server section
         server_group = QGroupBox("Server Selection")
@@ -459,11 +486,26 @@ class HomePanelWidget(QWidget):
         self.socket_test_btn.clicked.connect(self.check_socket_connection_status)
         # status_layout.addWidget(self.socket_test_btn)
 
-        self.main_layout.addWidget(left_panel)
+        self.left_panel_scroll = QScrollArea()
+        self.left_panel_scroll.setWidgetResizable(True)
+        self.left_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.left_panel_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.left_panel_scroll.setStyleSheet(get_scroll_area_style())
+        self.left_panel_scroll.setWidget(left_panel)
+        self.main_layout.addWidget(self.left_panel_scroll)
 
         # panel_layout.addWidget(left_panel)
         # panel_box.setLayout(panel_layout)
         # self.main_layout.addWidget(panel_box)
+
+    def apply_adaptive_layout(self):
+        """Apply screen-adaptive layout tweaks for the home view."""
+        if hasattr(self, 'patient_table_widget') and self.patient_table_widget:
+            self.patient_table_widget.auto_resize_columns()
+        if hasattr(self, 'left_panel_scroll') and self.left_panel_scroll:
+            self.left_panel_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.updateGeometry()
+        self.adjustSize()
 
     def _test_priority_download(self):
         """Test priority download mechanism manually"""

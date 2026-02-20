@@ -5,6 +5,7 @@ Right Panel Widget for displaying series information and thumbnails
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QRect
 from PySide6.QtGui import QPixmap, QPainter, QPen
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QGridLayout
+from PacsClient.utils.scroll_style import get_scroll_area_style
 try:
     import qtawesome as qta
     QTAWESOME_AVAILABLE = True
@@ -139,45 +140,7 @@ class RightPanelWidget(QWidget):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        self.scroll_area.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background: transparent;
-            }
-            QScrollBar:vertical {
-                border: 1px solid #4b5563;
-                background: #1f2937;
-                width: 12px;
-                margin: 12px 0px 12px 0px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical {
-                background: #374151;
-                min-height: 40px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #4b5563;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 12px;
-                width: 12px;
-                background: transparent;
-                border: none;
-                subcontrol-origin: margin;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: none;
-            }
-            QScrollBar::up-arrow:vertical,
-            QScrollBar::down-arrow:vertical {
-                width: 0px;
-                height: 0px;
-            }
-        """)
+        self.scroll_area.setStyleSheet(get_scroll_area_style())
         
         # Content container
         self.content_widget = QWidget()

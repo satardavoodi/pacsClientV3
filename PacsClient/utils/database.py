@@ -454,6 +454,37 @@ def save_token_usage(center: str, model: str, tokens: int):
                 total_tokens = excluded.total_tokens,
                 updated_at = CURRENT_TIMESTAMP
         """, (center, model, tokens))
+        conn.commit()
+
+def _ensure_token_usage_tables(conn: sqlite3.Connection) -> None:
+    """Ensure token-usage tables exist (safe for old DBs)."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_token_usage (
+            center_name TEXT NOT NULL,
+            model_name  TEXT NOT NULL,
+            total_tokens INTEGER DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (center_name, model_name)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS api_token_usage (
+            api_hash     TEXT NOT NULL,
+            api_mask     TEXT NOT NULL,
+            center_name  TEXT DEFAULT NULL,
+            model_name   TEXT NOT NULL,
+            total_tokens INTEGER DEFAULT 0,
+            last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (api_hash, model_name)
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_api_token_usage_last_used ON api_token_usage(last_used_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_api_token_usage_mask ON api_token_usage(api_mask)")
 
 def add_token_usage_delta(center: str, model: str, tokens_delta: int) -> None:
     """Atomic increment for center+model token usage."""
@@ -467,6 +498,7 @@ def add_token_usage_delta(center: str, model: str, tokens_delta: int) -> None:
         return
 
     with get_db_connection() as conn:
+        _ensure_token_usage_tables(conn)
         cur = conn.cursor()
         cur.execute(
             """
@@ -478,6 +510,7 @@ def add_token_usage_delta(center: str, model: str, tokens_delta: int) -> None:
             """,
             (center, model, delta),
         )
+        conn.commit()
 
 def _mask_api_key(api_key: str) -> str:
     """Return safe UI representation; never store full API key."""
@@ -519,6 +552,7 @@ def add_api_token_usage_delta(
 
     api_mask = _mask_api_key(api_key)
     with get_db_connection() as conn:
+        _ensure_token_usage_tables(conn)
         cur = conn.cursor()
         cur.execute(
             """
@@ -532,6 +566,7 @@ def add_api_token_usage_delta(
             """,
             (api_hash, api_mask, center_name, model_name, delta),
         )
+        conn.commit()
 
 
 def load_api_token_usage() -> dict:
@@ -672,6 +707,7 @@ def add_transcript_usage_delta(center_name: str, model_name: str, seconds_delta:
                 """,
                 (center_name, model_name, sec, sec),
             )
+            conn.commit()
 def _hash_and_mask_api_key(api_key: str) -> tuple[str, str]:
     """Return (api_hash, api_mask) using existing helpers."""
     return _hash_api_key(api_key), _mask_api_key(api_key)
@@ -759,6 +795,7 @@ def add_api_transcript_usage_delta(api_key: str, center_name: str, model_name: s
                 """,
                 (api_hash, api_mask, center_name, model_name, sec, sec),
             )
+            conn.commit()
 
 def load_api_transcript_usage_for_key(api_key: str) -> dict:
     """{model: minutes} for a single api_key (by hash)."""

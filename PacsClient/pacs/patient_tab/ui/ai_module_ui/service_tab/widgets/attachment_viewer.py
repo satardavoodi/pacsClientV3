@@ -4,6 +4,8 @@ Attachment Viewer Widget
 Grid-based attachment viewer with thumbnail support and preview capabilities.
 """
 
+from PacsClient.utils.scroll_style import get_scroll_area_style
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QFrame, QScrollArea, QSizePolicy, QGroupBox
@@ -230,7 +232,7 @@ class AttachmentGrid(QWidget):
         self.attachments = attachments
         self.base_url = base_url
         self._setup_ui()
-    
+
     def _setup_ui(self):
         """Set up the grid UI."""
         self.setStyleSheet(f"""
@@ -240,56 +242,41 @@ class AttachmentGrid(QWidget):
                 border-radius: {BORDER_RADIUS['lg']}px;
             }}
         """)
-        
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
+
         # Header
         header = self._create_header()
         layout.addWidget(header)
-        
+
         # Content with scroll
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(f"""
-            QScrollArea {{
-                background: transparent;
-                border: none;
-            }}
-            QScrollBar:vertical {{
-                background-color: {COLORS['bg_lighter']};
-                width: 8px;
-                border-radius: 4px;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: {COLORS['info']};
-                border-radius: 4px;
-                min-height: 30px;
-            }}
-        """)
-        
+        scroll.setStyleSheet(get_scroll_area_style())
+
         content = QWidget()
         content.setStyleSheet("background: transparent;")
         grid_layout = QGridLayout(content)
         grid_layout.setContentsMargins(15, 15, 15, 15)
         grid_layout.setSpacing(15)
-        
+
         # Add attachment thumbnails to grid
         columns = 4  # Number of columns
         for idx, attachment in enumerate(self.attachments):
             row = idx // columns
             col = idx % columns
-            
+
             thumbnail = AttachmentThumbnail(attachment, self.base_url, self)
             thumbnail.clicked.connect(self.attachment_clicked.emit)
             grid_layout.addWidget(thumbnail, row, col)
-        
+
         # Add stretch to fill remaining space
         grid_layout.setRowStretch(len(self.attachments) // columns + 1, 1)
-        
+
         scroll.setWidget(content)
         layout.addWidget(scroll)
     

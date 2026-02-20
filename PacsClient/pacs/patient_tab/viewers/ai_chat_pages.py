@@ -23,7 +23,7 @@ from PacsClient.utils.database import (
     ai_save_reception_report,
 )
 
-from .openai_reporter import reporter, translate_report, standardize, standard_assist_search, correction,translate_text_to_persian
+from .openai_reporter import reporter, translate_report, standardize, standard_assist_search, correction, translate_text_to_persian
 import re
 try:
     from PacsClient.utils import ICON_PATH
@@ -155,6 +155,23 @@ class ModePickerPage(QWidget):
         """)
         self._lock_lbl.setVisible(False)
         self._right_layout.addWidget(self._lock_lbl, 0, Qt.AlignCenter)
+
+        self._usage_lbl = QLabel(right_spacer)
+        self._usage_lbl.setWordWrap(True)
+        self._usage_lbl.setAlignment(Qt.AlignCenter)
+        self._usage_lbl.setStyleSheet("""
+            QLabel{
+                color: rgba(220,220,220,0.90);
+                padding: 16px;
+                border: 1px solid rgba(150,150,150,0.25);
+                border-radius: 12px;
+                background: rgba(10,10,10,0.35);
+                font-size: 12px;
+                line-height: 1.35;
+            }
+        """)
+        self._usage_lbl.setVisible(False)
+        self._right_layout.addWidget(self._usage_lbl, 0, Qt.AlignCenter)
         self._right_layout.addStretch(1)
 
         self._root.addWidget(self.left_wrap, 0, Qt.AlignTop | Qt.AlignLeft)
@@ -178,6 +195,7 @@ class ModePickerPage(QWidget):
 
         # هر بار نمایش: وضعیت دسترسی را سینک کن
         self._apply_access_state()
+        self._refresh_usage_panel()
 
         if not self._api_checked:
             self._api_checked = True
@@ -271,6 +289,80 @@ class ModePickerPage(QWidget):
                 "Please go back to the login page and enter the correct key."
             )
 
+    def _refresh_usage_panel(self, api_key: str | None = None) -> None:
+        def _mask_key(k: str) -> str:
+            k = (k or "").strip()
+            if not k:
+                return "-"
+            if len(k) <= 10:
+                return k[:2] + "..." + k[-2:]
+            return k[:4] + "..." + k[-4:]
+
+        key = (api_key or "").strip()
+        if not key:
+            try:
+                from .api_manager import Manage
+                key = (Manage.instance().get_irannobat_key() or "").strip()
+            except Exception:
+                try:
+                    key = (Manage.instance().get_last_api_key() or "").strip()
+                except Exception:
+                    key = ""
+
+        if not key:
+            self._usage_lbl.setVisible(False)
+            self._usage_lbl.setText("")
+            return
+
+        rows = []
+        tr_models = {}
+        try:
+            from PacsClient.utils.database import (
+                get_api_usage_rows_for_key,
+                load_api_transcript_usage_for_key,
+            )
+            rows = get_api_usage_rows_for_key(key, limit=200) or []
+            tr_models = load_api_transcript_usage_for_key(key) or {}
+        except Exception:
+            rows = []
+            tr_models = {}
+
+        api_mask = rows[0].get("api") if rows else _mask_key(key)
+        last_model = rows[0].get("model") if rows else "-"
+        last_used = rows[0].get("last_used_at") if rows else "-"
+        total_tokens = sum(int(r.get("tokens") or 0) for r in rows)
+
+        total_transcript_min = 0.0
+        for _m, val in tr_models.items():
+            try:
+                total_transcript_min += float(val or 0.0)
+            except Exception:
+                pass
+
+        if total_transcript_min < 0.1 and total_transcript_min > 0:
+            transcript_text = f"{max(1, int(round(total_transcript_min * 60.0)))} sec"
+        else:
+            transcript_text = f"{total_transcript_min:.1f} min"
+
+        if not rows and not tr_models:
+            body = "No usage data found for this API key yet."
+        else:
+            body = (
+                f"<b>API:</b> {api_mask}<br>"
+                f"<b>Last model:</b> {last_model}<br>"
+                f"<b>Total tokens:</b> {total_tokens:,}<br>"
+                f"<b>Total transcript:</b> {transcript_text}<br>"
+                f"<b>Last used:</b> {last_used}"
+            )
+
+        self._usage_lbl.setText(
+            "<div style='font-size:12px;line-height:1.35'>"
+            "<div style='font-size:13px;font-weight:700;margin:0 0 6px 0'>Usage</div>"
+            f"{body}"
+            "</div>"
+        )
+        self._usage_lbl.setVisible(True)
+
 
     def _apply_access_state(self) -> None:
         """
@@ -347,6 +439,7 @@ class ModePickerPage(QWidget):
                     api_key = None
 
                 self._show_welcome(center, api_key=api_key)
+                self._refresh_usage_panel(api_key=api_key)
                 return
 
             # Keep UI locked until validated
@@ -379,7 +472,7 @@ class ModePickerPage(QWidget):
             dlg = QInputDialog(self)
             dlg.setWindowTitle("🔑 API Key Required")
             dlg.setLabelText(
-                "Please enter your API key:\n\n"
+                "Please enter your IRANNOBAT API key:\n\n"
                 "This key will be used for all AI features\n"
                 "(Chat, Reports, Assistant, etc.)."
             )
@@ -438,6 +531,7 @@ class ModePickerPage(QWidget):
                 self._api_prompt_cancelled = False
                 self._set_ai_enabled(True)
                 self._show_welcome(center, api_key=api_key)
+                self._refresh_usage_panel(api_key=api_key)
                 return
 
             # Invalid key
@@ -1748,8 +1842,14 @@ class OneChatPage(QWidget):
                     files.append(("audio_files", open(p, "rb")))
                 if not files:
                     raise Exception("No valid audio files to upload.")
+                m = Manage.instance()
+                if not m.is_validated():
+                    raise RuntimeError("❌ API key is not set. Please enter it on the login page.")
+                info = m.ensure_detected()
+                gapgpt_key = (info.gapgpt_key or "").strip()
+                headers = {"Authorization": f"Bearer {gapgpt_key}"} if gapgpt_key else {}
                 data = {"quality_mode": getattr(self.composer, "_transcribe_quality_mode", "clear")}
-                r = requests.post(URL_GEN_TRANSCRIPT, files=files, data=data, timeout=360)
+                r = requests.post(URL_GEN_TRANSCRIPT, files=files, data=data, headers=headers, timeout=360)
                 r.raise_for_status()
                 return r.json()
             finally:
@@ -2214,9 +2314,18 @@ class OneChatPage(QWidget):
             if not isinstance(resp, dict):
                 return
 
-            # accept either flat fields or nested `usage`
-            usage = resp.get("usage")
-            src = usage if isinstance(usage, dict) else resp
+            prompt_keys = {
+                "prompt_tokens", "input_tokens", "input_token", "prompt_token", "prompt",
+            }
+            completion_keys = {
+                "completion_tokens", "output_tokens", "output_token", "completion_token", "completion",
+            }
+            total_keys = {
+                "total_tokens", "total_token", "total", "tokens", "token_total",
+            }
+            model_keys = {"model", "model_name", "model_id"}
+
+            found = {"prompt": None, "completion": None, "total": None, "model": None}
 
             def _as_int(x) -> int:
                 try:
@@ -2224,29 +2333,78 @@ class OneChatPage(QWidget):
                 except Exception:
                     return 0
 
-            p = _as_int(src.get("prompt_tokens"))
-            c = _as_int(src.get("completion_tokens"))
-            t = _as_int(src.get("total_tokens"))
+            def _as_str(x) -> str:
+                return "" if x is None else str(x)
 
-            # if only split exists, compute total
+            def _scan(node):
+                if isinstance(node, dict):
+                    for k, v in node.items():
+                        kl = str(k).lower()
+                        if kl in prompt_keys and found["prompt"] is None:
+                            found["prompt"] = _as_int(v)
+                        elif kl in completion_keys and found["completion"] is None:
+                            found["completion"] = _as_int(v)
+                        elif kl in total_keys and found["total"] is None:
+                            found["total"] = _as_int(v)
+                        elif kl in model_keys and found["model"] is None:
+                            mv = _as_str(v).strip()
+                            if mv:
+                                found["model"] = mv
+                        _scan(v)
+                elif isinstance(node, list):
+                    for it in node:
+                        _scan(it)
+
+            _scan(resp)
+
+            p = found["prompt"] or 0
+            c = found["completion"] or 0
+            t = found["total"] or 0
+
             if t <= 0 and (p > 0 or c > 0):
                 t = p + c
-
             if t <= 0:
                 return
 
-            m = Manage.instance()
-            if not m.is_validated():
-                return
+            resolved_model = (found["model"] or model_name or "Irannobat").strip()
 
-            # Prefer split if available
-            if p > 0 or c > 0:
-                m.update_usage(model=model_name, prompt_tokens=p, completion_tokens=c)
-            else:
-                m.update_usage_total(model=model_name, total_tokens=t)
+            api_key = ""
+            center = "<unknown>"
+            try:
+                m = Manage.instance()
+                if m.is_validated():
+                    info = m.ensure_detected()
+                    api_key = (info.irannobat_key or "").strip()
+                    center = (info.center_display or info.center_code or center).strip()
+            except Exception:
+                pass
+
+            try:
+                add_token_usage_delta(center, resolved_model, t)
+            except Exception:
+                pass
+            if api_key:
+                try:
+                    add_api_token_usage_delta(
+                        api_key=api_key,
+                        center_name=center,
+                        model_name=resolved_model,
+                        tokens_delta=t,
+                    )
+                except Exception:
+                    pass
+
+            try:
+                if api_key:
+                    m = Manage.instance()
+                    if p > 0 or c > 0:
+                        m.update_usage(model=resolved_model, prompt_tokens=p, completion_tokens=c)
+                    else:
+                        m.update_usage_total(model=resolved_model, total_tokens=t)
+            except Exception:
+                pass
 
         except Exception:
-            # never break UI for logging failures
             return
 
 
@@ -2261,9 +2419,13 @@ class OneChatPage(QWidget):
         """
         try:
             import os, re
-            import soundfile as sf
         except Exception:
             return
+
+        try:
+            import soundfile as sf
+        except Exception:
+            sf = None
 
         center = (
             getattr(self, "center", None)
@@ -2271,7 +2433,7 @@ class OneChatPage(QWidget):
             or getattr(self, "current_center", None)
             or "<unknown>"
         )
-        model_name = "irannobat transcript model"
+        model_name = "irannobat transcriptmodel"
 
         # Use the same key source as Welcome (avoid mismatch)
         api_key = ""
@@ -2279,6 +2441,11 @@ class OneChatPage(QWidget):
             from .api_manager import Manage
             m = Manage.instance()
             api_key = (m.get_irannobat_key() or "").strip() or (m.get_last_api_key() or "").strip()
+            try:
+                info = m.ensure_detected()
+                center = (getattr(info, "center_display", None) or getattr(info, "center_code", None) or center)
+            except Exception:
+                pass
         except Exception:
             api_key = ""
         if not api_key:
@@ -2292,17 +2459,18 @@ class OneChatPage(QWidget):
                     return 0.0
 
                 # soundfile (wav/flac/ogg/…)
-                try:
-                    info = sf.info(path)
-                    dur = float(getattr(info, "duration", 0.0) or 0.0)
-                    if dur > 0:
-                        return dur
-                    frames = float(getattr(info, "frames", 0.0) or 0.0)
-                    sr = float(getattr(info, "samplerate", 0.0) or 0.0)
-                    if frames > 0 and sr > 0:
-                        return frames / sr
-                except Exception:
-                    pass
+                if sf is not None:
+                    try:
+                        info = sf.info(path)
+                        dur = float(getattr(info, "duration", 0.0) or 0.0)
+                        if dur > 0:
+                            return dur
+                        frames = float(getattr(info, "frames", 0.0) or 0.0)
+                        sr = float(getattr(info, "samplerate", 0.0) or 0.0)
+                        if frames > 0 and sr > 0:
+                            return frames / sr
+                    except Exception:
+                        pass
 
                 # built-in WAV fallback
                 if str(path).lower().endswith(".wav"):
@@ -3006,32 +3174,13 @@ class OneChatPage(QWidget):
                 print(f"❌ Error fetching patient: {e}")
                 logger.error(f"❌ Error fetching patient: {e}")
 
-        manual_patient_id = False
-        if patient_id:
-            choice_box = QMessageBox(self)
-            choice_box.setWindowTitle("Send To Reception")
-            choice_box.setText(
-                f"Current patient ID: {patient_id}\n"
-                "Do you want to send to this patient or another patient?"
-            )
-            use_current_btn = choice_box.addButton("Use current patient", QMessageBox.AcceptRole)
-            use_other_btn = choice_box.addButton("Other patient...", QMessageBox.ActionRole)
-            cancel_btn = choice_box.addButton(QMessageBox.StandardButton.Cancel)
-            choice_box.exec()
-
-            clicked = choice_box.clickedButton()
-            if clicked == cancel_btn:
-                logger.info("Send to reception canceled by user.")
-                return
-            if clicked == use_other_btn:
-                manual_patient_id = True
-
-        if manual_patient_id or not patient_id:
-            default_value = "" if manual_patient_id else (self.study_uid or "").strip()
+        if not patient_id:
+            default_value = (self.study_uid or "").strip()
             patient_id, ok = QInputDialog.getText(
                 self,
                 "Patient ID Required",
-                "Please enter the patient ID to send.",
+                "Automatic access to the patient ID is not available.\n"
+                "Please enter the patient ID directly to send.",
                 QLineEdit.Normal,
                 default_value,
             )
@@ -3050,213 +3199,248 @@ class OneChatPage(QWidget):
             )
             return
 
-        patient_validated = False
-        try:
-            base_url = "http://81.16.117.196:8080"
-            validate_url = f"{base_url}/api/pacs/patients/{patient_id}"
-            masked_url = "http://<host>/api/pacs/patients/<patient_id>"
-            masked_id = "<patient_id>"
-            t0 = time.perf_counter()
-            logger.info(f"[RECEPTION_SERVER] → GET {masked_url} id={masked_id}")
-            response = requests.get(validate_url, timeout=20)
-            elapsed_ms = int((time.perf_counter() - t0) * 1000)
-            logger.info(
-                f"[RECEPTION_SERVER] ← status={response.status_code} elapsed_ms={elapsed_ms} content_type={response.headers.get('Content-Type')} content_length={response.headers.get('Content-Length')}"
-            )
+        def _send_with_patient_id(target_patient_id: str) -> bool:
+            patient_validated = False
+            try:
+                base_url = "http://81.16.117.196:8080"
+                validate_url = f"{base_url}/api/pacs/patients/{target_patient_id}"
+                masked_url = "http://<host>/api/pacs/patients/<patient_id>"
+                masked_id = "<patient_id>"
+                t0 = time.perf_counter()
+                logger.info(f"[RECEPTION_SERVER] → GET {masked_url} id={masked_id}")
+                response = requests.get(validate_url, timeout=20)
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                logger.info(
+                    f"[RECEPTION_SERVER] ← status={response.status_code} elapsed_ms={elapsed_ms} content_type={response.headers.get('Content-Type')} content_length={response.headers.get('Content-Length')}"
+                )
 
-            if not response.ok:
-                logger.warning("[RECEPTION_SERVER] ❌ Patient ID not found: <patient_id>")
+                if not response.ok:
+                    logger.warning("[RECEPTION_SERVER] ❌ Patient ID not found: <patient_id>")
+                    QMessageBox.warning(
+                        self,
+                        "Patient ID Not Found",
+                        "The patient ID was not found on the server.\nPlease check and try again.",
+                    )
+                    return False
+
+                patient_validated = True
+                try:
+                    response_json = response.json()
+                    logger.info(f"[RECEPTION_SERVER]   patient_json_keys={list(response_json.keys()) if isinstance(response_json, dict) else type(response_json)}")
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(f"[RECEPTION_SERVER] ❌ Patient validation failed: {e}")
                 QMessageBox.warning(
                     self,
-                    "Patient ID Not Found",
-                    "The patient ID was not found on the server.\nPlease check and try again.",
+                    "Patient ID Validation Failed",
+                    "Unable to validate the patient ID with the server.\nPlease try again.",
                 )
-                return
+                return False
 
-            patient_validated = True
+            # Save to database
+            print(f"\n💾 Saving report to database...")
+            print(f"   Patient ID: {target_patient_id}")
+            logger.info(f"💾 Saving report to database...")
+            logger.info(f"   Patient ID: {target_patient_id}")
+
             try:
-                response_json = response.json()
-                logger.info(f"[RECEPTION_SERVER]   patient_json_keys={list(response_json.keys()) if isinstance(response_json, dict) else type(response_json)}")
-            except Exception:
-                pass
-        except Exception as e:
-            logger.error(f"[RECEPTION_SERVER] ❌ Patient validation failed: {e}")
-            QMessageBox.warning(
-                self,
-                "Patient ID Validation Failed",
-                "Unable to validate the patient ID with the server.\nPlease try again.",
-            )
-            return
+                session_id = self.controller.session_id if hasattr(self, 'controller') else None
+                msg_id = getattr(bubble, '_msg_id', None)
+                modality = getattr(self, '_current_modality', 'Unknown')
+                sender_info = f"Modality: {modality}, Mode: {getattr(self, 'page_mode', 'Report')}"
 
-        # Save to database
-        print(f"\n💾 Saving report to database...")
-        print(f"   Patient ID: {patient_id}")
-        logger.info(f"💾 Saving report to database...")
-        logger.info(f"   Patient ID: {patient_id}")
-        
-        try:
-            session_id = self.controller.session_id if hasattr(self, 'controller') else None
-            msg_id = getattr(bubble, '_msg_id', None)
-            modality = getattr(self, '_current_modality', 'Unknown')
-            sender_info = f"Modality: {modality}, Mode: {getattr(self, 'page_mode', 'Report')}"
+                print(f"   Session ID: {session_id}")
+                print(f"   Message ID: {msg_id}")
+                print(f"   Modality: {modality}")
+                logger.info(f"   Session ID: {session_id}")
+                logger.info(f"   Message ID: {msg_id}")
+                logger.info(f"   Modality: {modality}")
 
-            print(f"   Session ID: {session_id}")
-            print(f"   Message ID: {msg_id}")
-            print(f"   Modality: {modality}")
-            logger.info(f"   Session ID: {session_id}")
-            logger.info(f"   Message ID: {msg_id}")
-            logger.info(f"   Modality: {modality}")
-            
-            # Call save function
-            print(f"→ Calling ai_save_reception_report...")
-            logger.info(f"→ Calling ai_save_reception_report...")
-            
-            report_id = ai_save_reception_report(
-                patient_id=patient_id,
-                html_content=html_content,
-                study_uid=self.study_uid or patient_id,
-                session_id=session_id,
-                msg_id=msg_id,
-                sender_info=sender_info
-            )
+                # Call save function
+                print(f"→ Calling ai_save_reception_report...")
+                logger.info(f"→ Calling ai_save_reception_report...")
 
-            if report_id:
-                # --- Send to Reception Server (same server) ---
-                server_sent = False
-                server_status = None
-                server_message = "Not sent"
-                try:
-                    from PacsClient.utils.socket_token_manager import get_socket_token_manager
-
-                    token_manager = get_socket_token_manager()
-                    token = token_manager.get_token() if token_manager else None
-
-                    if not token:
-                        server_message = "Missing auth token"
-                        logger.warning("[RECEPTION_SERVER] ❌ Missing auth token; skipping server send")
-                    else:
-                        base_url = "http://81.16.117.196:8080"
-                        url = f"{base_url}/api/pacs/update-report"
-
-                        reception_id = patient_id
-                        try:
-                            reception_id = int(patient_id) if str(patient_id).isdigit() else patient_id
-                        except Exception:
-                            reception_id = patient_id
-
-                        payload = {
-                            "receptionId": reception_id,
-                            "content": html_content,
-                            "findings": html_content,
-                            "status": "pending",
-                        }
-
-                        logger.info(f"[RECEPTION_SERVER] → POST {url}")
-                        logger.info(f"[RECEPTION_SERVER]   receptionId={reception_id}, content_len={len(html_content)}")
-
-                        response = requests.post(
-                            url,
-                            json=payload,
-                            headers={
-                                "Content-Type": "application/json",
-                                "Authorization": f"Bearer {token}",
-                            },
-                            timeout=30,
-                        )
-
-                        server_status = response.status_code
-                        response_text = (response.text or "").strip()
-
-                        logger.info(f"[RECEPTION_SERVER] ← status={server_status}")
-                        try:
-                            logger.info(f"[RECEPTION_SERVER]   headers={dict(response.headers)}")
-                        except Exception:
-                            pass
-                        if response_text:
-                            logger.info(f"[RECEPTION_SERVER]   body={response_text[:2000]}")
-
-                        response_json = None
-                        try:
-                            response_json = response.json()
-                            logger.info(f"[RECEPTION_SERVER]   json={response_json}")
-                            # Print complete JSON response to console
-                            print(f"\n{'='*80}")
-                            print("[RECEPTION_SERVER] ✅ Full Server Response JSON:")
-                            print(f"{'='*80}")
-                            print(json.dumps(response_json, indent=2, ensure_ascii=False))
-                            print(f"{'='*80}\n")
-                        except Exception:
-                            response_json = None
-
-                        if response.ok and (response_json is None or response_json.get("success", True)):
-                            server_sent = True
-                            server_message = (response_json or {}).get("message", "OK") if response_json else "OK"
-                        else:
-                            server_message = (response_json or {}).get("message", response_text[:200]) if response_text else "Server error"
-
-                except Exception as e:
-                    server_message = f"Exception: {e}"
-                    logger.error(f"[RECEPTION_SERVER] ❌ Exception while sending: {e}")
-
-                print("\n" + "="*100)
-                print("✅ ✅ ✅ SUCCESS! Report saved to database")
-                print("="*100)
-                print(f"📌 Report ID: {report_id}")
-                print(f"👤 Patient ID: {patient_id}")
-                print(f"🔬 Modality: {modality}")
-                print(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
-                print(f"• Server message: {server_message}")
-                print("="*100 + "\n")
-                
-                logger.info("="*100)
-                logger.info("✅ ✅ ✅ SUCCESS! Report saved to database")
-                logger.info("="*100)
-                logger.info(f"📌 Report ID: {report_id}")
-                logger.info(f"👤 Patient ID: {patient_id}")
-                logger.info(f"🔬 Modality: {modality}")
-                logger.info(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
-                logger.info("="*100)
-
-                QMessageBox.information(
-                    self,
-                    "✅ Report Saved Successfully",
-                    f"📝 The report has been saved successfully.\n\n"
-                    f"📌 Report ID: {report_id}\n"
-                    f"👤 Patient ID: {patient_id}\n"
-                    f"⏱️ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                    f"📨 Status:\n"
-                    f"• Saved to database\n"
-                    f"• Patient ID validated: {'✅' if patient_validated else '❌'}\n"
-                    f"• Sent to reception: {'✅' if server_sent else '❌'}\n"
-                    f"• Server status: {server_status if server_status is not None else 'N/A'}\n"
+                report_id = ai_save_reception_report(
+                    patient_id=target_patient_id,
+                    html_content=html_content,
+                    study_uid=self.study_uid or target_patient_id,
+                    session_id=session_id,
+                    msg_id=msg_id,
+                    sender_info=sender_info
                 )
 
+                if report_id:
+                    # --- Send to Reception Server (same server) ---
+                    server_sent = False
+                    server_status = None
+                    server_message = "Not sent"
+                    try:
+                        from PacsClient.utils.socket_token_manager import get_socket_token_manager
 
-            else:
+                        token_manager = get_socket_token_manager()
+                        token = token_manager.get_token() if token_manager else None
+
+                        if not token:
+                            server_message = "Missing auth token"
+                            logger.warning("[RECEPTION_SERVER] ❌ Missing auth token; skipping server send")
+                        else:
+                            base_url = "http://81.16.117.196:8080"
+                            url = f"{base_url}/api/pacs/update-report"
+
+                            reception_id = target_patient_id
+                            try:
+                                reception_id = int(target_patient_id) if str(target_patient_id).isdigit() else target_patient_id
+                            except Exception:
+                                reception_id = target_patient_id
+
+                            payload = {
+                                "receptionId": reception_id,
+                                "content": html_content,
+                                "findings": html_content,
+                                "status": "pending",
+                            }
+
+                            logger.info(f"[RECEPTION_SERVER] → POST {url}")
+                            logger.info(f"[RECEPTION_SERVER]   receptionId={reception_id}, content_len={len(html_content)}")
+
+                            response = requests.post(
+                                url,
+                                json=payload,
+                                headers={
+                                    "Content-Type": "application/json",
+                                    "Authorization": f"Bearer {token}",
+                                },
+                                timeout=30,
+                            )
+
+                            server_status = response.status_code
+                            response_text = (response.text or "").strip()
+
+                            logger.info(f"[RECEPTION_SERVER] ← status={server_status}")
+                            try:
+                                logger.info(f"[RECEPTION_SERVER]   headers={dict(response.headers)}")
+                            except Exception:
+                                pass
+                            if response_text:
+                                logger.info(f"[RECEPTION_SERVER]   body={response_text[:2000]}")
+
+                            response_json = None
+                            try:
+                                response_json = response.json()
+                                logger.info(f"[RECEPTION_SERVER]   json={response_json}")
+                                # Print complete JSON response to console
+                                print(f"\n{'='*80}")
+                                print("[RECEPTION_SERVER] ✅ Full Server Response JSON:")
+                                print(f"{'='*80}")
+                                print(json.dumps(response_json, indent=2, ensure_ascii=False))
+                                print(f"{'='*80}\n")
+                            except Exception:
+                                response_json = None
+
+                            if response.ok and (response_json is None or response_json.get("success", True)):
+                                server_sent = True
+                                server_message = (response_json or {}).get("message", "OK") if response_json else "OK"
+                            else:
+                                server_message = (response_json or {}).get("message", response_text[:200]) if response_text else "Server error"
+
+                    except Exception as e:
+                        server_message = f"Exception: {e}"
+                        logger.error(f"[RECEPTION_SERVER] ❌ Exception while sending: {e}")
+
+                    print("\n" + "="*100)
+                    print("✅ ✅ ✅ SUCCESS! Report saved to database")
+                    print("="*100)
+                    print(f"📌 Report ID: {report_id}")
+                    print(f"👤 Patient ID: {target_patient_id}")
+                    print(f"🔬 Modality: {modality}")
+                    print(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
+                    print(f"• Server message: {server_message}")
+                    print("="*100 + "\n")
+
+                    logger.info("="*100)
+                    logger.info("✅ ✅ ✅ SUCCESS! Report saved to database")
+                    logger.info("="*100)
+                    logger.info(f"📌 Report ID: {report_id}")
+                    logger.info(f"👤 Patient ID: {target_patient_id}")
+                    logger.info(f"🔬 Modality: {modality}")
+                    logger.info(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
+                    logger.info("="*100)
+
+                    QMessageBox.information(
+                        self,
+                        "✅ Report Saved Successfully",
+                        f"📝 The report has been saved successfully.\n\n"
+                        f"📌 Report ID: {report_id}\n"
+                        f"👤 Patient ID: {target_patient_id}\n"
+                        f"⏱️ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                        f"📨 Status:\n"
+                        f"• Saved to database\n"
+                        f"• Patient ID validated: {'✅' if patient_validated else '❌'}\n"
+                        f"• Sent to reception: {'✅' if server_sent else '❌'}\n"
+                        f"• Server status: {server_status if server_status is not None else 'N/A'}\n"
+                    )
+                    return True
+
                 print("\n" + "="*100)
                 print("❌ ❌ ❌ FAILED! Database save failed")
                 print("="*100 + "\n")
-                
+
                 logger.error("="*100)
                 logger.error("❌ ❌ ❌ FAILED! Database save failed")
                 logger.error("="*100)
-                
+
                 QMessageBox.warning(self, "Error", "Failed to save report!")
+                return False
 
-        except Exception as e:
-            print("\n" + "="*100)
-            print(f"❌ ❌ ❌ Exception Occurred!")
-            print(f"Error: {str(e)}")
-            print("="*100 + "\n")
-            
-            logger.error("="*100)
-            logger.error(f"❌ ❌ ❌ Exception Occurred!")
-            logger.error(f"Error: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-            logger.error("="*100)
+            except Exception as e:
+                print("\n" + "="*100)
+                print(f"❌ ❌ ❌ Exception Occurred!")
+                print(f"Error: {str(e)}")
+                print("="*100 + "\n")
 
-            QMessageBox.critical(self, "Error", f"Error: {str(e)}")
+                logger.error("="*100)
+                logger.error(f"❌ ❌ ❌ Exception Occurred!")
+                logger.error(f"Error: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                logger.error("="*100)
+
+                QMessageBox.critical(self, "Error", f"Error: {str(e)}")
+                return False
+
+        if not _send_with_patient_id(patient_id):
+            return
+
+        ask = QMessageBox.question(
+            self,
+            "ارسال برای بیمار دیگر؟",
+            "آیا می‌خواهید همین گزارش را برای بیمار دیگری هم ارسال کنید؟",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ask != QMessageBox.Yes:
+            return
+
+        new_patient_id, ok = QInputDialog.getText(
+            self,
+            "ارسال برای بیمار دیگر",
+            "شناسه بیمار جدید را وارد کنید:",
+            QLineEdit.Normal,
+            "",
+        )
+        if not ok:
+            return
+        new_patient_id = (new_patient_id or "").strip()
+        if not new_patient_id:
+            QMessageBox.warning(
+                self,
+                "Patient ID Required",
+                "Patient ID cannot be empty. Please enter a valid patient ID.",
+            )
+            return
+
+        _send_with_patient_id(new_patient_id)
 
     def _persian_bubble(self, bubble: "MessageBubble"):
         import logging
@@ -4127,12 +4311,19 @@ class OneChatPage(QWidget):
             if not file_path or not os.path.exists(file_path):
                 raise Exception("Audio file not found for transcription.")
             files = [("audio_files", open(file_path, "rb"))]
+            m = Manage.instance()
+            if not m.is_validated():
+                raise RuntimeError("❌ API key is not set. Please enter it on the login page.")
+            info = m.ensure_detected()
+            gapgpt_key = (info.gapgpt_key or "").strip()
+            headers = {"Authorization": f"Bearer {gapgpt_key}"} if gapgpt_key else {}
             data = {"quality_mode": getattr(self.composer, "_transcribe_quality_mode", "clear")}
             try:
                 r = requests.post(
                     URL_GEN_TRANSCRIPT,
                     files=files,
                     data=data,
+                    headers=headers,
                     timeout=360,
                 )
                 r.raise_for_status()

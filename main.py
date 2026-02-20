@@ -17,6 +17,7 @@ from PySide6.QtGui import QIcon
 from PacsClient import AppHandler
 from PacsClient.utils.font_manager import load_fonts, setup_font_rendering
 from PacsClient.utils import LicenseManager, LicenseDialog
+from PacsClient.utils.scroll_style import get_scroll_area_style
 import vtkmodules.vtkCommonCore as vtkCommonCore
 
 vtkCommonCore.vtkObject.GlobalWarningDisplayOff()
@@ -323,6 +324,7 @@ if __name__ == "__main__":
             outline: none;
         }
     """)
+    app.setStyleSheet(app.styleSheet() + get_scroll_area_style())
     
     # Initialize qtawesome fonts (required for icons in PyInstaller builds)
     try:
