@@ -1269,47 +1269,68 @@ class ViewerController:
         if series_str in self._hot_series_cache:
             hot_entry = self._hot_series_cache[series_str]
             if _entry_is_valid(hot_entry):
+                print(f"🔍 [FAST_LOOKUP] series={series_str} → HOT CACHE HIT")
                 return hot_entry
             self._hot_series_cache.pop(series_str, None)
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → hot cache stale, removed")
         
         # 2. Check main cache
         if series_str in self._series_cache:
             result = self._series_cache[series_str]
             if _entry_is_valid(result):
                 self._hot_series_cache[series_str] = result
+                print(f"🔍 [FAST_LOOKUP] series={series_str} → MAIN CACHE HIT")
                 return result
             self._series_cache.pop(series_str, None)
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → main cache stale, removed")
         
         # 3. Check index for fallback
         if series_str in self._series_number_to_index:
             idx = self._series_number_to_index[series_str]
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → found in index, idx={idx}")
             if idx < len(self.parent_widget.lst_thumbnails_data):
                 item = self.parent_widget.lst_thumbnails_data[idx]
                 vtk_data = item.get('vtk_image_data')
                 meta = item.get('metadata')
-                result = (vtk_data, meta, idx)
-                self._series_cache[series_str] = result
-                if len(self._hot_series_cache) > 3:  # Keep hot cache small
-                    self._hot_series_cache.pop(next(iter(self._hot_series_cache)))
-                self._hot_series_cache[series_str] = result
-                return result
+                print(f"🔍 [FAST_LOOKUP] series={series_str} → item retrieved: vtk={vtk_data is not None}, meta={meta is not None}")
+                if vtk_data is not None and meta is not None:
+                    result = (vtk_data, meta, idx)
+                    self._series_cache[series_str] = result
+                    if len(self._hot_series_cache) > 3:  # Keep hot cache small
+                        self._hot_series_cache.pop(next(iter(self._hot_series_cache)))
+                    self._hot_series_cache[series_str] = result
+                    print(f"🔍 [FAST_LOOKUP] series={series_str} → RETURNING from index lookup")
+                    return result
+                else:
+                    print(f"🔍 [FAST_LOOKUP] series={series_str} → item has None data, continuing to full cache")
+            else:
+                print(f"🔍 [FAST_LOOKUP] series={series_str} → idx {idx} >= list length {len(self.parent_widget.lst_thumbnails_data)}")
+        else:
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → NOT in _series_number_to_index")
 
         # 4. Deterministic full-series cache fallback (survives index churn)
         cached_full = self._full_cache_get(series_str)
         if cached_full is not None:
             vtk_data, meta = cached_full[0], cached_full[1]
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → FULL CACHE HIT: vtk={vtk_data is not None}, meta={meta is not None}")
             if vtk_data is not None and isinstance(meta, dict):
                 # Rehydrate parent/index caches on demand
                 try:
                     idx = self.parent_widget.replace_series_data(series_str, vtk_data, meta, meta.get('series', {}).get('thumbnail_path', ''))
-                except Exception:
+                    print(f"🔍 [FAST_LOOKUP] series={series_str} → rehydrated to lst_thumbnails_data at idx={idx}")
+                except Exception as e:
+                    print(f"🔍 [FAST_LOOKUP] series={series_str} → rehydrate FAILED: {e}")
                     idx = -1
                 if idx >= 0:
                     result = (vtk_data, meta, idx)
                     self._series_cache[series_str] = result
                     self._hot_series_cache[series_str] = result
+                    print(f"🔍 [FAST_LOOKUP] series={series_str} → RETURNING from full cache")
                     return result
+        else:
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → NOT in full cache")
         
+        print(f"🔍 [FAST_LOOKUP] series={series_str} → FINAL RETURN: None, None, -1")
         return None, None, -1
 
     def _get_paired_series_fast(self, series_name: str, exclude_number: str = None) -> list:
@@ -1809,6 +1830,11 @@ class ViewerController:
     def _create_lightweight_vtk_placeholder(self):
         """Create a lightweight VTK widget that defers rendering until data is loaded"""
         try:
+            # Use parent_widget's create_dummy_vtk_widget if available (supports AIVTKWidget override)
+            if hasattr(self.parent_widget, 'create_dummy_vtk_widget'):
+                return self.parent_widget.create_dummy_vtk_widget()
+            
+            # Fallback to default VTKWidget creation
             height = self.parent_widget.sidebar.height() if hasattr(self.parent_widget, 'sidebar') and self.parent_widget.sidebar else 480
             vtk_widget = VTKWidget(height_viewer=height, patient_widget=self.parent_widget)
 
@@ -1937,6 +1963,10 @@ class ViewerController:
 
     def creator_vtk_widget(self):
         try:
+            # Use parent_widget's creator method if available (supports AIVTKWidget override)
+            if hasattr(self.parent_widget, 'creator_vtk_widget'):
+                return self.parent_widget.creator_vtk_widget()
+            # Fallback to default VTKWidget creation
             height = self.parent_widget.sidebar.height() if hasattr(self.parent_widget, 'sidebar') and self.parent_widget.sidebar else 480
             return VTKWidget(height_viewer=height, patient_widget=self.parent_widget)
         except Exception as e:
@@ -3848,6 +3878,7 @@ class ViewerController:
                 metadata=metadata,
                 file_path=file_path
             )
+            print(f"🔄 [APPLY] series={series_number} → replace_series_data returned idx={series_idx}")
 
             # Update study path if needed
             if metadata.get('series', {}).get('series_path'):
@@ -4180,15 +4211,27 @@ class ViewerController:
                 self.parent_widget._event_loop = loop
 
                 async def _safe_async_load():
-                    """Load series asynchronously without locks - preview-first strategy"""
+                    """Load series asynchronously without locks - preview-first strategy."""
                     try:
                         # ✅ OPTIMIZATION: مرحله 1 - Preview سریع (100-200ms)
+                        # Run preview loading in a worker thread to avoid UI/event-loop stalls.
                         study_path = self._get_correct_study_path()
                         if study_path:
-                            vtk_preview, meta_preview = self._load_series_preview_async(
-                                series_number_str, 
-                                study_path
-                            )
+                            try:
+                                vtk_preview, meta_preview = await asyncio.to_thread(
+                                    self._load_series_preview_async,
+                                    series_number_str,
+                                    study_path,
+                                )
+                            except AttributeError:
+                                loop = asyncio.get_event_loop()
+                                vtk_preview, meta_preview = await loop.run_in_executor(
+                                    None,
+                                    self._load_series_preview_async,
+                                    series_number_str,
+                                    study_path,
+                                )
+
                             if vtk_preview is not None and meta_preview is not None:
                                 # Display preview فوری
                                 try:
@@ -4198,7 +4241,7 @@ class ViewerController:
                                         meta_preview,
                                         self.parent_widget.metadata_fixed.get('patient_pk', None),
                                         self.parent_widget.metadata_fixed.get('study_pk', None),
-                                        refresh_viewer=False
+                                        refresh_viewer=False,
                                     )
                                     print(f"📺 [PREVIEW] displayed for series={series_number_str}")
                                 except Exception as e:

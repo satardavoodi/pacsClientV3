@@ -1904,10 +1904,14 @@ class PatientWidget(QWidget):
             'metadata': metadata,
             'file_path': file_path
         }
+        
+        print(f"[REPLACE_SERIES_DATA] series={series_number_str} vtk={vtk_image_data is not None} meta={metadata is not None} list_len={len(self.lst_thumbnails_data)}")
 
         for idx, item in enumerate(self.lst_thumbnails_data):
             try:
-                if str(item.get('metadata', {}).get('series', {}).get('series_number')) == series_number_str:
+                item_series_str = str(item.get('metadata', {}).get('series', {}).get('series_number'))
+                if item_series_str == series_number_str:
+                    print(f"[REPLACE_SERIES_DATA] Found existing at idx={idx}, replacing")
                     self.lst_thumbnails_data[idx] = new_data
                     series_name = str(metadata.get('series', {}).get('series_name'))
                     self.viewer_controller._series_cache[series_number_str] = (vtk_image_data, metadata, idx)
@@ -1926,19 +1930,32 @@ class PatientWidget(QWidget):
                     except Exception:
                         pass
                     self.viewer_controller._rebuild_series_index()
+                    print(f"[REPLACE_SERIES_DATA] Successfully replaced and returning idx={idx}")
                     return idx
-            except Exception:
+            except Exception as e:
+                print(f"[REPLACE_SERIES_DATA] Error checking item {idx}: {e}")
                 continue
 
-        self.add_new_data_to_lst_thumbnails_data(new_data)
+        print(f"[REPLACE_SERIES_DATA] Not found in list, calling add_new_data_to_lst_thumbnails_data")
+        try:
+            self.add_new_data_to_lst_thumbnails_data(new_data)
+        except Exception as e:
+            print(f"[REPLACE_SERIES_DATA] add_new_data_to_lst_thumbnails_data FAILED: {e}")
+            import traceback
+            traceback.print_exc()
 
+        print(f"[REPLACE_SERIES_DATA] Searching for series={series_number_str} after add_new_data")
         for idx, item in enumerate(self.lst_thumbnails_data):
             try:
-                if str(item.get('metadata', {}).get('series', {}).get('series_number')) == series_number_str:
+                item_series_str = str(item.get('metadata', {}).get('series', {}).get('series_number'))
+                if item_series_str == series_number_str:
+                    print(f"[REPLACE_SERIES_DATA] Found at idx={idx} after add_new_data")
                     return idx
-            except Exception:
+            except Exception as e:
+                print(f"[REPLACE_SERIES_DATA] Error checking item {idx} after add: {e}")
                 continue
 
+        print(f"[REPLACE_SERIES_DATA] FAILED: series={series_number_str} not found after add_new_data, returning -1")
         return -1
 
     def check_and_add_meta_fixed(self, patient_info):

@@ -58,6 +58,27 @@ class AIPatientWidget(PatientWidget):
         height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
         return AIVTKWidget(height_viewer=height, patient_widget=self, type_viewer=self.type_viewer)
 
+    def create_dummy_vtk_widget(self):
+        """AI-specific lightweight placeholder using AIVTKWidget."""
+        try:
+            vtk_widget = self.creator_vtk_widget()
+            if vtk_widget is None:
+                raise RuntimeError("creator_vtk_widget returned None")
+
+            if hasattr(vtk_widget, 'renderer'):
+                vtk_widget.renderer.SetBackground(0.10, 0.10, 0.18)
+                if hasattr(vtk_widget, 'render_window'):
+                    vtk_widget.render_window.Render()
+
+            if hasattr(vtk_widget, 'render_window'):
+                vtk_widget.render_window.SetDesiredUpdateRate(0.001)
+
+            vtk_widget._is_placeholder = True
+            return vtk_widget
+        except Exception as e:
+            print(f"❌ Error creating AI placeholder VTK widget: {e}")
+            return super().create_dummy_vtk_widget()
+
     def update_sidebar_ui(self, lst_boxes_object):
         """AI-specific method to update sidebar with box objects"""
         for box_object in lst_boxes_object:
