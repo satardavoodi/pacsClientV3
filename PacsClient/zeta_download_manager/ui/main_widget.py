@@ -9,6 +9,7 @@ Modern, polished download manager interface with:
 """
 
 import logging
+from dataclasses import replace
 from types import SimpleNamespace
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -2915,7 +2916,33 @@ class DownloadManagerWidget(QWidget):
             logger.info(f"📊 [SERIES RETRY] Completed series: {state.completed_series}")
             logger.info(f"📊 [SERIES RETRY] Failed series: {state.failed_series}")
 
-            # Remove series from completed/failed lists if present
+            # Ensure the requested series is first in the task order
+            task = self._tasks.get(study_uid)
+            if not task:
+                task = self._reconstruct_task_from_database(study_uid)
+                if task:
+                    self._tasks[study_uid] = task
+
+            if task and task.series_list:
+                target_uid = str(series_uid) if series_uid else None
+                target_num = str(series_number) if series_number is not None else None
+                target_idx = None
+                for idx, series_info in enumerate(task.series_list):
+                    if target_uid and str(series_info.series_uid) == target_uid:
+                        target_idx = idx
+                        break
+                    if target_num is not None and str(series_info.series_number) == target_num:
+                        target_idx = idx
+                        break
+
+                if target_idx is not None and target_idx > 0:
+                    series_list = list(task.series_list)
+                    series_list.insert(0, series_list.pop(target_idx))
+                    task = replace(task, series_list=series_list)
+                    self._tasks[study_uid] = task
+                    logger.info(f"✅ [SERIES RETRY] Promoted series {series_number} to the front of the download order")
+
+            # Remove series from completed/failed/skipped lists if present
             series_removed = False
             
             # Try to remove by series_number first
@@ -2939,6 +2966,15 @@ class DownloadManagerWidget(QWidget):
                     state.failed_series.remove(series_uid)
                     logger.info(f"✅ [SERIES RETRY] Removed series UID {series_uid[:40]} from failed_series")
                     series_removed = True
+
+            if series_number and series_number in state.skipped_series:
+                state.skipped_series.remove(series_number)
+                logger.info(f"✅ [SERIES RETRY] Removed series {series_number} from skipped_series")
+                series_removed = True
+            if series_uid and series_uid in state.skipped_series:
+                state.skipped_series.remove(series_uid)
+                logger.info(f"✅ [SERIES RETRY] Removed series UID {series_uid[:40]} from skipped_series")
+                series_removed = True
             
             if not series_removed:
                 logger.warning(f"⚠️ [SERIES RETRY] Series {series_number} not found in completed/failed lists")
@@ -2962,6 +2998,18 @@ class DownloadManagerWidget(QWidget):
                 import traceback
                 traceback.print_exc()
             
+            # Promote study to CRITICAL and preempt other downloads
+            if state.priority != DownloadPriority.CRITICAL:
+                self.state_store.update(study_uid, priority=DownloadPriority.CRITICAL)
+                if task and task.priority != DownloadPriority.CRITICAL:
+                    task = replace(task, priority=DownloadPriority.CRITICAL)
+                    self._tasks[study_uid] = task
+                logger.info(f"✅ [SERIES RETRY] Priority set to CRITICAL for series retry")
+
+            if self.worker_pool.get_active_count() > 0:
+                logger.info(f"⏸️ [SERIES RETRY] Preempting active downloads for priority series retry")
+                self._pause_all_active_downloads()
+
             # FORCE change state - bypass terminal state protection
             # We need to directly modify the state object for terminal states
             logger.info(f"🔄 [SERIES RETRY] Current status: {state.status.value}")
@@ -2993,13 +3041,18 @@ class DownloadManagerWidget(QWidget):
             else:
                 logger.info(f"ℹ️ [SERIES RETRY] Study status is {state.status.value}, no status change needed")
 
+            if state.status != DownloadStatus.PENDING:
+                self.state_store.update(study_uid, status=DownloadStatus.PENDING, error_message=None)
+
             # Start/resume the download worker
             logger.info(f"🚀 [SERIES RETRY] Starting download worker for series retry")
             logger.info(f"🚀 [SERIES RETRY] Study UID: {study_uid}")
             logger.info(f"🚀 [SERIES RETRY] Target series: {series_number}")
             logger.info(f"🚀 [SERIES RETRY] Completed series before retry: {state.completed_series}")
             logger.info(f"🚀 [SERIES RETRY] Failed series before retry: {state.failed_series}")
-            self._start_download_worker(study_uid)
+            started = self._start_download_worker(study_uid)
+            if not started:
+                QTimer.singleShot(150, self._start_next_pending)
 
             # Refresh UI
             logger.info(f"🔄 [SERIES RETRY] Refreshing UI after series retry")
