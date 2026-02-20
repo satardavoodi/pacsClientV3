@@ -454,6 +454,7 @@ def save_token_usage(center: str, model: str, tokens: int):
                 total_tokens = excluded.total_tokens,
                 updated_at = CURRENT_TIMESTAMP
         """, (center, model, tokens))
+        conn.commit()
 
 def _ensure_token_usage_tables(conn: sqlite3.Connection) -> None:
     """Ensure token-usage tables exist (safe for old DBs)."""
@@ -509,6 +510,7 @@ def add_token_usage_delta(center: str, model: str, tokens_delta: int) -> None:
             """,
             (center, model, delta),
         )
+        conn.commit()
 
 def _mask_api_key(api_key: str) -> str:
     """Return safe UI representation; never store full API key."""
@@ -564,6 +566,7 @@ def add_api_token_usage_delta(
             """,
             (api_hash, api_mask, center_name, model_name, delta),
         )
+        conn.commit()
 
 
 def load_api_token_usage() -> dict:
@@ -704,6 +707,7 @@ def add_transcript_usage_delta(center_name: str, model_name: str, seconds_delta:
                 """,
                 (center_name, model_name, sec, sec),
             )
+            conn.commit()
 def _hash_and_mask_api_key(api_key: str) -> tuple[str, str]:
     """Return (api_hash, api_mask) using existing helpers."""
     return _hash_api_key(api_key), _mask_api_key(api_key)
@@ -791,6 +795,7 @@ def add_api_transcript_usage_delta(api_key: str, center_name: str, model_name: s
                 """,
                 (api_hash, api_mask, center_name, model_name, sec, sec),
             )
+            conn.commit()
 
 def load_api_transcript_usage_for_key(api_key: str) -> dict:
     """{model: minutes} for a single api_key (by hash)."""
