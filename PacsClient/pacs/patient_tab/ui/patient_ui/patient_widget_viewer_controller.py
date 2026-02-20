@@ -4157,7 +4157,14 @@ class ViewerController:
             # Check if already loaded
             series_key = f"series_{series_number_str}"
             if series_key in self.parent_widget.lst_series_name:
-                self.logger.debug(f"Series {series_number_str} already loaded, skipping")
+                # Series data is loaded, but if first series hasn't been displayed
+                # yet (e.g. loaded by show_exist_thumbnails but never shown on
+                # viewer), trigger display now.
+                if (not self._first_series_displayed) or self._any_viewer_empty():
+                    self.logger.info(f"Series {series_number_str} already loaded but not displayed — showing now")
+                    QTimer.singleShot(0, lambda sn=series_number_str: self._display_series_after_load(sn))
+                else:
+                    self.logger.debug(f"Series {series_number_str} already loaded, skipping")
                 return
 
             # Mark as pending

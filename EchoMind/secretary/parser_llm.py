@@ -7,6 +7,7 @@ from typing import Any
 
 import requests
 
+from EchoMind.api_manager import Manage
 from EchoMind.settings_store import get_echomind_api_key
 from .contracts import SecretaryActionPlan
 
@@ -96,11 +97,22 @@ def parse_command_llm(text: str, language: str = "auto", timeout: int = 45) -> S
         .replace("{{MODULE_MAP}}", module_map or "module_map unavailable")
         .replace("{{USER_TEXT}}", text or "")
     )
-    api_key = (get_echomind_api_key() or "").strip()
+    # --- per-center GapGPT key (same mechanism as openai_reporter) ---
+    api_key = ""
+    try:
+        m = Manage.instance()
+        if m.is_validated():
+            _, api_key = m.get_center_and_gapgpt_key()
+    except Exception:
+        pass
+    api_key = (api_key or "").strip()
+    # fallback: echomind settings key (legacy single-key path)
+    if not api_key:
+        api_key = (get_echomind_api_key() or "").strip()
     if not api_key:
         raise RuntimeError("EchoMind API key is not configured. Set it in Settings -> EchoMind.")
     payload = {
-        "model": "gpt-4.1-mini",
+        "model": "gpt-5.2",
         "messages": [
             {"role": "user", "content": prompt},
         ],

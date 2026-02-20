@@ -413,7 +413,22 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if self.image_viewer is None:
             print("⚠️ Cannot set interactor style - viewer not yet initialized")
             return
-            
+
+        # FIX: Preserve camera state before style change to prevent zoom-out
+        _saved_camera_state = None
+        try:
+            camera = self.image_viewer.renderer.GetActiveCamera()
+            if camera:
+                _saved_camera_state = {
+                    'parallel_scale': camera.GetParallelScale(),
+                    'position': camera.GetPosition(),
+                    'focal_point': camera.GetFocalPoint(),
+                    'view_up': camera.GetViewUp(),
+                    'clipping_range': camera.GetClippingRange(),
+                }
+        except Exception:
+            pass
+
         interactorstyle: AbstractInteractorStyle = style(self.image_viewer)
 
         # load widgets on new interactor style
@@ -424,6 +439,20 @@ class VTKWidget(QVTKRenderWindowInteractor):
         interactorstyle.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
         self.current_style = interactorstyle
+
+        # FIX: Restore camera state after style change to prevent zoom-out
+        if _saved_camera_state is not None:
+            try:
+                camera = self.image_viewer.renderer.GetActiveCamera()
+                if camera:
+                    camera.SetParallelScale(_saved_camera_state['parallel_scale'])
+                    camera.SetPosition(_saved_camera_state['position'])
+                    camera.SetFocalPoint(_saved_camera_state['focal_point'])
+                    camera.SetViewUp(_saved_camera_state['view_up'])
+                    camera.SetClippingRange(_saved_camera_state['clipping_range'])
+            except Exception:
+                pass
+
         self.image_viewer.Render()
 
     def restore_default_interactorstyle(self):
@@ -586,6 +615,9 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         # Show loading spinner (non-blocking)
         self.viewport_spinner.show_loading("Switching series...")
+
+        # Detect first-time load (placeholder → real series)
+        _is_first_load = (self.image_viewer is None)
         
         # =====================================================
         # ANTI-FLICKERING: Disable updates during switch
@@ -612,11 +644,21 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         # set interactor style again
         self.style = AbstractInteractorStyle(self.image_viewer)
+        self.current_style = self.style
         self.interactor.SetInteractorStyle(self.style)
         # self.style.interactionOccurred.connect(self.change_container_border)
         self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
         self.image_viewer.UpdateDisplayExtent()
+
+        # FIX: On first load (placeholder → real series), reset camera properly
+        # to prevent black screen
+        if _is_first_load:
+            self.image_viewer.renderer.ResetCamera()
+            self.image_viewer.renderer.ResetCameraClippingRange()
+            if hasattr(self.image_viewer, 'zoom_to_fit'):
+                self.image_viewer.zoom_to_fit()
+
         # Single render call (not both viewer and window)
         self.render_window.Render()
 
