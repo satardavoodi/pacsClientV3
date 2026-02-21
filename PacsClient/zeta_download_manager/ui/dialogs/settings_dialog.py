@@ -45,6 +45,23 @@ class SettingsDialog(QDialog):
         """Setup dialog UI"""
         self.setWindowTitle("Download Manager Settings")
         self.setMinimumWidth(500)
+        self.setStyleSheet(
+            """
+            QLabel { font-size: 13px; }
+            QGroupBox { font-size: 13px; font-weight: 600; }
+            QSpinBox {
+                min-height: 34px;
+                padding: 4px 8px;
+                font-size: 13px;
+            }
+            QCheckBox { spacing: 8px; font-size: 13px; }
+            QPushButton {
+                min-height: 36px;
+                padding: 8px 14px;
+                font-size: 13px;
+            }
+            """
+        )
         
         layout = QVBoxLayout(self)
         layout.setSpacing(16)

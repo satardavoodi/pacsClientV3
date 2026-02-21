@@ -1,0 +1,52 @@
+{
+  "default": {
+    "rows": 1,
+    "cols": 2
+  },
+  "modality_layouts": {
+    "CT": {
+      "rows": 1,
+      "cols": 2
+    },
+    "MR": {
+      "rows": 2,
+      "cols": 2
+    },
+    "MG": {
+      "rows": 2,
+      "cols": 2
+    },
+    "CR": {
+      "rows": 1,
+      "cols": 2
+    },
+    "DX": {
+      "rows": 1,
+      "cols": 2
+    },
+    "US": {
+      "rows": 1,
+      "cols": 2
+    },
+    "XA": {
+      "rows": 1,
+      "cols": 2
+    },
+    "RF": {
+      "rows": 1,
+      "cols": 2
+    },
+    "NM": {
+      "rows": 1,
+      "cols": 2
+    },
+    "PT": {
+      "rows": 1,
+      "cols": 2
+    },
+    "OT": {
+      "rows": 1,
+      "cols": 2
+    }
+  }
+}

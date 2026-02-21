@@ -92,6 +92,32 @@ def _post_chat(prompt: str, timeout: int = 45) -> Any:
         model="gpt-4.1-mini",
         timeout=timeout,
     )
+    # Use the EchoMind Settings key only (no per-center override).
+    api_key = (get_echomind_api_key() or "").strip()
+    if not api_key:
+        raise RuntimeError("EchoMind API key is not configured. Set it in Settings -> EchoMind.")
+    payload = {
+        "model": "gpt-5.2",
+        "messages": [
+            {"role": "user", "content": prompt},
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    resp = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=timeout)
+    resp.raise_for_status()
+    body = resp.json()
+    raw = body
+    if isinstance(body, dict):
+        choices = body.get("choices")
+        if isinstance(choices, list) and choices:
+            msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+            if isinstance(msg, dict) and msg.get("content"):
+                raw = msg.get("content")
+            elif isinstance(choices[0], dict) and choices[0].get("text"):
+                raw = choices[0].get("text")
 
 
 def _raw_to_plan(raw: Any) -> SecretaryActionPlan | None:

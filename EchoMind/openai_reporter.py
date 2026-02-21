@@ -1776,8 +1776,9 @@ Task: Translate the user's text from English to Persian (Farsi).
 STRICT RULES:
 - Output MUST be plain text only (NO JSON, NO code fences, NO extra labels).
 - Preserve structure: headings, numbering, bullet points, and line breaks.
-- DO NOT translate medical terms, anatomy names, diagnoses, acronyms, or modality names.
-  Keep such terms exactly in English (unchanged).
+- Translate ALL medical terms, anatomy names, diagnoses, and clinical terminology into their proper Persian equivalents.
+- Use accurate medical terminology in Persian (e.g., "disc bulging" → "برآمدگی دیسک", "intervertebral disc" → "دیسک بین مهره‌ای").
+- Keep abbreviations and technical codes in English only when they are universally used (e.g., MRI, CT, L4-L5).
 - Do NOT add, remove, infer, or summarize any content.
 """
 
@@ -1856,13 +1857,13 @@ def translate_report(
 
             Preserve the exact structure of the original radiology report, including all headings such as Findings, Pathological Findings, Normal Findings, bullet points, indentation, and sub-sections.
 
-            Do NOT translate medical terms, anatomical names, disease names, or clinical terminology. Keep all medical terms exactly in English, unchanged.
+            Translate ALL medical terms, anatomical names, disease names, and clinical terminology into their proper Persian equivalents.
 
             The Persian translation must be clear, formal, and consistent with professional clinical reporting style.
 
             Do not add, remove, or modify any clinical information.
 
-            Only translate descriptive text; keep numbers, levels (e.g., L4-L5), and medical terminology in English.
+            Keep abbreviations and technical codes in English only when they are universally used (e.g., MRI, CT, L4-L5).
 
             Output Format
 
@@ -1871,10 +1872,10 @@ def translate_report(
             Translated Radiology Report (EN → FA)
 
             [Pathological Findings]
-            ... Persian translation (medical terms preserved) ...
+            ... Persian translation (with proper medical terms in Persian) ...
 
             [Normal Findings]
-            ... Persian translation (medical terms preserved) ...
+            ... Persian translation (with proper medical terms in Persian) ...
 
             User Input
 
@@ -1914,31 +1915,31 @@ def translate_report(
             Translated Radiology Report (EN → FA)
 
             Pathological Findings
-            • در سطح L5-S1، وجود disc bulging همراه با annular fissuring مشاهده می‌شود.
-            • در سطح L4-L5، bilateral hypertrophy در facet joints دیده می‌شود.
-            • در سطح L4-L5، bilateral moderate to severe neural foraminal stenosis وجود دارد.
-            • در سطح L3-L4، به دلیل disc herniation و central disc extrusion، moderate to severe spinal canal stenosis مشاهده می‌شود.
+            • در سطح L5-S1، برآمدگی دیسک همراه با شکاف حلقوی مشاهده می‌شود.
+            • در سطح L4-L5، هیپرتروفی دوطرفه در مفاصل فاست دیده می‌شود.
+            • در سطح L4-L5، تنگی فورامن عصبی دوطرفه متوسط تا شدید وجود دارد.
+            • در سطح L3-L4، به دلیل فتق دیسک و بیرون زدگی مرکزی دیسک، تنگی کانال نخاعی متوسط تا شدید مشاهده می‌شود.
 
             Normal Findings
-            • Vertebral Alignment and Endplates:
-            • هیچ شواهدی از vertebral body fracture یا collapse وجود ندارد.
-            • Endplates مهره‌های کمری سالم هستند.
-            • هیچ abnormal vertebral rotation یا subluxation مشاهده نمی‌شود.
+            • تراز مهره‌ها و صفحات انتهایی:
+            • هیچ شواهدی از شکستگی یا فروپاشی جسم مهره وجود ندارد.
+            • صفحات انتهایی مهره‌های کمری سالم هستند.
+            • هیچ چرخش غیرطبیعی یا سابلوکساسیون مهره مشاهده نمی‌شود.
 
-            • Ligaments and Soft Tissues:
-            • هیچ شواهدی از ligament tear یا rupture وجود ندارد.
-            • Prevertebral soft tissues طبیعی هستند.
+            • رباط‌ها و بافت‌های نرم:
+            • هیچ شواهدی از پارگی یا رگشدگی رباط وجود ندارد.
+            • بافت‌های نرم پیش مهره‌ای طبیعی هستند.
 
-            • Discs and Intervertebral Joints:
-            • Intervertebral discs در سایر سطوح از نظر ارتفاع و signal intensity طبیعی هستند.
-            • در سایر سطوح، شواهدی از central disc extrusion یا herniation وجود ندارد.
+            • دیسک‌ها و مفاصل بین مهره‌ای:
+            • دیسک‌های بین مهره‌ای در سایر سطوح از نظر ارتفاع و شدت سیگنال طبیعی هستند.
+            • در سایر سطوح، شواهدی از بیرون زدگی مرکزی یا فتق دیسک وجود ندارد.
 
-            • Spinal Cord and Nerve Roots:
-            • Spinal cord فشرده نشده و signal intensity طبیعی دارد.
-            • هیچ شواهدی از nerve root avulsion یا آسیب وجود ندارد.
+            • طناب نخاعی و ریشه‌های عصبی:
+            • طناب نخاعی فشرده نشده و شدت سیگنال طبیعی دارد.
+            • هیچ شواهدی از کندگی ریشه عصبی یا آسیب وجود ندارد.
 
-            • Bone Marrow:
-            • Bone marrow signal در مهره‌های کمری طبیعی است.
+            • مغز استخوان:
+            • سیگنال مغز استخوان در مهره‌های کمری طبیعی است.
 
             ─────────────────────────────────────────
             🔴 STRICT FORMAT-MATCHING RULES (VERY IMPORTANT)

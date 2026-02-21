@@ -61,8 +61,9 @@ class ServerSettingsDialog(QDialog):
                 color: #f1f5f9;
                 border: 2px solid #334155;
                 border-radius: 8px;
-                padding: 10px 14px;
+                padding: 9px 12px;
                 font-size: 13px;
+                min-height: 34px;
                 font-weight: 500;
             }
             
@@ -82,10 +83,10 @@ class ServerSettingsDialog(QDialog):
                 color: #ffffff;
                 border: none;
                 border-radius: 8px;
-                padding: 12px 24px;
+                padding: 10px 20px;
                 font-weight: 700;
                 font-size: 14px;
-                min-height: 40px;
+                min-height: 36px;
             }
             
             QPushButton:hover {

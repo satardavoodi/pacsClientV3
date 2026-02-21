@@ -47,13 +47,13 @@ class LightViewerSettingsWidget(QWidget):
                 margin-top: 10px;
                 font-weight: bold;
                 color: #e2e8f0;
-                font-size: 15px;
+                font-size: 14px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px;
-                font-size: 15px;
+                font-size: 14px;
             }
             QLabel {
                 color: #e2e8f0;
@@ -64,8 +64,9 @@ class LightViewerSettingsWidget(QWidget):
                 color: #e2e8f0;
                 border: 1px solid #4a5568;
                 border-radius: 4px;
-                padding: 8px;
-                font-size: 17px;
+                padding: 7px 10px;
+                min-height: 34px;
+                font-size: 14px;
             }
             QLineEdit:focus {
                 border: 1px solid #3182ce;
@@ -78,8 +79,9 @@ class LightViewerSettingsWidget(QWidget):
                 color: #ffffff;
                 border: none;
                 border-radius: 6px;
-                padding: 8px 16px;
-                font-size: 17px;
+                padding: 8px 14px;
+                min-height: 36px;
+                font-size: 14px;
             }
             QPushButton:hover {
                 background-color: #2c5aa0;
@@ -96,7 +98,7 @@ class LightViewerSettingsWidget(QWidget):
         # Title
         title_label = QLabel("Light Viewer Settings")
         title_label.setStyleSheet(
-            "font-size: 23px; font-weight: 800; padding: 10px; color: #e2e8f0;"
+            "font-size: 20px; font-weight: 800; padding: 10px; color: #e2e8f0;"
         )
         main_layout.addWidget(title_label)
         
@@ -140,7 +142,7 @@ class LightViewerSettingsWidget(QWidget):
         
         # Status label
         self.viewer_status_label = QLabel("")
-        self.viewer_status_label.setStyleSheet("color: #a0aec0; font-size: 16px; padding: 5px;")
+        self.viewer_status_label.setStyleSheet("color: #a0aec0; font-size: 14px; padding: 5px;")
         viewer_layout.addWidget(self.viewer_status_label)
         
         # Clear button
@@ -152,11 +154,11 @@ class LightViewerSettingsWidget(QWidget):
         self.clear_btn.setCursor(Qt.PointingHandCursor)
         self.clear_btn.setStyleSheet("""
             QPushButton {
-                background-color: #dc2626;
+                background-color: #1d4ed8;
                 color: white;
             }
             QPushButton:hover {
-                background-color: #b91c1c;
+                background-color: #1e40af;
             }
         """)
         clear_layout.addWidget(self.clear_btn)
@@ -193,7 +195,7 @@ class LightViewerSettingsWidget(QWidget):
             "• Horos - Full-featured viewer (macOS only)\n\n"
             "Make sure to use the portable/standalone version of the viewer."
         )
-        info_text.setStyleSheet("color: #a0aec0; font-size: 16px; padding: 10px;")
+        info_text.setStyleSheet("color: #a0aec0; font-size: 14px; padding: 10px;")
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
         
@@ -296,7 +298,7 @@ class LightViewerSettingsWidget(QWidget):
             
         except Exception as e:
             self.status_label.setText(f"✗ Error saving settings: {str(e)}")
-            self.status_label.setStyleSheet("color: #f44336; padding: 5px 10px; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #60a5fa; padding: 5px 10px; font-weight: bold;")
             
             QMessageBox.critical(
                 self,

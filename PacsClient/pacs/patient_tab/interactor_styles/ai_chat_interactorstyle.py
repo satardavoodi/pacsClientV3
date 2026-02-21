@@ -338,9 +338,13 @@ class MamoWorker(QThread):
             resp = requests.post(URL, json=payload, timeout=240)
 
             print("============================")
-            print(f"url is {URL}")
-            print(f"payload is {payload}")
-            print('resp:', resp)
+            print(f"[MG][REQ] url={URL}")
+            print(f"[MG][REQ] payload={payload}")
+            print(f"[MG][RESP] status={resp.status_code} ok={resp.ok}")
+            try:
+                print(f"[MG][RESP] headers={dict(resp.headers)}")
+            except Exception:
+                pass
             print("============================")
 
             if self.canceled:
@@ -349,9 +353,15 @@ class MamoWorker(QThread):
 
             try:
                 data = resp.json()
-                print('\ndata:', data)
+                if isinstance(data, dict):
+                    print(f"[MG][RESP] json keys={list(data.keys())}")
+                else:
+                    print(f"[MG][RESP] json type={type(data)}")
+                print(f"[MG][RESP] json={data}")
             except ValueError:
-                raise Exception(f"Invalid JSON response: {resp.text}")
+                raw = (resp.text or "")
+                snippet = raw[:1000]
+                raise Exception(f"Invalid JSON response: {snippet}")
 
             # 2) دانلود فایل‌ها با چک cancel
             out = self.download_updated_csv_and_overlays(self.study_uid, data, self.breast_url, headers=self.headers)

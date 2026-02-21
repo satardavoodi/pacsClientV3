@@ -45,7 +45,7 @@ def compact_grid():
     return g
 
 
-def compact_spin(spin, w=110):
+def compact_spin(spin, w=100):
     spin.setFixedWidth(w)
     spin.setAlignment(Qt.AlignCenter)
     return spin
@@ -112,7 +112,7 @@ def create_slider_with_spin(spin, min_val, max_val, step, decimals=None):
     slider.setSingleStep(int(step * scale))
     slider.setPageStep(int(step * scale))
     slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-    slider.setMinimumHeight(44)
+    slider.setMinimumHeight(40)
     slider.setProperty("scale", scale)
     if decimals is not None:
         slider.setProperty("decimals", decimals)
@@ -148,7 +148,7 @@ def create_slider_with_spin(spin, min_val, max_val, step, decimals=None):
     # Reserve top space for the value bubble so it doesn't collide with other text.
     layout.setContentsMargins(0, 18, 0, 0)
     layout.setSpacing(8)
-    container.setMinimumHeight(60)
+    container.setMinimumHeight(54)
     layout.addWidget(min_label, 0)
     layout.addWidget(slider, 1)
     layout.addWidget(max_label, 0)
@@ -435,36 +435,36 @@ class FilterConfigWidget(QWidget):
         self.setStyleSheet("""
         #FilterConfigWidget QLabel {
             color: #dbe6f2;
-            font-size: 20px;
+            font-size: 14px;
         }
         #FilterConfigWidget QLabel[role="title"] {
-            font-size: 30px;
+            font-size: 20px;
             font-weight: 800;
             color: #eef6ff;
             padding: 4px 0 10px 0;
         }
         #FilterConfigWidget QLabel[role="param"] {
-            font-size: 20px;
+            font-size: 14px;
             font-weight: 700;
             color: #eef5ff;
         }
         #FilterConfigWidget QLabel[role="desc"] {
-            font-size: 18px;
+            font-size: 14px;
             color: #a9b7c6;
             padding-top: 2px;
             padding-bottom: 6px;
         }
         #FilterConfigWidget QLabel[role="range"] {
-            font-size: 18px;
+            font-size: 14px;
             color: #8ea0b2;
         }
         #FilterConfigWidget QLabel[role="guideHeading"] {
-            font-size: 21px;
+            font-size: 16px;
             font-weight: 800;
             color: #f0f7ff;
         }
         #FilterConfigWidget QLabel[role="guideBody"] {
-            font-size: 19px;
+            font-size: 14px;
             color: #b3c1cf;
             line-height: 1.25;
         }
@@ -482,7 +482,7 @@ class FilterConfigWidget(QWidget):
             left: 12px;
             padding: 0 8px;
             color: #eef6ff;
-            font-size: 21px;
+            font-size: 14px;
             font-weight: 800;
         }
         #FilterConfigWidget QGroupBox[role="guideBox"] {
@@ -498,10 +498,10 @@ class FilterConfigWidget(QWidget):
         }
         #FilterConfigWidget QToolButton[role="collapsibleHeader"] {
             text-align: left;
-            font-size: 21px;
+            font-size: 14px;
             font-weight: 900;
             color: #eef6ff;
-            padding: 10px 10px;
+            padding: 9px 10px;
             border-radius: 10px;
             background-color: rgba(255,255,255,0.04);
             border: 1px solid rgba(255,255,255,0.10);
@@ -516,7 +516,7 @@ class FilterConfigWidget(QWidget):
             background-color: rgba(0,0,0,0.10);
         }
         #FilterConfigWidget QLabel[role="cardTitle"] {
-            font-size: 19px;
+            font-size: 14px;
             font-weight: 900;
             color: #f0f7ff;
         }
@@ -528,14 +528,14 @@ class FilterConfigWidget(QWidget):
             background: transparent;
         }
         #FilterConfigWidget QTabBar::tab {
-            min-width: 140px;
-            min-height: 44px;
-            padding: 8px 16px;
+            min-width: 130px;
+            min-height: 40px;
+            padding: 7px 14px;
             margin-right: 6px;
             border-radius: 10px;
             background-color: rgba(255,255,255,0.06);
             color: #dbe6f2;
-            font-size: 20px;
+            font-size: 14px;
             font-weight: 800;
             border: 1px solid rgba(255,255,255,0.10);
         }
@@ -545,54 +545,54 @@ class FilterConfigWidget(QWidget):
         }
 
         #FilterConfigWidget QCheckBox {
-            spacing: 10px;
-            font-size: 20px;
+            spacing: 9px;
+            font-size: 14px;
             color: #eef5ff;
         }
         #FilterConfigWidget QPushButton {
-            min-height: 40px;
+            min-height: 36px;
             padding: 8px 14px;
-            font-size: 20px;
+            font-size: 14px;
             font-weight: 800;
             border-radius: 10px;
         }
 
         #FilterConfigWidget QSpinBox, #FilterConfigWidget QDoubleSpinBox {
-            min-height: 36px;
-            font-size: 22px;
+            min-height: 34px;
+            font-size: 14px;
             font-weight: 800;
-            padding-right: 8px;
+            padding-right: 6px;
         }
         #FilterConfigWidget QSpinBox::up-button, #FilterConfigWidget QDoubleSpinBox::up-button {
-            width: 22px;
-            height: 16px;
+            width: 20px;
+            height: 14px;
         }
         #FilterConfigWidget QSpinBox::down-button, #FilterConfigWidget QDoubleSpinBox::down-button {
-            width: 22px;
-            height: 16px;
+            width: 20px;
+            height: 14px;
         }
         #FilterConfigWidget QSpinBox::up-arrow, #FilterConfigWidget QDoubleSpinBox::up-arrow,
         #FilterConfigWidget QSpinBox::down-arrow, #FilterConfigWidget QDoubleSpinBox::down-arrow {
-            width: 9px;
-            height: 9px;
+            width: 8px;
+            height: 8px;
         }
         #FilterConfigWidget QLineEdit {
-            min-height: 36px;
-            font-size: 20px;
+            min-height: 34px;
+            font-size: 14px;
         }
 
         #FilterConfigWidget QSlider::groove:horizontal {
             border: 1px solid rgba(255,255,255,0.14);
-            height: 8px;
+            height: 7px;
             background: rgba(255,255,255,0.06);
             border-radius: 4px;
         }
         #FilterConfigWidget QSlider::handle:horizontal {
             background: #4a90e2;
             border: 1px solid rgba(255,255,255,0.25);
-            width: 18px;
-            margin: -6px 0;
-            border-radius: 9px;
+            width: 16px;
+            margin: -5px 0;
+            border-radius: 8px;
         }
         #FilterConfigWidget QSlider::sub-page:horizontal {
             background: rgba(74,144,226,0.35);
@@ -604,7 +604,7 @@ class FilterConfigWidget(QWidget):
             background: transparent;
         }
         #FilterConfigWidget QScrollBar:vertical {
-            width: 14px;
+            width: 12px;
             margin: 2px;
             background: rgba(255,255,255,0.03);
             border-radius: 7px;
@@ -612,7 +612,7 @@ class FilterConfigWidget(QWidget):
         #FilterConfigWidget QScrollBar::handle:vertical {
             background: rgba(255,255,255,0.18);
             border-radius: 7px;
-            min-height: 40px;
+            min-height: 36px;
         }
         #FilterConfigWidget QScrollBar::handle:vertical:hover {
             background: rgba(255,255,255,0.25);

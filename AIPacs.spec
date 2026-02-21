@@ -176,6 +176,7 @@ hiddenimports = [
     # Sound
     'sounddevice',
     'soundfile',
+    'speech_recognition',
     
     # System
     'sqlite3',

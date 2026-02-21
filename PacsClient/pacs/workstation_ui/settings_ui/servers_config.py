@@ -90,11 +90,11 @@ class ServersConfigWidget(QWidget):
         from PySide6.QtCore import Qt
 
         # --------- sizing (نیمه‌عرض و کوتاه) ---------
-        URL_W = 520  
-        URL_H = 40
-        STATUS_W = 110
-        BTN_W = 72
-        BTN_H = 40
+        URL_W = 480  
+        URL_H = 36
+        STATUS_W = 100
+        BTN_W = 65
+        BTN_H = 36
 
         # --------- layout ---------
         self.layout = QVBoxLayout(self)
@@ -102,7 +102,7 @@ class ServersConfigWidget(QWidget):
         self.layout.setSpacing(10)
 
         title = QLabel("AI Services URLs")
-        title.setStyleSheet("font-size: 13px; font-weight: 600;")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
         self.layout.addWidget(title, alignment=Qt.AlignLeft)
 
         card = QFrame()
@@ -156,12 +156,12 @@ class ServersConfigWidget(QWidget):
 
         self.save_urls_btn = QPushButton("Save URLs")
         self.save_urls_btn.setProperty("role", "success")
-        self.save_urls_btn.setFixedHeight(32)
+        self.save_urls_btn.setFixedHeight(36)
         self.save_urls_btn.clicked.connect(self.on_save)
 
         self.load_urls_btn = QPushButton("Load")
         self.load_urls_btn.setProperty("role", "secondary")
-        self.load_urls_btn.setFixedHeight(32)
+        self.load_urls_btn.setFixedHeight(36)
         self.load_urls_btn.clicked.connect(self.load_from_file)
 
         btn_row.addWidget(self.save_urls_btn)
@@ -186,13 +186,16 @@ class ServersConfigWidget(QWidget):
             }
             QLabel {
                 color: #e5e7eb;
+                font-size: 14px;
             }
             QLineEdit {
                 background-color: #0f1319;
                 color: #e5e7eb;
                 border: 1px solid #2b313b;
                 border-radius: 8px;
-                padding: 4px 10px;
+                padding: 6px 10px;
+                min-height: 34px;
+                font-size: 14px;
             }
             QLineEdit:focus {
                 border: 1px solid #60a5fa;
@@ -203,7 +206,9 @@ class ServersConfigWidget(QWidget):
                 color: #e5e7eb;
                 border: 1px solid #2b313b;
                 border-radius: 8px;
-                padding: 6px 12px;
+                padding: 8px 14px;
+                min-height: 36px;
+                font-size: 14px;
             }
             QPushButton[role="secondary"]:hover {
                 background-color: #202a3a;
@@ -217,7 +222,9 @@ class ServersConfigWidget(QWidget):
                 color: #ffffff;
                 border: none;
                 border-radius: 8px;
-                padding: 6px 14px;
+                padding: 8px 14px;
+                min-height: 36px;
+                font-size: 14px;
                 font-weight: 600;
             }
             QPushButton[role="success"]:hover {
@@ -328,7 +335,7 @@ class ServersConfigWidget(QWidget):
                 row["status"].setStyleSheet("color: #22c55e;")
             else:
                 row["status"].setText("Offline")
-                row["status"].setStyleSheet("color: #ef4444;")
+                row["status"].setStyleSheet("color: #60a5fa;")
                 row["status"].setToolTip(err or "")
             row["btn"].setEnabled(True)
 
@@ -467,7 +474,7 @@ class ServersConfigWidget(QWidget):
         if ok is True:
             lbl.setStyleSheet("color: #22c55e; font-weight: 600;")
         elif ok is False:
-            lbl.setStyleSheet("color: #ef4444; font-weight: 600;")
+            lbl.setStyleSheet("color: #60a5fa; font-weight: 600;")
         else:
             lbl.setStyleSheet("color: #9ca3af;")
 

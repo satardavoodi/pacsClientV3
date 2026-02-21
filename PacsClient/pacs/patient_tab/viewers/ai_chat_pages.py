@@ -408,8 +408,8 @@ class ModePickerPage(QWidget):
 
 
     def _prompt_api_key(self):
-        """Prompt user for API key if not validated (NO infinite loop; limited retries; HARD LOCK on cancel/fail)."""
-        from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
+        """Resolve API key only from Settings (no extra login prompt)."""
+        from PySide6.QtWidgets import QMessageBox
         from PySide6.QtCore import QTimer
         from .api_manager import APIKeyManager
 
@@ -445,133 +445,43 @@ class ModePickerPage(QWidget):
                 self._refresh_usage_panel(api_key=api_key)
                 return
 
-            # Keep UI locked until validated
-            self._set_ai_enabled(False, "🔑 Please enter a valid API key to enable AI features.")
+            # No stored validation yet: try to load from EchoMind Settings (single source of truth)
+            saved_key = ""
+            try:
+                from EchoMind.settings_store import get_echomind_api_key
+                saved_key = (get_echomind_api_key() or "").strip()
+            except Exception:
+                saved_key = ""
 
-            MAX_RETRIES = 3
-            self._api_retry_count = int(getattr(self, "_api_retry_count", 0))
+            if saved_key:
+                success, center, error = manager.validate_key(saved_key)
+                if success:
+                    self._api_retry_count = 0
+                    self._api_prompt_cancelled = False
+                    self._set_ai_enabled(True)
+                    self._show_welcome(center, api_key=saved_key)
+                    self._refresh_usage_panel(api_key=saved_key)
+                    return
 
-            # If retries already exceeded: hard lock
-            if self._api_retry_count >= MAX_RETRIES:
-                mb = QMessageBox(self)
-                mb.setIcon(QMessageBox.Critical)
-                mb.setWindowTitle("❌ Too Many Attempts")
-                mb.setText(
-                    "You have reached the maximum number of retry attempts.\n\n"
-                    "AI features are now locked.\n"
-                    "Please return to the login page and enter a valid API key, or contact support."
-                )
-                mb.exec()
-
+                # If saved key is invalid, block AI and ask user to fix in Settings
                 self._api_prompt_cancelled = True
                 self._set_ai_enabled(
                     False,
-                    "🔒 AI features are locked due to 3 invalid attempts.\n"
-                    "Please go back to the login page and set a valid API key."
+                    "🔒 The saved API key is invalid. Please update it in Settings → EchoMind."
                 )
-                return
-
-            # Show dialog
-            dlg = QInputDialog(self)
-            dlg.setWindowTitle("🔑 API Key Required")
-            dlg.setLabelText(
-                "Please enter your IRANNOBAT API key:\n\n"
-                "This key will be used for all AI features\n"
-                "(Chat, Reports, Assistant, etc.)."
-            )
-            dlg.setTextEchoMode(QLineEdit.Password)
-            dlg.resize(420, 210)
-
-            ok = bool(dlg.exec())
-            if not ok:
-                # Cancel => hard lock until a valid key is set through the proper flow
-                mb = QMessageBox(self)
-                mb.setIcon(QMessageBox.Warning)
-                mb.setWindowTitle("API Key Required")
-                mb.setText(
-                    "You cancelled API key entry.\n\n"
-                    "AI features are locked until a valid key is set."
-                )
-                mb.exec()
-
-                self._api_prompt_cancelled = True
-                self._set_ai_enabled(
-                    False,
-                    "🔒 You cancelled API key entry.\n"
-                    "Reports/Chat/Assistant are disabled until a valid API key is set."
-                )
-                return
-
-            api_key = (dlg.textValue() or "").strip()
-            if not api_key:
-                self._api_retry_count += 1
-                remaining = max(0, MAX_RETRIES - self._api_retry_count)
-
-                mb = QMessageBox(self)
-                mb.setIcon(QMessageBox.Warning)
-                mb.setWindowTitle("⚠️ Empty API Key")
-                mb.setText(
-                    f"No API key was entered.\n\n"
-                    f"Please try again. ({remaining} attempt(s) remaining)"
-                )
-                btn_retry = mb.addButton("🔁 Try again", QMessageBox.AcceptRole)
-                mb.exec()
-
-                if mb.clickedButton() == btn_retry and remaining > 0:
-                    QTimer.singleShot(0, self._prompt_api_key)
-                elif remaining <= 0:
-                    self._api_prompt_cancelled = True
-                    self._set_ai_enabled(
-                        False,
-                        "🔒 AI features are locked due to 3 invalid/empty attempts.\n"
-                        "Please go back to the login page and set a valid API key."
+                if error:
+                    mb = QMessageBox(self)
+                    mb.setIcon(QMessageBox.Critical)
+                    mb.setWindowTitle("❌ Invalid API Key")
+                    mb.setText(
+                        f"{error}\n\n"
+                        "Please open Settings → EchoMind and update your API key."
                     )
+                    mb.exec()
                 return
 
-            success, center, error = manager.validate_key(api_key)
-            if success:
-                self._api_retry_count = 0
-                self._api_prompt_cancelled = False
-                self._set_ai_enabled(True)
-                self._show_welcome(center, api_key=api_key)
-                self._refresh_usage_panel(api_key=api_key)
-                return
-
-            # Invalid key
-            self._api_retry_count += 1
-            remaining = max(0, MAX_RETRIES - self._api_retry_count)
-
-            mb = QMessageBox(self)
-            mb.setIcon(QMessageBox.Critical)
-            mb.setWindowTitle("❌ Invalid API Key")
-
-            if remaining > 0:
-                mb.setText(
-                    f"{error}\n\n"
-                    f"Please try again. ({remaining} attempt(s) remaining)\n\n"
-                    "If you have forgotten your API key, please contact support."
-                )
-                btn_retry = mb.addButton("🔁 Try again", QMessageBox.AcceptRole)
-                mb.exec()
-                if mb.clickedButton() == btn_retry:
-                    QTimer.singleShot(0, self._prompt_api_key)
-                return
-
-            # Retries exhausted => hard lock
-            mb.setText(
-                f"{error}\n\n"
-                "You have reached the maximum number of retry attempts.\n\n"
-                "AI features are now locked.\n"
-                "Please return to the login page and enter a valid API key, or contact support."
-            )
-            mb.exec()
-
-            self._api_prompt_cancelled = True
-            self._set_ai_enabled(
-                False,
-                "🔒 AI features are locked due to 3 invalid attempts.\n"
-                "Please go back to the login page and set a valid API key."
-            )
+            # No saved key: keep UI locked and ask user to configure Settings
+            self._set_ai_enabled(False, "🔑 Please set your API key in Settings → EchoMind.")
 
         finally:
             self._api_prompt_inflight = False
@@ -3415,36 +3325,6 @@ class OneChatPage(QWidget):
         if not _send_with_patient_id(patient_id):
             return
 
-        ask = QMessageBox.question(
-            self,
-            "ارسال برای بیمار دیگر؟",
-            "آیا می‌خواهید همین گزارش را برای بیمار دیگری هم ارسال کنید؟",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if ask != QMessageBox.Yes:
-            return
-
-        new_patient_id, ok = QInputDialog.getText(
-            self,
-            "ارسال برای بیمار دیگر",
-            "شناسه بیمار جدید را وارد کنید:",
-            QLineEdit.Normal,
-            "",
-        )
-        if not ok:
-            return
-        new_patient_id = (new_patient_id or "").strip()
-        if not new_patient_id:
-            QMessageBox.warning(
-                self,
-                "Patient ID Required",
-                "Patient ID cannot be empty. Please enter a valid patient ID.",
-            )
-            return
-
-        _send_with_patient_id(new_patient_id)
-
     def _persian_bubble(self, bubble: "MessageBubble"):
         import logging
         from datetime import datetime
@@ -3473,41 +3353,101 @@ class OneChatPage(QWidget):
         english_payload = ""
         src = ""
 
-        raw = getattr(bubble, "raw_report_json", None)
-        if isinstance(raw, str) and raw.strip():
-            english_payload = raw.strip()
-            src = "bubble.raw_report_json"
-            print(f"✅ Content extracted from: {src}")
-            logger.info(f"✅ Content extracted from: {src}")
+        # ✅ FIX: For assistant bubbles, prefer the exact assistant text stored in raw_report_json.
+        #         For report bubbles, prefer raw_report_json if available.
+        if is_assistant:
+            # Assistant => MUST send the exact assistant text (no HTML extraction)
+            raw = getattr(bubble, "raw_report_json", None)
+            if isinstance(raw, str) and raw.strip():
+                raw_text = raw.strip()
+                parsed = None
+                try:
+                    parsed = self._parse_assistant_dict(raw_text)
+                except Exception:
+                    parsed = None
+
+                # If the payload is JSON-like/structured, translate the rendered assistant text
+                if isinstance(parsed, dict) and not (len(parsed) == 1 and "Raw" in parsed):
+                    try:
+                        rendered_html = self._render_assistant_html(parsed)
+                        plain = extract_plain_text_from_html(rendered_html).strip()
+                    except Exception:
+                        plain = ""
+
+                    if plain:
+                        english_payload = plain
+                        src = "assistant_rendered_text [from raw_json]"
+                    else:
+                        english_payload = raw_text
+                        src = "bubble.raw_report_json [assistant]"
+                else:
+                    english_payload = raw_text
+                    src = "bubble.raw_report_json [assistant]"
+
+                print(f"✅ Content extracted from: {src}")
+                logger.info(f"✅ Content extracted from: {src}")
+            else:
+                # Fallback: extract from HTML/text if raw text is missing
+                html = ""
+                try:
+                    html = (bubble.get_html() or "").strip()
+                except Exception:
+                    html = (getattr(bubble, "_raw_text", "") or "").strip()
+
+                if not html:
+                    msg = "⚠ Cannot translate to Persian: this bubble has no content."
+                    print(f"❌ {msg}")
+                    logger.error(f"❌ {msg}")
+                    self.controller.bubble("AI ChatBot", msg)
+                    return
+
+                try:
+                    english_payload = extract_plain_text_from_html(html).strip()
+                except Exception:
+                    english_payload = ""
+
+                if not english_payload:
+                    english_payload = html  # last resort
+                src = "bubble.get_html() [assistant-fallback]"
+                print(f"✅ Content extracted from: {src}")
+                logger.info(f"✅ Content extracted from: {src}")
         else:
-            html = ""
-            try:
-                html = (bubble.get_html() or "").strip()
-            except Exception:
-                html = (getattr(bubble, "_raw_text", "") or "").strip()
+            # Report => prefer raw_report_json if available
+            raw = getattr(bubble, "raw_report_json", None)
+            if isinstance(raw, str) and raw.strip():
+                english_payload = raw.strip()
+                src = "bubble.raw_report_json [report]"
+                print(f"✅ Content extracted from: {src}")
+                logger.info(f"✅ Content extracted from: {src}")
+            else:
+                html = ""
+                try:
+                    html = (bubble.get_html() or "").strip()
+                except Exception:
+                    html = (getattr(bubble, "_raw_text", "") or "").strip()
 
-            if not html:
-                msg = "⚠ Cannot translate to Persian: this bubble has no content."
-                print(f"❌ {msg}")
-                logger.error(f"❌ {msg}")
-                self.controller.bubble("AI ChatBot", msg)
-                return
+                if not html:
+                    msg = "⚠ Cannot translate to Persian: this bubble has no content."
+                    print(f"❌ {msg}")
+                    logger.error(f"❌ {msg}")
+                    self.controller.bubble("AI ChatBot", msg)
+                    return
 
-            try:
-                english_payload = extract_plain_text_from_html(html).strip()
-            except Exception:
-                english_payload = ""
+                try:
+                    english_payload = extract_plain_text_from_html(html).strip()
+                except Exception:
+                    english_payload = ""
 
-            if not english_payload:
-                english_payload = html  # last resort
-            src = "bubble.get_html()"
-            print(f"✅ Content extracted from: {src}")
-            logger.info(f"✅ Content extracted from: {src}")
+                if not english_payload:
+                    english_payload = html  # last resort
+                src = "bubble.get_html() [report]"
+                print(f"✅ Content extracted from: {src}")
+                logger.info(f"✅ Content extracted from: {src}")
 
-            try:
-                bubble.raw_report_json = english_payload
-            except Exception:
-                pass
+                try:
+                    bubble.raw_report_json = english_payload
+                except Exception:
+                    pass
 
         if not english_payload.strip():
             msg = "⚠ Cannot translate to Persian: extracted content is empty."
@@ -3573,6 +3513,14 @@ class OneChatPage(QWidget):
                     self.controller.bubble("AI ChatBot", "⚠ Empty Persian assistant translation.")
                     logger.warning("⚠ Empty Persian assistant translation.")
                     return
+
+                # Persian assist output log (length + preview)
+                try:
+                    preview = txt[:400].replace("\n", " ")
+                    logger.info("[ASSISTANT-FA] len=%d preview=%s", len(txt), preview)
+                    print(f"[ASSISTANT-FA] len={len(txt)} preview={preview}")
+                except Exception:
+                    pass
 
                 html = (
                     "<div dir='rtl' style='direction: rtl; text-align: right;'>"
@@ -3756,6 +3704,12 @@ class OneChatPage(QWidget):
         if not is_user:
             origin = getattr(self, "_bubble_origin_hint", None)
             self._bubble_origin_hint = None
+            # Fallback: if hint is missing, infer from pending raw payloads
+            if not origin:
+                if getattr(self, "_pending_assistant_raw_en", None):
+                    origin = "assistant"
+                elif getattr(self, "_pending_report_raw_en", None):
+                    origin = "report"
 
         # --- 3.5) report raw (for DB persistence) ---
         raw_report_for_db: str | None = None
@@ -3776,6 +3730,11 @@ class OneChatPage(QWidget):
             on_persian=on_persian,
             on_send_reception=on_send_reception,
         )
+        # Keep origin on live bubbles (used by Persian/Edit)
+        try:
+            b._origin = origin
+        except Exception:
+            pass
 
         # 🔹 If this is a freshly generated report bubble, attach the raw EN JSON
         if origin == "report" and not is_user:

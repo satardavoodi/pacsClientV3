@@ -55,7 +55,10 @@ class CustomCheckbox(QWidget):
         layout.addWidget(self.checkbox_button)
         if self.label:
             layout.addWidget(self.label)
-        layout.addStretch()
+            layout.addStretch()
+        else:
+            # Keep icon centered when no text label is present (table checkbox column)
+            layout.setAlignment(Qt.AlignCenter)
         
         # Set initial icon
         self._update_icon()

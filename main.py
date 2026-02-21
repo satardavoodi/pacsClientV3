@@ -41,11 +41,15 @@ import os
 #     "--use-angle=d3d11 --ignore-gpu-blocklist"
 # )
 
-if sys.platform == 'win32':
+if sys.platform == "win32":
     # Use software rendering for maximum compatibility
     os.environ["QT_OPENGL"] = "software"
     os.environ["QT_QUICK_BACKEND"] = "software"
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream"
+    chromium_flags = "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream"
+    if not getattr(sys, "frozen", False):
+        os.environ["QTWEBENGINE_DISABLE_GPU"] = "1"
+        chromium_flags += " --use-angle=swiftshader"
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = chromium_flags
 
 
 if __name__ == "__main__":

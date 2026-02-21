@@ -109,7 +109,7 @@ class StorageCleanupPanelWidget(QWidget):
 
         self.storage_summary_label = QLabel("")
         self.storage_summary_label.setStyleSheet(
-            "color: #d1d5db; font-size: 13px; padding: 8px; "
+            "color: #d1d5db; font-size: 14px; padding: 8px; "
             "background-color: #1f2937; border-radius: 4px;"
         )
         self.storage_summary_label.setWordWrap(True)
@@ -152,7 +152,7 @@ class StorageCleanupPanelWidget(QWidget):
             size_label = QLabel("0 B")
             size_label.setMinimumWidth(100)
             size_label.setStyleSheet(
-                "color: #10b981; font-weight: 700; font-size: 15px; "
+                "color: #10b981; font-weight: 700; font-size: 14px; "
                 "padding: 4px 8px; background-color: #064e3b; border-radius: 4px;"
             )
             self.folder_size_labels[key] = size_label
@@ -160,21 +160,21 @@ class StorageCleanupPanelWidget(QWidget):
             
             comp_label = QLabel("0% of used disk")
             comp_label.setMinimumWidth(140)
-            comp_label.setStyleSheet("color: #d1d5db; font-size: 13px;")
+            comp_label.setStyleSheet("color: #d1d5db; font-size: 14px;")
             self.folder_comp_labels[key] = comp_label
             top_row.addWidget(comp_label)
             
             top_row.addStretch(1)
             
             clear_btn = QPushButton(btn_text)
-            clear_btn.setMinimumHeight(40)
+            clear_btn.setMinimumHeight(36)
             clear_btn.setMinimumWidth(180)
             clear_btn.setCursor(Qt.PointingHandCursor)
             clear_btn.setStyleSheet(
-                "QPushButton { background-color: #dc2626; border: none; "
+                "QPushButton { background-color: #1d4ed8; border: none; "
                 "border-radius: 6px; font-size: 14px; font-weight: 600; "
-                "padding: 10px 16px; color: white; } "
-                "QPushButton:hover { background-color: #b91c1c; }"
+                "padding: 8px 14px; color: white; } "
+                "QPushButton:hover { background-color: #1e40af; }"
             )
             if key == "patients":
                 clear_btn.clicked.connect(lambda _, k=key: self._show_patient_cleanup_dialog())
@@ -189,7 +189,7 @@ class StorageCleanupPanelWidget(QWidget):
             path_label = QLabel(" | ".join(str(p) for p in paths))
             path_label.setWordWrap(True)
             path_label.setStyleSheet(
-                "color: #9ca3af; font-size: 12px; padding-left: 4px; font-style: italic;"
+                "color: #9ca3af; font-size: 14px; padding-left: 4px; font-style: italic;"
             )
             row_layout.addWidget(path_label)
             
@@ -382,11 +382,11 @@ class StorageCleanupPanelWidget(QWidget):
         btn_layout.setSpacing(15)
         
         preview_btn = QPushButton("👁️  Preview Count")
-        preview_btn.setMinimumHeight(45)
+        preview_btn.setMinimumHeight(36)
         preview_btn.setMinimumWidth(160)
         preview_btn.setCursor(Qt.PointingHandCursor)
         preview_btn.setStyleSheet(
-            "QPushButton { font-size: 14px; font-weight: 600; padding: 12px 20px; "
+            "QPushButton { font-size: 14px; font-weight: 600; padding: 8px 14px; "
             "background-color: #3b82f6; border: none; border-radius: 6px; } "
             "QPushButton:hover { background-color: #2563eb; }"
         )
@@ -397,13 +397,13 @@ class StorageCleanupPanelWidget(QWidget):
         )
         
         execute_btn = QPushButton("⚠️  Execute Cleanup")
-        execute_btn.setMinimumHeight(45)
+        execute_btn.setMinimumHeight(36)
         execute_btn.setMinimumWidth(180)
         execute_btn.setCursor(Qt.PointingHandCursor)
         execute_btn.setStyleSheet(
-            "QPushButton { font-size: 14px; font-weight: 700; padding: 12px 20px; "
-            "background-color: #dc2626; border: none; border-radius: 6px; } "
-            "QPushButton:hover { background-color: #b91c1c; }"
+            "QPushButton { font-size: 14px; font-weight: 700; padding: 8px 14px; "
+            "background-color: #1d4ed8; border: none; border-radius: 6px; } "
+            "QPushButton:hover { background-color: #1e40af; }"
         )
         execute_btn.clicked.connect(
             lambda: self._execute_patient_cleanup(
@@ -412,11 +412,11 @@ class StorageCleanupPanelWidget(QWidget):
         )
         
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setMinimumHeight(45)
+        cancel_btn.setMinimumHeight(36)
         cancel_btn.setMinimumWidth(120)
         cancel_btn.setCursor(Qt.PointingHandCursor)
         cancel_btn.setStyleSheet(
-            "QPushButton { font-size: 14px; font-weight: 600; padding: 12px 20px; "
+            "QPushButton { font-size: 14px; font-weight: 600; padding: 8px 14px; "
             "background-color: #4b5563; border: none; border-radius: 6px; } "
             "QPushButton:hover { background-color: #6b7280; }"
         )
@@ -509,9 +509,9 @@ class StorageCleanupPanelWidget(QWidget):
             used_pct = float(row.get("used_percent", 0.0))
             free_pct = 100.0 - used_pct
             
-            # Color logic: red if <20% free, yellow if 20-40% free, green if >40% free
+            # Color logic: blue if <20% free, yellow if 20-40% free, green if >40% free
             if free_pct < 20.0:
-                bar_color = "#ef4444"  # red
+                bar_color = "#60a5fa"  # blue
             elif free_pct < 40.0:
                 bar_color = "#f59e0b"  # amber/yellow
             else:

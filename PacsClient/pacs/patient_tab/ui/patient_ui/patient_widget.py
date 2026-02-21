@@ -1644,9 +1644,52 @@ class PatientWidget(QWidget):
 
     def get_optimal_layout_for_series(self, metadata: dict) -> tuple[int, int]:
         """
-        Always use default layout from modality_grid.json (fallback 1x2).
+        Get layout based on series modality from modality_grid.json (fallback to default or 1x2).
         """
-        return self._get_default_layout_from_config()
+        # استخراج مودالیتی از metadata
+        modality = None
+        try:
+            if 'series' in metadata and 'modality' in metadata['series']:
+                modality = metadata['series']['modality']
+            elif 'instances' in metadata and len(metadata['instances']) > 0:
+                modality = metadata['instances'][0].get('modality')
+        except Exception as e:
+            print(f"⚠️ Error extracting modality from metadata: {e}")
+        
+        return self._get_default_layout_from_config(modality=modality)
+
+    def apply_modality_grid_config(self):
+        """Re-apply viewer layout based on the current modality grid config."""
+        try:
+            if not getattr(self, "viewer_controller", None):
+                return
+            if not hasattr(self, "vtk_layout"):
+                return
+
+            metadata = None
+            selected_widget = self.selected_widget
+            if selected_widget and getattr(selected_widget, "image_viewer", None):
+                metadata = getattr(selected_widget.image_viewer, "metadata", None)
+
+            if metadata is None and selected_widget is not None:
+                idx = getattr(selected_widget, "last_series_show", None)
+                if isinstance(idx, int) and 0 <= idx < len(self.lst_thumbnails_data):
+                    metadata = self.lst_thumbnails_data[idx].get("metadata")
+
+            if metadata is None and self.lst_thumbnails_data:
+                metadata = self.lst_thumbnails_data[0].get("metadata")
+
+            if metadata:
+                layout = self.get_optimal_layout_for_series(metadata)
+            else:
+                layout = self._get_default_layout_from_config()
+
+            if layout == self.viewer_controller._current_layout:
+                return
+
+            self.viewer_controller.apply_multi_viewer(layout, modify_by_user=True)
+        except Exception as e:
+            print(f"⚠️ Error applying modality grid config: {e}")
 
     def init_grid_config():
         """فایل config اولیه را ایجاد می‌کند اگر وجود نداشته باشد"""
@@ -1837,10 +1880,22 @@ class PatientWidget(QWidget):
         metadata = new_data['metadata']
 
         for i in range(len(self.lst_thumbnails_data)):
+            existing_series = self.lst_thumbnails_data[i].get('metadata', {}).get('series', {})
+            existing_series_number = str(existing_series.get('series_number'))
+            existing_series_name = str(existing_series.get('series_name'))
 
-            # we assume lst is such as left and right (front , back) queue without remove element
-            if self.lst_thumbnails_data[i]['metadata']['series']['series_name'] == metadata['series']['series_name']:
+            # If same series_number already exists, avoid duplicate insert.
+            if existing_series_number == series_number:
+                if len(metadata['instances']) == len(self.lst_thumbnails_data[i]['metadata']['instances']):
+                    return False
+                self.lst_thumbnails_data[i] = new_data
+                inserted_index = i
+                add_by_head = False
+                break
 
+            # We assume lst is such as left and right (front , back) queue without remove element
+            # Only treat series_name as a pairing key when it is present.
+            if existing_series_name and existing_series_name == metadata['series']['series_name']:
                 # this series has been created before
                 if len(metadata['instances']) == len(self.lst_thumbnails_data[i]['metadata']['instances']):
                     return False
@@ -1904,10 +1959,14 @@ class PatientWidget(QWidget):
             'metadata': metadata,
             'file_path': file_path
         }
+        
+        print(f"[REPLACE_SERIES_DATA] series={series_number_str} vtk={vtk_image_data is not None} meta={metadata is not None} list_len={len(self.lst_thumbnails_data)}")
 
         for idx, item in enumerate(self.lst_thumbnails_data):
             try:
-                if str(item.get('metadata', {}).get('series', {}).get('series_number')) == series_number_str:
+                item_series_str = str(item.get('metadata', {}).get('series', {}).get('series_number'))
+                if item_series_str == series_number_str:
+                    print(f"[REPLACE_SERIES_DATA] Found existing at idx={idx}, replacing")
                     self.lst_thumbnails_data[idx] = new_data
                     series_name = str(metadata.get('series', {}).get('series_name'))
                     self.viewer_controller._series_cache[series_number_str] = (vtk_image_data, metadata, idx)
@@ -1926,19 +1985,32 @@ class PatientWidget(QWidget):
                     except Exception:
                         pass
                     self.viewer_controller._rebuild_series_index()
+                    print(f"[REPLACE_SERIES_DATA] Successfully replaced and returning idx={idx}")
                     return idx
-            except Exception:
+            except Exception as e:
+                print(f"[REPLACE_SERIES_DATA] Error checking item {idx}: {e}")
                 continue
 
-        self.add_new_data_to_lst_thumbnails_data(new_data)
+        print(f"[REPLACE_SERIES_DATA] Not found in list, calling add_new_data_to_lst_thumbnails_data")
+        try:
+            self.add_new_data_to_lst_thumbnails_data(new_data)
+        except Exception as e:
+            print(f"[REPLACE_SERIES_DATA] add_new_data_to_lst_thumbnails_data FAILED: {e}")
+            import traceback
+            traceback.print_exc()
 
+        print(f"[REPLACE_SERIES_DATA] Searching for series={series_number_str} after add_new_data")
         for idx, item in enumerate(self.lst_thumbnails_data):
             try:
-                if str(item.get('metadata', {}).get('series', {}).get('series_number')) == series_number_str:
+                item_series_str = str(item.get('metadata', {}).get('series', {}).get('series_number'))
+                if item_series_str == series_number_str:
+                    print(f"[REPLACE_SERIES_DATA] Found at idx={idx} after add_new_data")
                     return idx
-            except Exception:
+            except Exception as e:
+                print(f"[REPLACE_SERIES_DATA] Error checking item {idx} after add: {e}")
                 continue
 
+        print(f"[REPLACE_SERIES_DATA] FAILED: series={series_number_str} not found after add_new_data, returning -1")
         return -1
 
     def check_and_add_meta_fixed(self, patient_info):
@@ -2897,17 +2969,29 @@ class PatientWidget(QWidget):
                 }
             """
 
+    def _safe_set_sidebar_button_style(self, button, checked: bool):
+        if button is None:
+            return
+        try:
+            button.setStyleSheet(self.sidebar_btn_style(checked))
+        except RuntimeError:
+            pass
+
+    def _apply_sidebar_button_styles(self, *, series=False, reception=False, ai_chat=False,
+                                     ai_module=False, advanced_tools=False):
+        self._safe_set_sidebar_button_style(getattr(self, 'btn_series', None), series)
+        self._safe_set_sidebar_button_style(getattr(self, 'btn_reception', None), reception)
+        self._safe_set_sidebar_button_style(getattr(self, 'btn_ai_chat', None), ai_chat)
+        self._safe_set_sidebar_button_style(getattr(self, 'btn_ai_module', None), ai_module)
+        self._safe_set_sidebar_button_style(getattr(self, 'btn_advanced_tools', None), advanced_tools)
+
     def switch_right_panel(self, option, *, force: bool = False):
         if option == "series":
             if self.right_panel.currentIndex() != 0:
                 self.right_panel.setCurrentIndex(0)
             if self.right_panel.width() != self.default_panel_width:
                 self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
-            self.btn_series.setStyleSheet(self.sidebar_btn_style(True))
-            self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+            self._apply_sidebar_button_styles(series=True)
 
         elif option == 'reception':
             if self._block_reception_autoswitch and not force:
@@ -2916,11 +3000,7 @@ class PatientWidget(QWidget):
 
             # If already on reception with correct width, avoid redundant work
             if self.right_panel.currentIndex() == 2 and self.right_panel.width() == self.reception_panel_width:
-                self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
-                self.btn_reception.setStyleSheet(self.sidebar_btn_style(True))
-                self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
-                self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
-                self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+                self._apply_sidebar_button_styles(reception=True)
                 return
 
             print("[PatientWidget] Switching to Reception Data tab (index 2)")
@@ -2951,11 +3031,7 @@ class PatientWidget(QWidget):
                 self.right_panel.setFixedWidth(self.reception_panel_width)  # Make it 70% bigger
             print(
                 f"[PatientWidget] Panel width changed from {self.default_panel_width} to {self.reception_panel_width}")
-            self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_reception.setStyleSheet(self.sidebar_btn_style(True))
-            self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+            self._apply_sidebar_button_styles(reception=True)
 
             # Trigger data fetch when tab is activated
             if self.reception_data_tab is not None:
@@ -2966,21 +3042,14 @@ class PatientWidget(QWidget):
             # self.right_panel.setCurrentIndex(2)
             if self.right_panel.width() != self.default_panel_width:
                 self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
-            self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(True))
-            self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+            self._apply_sidebar_button_styles(ai_chat=True)
             self.ai_chat_layout_ui()
 
         elif option == 'ai_module':
             if self.right_panel.width() != self.default_panel_width:
                 self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
-            self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(True))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(False))
+            self._apply_sidebar_button_styles(ai_module=True)
+            self._auto_open_first_series_for_eagle_eye()
             if self.method_add_new_tab:
                 self.method_add_new_tab(open_ai_client_tab=True, study_uid=self.study_uid)
 
@@ -2996,11 +3065,7 @@ class PatientWidget(QWidget):
 
             self.right_panel.setCurrentIndex(3)
             self.right_panel.setFixedWidth(self.default_panel_width)
-            self.btn_series.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_reception.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_chat.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_ai_module.setStyleSheet(self.sidebar_btn_style(False))
-            self.btn_advanced_tools.setStyleSheet(self.sidebar_btn_style(True))
+            self._apply_sidebar_button_styles(advanced_tools=True)
 
             self._refresh_advanced_analysis_series_list()
             
@@ -5090,21 +5155,25 @@ class PatientWidget(QWidget):
             percent: Progress percentage (0-100)
         """
         try:
+            safe_current = max(current or 0, 0)
+            safe_total = max(total or 0, 0)
+            safe_percent = max(min(percent or 0, 100), 0)
+
             # Store progress info for display
             self._download_progress = {
-                'current': current,
-                'total': total,
-                'percent': percent
+                'current': safe_current,
+                'total': safe_total,
+                'percent': safe_percent
             }
             
             # Update toolbar if available
             if hasattr(self, 'toolbar') and self.toolbar:
                 if hasattr(self.toolbar, 'update_download_progress'):
-                    self.toolbar.update_download_progress(current, total, percent)
+                    self.toolbar.update_download_progress(safe_current, safe_total, safe_percent)
             
             # Log major milestones
-            if percent % 25 == 0 or percent == 100:
-                self.logger.debug(f"Download progress: {current}/{total} ({percent}%)")
+            if safe_percent % 25 == 0 or safe_percent == 100:
+                self.logger.debug(f"Download progress: {safe_current}/{safe_total} ({safe_percent}%)")
                 
         except Exception as e:
             self.logger.debug(f"Error updating download progress: {e}")
@@ -5350,6 +5419,45 @@ class PatientWidget(QWidget):
         """Delegate to viewer controller"""
         return self.viewer_controller._any_viewer_empty()
 
+    def _auto_open_first_series_for_eagle_eye(self):
+        """Ensure first series is visible when Eagle Eye is opened."""
+        try:
+            if self._first_series_displayed and not self._any_viewer_empty():
+                return
+            self._eagle_eye_autoload_attempts = 0
+            self._eagle_eye_autoload_inflight = True
+            self._try_auto_open_first_series_for_eagle_eye()
+        except Exception as e:
+            print(f"⚠️ [EAGLE EYE] Failed to auto-open first series: {e}")
+
+    def _try_auto_open_first_series_for_eagle_eye(self):
+        """Retry helper to wait for thumbnails/viewers before opening first series."""
+        try:
+            if not getattr(self, '_eagle_eye_autoload_inflight', False):
+                return
+
+            if self._first_series_displayed and not self._any_viewer_empty():
+                self._eagle_eye_autoload_inflight = False
+                return
+
+            has_viewers = bool(getattr(self, 'lst_nodes_viewer', None))
+            has_thumbs = bool(getattr(self, 'lst_thumbnails_data', None))
+
+            if has_viewers and has_thumbs:
+                if self._display_first_series_in_viewer():
+                    self._eagle_eye_autoload_inflight = False
+                    return
+
+            self._eagle_eye_autoload_attempts += 1
+            if self._eagle_eye_autoload_attempts >= 8:
+                self._eagle_eye_autoload_inflight = False
+                return
+
+            QTimer.singleShot(50, self._try_auto_open_first_series_for_eagle_eye)
+        except Exception as e:
+            self._eagle_eye_autoload_inflight = False
+            print(f"⚠️ [EAGLE EYE] Auto-open retry failed: {e}")
+
 
     async def _do_load_series(self, series_number: str):
         """Internal method to actually load the series"""
@@ -5553,9 +5661,17 @@ class PatientWidget(QWidget):
         """Delegate to viewer controller"""
         return self.viewer_controller._display_first_series_in_all_viewers(series_number)
 
-    def _get_default_layout_from_config(self) -> tuple[int, int]:
-        """Delegate to viewer controller"""
-        return self.viewer_controller._get_default_layout_from_config()
+    def _get_default_layout_from_config(self, modality: str = None) -> tuple[int, int]:
+        """Read default layout from modality_grid.json based on modality (fallback to default then 1x2).
+        
+        Args:
+            modality: Optional modality string (e.g., 'CT', 'MR'). If provided, tries to find
+                     modality-specific layout first.
+        
+        Returns:
+            tuple: (rows, cols) for viewer grid layout
+        """
+        return self.viewer_controller._get_default_layout_from_config(modality=modality)
 
     def reset_slider(self, vtk_widget: VTKWidget, slider: QSlider):
         """Delegate to viewer controller"""

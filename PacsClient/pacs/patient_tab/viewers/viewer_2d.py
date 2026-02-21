@@ -121,6 +121,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     def __init__(self, render_window, interactor, height, vtk_image_data: vtk.vtkImageData, metadata,
                  metadata_fixed, apply_default_filter, vtk_widget):
         super().__init__()
+        self._suppress_render = False
+        self._camera_lock_state = None
+        self._camera_lock_until = 0.0
+        self._camera_lock_observer_id = None
         self._overlays = []
         self.viewer_type = None
         self.apply_default_filter = apply_default_filter
@@ -232,7 +236,27 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # self._baseline_scale = self.renderer.GetActiveCamera().GetParallelScale()
         # print('self.base_zoom_scale:', self.base_zoom_scale)
 
+        # ✅ FIX: Use zoom_to_fit for ALL modalities to ensure proper display
+        # The fixed scale was causing all non-CT images to display at the same zoom level,
+        # making some images appear too large or too small regardless of their actual FOV.
+        modality = str(self.metadata.get('series', {}).get('modality', '')).upper().strip()
+        series_desc = str(self.metadata.get('series', {}).get('series_description', 'Unknown')).strip()
+        series_number = str(self.metadata.get('series', {}).get('series_number', 'N/A')).strip()
+        dims = self.vtk_image_data.GetDimensions()
+        
+        logger.info(f"[CAMERA INIT] Series #{series_number} [{modality}] '{series_desc}'")
+        logger.info(f"[CAMERA INIT]   Image dimensions: {dims}")
+        logger.info(f"[CAMERA INIT]   Spacing: {self.vtk_image_data.GetSpacing()}")
+        logger.info(f"[CAMERA INIT]   Origin: {self.vtk_image_data.GetOrigin()}")
+        
+        # Use zoom_to_fit for all modalities to ensure each series displays at appropriate scale
+        camera = self.renderer.GetActiveCamera()
+        camera.ParallelProjectionOn()
         self.base_zoom_scale = self.zoom_to_fit(skip_render=True)
+        
+        logger.info(f"[CAMERA INIT]   Initial parallel scale (zoom_to_fit): {self.base_zoom_scale:.2f}")
+        logger.info(f"[CAMERA INIT]   Camera position: {camera.GetPosition()}")
+        logger.info(f"[CAMERA INIT]   Camera focal point: {camera.GetFocalPoint()}")
 
         # ❌ FLICKER FIX: Load actors without rendering - will render once at the end
         self.load_top_right_actors(render=False)
@@ -242,6 +266,43 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         
         # ✅ FLICKER FIX: Single render after all initialization is complete
         self.image_render_window.Render()
+
+    def Render(self):
+        if getattr(self, "_suppress_render", False):
+            return
+        return super().Render()
+
+    def lock_camera_state(self, state, duration_ms=300):
+        if not state or self.renderer is None:
+            return
+        self._camera_lock_state = state
+        self._camera_lock_until = time.time() + (float(duration_ms) / 1000.0)
+        if self._camera_lock_observer_id is None:
+            try:
+                self._camera_lock_observer_id = self.renderer.AddObserver(
+                    vtk.vtkCommand.StartEvent,
+                    self._on_renderer_start
+                )
+            except Exception:
+                self._camera_lock_observer_id = None
+
+    def _on_renderer_start(self, obj, event):
+        if not self._camera_lock_state:
+            return
+        if time.time() > self._camera_lock_until:
+            self._camera_lock_state = None
+            return
+        try:
+            camera = self.renderer.GetActiveCamera()
+            if camera:
+                camera.SetParallelScale(self._camera_lock_state['parallel_scale'])
+                camera.SetPosition(self._camera_lock_state['position'])
+                camera.SetFocalPoint(self._camera_lock_state['focal_point'])
+                camera.SetViewUp(self._camera_lock_state['view_up'])
+                camera.SetClippingRange(self._camera_lock_state['clipping_range'])
+                self.renderer.ResetCameraClippingRange()
+        except Exception:
+            pass
 
     @classmethod
     def _cache_get_preprocessed(cls, key):
@@ -329,7 +390,24 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         except Exception:
             pass
 
-        if self.apply_default_filter:
+        # ✅ DISABLE UNIFORM SCALING FOR ALL MODALITIES EXCEPT CT
+        # Each modality keeps its natural spacing so images display at their true physical scale.
+        # This means:
+        # - MR images show at their actual field-of-view size
+        # - Ultrasound images show at their actual scan size  
+        # - X-Ray/CR/DR images show at their actual detector size
+        # Only CT gets upsampling for better display quality
+        modality = None
+        try:
+            if hasattr(self, 'metadata') and self.metadata:
+                modality = str(self.metadata.get('series', {}).get('modality', '')).upper().strip()
+        except Exception:
+            pass
+        
+        # Only upsample for CT modality - all others use natural spacing
+        is_ct = (modality == 'CT')
+        
+        if self.apply_default_filter and is_ct:
             factor = self.__get_factor_upsample(vtk_image_data, self.viewer_height)
             if factor > 1:
                 vtk_image_data = display_upsample_xy(vtk_image_data, factor=factor)
@@ -453,6 +531,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         """
         print(f'overlay path: {path}')
 
+        camera = self.GetRenderer().GetActiveCamera() if self.GetRenderer() else None
+        saved_scale = None
+        if camera is not None:
+            try:
+                saved_scale = camera.GetParallelScale()
+            except Exception:
+                saved_scale = None
+
         # 1) Read NIfTI -> vtkImageData (your existing utility)
         vtk_image = read_segment_nifti(file=path)
 
@@ -494,6 +580,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         # 5) Align the overlay to the current slice and render
         self._sync_all_overlays_extent()
+        if saved_scale is not None and camera is not None:
+            try:
+                camera.SetParallelScale(saved_scale)
+            except Exception:
+                pass
         self.Render()
 
     def create_overlay_box(self, pts_world_point, actor, pts_ijk):
@@ -507,9 +598,18 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         text_actor_pos[1] += 5
 
-        box_name = f'Segmentation {len(self._overlays)}'
+        box_name = f'Box {len(self._overlays)}'
         text_actor = create_text_actor(text_actor_pos, box_name)
+        try:
+            if self.renderer:
+                text_actor.SetCamera(self.renderer.GetActiveCamera())
+        except Exception:
+            pass
         self.renderer.AddActor(text_actor)
+
+        if not hasattr(self, "_box_text_actors"):
+            self._box_text_actors = []
+        self._box_text_actors.append(text_actor)
 
         corner_ijk = bbox_corners_ijk(pts_ijk)
 
@@ -517,7 +617,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                                         status_abnormal=False, ijk_points=corner_ijk)
 
         # update Box Details UI
-        self.vtk_widget.update_boxes_details_ui(overlay_box_object)
+        if hasattr(self.vtk_widget, 'update_boxes_details_ui'):
+            self.vtk_widget.update_boxes_details_ui(overlay_box_object)
 
     def _schedule_render(self, delay=50):
         """Schedule a render with delay to batch multiple updates"""
@@ -851,6 +952,26 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         import time
         _reset_start = time.time()
         
+        # ✅ CRITICAL: Check if this is the same series or a different series
+        # Only preserve zoom scale for the SAME series (user zoom preservation)
+        # For different series, always calculate proper zoom based on image dimensions
+        current_series_uid = metadata.get('series', {}).get('series_uid', None)
+        cached_series_uid = getattr(self, '_cached_series_uid', None)
+        is_same_series = (current_series_uid is not None and 
+                          current_series_uid == cached_series_uid)
+        
+        # ✅ Save current camera scale ONLY if refreshing the same series
+        saved_scale = None
+        if is_same_series:
+            try:
+                camera = self.renderer.GetActiveCamera()
+                saved_scale = camera.GetParallelScale()
+                logger.debug(f"[reset_image_viewer] Same series - saved scale: {saved_scale:.2f}")
+            except Exception:
+                saved_scale = None
+        else:
+            logger.debug(f"[reset_image_viewer] Different series - will recalculate zoom")
+        
         _clear_start = time.time()
         self.clear_all_overlays()
         _clear_time = time.time() - _clear_start
@@ -860,8 +981,6 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         
         # ✅ OPTIMIZATION: Check if we can reuse existing reslice
         # If the vtk_image_data is the same (same series), skip reslice creation
-        current_series_uid = metadata.get('series', {}).get('series_uid', None)
-        cached_series_uid = getattr(self, '_cached_series_uid', None)
 
         old_preview_only = False
         try:
@@ -1012,12 +1131,29 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # print(f"         • Render: {_render_call_time:.3f}s")
 
         _zoom_start = time.time()
-        # ✅ FLICKER FIX: Use skip_render=True, then render once at the end
-        self.zoom_to_fit(skip_render=True)
-        # Single render after both UpdateDisplayExtent and zoom_to_fit
+        # ✅ CRITICAL FIX: Only restore saved scale for SAME series
+        # For different series, always call zoom_to_fit to calculate proper zoom based on dimensions
+        # This fixes the bug where series with different dimensions appear at wrong zoom levels
+        if saved_scale is not None and is_same_series:
+            try:
+                camera = self.renderer.GetActiveCamera()
+                camera.SetParallelScale(saved_scale)
+                logger.info(f"[reset_image_viewer] Same series - restored user zoom: {saved_scale:.2f}")
+                # Optionally save to vtk_widget if it exists
+                if hasattr(self, 'vtk_widget') and self.vtk_widget:
+                    self.vtk_widget._protected_parallel_scale = saved_scale
+            except Exception as e:
+                logger.warning(f"[reset_image_viewer] Failed to restore scale: {e}, falling back to zoom_to_fit")
+                self.zoom_to_fit(skip_render=True)
+        else:
+            # Different series or no saved scale - calculate proper zoom for this series
+            self.zoom_to_fit(skip_render=True)
+            logger.info(f"[reset_image_viewer] Called zoom_to_fit for {'new' if not is_same_series else 'initial'} series")
+        
+        # Single render after both UpdateDisplayExtent and zoom/scale restore
         self.image_render_window.Render()
         _zoom_time = time.time() - _zoom_start
-        print(f"         • zoom_to_fit: {_zoom_time:.3f}s")
+        print(f"         • zoom/scale restore: {_zoom_time:.3f}s")
 
         _render_time = time.time() - _render_start
         print(f"      • Render + zoom: {_render_time:.3f}s")
@@ -1143,6 +1279,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     def zoom_to_fit(self, skip_render=False):
         try:
+            logger.debug(f"[ZOOM_TO_FIT] START - skip_render={skip_render}")
+            
             self.renderer.ResetCamera()
             camera = self.renderer.GetActiveCamera()
 
@@ -1157,8 +1295,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             window_size = self.image_render_window.GetSize()
             window_width, window_height = window_size[0], window_size[1]
 
-            # print(f"Image dimensions: {image_width}x{image_height}")
-            # print(f"Window dimensions: {window_width}x{window_height}")
+            logger.debug(f"[ZOOM_TO_FIT]   Image dimensions: {image_width}x{image_height}")
+            logger.debug(f"[ZOOM_TO_FIT]   Window dimensions: {window_width}x{window_height}")
 
             spacing = self.vtk_image_data.GetSpacing()
 
@@ -1176,17 +1314,22 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             if image_aspect > window_aspect:
                 # image is wider
                 new_scale = (physical_width / 2.0) / (window_width / window_height) * zoom_factor
+                logger.debug(f"[ZOOM_TO_FIT]   Image is WIDER - using width-based scale")
             else:
                 # image is taller
                 new_scale = (physical_height / 2.0) * zoom_factor
+                logger.debug(f"[ZOOM_TO_FIT]   Image is TALLER - using height-based scale")
 
-            # print(f"Physical dimensions: {physical_width}x{physical_height}")
-            # print(f"New scale: {new_scale}")
-            # print(f"Aspect ratios - Image: {image_aspect}, Window: {window_aspect}")
+            logger.debug(f"[ZOOM_TO_FIT]   Physical dimensions: {physical_width:.2f}x{physical_height:.2f}mm")
+            logger.debug(f"[ZOOM_TO_FIT]   New parallel scale: {new_scale:.2f}")
+            logger.debug(f"[ZOOM_TO_FIT]   Aspect ratios - Image: {image_aspect:.3f}, Window: {window_aspect:.3f}")
 
             camera.SetParallelScale(new_scale)
+            logger.info(f"[ZOOM_TO_FIT] ✓ Applied scale: {new_scale:.2f}")
+            
             if not skip_render:
                 self.Render()
+                logger.debug(f"[ZOOM_TO_FIT]   Render completed")
 
             return new_scale
             # zoom = self.base_zoom_scale / camera.GetParallelScale()
@@ -1816,7 +1959,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                     self.renderer.RemoveActor(a)
                 except Exception:
                     pass
+        if hasattr(self, "_box_text_actors") and self._box_text_actors:
+            for a in self._box_text_actors:
+                try:
+                    self.renderer.RemoveActor(a)
+                except Exception:
+                    pass
         self._box_actors = []
+        self._box_text_actors = []
 
     def ijk_to_world(self, i: float, j: float, k: float | None = None, *, y_flip: bool = True):
         """
@@ -1961,9 +2111,17 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         هر باکس روی اسلایس فعلی رسم می‌گردد.
         """
         lst_boxes_object = []
+        camera = self.renderer.GetActiveCamera() if self.renderer else None
+        saved_scale = None
+        if camera is not None:
+            try:
+                saved_scale = camera.GetParallelScale()
+            except Exception:
+                saved_scale = None
         # پاک‌سازی باکس‌های قبلی
         self.clear_boxes()
         self._box_actors = []
+        self._box_text_actors = []
 
         def _actor_for_rect(p0, p1, p2, p3):
             pts = vtk.vtkPoints()
@@ -2016,6 +2174,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             # add text up of box
             box_name = f'Box{len(lst_boxes_object) + 1}, \t\tscore: {score}'
             text_actor = create_text_actor(world_position=((p1[0] + p0[0]) / 2, p1[1] + 2, p1[2]), text=box_name)
+            try:
+                if self.renderer:
+                    text_actor.SetCamera(self.renderer.GetActiveCamera())
+            except Exception:
+                pass
 
             # create box object for manage
             box_object = BoxManager(box_name=box_name, box_name_actor=text_actor, box_actor=actor, status_abnormal=True,
@@ -2023,10 +2186,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             lst_boxes_object.append(box_object)
 
             self.renderer.AddActor(text_actor)
+            self._box_text_actors.append(text_actor)
 
         # هم‌ترازسازی و رندر
         if hasattr(self, "_sync_all_overlays_extent"):
             self._sync_all_overlays_extent()
+        if saved_scale is not None and camera is not None:
+            try:
+                camera.SetParallelScale(saved_scale)
+            except Exception:
+                pass
         self.renderer.ResetCameraClippingRange()
         self.Render()
 

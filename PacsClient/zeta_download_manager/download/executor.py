@@ -250,12 +250,34 @@ class DownloadExecutor:
                 cancel_check=cancel_check,  # Pass cancel check for preemption
                 database_manager=self.database  # ✅ Pass database manager for instance insertion
             )
+
+            def _is_ct_study() -> bool:
+                modality = (task.modality or '').strip().upper()
+                if modality == 'CT':
+                    return True
+                series_modalities = [
+                    (s.modality or '').strip().upper()
+                    for s in metadata.series_list
+                    if s.modality
+                ]
+                return bool(series_modalities) and all(m == 'CT' for m in series_modalities)
+
+            def _series_sort_key(item):
+                raw = str(item.series_number).strip() if item.series_number is not None else ""
+                if raw.isdigit():
+                    return (0, int(raw), raw)
+                return (1, raw)
+
+            series_list_for_download = metadata.series_list
+            if _is_ct_study() and metadata.series_list:
+                series_list_for_download = sorted(metadata.series_list, key=_series_sort_key)
+                logger.info("📌 CT series order normalized by series_number")
             
             # Execute download
             try:
                 download_result = await downloader.download_all_series(
                     study_uid=study_uid,
-                    series_list=metadata.series_list,
+                    series_list=series_list_for_download,
                     patient_id=task.patient_id
                 )
             except Exception as e:
@@ -263,9 +285,25 @@ class DownloadExecutor:
                 from PacsClient.zeta_download_manager.workers.download_worker import DownloadCancelled
                 
                 if isinstance(e, (InterruptedError, DownloadCancelled)):
+                    # Preemption can surface as a cancellation; preserve auto-paused state.
+                    current_state = self.state.get(study_uid)
+                    if current_state and current_state.status == DownloadStatus.PAUSED and current_state.is_auto_paused:
+                        logger.warning(
+                            f"⏸️ Download preempted: {task.patient_name} (auto-paused)"
+                        )
+                        if completion_callback:
+                            completion_callback(study_uid, False)
+                        return DownloadResult(
+                            success=False,
+                            error_message="Paused for higher priority download (preemption)",
+                            study_uid=study_uid,
+                            downloaded_series=0,
+                            downloaded_images=0
+                        )
+
                     # User cancelled - log as info, not error
                     logger.warning(f"⏸️ Download cancelled: {task.patient_name}")
-                    
+
                     # Update state to cancelled (not failed)
                     self.state.update(
                         study_uid,
@@ -273,11 +311,11 @@ class DownloadExecutor:
                         error_message="Download cancelled by user",
                         end_time=datetime.now()
                     )
-                    
+
                     # Completion callback with success=False to indicate incomplete
                     if completion_callback:
                         completion_callback(study_uid, False)
-                    
+
                     # Return gracefully without traceback (use module-level import)
                     return DownloadResult(
                         success=False,

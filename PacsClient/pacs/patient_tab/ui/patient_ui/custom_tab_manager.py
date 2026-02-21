@@ -825,23 +825,31 @@ class CustomTabManager:
         Args:
             closed_index: The index of the tab that was closed
         """
-        # Check if there are any patient/service tabs remaining (excluding home tab at index 0)
-        if self.patient_tabs:
-            # Find a suitable tab to switch to
-            # Prefer tabs with lower index than the closed one, or the next available tab
+        # Prefer remaining patient tabs only (avoid switching to service tabs like Download Manager)
+        patient_only = {}
+        for idx, tab_data in self.patient_tabs.items():
+            if not tab_data.get('is_patient_tab', False):
+                continue
+            if tab_data.get('is_download_manager_tab', False):
+                continue
+            if tab_data.get('is_education_tab', False):
+                continue
+            if tab_data.get('is_web_browser_tab', False):
+                continue
+            if tab_data.get('is_reception_tab', False):
+                continue
+            patient_only[idx] = tab_data
+
+        if patient_only:
             target_index = None
-            
-            # First, try to find a tab at a lower index than the closed one
-            for idx in sorted(self.patient_tabs.keys()):
+            for idx in sorted(patient_only.keys()):
                 if idx < closed_index:
                     target_index = idx
                     break
-            
-            # If no lower index found, use the first available tab (could be higher index)
+
             if target_index is None:
-                target_index = min(self.patient_tabs.keys())
-            
-            # Activate the target tab
+                target_index = min(patient_only.keys())
+
             if target_index is not None:
                 self.set_tab_active(target_index)
                 return
