@@ -9,6 +9,7 @@ from PySide6.QtCore import QEvent, QTimer
 
 from .AIPacs_ui import ControlPanelInterface
 from PacsClient.utils import IMAGES_LOGIN_PATH
+from PacsClient.utils.db_manager import init_database, migrate_fix_null_study_paths
 from .shortcut_manager import ShortcutManager
 import qtawesome as qta
 import sys
@@ -44,6 +45,12 @@ class _PinnedHomeTabBar(QTabBar):
 class MainWindowWidget(QWidget):
     def __init__(self, auth_user=None, auth_token=None):
         super().__init__()
+        
+        # ✅ Initialize database FIRST before any other initialization
+        # This ensures api_token_usage and other tables exist before anything tries to access them
+        init_database()
+        migrate_fix_null_study_paths()
+        
         self.setWindowIcon(QIcon(fr"{IMAGES_LOGIN_PATH}/favicon.ico"))
         self.setWindowFlags(Qt.FramelessWindowHint if IS_WINDOWS else Qt.Window)
 

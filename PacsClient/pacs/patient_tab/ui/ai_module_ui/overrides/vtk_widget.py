@@ -5,6 +5,7 @@ from pathlib import Path, PureWindowsPath
 from PacsClient.pacs.patient_tab.utils import BoxManager, TYPES_VIEWER
 from PacsClient.utils.utils import load_mg_ai_manifest
 import asyncio
+import time
 
 
 class AIVTKWidget(VTKWidget):
@@ -15,6 +16,63 @@ class AIVTKWidget(VTKWidget):
         self.type_viewer = type_viewer
         self.csv_details_path = None
         self.csv_classification = None
+        self._csv_cache = {}
+        self._series_ai_cache = {}
+        self._ai_boxes_cache = {}
+        self._ai_last_run_series_uid = None
+        self._ai_last_run_ts = 0.0
+        self._ai_busy = False
+
+    def _get_csv_stamp(self, csv_path):
+        if csv_path is None:
+            return None
+        try:
+            path = Path(csv_path)
+            if not path.exists():
+                return (str(path), None)
+            return (str(path), path.stat().st_mtime)
+        except Exception:
+            return (str(csv_path), None)
+
+    def _load_csv_cached(self, csv_path):
+        if csv_path is None:
+            return None
+
+        try:
+            path = Path(csv_path)
+        except Exception:
+            return None
+
+        if not path.exists():
+            print(f"[MG][CSV] file not found: {path}")
+            return None
+
+        key = str(path)
+        try:
+            mtime = path.stat().st_mtime
+        except Exception:
+            mtime = None
+
+        cached = self._csv_cache.get(key)
+        if cached and cached.get("mtime") == mtime:
+            return cached.get("df")
+
+        df = pd.read_csv(path)
+        self._csv_cache[key] = {"mtime": mtime, "df": df}
+        return df
+
+    def _get_series_ai_cached(self, df: pd.DataFrame, check_all_rows=False):
+        try:
+            series_uid = self.image_viewer.metadata['series'].get('series_uid')
+        except Exception:
+            series_uid = None
+        cache_key = (id(df), series_uid, bool(check_all_rows))
+        cached = self._series_ai_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = self.get_series_ai_data_from_df(df, check_all_rows=check_all_rows)
+        self._series_ai_cache[cache_key] = result
+        return result
 
     def start_process_series(self, vtk_image_data, metadata, series_index, id_vtk_widget, metadata_fixed):
         print(f"[MG][VTK] start_process_series called for series={series_index} modality={metadata.get('series', {}).get('modality', 'N/A')}")
@@ -107,11 +165,10 @@ class AIVTKWidget(VTKWidget):
             print("[MG][CSV] csv_path is None")
             return None
 
-        if not csv_path.exists():
-            print(f"[MG][CSV] file not found: {csv_path}")
+        df = self._load_csv_cached(csv_path)
+        if df is None:
             return None
 
-        df = pd.read_csv(csv_path)
         print(f"[MG][CSV] loaded rows={len(df)} cols={list(df.columns)}")
         return df
 
@@ -270,7 +327,7 @@ class AIVTKWidget(VTKWidget):
 
     def extract_value_field(self, df: pd.DataFrame, field='box') -> list:
         try:
-            series_ai_data = self.get_series_ai_data_from_df(df)
+            series_ai_data = self._get_series_ai_cached(df, check_all_rows=False)
             if series_ai_data is not None:
                 return eval(series_ai_data[field].iloc[0])  # field=box :: extract only box
             return []
@@ -287,6 +344,8 @@ class AIVTKWidget(VTKWidget):
         try:
             print(f'[MG][ADD_BOXES] Called with {len(boxes_scores) if boxes_scores else 0} boxes')
             print(f'[MG][ADD_BOXES] boxes_scores: {boxes_scores}\n')
+            if not boxes_scores:
+                return
             if boxes_scores:
                 print(f'in if')
                 self.patient_widget.toolbar_manager.check_and_deactivate_tools()
@@ -323,6 +382,12 @@ class AIVTKWidget(VTKWidget):
         series_num = self.image_viewer.metadata.get('series', {}).get('series_number', 'N/A')
         series_uid = self.image_viewer.metadata.get('series', {}).get('series_uid', 'N/A')
         print(f"[MG][MANAGER_AI] START series={series_num} uid={series_uid}")
+        if self._ai_busy:
+            print("[MG][MANAGER_AI] Skipping - already running")
+            return
+        if self._ai_last_run_series_uid == series_uid and (time.time() - self._ai_last_run_ts) < 0.2:
+            print("[MG][MANAGER_AI] Skipping - debounced")
+            return
         if self.type_viewer == TYPES_VIEWER.fixed_viewer:
             print(f"[MG][MANAGER_AI] Skipping fixed_viewer")
             return
@@ -331,59 +396,83 @@ class AIVTKWidget(VTKWidget):
             print(f"[MG][MANAGER_AI] MG modality detected, loading boxes...")
             df = self.load_csv()
             if df is not None:
-                boxes_scores = []
+                self._ai_busy = True
+                try:
+                    det_stamp = self._get_csv_stamp(self.csv_details_path)
+                    cls_stamp = self._get_csv_stamp(self.csv_classification)
+                    cache_key = (series_uid, det_stamp, cls_stamp)
 
-                boxes = self.extract_value_field(df, field='box')
-                scores = self.extract_value_field(df, field='scores')
+                    cache_entry = self._ai_boxes_cache.get(cache_key)
+                    if cache_entry is None:
+                        boxes_scores = []
 
-                new_boxes = self.extract_value_field(df, field='new_box')
-                boxes += new_boxes
+                        boxes = self.extract_value_field(df, field='box')
+                        scores = self.extract_value_field(df, field='scores')
 
-                # sync scores base on boxes
-                non_scores = [None] * len(new_boxes)
-                scores += non_scores
+                        new_boxes = self.extract_value_field(df, field='new_box')
+                        boxes += new_boxes
 
-                removed_boxes = self.extract_value_field(df, field='removed')
+                        # sync scores base on boxes
+                        non_scores = [None] * len(new_boxes)
+                        scores += non_scores
 
-                df_classification = self.load_csv(self.csv_classification)
-                if df_classification is None:
-                    for i in range(len(boxes)):
-                        if boxes[i] not in removed_boxes:
-                            box = boxes[i]
-                            score = float(f'{scores[i]:.2f}') if scores[i] is not None else 'Custom'
-                            boxes_scores.append({'box': box, 'score': score})
-                else:
-                    for i in range(len(boxes)):
-                        if boxes[i] not in removed_boxes:
-                            box = boxes[i]
-                            score = float(f'{scores[i]:.2f}') if scores[i] is not None else 'Custom'
-                            classification_label = self.extract_classification_label(df_classification, box)
-                            boxes_scores.append({'box': box, 'score': score, 'classification': classification_label})
+                        removed_boxes = self.extract_value_field(df, field='removed')
 
-                print(
-                    "[MG][BOXES] total=%d new=%d removed=%d final=%d"
-                    % (len(boxes), len(new_boxes), len(removed_boxes), len(boxes_scores))
-                )
-                print(f"[MG][BOXES] boxes_scores={boxes_scores}")
+                        df_classification = self.load_csv(self.csv_classification)
+                        if df_classification is None:
+                            for i in range(len(boxes)):
+                                if boxes[i] not in removed_boxes:
+                                    box = boxes[i]
+                                    score = float(f'{scores[i]:.2f}') if scores[i] is not None else 'Custom'
+                                    boxes_scores.append({'box': box, 'score': score})
+                        else:
+                            for i in range(len(boxes)):
+                                if boxes[i] not in removed_boxes:
+                                    box = boxes[i]
+                                    score = float(f'{scores[i]:.2f}') if scores[i] is not None else 'Custom'
+                                    classification_label = self.extract_classification_label(df_classification, box)
+                                    boxes_scores.append({'box': box, 'score': score, 'classification': classification_label})
 
-                # boxes = [box for box in boxes if box not in removed_boxes]
-                # Use QTimer.singleShot for deferred execution to avoid async task conflicts
-                from PySide6.QtCore import QTimer
-                if not boxes_scores:
-                    print("[MG][BOXES] no boxes to render for this series")
-                    try:
-                        self.image_viewer.clear_boxes()
-                    except Exception:
-                        pass
-                else:
-                    print(f"[MG][BOXES] Scheduling render of {len(boxes_scores)} boxes in 100ms")
-                QTimer.singleShot(100, lambda: self.add_ai_boxes2viewer(boxes_scores))
+                        stats = {
+                            "total": len(boxes),
+                            "new": len(new_boxes),
+                            "removed": len(removed_boxes),
+                            "final": len(boxes_scores),
+                        }
+                        self._ai_boxes_cache[cache_key] = {
+                            "boxes_scores": boxes_scores,
+                            "stats": stats,
+                        }
+                    else:
+                        boxes_scores = cache_entry.get("boxes_scores", [])
+                        stats = cache_entry.get("stats", {"total": 0, "new": 0, "removed": 0, "final": len(boxes_scores)})
+
+                    print(
+                        "[MG][BOXES] total=%d new=%d removed=%d final=%d"
+                        % (stats.get("total", 0), stats.get("new", 0), stats.get("removed", 0), stats.get("final", 0))
+                    )
+                    print(f"[MG][BOXES] boxes_scores={boxes_scores}")
+
+                    from PySide6.QtCore import QTimer
+                    if not boxes_scores:
+                        print("[MG][BOXES] no boxes to render for this series")
+                        try:
+                            self.image_viewer.clear_boxes()
+                        except Exception:
+                            pass
+                    else:
+                        print(f"[MG][BOXES] Scheduling render of {len(boxes_scores)} boxes in 100ms")
+                        QTimer.singleShot(100, lambda: self.add_ai_boxes2viewer(boxes_scores))
+                finally:
+                    self._ai_last_run_series_uid = series_uid
+                    self._ai_last_run_ts = time.time()
+                    self._ai_busy = False
         else:
             print(f"[MG][MANAGER_AI] Modality is not MG, skipping boxes")
         print(f"[MG][MANAGER_AI] END series={series_num}")
 
     def extract_classification_label(self, df_classification, box_selected):
-        lst_ai_data = self.get_series_ai_data_from_df(df_classification, check_all_rows=True)
+        lst_ai_data = self._get_series_ai_cached(df_classification, check_all_rows=True)
 
         if lst_ai_data is not None:
             # get_series_ai_data_from_df returns a list of DataFrames when check_all_rows=True

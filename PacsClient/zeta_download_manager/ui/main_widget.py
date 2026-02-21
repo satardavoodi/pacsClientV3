@@ -2846,24 +2846,16 @@ class DownloadManagerWidget(QWidget):
                 
                 # Try to fetch study metadata from database and create state
                 try:
-                    from PacsClient.utils.db_manager import get_patient_by_study_uid
-                    db_info = get_patient_by_study_uid(study_uid)
+                    from PacsClient.utils.db_manager import get_study_info_with_series
+                    db_info = get_study_info_with_series(study_uid)
                     
                     if db_info:
                         logger.info(f"✅ [SERIES RETRY] Found study in database, creating state...")
+                        logger.info(f"   Patient: {db_info.get('patient_name', 'Unknown')}")
+                        logger.info(f"   Series count: {len(db_info.get('series', []))}")
                         
                         # Create task and state from DB info
-                        task = self._create_task_from_dict({
-                            'study_uid': study_uid,
-                            'patient_id': db_info.get('patient_id', ''),
-                            'patient_name': db_info.get('patient_name', ''),
-                            'study_date': db_info.get('study_date', ''),
-                            'study_description': db_info.get('study_description', ''),
-                            'modality': db_info.get('modality', ''),
-                            'series_count': db_info.get('series_count', 0),
-                            'images_count': 0,
-                            'series': []
-                        })
+                        task = self._create_task_from_dict(db_info)
                         
                         # Create state in store
                         state = self.state_store.create(task)

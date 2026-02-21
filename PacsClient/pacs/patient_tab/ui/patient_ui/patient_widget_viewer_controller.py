@@ -4478,19 +4478,55 @@ class ViewerController:
         #     QApplication.processEvents()
         pass  # Do nothing to match _show_loading_msg being disabled
 
-    def _get_default_layout_from_config(self) -> tuple[int, int]:
-        """Read default layout from modality_grid.json (fallback 1x2)."""
+    def _get_default_layout_from_config(self, modality: str = None) -> tuple[int, int]:
+        """Read layout from modality_grid.json based on modality (fallback to default then 1x2).
+        
+        Args:
+            modality: Optional modality string (e.g., 'CT', 'MR'). If provided, tries to find
+                     modality-specific layout first.
+        
+        Returns:
+            tuple: (rows, cols) for viewer grid layout
+        """
         try:
             if GRID_CONFIG_PATH.exists():
                 with open(GRID_CONFIG_PATH, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                
+                # 1. اگر مودالیتی مشخص شده، ابتدا در modality_layouts جستجو می‌کنیم
+                if modality:
+                    # جستجو در modality_layouts
+                    modality_layouts = data.get('modality_layouts', {})
+                    if modality in modality_layouts:
+                        mod_cfg = modality_layouts[modality]
+                        if isinstance(mod_cfg, dict):
+                            rows = int(mod_cfg.get('rows', 1))
+                            cols = int(mod_cfg.get('cols', 2))
+                            print(f"✅ Using layout for {modality}: {rows}x{cols}")
+                            return (rows, cols)
+                    
+                    # اگر در modality_layouts نبود، مستقیم در root جستجو می‌کنیم (برای سازگاری با فایل‌های قدیمی)
+                    if modality in data:
+                        mod_cfg = data[modality]
+                        if isinstance(mod_cfg, dict):
+                            rows = int(mod_cfg.get('rows', 1))
+                            cols = int(mod_cfg.get('cols', 2))
+                            print(f"✅ Using layout for {modality} (legacy): {rows}x{cols}")
+                            return (rows, cols)
+                
+                # 2. اگر مودالیتی پیدا نشد یا مشخص نشده، از default استفاده می‌کنیم
                 default_cfg = data.get('default') or data.get('DEFAULT')
                 if isinstance(default_cfg, dict):
                     rows = int(default_cfg.get('rows', 1))
                     cols = int(default_cfg.get('cols', 2))
+                    print(f"ℹ️ Using default layout: {rows}x{cols}")
                     return (rows, cols)
-        except Exception:
-            pass
+                    
+        except Exception as e:
+            print(f"⚠️ Error reading grid config: {e}")
+        
+        # 3. اگر همه چیز ناموفق بود، از fallback استفاده می‌کنیم
+        print("ℹ️ Using fallback layout: 1x2")
         return (1, 2)
 
     def _load_first_series_sync(self, size_init_viewers):
