@@ -134,14 +134,26 @@ class ImageViewer2DOptimized(vtk.vtkResliceImageViewer):
         self._render_timer = None
         self._high_quality_mode = high_quality_interpolation
         
-        # ========== بهینه‌سازی 1: Conditional Upsampling ==========
-        self.vtk_image_data = vtk_image_data
-        if enable_upsampling and should_upsample(vtk_image_data, height):
-            # فقط در صورت نیاز واقعی
-            self.vtk_image_data = fast_display_upsample_xy(vtk_image_data, factor=2.0)
-        
+        # Store metadata first (needed for modality check)
         self.metadata = metadata
         self.metadata_fixed = metadata_fixed
+        
+        # ========== بهینه‌سازی 1: Conditional Upsampling (CT only) ==========
+        # ✅ MODALITY CHECK: Only apply uniform scaling for CT modality
+        # Other modalities (MR, US, XA, etc.) keep their natural spacing/aspect ratio
+        modality = None
+        try:
+            if metadata:
+                modality = str(metadata.get('series', {}).get('modality', '')).upper().strip()
+        except Exception:
+            pass
+        
+        is_ct = (modality == 'CT')
+        
+        self.vtk_image_data = vtk_image_data
+        if enable_upsampling and is_ct and should_upsample(vtk_image_data, height):
+            # فقط برای CT و در صورت نیاز واقعی
+            self.vtk_image_data = fast_display_upsample_xy(vtk_image_data, factor=2.0)
         
         # Setup basic rendering
         self.SetRenderWindow(self.image_render_window)
@@ -165,7 +177,19 @@ class ImageViewer2DOptimized(vtk.vtkResliceImageViewer):
         self.UpdateDisplayExtent()
         
         # ========== بهینه‌سازی 3: Batch Actor Loading (بدون Render) ==========
-        self.base_zoom_scale = self._calculate_zoom_to_fit()  # محاسبه بدون render
+        # ✅ MODALITY-SPECIFIC ZOOM: Only fit-to-window for CT
+        modality = str(self.metadata.get('series', {}).get('modality', '')).upper().strip()
+        is_ct = (modality == 'CT')
+        
+        if is_ct:
+            self.base_zoom_scale = self._calculate_zoom_to_fit()  # محاسبه بدون render
+        else:
+            # Fixed scale for non-CT modalities (consistent display across all series)
+            camera = self.renderer.GetActiveCamera()
+            camera.ParallelProjectionOn()
+            fixed_scale = 256.0
+            camera.SetParallelScale(fixed_scale)
+            self.base_zoom_scale = fixed_scale
         
         # همه actorها را بدون render اضافه کن
         self._batch_load_all_actors()

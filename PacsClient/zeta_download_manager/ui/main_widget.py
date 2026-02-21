@@ -1364,6 +1364,10 @@ class DownloadManagerWidget(QWidget):
         overall_downloaded = completed_images + current_done
         overall_total = max(total_images, 0)
         overall_percent = (overall_downloaded / overall_total * 100) if overall_total > 0 else 0.0
+        if overall_percent < 0:
+            overall_percent = 0.0
+        elif overall_percent > 100:
+            overall_percent = 100.0
 
         return overall_downloaded, overall_total, overall_percent
     
@@ -1395,6 +1399,10 @@ class DownloadManagerWidget(QWidget):
             display_percent = state.progress_percent
             if display_percent <= 0 and display_total > 0 and display_downloaded > 0:
                 display_percent = (display_downloaded / display_total) * 100
+            if display_percent < 0:
+                display_percent = 0.0
+            elif display_percent > 100:
+                display_percent = 100.0
             
             # Update table progress bar
             try:
@@ -2410,6 +2418,17 @@ class DownloadManagerWidget(QWidget):
         """
         logger.error(f"❌ [ERROR] Worker error: {study_uid[:40] if study_uid else 'None'}... - {error_message}")
 
+        # If this study was auto-paused (preemption), do not mark it as FAILED.
+        current_state = self.state_store.get(study_uid)
+        if current_state and current_state.status == DownloadStatus.PAUSED and current_state.is_auto_paused:
+            logger.info(
+                f"⏸️ [ERROR] Ignoring error for auto-paused study {study_uid[:40]}... (preemption)"
+            )
+            # Allow the pipeline to continue for other downloads.
+            self._check_auto_resume()
+            QTimer.singleShot(100, self._start_next_pending)
+            return
+
         # Update state to FAILED before emitting signal
         self.state_store.update(
             study_uid,
@@ -2846,27 +2865,21 @@ class DownloadManagerWidget(QWidget):
                 
                 # Try to fetch study metadata from database and create state
                 try:
-                    from PacsClient.utils.db_manager import get_patient_by_study_uid
-                    db_info = get_patient_by_study_uid(study_uid)
+                    from PacsClient.utils.db_manager import get_study_info_with_series
+                    db_info = get_study_info_with_series(study_uid)
                     
                     if db_info:
                         logger.info(f"✅ [SERIES RETRY] Found study in database, creating state...")
+                        logger.info(f"   Patient: {db_info.get('patient_name', 'Unknown')}")
+                        logger.info(f"   Series count: {len(db_info.get('series', []))}")
                         
                         # Create task and state from DB info
-                        task = self._create_task_from_dict({
-                            'study_uid': study_uid,
-                            'patient_id': db_info.get('patient_id', ''),
-                            'patient_name': db_info.get('patient_name', ''),
-                            'study_date': db_info.get('study_date', ''),
-                            'study_description': db_info.get('study_description', ''),
-                            'modality': db_info.get('modality', ''),
-                            'series_count': db_info.get('series_count', 0),
-                            'images_count': 0,
-                            'series': []
-                        })
+                        task = self._create_task_from_dict(db_info)
                         
                         # Create state in store
                         state = self.state_store.create(task)
+                        # Keep task available for retry mapping and worker start
+                        self._tasks[study_uid] = task
                         logger.info(f"✅ [SERIES RETRY] Auto-created state for study {study_uid[:40]}")
                     else:
                         logger.warning(f"⚠️ [SERIES RETRY] Study not found in database")
@@ -2923,9 +2936,20 @@ class DownloadManagerWidget(QWidget):
                 if task:
                     self._tasks[study_uid] = task
 
+            target_uid = str(series_uid) if series_uid else None
+            target_num = str(series_number) if series_number is not None else None
+
             if task and task.series_list:
-                target_uid = str(series_uid) if series_uid else None
-                target_num = str(series_number) if series_number is not None else None
+                # Resolve missing series_uid/series_number from the task list
+                if not target_uid or not target_num:
+                    for series_info in task.series_list:
+                        if target_uid and str(series_info.series_uid) == target_uid:
+                            target_num = str(series_info.series_number)
+                            break
+                        if target_num is not None and str(series_info.series_number) == target_num:
+                            target_uid = str(series_info.series_uid)
+                            break
+
                 target_idx = None
                 for idx, series_info in enumerate(task.series_list):
                     if target_uid and str(series_info.series_uid) == target_uid:
@@ -2940,44 +2964,46 @@ class DownloadManagerWidget(QWidget):
                     series_list.insert(0, series_list.pop(target_idx))
                     task = replace(task, series_list=series_list)
                     self._tasks[study_uid] = task
-                    logger.info(f"✅ [SERIES RETRY] Promoted series {series_number} to the front of the download order")
+                    logger.info(f"✅ [SERIES RETRY] Promoted series {target_num or series_number} to the front of the download order")
 
             # Remove series from completed/failed/skipped lists if present
             series_removed = False
             
             # Try to remove by series_number first
-            if series_number:
-                if series_number in state.completed_series:
-                    state.completed_series.remove(series_number)
-                    logger.info(f"✅ [SERIES RETRY] Removed series {series_number} from completed_series")
+            if target_num:
+                if target_num in state.completed_series:
+                    state.completed_series.remove(target_num)
+                    logger.info(f"✅ [SERIES RETRY] Removed series {target_num} from completed_series")
                     series_removed = True
-                if series_number in state.failed_series:
-                    state.failed_series.remove(series_number)
-                    logger.info(f"✅ [SERIES RETRY] Removed series {series_number} from failed_series")
-                    series_removed = True
-            
-            # Try to remove by series_uid if provided
-            if series_uid:
-                if series_uid in state.completed_series:
-                    state.completed_series.remove(series_uid)
-                    logger.info(f"✅ [SERIES RETRY] Removed series UID {series_uid[:40]} from completed_series")
-                    series_removed = True
-                if series_uid in state.failed_series:
-                    state.failed_series.remove(series_uid)
-                    logger.info(f"✅ [SERIES RETRY] Removed series UID {series_uid[:40]} from failed_series")
+                if target_num in state.failed_series:
+                    state.failed_series.remove(target_num)
+                    logger.info(f"✅ [SERIES RETRY] Removed series {target_num} from failed_series")
                     series_removed = True
 
-            if series_number and series_number in state.skipped_series:
-                state.skipped_series.remove(series_number)
-                logger.info(f"✅ [SERIES RETRY] Removed series {series_number} from skipped_series")
+            # Try to remove by series_uid if provided or resolved
+            if target_uid:
+                if target_uid in state.completed_series:
+                    state.completed_series.remove(target_uid)
+                    logger.info(f"✅ [SERIES RETRY] Removed series UID {target_uid[:40]} from completed_series")
+                    series_removed = True
+                if target_uid in state.failed_series:
+                    state.failed_series.remove(target_uid)
+                    logger.info(f"✅ [SERIES RETRY] Removed series UID {target_uid[:40]} from failed_series")
+                    series_removed = True
+
+            if target_num and target_num in state.skipped_series:
+                state.skipped_series.remove(target_num)
+                logger.info(f"✅ [SERIES RETRY] Removed series {target_num} from skipped_series")
                 series_removed = True
-            if series_uid and series_uid in state.skipped_series:
-                state.skipped_series.remove(series_uid)
-                logger.info(f"✅ [SERIES RETRY] Removed series UID {series_uid[:40]} from skipped_series")
+            if target_uid and target_uid in state.skipped_series:
+                state.skipped_series.remove(target_uid)
+                logger.info(f"✅ [SERIES RETRY] Removed series UID {target_uid[:40]} from skipped_series")
                 series_removed = True
             
             if not series_removed:
-                logger.warning(f"⚠️ [SERIES RETRY] Series {series_number} not found in completed/failed lists")
+                logger.warning(
+                    f"⚠️ [SERIES RETRY] Series {target_num or series_number} not found in completed/failed lists"
+                )
             
             # CRITICAL: Delete series files from disk to force re-download
             # Otherwise downloader will skip the series thinking it's already complete
@@ -2986,7 +3012,7 @@ class DownloadManagerWidget(QWidget):
                 from pathlib import Path
                 import shutil
                 
-                series_path = Path(SOURCE_PATH) / study_uid / str(series_number)
+                series_path = Path(SOURCE_PATH) / study_uid / str(target_num or series_number)
                 if series_path.exists():
                     logger.info(f"🗑️ [SERIES RETRY] Deleting existing series files from disk: {series_path}")
                     shutil.rmtree(series_path)
@@ -3621,9 +3647,15 @@ class DownloadManagerWidget(QWidget):
         self.priority_combo.setCurrentText(state.priority.display_name)
         self.priority_combo.blockSignals(False)
 
-        # Load reception data
+        # Load reception data (avoid re-fetch loops on repeated refreshes)
         if task and task.patient_id:
-            self._load_reception_data(task.patient_id, study_uid)
+            patient_id = task.patient_id
+            cached_data = self._reception_cache.get(patient_id)
+            if patient_id == self._last_reception_patient_id and cached_data:
+                logger.info(f"📋 [RECEPTION] Using cached data for patient {patient_id}")
+                self._apply_reception_data(cached_data)
+            else:
+                self._load_reception_data(patient_id, study_uid)
 
         # Update series breakdown
         if task:
@@ -4134,6 +4166,10 @@ class DownloadManagerWidget(QWidget):
         if not patient_id:
             logger.info("📋 [RECEPTION] No patient ID provided, skipping reception data load")
             return
+        # Skip duplicate in-flight requests for the same patient
+        if patient_id in self._pending_reception_requests:
+            logger.info(f"📋 [RECEPTION] Request already pending for patient {patient_id}, skipping")
+            return
 
         logger.info("=" * 120)
         logger.info(f"📋 [RECEPTION_REQUEST] 🔄 Loading reception data for patient")
@@ -4236,9 +4272,6 @@ class DownloadManagerWidget(QWidget):
                 if current_patient_id == patient_id:
                     logger.info(f"   ✅ Current selection has matching patient_id: {patient_id}")
                     should_apply = True
-                else:
-                    logger.info(f"   ℹ️ Data is for different patient (current: {current_patient_id}, received: {patient_id}). Not applying.")
-            
             if should_apply:
                 logger.info(f"   🎨 Applying reception data to UI for patient {patient_id}")
                 self._apply_reception_data(patient_data)

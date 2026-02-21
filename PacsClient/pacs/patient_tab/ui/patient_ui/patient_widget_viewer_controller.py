@@ -226,6 +226,9 @@ class ViewerController:
         self._pending_thumbnail_updates = []
         self._image_cache_max_size = 10
 
+        # Track current layout to avoid redundant re-applies
+        self._current_layout = None
+
         # Per-viewport request/version state to avoid stale async apply
         self._viewer_request_token = {}  # viewer_id -> token
 
@@ -238,6 +241,7 @@ class ViewerController:
         self._series_load_events = {}  # series_number -> threading.Event
         self._series_load_lock = threading.Lock()
         self._prefetch_max_series = 24
+
         self._prefetch_delay_ms = 120
         self._interactive_load_in_progress = False
 
@@ -303,6 +307,36 @@ class ViewerController:
             f"heavy_threshold={_cap['warmup_max_slices']}slices "
             f"disk_persist_max={_cap['disk_persist_max']//(1024*1024)}MB"
         )
+
+    def _ensure_grid_config_exists(self):
+        """Create the modality grid config if missing."""
+        if GRID_CONFIG_PATH.exists():
+            return
+
+        default_config = {
+            "default": {"rows": 1, "cols": 2},
+            "modality_layouts": {
+                "CT": {"rows": 1, "cols": 2},
+                "MR": {"rows": 1, "cols": 2},
+                "MG": {"rows": 2, "cols": 2},
+                "CR": {"rows": 1, "cols": 2},
+                "DX": {"rows": 1, "cols": 2},
+                "US": {"rows": 1, "cols": 2},
+                "XA": {"rows": 1, "cols": 2},
+                "RF": {"rows": 1, "cols": 2},
+                "NM": {"rows": 1, "cols": 2},
+                "PT": {"rows": 1, "cols": 2},
+                "OT": {"rows": 1, "cols": 2}
+            }
+        }
+
+        try:
+            GRID_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(GRID_CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(default_config, f, indent=2, ensure_ascii=False)
+            print(f"✅ Default modality grid config created: {GRID_CONFIG_PATH}")
+        except Exception as e:
+            print(f"⚠️ Could not create default grid config: {e}")
 
     def _is_boostviewer_enabled_runtime(self) -> bool:
         try:
@@ -1269,47 +1303,68 @@ class ViewerController:
         if series_str in self._hot_series_cache:
             hot_entry = self._hot_series_cache[series_str]
             if _entry_is_valid(hot_entry):
+                print(f"🔍 [FAST_LOOKUP] series={series_str} → HOT CACHE HIT")
                 return hot_entry
             self._hot_series_cache.pop(series_str, None)
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → hot cache stale, removed")
         
         # 2. Check main cache
         if series_str in self._series_cache:
             result = self._series_cache[series_str]
             if _entry_is_valid(result):
                 self._hot_series_cache[series_str] = result
+                print(f"🔍 [FAST_LOOKUP] series={series_str} → MAIN CACHE HIT")
                 return result
             self._series_cache.pop(series_str, None)
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → main cache stale, removed")
         
         # 3. Check index for fallback
         if series_str in self._series_number_to_index:
             idx = self._series_number_to_index[series_str]
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → found in index, idx={idx}")
             if idx < len(self.parent_widget.lst_thumbnails_data):
                 item = self.parent_widget.lst_thumbnails_data[idx]
                 vtk_data = item.get('vtk_image_data')
                 meta = item.get('metadata')
-                result = (vtk_data, meta, idx)
-                self._series_cache[series_str] = result
-                if len(self._hot_series_cache) > 3:  # Keep hot cache small
-                    self._hot_series_cache.pop(next(iter(self._hot_series_cache)))
-                self._hot_series_cache[series_str] = result
-                return result
+                print(f"🔍 [FAST_LOOKUP] series={series_str} → item retrieved: vtk={vtk_data is not None}, meta={meta is not None}")
+                if vtk_data is not None and meta is not None:
+                    result = (vtk_data, meta, idx)
+                    self._series_cache[series_str] = result
+                    if len(self._hot_series_cache) > 3:  # Keep hot cache small
+                        self._hot_series_cache.pop(next(iter(self._hot_series_cache)))
+                    self._hot_series_cache[series_str] = result
+                    print(f"🔍 [FAST_LOOKUP] series={series_str} → RETURNING from index lookup")
+                    return result
+                else:
+                    print(f"🔍 [FAST_LOOKUP] series={series_str} → item has None data, continuing to full cache")
+            else:
+                print(f"🔍 [FAST_LOOKUP] series={series_str} → idx {idx} >= list length {len(self.parent_widget.lst_thumbnails_data)}")
+        else:
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → NOT in _series_number_to_index")
 
         # 4. Deterministic full-series cache fallback (survives index churn)
         cached_full = self._full_cache_get(series_str)
         if cached_full is not None:
             vtk_data, meta = cached_full[0], cached_full[1]
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → FULL CACHE HIT: vtk={vtk_data is not None}, meta={meta is not None}")
             if vtk_data is not None and isinstance(meta, dict):
                 # Rehydrate parent/index caches on demand
                 try:
                     idx = self.parent_widget.replace_series_data(series_str, vtk_data, meta, meta.get('series', {}).get('thumbnail_path', ''))
-                except Exception:
+                    print(f"🔍 [FAST_LOOKUP] series={series_str} → rehydrated to lst_thumbnails_data at idx={idx}")
+                except Exception as e:
+                    print(f"🔍 [FAST_LOOKUP] series={series_str} → rehydrate FAILED: {e}")
                     idx = -1
                 if idx >= 0:
                     result = (vtk_data, meta, idx)
                     self._series_cache[series_str] = result
                     self._hot_series_cache[series_str] = result
+                    print(f"🔍 [FAST_LOOKUP] series={series_str} → RETURNING from full cache")
                     return result
+        else:
+            print(f"🔍 [FAST_LOOKUP] series={series_str} → NOT in full cache")
         
+        print(f"🔍 [FAST_LOOKUP] series={series_str} → FINAL RETURN: None, None, -1")
         return None, None, -1
 
     def _get_paired_series_fast(self, series_name: str, exclude_number: str = None) -> list:
@@ -1359,6 +1414,8 @@ class ViewerController:
             required_count = rows * cols
             current_count = len(self.lst_nodes_viewer)
             current_data_count = len(self.parent_widget.lst_thumbnails_data)
+
+            self._current_layout = (rows, cols)
 
             print(f"🔧 [LAYOUT] Applying {rows}x{cols} layout (need {required_count} viewers, have {current_count})")
 
@@ -1809,6 +1866,11 @@ class ViewerController:
     def _create_lightweight_vtk_placeholder(self):
         """Create a lightweight VTK widget that defers rendering until data is loaded"""
         try:
+            # Use parent_widget's create_dummy_vtk_widget if available (supports AIVTKWidget override)
+            if hasattr(self.parent_widget, 'create_dummy_vtk_widget'):
+                return self.parent_widget.create_dummy_vtk_widget()
+            
+            # Fallback to default VTKWidget creation
             height = self.parent_widget.sidebar.height() if hasattr(self.parent_widget, 'sidebar') and self.parent_widget.sidebar else 480
             vtk_widget = VTKWidget(height_viewer=height, patient_widget=self.parent_widget)
 
@@ -1937,6 +1999,10 @@ class ViewerController:
 
     def creator_vtk_widget(self):
         try:
+            # Use parent_widget's creator method if available (supports AIVTKWidget override)
+            if hasattr(self.parent_widget, 'creator_vtk_widget'):
+                return self.parent_widget.creator_vtk_widget()
+            # Fallback to default VTKWidget creation
             height = self.parent_widget.sidebar.height() if hasattr(self.parent_widget, 'sidebar') and self.parent_widget.sidebar else 480
             return VTKWidget(height_viewer=height, patient_widget=self.parent_widget)
         except Exception as e:
@@ -3637,7 +3703,8 @@ class ViewerController:
             print(f"📂 [LOAD] Loading series {series_number} from {study_path} (thread={threading.current_thread().name})")
 
             # Bail out early if tab was deactivated while queued (e.g. user pressed F5).
-            if not self._tab_active:
+            # Allow explicit user-driven loads even if tab_active flag is stale.
+            if not self._tab_active and not self._interactive_load_in_progress:
                 print(f"⏭️ [LOAD SKIP] tab inactive for series {series_number}")
                 return False
 
@@ -3848,6 +3915,7 @@ class ViewerController:
                 metadata=metadata,
                 file_path=file_path
             )
+            print(f"🔄 [APPLY] series={series_number} → replace_series_data returned idx={series_idx}")
 
             # Update study path if needed
             if metadata.get('series', {}).get('series_path'):
@@ -4053,6 +4121,24 @@ class ViewerController:
                         self.parent_widget.series_downloaded.emit(series_number)
                     return
             print(f"   ℹ️ No server info available for download")
+
+            # Fallback: trigger per-series retry via Download Manager
+            inflight = getattr(self.parent_widget, '_retry_series_inflight', None)
+            if inflight is None:
+                inflight = set()
+                self.parent_widget._retry_series_inflight = inflight
+            if series_number in inflight:
+                return
+            inflight.add(series_number)
+
+            try:
+                self.parent_widget._on_retry_series_download(
+                    series_number=str(series_number),
+                    study_uid=str(getattr(self.parent_widget, 'study_uid', '') or ''),
+                    series_uid=None,
+                )
+            finally:
+                QTimer.singleShot(2000, lambda: inflight.discard(series_number))
         except Exception as e:
             print(f"   ⚠️ Error triggering download: {e}")
 
@@ -4157,7 +4243,14 @@ class ViewerController:
             # Check if already loaded
             series_key = f"series_{series_number_str}"
             if series_key in self.parent_widget.lst_series_name:
-                self.logger.debug(f"Series {series_number_str} already loaded, skipping")
+                # Series data is loaded, but if first series hasn't been displayed
+                # yet (e.g. loaded by show_exist_thumbnails but never shown on
+                # viewer), trigger display now.
+                if (not self._first_series_displayed) or self._any_viewer_empty():
+                    self.logger.info(f"Series {series_number_str} already loaded but not displayed — showing now")
+                    QTimer.singleShot(0, lambda sn=series_number_str: self._display_series_after_load(sn))
+                else:
+                    self.logger.debug(f"Series {series_number_str} already loaded, skipping")
                 return
 
             # Mark as pending
@@ -4173,15 +4266,27 @@ class ViewerController:
                 self.parent_widget._event_loop = loop
 
                 async def _safe_async_load():
-                    """Load series asynchronously without locks - preview-first strategy"""
+                    """Load series asynchronously without locks - preview-first strategy."""
                     try:
                         # ✅ OPTIMIZATION: مرحله 1 - Preview سریع (100-200ms)
+                        # Run preview loading in a worker thread to avoid UI/event-loop stalls.
                         study_path = self._get_correct_study_path()
                         if study_path:
-                            vtk_preview, meta_preview = self._load_series_preview_async(
-                                series_number_str, 
-                                study_path
-                            )
+                            try:
+                                vtk_preview, meta_preview = await asyncio.to_thread(
+                                    self._load_series_preview_async,
+                                    series_number_str,
+                                    study_path,
+                                )
+                            except AttributeError:
+                                loop = asyncio.get_event_loop()
+                                vtk_preview, meta_preview = await loop.run_in_executor(
+                                    None,
+                                    self._load_series_preview_async,
+                                    series_number_str,
+                                    study_path,
+                                )
+
                             if vtk_preview is not None and meta_preview is not None:
                                 # Display preview فوری
                                 try:
@@ -4191,7 +4296,7 @@ class ViewerController:
                                         meta_preview,
                                         self.parent_widget.metadata_fixed.get('patient_pk', None),
                                         self.parent_widget.metadata_fixed.get('study_pk', None),
-                                        refresh_viewer=False
+                                        refresh_viewer=False,
                                     )
                                     print(f"📺 [PREVIEW] displayed for series={series_number_str}")
                                 except Exception as e:
@@ -4428,19 +4533,56 @@ class ViewerController:
         #     QApplication.processEvents()
         pass  # Do nothing to match _show_loading_msg being disabled
 
-    def _get_default_layout_from_config(self) -> tuple[int, int]:
-        """Read default layout from modality_grid.json (fallback 1x2)."""
+    def _get_default_layout_from_config(self, modality: str = None) -> tuple[int, int]:
+        """Read layout from modality_grid.json based on modality (fallback to default then 1x2).
+        
+        Args:
+            modality: Optional modality string (e.g., 'CT', 'MR'). If provided, tries to find
+                     modality-specific layout first.
+        
+        Returns:
+            tuple: (rows, cols) for viewer grid layout
+        """
         try:
+            self._ensure_grid_config_exists()
             if GRID_CONFIG_PATH.exists():
                 with open(GRID_CONFIG_PATH, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                
+                # 1. اگر مودالیتی مشخص شده، ابتدا در modality_layouts جستجو می‌کنیم
+                if modality:
+                    # جستجو در modality_layouts
+                    modality_layouts = data.get('modality_layouts', {})
+                    if modality in modality_layouts:
+                        mod_cfg = modality_layouts[modality]
+                        if isinstance(mod_cfg, dict):
+                            rows = int(mod_cfg.get('rows', 1))
+                            cols = int(mod_cfg.get('cols', 2))
+                            print(f"✅ Using layout for {modality}: {rows}x{cols}")
+                            return (rows, cols)
+                    
+                    # اگر در modality_layouts نبود، مستقیم در root جستجو می‌کنیم (برای سازگاری با فایل‌های قدیمی)
+                    if modality in data:
+                        mod_cfg = data[modality]
+                        if isinstance(mod_cfg, dict):
+                            rows = int(mod_cfg.get('rows', 1))
+                            cols = int(mod_cfg.get('cols', 2))
+                            print(f"✅ Using layout for {modality} (legacy): {rows}x{cols}")
+                            return (rows, cols)
+                
+                # 2. اگر مودالیتی پیدا نشد یا مشخص نشده، از default استفاده می‌کنیم
                 default_cfg = data.get('default') or data.get('DEFAULT')
                 if isinstance(default_cfg, dict):
                     rows = int(default_cfg.get('rows', 1))
                     cols = int(default_cfg.get('cols', 2))
+                    print(f"ℹ️ Using default layout: {rows}x{cols}")
                     return (rows, cols)
-        except Exception:
-            pass
+                    
+        except Exception as e:
+            print(f"⚠️ Error reading grid config: {e}")
+        
+        # 3. اگر همه چیز ناموفق بود، از fallback استفاده می‌کنیم
+        print("ℹ️ Using fallback layout: 1x2")
         return (1, 2)
 
     def _load_first_series_sync(self, size_init_viewers):
@@ -4502,6 +4644,8 @@ class ViewerController:
         """⚡ Optimized: Synchronous viewer layout without processEvents delays"""
         try:
             number_of_row, number_of_column = int(numbers[0]), int(numbers[1])
+
+            self._current_layout = (number_of_row, number_of_column)
 
             # Cleanup old viewers
             self.cleanup_all_viewers()

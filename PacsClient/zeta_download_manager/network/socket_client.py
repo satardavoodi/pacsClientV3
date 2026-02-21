@@ -769,6 +769,9 @@ class SocketDicomClient:
                     if is_compressed:
                         dicom_bytes = gzip.decompress(dicom_bytes)
                     
+                    # Ensure directory exists (defensive check for preemption recovery)
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    
                     # Save file
                     with open(file_path, 'wb') as f:
                         f.write(dicom_bytes)
@@ -777,6 +780,9 @@ class SocketDicomClient:
                     
                 except Exception as e:
                     logger.error(f"❌ Error saving instance {instance_number}: {e}")
+                    # Log the full path for debugging
+                    logger.error(f"   File path: {file_path}")
+                    logger.error(f"   Directory exists: {file_path.parent.exists()}")
                     continue
                 
                 # Progress callback

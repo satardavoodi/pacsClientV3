@@ -12,7 +12,8 @@ from PySide6.QtGui import QStandardItemModel, QStandardItem, QMovie
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QFileDialog, QGroupBox, QHBoxLayout,
     QLabel, QListView, QLineEdit, QMainWindow, QMessageBox, QPushButton,
-    QRadioButton, QSizePolicy, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QListWidget
+    QRadioButton, QSizePolicy, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QListWidget,
+    QProgressBar
 )
 
 from . import AbstractTab
@@ -326,6 +327,9 @@ class ImagingToolsTab(AbstractTab):
         self.vertical_layout: QVBoxLayout = self.get_center_layout_vertical()
         self.left_sidebar_root_layout: QVBoxLayout = self.get_sidebar_layout()
 
+        # ---- processing indicator (top-right of imaging tab)
+        self._init_processing_indicator()
+
         # ---- sidebar container widget
         self.left_sidebar_widget = QWidget()
         self.left_sidebar_layout = QVBoxLayout(self.left_sidebar_widget)
@@ -368,6 +372,45 @@ class ImagingToolsTab(AbstractTab):
 
         # Delay UI setup
         QTimer.singleShot(100, self._post_init_setup)
+
+    def _init_processing_indicator(self):
+        self.processing_widget = QWidget()
+        processing_layout = QHBoxLayout(self.processing_widget)
+        processing_layout.setContentsMargins(0, 0, 0, 0)
+        processing_layout.addStretch()
+
+        self.processing_label = QLabel("Processing: Idle")
+        self.processing_label.setStyleSheet("color: #9ca3af; font-weight: 600;")
+
+        self.processing_bar = QProgressBar()
+        self.processing_bar.setFixedWidth(140)
+        self.processing_bar.setFixedHeight(8)
+        self.processing_bar.setTextVisible(False)
+        self.processing_bar.setRange(0, 1)
+        self.processing_bar.setValue(1)
+        self.processing_bar.hide()
+
+        processing_layout.addWidget(self.processing_label)
+        processing_layout.addWidget(self.processing_bar)
+
+        self.vertical_layout.addWidget(self.processing_widget)
+
+    def set_processing_status(self, text: str, active: bool = True):
+        if not hasattr(self, "processing_label"):
+            return
+
+        if text:
+            self.processing_label.setText(text)
+
+        if active:
+            self.processing_label.setStyleSheet("color: #34d399; font-weight: 600;")
+            self.processing_bar.setRange(0, 0)
+            self.processing_bar.show()
+        else:
+            self.processing_label.setStyleSheet("color: #9ca3af; font-weight: 600;")
+            self.processing_bar.setRange(0, 1)
+            self.processing_bar.setValue(1)
+            self.processing_bar.hide()
 
     def _remove_patient_widget_buttons(self):
         """حذف دکمه‌های غیرضروری از patient_widget"""
@@ -413,6 +456,12 @@ class ImagingToolsTab(AbstractTab):
         
         # بارگذاری داده‌های bone age
         QTimer.singleShot(200, self._load_bone_age_feature_if_exists)
+
+        # Ensure the AI patient widget is treated as active in this window
+        try:
+            self.patient_widget.on_tab_activated()
+        except Exception:
+            pass
 
         
         # Load MG runs if needed
@@ -526,41 +575,6 @@ class ImagingToolsTab(AbstractTab):
             self.mg_runs_loaded = False
         finally:
             self.mg_runs_combo.blockSignals(False)
-
-
-        active = data.get("active", {})
-        available = data.get("available", [])
-
-        active_key = (
-            active.get("detection"),
-            active.get("classification")
-        )
-
-        active_index = -1
-
-        for idx, run in enumerate(available):
-            det = run.get("detection")
-            cls = run.get("classification")
-
-            thr_label = run.get("threshold_label")
-            thr = run.get("threshold")
-
-            if thr_label:
-                label = f"Threshold {thr_label}"
-            elif thr is not None:
-                label = f"Threshold {thr:.2f}"
-            else:
-                label = det
-
-            self.mg_runs_combo.addItem(label, (det, cls))
-
-            if (det, cls) == active_key:
-                active_index = idx
-
-        if active_index >= 0:
-            self.mg_runs_combo.setCurrentIndex(active_index)
-
-        self.mg_runs_combo.blockSignals(False)
 
     def _load_bone_age_feature_if_exists(self):
         """

@@ -51,13 +51,13 @@ class GridPickerPopup(QFrame):
         """)
 
         layout = QGridLayout(self)
-        layout.setSpacing(6)  # More spacing for easier clicking
+        layout.setSpacing(5)  # More spacing for easier clicking
 
         self.buttons = {}
         for r in range(max_size):
             for c in range(max_size):
                 btn = QPushButton()
-                btn.setFixedSize(32, 32)  # Larger cells for easier targeting
+                btn.setFixedSize(29, 29)  # Larger cells for easier targeting
                 btn.setCursor(Qt.PointingHandCursor)
                 btn.enterEvent = lambda e, rr=r, cc=c: self._hover(rr, cc)
                 btn.clicked.connect(lambda _, rr=r, cc=c: self._select(rr + 1, cc + 1))
@@ -83,8 +83,8 @@ class GridPickerButton(QPushButton):
         super().__init__(f"{rows} × {cols}", parent)
         self.rows = rows
         self.cols = cols
-        self.setFixedWidth(110)  # Wider for better readability
-        self.setMinimumHeight(38)  # Taller for easier clicking
+        self.setFixedWidth(100)  # Wider for better readability
+        self.setMinimumHeight(34)  # Taller for easier clicking
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(
             "QPushButton { font-size: 14px; font-weight: 600; }"
@@ -164,8 +164,8 @@ class ModalityGridConfigWidget(QWidget):
             background-color: #1b2230;
             border: 1px solid #2b313b;
             border-radius: 8px;
-            padding: 10px 16px;
-            min-height: 40px;
+            padding: 9px 14px;
+            min-height: 36px;
             font-size: 14px;
             font-weight: 600;
         }
@@ -183,8 +183,8 @@ class ModalityGridConfigWidget(QWidget):
             background-color: #1b2230;
             border: 1px solid #2b313b;
             border-radius: 6px;
-            padding: 8px 12px;
-            min-height: 38px;
+            padding: 7px 11px;
+            min-height: 34px;
             font-size: 14px;
         }
         QLabel {
@@ -193,34 +193,34 @@ class ModalityGridConfigWidget(QWidget):
         """)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 18)  # Generous padding
-        root.setSpacing(18)
+        root.setContentsMargins(18, 16, 18, 16)  # Generous padding
+        root.setSpacing(16)
 
         title = QLabel("Viewer Configuration")
-        title.setStyleSheet("font-size: 17px; font-weight: 700; color: #f3f4f6;")
+        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #f3f4f6;")
         root.addWidget(title, alignment=Qt.AlignLeft)
 
         card = QFrame()
         card.setObjectName("Card")
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         card_layout = QVBoxLayout(card)
-        card_layout.setSpacing(20)  # Larger spacing between sections
+        card_layout.setSpacing(18)  # Larger spacing between sections
 
         # ---------- Two Columns ----------
         content_row = QHBoxLayout()
-        content_row.setSpacing(20)  # More space between panels
+        content_row.setSpacing(18)  # More space between panels
 
         left_panel = QFrame()
         left_panel.setObjectName("Panel")
         left_panel_layout = QVBoxLayout(left_panel)
-        left_panel_layout.setContentsMargins(18, 18, 18, 18)  # Generous padding
-        left_panel_layout.setSpacing(16)
+        left_panel_layout.setContentsMargins(16, 16, 16, 16)  # Generous padding
+        left_panel_layout.setSpacing(14)
 
         right_panel = QFrame()
         right_panel.setObjectName("Panel")
         right_panel_layout = QVBoxLayout(right_panel)
-        right_panel_layout.setContentsMargins(18, 18, 18, 18)  # Generous padding
-        right_panel_layout.setSpacing(16)
+        right_panel_layout.setContentsMargins(16, 16, 16, 16)  # Generous padding
+        right_panel_layout.setSpacing(14)
 
         content_row.addWidget(left_panel, 3)
         content_row.addWidget(right_panel, 4)
@@ -228,12 +228,12 @@ class ModalityGridConfigWidget(QWidget):
 
         # ---------- Left: Grid ----------
         left_title = QLabel("Modality Grid Layout")
-        left_title.setStyleSheet("font-weight: 600; font-size: 15px; color: #f9fafb;")
+        left_title.setStyleSheet("font-weight: 600; font-size: 14px; color: #f9fafb;")
         left_panel_layout.addWidget(left_title)
 
         self.grid = QGridLayout()
-        self.grid.setHorizontalSpacing(18)  # More horizontal space
-        self.grid.setVerticalSpacing(14)  # More vertical space
+        self.grid.setHorizontalSpacing(16)  # More horizontal space
+        self.grid.setVerticalSpacing(13)  # More vertical space
 
         for i, h in enumerate(["Modality", "Layout", ""]):
             lbl = QLabel(h)
@@ -248,15 +248,15 @@ class ModalityGridConfigWidget(QWidget):
 
         self.new_name = QComboBox()
         self.new_name.setEditable(True)
-        self.new_name.setFixedWidth(120)  # Wider for better readability
+        self.new_name.setFixedWidth(108)  # Wider for better readability
 
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(self.GRID_PRESETS.keys())
-        self.preset_combo.setFixedWidth(100)  # Wider
+        self.preset_combo.setFixedWidth(90)  # Wider
 
         add_btn = QPushButton("Add")
         add_btn.setProperty("role", "success")
-        add_btn.setMinimumWidth(100)
+        add_btn.setMinimumWidth(90)
         add_btn.setCursor(Qt.PointingHandCursor)
         add_btn.clicked.connect(self.add_modality)
 
@@ -281,14 +281,14 @@ class ModalityGridConfigWidget(QWidget):
         boost_row.setSpacing(10)
         
         boost_title = QLabel("Boost Viewer")
-        boost_title.setStyleSheet("font-weight: 600; font-size: 15px; color: #f9fafb;")
+        boost_title.setStyleSheet("font-weight: 600; font-size: 14px; color: #f9fafb;")
         boost_row.addWidget(boost_title)
 
         self.boostviewer_toggle = QCheckBox("Enable BoostViewer")
         self.boostviewer_toggle.setChecked(True)
         self.boostviewer_toggle.setStyleSheet(
-            "QCheckBox { font-size: 14px; spacing: 10px; color: #e5e7eb; } "
-            "QCheckBox::indicator { width: 20px; height: 20px; }"
+            "QCheckBox { font-size: 14px; spacing: 9px; color: #e5e7eb; } "
+            "QCheckBox::indicator { width: 18px; height: 18px; }"
         )
         self.boostviewer_toggle.setToolTip(
             "When enabled, automatic ZetaBoost warm-up runs on patient tab activation.\n"
@@ -301,7 +301,7 @@ class ModalityGridConfigWidget(QWidget):
             "OFF: Manual-only mode (cache only what user drags/views)."
         )
         boost_desc.setStyleSheet(
-            "color: #d1d5db; font-size: 13px; padding: 10px; "
+            "color: #d1d5db; font-size: 14px; padding: 9px; "
             "background-color: #1f2937; border-radius: 4px; line-height: 1.5;"
         )
         boost_desc.setWordWrap(True)
@@ -315,17 +315,17 @@ class ModalityGridConfigWidget(QWidget):
 
         save = QPushButton("💾  Save Configuration")
         save.setProperty("role", "success")
-        save.setMinimumWidth(180)
-        save.setMinimumHeight(45)
+        save.setMinimumWidth(162)
+        save.setMinimumHeight(36)
         save.setCursor(Qt.PointingHandCursor)
         save.setStyleSheet(
-            "QPushButton { font-size: 15px; font-weight: 700; }"
+            "QPushButton { font-size: 14px; font-weight: 700; }"
         )
         save.clicked.connect(self.save_config)
 
         reload_btn = QPushButton("🔄  Reload")
-        reload_btn.setMinimumWidth(140)
-        reload_btn.setMinimumHeight(45)
+        reload_btn.setMinimumWidth(126)
+        reload_btn.setMinimumHeight(36)
         reload_btn.setCursor(Qt.PointingHandCursor)
         reload_btn.clicked.connect(self.load_config)
 
@@ -368,6 +368,27 @@ class ModalityGridConfigWidget(QWidget):
     # --------------------------------------------------
     # Logic
     # --------------------------------------------------
+    def _create_default_config(self):
+        """ایجاد فایل کانفیگ پیش‌فرض در صورت عدم وجود."""
+        default_config = {
+            "default": {
+                "rows": 1,
+                "cols": 2
+            },
+            "modality_layouts": {
+                k: {"rows": v[0], "cols": v[1]}
+                for k, v in self.DEFAULT_LAYOUTS.items()
+            }
+        }
+        
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(default_config, f, indent=2, ensure_ascii=False)
+            print(f"✅ Default modality config created: {self.config_path}")
+        except Exception as e:
+            print(f"❌ Error creating default config: {e}")
+
     def load_config(self):
         # ابتدا همه مودالیتی‌های پیش‌فرض را لود می‌کنیم
         self.config_data = {
@@ -377,6 +398,11 @@ class ModalityGridConfigWidget(QWidget):
 
         # Load BoostViewer setting independently from modality grid config
         self.boostviewer_toggle.setChecked(load_boost_viewer_enabled(default=True))
+        
+        # اگر فایل کانفیگ وجود نداشت، آن را ایجاد می‌کنیم
+        if not self.config_path.exists():
+            print(f"⚠️ Modality config not found, creating default: {self.config_path}")
+            self._create_default_config()
         
         # اگر فایل کانفیگ وجود داشت، مقادیر آن را override می‌کنیم
         if self.config_path.exists():
@@ -390,7 +416,9 @@ class ModalityGridConfigWidget(QWidget):
                         # مقادیر ذخیره شده را به config_data اضافه/بروزرسانی می‌کنیم
                         self.config_data.update(saved_config)
             except Exception as e:
-                print(f"Error loading config: {e}")
+                print(f"❌ Error loading config: {e}")
+                # در صورت خطا، فایل پیش‌فرض را دوباره ایجاد می‌کنیم
+                self._create_default_config()
         
         self._rebuild()
 
@@ -426,9 +454,9 @@ class ModalityGridConfigWidget(QWidget):
             rm.setFixedSize(36, 36)  # Larger clickable area
             rm.setCursor(Qt.PointingHandCursor)
             rm.setStyleSheet(
-                "QToolButton { font-size: 16px; font-weight: bold; color: #ef4444; "
-                "background-color: #7f1d1d; border: 1px solid #991b1b; border-radius: 6px; } "
-                "QToolButton:hover { background-color: #991b1b; }"
+                "QToolButton { font-size: 16px; font-weight: bold; color: #e2e8f0; "
+                "background-color: #1d4ed8; border: 1px solid #1e40af; border-radius: 6px; } "
+                "QToolButton:hover { background-color: #1e40af; }"
             )
             rm.clicked.connect(lambda _, m=name: self.remove_modality(m))
 
@@ -466,11 +494,21 @@ class ModalityGridConfigWidget(QWidget):
                 "cols": picker.cols,
             }
 
+        # ساختار JSON جدید با default و modality_layouts
+        config_to_save = {
+            "default": {
+                "rows": 1,
+                "cols": 2
+            },
+            "modality_layouts": self.config_data
+        }
+
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(self.config_data, f, indent=2)
+            json.dump(config_to_save, f, indent=2, ensure_ascii=False)
 
         save_boost_viewer_enabled(self.boostviewer_toggle.isChecked())
 
         self.configChanged.emit()
         QMessageBox.information(self, "Saved", "Grid configuration saved.")
+        print(f"✅ Modality grid config saved: {self.config_path}")

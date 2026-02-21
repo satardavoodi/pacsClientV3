@@ -175,7 +175,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
         try:
             # Check if image_viewer exists before rendering
             if self.image_viewer is None:
+                logger.debug("[RENDER] Skipped - no image_viewer")
                 return
+            
+            logger.debug("[RENDER] ▶ Starting batched render")
             
             # Update last render time
             self._last_render_time = time.time() * 1000
@@ -193,7 +196,19 @@ class VTKWidget(QVTKRenderWindowInteractor):
             
             # Single render call at the end
             self.image_viewer.Render()
-
+            
+            # Check if image has valid dimensions (detect incomplete renders)
+            if hasattr(self.image_viewer, 'vtk_image_data') and self.image_viewer.vtk_image_data:
+                dims = self.image_viewer.vtk_image_data.GetDimensions()
+                if dims[0] == 0 or dims[1] == 0:
+                    logger.warning(f"[RENDER] ⚠ INCOMPLETE - Image has zero dimensions: {dims}")
+                else:
+                    logger.debug(f"[RENDER] ✓ Complete - dims: {dims[0]}x{dims[1]}x{dims[2]}")
+            
+        except Exception as e:
+            logger.error(f"[RENDER] ✗ FAILED - Error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         finally:
             self._render_pending = False
 
@@ -413,7 +428,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if self.image_viewer is None:
             print("⚠️ Cannot set interactor style - viewer not yet initialized")
             return
-            
+
+        self._freeze_render_window()
+        _saved_camera_state = self._capture_camera_state()
+        try:
+            if _saved_camera_state is not None and hasattr(self.image_viewer, "lock_camera_state"):
+                self.image_viewer.lock_camera_state(_saved_camera_state, duration_ms=350)
+        except Exception:
+            pass
+
         interactorstyle: AbstractInteractorStyle = style(self.image_viewer)
 
         # load widgets on new interactor style
@@ -424,11 +447,124 @@ class VTKWidget(QVTKRenderWindowInteractor):
         interactorstyle.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
         self.current_style = interactorstyle
+
+        self._restore_camera_state(_saved_camera_state)
+        self._schedule_camera_restore(_saved_camera_state)
+
         self.image_viewer.Render()
+
+    def _capture_camera_state(self):
+        try:
+            if self.image_viewer is None:
+                return None
+            camera = self.image_viewer.renderer.GetActiveCamera()
+            if not camera:
+                return None
+            state = {
+                'parallel_scale': camera.GetParallelScale(),
+                'position': camera.GetPosition(),
+                'focal_point': camera.GetFocalPoint(),
+                'view_up': camera.GetViewUp(),
+                'clipping_range': camera.GetClippingRange(),
+            }
+            # ✅ Update protected scale when capturing state
+            self._protected_parallel_scale = state['parallel_scale']
+            logger.debug(f"[_capture_camera_state] Protected scale saved: {self._protected_parallel_scale}")
+            return state
+        except Exception:
+            return None
+
+    def _restore_camera_state(self, state):
+        if not state or self.image_viewer is None:
+            return
+        try:
+            camera = self.image_viewer.renderer.GetActiveCamera()
+            if camera:
+                camera.SetParallelScale(state['parallel_scale'])
+                camera.SetPosition(state['position'])
+                # ✅ Update protected scale when restoring state
+                self._protected_parallel_scale = state['parallel_scale']
+                logger.debug(f"[_restore_camera_state] Protected scale restored: {self._protected_parallel_scale}")
+                camera.SetFocalPoint(state['focal_point'])
+                camera.SetViewUp(state['view_up'])
+                camera.SetClippingRange(state['clipping_range'])
+                self.image_viewer.renderer.ResetCameraClippingRange()
+        except Exception:
+            pass
+
+    def _schedule_camera_restore(self, state):
+        if not state or self.image_viewer is None:
+            return
+
+        def _restore():
+            self._restore_camera_state(state)
+            try:
+                self.image_viewer.Render()
+            except Exception:
+                pass
+
+        try:
+            QTimer.singleShot(0, _restore)
+            QTimer.singleShot(50, _restore)
+        except Exception:
+            pass
+
+    def _freeze_render_window(self, duration_ms=200):
+        if self.image_viewer is None:
+            return
+        try:
+            render_window = self.image_viewer.image_render_window
+            interactor = self.image_viewer.image_interactor
+            self.image_viewer._suppress_render = True
+            render_window.SetAbortRender(1)
+
+            try:
+                self._prev_interactor_render = interactor.GetEnableRender()
+            except Exception:
+                self._prev_interactor_render = None
+
+            try:
+                if hasattr(interactor, "EnableRenderOff"):
+                    interactor.EnableRenderOff()
+            except Exception:
+                pass
+
+            def _unfreeze():
+                try:
+                    render_window.SetAbortRender(0)
+                    self.image_viewer._suppress_render = False
+                    try:
+                        if hasattr(interactor, "EnableRenderOn"):
+                            interactor.EnableRenderOn()
+                    except Exception:
+                        pass
+                    try:
+                        if self._prev_interactor_render is not None:
+                            interactor.SetEnableRender(self._prev_interactor_render)
+                    except Exception:
+                        pass
+                    try:
+                        self.image_viewer.Render()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            QTimer.singleShot(duration_ms, _unfreeze)
+        except Exception:
+            pass
 
     def restore_default_interactorstyle(self):
         if self.image_viewer is None:
             return
+
+        self._freeze_render_window()
+        _saved_camera_state = self._capture_camera_state()
+        try:
+            if _saved_camera_state is not None and hasattr(self.image_viewer, "lock_camera_state"):
+                self.image_viewer.lock_camera_state(_saved_camera_state, duration_ms=350)
+        except Exception:
+            pass
             
         default_interactorstyle = self.style
 
@@ -438,7 +574,23 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.interactor.SetInteractorStyle(default_interactorstyle)
         self.current_style = default_interactorstyle
         self.current_style.reset_events()  # reset events to default events
+        self._ensure_interactor_style_enabled()
+
+        self._restore_camera_state(_saved_camera_state)
+        self._schedule_camera_restore(_saved_camera_state)
         self.image_viewer.Render()
+
+    def _ensure_interactor_style_enabled(self):
+        try:
+            if getattr(self, 'current_style', None) is not None and hasattr(self.current_style, 'On'):
+                self.current_style.On()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'interactor') and self.interactor is not None and hasattr(self.interactor, 'Enable'):
+                self.interactor.Enable()
+        except Exception:
+            pass
 
     def set_widgets_on_new_interactorstyle(self, new_interactorstyle: AbstractInteractorStyle):
         # Check if current_style exists (for progressive download dummy viewers)
@@ -477,6 +629,16 @@ class VTKWidget(QVTKRenderWindowInteractor):
         """
         ANTI-FLICKERING: Initialize series without processEvents calls
         """
+        # Extract series info for logging
+        series_number = metadata.get('series', {}).get('series_number', 'N/A') if metadata else 'N/A'
+        series_desc = metadata.get('series', {}).get('series_description', 'Unknown') if metadata else 'Unknown'
+        modality = metadata.get('series', {}).get('modality', 'Unknown') if metadata else 'Unknown'
+        dims = vtk_image_data.GetDimensions() if vtk_image_data else (0, 0, 0)
+        
+        logger.info(f"[SERIES INIT] ▶ START - Series #{series_number} [{modality}] '{series_desc}'")
+        logger.info(f"[SERIES INIT]   Viewer ID: {id_vtk_widget}, Index: {series_index}")
+        logger.info(f"[SERIES INIT]   Image dimensions: {dims[0]}x{dims[1]}x{dims[2]}")
+        
         # Show spinner immediately (non-blocking)
         self.viewport_spinner.show_loading("Loading...")
 
@@ -488,6 +650,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
             self.image_viewer = ImageViewer2D(self.render_window, self.interactor, self.height_viewer, vtk_image_data,
                                               metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
+            
+            logger.debug(f"[SERIES INIT]   ImageViewer2D created successfully")
 
             self.style = AbstractInteractorStyle(self.image_viewer)
             self.current_style = self.style
@@ -497,7 +661,19 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self.last_series_show = series_index
             self.id_vtk_widget = id_vtk_widget
             self.save_status_camera(self.image_viewer)
+            
+            # Log final camera state
+            if self.image_viewer and self.image_viewer.renderer:
+                camera = self.image_viewer.renderer.GetActiveCamera()
+                if camera:
+                    parallel_scale = camera.GetParallelScale()
+                    logger.info(f"[SERIES INIT] ✓ COMPLETE - Final parallel scale: {parallel_scale:.2f}")
 
+        except Exception as e:
+            logger.error(f"[SERIES INIT] ✗ FAILED - Error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
         finally:
             # Re-enable updates
             self.setUpdatesEnabled(True)
@@ -509,10 +685,30 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self.viewport_spinner.spinner.center_in_parent()
 
     def reset_image(self, vtk_image_data, metadata):  # reload image
+        # Extract series info for logging
+        series_number = metadata.get('series', {}).get('series_number', 'N/A') if metadata else 'N/A'
+        series_desc = metadata.get('series', {}).get('series_description', 'Unknown') if metadata else 'Unknown'
+        modality = metadata.get('series', {}).get('modality', 'Unknown') if metadata else 'Unknown'
+        dims = vtk_image_data.GetDimensions() if vtk_image_data else (0, 0, 0)
+        
+        logger.info(f"[IMAGE RESET] ▶ START - Series #{series_number} [{modality}] '{series_desc}'")
+        logger.info(f"[IMAGE RESET]   Image dimensions: {dims[0]}x{dims[1]}x{dims[2]}")
+        
         # Show reset spinner
         self.viewport_spinner.show_reset("Applying reset...")
 
         try:
+            # ✅ Save current camera scale before reset
+            saved_scale = None
+            try:
+                if self.image_viewer and self.image_viewer.renderer:
+                    camera = self.image_viewer.renderer.GetActiveCamera()
+                    if camera:
+                        saved_scale = camera.GetParallelScale()
+                        logger.info(f"[IMAGE RESET]   Saved current scale: {saved_scale:.2f}")
+            except:
+                pass
+            
             # delete and set image
             self.image_viewer.reset_image_viewer(vtk_image_data, metadata)
 
@@ -523,6 +719,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
             self.slider.setValue(mid_slice)
             self.image_viewer.apply_default_window_level(mid_slice)
+            
+            logger.debug(f"[IMAGE RESET]   Reset to slice {mid_slice} / {self.get_count_of_slices()}")
 
             # Reset camera to default state (like toolbar reset)
             camera = self.image_viewer.renderer.GetActiveCamera()
@@ -534,13 +732,26 @@ class VTKWidget(QVTKRenderWindowInteractor):
                 # Default view up for medical images
                 camera.SetViewUp(0, -1, 0)
 
-            # Reset camera and apply zoom to fit
+            # Reset camera and apply zoom to fit for proper display
             self.image_viewer.renderer.ResetCamera()
             self.image_viewer.renderer.ResetCameraClippingRange()
-            self.image_viewer.zoom_to_fit()
+            
+            # ✅ Always use zoom_to_fit to ensure image fills the viewer properly
+            new_scale = self.image_viewer.zoom_to_fit()
+            if new_scale:
+                self._protected_parallel_scale = new_scale
+                logger.info(f"[IMAGE RESET]   Applied zoom_to_fit scale: {new_scale:.2f}")
+            else:
+                logger.warning(f"[IMAGE RESET]   zoom_to_fit returned None/False")
 
             self.image_viewer.Render()
+            logger.info(f"[IMAGE RESET] ✓ COMPLETE")
 
+        except Exception as e:
+            logger.error(f"[IMAGE RESET] ✗ FAILED - Error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
         finally:
             # Hide spinner after reset is complete
             QTimer.singleShot(300, self.viewport_spinner.hide_loading)
@@ -586,6 +797,9 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         # Show loading spinner (non-blocking)
         self.viewport_spinner.show_loading("Switching series...")
+
+        # Detect first-time load (placeholder → real series)
+        _is_first_load = (self.image_viewer is None)
         
         # =====================================================
         # ANTI-FLICKERING: Disable updates during switch
@@ -612,11 +826,25 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         # set interactor style again
         self.style = AbstractInteractorStyle(self.image_viewer)
+        self.current_style = self.style
         self.interactor.SetInteractorStyle(self.style)
         # self.style.interactionOccurred.connect(self.change_container_border)
         self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
 
         self.image_viewer.UpdateDisplayExtent()
+
+        # FIX: On first load (placeholder → real series), reset camera properly
+        # to prevent black screen
+        if _is_first_load:
+            self.image_viewer.renderer.ResetCamera()
+            self.image_viewer.renderer.ResetCameraClippingRange()
+            if hasattr(self.image_viewer, 'zoom_to_fit'):
+                # ✅ Save the initial scale after zoom_to_fit
+                initial_scale = self.image_viewer.zoom_to_fit()
+                if initial_scale:
+                    self._protected_parallel_scale = initial_scale
+                    logger.debug(f"[switch_series] Saved initial scale: {initial_scale}")
+
         # Single render call (not both viewer and window)
         self.render_window.Render()
 
@@ -644,9 +872,32 @@ class VTKWidget(QVTKRenderWindowInteractor):
         - Smart spinner messaging based on series size
         - Batched rendering operations
         """
+        # Extract series info for logging
+        series_number = metadata.get('series', {}).get('series_number', 'N/A') if metadata else 'N/A'
+        series_desc = metadata.get('series', {}).get('series_description', 'Unknown') if metadata else 'Unknown'
+        modality = metadata.get('series', {}).get('modality', 'Unknown') if metadata else 'Unknown'
+        dims = vtk_image_data.GetDimensions() if vtk_image_data else (0, 0, 0)
+        is_combined = (vtk_image_data_2 is not None) and (metadata_2 is not None)
+        
+        logger.info(f"[SERIES SWITCH] ▶ START - Series #{series_number} [{modality}] '{series_desc}'")
+        logger.info(f"[SERIES SWITCH]   Index: {series_index}, Combined: {is_combined}")
+        logger.info(f"[SERIES SWITCH]   Image dimensions: {dims[0]}x{dims[1]}x{dims[2]}")
+        
         # Check this series has showed
         if self.last_series_show == series_index:
+            logger.info(f"[SERIES SWITCH] ⏭ SKIP - Already showing series {series_index}")
             return False
+        
+        # Save current camera scale before switch
+        saved_scale = None
+        try:
+            if self.image_viewer and self.image_viewer.renderer:
+                camera = self.image_viewer.renderer.GetActiveCamera()
+                if camera:
+                    saved_scale = camera.GetParallelScale()
+                    logger.info(f"[SERIES SWITCH]   Saved current scale: {saved_scale:.2f}")
+        except:
+            pass
 
         # 🎬 SHOW SPINNER WITH SMART MESSAGE BASED ON SERIES SIZE
         spinner_message = self._get_smart_spinner_message(vtk_image_data, metadata)
@@ -683,11 +934,34 @@ class VTKWidget(QVTKRenderWindowInteractor):
                         else:
                             # Single viewer - use fast reset
                             # ⚡ FAST PATH: Just update image data without full viewer recreation
+                            logger.debug(f"[SERIES SWITCH]   Using FAST PATH (viewer reuse)")
                             self.image_viewer.reset_image_viewer(vtk_image_data, metadata)
                             self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
                             
+                            # ✅ CRITICAL: Update _protected_parallel_scale to match the 
+                            # zoom_to_fit scale that reset_image_viewer calculated.
+                            # Do NOT restore old saved_scale - it was from a different series
+                            # with different dimensions and would make the image appear too
+                            # small or too large.
+                            try:
+                                camera = self.image_viewer.renderer.GetActiveCamera()
+                                if camera:
+                                    current_scale = camera.GetParallelScale()
+                                    self._protected_parallel_scale = current_scale
+                                    logger.info(f"[SERIES SWITCH]   Updated protected scale to zoom_to_fit result: {current_scale:.2f}")
+                            except:
+                                logger.warning(f"[SERIES SWITCH]   Failed to update protected scale")
+                            
                             self.last_series_show = series_index
                             self.save_status_camera(self.image_viewer)
+                            
+                            # Log final camera state
+                            try:
+                                camera = self.image_viewer.renderer.GetActiveCamera()
+                                final_scale = camera.GetParallelScale() if camera else 0
+                                logger.info(f"[SERIES SWITCH] ✓ COMPLETE (FAST) - Final scale: {final_scale:.2f}")
+                            except:
+                                logger.info(f"[SERIES SWITCH] ✓ COMPLETE (FAST)")
                             
                             # Re-enable updates and unblock slider signals, then hide spinner
                             self.setUpdatesEnabled(True)
@@ -697,18 +971,24 @@ class VTKWidget(QVTKRenderWindowInteractor):
                             return True
                             
                 except Exception as e:
-                    self.logger.debug(f"Fast path failed, falling back to recreation: {e}")
+                    logger.warning(f"[SERIES SWITCH] Fast path failed, falling back to recreation: {e}")
+                    import traceback
+                    traceback.print_exc()
                     self.cleanup_image_viewer()
 
             # Create new viewer (first time or fallback)
             # ⚡ BATCHED CREATION: All operations grouped together
+            logger.debug(f"[SERIES SWITCH]   Using SLOW PATH (viewer recreation)")
+            
             if (vtk_image_data_2 is not None) and (metadata_2 is not None):
+                logger.debug(f"[SERIES SWITCH]   Creating CustomCombineImageViewers")
                 self.image_viewer = CustomCombineImageViewers(
                     self.render_window, self.interactor, self.height_viewer, vtk_image_data1=vtk_image_data,
                     metadata1=metadata,
                     vtk_image_data2=vtk_image_data_2, metadata2=metadata_2, metadata_fixed=metadata_fixed,
                     apply_default_filter=self.apply_default_filter, vtk_widget=self)
             else:
+                logger.debug(f"[SERIES SWITCH]   Creating ImageViewer2D")
                 self.image_viewer = ImageViewer2D(self.render_window, self.interactor, self.height_viewer, vtk_image_data,
                                                   metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
 
@@ -722,13 +1002,30 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self.style = AbstractInteractorStyle(self.image_viewer)
             self.interactor.SetInteractorStyle(self.style)
             self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
+            self.current_style = self.style
+            self._ensure_interactor_style_enabled()
 
             # ⚡ SINGLE BATCHED RENDER at the end (not multiple renders)
+            logger.debug(f"[SERIES SWITCH]   UpdateDisplayExtent + Render")
             self.image_viewer.UpdateDisplayExtent()
             self.render_window.Render()
 
             self.last_series_show = series_index
             self.save_status_camera(self.image_viewer)
+
+            # Log final camera state
+            try:
+                camera = self.image_viewer.renderer.GetActiveCamera()
+                final_scale = camera.GetParallelScale() if camera else 0
+                logger.info(f"[SERIES SWITCH] ✓ COMPLETE (SLOW) - Final scale: {final_scale:.2f}")
+            except:
+                logger.info(f"[SERIES SWITCH] ✓ COMPLETE (SLOW)")
+            
+        except Exception as e:
+            logger.error(f"[SERIES SWITCH] ✗ FAILED - Error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
             
         finally:
             # =====================================================
@@ -786,11 +1083,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if self.image_viewer is None:
             return
         
-        # ✅ Save current camera zoom before slice change
+        # ✅ CRITICAL: Save current camera zoom before slice change
+        saved_scale = None
         try:
             camera = self.image_viewer.renderer.GetActiveCamera()
             if camera:
-                self._protected_parallel_scale = camera.GetParallelScale()
+                saved_scale = camera.GetParallelScale()
+                # Update protected scale only if not already set or if changed by user zoom
+                if self._protected_parallel_scale is None or abs(saved_scale - self._protected_parallel_scale) > 0.01:
+                    self._protected_parallel_scale = saved_scale
                 logger.debug(f"[set_slice] Protected scale={self._protected_parallel_scale}")
         except:
             pass
@@ -798,14 +1099,16 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.image_viewer.set_slice(slice_index)
         self.image_viewer.last_index_slice_saved = slice_index
         
-        # ✅ Revert camera zoom if it was changed
+        # ✅ CRITICAL: Force restore camera zoom after slice change
         try:
             camera = self.image_viewer.renderer.GetActiveCamera()
-            if self._protected_parallel_scale is not None and camera:
+            if saved_scale is not None and camera:
                 current_scale = camera.GetParallelScale()
-                if abs(current_scale - self._protected_parallel_scale) > 0.01:  # Tolerance
-                    logger.warning(f"[set_slice] Zoom change detected! scale={current_scale} → reverting to {self._protected_parallel_scale}")
-                    camera.SetParallelScale(self._protected_parallel_scale)
+                # If scale changed at all, restore it
+                if abs(current_scale - saved_scale) > 0.001:  # Very tight tolerance
+                    logger.warning(f"[set_slice] Zoom change detected! scale={current_scale} → reverting to {saved_scale}")
+                    camera.SetParallelScale(saved_scale)
+                    self._protected_parallel_scale = saved_scale
                     self.image_viewer.Render()
         except:
             pass
@@ -852,24 +1155,31 @@ class VTKWidget(QVTKRenderWindowInteractor):
         CRITICAL: Prevents VTK zoom by consuming the event and NOT calling super().wheelEvent()
         """
         # ✅ ALWAYS log to confirm this method is being called
-        logger.info(f"[wheelEvent] Called - image_viewer={'present' if self.image_viewer else 'None'}, slider={'present' if self.slider else 'None'}")
+        logger.debug(f"[WHEEL] Called - image_viewer={'present' if self.image_viewer else 'None'}, slider={'present' if self.slider else 'None'}")
         
         try:
             # Check if image_viewer exists with valid slider
             if self.image_viewer is None or self.slider is None:
                 # No image or slider - consume event to prevent VTK zoom
-                logger.debug("[wheelEvent] No image_viewer or slider - consuming event")
+                logger.debug("[WHEEL] No image_viewer or slider - consuming event")
                 event.accept()
                 return
+            
+            # Get current camera scale before processing
+            try:
+                camera = self.image_viewer.renderer.GetActiveCamera()
+                scale_before = camera.GetParallelScale() if camera else 0
+            except:
+                scale_before = 0
             
             delta = event.angleDelta().y()
             max_slice = self.get_count_of_slices()
             
-            logger.debug(f"[wheelEvent] delta={delta}, max_slice={max_slice}")
+            logger.debug(f"[WHEEL] delta={delta}, max_slice={max_slice}, current_scale={scale_before:.2f}")
             
             # Nothing to scroll through - still consume to prevent VTK zoom
             if max_slice <= 1:
-                logger.debug("[wheelEvent] max_slice <= 1 - consuming event")
+                logger.debug("[WHEEL] max_slice <= 1 - consuming event")
                 event.accept()
                 return
             
@@ -901,7 +1211,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # Clamp to valid range [0, N-1]
             next_slice = max(0, min(next_slice, max_slice - 1))
             
-            logger.debug(f"[wheelEvent] current={current_slice}, next={next_slice}, step={step}")
+            logger.debug(f"[WHEEL] current={current_slice}, next={next_slice}, step={step}")
             
             # Update slider (triggers rendering via signal)
             self.slider.setValue(next_slice)
@@ -912,18 +1222,31 @@ class VTKWidget(QVTKRenderWindowInteractor):
                 if hasattr(style, 'update_slice'):
                     style.update_slice()
             except Exception as e:
-                logger.debug(f"[wheelEvent] Error updating ruler: {e}")
+                logger.debug(f"[WHEEL] Error updating ruler: {e}")
 
             # Update container border state
             self.change_container_border()
             
+            # Verify camera scale hasn't changed (zoom protection)
+            try:
+                camera = self.image_viewer.renderer.GetActiveCamera()
+                scale_after = camera.GetParallelScale() if camera else 0
+                if abs(scale_after - scale_before) > 0.01:
+                    logger.warning(f"[WHEEL] ⚠ UNEXPECTED ZOOM - Scale changed: {scale_before:.2f} → {scale_after:.2f}")
+                    # Restore original scale
+                    camera.SetParallelScale(scale_before)
+                    self._protected_parallel_scale = scale_before
+                    self.image_viewer.Render()
+            except:
+                pass
+            
             # ✅ CRITICAL: CONSUME the event - DO NOT let parent handle it
-            logger.debug("[wheelEvent] Accepting event (slice changed)")
+            logger.debug("[WHEEL] Accepting event (slice changed)")
             event.accept()
             
         except Exception as e:
             # ✅ Even on error, CONSUME the event to prevent VTK zoom fallback
-            logger.warning(f"[wheelEvent] Exception (consuming to prevent zoom): {e}")
+            logger.warning(f"[WHEEL] Exception (consuming to prevent zoom): {e}")
             event.accept()
 
     def dragEnterEvent(self, event):
