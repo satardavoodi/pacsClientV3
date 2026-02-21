@@ -180,15 +180,17 @@ class CustomTabManager:
         container = QWidget(self.logo_button)
         container.setObjectName("AIPacsBrandContainer")
         container.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         outer = QVBoxLayout(container)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(2)
+        outer.setSpacing(0)
         outer.setAlignment(Qt.AlignCenter)
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
+        row.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
 
         ai = QLabel("AI", container)
         ai.setObjectName("AIPacsBrandAI")
@@ -217,30 +219,23 @@ class CustomTabManager:
         f_pacs.setWeight(QFont.DemiBold)
         pacs.setFont(f_pacs)
 
+        row.addStretch(1)
         row.addWidget(ai)
         row.addWidget(dash)
         row.addWidget(pacs)
-
-        tagline = QLabel("", container)
-        tagline.setObjectName("AIPacsBrandTagline")
-        tagline.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        tagline.setLayoutDirection(Qt.RightToLeft)
-        tagline.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        f_tag = QFont("IRANYekan")
-        f_tag.setFamilies(["IRANYekan", "Tahoma", "Segoe UI"])
-        f_tag.setPixelSize(13)
-        f_tag.setWeight(QFont.Medium)
-        tagline.setFont(f_tag)
-        tagline.setMinimumHeight(16)
+        row.addStretch(1)
 
         outer.addLayout(row)
-        outer.addWidget(tagline)
 
         # Mount into the button.
         btn_layout = self.logo_button.layout()
         if btn_layout is None:
             btn_layout = QHBoxLayout(self.logo_button)
-            btn_layout.setContentsMargins(14, 0, 14, 0)
+            btn_layout.setContentsMargins(14, 6, 14, 6)
+            btn_layout.setSpacing(0)
+            btn_layout.setAlignment(Qt.AlignCenter)
+        else:
+            btn_layout.setContentsMargins(14, 6, 14, 6)
             btn_layout.setSpacing(0)
             btn_layout.setAlignment(Qt.AlignCenter)
 
@@ -344,9 +339,9 @@ class CustomTabManager:
             QPushButton#LogoButton {
                 /* Softer, UI-consistent look: low-contrast gradient + muted border */
                 /* Lighter indigo-tinted container gradient (box only; letters are separate) */
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1b2340, stop:1 #111a2e);
-                border: 1px solid rgba(99, 102, 241, 0.18);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #2a3360, stop:0.55 #1f2850, stop:1 #111a34);
+                border: 1px solid rgba(99, 102, 241, 0.24);
                 border-radius: 12px;
                 color: #f8fafc;
                 padding: 0px;
@@ -373,9 +368,9 @@ class CustomTabManager:
             }
 
             QPushButton#LogoButton[active="true"] {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1a2240, stop:1 #0f172a);
-                border: 1px solid rgba(99, 102, 241, 0.32);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #2d3768, stop:0.55 #242e5b, stop:1 #121c38);
+                border: 1px solid rgba(99, 102, 241, 0.34);
                 color: #ffffff;
             }
 
@@ -384,20 +379,20 @@ class CustomTabManager:
             }
 
             QPushButton#LogoButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #222b4d, stop:1 #141e36);
-                border: 1px solid rgba(99, 102, 241, 0.26);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #313c71, stop:0.55 #273264, stop:1 #152141);
+                border: 1px solid rgba(99, 102, 241, 0.30);
             }
 
             QPushButton#LogoButton[active="true"]:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #232c52, stop:1 #111a2e);
-                border: 1px solid rgba(99, 102, 241, 0.34);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #35407a, stop:0.55 #2a356a, stop:1 #162345);
+                border: 1px solid rgba(99, 102, 241, 0.36);
             }
 
             QPushButton#LogoButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #101a33, stop:1 #0b1220);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #1a2344, stop:0.6 #141c36, stop:1 #0c1324);
                 border: 1px solid rgba(96, 165, 250, 0.32);
             }
         """

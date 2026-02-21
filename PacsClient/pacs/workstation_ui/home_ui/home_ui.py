@@ -202,8 +202,8 @@ class HomePanelWidget(QWidget):
 
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(6, 6, 6, 6)
-        left_layout.setSpacing(2)
+        left_layout.setContentsMargins(4, 4, 4, 4)
+        left_layout.setSpacing(6)
         left_panel.setMinimumWidth(240)
         left_panel.setMaximumWidth(380)
         left_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
@@ -282,32 +282,52 @@ class HomePanelWidget(QWidget):
             }
         ''')
 
-        # Adaptive layout button
+        # Adaptive layout header wrapper (mirrors Study Information black container)
+        adaptive_header_height = 54
+        adaptive_header_widget = QWidget()
+        adaptive_header_widget.setFixedHeight(adaptive_header_height)
+        adaptive_header_widget.setStyleSheet("""
+            QWidget {
+                background: #0f1419;
+                border-radius: 8px;
+            }
+        """)
+        adaptive_header_layout = QHBoxLayout(adaptive_header_widget)
+        adaptive_header_layout.setContentsMargins(12, 8, 12, 8)
+        adaptive_header_layout.setSpacing(10)
+        adaptive_header_layout.setAlignment(Qt.AlignVCenter)
+
+        # Adaptive layout button (inside black wrapper)
         self.adaptive_layout_btn = QPushButton(qta.icon('fa5s.expand-arrows-alt', color='white'), " Adaptive to Screen Size")
         self.adaptive_layout_btn.setToolTip("Auto-fit table columns and keep controls visible on any screen size")
+        self.adaptive_layout_btn.setFixedHeight(36)
+        self.adaptive_layout_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.adaptive_layout_btn.setStyleSheet("""
             QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2563eb, stop:1 #1d4ed8);
-                color: #ffffff;
-                border: 1px solid #2563eb;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #7c3aed, stop:1 #5b21b6);
+                color: #f7fafc;
+                border: 1px solid #7c3aed;
                 border-radius: 8px;
-                padding: 6px 10px;
-                font-size: 12px;
+                padding: 6px 0px;
+                font-size: 13px;
                 font-family: 'Roboto', sans-serif;
-                margin: 2px 0px;
+                margin: 0px;
+                text-align: center;
             }
             QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1d4ed8, stop:1 #1e40af);
-                border-color: #1d4ed8;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #6d28d9, stop:1 #4c1d95);
+                border-color: #6d28d9;
             }
         """)
         self.adaptive_layout_btn.clicked.connect(self.apply_adaptive_layout)
-        left_layout.addWidget(self.adaptive_layout_btn)
+        adaptive_header_layout.addWidget(self.adaptive_layout_btn)
+        left_layout.addWidget(adaptive_header_widget)
 
         # server section
         server_group = QGroupBox("Server Selection")
+        server_group.setAlignment(Qt.AlignHCenter)
         server_layout = QVBoxLayout()
         # server_layout.setContentsMargins(6, 12, 6, 6)
         # server_layout.setSpacing(6)
@@ -657,6 +677,7 @@ class HomePanelWidget(QWidget):
         self.patient_table_widget.downloadRequested.connect(self._on_download_requested)
         self.patient_table_widget.zetaNprRequested.connect(self._on_zeta_npr_requested)
         self.patient_table_widget.cdBurnRequested.connect(self._on_cd_burn_requested)
+        self.patient_table_widget.printRequested.connect(self.open_printing_module)
 
         # ★★★ تنظیمات وسط‌چین کردن هدر جدول ★★★
         if hasattr(self.patient_table_widget, 'results_table'):

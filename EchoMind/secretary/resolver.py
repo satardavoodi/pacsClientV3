@@ -16,10 +16,12 @@ def compact_patient_row(row: dict[str, Any]) -> dict[str, Any]:
         "patient_name": str(row.get("patient_name") or "").strip(),
         "study_uid": str(row.get("study_uid") or "").strip(),
         "modality": str(row.get("modality") or "").strip(),
+        "body_part": str(row.get("body_part") or "").strip(),
         "date": str(row.get("date") or row.get("study_date") or "").strip(),
         "time": str(row.get("time") or row.get("study_time") or "").strip(),
         "description": str(row.get("description") or "").strip(),
         "report_status": str(row.get("report_status") or "pending").strip() or "pending",
+        "images_count": str(row.get("images_count") or "").strip(),
     }
 
 

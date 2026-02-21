@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QPushButton,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -76,6 +77,14 @@ class SecretaryOrbButton(QToolButton):
         self._frame_timer.setInterval(70)
         self._frame_timer.timeout.connect(self._advance_frame)
 
+        # Error-state animation (slower red pulse)
+        self._error_mode: bool = False
+        self._error_frames: list = []
+        self._error_frame_index: int = 0
+        self._error_timer = QTimer(self)
+        self._error_timer.setInterval(90)
+        self._error_timer.timeout.connect(self._advance_error_frame)
+
         self.toggled.connect(self._on_toggled)
 
     def sizeHint(self):
@@ -113,16 +122,44 @@ class SecretaryOrbButton(QToolButton):
     def _apply_state(self, active):
         self._active = active
         if active:
+            # Clear error mode so a fresh activation shows listening colours
+            self._error_mode = False
+            self._error_timer.stop()
             self._frame_timer.start()
         else:
             self._frame_timer.stop()
             self._frame_index = 0
+            if self._error_mode:
+                self._error_timer.start()
         self.update()
 
     def _advance_frame(self):
         if not self._active or not self._active_frames:
             return
         self._frame_index = (self._frame_index + 1) % len(self._active_frames)
+        self.update()
+        parent = self.parentWidget()
+        if parent is not None:
+            parent.update()
+
+    def set_error(self, error: bool) -> None:
+        """Switch the orb into error visual mode (red slow-pulse) or back to idle."""
+        error = bool(error)
+        if self._error_mode == error:
+            return
+        self._error_mode = error
+        if error and not self._active:
+            self._error_frame_index = 0
+            self._error_timer.start()
+        else:
+            self._error_timer.stop()
+            self._error_frame_index = 0
+        self.update()
+
+    def _advance_error_frame(self):
+        if not self._error_mode or self._active:
+            return
+        self._error_frame_index = (self._error_frame_index + 1) % max(1, len(self._error_frames))
         self.update()
         parent = self.parentWidget()
         if parent is not None:
@@ -244,7 +281,7 @@ class SecretaryOrbButton(QToolButton):
             return
 
         self._cached_side = side
-        self._inactive_frame = self._render_frame(side, active=False, phase=0.0)
+        self._inactive_frame = self._render_frame(side, active=False, phase=0.0, error=False)
 
         frame_count = 72
         self._active_frames = [
@@ -252,13 +289,30 @@ class SecretaryOrbButton(QToolButton):
                 side,
                 active=True,
                 phase=(2.0 * math.pi * idx) / float(frame_count),
+                error=False,
             )
             for idx in range(frame_count)
         ]
         self._frame_index = 0
 
-    def _secretary_icon(self, size, active):
-        color = "#dcf8ff" if active else "#7f91a8"
+        # Error state: 48 frames ≈ 4.3 s slow red pulse
+        error_frame_count = 48
+        self._error_frames = [
+            self._render_frame(
+                side,
+                active=False,
+                phase=(2.0 * math.pi * idx) / float(error_frame_count),
+                error=True,
+            )
+            for idx in range(error_frame_count)
+        ]
+        self._error_frame_index = 0
+
+    def _secretary_icon(self, size, active, error=False):
+        if error:
+            color = "#a05548"
+        else:
+            color = "#dcf8ff" if active else "#7f91a8"
         for icon_name in ("fa5s.user-tie", "fa5s.robot", "fa5s.microphone"):
             try:
                 return qta.icon(icon_name, color=color).pixmap(size, size)
@@ -268,7 +322,7 @@ class SecretaryOrbButton(QToolButton):
         fallback.fill(Qt.transparent)
         return fallback
 
-    def _draw_base_orb(self, painter, orb_rect, active):
+    def _draw_base_orb(self, painter, orb_rect, active, error=False):
         circle = QPainterPath()
         circle.addEllipse(orb_rect)
 
@@ -278,7 +332,7 @@ class SecretaryOrbButton(QToolButton):
         texture_size = int(orb_rect.width())
         texture = self._build_texture(texture_size)
         if not texture.isNull():
-            painter.setOpacity(0.92 if active else 0.34)
+            painter.setOpacity(0.92 if active else (0.28 if error else 0.34))
             painter.drawPixmap(orb_rect.toRect(), texture)
             painter.setOpacity(1.0)
         else:
@@ -292,9 +346,14 @@ class SecretaryOrbButton(QToolButton):
             orb_rect.top() + orb_rect.height() * 0.26,
             orb_rect.width() * 0.78,
         )
-        light.setColorAt(0.0, QColor(255, 255, 255, 84 if active else 36))
-        light.setColorAt(0.45, QColor(121, 218, 255, 48 if active else 12))
-        light.setColorAt(1.0, QColor(255, 255, 255, 0))
+        if error:
+            light.setColorAt(0.0,  QColor(255, 72, 52, 58))
+            light.setColorAt(0.45, QColor(200, 38, 28, 22))
+            light.setColorAt(1.0,  QColor(255, 255, 255, 0))
+        else:
+            light.setColorAt(0.0, QColor(255, 255, 255, 84 if active else 36))
+            light.setColorAt(0.45, QColor(121, 218, 255, 48 if active else 12))
+            light.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillRect(orb_rect, light)
 
         depth = QRadialGradient(
@@ -302,8 +361,12 @@ class SecretaryOrbButton(QToolButton):
             orb_rect.center().y() + orb_rect.height() * 0.36,
             orb_rect.width() * 0.75,
         )
-        depth.setColorAt(0.0, QColor(11, 16, 22, 0))
-        depth.setColorAt(1.0, QColor(11, 16, 22, 128 if active else 168))
+        if error:
+            depth.setColorAt(0.0, QColor(14, 6, 6, 0))
+            depth.setColorAt(1.0, QColor(14, 6, 6, 148))
+        else:
+            depth.setColorAt(0.0, QColor(11, 16, 22, 0))
+            depth.setColorAt(1.0, QColor(11, 16, 22, 128 if active else 168))
         painter.fillRect(orb_rect, depth)
 
         # Remove source text artifacts from the original banner and keep mascot focus.
@@ -321,7 +384,7 @@ class SecretaryOrbButton(QToolButton):
         beat = 0.5 - (0.5 * math.cos(phase))
         return max(0.0, min(1.0, beat ** 1.25))
 
-    def _render_frame(self, side, active, phase):
+    def _render_frame(self, side, active, phase, error=False):
         pixmap = QPixmap(side, side)
         pixmap.fill(Qt.transparent)
 
@@ -344,9 +407,12 @@ class SecretaryOrbButton(QToolButton):
         center = static_orb_rect.center()
 
         # Keep banner/background fully static inside the circle.
-        self._draw_base_orb(painter, static_orb_rect, active)
+        self._draw_base_orb(painter, static_orb_rect, active, error=error)
 
-        border = QPen(QColor(101, 226, 255, 156 if active else 106), 1.85)
+        if error:
+            border = QPen(QColor(218, 65, 48, 162), 1.85)
+        else:
+            border = QPen(QColor(101, 226, 255, 156 if active else 106), 1.85)
         painter.setPen(border)
         painter.setBrush(Qt.NoBrush)
         painter.drawEllipse(pulse_orb_rect.adjusted(2.0, 2.0, -2.0, -2.0))
@@ -356,9 +422,15 @@ class SecretaryOrbButton(QToolButton):
             painter.setPen(pulse_ring)
             painter.setBrush(Qt.NoBrush)
             painter.drawEllipse(pulse_orb_rect.adjusted(-5.0, -5.0, 5.0, 5.0))
+        elif error:
+            err_beat = self._heartbeat_strength(phase * 0.55)  # slower than normal
+            pulse_ring = QPen(QColor(228, 58, 40, int(18 + (32 * err_beat))), 1.25)
+            painter.setPen(pulse_ring)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(pulse_orb_rect.adjusted(-5.0, -5.0, 5.0, 5.0))
 
         icon_size = int(static_orb_rect.width() * 0.28)
-        icon = self._secretary_icon(icon_size, active)
+        icon = self._secretary_icon(icon_size, active, error=error)
         icon_x = int(center.x() - (icon_size * 0.5))
         icon_y = int(center.y() - (icon_size * 0.5))
         painter.drawPixmap(icon_x, icon_y, icon)
@@ -381,6 +453,8 @@ class SecretaryOrbButton(QToolButton):
 
         if self._active and self._active_frames:
             frame = self._active_frames[self._frame_index]
+        elif self._error_mode and self._error_frames:
+            frame = self._error_frames[self._error_frame_index % len(self._error_frames)]
         else:
             frame = self._inactive_frame
         if not frame.isNull():
@@ -497,6 +571,221 @@ class SecretaryLogPopup(QDialog):
         super().closeEvent(event)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# SecretaryConfirmDialog
+# Dark-themed modal popup for actions that require explicit user confirmation:
+#   • Download patient / batch download
+#   • Delete patient / study / any stored item
+#   • Structural server changes (send report, modify stored data)
+# All other commands (search, open, navigate, view) are executed immediately
+# without showing this dialog.
+# ──────────────────────────────────────────────────────────────────────────────
+class SecretaryConfirmDialog(QDialog):
+    """EchoMind-styled Yes/No confirmation dialog for critical Secretary actions."""
+
+    # action → (window title, qtawesome icon, English confirmation sentence)
+    _ACTION_MAP: dict = {
+        "download_patient":    ("Download Patient",    "fa5s.download",          "I want to download this patient's data."),
+        "select_and_download": ("Batch Download",      "fa5s.download",          "I want to download the selected patients."),
+        "open_patient":        ("Open Patient",        "fa5s.folder-open",       "I want to open this patient's study."),
+        "delete_patient":      ("Delete Patient",      "fa5s.trash-alt",         "I want to delete this patient."),
+        "delete_study":        ("Delete Study",        "fa5s.trash-alt",         "I want to delete this study."),
+        "delete_item":         ("Delete Item",         "fa5s.trash-alt",         "I want to delete this item."),
+        "send_report":         ("Send Report",         "fa5s.paper-plane",       "I want to send this report to the server."),
+        "modify_data":         ("Modify Server Data",  "fa5s.edit",              "I want to apply changes to the stored data."),
+        "create_record":       ("Create Record",       "fa5s.plus-circle",       "I want to create a new record on the server."),
+    }
+    _DEFAULT = ("Confirm Action", "fa5s.exclamation-triangle", "Are you sure you want to proceed?")
+
+    def __init__(self, result: dict, parent=None):
+        super().__init__(parent)
+        action = str(result.get("action") or "")
+        title, icon_name, message = self._ACTION_MAP.get(action, self._DEFAULT)
+        data = result.get("data") or {}
+        detail = self._build_detail(action, data, result.get("message", ""))
+
+        self.setModal(True)
+        self.setWindowModality(Qt.ApplicationModal)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMinimumWidth(400)
+
+        # ── Root: semi-transparent overlay ────────────────────────────────────
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        overlay = QFrame(self)
+        overlay.setStyleSheet("QFrame { background: rgba(4, 8, 14, 172); }")
+        root.addWidget(overlay)
+
+        ol = QVBoxLayout(overlay)
+        ol.setContentsMargins(22, 22, 22, 22)
+        ol.setSpacing(0)
+
+        # ── Main panel ────────────────────────────────────────────────────────
+        panel = QFrame(overlay)
+        panel.setStyleSheet(
+            "QFrame {"
+            "background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            "  stop:0 #0c1826, stop:0.6 #091420, stop:1 #06101a);"
+            "border: 1px solid #1e4a72;"
+            "border-radius: 14px;"
+            "}"
+        )
+        ol.addWidget(panel)
+
+        pl = QVBoxLayout(panel)
+        pl.setContentsMargins(26, 20, 26, 20)
+        pl.setSpacing(12)
+
+        # ── Header row: action icon + branding label ───────────────────────────
+        header_row = QHBoxLayout()
+        header_row.setSpacing(10)
+
+        try:
+            action_icon_lbl = QLabel()
+            pix = qta.icon(icon_name, color="#4ab0e8").pixmap(26, 26)
+            action_icon_lbl.setPixmap(pix)
+            action_icon_lbl.setFixedSize(26, 26)
+            header_row.addWidget(action_icon_lbl, 0)
+        except Exception:
+            pass
+
+        brand = QLabel("EchoMind Secretary")
+        brand.setStyleSheet(
+            "QLabel {"
+            "color: #3a8ec8; font-size: 10px;"
+            "font-family: 'Roboto', sans-serif; font-weight: 600;"
+            "background: transparent;"
+            "}"
+        )
+        header_row.addWidget(brand, 1)
+        pl.addLayout(header_row)
+
+        # ── Thin divider ──────────────────────────────────────────────────────
+        sep = QFrame(panel)
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("QFrame { background: #1b3a56; border: none; max-height: 1px; }")
+        pl.addWidget(sep)
+
+        # ── Action title ──────────────────────────────────────────────────────
+        title_lbl = QLabel(title)
+        title_lbl.setWordWrap(True)
+        title_lbl.setStyleSheet(
+            "QLabel {"
+            "color: #d5eeff; font-size: 15px;"
+            "font-family: 'Roboto', sans-serif; font-weight: 700;"
+            "background: transparent; padding-top: 2px;"
+            "}"
+        )
+        pl.addWidget(title_lbl)
+
+        # ── English confirmation sentence ─────────────────────────────────────
+        msg_lbl = QLabel(message)
+        msg_lbl.setWordWrap(True)
+        msg_lbl.setStyleSheet(
+            "QLabel {"
+            "color: #9ac4e0; font-size: 13px;"
+            "font-family: 'Roboto', sans-serif;"
+            "background: transparent;"
+            "}"
+        )
+        pl.addWidget(msg_lbl)
+
+        # ── Detail card (patient name/ID or count) ────────────────────────────
+        if detail:
+            detail_lbl = QLabel(detail)
+            detail_lbl.setWordWrap(True)
+            detail_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            detail_lbl.setStyleSheet(
+                "QLabel {"
+                "color: #6898b8; font-size: 11px;"
+                "font-family: 'Consolas', 'Roboto Mono', monospace;"
+                "background: rgba(10, 22, 36, 0.75);"
+                "border: 1px solid #1a3550;"
+                "border-radius: 7px;"
+                "padding: 7px 12px;"
+                "}"
+            )
+            pl.addWidget(detail_lbl)
+
+        # ── Spacer ────────────────────────────────────────────────────────────
+        pl.addSpacing(4)
+
+        # ── Button row ────────────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+        btn_row.addStretch(1)
+
+        self._no_btn = QPushButton("No, Cancel")
+        self._no_btn.setCursor(Qt.PointingHandCursor)
+        self._no_btn.setFixedHeight(34)
+        self._no_btn.setMinimumWidth(114)
+        self._no_btn.setStyleSheet(
+            "QPushButton {"
+            "background: rgba(14, 26, 42, 0.92);"
+            "color: #7098b0; border: 1px solid #2a4a68;"
+            "border-radius: 8px; font-size: 12px;"
+            "font-family: 'Roboto', sans-serif; font-weight: 600; padding: 0 18px;"
+            "}"
+            "QPushButton:hover {"
+            "background: rgba(22, 38, 58, 0.96); color: #99c0da; border-color: #3e6a8a;"
+            "}"
+            "QPushButton:pressed { background: rgba(8, 16, 28, 1.0); }"
+        )
+        self._no_btn.clicked.connect(self.reject)
+        btn_row.addWidget(self._no_btn)
+
+        self._yes_btn = QPushButton("Yes, Proceed")
+        self._yes_btn.setCursor(Qt.PointingHandCursor)
+        self._yes_btn.setFixedHeight(34)
+        self._yes_btn.setMinimumWidth(122)
+        self._yes_btn.setDefault(True)
+        self._yes_btn.setStyleSheet(
+            "QPushButton {"
+            "background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            "  stop:0 #1a6aa8, stop:1 #134e80);"
+            "color: #d8f0ff; border: 1px solid #2e80c0;"
+            "border-radius: 8px; font-size: 12px;"
+            "font-family: 'Roboto', sans-serif; font-weight: 700; padding: 0 18px;"
+            "}"
+            "QPushButton:hover {"
+            "background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            "  stop:0 #2280c8, stop:1 #1a5e98);"
+            "border-color: #40a0e0;"
+            "}"
+            "QPushButton:pressed { background: #0e3e68; }"
+        )
+        self._yes_btn.clicked.connect(self.accept)
+        btn_row.addWidget(self._yes_btn)
+
+        pl.addLayout(btn_row)
+
+    @staticmethod
+    def _build_detail(action: str, data: dict, fallback_msg: str) -> str:
+        """Compose a human-readable detail line from result data."""
+        if isinstance(data, dict):
+            candidate = data.get("candidate")
+            if isinstance(candidate, dict):
+                pid  = str(candidate.get("patient_id")   or "").strip()
+                name = str(candidate.get("patient_name") or "").strip()
+                if name and pid:
+                    return f"Patient: {name}  ({pid})"
+                if name or pid:
+                    return f"Patient: {name or pid}"
+            count = data.get("selected_count") or data.get("downloaded_count")
+            if count:
+                scol = str(data.get("sort_column") or "")
+                sord = str(data.get("sort_order")  or "")
+                suffix = f"  —  sorted by {scol} {sord}" if scol else ""
+                return f"{count} patient(s) will be affected{suffix}"
+        if fallback_msg:
+            clean = " ".join(str(fallback_msg).split())
+            return clean[:180] + ("…" if len(clean) > 180 else "")
+        return ""
+
+
 class SecretaryButtonWidget(QWidget):
     listeningToggled = Signal(bool)
 
@@ -520,6 +809,14 @@ class SecretaryButtonWidget(QWidget):
         self._worker = None
         self._secretary_orchestrator = None
         self._secretary_session_id = f"secretary-home-{uuid.uuid4().hex[:10]}"
+
+        # Visual state machine: "idle" | "listening" | "error"
+        self._ui_state: str = "idle"
+        self._prev_ui_state: str = "idle"
+        self._fade_t: float = 1.0
+        self._fade_timer = QTimer(self)
+        self._fade_timer.setInterval(16)
+        self._fade_timer.timeout.connect(self._advance_fade)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(2, 4, 2, 4)
@@ -549,6 +846,49 @@ class SecretaryButtonWidget(QWidget):
             "}"
         )
         main_layout.addWidget(self.log_box, 0, Qt.AlignHCenter)
+
+        # ── Memory status row: counter label + "New" button ───────────────────
+        _mem_row = QHBoxLayout()
+        _mem_row.setSpacing(4)
+        _mem_row.setContentsMargins(2, 0, 2, 0)
+
+        self.memory_label = QLabel("Memory #1 — Cycle 0/10")
+        self.memory_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.memory_label.setStyleSheet(
+            "QLabel {"
+            "color: #5a8fa0;"
+            "font-size: 10px;"
+            "font-family: 'Consolas', 'Roboto Mono', monospace;"
+            "background: transparent;"
+            "}"
+        )
+        _mem_row.addWidget(self.memory_label, 1)
+
+        self.memory_new_btn = QToolButton(self)
+        self.memory_new_btn.setText("New")
+        self.memory_new_btn.setToolTip("Start a new conversation memory file")
+        self.memory_new_btn.setCursor(Qt.PointingHandCursor)
+        self.memory_new_btn.setAutoRaise(True)
+        self.memory_new_btn.setFixedHeight(18)
+        self.memory_new_btn.setStyleSheet(
+            "QToolButton {"
+            "color: #5a8fa0;"
+            "font-size: 10px;"
+            "background: rgba(14, 26, 38, 0.70);"
+            "border: 1px solid #2a4a5a;"
+            "border-radius: 4px;"
+            "padding: 0px 5px;"
+            "}"
+            "QToolButton:hover {"
+            "color: #9accde;"
+            "border-color: #4a8aa8;"
+            "background: rgba(22, 40, 56, 0.90);"
+            "}"
+        )
+        self.memory_new_btn.clicked.connect(self._on_new_memory)
+        _mem_row.addWidget(self.memory_new_btn, 0)
+
+        main_layout.addLayout(_mem_row)
 
         self.log_expand_icon = QToolButton(self)
         self.log_expand_icon.setCursor(Qt.PointingHandCursor)
@@ -594,37 +934,75 @@ class SecretaryButtonWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
 
         panel_rect = QRectF(self.rect())
-        panel_grad = QLinearGradient(panel_rect.topLeft(), panel_rect.bottomLeft())
-        panel_grad.setColorAt(0.0, QColor(8, 15, 24, 210))
-        panel_grad.setColorAt(0.35, QColor(7, 14, 22, 228))
-        panel_grad.setColorAt(1.0, QColor(5, 11, 18, 238))
-        painter.fillRect(panel_rect, panel_grad)
+        state  = getattr(self, "_ui_state", "idle")
+        fade   = getattr(self, "_fade_t",   1.0)
 
-        if hasattr(self, "orb_button"):
-            orb_geo = self.orb_button.geometry()
-            halo_center_x = orb_geo.center().x()
-            halo_center_y = orb_geo.center().y() + (orb_geo.height() * 0.04)
-            if self.orb_button.is_active():
-                phase = self.orb_button.get_phase()
-                beat = 0.5 - (0.5 * math.cos(phase))
-                beat = max(0.0, min(1.0, beat ** 1.25))
+        # === Panel background — subtle per-state tint ========================
+        pg = QLinearGradient(panel_rect.topLeft(), panel_rect.bottomLeft())
+        if state == "error":
+            pg.setColorAt(0.0,  QColor(20,  8, 10, 215))
+            pg.setColorAt(0.35, QColor(15,  6,  8, 230))
+            pg.setColorAt(1.0,  QColor(10,  4,  5, 242))
+        elif state == "listening":
+            pg.setColorAt(0.0,  QColor( 8, 19, 36, 215))
+            pg.setColorAt(0.35, QColor( 6, 15, 28, 230))
+            pg.setColorAt(1.0,  QColor( 3, 10, 20, 242))
+        else:  # idle
+            pg.setColorAt(0.0,  QColor( 8, 14, 22, 215))
+            pg.setColorAt(0.35, QColor( 7, 12, 19, 228))
+            pg.setColorAt(1.0,  QColor( 5, 10, 16, 240))
+        painter.fillRect(panel_rect, pg)
 
-                halo_radius = max(panel_rect.width() * 0.95, panel_rect.height() * 0.82)
-                halo = QRadialGradient(halo_center_x, halo_center_y, halo_radius)
-                halo.setColorAt(0.00, QColor(88, 219, 255, int(72 + (38 * beat))))
-                halo.setColorAt(0.40, QColor(63, 178, 232, int(30 + (18 * beat))))
-                halo.setColorAt(0.82, QColor(30, 114, 165, int(8 + (6 * beat))))
-                halo.setColorAt(1.00, QColor(10, 18, 27, 0))
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(halo)
-                painter.drawEllipse(
-                    QRectF(
-                        halo_center_x - halo_radius,
-                        halo_center_y - halo_radius,
-                        halo_radius * 2.0,
-                        halo_radius * 2.0,
-                    )
-                )
+        if not hasattr(self, "orb_button"):
+            painter.end()
+            return
+
+        orb_geo = self.orb_button.geometry()
+        halo_cx = orb_geo.center().x()
+        halo_cy = orb_geo.center().y() + orb_geo.height() * 0.04
+        painter.setPen(Qt.NoPen)
+
+        # === Listening — two-layer bright blue glow =========================
+        if state == "listening":
+            phase = self.orb_button.get_phase()
+            beat  = max(0.0, min(1.0, (0.5 - 0.5 * math.cos(phase)) ** 1.25))
+            f     = fade  # 0 → 1 as state fades in
+
+            # Outer atmospheric glow (large, soft)
+            r_out = max(panel_rect.width() * 1.05, panel_rect.height() * 0.90)
+            g_out = QRadialGradient(halo_cx, halo_cy, r_out)
+            g_out.setColorAt(0.00, QColor( 92, 228, 255, int((62 + 32 * beat) * f)))
+            g_out.setColorAt(0.38, QColor( 58, 178, 238, int((24 + 14 * beat) * f)))
+            g_out.setColorAt(0.72, QColor( 26, 110, 168, int(( 7 +  5 * beat) * f)))
+            g_out.setColorAt(1.00, QColor(  0,   0,   0, 0))
+            painter.setBrush(g_out)
+            painter.drawEllipse(QRectF(halo_cx - r_out, halo_cy - r_out, r_out * 2, r_out * 2))
+
+            # Inner core glow (tight — makes center feel strongly illuminated)
+            r_in = max(panel_rect.width() * 0.50, orb_geo.height() * 1.02)
+            g_in = QRadialGradient(halo_cx, halo_cy, r_in)
+            g_in.setColorAt(0.00, QColor(148, 255, 255, int((112 + 58 * beat) * f)))
+            g_in.setColorAt(0.30, QColor( 92, 220, 255, int(( 62 + 34 * beat) * f)))
+            g_in.setColorAt(0.65, QColor( 50, 162, 222, int(( 22 + 14 * beat) * f)))
+            g_in.setColorAt(1.00, QColor(  0,   0,   0, 0))
+            painter.setBrush(g_in)
+            painter.drawEllipse(QRectF(halo_cx - r_in, halo_cy - r_in, r_in * 2, r_in * 2))
+
+        # === Error — slow red radial glow ====================================
+        elif state == "error":
+            n_err   = len(self.orb_button._error_frames) if self.orb_button._error_frames else 48
+            idx_e   = self.orb_button._error_frame_index
+            e_phase = (2.0 * math.pi * idx_e) / max(1, n_err)
+            beat_e  = max(0.0, min(1.0, (0.5 - 0.5 * math.cos(e_phase * 0.65)) ** 1.2))
+
+            r_err = max(panel_rect.width() * 0.88, panel_rect.height() * 0.76)
+            g_err = QRadialGradient(halo_cx, halo_cy, r_err)
+            g_err.setColorAt(0.00, QColor(255, 66, 46, int((60 + 44 * beat_e) * fade)))
+            g_err.setColorAt(0.38, QColor(200, 35, 24, int((20 + 16 * beat_e) * fade)))
+            g_err.setColorAt(0.75, QColor(128, 16, 10, int(( 6 +  5 * beat_e) * fade)))
+            g_err.setColorAt(1.00, QColor(  0,  0,  0, 0))
+            painter.setBrush(g_err)
+            painter.drawEllipse(QRectF(halo_cx - r_err, halo_cy - r_err, r_err * 2, r_err * 2))
 
         painter.end()
 
@@ -709,6 +1087,73 @@ class SecretaryButtonWidget(QWidget):
         self._thinking_stage = stage or "Ready"
         self._refresh_log_box()
 
+    # ── Visual state machine ──────────────────────────────────────────────────
+
+    def set_ui_state(self, state: str) -> None:
+        """Transition the panel to 'idle', 'listening', or 'error' with a fade."""
+        if state == getattr(self, "_ui_state", "idle"):
+            return
+        self._prev_ui_state = getattr(self, "_ui_state", "idle")
+        self._ui_state = state
+        self._fade_t = 0.0
+        # Sync orb error-mode so its border/ring change too
+        if hasattr(self, "orb_button"):
+            self.orb_button.set_error(state == "error")
+        self._fade_timer.start()
+        self.update()
+
+    def _advance_fade(self) -> None:
+        self._fade_t = min(1.0, self._fade_t + 0.055)  # ~18 steps ≈ 290 ms
+        self.update()
+        if self._fade_t >= 1.0:
+            self._fade_timer.stop()
+
+    # ── Memory helpers ────────────────────────────────────────────────────────
+
+    def _on_new_memory(self) -> None:
+        """Create a new memory file when the user clicks the 'New' button."""
+        try:
+            # Ensure the orchestrator is alive so we can reach its memory store
+            if not self._ensure_secretary_runtime():
+                return
+            mem = getattr(self._secretary_orchestrator, "memory_store", None)
+            if mem is not None:
+                mem.new_memory()
+                self._refresh_memory_label()
+        except Exception:
+            pass
+
+    def _refresh_memory_label(self) -> None:
+        """Read the current (memory_number, cycle_count) and update the label."""
+        try:
+            mem = getattr(getattr(self, "_secretary_orchestrator", None), "memory_store", None)
+            if mem is None:
+                return
+            num, cyc = mem.get_current_info()
+            self.memory_label.setText(f"Memory #{num} — Cycle {cyc}/10")
+        except Exception:
+            pass
+
+    # ── Confirmation dialog ───────────────────────────────────────────────────
+
+    def _show_secretary_confirm_dialog(self, result: dict) -> bool:
+        """Show the EchoMind confirmation popup. Returns True if user clicked Yes."""
+        try:
+            dlg = SecretaryConfirmDialog(result, parent=self.window())
+            dlg.adjustSize()
+            # Centre the dialog over the host window
+            host = self.window()
+            if host is not None:
+                geo = host.geometry()
+                hint = dlg.sizeHint()
+                dlg.move(
+                    geo.x() + max(0, (geo.width()  - hint.width())  // 2),
+                    geo.y() + max(0, (geo.height() - hint.height()) // 2),
+                )
+            return dlg.exec() == QDialog.Accepted
+        except Exception:
+            return False
+
     def append_log(self, role, text):
         ts = datetime.now().strftime("%H:%M:%S")
         role_map = {
@@ -733,11 +1178,16 @@ class SecretaryButtonWidget(QWidget):
             self._stage_lines = []
             if not self._ensure_echomind_login():
                 self._set_active_silent(False)
+                QTimer.singleShot(0, lambda: self.set_ui_state("error"))
                 return
+            self.set_ui_state("listening")
             self._set_thinking_status("Listening")
             self.append_log("system", "Secretary is live and listening for a command.")
             self._start_recording()
         else:
+            # Only drop back to idle if the previous action was not an error
+            if getattr(self, "_ui_state", "idle") != "error":
+                self.set_ui_state("idle")
             self._set_thinking_status("Transcribing")
             self.append_log("system", "Secretary listening stopped.")
             self._stop_recording_and_process()
@@ -1119,6 +1569,34 @@ class SecretaryButtonWidget(QWidget):
                 self._post_log("system", f"Secretary engine error: {exc}")
                 return
 
+            # ── Popup confirmation dialog ─────────────────────────────────────
+            # Triggered for: download, delete, structural server changes.
+            # All other actions (search, open, navigate, view) execute directly
+            # and will never reach CONFIRM_REQUIRED so the dialog is never shown.
+            if (result or {}).get("error_code") == "CONFIRM_REQUIRED":
+                self._set_thinking_status("Awaiting Confirmation")
+                self._post_log("system", "Confirmation required — showing dialog.")
+                confirmed = self._show_secretary_confirm_dialog(result or {})
+                answer_text = "yes" if confirmed else "no"
+                try:
+                    result = self._secretary_orchestrator.handle({  # type: ignore[union-attr]
+                        "text": answer_text,
+                        "session_id": self._secretary_session_id,
+                    })
+                except Exception as _conf_exc:
+                    result = {
+                        "ok": False,
+                        "action": (result or {}).get("action", "unknown"),
+                        "message": f"Confirmation dispatch failed: {_conf_exc}",
+                        "data": None,
+                        "error_code": "INTERNAL",
+                    }
+                self._post_log(
+                    "system",
+                    f"User {'confirmed' if confirmed else 'cancelled'} — "
+                    f"result: {'OK' if (result or {}).get('ok') else (result or {}).get('error_code', 'error')}",
+                )
+
             import datetime as _dt2
             import sys as _sys2
             def _elog2(msg: str) -> None:
@@ -1138,8 +1616,13 @@ class SecretaryButtonWidget(QWidget):
                 _elog2(f"  data keys  : {list(data.keys())}")
             self.append_output(self._format_secretary_result_text(result or {}))
             self._set_thinking_status("Ready")
+            self.set_ui_state("idle")
+            # Update memory label with new cycle count
+            QTimer.singleShot(50, self._refresh_memory_label)
 
         def failed(msg: str):
+            if getattr(self, "_ui_state", "idle") != "error":
+                self.set_ui_state("idle")
             self._set_thinking_status("Ready")
             self._post_log("system", f"Secretary failed: {msg}")
 

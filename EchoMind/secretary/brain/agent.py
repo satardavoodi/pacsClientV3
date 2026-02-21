@@ -55,6 +55,26 @@ STRICT RULES:
 - Use the entity schema and confirmation policy from the module document.
 - If the user request maps to a side-effect action, set needs_confirmation=true.
 - confidence is a float 0.0–1.0.
+
+CONVERSATION MEMORY RULES (CRITICAL — apply before anything else):
+- When the prompt contains a "=== CONVERSATION MEMORY ===" block, it represents
+  results from the user's previous commands in this session.
+- Each memory cycle contains a [Patient List] section with structured rows:
+  ID:<patient_id> | Name:<name> | Modality:<code> | Body:<body_part> | ...
+- When the user refers to a patient by modality, body part, name fragment, index
+  ("the 5th patient"), or any characteristic that matches a memory list entry:
+  1. FIND that patient in the [Patient List] of the most-recent matching cycle.
+  2. Extract the patient's exact numeric ID (the value after "ID:").
+  3. Use that numeric ID as the patient_code entity in your action plan.
+  4. NEVER use the modality code (e.g. "MR"), body-part name (e.g. "BREAST"),
+     or any descriptive word as patient_code — patient_code must be a real ID.
+  5. When the match is UNIQUE (exactly one row matched), set needs_confirmation=false
+     for download_patient and open_patient — the ID is already confirmed by memory.
+     The system will execute immediately without asking the user to say "yes".
+- If the memory list contains multiple matches, pick the best match and set
+  needs_confirmation=true so the user can confirm which patient to act on.
+- If the memory does not contain enough data to resolve the patient, produce a
+  list_patients action to re-fetch with appropriate filters instead.
 """
 
 # ── Dispatcher map ────────────────────────────────────────────────────────────
@@ -137,6 +157,7 @@ class AgentBrain:
         user_text: str,
         language: str = "auto",
         pre_routed: "RouteDecision | None" = None,
+        memory_context: str = "",
     ) -> SecretaryActionPlan | None:
         """
         Run Phase 1 (routing) + Phase 2 (planning) and return a validated plan.
@@ -179,6 +200,7 @@ class AgentBrain:
             user_text=user_text,
             language=language,
             module_docs=module_docs,
+            memory_context=memory_context,
         )
         if plan is None:
             log.warning("Phase 2 returned no plan.")
@@ -306,6 +328,7 @@ class AgentBrain:
         user_text: str,
         language: str,
         module_docs: str,
+        memory_context: str = "",
         timeout: float = _TIMEOUT,
     ) -> SecretaryActionPlan | None:
         """Call the LLM with the module document(s) to produce an action plan."""
@@ -320,10 +343,16 @@ class AgentBrain:
             f"  this week = {(_today - timedelta(days=_today.weekday())).isoformat()} .. {_today.isoformat()}\n"
             f"IMPORTANT: Never guess or use training-data dates. Always compute relative dates from today above."
         )
+        _memory_section = (
+            f"{memory_context}\n\n"
+            if memory_context and memory_context.strip()
+            else ""
+        )
         user_message = (
             f"Language hint: {language or 'auto'}\n\n"
             f"=== DATE CONTEXT ===\n"
             f"{_date_context}\n\n"
+            f"{_memory_section}"
             "=== MODULE DOCUMENTS (Document 2) ===\n"
             f"{module_docs}\n\n"
             "=== USER REQUEST ===\n"

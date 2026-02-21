@@ -222,7 +222,7 @@ class ControlPanelWindow(object):
 
         self.verticalLayout = QVBoxLayout(self.leftMenuContainer)
         self.verticalLayout.setSpacing(0)
-        self.verticalLayout.setContentsMargins(3, 8, 3, 8)
+        self.verticalLayout.setContentsMargins(3, 4, 3, 4)
 
         self.leftMenuSubContainer = QWidget(self.leftMenuContainer)
         self.verticalLayout_2 = QVBoxLayout(self.leftMenuSubContainer)

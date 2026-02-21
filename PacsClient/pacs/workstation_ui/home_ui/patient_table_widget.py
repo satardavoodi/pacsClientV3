@@ -546,6 +546,7 @@ class PatientTableWidget(QWidget):
     downloadRequested = Signal(list)  # list of patient data dictionaries for download
     zetaNprRequested = Signal(list)  # list of patient data dictionaries for Zeta Download download
     cdBurnRequested = Signal(list)  # list of patient data dictionaries for CD burning
+    printRequested = Signal()  # request to open printing module with current selected studies
     statusUpdateResult = Signal(str, str, object)  # study_uid, new_status, response
 
     def __init__(self, parent=None):
@@ -880,7 +881,9 @@ class PatientTableWidget(QWidget):
         layout.setSpacing(6)
         
         # Header section with title and search info
+        header_height = 54
         header_widget = QWidget()
+        header_widget.setFixedHeight(header_height)
         header_widget.setStyleSheet("""
             QWidget {
                 background: #0f1419;
@@ -889,11 +892,13 @@ class PatientTableWidget(QWidget):
             }
         """)
         header_layout = QHBoxLayout(header_widget)
-        header_layout.setContentsMargins(8, 8, 8, 8)
+        header_layout.setContentsMargins(12, 8, 12, 8)
         header_layout.setSpacing(12)
+        header_layout.setAlignment(Qt.AlignVCenter)
         
         # Title
         title_label = QLabel("Patient Studies")
+        title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         title_label.setStyleSheet("""
             QLabel {
                 font-size: 14px;
@@ -907,6 +912,7 @@ class PatientTableWidget(QWidget):
         self.results_count_label = QLabel()
         self.results_count_label.setPixmap(qta.icon('fa5s.chart-bar', color='#a0aec0').pixmap(12, 12))
         self.results_count_label.setText(" 0 studies found")
+        self.results_count_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.results_count_label.setStyleSheet("""
             QLabel {
                 font-size: 14px;
@@ -1038,6 +1044,43 @@ class PatientTableWidget(QWidget):
         self.cd_burn_btn.setCursor(Qt.PointingHandCursor)
         self.cd_burn_btn.setEnabled(False)  # Initially disabled
 
+        # Print button - uses same workflow as left menu Print
+        self.print_btn = QPushButton(qta.icon('fa5s.print', color='white'), "")
+        self.print_btn.setToolTip("Print selected studies")
+        self.print_btn.clicked.connect(self._on_print_clicked)
+        self.print_btn.setFixedSize(36, 36)
+        self.print_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #14b8a6, stop:1 #0d9488);
+                color: white;
+                border: 1px solid #14b8a6;
+                border-radius: 8px;
+                padding: 8px;
+                font-size: 12px;
+                font-family: 'Roboto', sans-serif;
+                font-weight: 600;
+                margin: 4px 0px;
+                qproperty-iconSize: 16px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #0d9488, stop:1 #0f766e);
+                border-color: #0d9488;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #0f766e, stop:1 #115e59);
+            }
+            QPushButton:disabled {
+                background: #374151;
+                border-color: #4b5563;
+                color: #6b7280;
+            }
+        """)
+        self.print_btn.setCursor(Qt.PointingHandCursor)
+        self.print_btn.setEnabled(False)
+
         # Unified button style for all utility buttons
         utility_button_style = """
             QPushButton {
@@ -1108,6 +1151,7 @@ class PatientTableWidget(QWidget):
         header_layout.addWidget(self.refresh_btn)
         header_layout.addWidget(self.settings_btn)
         header_layout.addWidget(self.delete_btn)
+        header_layout.addWidget(self.print_btn)
         header_layout.addWidget(self.cd_burn_btn)
         header_layout.addWidget(self.download_btn)
         layout.addWidget(header_widget)
@@ -1343,6 +1387,15 @@ class PatientTableWidget(QWidget):
             print(f"Error in CD burn: {str(e)}")
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Error in CD burn: {str(e)}")
+
+    def _on_print_clicked(self):
+        """Handle print button click by delegating to HomePanelWidget print flow"""
+        try:
+            self.printRequested.emit()
+        except Exception as e:
+            print(f"Error in print request: {str(e)}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"Error in print request: {str(e)}")
     
     def _on_delete_clicked(self):
         """Handle delete button click - only delete downloaded studies"""
@@ -1560,11 +1613,13 @@ class PatientTableWidget(QWidget):
             self.download_btn.setEnabled(True)
             self.zeta_npr_btn.setEnabled(True)  # Enable Zeta Download button
             self.cd_burn_btn.setEnabled(True)  # CD burn فعال برای همه انتخاب شده‌ها
+            self.print_btn.setEnabled(True)
             # متن فقط هنگام hover نشان داده می‌شود
         else:
             self.download_btn.setEnabled(False)
             self.zeta_npr_btn.setEnabled(False)  # Disable Zeta Download button
             self.cd_burn_btn.setEnabled(False)
+            self.print_btn.setEnabled(False)
             # متن پاک می‌شود
         
         # Update delete button - only enable if at least one downloaded study is selected

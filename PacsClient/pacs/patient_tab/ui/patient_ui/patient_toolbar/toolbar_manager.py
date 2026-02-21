@@ -2404,6 +2404,14 @@ class ToolbarManager:
             ])
             layout.addWidget(curved_mpr_btn)
             
+            # Curve MPR button (New)
+            new_curve_mpr_btn = create_dropdown_tool('Curve MPR', 'fa5s.bezier-curve', '#8b5cf6')
+            new_curve_mpr_btn.clicked.connect(lambda: [
+                self.toggle_new_curve_mpr(),
+                dropdown.close()
+            ])
+            layout.addWidget(new_curve_mpr_btn)
+            
             # MIP button
             mip_btn = create_dropdown_tool('MIP - Maximum Intensity', 'fa5s.layer-group', '#60a5fa')
             mip_btn.clicked.connect(lambda: [
@@ -3889,6 +3897,282 @@ class ToolbarManager:
                 f"Error launching Zeta MPR:\n{str(e)}"
             )
             # Restore original widget visibility on error
+            if selected_widget:
+                selected_widget.setVisible(True)
+
+    def toggle_new_curve_mpr(self):
+        """
+        Toggle Curve MPR viewer ON/OFF for the selected viewport.
+        """
+        import logging
+        import sys
+        from PySide6.QtWidgets import QMessageBox
+        logger = logging.getLogger(__name__)
+        
+        logger.info("="*100)
+        logger.info("🔨 [MPR] toggle_new_curve_mpr called")
+        
+        # Check if MPR is already active - if so, close it
+        active_original_widget = None
+        active_mpr_widget = None
+
+        try:
+            for idx, node in enumerate(self.patient_widget.lst_nodes_viewer):
+                widget = getattr(node, 'vtk_widget', None)
+                if widget is None:
+                    continue
+                if hasattr(widget, '_curve_mpr_widget') and widget._curve_mpr_widget:
+                    active_original_widget = widget
+                    active_mpr_widget = widget._curve_mpr_widget
+                    break
+        except Exception as e:
+            logger.error(f"   ⚠️ [MPR] Error checking active MPR: {e}")
+
+        selected_widget = self.patient_widget.selected_widget
+        
+        if active_mpr_widget is None and hasattr(selected_widget, '_original_widget'):
+            active_original_widget = selected_widget._original_widget
+            active_mpr_widget = selected_widget
+
+        if active_mpr_widget is not None:
+            logger.info("🔄 [MPR CLOSE] Closing Curve MPR (toggle OFF)")
+            self._restore_selected_viewer(active_original_widget or selected_widget)
+            self.tool_selected = None
+            self.handle_buttons_checked()
+            return
+        
+        # Otherwise, open Curve MPR (toggle ON)
+        try:
+            logger.info("🚀 [MPR OPEN] Opening Curve MPR (toggle ON)")
+            self.check_and_deactivate_tools()
+            
+            selected_widget = self.patient_widget.selected_widget
+            
+            if not hasattr(selected_widget, 'image_viewer') or selected_widget.image_viewer is None:
+                QMessageBox.warning(self.patient_widget, "No Image Available", "No active DICOM series available.\n\nPlease load an image first.")
+                return
+            
+            if not hasattr(selected_widget, 'last_series_show') or selected_widget.last_series_show is None:
+                QMessageBox.warning(self.patient_widget, "No Series Available", "No active DICOM series available.\n\nPlease select a series first.")
+                return
+            
+            try:
+                if not hasattr(selected_widget.image_viewer, 'metadata') or selected_widget.image_viewer.metadata is None:
+                    QMessageBox.warning(self.patient_widget, "No Metadata", "Image viewer metadata not available.\n\nPlease reload the series.")
+                    return
+                
+                viewer_metadata = selected_widget.image_viewer.metadata
+                series_meta = viewer_metadata.get('series', {})
+                series_number = str(series_meta.get('series_number', ''))
+                
+                if not series_number:
+                    QMessageBox.warning(self.patient_widget, "No Series Number", "Series number not found in metadata.")
+                    return
+            except Exception as e:
+                QMessageBox.warning(self.patient_widget, "Metadata Error", f"Could not extract series number from viewer metadata:\n{str(e)}")
+                return
+            
+            series_data = None
+            active_series_index = None
+            
+            for idx, thumb_data in enumerate(self.patient_widget.lst_thumbnails_data):
+                thumb_meta = thumb_data.get('metadata', {})
+                thumb_series_meta = thumb_meta.get('series', {})
+                this_series_num = str(thumb_series_meta.get('series_number', ''))
+                
+                if this_series_num == series_number:
+                    series_data = thumb_data
+                    active_series_index = idx
+                    break
+            
+            if series_data is None or active_series_index is None:
+                QMessageBox.warning(self.patient_widget, "Series Not Found", f"Series {series_number} not found in loaded thumbnails.")
+                return
+            
+            try:
+                vtk_image_data = series_data.get('vtk_image_data')
+                if vtk_image_data is None:
+                    QMessageBox.warning(self.patient_widget, "No Image Data", f"No VTK image data available for series {series_number}.")
+                    return
+            except Exception as e:
+                QMessageBox.warning(self.patient_widget, "Data Error", f"Error accessing series data: {str(e)}")
+                return
+            
+            parent_widget = selected_widget.parent()
+            parent_layout = parent_widget.layout()
+            
+            grid_position = None
+            if parent_layout:
+                from PySide6.QtWidgets import QGridLayout
+                if isinstance(parent_layout, QGridLayout):
+                    for i in range(parent_layout.count()):
+                        item = parent_layout.itemAt(i)
+                        if item and item.widget() == selected_widget:
+                            grid_position = parent_layout.getItemPosition(i)
+                            break
+
+            if grid_position:
+                selected_widget._mpr_grid_position = grid_position
+            
+            selected_widget.setVisible(False)
+            
+            import os
+            import importlib.util
+            import shutil
+            
+            patient_tab_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta mpr")
+            if not os.path.exists(zeta_mpr_dir):
+                zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta_mpr")
+            
+            # --- Copy vtk_3d_presets.py into zeta mpr dir (same fix used by toggle_zeta_mpr) ---
+            viewers_dir = os.path.join(patient_tab_dir, "viewers")
+            vtk_presets_src = os.path.join(viewers_dir, "vtk_3d_presets.py")
+            vtk_presets_dst = os.path.join(zeta_mpr_dir, "vtk_3d_presets.py")
+            copied_vtk_presets = False
+            if os.path.exists(vtk_presets_src) and not os.path.exists(vtk_presets_dst):
+                shutil.copy2(vtk_presets_src, vtk_presets_dst)
+                copied_vtk_presets = True
+            
+            # Load the main zeta_mpr_pkg (StandardMPRViewer)
+            zeta_init_path = os.path.join(zeta_mpr_dir, "__init__.py")
+            if not os.path.exists(zeta_init_path):
+                QMessageBox.critical(self.patient_widget, "Error", "Zeta MPR module is missing __init__.py")
+                selected_widget.setVisible(True)
+                return
+            
+            zeta_spec = importlib.util.spec_from_file_location("zeta_mpr_pkg", zeta_init_path)
+            zeta_mpr_pkg_mod = importlib.util.module_from_spec(zeta_spec)
+            sys.modules["zeta_mpr_pkg"] = zeta_mpr_pkg_mod
+            zeta_spec.loader.exec_module(zeta_mpr_pkg_mod)
+            zeta_mpr_pkg = zeta_mpr_pkg_mod
+            
+            # Load the CurveMPR sub-package
+            init_path = os.path.join(zeta_mpr_dir, "CurveMPR", "__init__.py")
+            if not os.path.exists(init_path):
+                QMessageBox.critical(self.patient_widget, "Error", "Curve MPR module is missing __init__.py")
+                selected_widget.setVisible(True)
+                return
+                
+            spec = importlib.util.spec_from_file_location("curve_mpr_pkg", init_path)
+            curve_mpr_pkg = importlib.util.module_from_spec(spec)
+            sys.modules["curve_mpr_pkg"] = curve_mpr_pkg
+            spec.loader.exec_module(curve_mpr_pkg)
+            
+            window_width = None
+            window_center = None
+            try:
+                if hasattr(selected_widget, 'image_viewer') and selected_widget.image_viewer:
+                    image_viewer = selected_widget.image_viewer
+                    if hasattr(image_viewer, 'get_window_level'):
+                        window_width, window_center = image_viewer.get_window_level()
+                    elif hasattr(image_viewer, 'color_mapper'):
+                        window_width = image_viewer.color_mapper.GetWindow()
+                        window_center = image_viewer.color_mapper.GetLevel()
+                elif hasattr(selected_widget, 'window_width') and hasattr(selected_widget, 'window_center'):
+                    window_width = selected_widget.window_width
+                    window_center = selected_widget.window_center
+            except Exception as wl_err:
+                logger.warning(f"Could not read window/level from main viewer: {wl_err}")
+
+            zeta_widget = zeta_mpr_pkg.StandardMPRViewer(
+                vtk_image_data=vtk_image_data,
+                parent=parent_widget,
+                window_width=window_width,
+                window_center=window_center
+            )
+            
+            # Now inject Curve MPR into the 3D view pane (bottom right)
+            curve_widget = curve_mpr_pkg.CurveMPRWidget(vtk_image_data, main_viewer=zeta_widget, parent=zeta_widget)
+            
+            # Replace the 3D view with our Curve MPR widget
+            # StandardMPRViewer has a grid layout in _views_layout.
+            layout = getattr(zeta_widget, '_views_layout', None)
+            if layout:
+                # Remove the Coronal widget (1, 1)
+                item = layout.itemAtPosition(1, 1)
+                if item and item.widget():
+                    item.widget().hide()
+                    layout.removeWidget(item.widget())
+                
+                # Remove the Sagittal widget (1, 0)
+                item = layout.itemAtPosition(1, 0)
+                if item and item.widget():
+                    item.widget().hide()
+                    layout.removeWidget(item.widget())
+                    
+                # Remove the 3D widget (0, 1)
+                item = layout.itemAtPosition(0, 1)
+                if item and item.widget():
+                    item.widget().hide()
+                    layout.removeWidget(item.widget())
+                
+                # Add Curve MPR viewers to the grid layout
+                # Pane 1: Axial (0, 0) - already there
+                # Pane 2: Curved (0, 1)
+                layout.addWidget(curve_widget.vtkWidget_curved, 0, 1)
+                # Pane 3: Ortho (1, 0)
+                layout.addWidget(curve_widget.vtkWidget_ortho, 1, 0)
+                # Pane 4: MIP (1, 1)
+                if hasattr(curve_widget, 'vtkWidget_mip'):
+                    layout.addWidget(curve_widget.vtkWidget_mip, 1, 1)
+                
+                # Add controls to the top of StandardMPRViewer
+                controls_layout = QHBoxLayout()
+                controls_layout.addWidget(curve_widget.btn_clear)
+                controls_layout.addWidget(curve_widget.lbl_info)
+                controls_layout.addStretch()
+                
+                # Insert controls at the top of main_layout
+                main_layout = zeta_widget.layout()
+                if main_layout:
+                    main_layout.insertLayout(0, controls_layout)
+                    
+                # Hide the CurveMPRWidget itself since we extracted its children
+                curve_widget.hide()
+                
+            # Set up the interactor style on the axial view
+            if hasattr(zeta_widget, 'viewers') and 'axial' in zeta_widget.viewers:
+                interactor_style = curve_mpr_pkg.CurveMPRInteractorStyle(zeta_widget, curve_widget)
+                existing_style = zeta_widget.viewers['axial']['widget'].GetInteractorStyle()
+                if existing_style:
+                    interactor_style.attach(existing_style)
+                # Keep a reference to prevent garbage collection
+                curve_widget._interactor_helper = interactor_style
+            
+            if parent_layout and grid_position:
+                from PySide6.QtWidgets import QGridLayout
+                if isinstance(parent_layout, QGridLayout):
+                    row, col, rowSpan, colSpan = grid_position
+                    parent_layout.addWidget(zeta_widget, row, col, rowSpan, colSpan)
+            elif parent_layout:
+                parent_layout.addWidget(zeta_widget)
+            
+            selected_widget._curve_mpr_widget = zeta_widget
+            selected_widget._original_visible = True
+            zeta_widget._original_widget = selected_widget
+            
+            self.tool_selected = self.tool_access.CURVED_MPR
+            self.handle_buttons_checked()
+            
+            # Cleanup copied vtk_3d_presets.py (no longer needed after import)
+            if copied_vtk_presets and os.path.exists(vtk_presets_dst):
+                try:
+                    os.remove(vtk_presets_dst)
+                except Exception:
+                    pass
+            
+        except Exception as e:
+            logger.error(f"ERROR launching Curve MPR: {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self.patient_widget, "Error", f"Error launching Curve MPR:\n{str(e)}")
+            # Cleanup copied file on error too
+            try:
+                if 'copied_vtk_presets' in dir() and copied_vtk_presets and 'vtk_presets_dst' in dir() and os.path.exists(vtk_presets_dst):
+                    os.remove(vtk_presets_dst)
+            except Exception:
+                pass
             if selected_widget:
                 selected_widget.setVisible(True)
 

@@ -159,7 +159,7 @@ Download a single patient study.
 |----------------|--------|----------|-------------|
 | `patient_code` | string | no       | Patient ID or partial name. Uses last selected if omitted. |
 
-**Confirmation required:** `true`
+**Confirmation required:** `true` — **EXCEPTION:** if `patient_code` is a plain numeric ID resolved directly from the conversation memory list (single unambiguous match), set `needs_confirmation: false`.
 
 ---
 
@@ -209,7 +209,7 @@ Download a single patient study.
 - If `source` is not specified for `list_patients`, use `"active_tab"` to keep the current tab.
 - Date ranges are inclusive on both ends.
 - `needs_confirmation` must be `false` for `list_patients`, `set_source_mode`, `import_dicom`, `select_patient`, `change_font_size`, `sort_patients`.
-- `needs_confirmation` must be `true` for `open_patient`, `download_patient`, `select_and_download`.
+- `needs_confirmation` must be `true` for `open_patient`, `download_patient`, `select_and_download` — **EXCEPT** when the `patient_code` is a numeric patient ID resolved unambiguously from the conversation memory list: in that case set `needs_confirmation: false` for `open_patient` and `download_patient`.
 - `confidence` range: 0.0–1.0.
 - `select_and_download`: always set `needs_confirmation: true` because it will queue downloads.
 - `sort_patients` + immediate download should use `select_and_download` (single action), not two separate actions.
@@ -225,3 +225,59 @@ Return **only** a JSON object (no markdown fences, no prose) with exactly these 
 ```
 action, entities, confidence, needs_confirmation, reason
 ```
+
+---
+
+## 6. CONVERSATION MEMORY — how to use prior-cycle patient lists
+
+When the prompt contains a `=== CONVERSATION MEMORY ===` block, treat it as the
+**authoritative intermediate state** from the current session.  Each cycle in
+that block contains a structured `[Patient List]` section formatted as:
+
+```
+  N. ID:<patient_id> | Name:<patient_name> | Modality:<code> | Body:<body_part> | Date:... | Time:... | Images:...
+```
+
+### 6.1 Resolving a patient reference from memory
+
+When the user's follow-up command references a patient by any characteristic
+that can be matched against the memory list (modality, body part, name fragment,
+position / index, description), you **must**:
+
+1. Scan the `[Patient List]` rows of the **most recent cycle** whose list is
+   non-empty.
+2. Filter rows where the referenced characteristic matches (case-insensitive
+   substring match is acceptable for body_part and patient_name; exact match
+   for modality code).
+3. Extract the `patient_id` value (the number after `ID:`) from the matched
+   row(s).
+4. Use that numeric `patient_id` as the `patient_code` entity in your plan.
+5. Because the patient is already uniquely identified, set `needs_confirmation: false` (single match) so the command executes immediately without requiring a second voice confirmation.
+
+**IMPORTANT — what NOT to do:**
+- ❌ Do NOT use the body-part name (e.g. `"BREAST"`, `"BRAIN"`) as `patient_code`.
+- ❌ Do NOT use the modality code (e.g. `"MR"`, `"CT"`) as `patient_code`.
+- ❌ Do NOT use descriptive words from the user request as `patient_code`.
+- ✅ `patient_code` must always be a real patient identifier from the memory list.
+
+### 6.2 Multiple matches from memory
+
+If multiple rows match the filter:
+- Set `needs_confirmation: true`.
+- Place the **first** (or best) match `patient_id` in `patient_code`.
+- Explain the ambiguity in the `reason` field.
+
+### 6.3 Memory list is empty / body_part not populated
+
+If the memory patient list is empty or the needed field (e.g. `body_part`) is
+blank for all rows, produce a fresh `list_patients` action with the appropriate
+filter (e.g. `modality`, `date`) to re-fetch the data, instead of guessing.
+
+### 6.4 Continuation examples
+
+| User follow-up (after a list of 60 MRI patients was fetched) | Correct plan |
+|--------------------------------------------------------------|--------------|
+| "بیماری که برست انجام داده دانلودش کن" (download breast patient) | Find row with Body containing "breast" → use its ID as patient_code → `download_patient { patient_code: "<ID>", needs_confirmation: false }` |
+| "نفر پنجم رو دانلود کن" (download the 5th one) | Take the 5th row from memory list → use its ID → `download_patient { patient_code: "<ID>", needs_confirmation: false }` |
+| "بیمار احمدی رو باز کن" (open patient Ahmadi) | Find row with Name containing "AHMADI" → use its ID → `open_patient { patient_code: "<ID>", needs_confirmation: false }` |
+| "اولین رو انتخاب کن" (select the first one) | Take the 1st row ID → `select_patient { patient_code: "<ID>" }` |

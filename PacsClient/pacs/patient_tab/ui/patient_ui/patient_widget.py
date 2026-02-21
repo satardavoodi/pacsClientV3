@@ -2953,9 +2953,12 @@ class PatientWidget(QWidget):
                     background-color: #2196f3;
                     color: white;
                     font-weight: bold;
+                    font-size: 14px;
+                    line-height: 1.4;
+                    letter-spacing: 0.5px;
                     border: none;
                     border-radius: 8px;
-                    padding: 10px 0;
+                    padding: 14px 0;
                 }
             """
         else:
@@ -2963,9 +2966,13 @@ class PatientWidget(QWidget):
                 QPushButton {
                     background-color: #222;
                     color: #aaa;
+                    font-weight: bold;
+                    font-size: 14px;
+                    line-height: 1.4;
+                    letter-spacing: 0.5px;
                     border: none;
                     border-radius: 8px;
-                    padding: 10px 0;
+                    padding: 14px 0;
                 }
             """
 

@@ -48,6 +48,9 @@ class SecretaryOrchestrator:
         self.executor = SecretaryExecutor(self.adapter)
         self.llm_fallback = llm_fallback
         self._sessions: dict[str, dict[str, Any]] = {}
+        # ── EchoMind memory ───────────────────────────────────────────────────
+        self._memory_store: Any = None   # lazy-loaded EchoMindMemoryStore
+        self._last_modules: list[str] = []  # populated by _parse_plan (brain path)
         self._use_brain = use_brain
         self._brain = None          # lazy-loaded AgentBrain instance
 
@@ -78,7 +81,23 @@ class SecretaryOrchestrator:
             self._brain = AgentBrain(executor=self.executor, fallback_to_secretary=True)
         return self._brain
 
-    def _parse_plan(self, cmd: SecretaryCommand) -> SecretaryActionPlan | None:
+    def _get_memory_store_safe(self):
+        """Lazy-load EchoMindMemoryStore; returns None on any failure."""
+        if self._memory_store is not None:
+            return self._memory_store
+        try:
+            from .memory.memory_store import EchoMindMemoryStore
+            self._memory_store = EchoMindMemoryStore()
+        except Exception:
+            self._memory_store = None
+        return self._memory_store
+
+    @property
+    def memory_store(self):
+        """Public accessor for the memory store (used by the UI button)."""
+        return self._get_memory_store_safe()
+
+    def _parse_plan(self, cmd: SecretaryCommand, memory_context: str = "") -> SecretaryActionPlan | None:
         text = cmd.get("text") or ""
         language = cmd.get("language") or "auto"
         progress_cb = cmd.get("progress_cb")  # optional callable(stage: str)
@@ -92,8 +111,10 @@ class SecretaryOrchestrator:
                 if decision and not decision.is_empty:
                     if callable(progress_cb):
                         progress_cb(f"Phase 3: Planning ({', '.join(decision.modules)})")
+                    self._last_modules = list(decision.modules)  # capture for memory
                 brain_plan = self._get_brain().plan(
-                    user_text=text, language=language, pre_routed=decision
+                    user_text=text, language=language, pre_routed=decision,
+                    memory_context=memory_context,
                 )
                 if brain_plan:
                     return self._ensure_source(brain_plan, cmd)
@@ -252,6 +273,14 @@ class SecretaryOrchestrator:
         action_blob: dict[str, Any] = {}
         confirmation_required = False
 
+        # ── Memory: start a new cycle ────────────────────────────────────────
+        _mem = self._get_memory_store_safe()
+        if _mem:
+            try:
+                _mem.start_cycle(text)
+            except Exception:
+                pass
+
         try:
             pending = state.get("pending")
             if pending and pending.get("type") == "choose":
@@ -372,7 +401,10 @@ class SecretaryOrchestrator:
                     "error_code": None,
                 }
 
-            plan = self._parse_plan(cmd)
+            plan = self._parse_plan(
+                cmd,
+                memory_context=(_mem.get_context_for_llm() if _mem else ""),
+            )
             if not plan:
                 return {
                     "ok": False,
@@ -440,11 +472,25 @@ class SecretaryOrchestrator:
 
             _session.add_plan(dict(plan))
 
+            # ── Memory: record modules + GPT command ─────────────────────────
+            if _mem:
+                try:
+                    _mem.record_modules(self._last_modules)
+                    _mem.record_gpt_command(dict(plan))
+                except Exception:
+                    pass
+
             # ── Execution retry loop (Task 6: LLM-feedback repair) ────────────
+            # When the agent explicitly resolved the patient from memory and
+            # produced needs_confirmation=False, skip the voice confirmation
+            # gate entirely — no second "yes" command required.
+            _auto_confirmed: bool = plan.get("needs_confirmation") is False
+            if _auto_confirmed:
+                confirmed = True  # propagate to audit log
             active_plan = copy.deepcopy(plan)
             result = None
             for _exec_attempt in range(1, self._MAX_EXECUTION_RETRIES + 1):
-                result = self._run_plan(active_plan, state, confirmed=False)
+                result = self._run_plan(active_plan, state, confirmed=_auto_confirmed)
 
                 # Success or pending user input → stop immediately
                 if result.get("ok") or result.get("error_code") in (
@@ -499,6 +545,18 @@ class SecretaryOrchestrator:
 
                 _session.add_repair(dict(repaired), attempt=_exec_attempt)
                 active_plan = repaired
+
+            # ── Memory: record execution result and close cycle ───────────────
+            if _mem:
+                try:
+                    _patient_list = state.get("last_list", []) if result.get("ok") else []
+                    # Also check if data is a list of patient dicts
+                    if not _patient_list and isinstance(result.get("data"), list):
+                        _patient_list = result["data"]
+                    _mem.record_execution_result(result, _patient_list)
+                    _mem.close_cycle()
+                except Exception:
+                    pass
 
             audit.log_end(
                 action_id=action_id,

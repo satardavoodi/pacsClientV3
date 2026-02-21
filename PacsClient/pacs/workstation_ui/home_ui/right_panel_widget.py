@@ -90,7 +90,9 @@ class RightPanelWidget(QWidget):
         main_layout.setSpacing(6)
         
         # Enhanced header
+        header_height = 54
         header_widget = QWidget()
+        header_widget.setFixedHeight(header_height)
         header_layout = QHBoxLayout(header_widget)
         header_widget.setStyleSheet("""
             QWidget {
@@ -98,9 +100,13 @@ class RightPanelWidget(QWidget):
                 border-radius: 8px;
             }
         """)
+        header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setSpacing(10)
+        header_layout.setAlignment(Qt.AlignVCenter)
         
         # Title
         self.title_label = QLabel("Study Information")
+        self.title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.title_label.setStyleSheet("""
             QLabel {
                 font-size: 13px;
@@ -111,12 +117,13 @@ class RightPanelWidget(QWidget):
                     stop:0 #7c3aed, stop:1 #5b21b6);
                 border: 1px solid #7c3aed;
                 border-radius: 8px;
-                margin: 4px 0px;
+                margin: 0px;
             }
         """)
         
         # Count indicator
         self.count_label = QLabel("0 series")
+        self.count_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         self.count_label.setStyleSheet("""
             QLabel {
                 font-size: 9px;
@@ -126,7 +133,7 @@ class RightPanelWidget(QWidget):
                 background: rgba(160, 174, 192, 0.1);
                 border: 1px solid rgba(160, 174, 192, 0.2);
                 border-radius: 8px;
-                margin: 4px 0px;
+                margin: 0px;
             }
         """)
         
