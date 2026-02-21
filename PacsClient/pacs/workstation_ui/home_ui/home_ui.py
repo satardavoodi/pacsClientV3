@@ -158,6 +158,16 @@ class HomePanelWidget(QWidget):
         except Exception as e:
             print(f"Error refreshing table anti-aliasing: {str(e)}")
 
+    def apply_modality_grid_config_to_open_tabs(self):
+        """Apply updated modality grid layout to all open patient tabs."""
+        if not self.custom_tab_manager:
+            return
+
+        for tab_data in self.custom_tab_manager.get_all_patient_tabs().values():
+            widget = tab_data.get("widget")
+            if widget and hasattr(widget, "apply_modality_grid_config"):
+                widget.apply_modality_grid_config()
+
     def show_loading_message(self):
         if self.loading_message is None:
             self.loading_message = QLabel("Loading medical images...", self)

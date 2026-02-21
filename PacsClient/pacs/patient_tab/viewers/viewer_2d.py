@@ -531,6 +531,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         """
         print(f'overlay path: {path}')
 
+        camera = self.GetRenderer().GetActiveCamera() if self.GetRenderer() else None
+        saved_scale = None
+        if camera is not None:
+            try:
+                saved_scale = camera.GetParallelScale()
+            except Exception:
+                saved_scale = None
+
         # 1) Read NIfTI -> vtkImageData (your existing utility)
         vtk_image = read_segment_nifti(file=path)
 
@@ -572,6 +580,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         # 5) Align the overlay to the current slice and render
         self._sync_all_overlays_extent()
+        if saved_scale is not None and camera is not None:
+            try:
+                camera.SetParallelScale(saved_scale)
+            except Exception:
+                pass
         self.Render()
 
     def create_overlay_box(self, pts_world_point, actor, pts_ijk):
@@ -585,9 +598,18 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         text_actor_pos[1] += 5
 
-        box_name = f'Segmentation {len(self._overlays)}'
+        box_name = f'Box {len(self._overlays)}'
         text_actor = create_text_actor(text_actor_pos, box_name)
+        try:
+            if self.renderer:
+                text_actor.SetCamera(self.renderer.GetActiveCamera())
+        except Exception:
+            pass
         self.renderer.AddActor(text_actor)
+
+        if not hasattr(self, "_box_text_actors"):
+            self._box_text_actors = []
+        self._box_text_actors.append(text_actor)
 
         corner_ijk = bbox_corners_ijk(pts_ijk)
 
@@ -2089,6 +2111,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         هر باکس روی اسلایس فعلی رسم می‌گردد.
         """
         lst_boxes_object = []
+        camera = self.renderer.GetActiveCamera() if self.renderer else None
+        saved_scale = None
+        if camera is not None:
+            try:
+                saved_scale = camera.GetParallelScale()
+            except Exception:
+                saved_scale = None
         # پاک‌سازی باکس‌های قبلی
         self.clear_boxes()
         self._box_actors = []
@@ -2145,6 +2174,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             # add text up of box
             box_name = f'Box{len(lst_boxes_object) + 1}, \t\tscore: {score}'
             text_actor = create_text_actor(world_position=((p1[0] + p0[0]) / 2, p1[1] + 2, p1[2]), text=box_name)
+            try:
+                if self.renderer:
+                    text_actor.SetCamera(self.renderer.GetActiveCamera())
+            except Exception:
+                pass
 
             # create box object for manage
             box_object = BoxManager(box_name=box_name, box_name_actor=text_actor, box_actor=actor, status_abnormal=True,
@@ -2157,6 +2191,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # هم‌ترازسازی و رندر
         if hasattr(self, "_sync_all_overlays_extent"):
             self._sync_all_overlays_extent()
+        if saved_scale is not None and camera is not None:
+            try:
+                camera.SetParallelScale(saved_scale)
+            except Exception:
+                pass
         self.renderer.ResetCameraClippingRange()
         self.Render()
 

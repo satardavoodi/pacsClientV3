@@ -83,6 +83,10 @@ class ControlPanelWindow(object):
         self.closeCenterMenuBtn.clicked.connect(lambda: self.centerMenuContainer.hide())
         self.closeRightMenuBtn.clicked.connect(lambda: self.rightMenuContainer.hide())
 
+    def _on_modality_grid_config_changed(self):
+        if hasattr(self, "home_widget") and self.home_widget:
+            self.home_widget.apply_modality_grid_config_to_open_tabs()
+
     def _toggle_center_menu(self, *, page: str):
         """Show/hide the center menu and switch to the requested page."""
         try:
@@ -436,6 +440,9 @@ class ControlPanelWindow(object):
 
         # Settings widget
         self.settings_widget = settings_ui.SettingsTabWidget()
+        self.settings_widget.viewer_config.configChanged.connect(
+            self._on_modality_grid_config_changed
+        )
         self.mainPages.addWidget(self.settings_widget)
 
         # Data page

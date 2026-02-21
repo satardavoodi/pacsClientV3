@@ -334,6 +334,31 @@ class PolygonSegmentationInteractorStyle(AbstractInteractorStyle):
         """
         pass
 
+    def request_segmentation_for_ijk(self, ijk_list_3d: list) -> tuple[str | None, dict | None]:
+        """Send segmentation request for precomputed IJK points (no VTK/UI calls)."""
+        if not (self.server_config.get("STUDY_UID") or self.server_config.get("DICOM_FOLDER")):
+            print("[poly] neither study_uid nor dicom_folder set; abort.")
+            return None, None
+
+        payload = build_payload_ijk(self.server_config, ijk_list_3d)
+        url = f"http://{self.server_ip}:{self.server_port}/dicom-info/"
+
+        try:
+            print(f"\npayload: {payload}\n")
+            print(f"ijk points on countor closed: {payload['params']['points']}")
+
+            if self.server_config.get("DOWNLOAD_TO_CLIENT"):
+                out_path = download_file(url, payload, kind="nifti")
+            else:
+                r = post_json(url, payload, timeout=180)
+                r.raise_for_status()
+                resp = r.json() or {}
+                out_path = resp.get("nifti_path") or resp.get("out_path") or resp.get("path")
+            return out_path, payload
+        except Exception as e:
+            print("[poly] send/download failed:", e)
+            return None, payload
+
     def draw_segmentation_with_ijk_point(self, pts_world_out: list):
         if not (self.server_config.get("STUDY_UID") or self.server_config.get("DICOM_FOLDER")):
             print("[poly] neither study_uid nor dicom_folder set; abort.")
@@ -357,23 +382,9 @@ class PolygonSegmentationInteractorStyle(AbstractInteractorStyle):
             print(f"[poly] ERROR: cannot map display-world to input-ijk: {e}")
             return
 
-        payload = build_payload_ijk(self.server_config, ijk_list_3d)
-        url = f"http://{self.server_ip}:{self.server_port}/dicom-info/"
-
-        try:
-            print(f'\npayload: {payload}\n')
-            print(f'ijk points on countor closed: {payload["params"]["points"]}')
-
-            if self.server_config.get("DOWNLOAD_TO_CLIENT"):
-                out_path = download_file(url, payload, kind="nifti")
-                # print(f'in if on counter closed out_path: {out_path}')
-            else:
-                r = post_json(url, payload, timeout=180)
-                r.raise_for_status()
-                resp = r.json()
-                print("[poly] server response:", resp)
-        except Exception as e:
-            print("[poly] send/download failed:", e)
+        out_path, payload = self.request_segmentation_for_ijk(ijk_list_3d)
+        if payload is None:
+            return
 
         points = payload["params"]["points"]
 
