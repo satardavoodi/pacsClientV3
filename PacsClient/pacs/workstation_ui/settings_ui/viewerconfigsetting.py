@@ -368,6 +368,27 @@ class ModalityGridConfigWidget(QWidget):
     # --------------------------------------------------
     # Logic
     # --------------------------------------------------
+    def _create_default_config(self):
+        """ایجاد فایل کانفیگ پیش‌فرض در صورت عدم وجود."""
+        default_config = {
+            "default": {
+                "rows": 1,
+                "cols": 2
+            },
+            "modality_layouts": {
+                k: {"rows": v[0], "cols": v[1]}
+                for k, v in self.DEFAULT_LAYOUTS.items()
+            }
+        }
+        
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(default_config, f, indent=2, ensure_ascii=False)
+            print(f"✅ Default modality config created: {self.config_path}")
+        except Exception as e:
+            print(f"❌ Error creating default config: {e}")
+
     def load_config(self):
         # ابتدا همه مودالیتی‌های پیش‌فرض را لود می‌کنیم
         self.config_data = {
@@ -377,6 +398,11 @@ class ModalityGridConfigWidget(QWidget):
 
         # Load BoostViewer setting independently from modality grid config
         self.boostviewer_toggle.setChecked(load_boost_viewer_enabled(default=True))
+        
+        # اگر فایل کانفیگ وجود نداشت، آن را ایجاد می‌کنیم
+        if not self.config_path.exists():
+            print(f"⚠️ Modality config not found, creating default: {self.config_path}")
+            self._create_default_config()
         
         # اگر فایل کانفیگ وجود داشت، مقادیر آن را override می‌کنیم
         if self.config_path.exists():
@@ -390,7 +416,9 @@ class ModalityGridConfigWidget(QWidget):
                         # مقادیر ذخیره شده را به config_data اضافه/بروزرسانی می‌کنیم
                         self.config_data.update(saved_config)
             except Exception as e:
-                print(f"Error loading config: {e}")
+                print(f"❌ Error loading config: {e}")
+                # در صورت خطا، فایل پیش‌فرض را دوباره ایجاد می‌کنیم
+                self._create_default_config()
         
         self._rebuild()
 
@@ -466,11 +494,21 @@ class ModalityGridConfigWidget(QWidget):
                 "cols": picker.cols,
             }
 
+        # ساختار JSON جدید با default و modality_layouts
+        config_to_save = {
+            "default": {
+                "rows": 1,
+                "cols": 2
+            },
+            "modality_layouts": self.config_data
+        }
+
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(self.config_data, f, indent=2)
+            json.dump(config_to_save, f, indent=2, ensure_ascii=False)
 
         save_boost_viewer_enabled(self.boostviewer_toggle.isChecked())
 
         self.configChanged.emit()
         QMessageBox.information(self, "Saved", "Grid configuration saved.")
+        print(f"✅ Modality grid config saved: {self.config_path}")

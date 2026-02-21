@@ -3350,41 +3350,101 @@ class OneChatPage(QWidget):
         english_payload = ""
         src = ""
 
-        raw = getattr(bubble, "raw_report_json", None)
-        if isinstance(raw, str) and raw.strip():
-            english_payload = raw.strip()
-            src = "bubble.raw_report_json"
-            print(f"✅ Content extracted from: {src}")
-            logger.info(f"✅ Content extracted from: {src}")
+        # ✅ FIX: For assistant bubbles, prefer the exact assistant text stored in raw_report_json.
+        #         For report bubbles, prefer raw_report_json if available.
+        if is_assistant:
+            # Assistant => MUST send the exact assistant text (no HTML extraction)
+            raw = getattr(bubble, "raw_report_json", None)
+            if isinstance(raw, str) and raw.strip():
+                raw_text = raw.strip()
+                parsed = None
+                try:
+                    parsed = self._parse_assistant_dict(raw_text)
+                except Exception:
+                    parsed = None
+
+                # If the payload is JSON-like/structured, translate the rendered assistant text
+                if isinstance(parsed, dict) and not (len(parsed) == 1 and "Raw" in parsed):
+                    try:
+                        rendered_html = self._render_assistant_html(parsed)
+                        plain = extract_plain_text_from_html(rendered_html).strip()
+                    except Exception:
+                        plain = ""
+
+                    if plain:
+                        english_payload = plain
+                        src = "assistant_rendered_text [from raw_json]"
+                    else:
+                        english_payload = raw_text
+                        src = "bubble.raw_report_json [assistant]"
+                else:
+                    english_payload = raw_text
+                    src = "bubble.raw_report_json [assistant]"
+
+                print(f"✅ Content extracted from: {src}")
+                logger.info(f"✅ Content extracted from: {src}")
+            else:
+                # Fallback: extract from HTML/text if raw text is missing
+                html = ""
+                try:
+                    html = (bubble.get_html() or "").strip()
+                except Exception:
+                    html = (getattr(bubble, "_raw_text", "") or "").strip()
+
+                if not html:
+                    msg = "⚠ Cannot translate to Persian: this bubble has no content."
+                    print(f"❌ {msg}")
+                    logger.error(f"❌ {msg}")
+                    self.controller.bubble("AI ChatBot", msg)
+                    return
+
+                try:
+                    english_payload = extract_plain_text_from_html(html).strip()
+                except Exception:
+                    english_payload = ""
+
+                if not english_payload:
+                    english_payload = html  # last resort
+                src = "bubble.get_html() [assistant-fallback]"
+                print(f"✅ Content extracted from: {src}")
+                logger.info(f"✅ Content extracted from: {src}")
         else:
-            html = ""
-            try:
-                html = (bubble.get_html() or "").strip()
-            except Exception:
-                html = (getattr(bubble, "_raw_text", "") or "").strip()
+            # Report => prefer raw_report_json if available
+            raw = getattr(bubble, "raw_report_json", None)
+            if isinstance(raw, str) and raw.strip():
+                english_payload = raw.strip()
+                src = "bubble.raw_report_json [report]"
+                print(f"✅ Content extracted from: {src}")
+                logger.info(f"✅ Content extracted from: {src}")
+            else:
+                html = ""
+                try:
+                    html = (bubble.get_html() or "").strip()
+                except Exception:
+                    html = (getattr(bubble, "_raw_text", "") or "").strip()
 
-            if not html:
-                msg = "⚠ Cannot translate to Persian: this bubble has no content."
-                print(f"❌ {msg}")
-                logger.error(f"❌ {msg}")
-                self.controller.bubble("AI ChatBot", msg)
-                return
+                if not html:
+                    msg = "⚠ Cannot translate to Persian: this bubble has no content."
+                    print(f"❌ {msg}")
+                    logger.error(f"❌ {msg}")
+                    self.controller.bubble("AI ChatBot", msg)
+                    return
 
-            try:
-                english_payload = extract_plain_text_from_html(html).strip()
-            except Exception:
-                english_payload = ""
+                try:
+                    english_payload = extract_plain_text_from_html(html).strip()
+                except Exception:
+                    english_payload = ""
 
-            if not english_payload:
-                english_payload = html  # last resort
-            src = "bubble.get_html()"
-            print(f"✅ Content extracted from: {src}")
-            logger.info(f"✅ Content extracted from: {src}")
+                if not english_payload:
+                    english_payload = html  # last resort
+                src = "bubble.get_html() [report]"
+                print(f"✅ Content extracted from: {src}")
+                logger.info(f"✅ Content extracted from: {src}")
 
-            try:
-                bubble.raw_report_json = english_payload
-            except Exception:
-                pass
+                try:
+                    bubble.raw_report_json = english_payload
+                except Exception:
+                    pass
 
         if not english_payload.strip():
             msg = "⚠ Cannot translate to Persian: extracted content is empty."
@@ -3450,6 +3510,14 @@ class OneChatPage(QWidget):
                     self.controller.bubble("AI ChatBot", "⚠ Empty Persian assistant translation.")
                     logger.warning("⚠ Empty Persian assistant translation.")
                     return
+
+                # Persian assist output log (length + preview)
+                try:
+                    preview = txt[:400].replace("\n", " ")
+                    logger.info("[ASSISTANT-FA] len=%d preview=%s", len(txt), preview)
+                    print(f"[ASSISTANT-FA] len={len(txt)} preview={preview}")
+                except Exception:
+                    pass
 
                 html = (
                     "<div dir='rtl' style='direction: rtl; text-align: right;'>"
@@ -3633,6 +3701,12 @@ class OneChatPage(QWidget):
         if not is_user:
             origin = getattr(self, "_bubble_origin_hint", None)
             self._bubble_origin_hint = None
+            # Fallback: if hint is missing, infer from pending raw payloads
+            if not origin:
+                if getattr(self, "_pending_assistant_raw_en", None):
+                    origin = "assistant"
+                elif getattr(self, "_pending_report_raw_en", None):
+                    origin = "report"
 
         # --- 3.5) report raw (for DB persistence) ---
         raw_report_for_db: str | None = None
@@ -3653,6 +3727,11 @@ class OneChatPage(QWidget):
             on_persian=on_persian,
             on_send_reception=on_send_reception,
         )
+        # Keep origin on live bubbles (used by Persian/Edit)
+        try:
+            b._origin = origin
+        except Exception:
+            pass
 
         # 🔹 If this is a freshly generated report bubble, attach the raw EN JSON
         if origin == "report" and not is_user:

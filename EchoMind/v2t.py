@@ -3267,13 +3267,10 @@ class OneChatPage(QWidget):
         english_payload = ""
         src = ""
 
-        raw = getattr(bubble, "raw_report_json", None)
-        if isinstance(raw, str) and raw.strip():
-            english_payload = raw.strip()
-            src = "bubble.raw_report_json"
-            print(f"✅ Content extracted from: {src}")
-            logger.info(f"✅ Content extracted from: {src}")
-        else:
+        # ✅ FIX: For assistant bubbles, always extract from HTML (not raw_report_json)
+        #         For report bubbles, prefer raw_report_json if available
+        if is_assistant:
+            # Assistant => extract from HTML/text
             html = ""
             try:
                 html = (bubble.get_html() or "").strip()
@@ -3294,14 +3291,46 @@ class OneChatPage(QWidget):
 
             if not english_payload:
                 english_payload = html  # last resort
-            src = "bubble.get_html()"
+            src = "bubble.get_html() [assistant]"
             print(f"✅ Content extracted from: {src}")
             logger.info(f"✅ Content extracted from: {src}")
+        else:
+            # Report => prefer raw_report_json if available
+            raw = getattr(bubble, "raw_report_json", None)
+            if isinstance(raw, str) and raw.strip():
+                english_payload = raw.strip()
+                src = "bubble.raw_report_json [report]"
+                print(f"✅ Content extracted from: {src}")
+                logger.info(f"✅ Content extracted from: {src}")
+            else:
+                html = ""
+                try:
+                    html = (bubble.get_html() or "").strip()
+                except Exception:
+                    html = (getattr(bubble, "_raw_text", "") or "").strip()
 
-            try:
-                bubble.raw_report_json = english_payload
-            except Exception:
-                pass
+                if not html:
+                    msg = "⚠ Cannot translate to Persian: this bubble has no content."
+                    print(f"❌ {msg}")
+                    logger.error(f"❌ {msg}")
+                    self.controller.bubble("AI ChatBot", msg)
+                    return
+
+                try:
+                    english_payload = extract_plain_text_from_html(html).strip()
+                except Exception:
+                    english_payload = ""
+
+                if not english_payload:
+                    english_payload = html  # last resort
+                src = "bubble.get_html() [report]"
+                print(f"✅ Content extracted from: {src}")
+                logger.info(f"✅ Content extracted from: {src}")
+
+                try:
+                    bubble.raw_report_json = english_payload
+                except Exception:
+                    pass
 
         if not english_payload.strip():
             msg = "⚠ Cannot translate to Persian: extracted content is empty."
@@ -3312,6 +3341,18 @@ class OneChatPage(QWidget):
 
         print(f"→ English content extracted: {len(english_payload)} characters")
         logger.info(f"→ English content extracted: {len(english_payload)} characters")
+
+        # 🔍 LOG FULL ENGLISH PAYLOAD BEING SENT
+        print("\n" + "="*100)
+        print("📤 ENGLISH PAYLOAD BEING SENT TO API:")
+        print("="*100)
+        print(english_payload)
+        print("="*100 + "\n")
+        logger.info("\n" + "="*100)
+        logger.info("📤 ENGLISH PAYLOAD BEING SENT TO API:")
+        logger.info("="*100)
+        logger.info(english_payload)
+        logger.info("="*100)
 
         # ─────────────────────────────────────────────
         # 2) Worker (API call)
@@ -3333,11 +3374,39 @@ class OneChatPage(QWidget):
                 QTimer.singleShot(100, self._prompt_for_api_key)
                 return
 
+            # 🔍 LOG TRANSLATION TYPE
+            translation_type = "ASSISTANT (free text)" if is_assistant else "REPORT (structured)"
+            print(f"\n🔄 Translation type: {translation_type}")
+            logger.info(f"🔄 Translation type: {translation_type}")
+
             # ✅ Assistant => translate free text
             if is_assistant:
-                return translate_text_to_persian(user_msg=english_payload, CENTER_Key=center_key)
+                result = translate_text_to_persian(user_msg=english_payload, CENTER_Key=center_key)
+                print("\n" + "="*100)
+                print("📥 RAW API RESPONSE (translate_text_to_persian):")
+                print("="*100)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                print("="*100 + "\n")
+                logger.info("\n" + "="*100)
+                logger.info("📥 RAW API RESPONSE (translate_text_to_persian):")
+                logger.info("="*100)
+                logger.info(json.dumps(result, ensure_ascii=False, indent=2))
+                logger.info("="*100)
+                return result
             # ✅ Report => translate structured report
-            return translate_report(user_msg=english_payload, CENTER_Key=center_key)
+            else:
+                result = translate_report(user_msg=english_payload, CENTER_Key=center_key)
+                print("\n" + "="*100)
+                print("📥 RAW API RESPONSE (translate_report):")
+                print("="*100)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                print("="*100 + "\n")
+                logger.info("\n" + "="*100)
+                logger.info("📥 RAW API RESPONSE (translate_report):")
+                logger.info("="*100)
+                logger.info(json.dumps(result, ensure_ascii=False, indent=2))
+                logger.info("="*100)
+                return result
 
         # ─────────────────────────────────────────────
         # 3) Handle success

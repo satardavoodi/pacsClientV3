@@ -233,6 +233,106 @@ def get_series_by_study_pk(study_pk: int) -> list[dict]:
     return [dict(zip(columns, row)) for row in rows]
 
 
+def get_study_info_with_series(study_uid: str) -> dict:
+    """
+    Get complete study information including patient data and series list.
+    Used for download retry when state is not found.
+    
+    Returns:
+        dict with keys: study_uid, patient_id, patient_name, study_date, 
+        study_description, modality, series_count, images_count, series (list)
+    """
+    try:
+        conn = get_connection_database()
+        cur = conn.cursor()
+        
+        # Get study info with patient data
+        cur.execute("""
+            SELECT 
+                s.study_uid,
+                s.study_date,
+                s.study_time,
+                s.study_description,
+                s.modality,
+                s.body_part,
+                s.number_of_series,
+                s.number_of_instances,
+                p.patient_id,
+                p.patient_name,
+                p.birth_date,
+                p.sex,
+                p.age
+            FROM studies s
+            JOIN patients p ON s.patient_fk = p.patient_pk
+            WHERE s.study_uid = ?
+        """, (study_uid,))
+        
+        study_row = cur.fetchone()
+        if not study_row:
+            return None
+        
+        # Get series list
+        study_pk = find_study_pk_with_study_uid(study_uid)
+        cur.execute("""
+            SELECT 
+                series_uid,
+                series_number,
+                series_description,
+                modality,
+                image_count,
+                protocol_name,
+                body_part_examined,
+                manufacturer,
+                institution_name,
+                thumbnail_path
+            FROM series 
+            WHERE study_fk = ? 
+            ORDER BY series_number
+        """, (study_pk,))
+        
+        series_rows = cur.fetchall()
+        
+        # Build series list
+        series_list = []
+        for sr in series_rows:
+            series_list.append({
+                'series_uid': sr[0],
+                'series_number': sr[1],
+                'series_description': sr[2] or '',
+                'modality': sr[3] or '',
+                'image_count': sr[4] or 0,
+                'protocol_name': sr[5],
+                'body_part_examined': sr[6],
+                'manufacturer': sr[7],
+                'institution_name': sr[8],
+                'thumbnail_path': sr[9]
+            })
+        
+        # Build complete study info
+        return {
+            'study_uid': study_row[0],
+            'study_date': study_row[1] or '',
+            'study_time': study_row[2] or '',
+            'study_description': study_row[3] or '',
+            'modality': study_row[4] or '',
+            'body_part': study_row[5] or '',
+            'series_count': study_row[6] or 0,
+            'images_count': study_row[7] or 0,
+            'patient_id': study_row[8] or '',
+            'patient_name': study_row[9] or '',
+            'patient_birth_date': study_row[10] or '',
+            'patient_sex': study_row[11] or '',
+            'patient_age': study_row[12] or '',
+            'series': series_list
+        }
+        
+    except Exception as e:
+        print(f"❌ Error getting study info with series: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def get_series_by_study_and_number(study_uid: str, series_number: int) -> dict:
     """Get series information by study UID and series number"""
     try:

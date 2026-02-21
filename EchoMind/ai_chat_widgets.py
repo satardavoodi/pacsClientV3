@@ -3980,7 +3980,8 @@ class UnifiedComposer(QWidget):
         self._mic_mode = mode
         if mode == "record":
             _set_icon(self.btn_mic, "mic.png", 20, "Record voice")
-            # Hide recording controls when in idle/record mode
+            # Show mic button and hide recording controls when in idle/record mode
+            self.btn_mic.setVisible(True)
             self.btn_pause.setVisible(False)
             self.btn_confirm_rec.setVisible(False)
             self.btn_cancel.setVisible(False)
@@ -3992,6 +3993,7 @@ class UnifiedComposer(QWidget):
             self.btn_cancel.setVisible(True)
         else:
             _set_icon(self.btn_mic, "mic.png", 20, "Record voice")
+            self.btn_mic.setVisible(True)
             self.btn_pause.setVisible(False)
             self.btn_confirm_rec.setVisible(False)
             self.btn_cancel.setVisible(False)

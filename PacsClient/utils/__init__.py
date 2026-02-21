@@ -9,7 +9,7 @@ from .db_manager import get_connection_database, insert_patient, insert_study, i
     get_count_instances_in_study, get_study_by_study_uid, update_study_counts_by_uid,\
     update_patient_missing_fields, update_study_missing_fields, update_series_missing_fields,\
     update_instance_missing_fields, get_attachments_uploaded, append_attachments_uploaded, get_series_path_with_study_pk_and_series_number,\
-    get_visit_status, set_visit_status, ensure_visit_status_column
+    get_visit_status, set_visit_status, ensure_visit_status_column, get_study_info_with_series
 
 # --- AI Chat exports (روی همان DB اصلی) ---
 from .db_manager import (

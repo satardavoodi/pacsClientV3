@@ -1644,9 +1644,19 @@ class PatientWidget(QWidget):
 
     def get_optimal_layout_for_series(self, metadata: dict) -> tuple[int, int]:
         """
-        Always use default layout from modality_grid.json (fallback 1x2).
+        Get layout based on series modality from modality_grid.json (fallback to default or 1x2).
         """
-        return self._get_default_layout_from_config()
+        # استخراج مودالیتی از metadata
+        modality = None
+        try:
+            if 'series' in metadata and 'modality' in metadata['series']:
+                modality = metadata['series']['modality']
+            elif 'instances' in metadata and len(metadata['instances']) > 0:
+                modality = metadata['instances'][0].get('modality')
+        except Exception as e:
+            print(f"⚠️ Error extracting modality from metadata: {e}")
+        
+        return self._get_default_layout_from_config(modality=modality)
 
     def init_grid_config():
         """فایل config اولیه را ایجاد می‌کند اگر وجود نداشته باشد"""
@@ -5127,7 +5137,7 @@ class PatientWidget(QWidget):
                 self._eagle_eye_autoload_inflight = False
                 return
 
-            QTimer.singleShot(200, self._try_auto_open_first_series_for_eagle_eye)
+            QTimer.singleShot(50, self._try_auto_open_first_series_for_eagle_eye)
         except Exception as e:
             self._eagle_eye_autoload_inflight = False
             print(f"⚠️ [EAGLE EYE] Auto-open retry failed: {e}")
@@ -5335,9 +5345,17 @@ class PatientWidget(QWidget):
         """Delegate to viewer controller"""
         return self.viewer_controller._display_first_series_in_all_viewers(series_number)
 
-    def _get_default_layout_from_config(self) -> tuple[int, int]:
-        """Delegate to viewer controller"""
-        return self.viewer_controller._get_default_layout_from_config()
+    def _get_default_layout_from_config(self, modality: str = None) -> tuple[int, int]:
+        """Read default layout from modality_grid.json based on modality (fallback to default then 1x2).
+        
+        Args:
+            modality: Optional modality string (e.g., 'CT', 'MR'). If provided, tries to find
+                     modality-specific layout first.
+        
+        Returns:
+            tuple: (rows, cols) for viewer grid layout
+        """
+        return self.viewer_controller._get_default_layout_from_config(modality=modality)
 
     def reset_slider(self, vtk_widget: VTKWidget, slider: QSlider):
         """Delegate to viewer controller"""

@@ -2846,27 +2846,21 @@ class DownloadManagerWidget(QWidget):
                 
                 # Try to fetch study metadata from database and create state
                 try:
-                    from PacsClient.utils.db_manager import get_patient_by_study_uid
-                    db_info = get_patient_by_study_uid(study_uid)
+                    from PacsClient.utils.db_manager import get_study_info_with_series
+                    db_info = get_study_info_with_series(study_uid)
                     
                     if db_info:
                         logger.info(f"✅ [SERIES RETRY] Found study in database, creating state...")
+                        logger.info(f"   Patient: {db_info.get('patient_name', 'Unknown')}")
+                        logger.info(f"   Series count: {len(db_info.get('series', []))}")
                         
                         # Create task and state from DB info
-                        task = self._create_task_from_dict({
-                            'study_uid': study_uid,
-                            'patient_id': db_info.get('patient_id', ''),
-                            'patient_name': db_info.get('patient_name', ''),
-                            'study_date': db_info.get('study_date', ''),
-                            'study_description': db_info.get('study_description', ''),
-                            'modality': db_info.get('modality', ''),
-                            'series_count': db_info.get('series_count', 0),
-                            'images_count': 0,
-                            'series': []
-                        })
+                        task = self._create_task_from_dict(db_info)
                         
                         # Create state in store
                         state = self.state_store.create(task)
+                        # Keep task available for retry mapping and worker start
+                        self._tasks[study_uid] = task
                         logger.info(f"✅ [SERIES RETRY] Auto-created state for study {study_uid[:40]}")
                     else:
                         logger.warning(f"⚠️ [SERIES RETRY] Study not found in database")
@@ -2923,9 +2917,20 @@ class DownloadManagerWidget(QWidget):
                 if task:
                     self._tasks[study_uid] = task
 
+            target_uid = str(series_uid) if series_uid else None
+            target_num = str(series_number) if series_number is not None else None
+
             if task and task.series_list:
-                target_uid = str(series_uid) if series_uid else None
-                target_num = str(series_number) if series_number is not None else None
+                # Resolve missing series_uid/series_number from the task list
+                if not target_uid or not target_num:
+                    for series_info in task.series_list:
+                        if target_uid and str(series_info.series_uid) == target_uid:
+                            target_num = str(series_info.series_number)
+                            break
+                        if target_num is not None and str(series_info.series_number) == target_num:
+                            target_uid = str(series_info.series_uid)
+                            break
+
                 target_idx = None
                 for idx, series_info in enumerate(task.series_list):
                     if target_uid and str(series_info.series_uid) == target_uid:
@@ -2940,44 +2945,46 @@ class DownloadManagerWidget(QWidget):
                     series_list.insert(0, series_list.pop(target_idx))
                     task = replace(task, series_list=series_list)
                     self._tasks[study_uid] = task
-                    logger.info(f"✅ [SERIES RETRY] Promoted series {series_number} to the front of the download order")
+                    logger.info(f"✅ [SERIES RETRY] Promoted series {target_num or series_number} to the front of the download order")
 
             # Remove series from completed/failed/skipped lists if present
             series_removed = False
             
             # Try to remove by series_number first
-            if series_number:
-                if series_number in state.completed_series:
-                    state.completed_series.remove(series_number)
-                    logger.info(f"✅ [SERIES RETRY] Removed series {series_number} from completed_series")
+            if target_num:
+                if target_num in state.completed_series:
+                    state.completed_series.remove(target_num)
+                    logger.info(f"✅ [SERIES RETRY] Removed series {target_num} from completed_series")
                     series_removed = True
-                if series_number in state.failed_series:
-                    state.failed_series.remove(series_number)
-                    logger.info(f"✅ [SERIES RETRY] Removed series {series_number} from failed_series")
-                    series_removed = True
-            
-            # Try to remove by series_uid if provided
-            if series_uid:
-                if series_uid in state.completed_series:
-                    state.completed_series.remove(series_uid)
-                    logger.info(f"✅ [SERIES RETRY] Removed series UID {series_uid[:40]} from completed_series")
-                    series_removed = True
-                if series_uid in state.failed_series:
-                    state.failed_series.remove(series_uid)
-                    logger.info(f"✅ [SERIES RETRY] Removed series UID {series_uid[:40]} from failed_series")
+                if target_num in state.failed_series:
+                    state.failed_series.remove(target_num)
+                    logger.info(f"✅ [SERIES RETRY] Removed series {target_num} from failed_series")
                     series_removed = True
 
-            if series_number and series_number in state.skipped_series:
-                state.skipped_series.remove(series_number)
-                logger.info(f"✅ [SERIES RETRY] Removed series {series_number} from skipped_series")
+            # Try to remove by series_uid if provided or resolved
+            if target_uid:
+                if target_uid in state.completed_series:
+                    state.completed_series.remove(target_uid)
+                    logger.info(f"✅ [SERIES RETRY] Removed series UID {target_uid[:40]} from completed_series")
+                    series_removed = True
+                if target_uid in state.failed_series:
+                    state.failed_series.remove(target_uid)
+                    logger.info(f"✅ [SERIES RETRY] Removed series UID {target_uid[:40]} from failed_series")
+                    series_removed = True
+
+            if target_num and target_num in state.skipped_series:
+                state.skipped_series.remove(target_num)
+                logger.info(f"✅ [SERIES RETRY] Removed series {target_num} from skipped_series")
                 series_removed = True
-            if series_uid and series_uid in state.skipped_series:
-                state.skipped_series.remove(series_uid)
-                logger.info(f"✅ [SERIES RETRY] Removed series UID {series_uid[:40]} from skipped_series")
+            if target_uid and target_uid in state.skipped_series:
+                state.skipped_series.remove(target_uid)
+                logger.info(f"✅ [SERIES RETRY] Removed series UID {target_uid[:40]} from skipped_series")
                 series_removed = True
             
             if not series_removed:
-                logger.warning(f"⚠️ [SERIES RETRY] Series {series_number} not found in completed/failed lists")
+                logger.warning(
+                    f"⚠️ [SERIES RETRY] Series {target_num or series_number} not found in completed/failed lists"
+                )
             
             # CRITICAL: Delete series files from disk to force re-download
             # Otherwise downloader will skip the series thinking it's already complete
@@ -2986,7 +2993,7 @@ class DownloadManagerWidget(QWidget):
                 from pathlib import Path
                 import shutil
                 
-                series_path = Path(SOURCE_PATH) / study_uid / str(series_number)
+                series_path = Path(SOURCE_PATH) / study_uid / str(target_num or series_number)
                 if series_path.exists():
                     logger.info(f"🗑️ [SERIES RETRY] Deleting existing series files from disk: {series_path}")
                     shutil.rmtree(series_path)
