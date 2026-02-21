@@ -28,7 +28,9 @@ import math
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QRect, QTimer, QRectF
+from PySide6.QtCore import (
+    Qt, QEvent, QRect, QTimer, QRectF, QPropertyAnimation, QEasingCurve,
+)
 from PySide6.QtGui import (
     QColor,
     QPainter,
@@ -184,8 +186,16 @@ class _LogoSpinner(QWidget):
 #  AiPacsLoadingOverlay  (public API)
 # ═══════════════════════════════════════════════════════════════════════════
 class AiPacsLoadingOverlay(QWidget):
-    """Full-window loading overlay with the AI Pacs logo, animated spinner,
-    and status text.  Designed to be created once and shown/hidden.
+    """Full-screen loading overlay rendered as a **top-level frameless window**
+    so it floats above native/heavyweight widgets (VTK/OpenGL viewports).
+
+    Regular child-widget overlays are always painted *behind* VTK render
+    windows because VTK uses native OS window handles.  Making the overlay
+    a top-level ``Qt.Tool`` window with ``WindowStaysOnTopHint`` is the
+    only reliable way to appear above them.
+
+    The overlay tracks its *anchor widget* (the widget it was shown over)
+    and repositions itself whenever the anchor moves or resizes.
 
     Class Methods
     -------------
@@ -195,22 +205,37 @@ class AiPacsLoadingOverlay(QWidget):
 
     def __init__(
         self,
-        parent: QWidget,
+        anchor: QWidget,
         title: str = "AI Pacs Image Analysis",
         status: str = "Please wait",
         subtitle: str = "",
     ):
-        super().__init__(parent)
-        self.setObjectName("AiPacsLoadingOverlay")
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-
-        # Cover the entire parent
-        self.setGeometry(parent.rect())
-
-        # Semi-transparent dark backdrop
-        self.setStyleSheet(
-            "QWidget#AiPacsLoadingOverlay { background: rgba(10, 14, 20, 210); }"
+        # Top-level frameless tool window — floats above VTK surfaces
+        super().__init__(
+            None,
+            Qt.Tool
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint,
         )
+        self.setObjectName("AiPacsLoadingOverlay")
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+
+        # Keep a reference to the widget we're covering
+        self._anchor = anchor
+
+        # Position over the anchor using global screen coords
+        self._sync_geometry()
+
+        # Watch the anchor (and its top window) for move / resize
+        anchor.installEventFilter(self)
+        top = anchor.window()
+        if top and top is not anchor:
+            top.installEventFilter(self)
+
+        # Semi-transparent dark backdrop (painted via paintEvent for
+        # true translucent background on a top-level window)
+        self._bg_color = QColor(10, 14, 20, 210)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -293,6 +318,30 @@ class AiPacsLoadingOverlay(QWidget):
         self._dots_timer.timeout.connect(self._tick_dots)
         self._dots_timer.start(420)
 
+    # ── geometry sync ────────────────────────────────────────────────
+    def _sync_geometry(self):
+        """Reposition/resize to cover the anchor widget exactly."""
+        a = self._anchor
+        if a is None or not a.isVisible():
+            return
+        global_pos = a.mapToGlobal(a.rect().topLeft())
+        self.setGeometry(global_pos.x(), global_pos.y(), a.width(), a.height())
+
+    # ── paint the translucent backdrop ───────────────────────────────
+    def paintEvent(self, _event):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), self._bg_color)
+        p.end()
+
+    # ── resize / move tracking via event filter ──────────────────────
+    def eventFilter(self, obj, event):
+        """Follow anchor widget moves and resizes."""
+        etype = event.type()
+        if etype in (QEvent.Resize, QEvent.Move):
+            self._sync_geometry()
+        return super().eventFilter(obj, event)
+
     # ── helpers ──────────────────────────────────────────────────────
     def _tick_dots(self):
         self._dots_n = (self._dots_n + 1) % 4
@@ -314,19 +363,58 @@ class AiPacsLoadingOverlay(QWidget):
     ) -> "AiPacsLoadingOverlay":
         """Create, paint, and return the overlay (already visible).
 
+        *parent* is the widget the overlay should cover (e.g. the center
+        viewer area).  The overlay is a top-level window that floats above
+        native VTK/OpenGL surfaces.
+
         Call ``AiPacsLoadingOverlay.hide_overlay(ref)`` when done.
         """
         overlay = cls(parent, title=title, status=status, subtitle=subtitle)
-        overlay.raise_()
         overlay.show()
+        overlay.raise_()
+        overlay.activateWindow()
         # Force the event loop to paint the overlay immediately
         QApplication.processEvents()
         QApplication.processEvents()
         return overlay
 
     @staticmethod
-    def hide_overlay(overlay: Optional["AiPacsLoadingOverlay"]):
-        """Safely hide and schedule deletion of *overlay*."""
-        if overlay is not None:
-            overlay.hide()
-            overlay.deleteLater()
+    def hide_overlay(
+        overlay: Optional["AiPacsLoadingOverlay"],
+        fade_ms: int = 500,
+        delay_ms: int = 0,
+    ):
+        """Fade-out then hide and delete *overlay*.
+
+        Args:
+            overlay:  The overlay instance (or None — safe to pass).
+            fade_ms:  Duration of the opacity fade-out (default 500 ms).
+            delay_ms: Extra delay *before* starting the fade (default 0).
+        """
+        if overlay is None:
+            return
+
+        def _start_fade():
+            # Animate windowOpacity from 1.0 → 0.0
+            anim = QPropertyAnimation(overlay, b"windowOpacity")
+            anim.setDuration(fade_ms)
+            anim.setStartValue(overlay.windowOpacity())
+            anim.setEndValue(0.0)
+            anim.setEasingCurve(QEasingCurve.InOutQuad)
+            # Once the animation finishes, actually remove the overlay
+            anim.finished.connect(lambda: _cleanup(overlay))
+            # Store a reference so it isn't garbage-collected mid-animation
+            overlay._fade_anim = anim
+            anim.start()
+
+        def _cleanup(ov):
+            try:
+                ov.hide()
+                ov.deleteLater()
+            except Exception:
+                pass
+
+        if delay_ms > 0:
+            QTimer.singleShot(delay_ms, _start_fade)
+        else:
+            _start_fade()

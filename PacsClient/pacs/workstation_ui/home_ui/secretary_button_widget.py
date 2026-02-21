@@ -813,54 +813,24 @@ class SecretaryButtonWidget(QWidget):
             self._post_log("system", "GapGPT blocked: EchoMind key is not validated.")
             return
 
-        try:
-            info = Manage.instance().ensure_detected()
-        except Exception as exc:
-            self._post_log("system", f"GapGPT blocked: center detection failed ({exc}).")
-            return
-
-        api_key = (info.gapgpt_key or "").strip()
-        if not api_key:
-            self._post_log("system", "GapGPT API key is not configured for this center.")
-            return
-
         def work():
+            # LLM call goes through EchoMind.llm_client — key comes from Settings → EchoMind
             try:
-                payload = {
-                    "model": "gpt-4.1-mini",
-                    "messages": [
+                from EchoMind.llm_client import gapgpt_chat, LLMError
+                content = gapgpt_chat(
+                    messages=[
                         {
                             "role": "system",
                             "content": "You are a helpful medical assistant. Respond to the transcript concisely.",
                         },
                         {"role": "user", "content": text},
                     ],
-                }
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                }
-                resp = requests.post(
-                    "https://api.gapgpt.app/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
+                    model="gpt-4.1-mini",
                     timeout=60,
                 )
-                if resp.status_code != 200:
-                    snippet = (resp.text or "")[:600].replace("\r", " ").replace("\n", " ")
-                    return {
-                        "ok": False,
-                        "error": f"HTTP {resp.status_code}: {snippet}",
-                    }
-
-                body = resp.json()
-                choices = body.get("choices") if isinstance(body, dict) else None
-                if isinstance(choices, list) and choices:
-                    msg = choices[0].get("message") if isinstance(choices[0], dict) else None
-                    content = (msg or {}).get("content") if isinstance(msg, dict) else None
-                    if content:
-                        return {"ok": True, "content": str(content).strip()}
-                return {"ok": False, "error": "Empty response from GapGPT."}
+                return {"ok": True, "content": content}
+            except LLMError as exc:
+                return {"ok": False, "error": str(exc)}
             except Exception as exc:
                 return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
@@ -899,6 +869,11 @@ class SecretaryButtonWidget(QWidget):
     def _format_secretary_result_text(self, result: dict) -> str:
         action = str(result.get("action") or "secretary")
         msg = str(result.get("message") or "").strip()
+
+        # Chitchat / greeting replies — show as a clean conversational message.
+        if action == "chitchat":
+            return msg or "Secretary: ..."
+
         ok = "OK" if result.get("ok") else "Action Required"
         lines = [f"Secretary [{action}] ({ok}): {msg}"]
 
@@ -1036,10 +1011,19 @@ class SecretaryButtonWidget(QWidget):
             self._post_log("system", "Secretary is still processing the previous request.")
             return
 
-        self._set_thinking_status("Transcribing")
-        self._post_log("system", "Transcribing voice...")
+        self._set_thinking_status("Phase 1: Transcribing")
+        self._post_log("system", "Phase 1: Sending voice to GPT for transcription...")
 
         def work():
+            import datetime as _dt
+            import sys as _sys
+            def _elog(msg: str) -> None:
+                try:
+                    _sys.stderr.write(msg + "\n")
+                    _sys.stderr.flush()
+                except Exception:
+                    pass
+            _elog(f"[EchoMind | Phase 1] {_dt.datetime.now():%H:%M:%S} — STT started: sending audio to transcription service")
             try:
                 stt_settings = load_settings() or {}
                 stt_req = {
@@ -1087,19 +1071,37 @@ class SecretaryButtonWidget(QWidget):
             transcript = (resp.get("transcript") or "").strip()
             stt_req = resp.get("stt_req") or {}
             stt_resp = resp.get("stt_resp") or {}
-            self._post_log("system", f"STT request: {stt_req}")
-            self._post_log("system", f"STT response: {stt_resp}")
+            import datetime as _dt
+            import sys as _sys
+            def _elog(msg: str) -> None:
+                try:
+                    _sys.stderr.write(msg + "\n")
+                    _sys.stderr.flush()
+                except Exception:
+                    pass
+            _elog(f"[EchoMind | Phase 1] {_dt.datetime.now():%H:%M:%S} — STT complete")
+            _elog(f"  transcript : {transcript!r}")
+            self._post_log("system", f"Phase 1 complete — transcript: {transcript!r}")
             if transcript:
                 self.append_input(transcript)
-                self._send_transcript_to_gapgpt(transcript)
 
             if not self._ensure_secretary_runtime():
                 return
 
-            self._set_thinking_status("Orchestrating")
+            # Phase 2: the orchestrator will route the text to a module (LLM call).
+            self._set_thinking_status("Phase 2: Module Routing")
+            self._post_log("system", "Phase 2: Sending transcript + module catalog to GPT.")
+            _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — sending transcript + catalog to GPT for module routing")
+
             stt_settings = resp.get("stt_settings") or {}
             requested_route = str(stt_req.get("route") or "native")
             used_route = str(stt_resp.get("route_used") or requested_route)
+
+            # progress_cb is invoked from the worker thread — use singleShot to
+            # update the Qt label safely from the main thread.
+            def _progress(stage: str) -> None:
+                QTimer.singleShot(0, lambda s=stage: self._set_thinking_status(s))
+
             payload = {
                 "text": transcript,
                 "language": "auto",
@@ -1108,6 +1110,7 @@ class SecretaryButtonWidget(QWidget):
                 "stt_route": requested_route,
                 "stt_route_used": used_route,
                 "stt_fallback": bool(stt_settings.get("secretary_stt_fallback", True)),
+                "progress_cb": _progress,
             }
             try:
                 result = self._secretary_orchestrator.handle(payload)  # type: ignore[union-attr]
@@ -1116,6 +1119,23 @@ class SecretaryButtonWidget(QWidget):
                 self._post_log("system", f"Secretary engine error: {exc}")
                 return
 
+            import datetime as _dt2
+            import sys as _sys2
+            def _elog2(msg: str) -> None:
+                try:
+                    _sys2.stderr.write(msg + "\n")
+                    _sys2.stderr.flush()
+                except Exception:
+                    pass
+            _elog2(f"[EchoMind | Result ] {_dt2.datetime.now():%H:%M:%S} — pipeline complete")
+            _elog2(f"  ok         : {(result or {}).get('ok')}")
+            _elog2(f"  action     : {(result or {}).get('action')}")
+            _elog2(f"  message    : {str((result or {}).get('message') or '')[:120]}")
+            data = (result or {}).get("data")
+            if isinstance(data, list):
+                _elog2(f"  data rows  : {len(data)}")
+            elif isinstance(data, dict):
+                _elog2(f"  data keys  : {list(data.keys())}")
             self.append_output(self._format_secretary_result_text(result or {}))
             self._set_thinking_status("Ready")
 

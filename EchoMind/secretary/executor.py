@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from .adapters.home_widget_adapter import HomeWidgetAdapter
@@ -19,6 +19,41 @@ class SecretaryExecutor:
         if len(s) >= 8:
             return s[:8]
         return ""
+
+    @staticmethod
+    def _normalize_date_filter(raw: str) -> tuple[str, str]:
+        """Return (date_from, date_to) in YYYYMMDD for supported tokens/ranges."""
+        v = (raw or "").strip().lower()
+        if not v:
+            return "", ""
+
+        now = datetime.now()
+        if v == "today":
+            d = now.strftime("%Y%m%d")
+            return d, d
+        if v == "yesterday":
+            d = (now - timedelta(days=1)).strftime("%Y%m%d")
+            return d, d
+
+        # Handle "N days ago" / "N day ago" patterns (fallback if LLM returns relative)
+        import re as _re
+        _m = _re.match(r"(\d+)\s*days?\s*ago", v)
+        if _m:
+            d = (now - timedelta(days=int(_m.group(1)))).strftime("%Y%m%d")
+            return d, d
+
+        if ".." in v:
+            left, right = v.split("..", 1)
+            d1 = SecretaryExecutor._to_yyyymmdd(left)
+            d2 = SecretaryExecutor._to_yyyymmdd(right)
+            if d1 and d2:
+                return (d1, d2) if d1 <= d2 else (d2, d1)
+            return "", ""
+
+        d = SecretaryExecutor._to_yyyymmdd(v)
+        if d:
+            return d, d
+        return "", ""
 
     @staticmethod
     def _is_modality_match(value: str, target: str) -> bool:
@@ -42,14 +77,14 @@ class SecretaryExecutor:
 
         entities = plan.get("entities", {})
         source = str(entities.get("source") or self.adapter.get_active_source())
-        today = datetime.now().strftime("%Y%m%d")
-        date_filter = today if str(entities.get("date") or "").lower() == "today" else ""
+        date_raw = str(entities.get("date") or "")
+        date_from, date_to = self._normalize_date_filter(date_raw)
         modality_filter = str(entities.get("modality") or "").upper()
 
         criteria: dict[str, Any] = {}
-        if date_filter:
-            criteria["date_from"] = date_filter
-            criteria["date_to"] = date_filter
+        if date_from and date_to:
+            criteria["date_from"] = date_from
+            criteria["date_to"] = date_to
         if modality_filter:
             criteria["modality"] = modality_filter
 
@@ -68,8 +103,9 @@ class SecretaryExecutor:
         filtered: list[dict[str, Any]] = []
         for row in rows:
             date_ok = True
-            if date_filter:
-                date_ok = self._to_yyyymmdd(str(row.get("date") or "")) == date_filter
+            if date_from and date_to:
+                row_date = self._to_yyyymmdd(str(row.get("date") or ""))
+                date_ok = bool(row_date) and date_from <= row_date <= date_to
             modality_ok = self._is_modality_match(str(row.get("modality") or ""), modality_filter) if modality_filter else True
             if date_ok and modality_ok:
                 filtered.append(compact_patient_row(row))
@@ -255,6 +291,18 @@ class SecretaryExecutor:
             return self._open_patient(plan, state, confirmed=confirmed)
         if action == "download_patient":
             return self._download_patient(plan, state, confirmed=confirmed)
+        if action == "set_source_mode":
+            return self._set_source_mode(plan, state)
+        if action == "import_dicom":
+            return self._import_dicom(plan, state)
+        if action == "select_patient":
+            return self._select_patient(plan, state)
+        if action == "change_font_size":
+            return self._change_font_size(plan, state)
+        if action == "sort_patients":
+            return self._sort_patients(plan, state)
+        if action == "select_and_download":
+            return self._select_and_download(plan, state, confirmed=confirmed)
         return {
             "ok": False,
             "action": str(action or "unknown"),
@@ -262,3 +310,104 @@ class SecretaryExecutor:
             "data": None,
             "error_code": "UNSUPPORTED_ACTION",
         }
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # New action handlers
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _set_source_mode(self, plan: SecretaryActionPlan, state: dict[str, Any]) -> SecretaryResult:
+        """Switch the active data-source tab."""
+        if not self.adapter.is_available():
+            return {"ok": False, "action": "set_source_mode", "message": "PACS home widget is not available.", "data": None, "error_code": "NO_HOME_WIDGET"}
+        entities = plan.get("entities", {})
+        mode = str(entities.get("mode") or entities.get("source") or "").lower().strip()
+        if mode not in ("local", "server", "import"):
+            return {"ok": False, "action": "set_source_mode", "message": f"Unknown source mode '{mode}'. Use local, server, or import.", "data": None, "error_code": "INVALID_MODE"}
+        ok = self.adapter.set_source_mode(mode)
+        return {"ok": ok, "action": "set_source_mode", "message": f"Source mode switched to '{mode}'." if ok else "Failed to switch mode.", "data": {"mode": mode}, "error_code": None if ok else "SWITCH_FAILED"}
+
+    def _import_dicom(self, plan: SecretaryActionPlan, state: dict[str, Any]) -> SecretaryResult:
+        """Open the Import tab and trigger the folder-selection dialog."""
+        if not self.adapter.is_available():
+            return {"ok": False, "action": "import_dicom", "message": "PACS home widget is not available.", "data": None, "error_code": "NO_HOME_WIDGET"}
+        ok = self.adapter.trigger_import_dicom()
+        return {"ok": ok, "action": "import_dicom", "message": "Import panel opened. Please select the DICOM folder." if ok else "Failed to open import panel.", "data": None, "error_code": None if ok else "IMPORT_FAILED"}
+
+    def _select_patient(self, plan: SecretaryActionPlan, state: dict[str, Any]) -> SecretaryResult:
+        """Select (check checkboxes) one or more patient rows."""
+        if not self.adapter.is_available():
+            return {"ok": False, "action": "select_patient", "message": "PACS home widget is not available.", "data": None, "error_code": "NO_HOME_WIDGET"}
+        entities = plan.get("entities", {})
+        code = str(entities.get("patient_code") or "").strip()
+        limit = entities.get("limit")
+        if code:
+            count = self.adapter.select_rows_by_code(code)
+            if count == 0:
+                return {"ok": False, "action": "select_patient", "message": f"No patient found for code '{code}'.", "data": None, "error_code": "NOT_FOUND"}
+            return {"ok": True, "action": "select_patient", "message": f"Selected {count} patient(s) matching '{code}'.", "data": {"selected_count": count}, "error_code": None}
+        if limit is not None:
+            try:
+                n = int(limit)
+            except (TypeError, ValueError):
+                n = 1
+            count = self.adapter.select_top_n_rows(n)
+            return {"ok": True, "action": "select_patient", "message": f"Selected top {count} patient row(s).", "data": {"selected_count": count}, "error_code": None}
+        return {"ok": False, "action": "select_patient", "message": "Provide patient_code or limit entity.", "data": None, "error_code": "MISSING_CRITERIA"}
+
+    def _change_font_size(self, plan: SecretaryActionPlan, state: dict[str, Any]) -> SecretaryResult:
+        """Increase or decrease the patient list font size."""
+        if not self.adapter.is_available():
+            return {"ok": False, "action": "change_font_size", "message": "PACS home widget is not available.", "data": None, "error_code": "NO_HOME_WIDGET"}
+        entities = plan.get("entities", {})
+        direction = str(entities.get("direction") or "").lower().strip()
+        if not direction:
+            return {"ok": False, "action": "change_font_size", "message": "Provide direction: increase or decrease.", "data": None, "error_code": "MISSING_DIRECTION"}
+        ok = self.adapter.change_font_size(direction)
+        return {"ok": ok, "action": "change_font_size", "message": f"Font size {direction}d." if ok else f"Invalid direction '{direction}'.", "data": {"direction": direction}, "error_code": None if ok else "INVALID_DIRECTION"}
+
+    def _sort_patients(self, plan: SecretaryActionPlan, state: dict[str, Any]) -> SecretaryResult:
+        """Sort the patient list table by a given column."""
+        if not self.adapter.is_available():
+            return {"ok": False, "action": "sort_patients", "message": "PACS home widget is not available.", "data": None, "error_code": "NO_HOME_WIDGET"}
+        entities = plan.get("entities", {})
+        column = str(entities.get("column") or "date").lower().strip()
+        order = str(entities.get("order") or "desc").lower().strip()
+        ok = self.adapter.sort_patients(column, order)
+        if not ok:
+            return {"ok": False, "action": "sort_patients", "message": f"Cannot sort by column '{column}'.", "data": None, "error_code": "INVALID_COLUMN"}
+        return {"ok": True, "action": "sort_patients", "message": f"Sorted by '{column}' ({order}).", "data": {"column": column, "order": order}, "error_code": None}
+
+    def _select_and_download(self, plan: SecretaryActionPlan, state: dict[str, Any], confirmed: bool = False) -> SecretaryResult:
+        """Sort → select top-N → download in one step."""
+        if not self.adapter.is_available():
+            return {"ok": False, "action": "select_and_download", "message": "PACS home widget is not available.", "data": None, "error_code": "NO_HOME_WIDGET"}
+        entities = plan.get("entities", {})
+        sort_col = str(entities.get("sort_column") or entities.get("column") or "date").lower().strip()
+        sort_order = str(entities.get("sort_order") or entities.get("order") or "desc").lower().strip()
+        try:
+            limit = int(entities.get("limit") or 10)
+        except (TypeError, ValueError):
+            limit = 10
+
+        # Step 1 – sort (silently ignore if column unknown)
+        self.adapter.sort_patients(sort_col, sort_order)
+
+        # Step 2 – select top N
+        selected = self.adapter.select_top_n_rows(limit)
+
+        if selected == 0:
+            return {"ok": False, "action": "select_and_download", "message": "No patient rows found to select.", "data": None, "error_code": "NO_ROWS"}
+
+        if not confirmed:
+            return {"ok": False, "action": "select_and_download",
+                    "message": f"About to download top {selected} patient(s) sorted by {sort_col} {sort_order}. Confirm?",
+                    "data": {"selected_count": selected, "sort_column": sort_col, "sort_order": sort_order},
+                    "error_code": "CONFIRM_REQUIRED"}
+
+        # Step 3 – download
+        downloaded = self.adapter.trigger_download_selected()
+        state["last_list"] = self.adapter.get_checked_studies()
+        return {"ok": True, "action": "select_and_download",
+                "message": f"Download queued for {downloaded} patient(s) (sorted by {sort_col} {sort_order}).",
+                "data": {"downloaded_count": downloaded, "sort_column": sort_col, "sort_order": sort_order},
+                "error_code": None}

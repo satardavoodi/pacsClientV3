@@ -327,7 +327,8 @@ class SlicerLauncherWorker(QThread):
         viewport_x: Optional[int] = None,
         viewport_y: Optional[int] = None,
         viewport_width: Optional[int] = None,
-        viewport_height: Optional[int] = None
+        viewport_height: Optional[int] = None,
+        remote_payload: Optional[dict] = None,
     ):
         super().__init__()
         self.dicom_dir = dicom_dir
@@ -343,11 +344,24 @@ class SlicerLauncherWorker(QThread):
         self.viewport_y = viewport_y
         self.viewport_width = viewport_width
         self.viewport_height = viewport_height
+        self._remote_payload = remote_payload
         self._process: Optional[subprocess.Popen] = None
     
     def run(self):
         """Execute the Slicer launch in a separate thread."""
         try:
+            # ── Try sending a remote command to an already-running instance ──
+            # This is done here (worker thread) instead of the main thread so
+            # the UI event loop is never blocked by the socket timeout.
+            if self._remote_payload:
+                try:
+                    if send_remote_command(self._remote_payload):
+                        print("[AIPACS_LAUNCH] Remote command accepted by running viewer (from worker)")
+                        self.finished_signal.emit(0)
+                        return
+                except Exception as e:
+                    print(f"[AIPACS_LAUNCH] Remote command failed: {e}")
+
             # Import the launcher module (should already be preloaded for speed)
             from PacsClient.pacs.patient_tab.advance_mpr_3d_slicer.slicer_custom_app.launch_slicer import launch_slicer
             
@@ -490,7 +504,10 @@ class SlicerLauncher(QObject):
         """
         print(f"[AIPACS_LAUNCH] SlicerLauncher.launch_with_dicom() called, _is_running={self._is_running}")
 
-        payload = {
+        # Build remote payload – the worker thread will try sending this
+        # to an already-running Slicer instance BEFORE falling back to a
+        # fresh launch.  This keeps the main/UI thread completely free.
+        remote_payload = {
             "command": "load_dicom",
             "dicom_dir": dicom_dir,
             "layout": layout,
@@ -505,10 +522,6 @@ class SlicerLauncher(QObject):
             "viewport_height": viewport_height
         }
 
-        if send_remote_command(payload):
-            print("[AIPACS_LAUNCH] Remote command accepted by running viewer")
-            return True
-        
         if self._is_running:
             print("[AIPACS_LAUNCH] BLOCKED - Already running, showing message")
             QMessageBox.information(
@@ -527,7 +540,7 @@ class SlicerLauncher(QObject):
         from PacsClient.pacs.patient_tab.advance_mpr_3d_slicer.slicer_launcher import SlicerPrewarmManager
         prewarm_mgr = SlicerPrewarmManager.instance()
         
-        # Create and start worker thread
+        # Create and start worker thread (remote command check happens inside)
         self._worker = SlicerLauncherWorker(
             dicom_dir=dicom_dir,
             layout=layout,
@@ -540,7 +553,8 @@ class SlicerLauncher(QObject):
             viewport_x=viewport_x,
             viewport_y=viewport_y,
             viewport_width=viewport_width,
-            viewport_height=viewport_height
+            viewport_height=viewport_height,
+            remote_payload=remote_payload,
         )
         self._worker.started_signal.connect(self._on_started)
         self._worker.finished_signal.connect(self._on_finished)

@@ -518,3 +518,30 @@ class Manage:
         for name, m in sorted(models.items(), key=lambda kv: kv[0]):
             lines.append(f"  - {name}: {int(m.get('total_tokens',0)):,} tokens ({int(m.get('requests',0))} req)")
         return "\n".join(lines)
+
+
+# ===========================================================================
+# CANONICAL REDIRECT
+# ---------------------------------------------------------------------------
+# EchoMind/api_manager.py is the single source of truth for:
+#   - the CENTERS registry (license key → GapGPT key mapping)
+#   - APIKeyManager singleton (authentication state)
+#   - Manage singleton (center detection + usage logging)
+#
+# This re-export MUST stay at the bottom of the file so that it overwrites
+# the locally-defined class names.  All callers doing
+#     from .api_manager import APIKeyManager, Manage
+# will receive the same singleton instances that EchoMind Settings manages,
+# guaranteeing that authentication in Settings → EchoMind propagates to
+# every part of the application that calls LLM APIs.
+#
+# To add / change centers or keys: edit EchoMind/api_manager.py ONLY.
+# ===========================================================================
+from EchoMind.api_manager import (  # noqa: F401, F811, E402
+    CenterRecord,
+    CENTERS,
+    CenterInfo,
+    APIKeyManager,
+    Manage,
+    register_center,
+)

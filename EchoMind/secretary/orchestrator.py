@@ -1,24 +1,55 @@
 from __future__ import annotations
 
 import copy
+import sys
 import time
+from datetime import datetime
 from typing import Any
 
 from . import audit
 from .adapters.home_widget_adapter import HomeWidgetAdapter
 from .confirm import is_no, is_yes, parse_selection_index
 from .contracts import SecretaryActionPlan, SecretaryCommand, SecretaryResult
+from .errors import ERR_PLAN_VALIDATION_FAILED, ERR_RUNTIME, ERR_UNPARSED
+from .execution_repair import is_repairable, repair_plan_after_execution_failure
 from .executor import SecretaryExecutor
 from .parser_llm import parse_command_llm
-from .parser_rules import parse_command_rule
+from .parser_rules import is_chitchat, parse_command_rule
+from .repair_loop import retry_plan_with_llm
+from .session_log import SessionLog
+from .validator import validate_plan
 
 
 class SecretaryOrchestrator:
-    def __init__(self, home_widget=None, llm_fallback: bool = True):
+    # Maximum number of execution attempts per command (1 initial + up to 4 LLM repairs)
+    _MAX_EXECUTION_RETRIES: int = 5
+
+    def __init__(
+        self,
+        home_widget=None,
+        llm_fallback: bool = True,
+        use_brain: bool = False,
+    ):
+        """
+        Parameters
+        ----------
+        home_widget :
+            The HomePanel widget to bind the adapter to.
+        llm_fallback : bool
+            If True (default), fall back to the single-shot LLM parser
+            + repair loop when the rule parser fails.
+        use_brain : bool
+            If True, route user requests through the two-phase AgentBrain
+            pipeline (Phase 1: module routing → Phase 2: action planning)
+            instead of the single-shot rule + LLM approach.
+            Set to True when you want full multi-module agent behaviour.
+        """
         self.adapter = HomeWidgetAdapter(home_widget=home_widget)
         self.executor = SecretaryExecutor(self.adapter)
         self.llm_fallback = llm_fallback
         self._sessions: dict[str, dict[str, Any]] = {}
+        self._use_brain = use_brain
+        self._brain = None          # lazy-loaded AgentBrain instance
 
     def _get_state(self, sid: str) -> dict[str, Any]:
         state = self._sessions.get(sid)
@@ -40,10 +71,36 @@ class SecretaryOrchestrator:
             out["entities"]["source"] = source_scope
         return out
 
+    def _get_brain(self):
+        """Lazy-load the AgentBrain (avoids circular import at module load time)."""
+        if self._brain is None:
+            from .brain.agent import AgentBrain
+            self._brain = AgentBrain(executor=self.executor, fallback_to_secretary=True)
+        return self._brain
+
     def _parse_plan(self, cmd: SecretaryCommand) -> SecretaryActionPlan | None:
         text = cmd.get("text") or ""
         language = cmd.get("language") or "auto"
+        progress_cb = cmd.get("progress_cb")  # optional callable(stage: str)
 
+        # ── AgentBrain path (two-phase: routing + planning) ───────────────────
+        if self._use_brain:
+            try:
+                if callable(progress_cb):
+                    progress_cb("Phase 2: Module Routing")
+                decision = self._get_brain()._get_route(user_text=text, language=language)
+                if decision and not decision.is_empty:
+                    if callable(progress_cb):
+                        progress_cb(f"Phase 3: Planning ({', '.join(decision.modules)})")
+                brain_plan = self._get_brain().plan(
+                    user_text=text, language=language, pre_routed=decision
+                )
+                if brain_plan:
+                    return self._ensure_source(brain_plan, cmd)
+            except Exception:
+                pass  # fall through to legacy path on any brain failure
+
+        # ── Legacy path: rule parser → single-shot LLM → repair loop ─────────
         plan = parse_command_rule(text)
         if plan:
             return self._ensure_source(plan, cmd)
@@ -54,7 +111,23 @@ class SecretaryOrchestrator:
             except Exception:
                 llm_plan = None
             if llm_plan:
-                return self._ensure_source(llm_plan, cmd)
+                normalized, errs = validate_plan(llm_plan)
+                if not errs and normalized is not None:
+                    return self._ensure_source(normalized, cmd)
+
+                try:
+                    repaired = retry_plan_with_llm(
+                        user_text=text,
+                        language=language,
+                        invalid_plan=dict(llm_plan),
+                        validation_errors=errs,
+                        max_retries=2,
+                    )
+                except Exception:
+                    repaired = None
+
+                if repaired:
+                    return self._ensure_source(repaired, cmd)
         return None
 
     @staticmethod
@@ -146,12 +219,31 @@ class SecretaryOrchestrator:
         return result
 
     def handle(self, cmd: SecretaryCommand) -> SecretaryResult:
+        """Public entry-point: wraps _handle_core with per-request session logging."""
+        text = (cmd.get("text") or "").strip()
+        _session = SessionLog(user_text=text)
+        _result: SecretaryResult = {
+            "ok": False,
+            "action": "unknown",
+            "message": "No result produced.",
+            "data": None,
+            "error_code": "INTERNAL",
+        }
+        try:
+            _result = self._handle_core(cmd, _session)
+        finally:
+            _session.close(_result)
+        return _result
+
+    def _handle_core(self, cmd: SecretaryCommand, _session: SessionLog) -> SecretaryResult:  # noqa: C901
+        """Core request handler — called by handle()."""
         text = (cmd.get("text") or "").strip()
         sid = cmd.get("session_id") or "secretary-default"
         state = self._get_state(sid)
         source_tab = self.adapter.get_active_source()
         stt_req = cmd.get("stt_route", "native")
         stt_used = cmd.get("stt_route_used", stt_req)
+        language = cmd.get("language") or "auto"
         t0 = time.perf_counter()
         action_id: int | None = None
         confirmed = False
@@ -268,6 +360,18 @@ class SecretaryOrchestrator:
                 )
                 return result
 
+            # ── Chitchat / greeting fast-path ─────────────────────────────
+            # Check before _parse_plan so the LLM is never called for greetings.
+            chat, chat_reply = is_chitchat(text)
+            if chat:
+                return {
+                    "ok": True,
+                    "action": "chitchat",
+                    "message": chat_reply,
+                    "data": None,
+                    "error_code": None,
+                }
+
             plan = self._parse_plan(cmd)
             if not plan:
                 return {
@@ -275,8 +379,48 @@ class SecretaryOrchestrator:
                     "action": "unknown",
                     "message": "I could not map this command to a Secretary action.",
                     "data": None,
-                    "error_code": "UNPARSED",
+                    "error_code": ERR_UNPARSED,
                 }
+
+            validated_plan, validation_errors = validate_plan(plan)
+            if validation_errors:
+                err_rows = [e.to_dict() for e in validation_errors]
+                action_name = str(plan.get("action") or "unknown")
+                entities = dict(plan.get("entities") or {}) if isinstance(plan, dict) else {}
+                action_blob = dict(plan) if isinstance(plan, dict) else {}
+                action_id = audit.log_start(
+                    sid=sid,
+                    source_tab=source_tab,
+                    command_text=text,
+                    stt_route_requested=stt_req,
+                    stt_route_used=stt_used,
+                    intent=action_name,
+                    entities=entities,
+                    action=action_blob,
+                    confirmation_required=False,
+                )
+                result = {
+                    "ok": False,
+                    "action": action_name,
+                    "message": "Plan validation failed.",
+                    "data": {
+                        "validation_errors": err_rows,
+                        "received_plan": action_blob,
+                    },
+                    "error_code": ERR_PLAN_VALIDATION_FAILED,
+                }
+                audit.log_end(
+                    action_id=action_id,
+                    confirmed=False,
+                    status="error",
+                    error_code=result.get("error_code"),
+                    error_text=result.get("message"),
+                    result_count=self._count_result_rows(result.get("data")),
+                    latency_ms=int((time.perf_counter() - t0) * 1000),
+                )
+                return result
+
+            plan = validated_plan
 
             action_name = str(plan.get("action") or "unknown")
             entities = dict(plan.get("entities") or {})
@@ -294,7 +438,68 @@ class SecretaryOrchestrator:
                 confirmation_required=confirmation_required,
             )
 
-            result = self._run_plan(plan, state, confirmed=False)
+            _session.add_plan(dict(plan))
+
+            # ── Execution retry loop (Task 6: LLM-feedback repair) ────────────
+            active_plan = copy.deepcopy(plan)
+            result = None
+            for _exec_attempt in range(1, self._MAX_EXECUTION_RETRIES + 1):
+                result = self._run_plan(active_plan, state, confirmed=False)
+
+                # Success or pending user input → stop immediately
+                if result.get("ok") or result.get("error_code") in (
+                    "CONFIRM_REQUIRED", "AMBIGUOUS"
+                ):
+                    break
+
+                # Last attempt → wrap up with terminal message
+                if _exec_attempt >= self._MAX_EXECUTION_RETRIES:
+                    _ts = datetime.now().strftime("%H:%M:%S")
+                    sys.stderr.write(
+                        f"\n[EchoMind | Retry   ] {_ts} — all {self._MAX_EXECUTION_RETRIES} "
+                        f"attempts exhausted for action '{active_plan.get('action')}'\n"
+                    )
+                    sys.stderr.flush()
+                    _session.add_error(
+                        f"MAX_RETRIES_EXCEEDED after {self._MAX_EXECUTION_RETRIES} attempts"
+                    )
+                    result = {
+                        "ok": False,
+                        "action": str(active_plan.get("action") or "unknown"),
+                        "message": (
+                            f"EchoMind Secretary could not complete the command after "
+                            f"{self._MAX_EXECUTION_RETRIES} attempts. "
+                            f"Last error: {result.get('message')} "
+                            "EchoMind Secretary is closing this request."
+                        ),
+                        "data": result.get("data"),
+                        "error_code": "MAX_RETRIES_EXCEEDED",
+                    }
+                    state["pending"] = None
+                    break
+
+                # Non-repairable error → stop retrying
+                if not is_repairable(result):
+                    break
+
+                # Ask LLM to repair the plan
+                _session.add_error(
+                    str(result.get("message")), attempt=_exec_attempt
+                )
+                repaired = repair_plan_after_execution_failure(
+                    user_text=text,
+                    language=language,
+                    failed_plan=dict(active_plan),
+                    execution_result=result,
+                    attempt=_exec_attempt,
+                    max_attempts=self._MAX_EXECUTION_RETRIES,
+                )
+                if not repaired:
+                    break  # LLM could not produce a valid repair
+
+                _session.add_repair(dict(repaired), attempt=_exec_attempt)
+                active_plan = repaired
+
             audit.log_end(
                 action_id=action_id,
                 confirmed=confirmed,
@@ -311,7 +516,7 @@ class SecretaryOrchestrator:
                 "action": action_name,
                 "message": f"Secretary runtime error: {exc}",
                 "data": None,
-                "error_code": "RUNTIME_ERROR",
+                "error_code": ERR_RUNTIME,
             }
             audit.log_end(
                 action_id=action_id,

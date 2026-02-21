@@ -13,5 +13,8 @@ def get_runtime_home_widget():
 def create_secretary_orchestrator(home_widget=None):
     from EchoMind.secretary.orchestrator import SecretaryOrchestrator
 
-    return SecretaryOrchestrator(home_widget=home_widget or get_runtime_home_widget())
+    return SecretaryOrchestrator(
+        home_widget=home_widget or get_runtime_home_widget(),
+        use_brain=True,
+    )
 

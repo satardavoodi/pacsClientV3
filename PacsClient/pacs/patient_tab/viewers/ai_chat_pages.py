@@ -171,7 +171,7 @@ class ModePickerPage(QWidget):
             }
         """)
         self._usage_lbl.setVisible(False)
-        self._right_layout.addWidget(self._usage_lbl, 0, Qt.AlignCenter)
+        # Usage panel deliberately not added to layout — removed from UI.
         self._right_layout.addStretch(1)
 
         self._root.addWidget(self.left_wrap, 0, Qt.AlignTop | Qt.AlignLeft)
@@ -290,6 +290,9 @@ class ModePickerPage(QWidget):
             )
 
     def _refresh_usage_panel(self, api_key: str | None = None) -> None:
+        # Usage panel removed from UI — keep the method as a no-op so callers don't crash.
+        return
+
         def _mask_key(k: str) -> str:
             k = (k or "").strip()
             if not k:
