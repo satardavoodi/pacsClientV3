@@ -4084,6 +4084,24 @@ class ViewerController:
                         self.parent_widget.series_downloaded.emit(series_number)
                     return
             print(f"   ℹ️ No server info available for download")
+
+            # Fallback: trigger per-series retry via Download Manager
+            inflight = getattr(self.parent_widget, '_retry_series_inflight', None)
+            if inflight is None:
+                inflight = set()
+                self.parent_widget._retry_series_inflight = inflight
+            if series_number in inflight:
+                return
+            inflight.add(series_number)
+
+            try:
+                self.parent_widget._on_retry_series_download(
+                    series_number=str(series_number),
+                    study_uid=str(getattr(self.parent_widget, 'study_uid', '') or ''),
+                    series_uid=None,
+                )
+            finally:
+                QTimer.singleShot(2000, lambda: inflight.discard(series_number))
         except Exception as e:
             print(f"   ⚠️ Error triggering download: {e}")
 
