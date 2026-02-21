@@ -574,10 +574,23 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.interactor.SetInteractorStyle(default_interactorstyle)
         self.current_style = default_interactorstyle
         self.current_style.reset_events()  # reset events to default events
+        self._ensure_interactor_style_enabled()
 
         self._restore_camera_state(_saved_camera_state)
         self._schedule_camera_restore(_saved_camera_state)
         self.image_viewer.Render()
+
+    def _ensure_interactor_style_enabled(self):
+        try:
+            if getattr(self, 'current_style', None) is not None and hasattr(self.current_style, 'On'):
+                self.current_style.On()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'interactor') and self.interactor is not None and hasattr(self.interactor, 'Enable'):
+                self.interactor.Enable()
+        except Exception:
+            pass
 
     def set_widgets_on_new_interactorstyle(self, new_interactorstyle: AbstractInteractorStyle):
         # Check if current_style exists (for progressive download dummy viewers)
@@ -989,6 +1002,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self.style = AbstractInteractorStyle(self.image_viewer)
             self.interactor.SetInteractorStyle(self.style)
             self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
+            self.current_style = self.style
+            self._ensure_interactor_style_enabled()
 
             # ⚡ SINGLE BATCHED RENDER at the end (not multiple renders)
             logger.debug(f"[SERIES SWITCH]   UpdateDisplayExtent + Render")
@@ -997,7 +1012,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
             self.last_series_show = series_index
             self.save_status_camera(self.image_viewer)
-            
+
             # Log final camera state
             try:
                 camera = self.image_viewer.renderer.GetActiveCamera()

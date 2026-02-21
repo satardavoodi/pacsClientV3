@@ -1937,7 +1937,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                     self.renderer.RemoveActor(a)
                 except Exception:
                     pass
+        if hasattr(self, "_box_text_actors") and self._box_text_actors:
+            for a in self._box_text_actors:
+                try:
+                    self.renderer.RemoveActor(a)
+                except Exception:
+                    pass
         self._box_actors = []
+        self._box_text_actors = []
 
     def ijk_to_world(self, i: float, j: float, k: float | None = None, *, y_flip: bool = True):
         """
@@ -2085,6 +2092,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # پاک‌سازی باکس‌های قبلی
         self.clear_boxes()
         self._box_actors = []
+        self._box_text_actors = []
 
         def _actor_for_rect(p0, p1, p2, p3):
             pts = vtk.vtkPoints()
@@ -2144,6 +2152,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             lst_boxes_object.append(box_object)
 
             self.renderer.AddActor(text_actor)
+            self._box_text_actors.append(text_actor)
 
         # هم‌ترازسازی و رندر
         if hasattr(self, "_sync_all_overlays_extent"):
