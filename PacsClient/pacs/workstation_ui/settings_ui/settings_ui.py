@@ -92,10 +92,10 @@ class SettingsTabWidget(QTabWidget):
                 border: 1px solid #4a5568;
                 border-bottom: none;
                 border-radius: 6px 6px 0 0;
-                padding: 12px 22px;
+                padding: 11px 20px;
                 margin-right: 2px;
-                font-size: 20px;
-                min-width: 170px;
+                font-size: 14px;
+                min-width: 155px;
             }
             QTabWidget#SettingsTabWidget QTabBar::tab:selected {
                 background: #3182ce;
@@ -129,6 +129,16 @@ class SettingsTabWidget(QTabWidget):
             }
 
             /* ---------- Inputs ---------- */
+            QTabWidget#SettingsTabWidget QLabel {
+                font-size: 14px;
+            }
+            QTabWidget#SettingsTabWidget QGroupBox::title {
+                font-size: 14px;
+            }
+            QTabWidget#SettingsTabWidget QCheckBox {
+                spacing: 8px;
+                font-size: 14px;
+            }
             QTabWidget#SettingsTabWidget QLineEdit,
             QTabWidget#SettingsTabWidget QTextEdit,
             QTabWidget#SettingsTabWidget QPlainTextEdit {
@@ -136,7 +146,9 @@ class SettingsTabWidget(QTabWidget):
                 color: #e2e8f0;
                 border: 1px solid #334155;
                 border-radius: 6px;
-                padding: 6px 8px;
+                padding: 6px 10px;
+                min-height: 34px;
+                font-size: 14px;
                 selection-background-color: #2563eb;
                 selection-color: #ffffff;
             }
@@ -153,8 +165,9 @@ class SettingsTabWidget(QTabWidget):
                 color: #e2e8f0;
                 border: 1px solid #334155;
                 border-radius: 6px;
-                padding: 4px 8px;
-                min-height: 26px;
+                padding: 5px 10px;
+                min-height: 34px;
+                font-size: 14px;
             }
             QTabWidget#SettingsTabWidget QComboBox::drop-down {
                 border-left: 1px solid #334155;
@@ -189,7 +202,9 @@ class SettingsTabWidget(QTabWidget):
                 color: #e2e8f0;
                 border: 1px solid #4a5568;
                 border-radius: 6px;
-                padding: 7px 12px;
+                padding: 8px 14px;
+                min-height: 36px;
+                font-size: 14px;
             }
             QTabWidget#SettingsTabWidget QPushButton:hover {
                 background: #4a5568;

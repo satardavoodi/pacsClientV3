@@ -1364,6 +1364,10 @@ class DownloadManagerWidget(QWidget):
         overall_downloaded = completed_images + current_done
         overall_total = max(total_images, 0)
         overall_percent = (overall_downloaded / overall_total * 100) if overall_total > 0 else 0.0
+        if overall_percent < 0:
+            overall_percent = 0.0
+        elif overall_percent > 100:
+            overall_percent = 100.0
 
         return overall_downloaded, overall_total, overall_percent
     
@@ -1395,6 +1399,10 @@ class DownloadManagerWidget(QWidget):
             display_percent = state.progress_percent
             if display_percent <= 0 and display_total > 0 and display_downloaded > 0:
                 display_percent = (display_downloaded / display_total) * 100
+            if display_percent < 0:
+                display_percent = 0.0
+            elif display_percent > 100:
+                display_percent = 100.0
             
             # Update table progress bar
             try:
@@ -2409,6 +2417,17 @@ class DownloadManagerWidget(QWidget):
         4. Start the next pending download
         """
         logger.error(f"❌ [ERROR] Worker error: {study_uid[:40] if study_uid else 'None'}... - {error_message}")
+
+        # If this study was auto-paused (preemption), do not mark it as FAILED.
+        current_state = self.state_store.get(study_uid)
+        if current_state and current_state.status == DownloadStatus.PAUSED and current_state.is_auto_paused:
+            logger.info(
+                f"⏸️ [ERROR] Ignoring error for auto-paused study {study_uid[:40]}... (preemption)"
+            )
+            # Allow the pipeline to continue for other downloads.
+            self._check_auto_resume()
+            QTimer.singleShot(100, self._start_next_pending)
+            return
 
         # Update state to FAILED before emitting signal
         self.state_store.update(

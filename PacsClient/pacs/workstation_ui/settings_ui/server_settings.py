@@ -54,6 +54,7 @@ class ServerSettingsWidget(QWidget):
             }
             QWidget#ServerSettingsWidget QLabel {
                 color: #e5e7eb;
+                font-size: 14px;
             }
             QWidget#ServerSettingsWidget QGroupBox {
                 background-color: #0f1217;
@@ -75,7 +76,8 @@ class ServerSettingsWidget(QWidget):
                 border: 1px solid #2b2f36;
                 border-radius: 8px;
                 padding: 6px 10px;
-                min-height: 28px; /* short height */
+                min-height: 34px;
+                font-size: 14px;
             }
             QWidget#ServerSettingsWidget QLineEdit:focus {
                 border: 1px solid #60a5fa;
@@ -85,9 +87,9 @@ class ServerSettingsWidget(QWidget):
                 color: #e5e7eb;
                 border: 1px solid #2b2f36;
                 border-radius: 8px;
-                padding: 6px 12px;
-                min-height: 28px;
-                font-size: 12px;
+                padding: 8px 14px;
+                min-height: 36px;
+                font-size: 14px;
             }
             QWidget#ServerSettingsWidget QPushButton:hover {
                 background-color: #243041;
@@ -114,9 +116,9 @@ class ServerSettingsWidget(QWidget):
                 border-color: #22c55e;
             }
             QWidget#ServerSettingsWidget QPushButton#danger {
-                background-color: #3f1d1d;
-                border: 1px solid #7f1d1d;
-                color: #fee2e2;
+                background-color: #1e3a8a;
+                border: 1px solid #1d4ed8;
+                color: #e0f2fe;
             }
         """)
 
@@ -141,14 +143,15 @@ class ServerSettingsWidget(QWidget):
                 selection-background-color: #2563eb;
                 selection-color: #ffffff;
             }
-            QTableWidget::item { padding: 6px; }
+            QTableWidget::item { padding: 5px; }
             QTableWidget::item:hover { background-color: #111827; }
             QHeaderView::section {
                 background-color: #111827;
                 color: #e5e7eb;
-                padding: 8px;
+                padding: 7px;
                 border: 1px solid #2b2f36;
                 font-weight: 600;
+                font-size: 14px;
             }
         """)
 
@@ -172,9 +175,9 @@ class ServerSettingsWidget(QWidget):
         self.port_edit = QLineEdit()
         self.ae_title_edit = QLineEdit()
 
-        # short height inputs
+        # standard height inputs
         for w in (self.name_edit, self.host_edit, self.port_edit, self.ae_title_edit):
-            w.setFixedHeight(30)
+            w.setFixedHeight(34)
 
         form_layout.addWidget(QLabel("Server Name:"), 0, 0)
         form_layout.addWidget(self.name_edit, 0, 1)
@@ -390,7 +393,7 @@ class ServerSettingsWidget(QWidget):
                 port = int(port_item.text().strip())
             except ValueError:
                 status_item.setText("Invalid Port")
-                status_item.setBackground(QColor("#F44336"))
+                status_item.setBackground(QColor("#60a5fa"))
                 return
 
             # وضعیت موقت
@@ -406,14 +409,14 @@ class ServerSettingsWidget(QWidget):
                 status_item.setToolTip("")
             else:
                 status_item.setText("Offline")
-                status_item.setBackground(QColor("#F44336"))
+                status_item.setBackground(QColor("#60a5fa"))
                 status_item.setToolTip(err or "Unknown error")
 
         except Exception:
             status_item = self.server_list.item(row, 4)
             if status_item:
                 status_item.setText("Error")
-                status_item.setBackground(QColor("#F44336"))
+                status_item.setBackground(QColor("#60a5fa"))
 
     def on_server_selected(self):
         selected_items = self.server_list.selectedItems()

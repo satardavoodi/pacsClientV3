@@ -555,6 +555,23 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
             print(f"[FILESYSTEM LOAD] No DICOM files found in {series_folder}")
             return None
 
+        # Filter mixed-size series (SimpleITK fails if sizes differ)
+        try:
+            size_dict = utils.group_images_base_on_size(series_folder, ordering_by_instance_number=False)
+            if size_dict:
+                if len(size_dict) > 1:
+                    largest_size, largest_files = max(size_dict.items(), key=lambda kv: len(kv[1]))
+                    other_counts = {f"{k[0]}x{k[1]}": len(v) for k, v in size_dict.items() if k != largest_size}
+                    dicom_files = natsorted([Path(f) for f in largest_files])
+                    print(
+                        f"[FILESYSTEM LOAD] Size mismatch detected; using {largest_size} with {len(dicom_files)} files, skipping {other_counts}"
+                    )
+                else:
+                    only_files = next(iter(size_dict.values()))
+                    dicom_files = natsorted([Path(f) for f in only_files])
+        except Exception as e:
+            print(f"[FILESYSTEM LOAD] WARN: size grouping failed, using all files: {e}")
+
         print(f"[FILESYSTEM LOAD] Loading series {series_number} from filesystem with {len(dicom_files)} files")
 
         # بارگذاری DICOM با SimpleITK

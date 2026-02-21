@@ -53,6 +53,12 @@ class AIPatientWidget(PatientWidget):
         """
         return (1, 1)
 
+    def _get_default_layout_from_config(self, modality: str = None) -> tuple:
+        """
+        Force 1x1 layout for AI imaging tab regardless of modality config.
+        """
+        return (1, 1)
+
     def creator_vtk_widget(self):
         """Override to create AI-specific VTK widget"""
         height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480

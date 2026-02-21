@@ -226,6 +226,9 @@ class ViewerController:
         self._pending_thumbnail_updates = []
         self._image_cache_max_size = 10
 
+        # Track current layout to avoid redundant re-applies
+        self._current_layout = None
+
         # Per-viewport request/version state to avoid stale async apply
         self._viewer_request_token = {}  # viewer_id -> token
 
@@ -238,6 +241,7 @@ class ViewerController:
         self._series_load_events = {}  # series_number -> threading.Event
         self._series_load_lock = threading.Lock()
         self._prefetch_max_series = 24
+
         self._prefetch_delay_ms = 120
         self._interactive_load_in_progress = False
 
@@ -303,6 +307,36 @@ class ViewerController:
             f"heavy_threshold={_cap['warmup_max_slices']}slices "
             f"disk_persist_max={_cap['disk_persist_max']//(1024*1024)}MB"
         )
+
+    def _ensure_grid_config_exists(self):
+        """Create the modality grid config if missing."""
+        if GRID_CONFIG_PATH.exists():
+            return
+
+        default_config = {
+            "default": {"rows": 1, "cols": 2},
+            "modality_layouts": {
+                "CT": {"rows": 1, "cols": 2},
+                "MR": {"rows": 1, "cols": 2},
+                "MG": {"rows": 2, "cols": 2},
+                "CR": {"rows": 1, "cols": 2},
+                "DX": {"rows": 1, "cols": 2},
+                "US": {"rows": 1, "cols": 2},
+                "XA": {"rows": 1, "cols": 2},
+                "RF": {"rows": 1, "cols": 2},
+                "NM": {"rows": 1, "cols": 2},
+                "PT": {"rows": 1, "cols": 2},
+                "OT": {"rows": 1, "cols": 2}
+            }
+        }
+
+        try:
+            GRID_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(GRID_CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(default_config, f, indent=2, ensure_ascii=False)
+            print(f"✅ Default modality grid config created: {GRID_CONFIG_PATH}")
+        except Exception as e:
+            print(f"⚠️ Could not create default grid config: {e}")
 
     def _is_boostviewer_enabled_runtime(self) -> bool:
         try:
@@ -1380,6 +1414,8 @@ class ViewerController:
             required_count = rows * cols
             current_count = len(self.lst_nodes_viewer)
             current_data_count = len(self.parent_widget.lst_thumbnails_data)
+
+            self._current_layout = (rows, cols)
 
             print(f"🔧 [LAYOUT] Applying {rows}x{cols} layout (need {required_count} viewers, have {current_count})")
 
@@ -3667,7 +3703,8 @@ class ViewerController:
             print(f"📂 [LOAD] Loading series {series_number} from {study_path} (thread={threading.current_thread().name})")
 
             # Bail out early if tab was deactivated while queued (e.g. user pressed F5).
-            if not self._tab_active:
+            # Allow explicit user-driven loads even if tab_active flag is stale.
+            if not self._tab_active and not self._interactive_load_in_progress:
                 print(f"⏭️ [LOAD SKIP] tab inactive for series {series_number}")
                 return False
 
@@ -4507,6 +4544,7 @@ class ViewerController:
             tuple: (rows, cols) for viewer grid layout
         """
         try:
+            self._ensure_grid_config_exists()
             if GRID_CONFIG_PATH.exists():
                 with open(GRID_CONFIG_PATH, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -4606,6 +4644,8 @@ class ViewerController:
         """⚡ Optimized: Synchronous viewer layout without processEvents delays"""
         try:
             number_of_row, number_of_column = int(numbers[0]), int(numbers[1])
+
+            self._current_layout = (number_of_row, number_of_column)
 
             # Cleanup old viewers
             self.cleanup_all_viewers()

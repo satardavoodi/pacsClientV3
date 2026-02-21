@@ -1658,6 +1658,39 @@ class PatientWidget(QWidget):
         
         return self._get_default_layout_from_config(modality=modality)
 
+    def apply_modality_grid_config(self):
+        """Re-apply viewer layout based on the current modality grid config."""
+        try:
+            if not getattr(self, "viewer_controller", None):
+                return
+            if not hasattr(self, "vtk_layout"):
+                return
+
+            metadata = None
+            selected_widget = self.selected_widget
+            if selected_widget and getattr(selected_widget, "image_viewer", None):
+                metadata = getattr(selected_widget.image_viewer, "metadata", None)
+
+            if metadata is None and selected_widget is not None:
+                idx = getattr(selected_widget, "last_series_show", None)
+                if isinstance(idx, int) and 0 <= idx < len(self.lst_thumbnails_data):
+                    metadata = self.lst_thumbnails_data[idx].get("metadata")
+
+            if metadata is None and self.lst_thumbnails_data:
+                metadata = self.lst_thumbnails_data[0].get("metadata")
+
+            if metadata:
+                layout = self.get_optimal_layout_for_series(metadata)
+            else:
+                layout = self._get_default_layout_from_config()
+
+            if layout == self.viewer_controller._current_layout:
+                return
+
+            self.viewer_controller.apply_multi_viewer(layout, modify_by_user=True)
+        except Exception as e:
+            print(f"⚠️ Error applying modality grid config: {e}")
+
     def init_grid_config():
         """فایل config اولیه را ایجاد می‌کند اگر وجود نداشته باشد"""
         if not GRID_CONFIG_PATH.exists():
@@ -1847,10 +1880,22 @@ class PatientWidget(QWidget):
         metadata = new_data['metadata']
 
         for i in range(len(self.lst_thumbnails_data)):
+            existing_series = self.lst_thumbnails_data[i].get('metadata', {}).get('series', {})
+            existing_series_number = str(existing_series.get('series_number'))
+            existing_series_name = str(existing_series.get('series_name'))
 
-            # we assume lst is such as left and right (front , back) queue without remove element
-            if self.lst_thumbnails_data[i]['metadata']['series']['series_name'] == metadata['series']['series_name']:
+            # If same series_number already exists, avoid duplicate insert.
+            if existing_series_number == series_number:
+                if len(metadata['instances']) == len(self.lst_thumbnails_data[i]['metadata']['instances']):
+                    return False
+                self.lst_thumbnails_data[i] = new_data
+                inserted_index = i
+                add_by_head = False
+                break
 
+            # We assume lst is such as left and right (front , back) queue without remove element
+            # Only treat series_name as a pairing key when it is present.
+            if existing_series_name and existing_series_name == metadata['series']['series_name']:
                 # this series has been created before
                 if len(metadata['instances']) == len(self.lst_thumbnails_data[i]['metadata']['instances']):
                     return False
@@ -4843,21 +4888,25 @@ class PatientWidget(QWidget):
             percent: Progress percentage (0-100)
         """
         try:
+            safe_current = max(current or 0, 0)
+            safe_total = max(total or 0, 0)
+            safe_percent = max(min(percent or 0, 100), 0)
+
             # Store progress info for display
             self._download_progress = {
-                'current': current,
-                'total': total,
-                'percent': percent
+                'current': safe_current,
+                'total': safe_total,
+                'percent': safe_percent
             }
             
             # Update toolbar if available
             if hasattr(self, 'toolbar') and self.toolbar:
                 if hasattr(self.toolbar, 'update_download_progress'):
-                    self.toolbar.update_download_progress(current, total, percent)
+                    self.toolbar.update_download_progress(safe_current, safe_total, safe_percent)
             
             # Log major milestones
-            if percent % 25 == 0 or percent == 100:
-                self.logger.debug(f"Download progress: {current}/{total} ({percent}%)")
+            if safe_percent % 25 == 0 or safe_percent == 100:
+                self.logger.debug(f"Download progress: {safe_current}/{safe_total} ({safe_percent}%)")
                 
         except Exception as e:
             self.logger.debug(f"Error updating download progress: {e}")

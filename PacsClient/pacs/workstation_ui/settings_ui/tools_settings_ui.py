@@ -22,7 +22,7 @@ class ColorButton(QPushButton):
         self.current_color = initial_color
         self.clicked.connect(self.pick_color)
         self.update_button_color()
-        self.setFixedHeight(30)
+        self.setFixedHeight(34)
         self.setCursor(Qt.PointingHandCursor)
     
     def update_button_color(self):
@@ -90,7 +90,7 @@ class ToolSettingsPanel(QGroupBox):
         self.line_width_spin.setRange(0.5, 20.0)
         self.line_width_spin.setSingleStep(0.5)
         self.line_width_spin.setValue(self.style.line_width)
-        self.line_width_spin.setFixedWidth(100)
+        self.line_width_spin.setFixedWidth(90)
         self.line_width_spin.setSuffix(" px")
         line_width_layout.addWidget(self.line_width_spin)
         line_width_layout.addStretch()
@@ -125,7 +125,7 @@ class ToolSettingsPanel(QGroupBox):
         self.font_size_spin.setRange(8, 72)
         self.font_size_spin.setSingleStep(2)
         self.font_size_spin.setValue(self.style.font_size)
-        self.font_size_spin.setFixedWidth(100)
+        self.font_size_spin.setFixedWidth(90)
         self.font_size_spin.setSuffix(" pt")
         font_size_layout.addWidget(self.font_size_spin)
         font_size_layout.addStretch()
@@ -173,16 +173,20 @@ class ToolsSettingsWidget(QWidget):
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px;
+                font-size: 14px;
             }
             QLabel {
                 color: #e2e8f0;
+                font-size: 14px;
             }
             QDoubleSpinBox, QSpinBox {
                 background-color: #2d3748;
                 color: #e2e8f0;
                 border: 1px solid #4a5568;
                 border-radius: 4px;
-                padding: 4px;
+                padding: 5px 8px;
+                min-height: 34px;
+                font-size: 14px;
             }
             QDoubleSpinBox:focus, QSpinBox:focus {
                 border: 1px solid #3182ce;
@@ -209,9 +213,10 @@ class ToolsSettingsWidget(QWidget):
             QTabBar::tab {
                 background-color: #1a202c;
                 color: #e2e8f0;
-                padding: 8px 16px;
+                padding: 7px 14px;
                 border-top-left-radius: 4px;
                 border-top-right-radius: 4px;
+                font-size: 14px;
             }
             QTabBar::tab:selected {
                 background-color: #2d3748;
@@ -225,8 +230,9 @@ class ToolsSettingsWidget(QWidget):
                 color: #ffffff;
                 border: none;
                 border-radius: 6px;
-                padding: 8px 16px;
-                font-size: 13px;
+                padding: 8px 14px;
+                min-height: 36px;
+                font-size: 14px;
             }
             QPushButton:hover {
                 background-color: #2c5aa0;
@@ -296,19 +302,19 @@ class ToolsSettingsWidget(QWidget):
         # Reset to defaults button
         reset_btn = QPushButton("Reset to Defaults")
         reset_btn.clicked.connect(self.reset_to_defaults)
-        reset_btn.setFixedWidth(150)
+        reset_btn.setFixedWidth(140)
         button_layout.addWidget(reset_btn)
         
         # Save button
         save_btn = QPushButton("Save Settings")
         save_btn.clicked.connect(self.save_settings)
-        save_btn.setFixedWidth(150)
+        save_btn.setFixedWidth(140)
         save_btn.setStyleSheet("""
             QPushButton {
                 background-color: #48bb78;
                 color: white;
                 font-weight: bold;
-                padding: 8px;
+                padding: 8px 12px;
                 border-radius: 4px;
             }
             QPushButton:hover {
@@ -362,7 +368,7 @@ class ToolsSettingsWidget(QWidget):
             
         except Exception as e:
             self.status_label.setText(f"✗ Error saving settings: {str(e)}")
-            self.status_label.setStyleSheet("color: #f44336; padding: 5px 10px; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #60a5fa; padding: 5px 10px; font-weight: bold;")
             
             print(f"❌ [SETTINGS ERROR] Failed to save: {e}")
             import traceback

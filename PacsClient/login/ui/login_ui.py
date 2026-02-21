@@ -25,7 +25,7 @@ def show_error_message(topic_error, detailed_message=None):
         msg.setWindowIcon(QIcon(fr"{IMAGES_LOGIN_PATH}/favicon.ico"))
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle("Missing Information")
-        msg.setText("Please enter both username and password.")
+        msg.setText("Please enter username, password, and center.")
         msg.exec()
     elif topic_error == 'connection_error':
         msg = QMessageBox()
@@ -73,6 +73,12 @@ class LoginWindow(QWidget):
         layout.addWidget(self.password_label)
         layout.addWidget(self.password_input)
 
+        # Center input
+        self.center_label = QLabel("Center:")
+        self.center_input = QLineEdit()
+        layout.addWidget(self.center_label)
+        layout.addWidget(self.center_input)
+
         # Remember Me checkbox
         self.remember_me_checkbox = QCheckBox("Remember Me")
         self.remember_me_checkbox.setChecked(True)
@@ -93,13 +99,17 @@ class LoginWindow(QWidget):
             if os.path.exists(config_file):
                 with open(config_file, 'r') as f:
                     config = json.load(f)
-                    if config.get("remember_me"):
+                    remember_me = bool(config.get("remember_me"))
+                    self.remember_me_checkbox.setChecked(remember_me)
+                    if remember_me:
                         username = config.get("username", "")
                         password = config.get("password", "")
                         self.username_input.setText(username)
                         self.password_input.setText(password)
-                        self.remember_me_checkbox.setChecked(True)
                         self._auto_login_if_possible(username, password)
+                    center = config.get("center", "")
+                    if center:
+                        self.center_input.setText(center)
         except Exception as e:
             print(f"Error loading saved credentials: {e}")
 
@@ -156,30 +166,26 @@ class LoginWindow(QWidget):
             print(f"❌ Socket authentication error: {e}")
             return False, f"Authentication error: {str(e)}", None, None
 
-    def save_credentials(self, username: str, password: str):
-        """Save credentials if 'Remember Me' is checked"""
+    def save_credentials(self, username: str, password: str, center: str):
+        """Save login settings, including center value"""
         try:
-            if self.remember_me_checkbox.isChecked():
-                config_file = self._get_login_config_path()
-                
-                config = {
-                    "username": username,
-                    "password": password,
-                    "remember_me": True
-                }
-                
-                with open(config_file, 'w') as f:
-                    json.dump(config, f)
-            else:
-                # Remove saved credentials if unchecked
-                config_file = self._get_login_config_path()
-                if os.path.exists(config_file):
-                    os.remove(config_file)
+            config_file = self._get_login_config_path()
+            remember_me = self.remember_me_checkbox.isChecked()
+
+            config = {
+                "username": username if remember_me else "",
+                "password": password if remember_me else "",
+                "remember_me": remember_me,
+                "center": center
+            }
+
+            with open(config_file, 'w') as f:
+                json.dump(config, f)
         except Exception as e:
             print(f"Error saving credentials: {e}")
 
-    def _handle_successful_login(self, username: str, password: str):
-        self.save_credentials(username, password)
+    def _handle_successful_login(self, username: str, password: str, center: str):
+        self.save_credentials(username, password, center)
         if self.parent() and hasattr(self.parent(), 'setCurrentIndex'):
             self.parent().setCurrentIndex(1)
         else:
@@ -191,7 +197,8 @@ class LoginWindow(QWidget):
 
         success, message, token, user = self.authenticate_with_socket(username, password)
         if success:
-            self._handle_successful_login(username, password)
+            center = self.center_input.text().strip()
+            self._handle_successful_login(username, password, center)
         else:
             if "could not connect" in (message or "").lower():
                 show_error_message('connection_error', message)
@@ -202,9 +209,10 @@ class LoginWindow(QWidget):
         # Get credentials
         username = self.username_input.text().strip()
         password = self.password_input.text().strip()
+        center = self.center_input.text().strip()
 
         # Validate that both fields are filled
-        if not username or not password:
+        if not username or not password or not center:
             show_error_message('empty_fields')  # Show error message for empty fields
             return
 
@@ -212,7 +220,7 @@ class LoginWindow(QWidget):
         success, message, token, user = self.authenticate_with_socket(username, password)
 
         if success:
-            self._handle_successful_login(username, password)
+            self._handle_successful_login(username, password, center)
         else:
             # Determine the type of error and show appropriate message
             if "could not connect" in message.lower():

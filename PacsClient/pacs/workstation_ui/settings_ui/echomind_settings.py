@@ -66,6 +66,9 @@ class EchoMindSettingsWidget(QWidget):
                 left: 10px;
                 padding: 0 6px;
             }
+            QWidget#EchoMindSettingsWidget QLabel {
+                font-size: 15px;
+            }
             QWidget#EchoMindSettingsWidget QLineEdit,
             QWidget#EchoMindSettingsWidget QComboBox,
             QWidget#EchoMindSettingsWidget QTextEdit {
@@ -73,14 +76,18 @@ class EchoMindSettingsWidget(QWidget):
                 color: #e2e8f0;
                 border: 1px solid #334155;
                 border-radius: 6px;
-                padding: 6px 8px;
+                padding: 6px 10px;
+                min-height: 34px;
+                font-size: 15px;
             }
             QWidget#EchoMindSettingsWidget QPushButton {
                 background-color: #3182ce;
                 color: #ffffff;
                 border: none;
                 border-radius: 6px;
-                padding: 8px 12px;
+                padding: 8px 14px;
+                min-height: 36px;
+                font-size: 14px;
                 font-weight: 600;
             }
             QWidget#EchoMindSettingsWidget QPushButton:hover {
@@ -94,7 +101,7 @@ class EchoMindSettingsWidget(QWidget):
         root.setSpacing(12)
 
         title = QLabel("EchoMind Settings")
-        title.setStyleSheet("font-size: 22px; font-weight: 800;")
+        title.setStyleSheet("font-size: 20px; font-weight: 800;")
         root.addWidget(title)
 
         subtitle = QLabel(
@@ -182,7 +189,7 @@ class EchoMindSettingsWidget(QWidget):
 
         self.provider_help = QLabel("")
         self.provider_help.setWordWrap(True)
-        self.provider_help.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        self.provider_help.setStyleSheet("color: #94a3b8; font-size: 15px;")
         stt_layout.addRow("", self.provider_help)
 
         root.addWidget(stt_group)
