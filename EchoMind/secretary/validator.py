@@ -15,11 +15,21 @@ from .errors import (
     ERR_UNSUPPORTED_ENTITY,
 )
 
-_ALLOWED_ACTIONS = {"list_patients", "open_patient", "download_patient"}
+_ALLOWED_ACTIONS = {
+    "list_patients",
+    "open_patient",
+    "download_patient",
+    "set_source_mode",
+    "import_dicom",
+    "select_patient",
+    "change_font_size",
+    "sort_patients",
+    "select_and_download",
+}
 _ALLOWED_SOURCES = {"active_tab", "local", "server"}
 
 _ALLOWED_ENTITY_KEYS_BY_ACTION: dict[str, set[str]] = {
-    "list_patients": {"source", "date", "modality"},
+    "list_patients": {"source", "date", "modality", "patient_name", "patient_code"},
     "open_patient": {"source", "patient_code", "resolved_patient"},
     "download_patient": {
         "source",
@@ -27,6 +37,12 @@ _ALLOWED_ENTITY_KEYS_BY_ACTION: dict[str, set[str]] = {
         "use_context_patient",
         "resolved_patient",
     },
+    "set_source_mode": {"mode", "source"},
+    "import_dicom": {"path"},
+    "select_patient": {"patient_code", "limit", "row_index"},
+    "change_font_size": {"direction", "delta"},
+    "sort_patients": {"column", "order"},
+    "select_and_download": {"sort_column", "sort_order", "column", "order", "limit"},
 }
 
 _DATE_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -148,7 +164,11 @@ def validate_plan_semantics(plan: SecretaryActionPlan) -> list[ValidationError]:
                 code=ERR_INVALID_ACTION,
                 field="action",
                 message=f"Unsupported action '{action}'.",
-                hint="Allowed: list_patients, open_patient, download_patient",
+                hint=(
+                    "Allowed: list_patients, open_patient, download_patient, "
+                    "set_source_mode, import_dicom, select_patient, "
+                    "change_font_size, sort_patients, select_and_download"
+                ),
             )
         )
         return errs

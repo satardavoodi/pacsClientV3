@@ -1016,7 +1016,14 @@ class SecretaryButtonWidget(QWidget):
 
         def work():
             import datetime as _dt
-            print(f"[EchoMind | Phase 1] {_dt.datetime.now():%H:%M:%S} — STT started: sending audio to transcription service")
+            import sys as _sys
+            def _elog(msg: str) -> None:
+                try:
+                    _sys.stderr.write(msg + "\n")
+                    _sys.stderr.flush()
+                except Exception:
+                    pass
+            _elog(f"[EchoMind | Phase 1] {_dt.datetime.now():%H:%M:%S} — STT started: sending audio to transcription service")
             try:
                 stt_settings = load_settings() or {}
                 stt_req = {
@@ -1065,8 +1072,15 @@ class SecretaryButtonWidget(QWidget):
             stt_req = resp.get("stt_req") or {}
             stt_resp = resp.get("stt_resp") or {}
             import datetime as _dt
-            print(f"[EchoMind | Phase 1] {_dt.datetime.now():%H:%M:%S} — STT complete")
-            print(f"  transcript : {transcript!r}")
+            import sys as _sys
+            def _elog(msg: str) -> None:
+                try:
+                    _sys.stderr.write(msg + "\n")
+                    _sys.stderr.flush()
+                except Exception:
+                    pass
+            _elog(f"[EchoMind | Phase 1] {_dt.datetime.now():%H:%M:%S} — STT complete")
+            _elog(f"  transcript : {transcript!r}")
             self._post_log("system", f"Phase 1 complete — transcript: {transcript!r}")
             if transcript:
                 self.append_input(transcript)
@@ -1077,7 +1091,7 @@ class SecretaryButtonWidget(QWidget):
             # Phase 2: the orchestrator will route the text to a module (LLM call).
             self._set_thinking_status("Phase 2: Module Routing")
             self._post_log("system", "Phase 2: Sending transcript + module catalog to GPT.")
-            print(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — sending transcript + catalog to GPT for module routing")
+            _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — sending transcript + catalog to GPT for module routing")
 
             stt_settings = resp.get("stt_settings") or {}
             requested_route = str(stt_req.get("route") or "native")
@@ -1106,15 +1120,22 @@ class SecretaryButtonWidget(QWidget):
                 return
 
             import datetime as _dt2
-            print(f"[EchoMind | Result ] {_dt2.datetime.now():%H:%M:%S} — pipeline complete")
-            print(f"  ok         : {(result or {}).get('ok')}")
-            print(f"  action     : {(result or {}).get('action')}")
-            print(f"  message    : {str((result or {}).get('message') or '')[:120]}")
+            import sys as _sys2
+            def _elog2(msg: str) -> None:
+                try:
+                    _sys2.stderr.write(msg + "\n")
+                    _sys2.stderr.flush()
+                except Exception:
+                    pass
+            _elog2(f"[EchoMind | Result ] {_dt2.datetime.now():%H:%M:%S} — pipeline complete")
+            _elog2(f"  ok         : {(result or {}).get('ok')}")
+            _elog2(f"  action     : {(result or {}).get('action')}")
+            _elog2(f"  message    : {str((result or {}).get('message') or '')[:120]}")
             data = (result or {}).get("data")
             if isinstance(data, list):
-                print(f"  data rows  : {len(data)}")
+                _elog2(f"  data rows  : {len(data)}")
             elif isinstance(data, dict):
-                print(f"  data keys  : {list(data.keys())}")
+                _elog2(f"  data keys  : {list(data.keys())}")
             self.append_output(self._format_secretary_result_text(result or {}))
             self._set_thinking_status("Ready")
 

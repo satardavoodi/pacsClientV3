@@ -146,10 +146,17 @@ def route_request(
     }
 
     import datetime as _dt
-    print(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — Phase 2 LLM REQUEST (module routing)")
-    print(f"  model      : {_MODEL}")
-    print(f"  user_text  : {user_text!r}")
-    print(f"  prompt_len : {len(user_message)} chars")
+    import sys as _sys
+    def _elog(msg: str) -> None:
+        try:
+            _sys.stderr.write(msg + "\n")
+            _sys.stderr.flush()
+        except Exception:
+            pass
+    _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — Phase 2 LLM REQUEST (module routing)")
+    _elog(f"  model      : {_MODEL}")
+    _elog(f"  user_text  : {user_text!r}")
+    _elog(f"  prompt_len : {len(user_message)} chars")
 
     try:
         raw = gapgpt_chat(
@@ -161,13 +168,13 @@ def route_request(
         )
     except LLMError as exc:
         log.error("Phase 1 LLM call failed: %s", exc)
-        print(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — Phase 2 LLM ERROR: {exc}")
+        _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — Phase 2 LLM ERROR: {exc}")
         return RouteDecision(modules=[], reason=f"llm_error: {exc}", raw_response="")
 
     modules, reason = _parse_route_response(raw)
     log.debug("Phase 1 route decision: modules=%s reason=%r", modules, reason)
-    print(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — Phase 2 LLM RESPONSE")
-    print(f"  raw        : {raw[:300]}")
-    print(f"  modules    : {modules}")
-    print(f"  reason     : {reason}")
+    _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — Phase 2 LLM RESPONSE")
+    _elog(f"  raw        : {raw[:300]}")
+    _elog(f"  modules    : {modules}")
+    _elog(f"  reason     : {reason}")
     return RouteDecision(modules=modules, reason=reason, raw_response=raw)

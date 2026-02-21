@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import sys
 import time
+from datetime import datetime
 from typing import Any
 
 from . import audit
@@ -9,14 +11,19 @@ from .adapters.home_widget_adapter import HomeWidgetAdapter
 from .confirm import is_no, is_yes, parse_selection_index
 from .contracts import SecretaryActionPlan, SecretaryCommand, SecretaryResult
 from .errors import ERR_PLAN_VALIDATION_FAILED, ERR_RUNTIME, ERR_UNPARSED
+from .execution_repair import is_repairable, repair_plan_after_execution_failure
 from .executor import SecretaryExecutor
 from .parser_llm import parse_command_llm
 from .parser_rules import is_chitchat, parse_command_rule
 from .repair_loop import retry_plan_with_llm
+from .session_log import SessionLog
 from .validator import validate_plan
 
 
 class SecretaryOrchestrator:
+    # Maximum number of execution attempts per command (1 initial + up to 4 LLM repairs)
+    _MAX_EXECUTION_RETRIES: int = 5
+
     def __init__(
         self,
         home_widget=None,
@@ -212,12 +219,31 @@ class SecretaryOrchestrator:
         return result
 
     def handle(self, cmd: SecretaryCommand) -> SecretaryResult:
+        """Public entry-point: wraps _handle_core with per-request session logging."""
+        text = (cmd.get("text") or "").strip()
+        _session = SessionLog(user_text=text)
+        _result: SecretaryResult = {
+            "ok": False,
+            "action": "unknown",
+            "message": "No result produced.",
+            "data": None,
+            "error_code": "INTERNAL",
+        }
+        try:
+            _result = self._handle_core(cmd, _session)
+        finally:
+            _session.close(_result)
+        return _result
+
+    def _handle_core(self, cmd: SecretaryCommand, _session: SessionLog) -> SecretaryResult:  # noqa: C901
+        """Core request handler — called by handle()."""
         text = (cmd.get("text") or "").strip()
         sid = cmd.get("session_id") or "secretary-default"
         state = self._get_state(sid)
         source_tab = self.adapter.get_active_source()
         stt_req = cmd.get("stt_route", "native")
         stt_used = cmd.get("stt_route_used", stt_req)
+        language = cmd.get("language") or "auto"
         t0 = time.perf_counter()
         action_id: int | None = None
         confirmed = False
@@ -412,7 +438,68 @@ class SecretaryOrchestrator:
                 confirmation_required=confirmation_required,
             )
 
-            result = self._run_plan(plan, state, confirmed=False)
+            _session.add_plan(dict(plan))
+
+            # ── Execution retry loop (Task 6: LLM-feedback repair) ────────────
+            active_plan = copy.deepcopy(plan)
+            result = None
+            for _exec_attempt in range(1, self._MAX_EXECUTION_RETRIES + 1):
+                result = self._run_plan(active_plan, state, confirmed=False)
+
+                # Success or pending user input → stop immediately
+                if result.get("ok") or result.get("error_code") in (
+                    "CONFIRM_REQUIRED", "AMBIGUOUS"
+                ):
+                    break
+
+                # Last attempt → wrap up with terminal message
+                if _exec_attempt >= self._MAX_EXECUTION_RETRIES:
+                    _ts = datetime.now().strftime("%H:%M:%S")
+                    sys.stderr.write(
+                        f"\n[EchoMind | Retry   ] {_ts} — all {self._MAX_EXECUTION_RETRIES} "
+                        f"attempts exhausted for action '{active_plan.get('action')}'\n"
+                    )
+                    sys.stderr.flush()
+                    _session.add_error(
+                        f"MAX_RETRIES_EXCEEDED after {self._MAX_EXECUTION_RETRIES} attempts"
+                    )
+                    result = {
+                        "ok": False,
+                        "action": str(active_plan.get("action") or "unknown"),
+                        "message": (
+                            f"EchoMind Secretary could not complete the command after "
+                            f"{self._MAX_EXECUTION_RETRIES} attempts. "
+                            f"Last error: {result.get('message')} "
+                            "EchoMind Secretary is closing this request."
+                        ),
+                        "data": result.get("data"),
+                        "error_code": "MAX_RETRIES_EXCEEDED",
+                    }
+                    state["pending"] = None
+                    break
+
+                # Non-repairable error → stop retrying
+                if not is_repairable(result):
+                    break
+
+                # Ask LLM to repair the plan
+                _session.add_error(
+                    str(result.get("message")), attempt=_exec_attempt
+                )
+                repaired = repair_plan_after_execution_failure(
+                    user_text=text,
+                    language=language,
+                    failed_plan=dict(active_plan),
+                    execution_result=result,
+                    attempt=_exec_attempt,
+                    max_attempts=self._MAX_EXECUTION_RETRIES,
+                )
+                if not repaired:
+                    break  # LLM could not produce a valid repair
+
+                _session.add_repair(dict(repaired), attempt=_exec_attempt)
+                active_plan = repaired
+
             audit.log_end(
                 action_id=action_id,
                 confirmed=confirmed,

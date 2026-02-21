@@ -150,24 +150,31 @@ class AgentBrain:
         Returns None if no plan could be produced.
         """
         import datetime as _dt
+        import sys as _sys
+        def _elog(msg: str) -> None:
+            try:
+                _sys.stderr.write(msg + "\n")
+                _sys.stderr.flush()
+            except Exception:
+                pass
         # ── Phase 1: route ────────────────────────────────────────────────────
         if pre_routed is not None:
             decision: RouteDecision = pre_routed
-            print(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — routing decision (pre-computed): {decision.modules}")
+            _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — routing decision (pre-computed): {decision.modules}")
         else:
             decision = route_request(user_text=user_text, language=language)
         log.info("[Phase1] modules=%s  reason=%r", decision.modules, decision.reason)
 
         if decision.is_empty:
             log.warning("Phase 1 returned no modules; cannot plan.")
-            print(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — ERROR: no modules selected, cannot proceed to Phase 3")
+            _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — ERROR: no modules selected, cannot proceed to Phase 3")
             return None
 
         # ── Phase 3: plan ────────────────────────────────────────────────────
-        print(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — sending module docs + user text to GPT for action planning")
-        print(f"  modules    : {decision.modules}")
+        _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — sending module docs + user text to GPT for action planning")
+        _elog(f"  modules    : {decision.modules}")
         module_docs = load_module_docs(decision.modules)
-        print(f"  docs_len   : {len(module_docs)} chars")
+        _elog(f"  docs_len   : {len(module_docs)} chars")
         plan = self._phase2_plan(
             user_text=user_text,
             language=language,
@@ -175,7 +182,7 @@ class AgentBrain:
         )
         if plan is None:
             log.warning("Phase 2 returned no plan.")
-            print(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — ERROR: LLM returned no action plan")
+            _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — ERROR: LLM returned no action plan")
             return None
 
         # ── Validate ─────────────────────────────────────────────────────────
@@ -302,8 +309,21 @@ class AgentBrain:
         timeout: float = _TIMEOUT,
     ) -> SecretaryActionPlan | None:
         """Call the LLM with the module document(s) to produce an action plan."""
+        from datetime import date, timedelta
+        _today = date.today()
+        _date_context = (
+            f"TODAY'S DATE (authoritative — use this for ALL relative date expressions):\n"
+            f"  today     = {_today.isoformat()}  ({_today.strftime('%A')})\n"
+            f"  yesterday = {(_today - timedelta(days=1)).isoformat()}\n"
+            f"  2 days ago= {(_today - timedelta(days=2)).isoformat()}\n"
+            f"  3 days ago= {(_today - timedelta(days=3)).isoformat()}\n"
+            f"  this week = {(_today - timedelta(days=_today.weekday())).isoformat()} .. {_today.isoformat()}\n"
+            f"IMPORTANT: Never guess or use training-data dates. Always compute relative dates from today above."
+        )
         user_message = (
             f"Language hint: {language or 'auto'}\n\n"
+            f"=== DATE CONTEXT ===\n"
+            f"{_date_context}\n\n"
             "=== MODULE DOCUMENTS (Document 2) ===\n"
             f"{module_docs}\n\n"
             "=== USER REQUEST ===\n"
@@ -320,10 +340,17 @@ class AgentBrain:
             "max_tokens": 512,
         }
         import datetime as _dt
-        print(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM REQUEST (action planning)")
-        print(f"  model      : {_MODEL}")
-        print(f"  user_text  : {user_text!r}")
-        print(f"  docs_len   : {len(module_docs)} chars")
+        import sys as _sys
+        def _elog(msg: str) -> None:
+            try:
+                _sys.stderr.write(msg + "\n")
+                _sys.stderr.flush()
+            except Exception:
+                pass
+        _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM REQUEST (action planning)")
+        _elog(f"  model      : {_MODEL}")
+        _elog(f"  user_text  : {user_text!r}")
+        _elog(f"  docs_len   : {len(module_docs)} chars")
         try:
             raw = gapgpt_chat(
                 messages=payload["messages"],
@@ -333,17 +360,17 @@ class AgentBrain:
                 timeout=int(timeout),
             )
             log.debug("Phase 2 raw response: %r", raw[:400])
-            print(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM RESPONSE")
-            print(f"  raw        : {raw[:500]}")
+            _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM RESPONSE")
+            _elog(f"  raw        : {raw[:500]}")
             parsed = _parse_action_plan(raw)
             if parsed:
-                print(f"  action     : {parsed.get('action')}")
-                print(f"  entities   : {parsed.get('entities')}")
-                print(f"  confidence : {parsed.get('confidence')}")
+                _elog(f"  action     : {parsed.get('action')}")
+                _elog(f"  entities   : {parsed.get('entities')}")
+                _elog(f"  confidence : {parsed.get('confidence')}")
             else:
-                print(f"  [Phase 3] WARNING: could not parse JSON from response")
+                _elog(f"  [Phase 3] WARNING: could not parse JSON from response")
             return parsed
         except LLMError as exc:
             log.error("Phase 2 LLM call failed: %s", exc)
-            print(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM ERROR: {exc}")
+            _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM ERROR: {exc}")
             return None
