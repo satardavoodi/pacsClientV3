@@ -20,7 +20,7 @@ except Exception:
 # =============================
 # API endpoints
 # =============================
-AI_BASE      = 'http://87.236.166.66:8002'  
+AI_BASE      = 'http://185.239.2.153:8002'  
 URL_CHAT             = f"{AI_BASE}/chat"
 URL_GEN_REPORT       = f"{AI_BASE}/generate_report"
 URL_GEN_TRANSCRIPT   = f"{AI_BASE}/generate_transcript"
