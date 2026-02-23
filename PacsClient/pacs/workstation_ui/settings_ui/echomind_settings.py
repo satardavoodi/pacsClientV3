@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QGroupBox,
     QLineEdit,
@@ -68,6 +69,16 @@ class EchoMindSettingsWidget(QWidget):
             }
             QWidget#EchoMindSettingsWidget QLabel {
                 font-size: 15px;
+            }
+            QWidget#EchoMindSettingsWidget QLabel[valueLabel="true"] {
+                font-size: 15px;
+                font-weight: 600;
+                color: #60a5fa;
+                background-color: #0f172a;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 8px 12px;
+                min-height: 34px;
             }
             QWidget#EchoMindSettingsWidget QLineEdit,
             QWidget#EchoMindSettingsWidget QComboBox,
@@ -142,34 +153,70 @@ class EchoMindSettingsWidget(QWidget):
         usage_header.addWidget(self.refresh_usage_btn)
         usage_layout.addLayout(usage_header)
 
-        form = QFormLayout()
+        # Two-column grid layout for better visibility
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(10)
+        grid.setContentsMargins(8, 8, 8, 8)
 
         self.center_value = QLabel("-")
+        self.center_value.setProperty("valueLabel", True)
         self.center_code_value = QLabel("-")
+        self.center_code_value.setProperty("valueLabel", True)
         self.key_mask_value = QLabel("-")
+        self.key_mask_value.setProperty("valueLabel", True)
         self.total_tokens_value = QLabel("0")
+        self.total_tokens_value.setProperty("valueLabel", True)
         self.total_transcript_value = QLabel("0 min")
+        self.total_transcript_value.setProperty("valueLabel", True)
         self.usage_entries_value = QLabel("0")
+        self.usage_entries_value.setProperty("valueLabel", True)
         self.token_models_value = QLabel("0")
+        self.token_models_value.setProperty("valueLabel", True)
         self.transcript_models_value = QLabel("0")
+        self.transcript_models_value.setProperty("valueLabel", True)
         self.top_token_model_value = QLabel("-")
+        self.top_token_model_value.setProperty("valueLabel", True)
         self.top_transcript_model_value = QLabel("-")
+        self.top_transcript_model_value.setProperty("valueLabel", True)
         self.last_used_value = QLabel("-")
+        self.last_used_value.setProperty("valueLabel", True)
         self.last_refresh_value = QLabel("-")
+        self.last_refresh_value.setProperty("valueLabel", True)
 
-        form.addRow("Organization / Center:", self.center_value)
-        form.addRow("Center Code:", self.center_code_value)
-        form.addRow("API Key:", self.key_mask_value)
-        form.addRow("Tokens Consumed:", self.total_tokens_value)
-        form.addRow("Transcript Consumed:", self.total_transcript_value)
-        form.addRow("Usage Entries:", self.usage_entries_value)
-        form.addRow("Token Models:", self.token_models_value)
-        form.addRow("Transcript Models:", self.transcript_models_value)
-        form.addRow("Top Token Model:", self.top_token_model_value)
-        form.addRow("Top Transcript Model:", self.top_transcript_model_value)
-        form.addRow("Last Used:", self.last_used_value)
-        form.addRow("Last Refresh:", self.last_refresh_value)
-        usage_layout.addLayout(form)
+        # Left column (rows 0-5)
+        grid.addWidget(QLabel("Organization / Center:"), 0, 0)
+        grid.addWidget(self.center_value, 0, 1)
+        grid.addWidget(QLabel("Center Code:"), 1, 0)
+        grid.addWidget(self.center_code_value, 1, 1)
+        grid.addWidget(QLabel("API Key:"), 2, 0)
+        grid.addWidget(self.key_mask_value, 2, 1)
+        grid.addWidget(QLabel("Tokens Consumed:"), 3, 0)
+        grid.addWidget(self.total_tokens_value, 3, 1)
+        grid.addWidget(QLabel("Transcript Consumed:"), 4, 0)
+        grid.addWidget(self.total_transcript_value, 4, 1)
+        grid.addWidget(QLabel("Usage Entries:"), 5, 0)
+        grid.addWidget(self.usage_entries_value, 5, 1)
+
+        # Right column (rows 0-5)
+        grid.addWidget(QLabel("Token Models:"), 0, 2)
+        grid.addWidget(self.token_models_value, 0, 3)
+        grid.addWidget(QLabel("Transcript Models:"), 1, 2)
+        grid.addWidget(self.transcript_models_value, 1, 3)
+        grid.addWidget(QLabel("Top Token Model:"), 2, 2)
+        grid.addWidget(self.top_token_model_value, 2, 3)
+        grid.addWidget(QLabel("Top Transcript Model:"), 3, 2)
+        grid.addWidget(self.top_transcript_model_value, 3, 3)
+        grid.addWidget(QLabel("Last Used:"), 4, 2)
+        grid.addWidget(self.last_used_value, 4, 3)
+        grid.addWidget(QLabel("Last Refresh:"), 5, 2)
+        grid.addWidget(self.last_refresh_value, 5, 3)
+
+        # Set column stretches for better spacing
+        grid.setColumnStretch(1, 1)  # Left value column
+        grid.setColumnStretch(3, 1)  # Right value column
+
+        usage_layout.addLayout(grid)
 
         self.metadata_box = QTextEdit()
         self.metadata_box.setReadOnly(True)
@@ -180,17 +227,30 @@ class EchoMindSettingsWidget(QWidget):
         root.addWidget(usage_group)
 
         stt_group = QGroupBox("EchoMind Secretary Voice-to-Text Model")
-        stt_layout = QFormLayout(stt_group)
+        stt_layout = QVBoxLayout(stt_group)
+        
+        stt_grid = QGridLayout()
+        stt_grid.setHorizontalSpacing(12)
+        stt_grid.setVerticalSpacing(10)
+        stt_grid.setContentsMargins(8, 8, 8, 8)
+        
         self.provider_combo = QComboBox()
         self.provider_combo.addItem("Server model (IranNevis)", userData="native")
         self.provider_combo.addItem("V2T model (Google Speech)", userData="v2t")
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
-        stt_layout.addRow("Model:", self.provider_combo)
+        
+        model_label = QLabel("Model:")
+        model_label.setMinimumWidth(80)
+        stt_grid.addWidget(model_label, 0, 0)
+        stt_grid.addWidget(self.provider_combo, 0, 1)
 
         self.provider_help = QLabel("")
         self.provider_help.setWordWrap(True)
         self.provider_help.setStyleSheet("color: #94a3b8; font-size: 15px;")
-        stt_layout.addRow("", self.provider_help)
+        stt_grid.addWidget(self.provider_help, 1, 0, 1, 2)
+        
+        stt_grid.setColumnStretch(1, 1)
+        stt_layout.addLayout(stt_grid)
 
         root.addWidget(stt_group)
         root.addStretch(1)
