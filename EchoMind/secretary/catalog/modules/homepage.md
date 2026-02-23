@@ -185,11 +185,15 @@ Download a single patient study.
 | برو لوکال / حالت لوکال / تب محلی                           | `set_source_mode { mode: "local" }`        |
 | برو ایمپورت / وارد کردن فایل / تب ایمپورت                 | `set_source_mode { mode: "import" }`       |
 | یک فایل DICOM وارد کن / ایمپورت دایکام                    | `import_dicom`                             |
+| **Search / Find / Locate Patient** (verb = locate in list, NOT open viewer) |  |
+| سرش کن / سرزدن بهش / جستجوش کن / پیداش کن                | `select_patient { patient_code: "X" }`     |
+| بررسیش کن / ببین کجاست / سرچش کن / checkش کن              | `select_patient { patient_code: "X" }`     |
+| search X / find X / locate X / look up X                   | `select_patient { patient_code: "X" }`     |
 | **Select Patient**                                          |                                            |
 | بیمار X رو انتخاب کن / select patient X                    | `select_patient { patient_code: "X" }`     |
 | ۱۰ تا اول رو انتخاب کن / select first 10                   | `select_patient { limit: 10 }`             |
-| **Open Patient**                                            |                                            |
-| بیمار X رو باز کن / open patient X                         | `open_patient { patient_code: "X" }`       |
+| **Open Patient** (verb = enter viewer — باز کن / بازش کن)  |                                            |
+| بیمار X رو باز کن / بازش کن / open patient X               | `open_patient { patient_code: "X" }`       |
 | **Font Size**                                               |                                            |
 | فونت رو بزرگ‌تر کن / متن رو بزرگتر / increase text        | `change_font_size { direction: "increase" }` |
 | فونت رو کوچیک‌تر کن / متن رو کوچکتر / decrease text       | `change_font_size { direction: "decrease" }` |
@@ -225,6 +229,27 @@ Return **only** a JSON object (no markdown fences, no prose) with exactly these 
 ```
 action, entities, confidence, needs_confirmation, reason
 ```
+
+---
+
+## 7. VERB SEMANTICS — CRITICAL ACTION DISAMBIGUATION
+
+The **verb** in the user's sentence determines the action.  Context alone must
+never override the verb.  The following table is authoritative:
+
+| Verb group | Persian examples | English | → Action |
+|---|---|---|---|
+| **Search / Find / Locate** | سرش کن · سرزدن · جستجو کن · پیداش کن · ببین کجاست · سرچش کن · چک کن | search · find · locate · look up · check | `select_patient` |
+| **Open / View** | باز کن · بازش کن · مشاهده کن · ببینمش | open · view · launch · enter | `open_patient` |
+| **Download / Fetch** | دانلودش کن · دریافتش کن · بگیرش | download · fetch · save | `download_patient` |
+| **List / Show** | نشون بده · بیار · لیست کن (no specific patient) | list · show · display | `list_patients` |
+
+**Rule:** When only the verb differs, GPT MUST follow the table above.  
+**Example:** "ام آر آی مغز سومیه میرفندر اسکی رو سرش کن" → `select_patient` (search verb).  
+**Example:** "ام آر آی مغز سومیه میرفندر اسکی رو باز کن" → `open_patient` (open verb).
+
+If the verb is ambiguous or absent, choose the least-intrusive action:
+`select_patient` > `open_patient` > `download_patient`
 
 ---
 

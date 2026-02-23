@@ -50,9 +50,12 @@ import requests
 
 log = logging.getLogger(__name__)
 
-_API_URL         = "https://api.gapgpt.app/v1/chat/completions"
-_DEFAULT_MODEL   = "gpt-4.1-mini"
-_DEFAULT_TIMEOUT = 60
+# ── Connection settings — single source of truth is ai_chat_config.py ────────
+from EchoMind.ai_chat_config import GAPGPT_API_URL, GAPGPT_DEFAULT_MODEL, GAPGPT_TIMEOUT
+
+_API_URL         = GAPGPT_API_URL
+_DEFAULT_MODEL   = GAPGPT_DEFAULT_MODEL
+_DEFAULT_TIMEOUT = GAPGPT_TIMEOUT
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────

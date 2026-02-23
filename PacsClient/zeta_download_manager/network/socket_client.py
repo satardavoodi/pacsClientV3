@@ -452,16 +452,27 @@ class SocketDicomClient:
 
                     logger.info(f"📥 Receiving response body ({response_length} bytes)...")
 
-                    # Receive response data
-                    response_data = b''
-                    while len(response_data) < response_length:
-                        chunk_size = min(SOCKET_CHUNK_SIZE, response_length - len(response_data))
-                        chunk = self._safe_recv(chunk_size)
+                    # Change #9A: Pre-allocate bytearray + memoryview → O(1) per chunk.
+                    # Old pattern (response_data += chunk) was O(n) per iteration = O(n²) total.
+                    # For a 7 MB batch that caused ~385 MB of GIL-held memory copies per batch,
+                    # stalling the main thread's VTK render for 5–15 ms every 1–2 seconds.
+                    _recv_buf  = bytearray(response_length)
+                    _recv_view = memoryview(_recv_buf)
+                    _recv_off  = 0
+                    while _recv_off < response_length:
+                        _chunk_sz = min(SOCKET_CHUNK_SIZE, response_length - _recv_off)
+                        chunk = self._safe_recv(_chunk_sz)
                         if not chunk:
                             raise NetworkError("Connection lost while receiving data")
-                        response_data += chunk
-                        if response_length > 100000:  # Log progress for large responses
-                            logger.info(f"📥 Received {len(response_data)}/{response_length} bytes ({100*len(response_data)//response_length}%)")
+                        _n = len(chunk)
+                        _recv_view[_recv_off:_recv_off + _n] = chunk   # O(1) in-place copy
+                        _recv_off += _n
+                        if response_length > 100000:
+                            logger.info(
+                                f"📥 Received {_recv_off}/{response_length} bytes "
+                                f"({100 * _recv_off // response_length}%)"
+                            )
+                    response_data = bytes(_recv_buf)
 
                     logger.info(f"📥 Response received completely ({len(response_data)} bytes)")
 
@@ -737,7 +748,13 @@ class SocketDicomClient:
             
             logger.info(f"📦 Batch {batch_idx + 1}: Got {len(instances)} instances")
             
-            for instance_data in instances:
+            # Change #9B: Yield the asyncio event loop every 3 files.
+            # The base64 + gzip + file-write loop holds the GIL for 30–130 ms per batch
+            # with no yield. asyncio.sleep(0) calls the event loop's I/O selector, which
+            # releases the GIL briefly and breaks the burst into <10 ms chunks.
+            for _inst_idx, instance_data in enumerate(instances):
+                if _inst_idx > 0 and _inst_idx % 3 == 0:
+                    await asyncio.sleep(0)   # yield GIL / allow other coroutines to run
                 # GetSeriesImages format uses 'dicom_data' and 'is_compressed'
                 dicom_data_b64 = instance_data.get('dicom_data', '')
                 is_compressed = instance_data.get('is_compressed', False)
@@ -802,6 +819,8 @@ class SocketDicomClient:
                 logger.info(f"📦 Server indicates no more batches")
                 break
 
+            # Change #9B: Yield between batches to give main thread a GIL window.
+            await asyncio.sleep(0)
             batch_idx += 1
             batch_start += batch_size
         

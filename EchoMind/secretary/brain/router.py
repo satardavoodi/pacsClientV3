@@ -31,25 +31,18 @@ log = logging.getLogger(__name__)
 
 # ── LLM connection — all calls routed through EchoMind.llm_client ─────────────
 # Key is resolved automatically from EchoMind Settings (Settings → EchoMind).
-_MODEL = "gpt-4.1-mini"
-_TIMEOUT = 20
+from ..config import SECRETARY_LLM_MODEL as _MODEL, SECRETARY_PHASE1_TIMEOUT, PHASE1_PROMPT_FILE
+_TIMEOUT = SECRETARY_PHASE1_TIMEOUT
 
-_SYSTEM_PROMPT = """\
-You are the Module Router for the AIPacs medical imaging workstation.
-Your ONLY job is to read the MODULE CATALOG and the user's request, then
-decide which module document(s) should be fetched to fulfil the request.
+def _load_phase1_prompt() -> str:
+    try:
+        return PHASE1_PROMPT_FILE.read_text(encoding="utf-8").strip()
+    except Exception as exc:
+        log.error("Could not load Phase 1 system prompt: %s", exc)
+        return ""
 
-Rules:
-- Reply with JSON only; no prose, no markdown fences.
-- The JSON must have exactly two fields:
-    "modules": [<module_id>, ...]   // ordered list; max 3 entries
-    "reason":  "<one sentence>"
-- Use only module_ids that appear in the catalog.
-- Order modules by execution dependency: put the provider module before the
-  consumer module (e.g. "homepage" before "patient_viewer" when the user
-  wants to open a patient from a list).
-- If the request is completely unrecognisable, return {"modules": [], "reason": "unknown"}.
-"""
+
+_SYSTEM_PROMPT: str = _load_phase1_prompt()
 
 
 @dataclass

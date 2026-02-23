@@ -34,6 +34,22 @@ URL_SEARCH           = f"{AI_BASE}/search"
 
 
 # =============================
+# GapGPT LLM connection
+# =============================
+# These are shared transport-level settings used by EchoMind/llm_client.py.
+#
+# GAPGPT_API_URL   — the GapGPT completion endpoint (shared by all consumers)
+# GAPGPT_TIMEOUT   — default HTTP timeout for llm_client.gapgpt_chat()
+# GAPGPT_DEFAULT_MODEL — used ONLY as the llm_client.py default-parameter
+#                        fallback (for reporting module callers that don't
+#                        specify a model).  The Secretary module has its own
+#                        model setting in EchoMind/secretary/config.py.
+GAPGPT_API_URL       = "https://api.gapgpt.app/v1/chat/completions"
+GAPGPT_DEFAULT_MODEL = "gpt-5.2"    # llm_client.py fallback only
+GAPGPT_TIMEOUT       = 60           # seconds
+
+
+# =============================
 # UI tokens
 # =============================
 CLR_BG = "#222"

@@ -1,5 +1,6 @@
 import sys
 import os
+import multiprocessing   # freeze_support() required for subprocess spawn in PyInstaller builds
 
 # Fix Windows console encoding for emoji support
 if sys.platform == 'win32':
@@ -53,6 +54,12 @@ if sys.platform == "win32":
 
 
 if __name__ == "__main__":
+    # multiprocessing.freeze_support() MUST be the very first call inside
+    # if __name__ == '__main__' when the app is frozen with PyInstaller.
+    # Without it, every download subprocess spawn would re-run the full
+    # application startup, creating an infinite process loop.
+    multiprocessing.freeze_support()
+
     # Set working directory to _internal for PyInstaller builds
     if getattr(sys, 'frozen', False):
         # Running as PyInstaller executable

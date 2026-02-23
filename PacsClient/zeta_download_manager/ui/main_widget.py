@@ -35,7 +35,8 @@ from PacsClient.pacs.patient_tab.ui.ai_module_ui.service_tab.reception_data_serv
 from ..network.socket_client import SocketDicomClient
 from ..storage.database_manager import DatabaseManager
 from ..workers.worker_pool import WorkerPool
-from ..workers.download_worker import DownloadWorker
+from ..workers.download_worker import DownloadWorker  # kept as fallback
+from ..workers.subprocess_worker import SubprocessDownloadWorker
 from .styles.theme import ModernTheme, get_current_theme
 from .styles.colors import ColorPalette
 from .components.priority_group import PriorityGroupHeader
@@ -2078,8 +2079,11 @@ class DownloadManagerWidget(QWidget):
             logger.info(f"🚀 [WORKER-START] Found task with {len(task.series_list)} series")
 
             # Create worker
-            logger.info(f"🚀 [WORKER-START] Creating DownloadWorker instance...")
-            worker = DownloadWorker(task, self.executor)
+            logger.info(f"🚀 [WORKER-START] Creating SubprocessDownloadWorker instance...")
+            # SubprocessDownloadWorker: runs download in a separate OS process (own GIL).
+            # This ensures the viewer's VTK render thread is NEVER blocked by download
+            # Python code regardless of how download-heavy the operation is (Mode B fix).
+            worker = SubprocessDownloadWorker(task, self.executor)
             logger.info(f"🚀 [WORKER-START] Worker created: {type(worker).__name__}")
 
             # Connect signals
@@ -2112,6 +2116,16 @@ class DownloadManagerWidget(QWidget):
                 logger.info(f"🚀 [WORKER-START] Starting worker thread...")
                 worker.start()
                 logger.info(f"🚀 [WORKER-START] Worker thread started")
+
+                # Change #7: Increment global ZetaBoost download counter so that
+                # ALL ZetaBoost engine instances block warmup/background lanes while
+                # this download is active (prevents cross-study ITK CPU saturation).
+                try:
+                    from PacsClient.pacs.patient_tab.zeta_boost.engine import ZetaBoostEngine
+                    ZetaBoostEngine.notify_global_download_start()
+                    logger.info("[Change#7] ZetaBoost global download counter incremented")
+                except Exception as _e:
+                    logger.debug(f"[Change#7] ZetaBoost gate not available: {_e}")
 
                 # Log database update for download start
                 updated_state = self.state_store.get(study_uid)
@@ -2276,6 +2290,16 @@ class DownloadManagerWidget(QWidget):
     
     def _on_worker_completed(self, study_uid: str, success: bool) -> None:
         """Handle worker completion signal"""
+        # Change #7: Decrement global ZetaBoost download counter FIRST so that
+        # warmup/background lanes are unblocked as soon as this download ends.
+        # Must happen before any other state update to propagate immediately.
+        try:
+            from PacsClient.pacs.patient_tab.zeta_boost.engine import ZetaBoostEngine
+            ZetaBoostEngine.notify_global_download_stop()
+            logger.info("[Change#7] ZetaBoost global download counter decremented")
+        except Exception as _e:
+            logger.debug(f"[Change#7] ZetaBoost gate not available: {_e}")
+
         try:
             logger.info(f"✅ [COMPLETION] Worker completed: {study_uid[:40]}... (success={success})")
 

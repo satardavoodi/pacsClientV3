@@ -39,43 +39,18 @@ log = logging.getLogger(__name__)
 
 # ── LLM connection — all calls routed through EchoMind.llm_client ─────────────
 # Key is resolved automatically from EchoMind Settings (Settings → EchoMind).
-_MODEL = "gpt-4.1-mini"
-_TIMEOUT = 30
+from ..config import SECRETARY_LLM_MODEL as _MODEL, SECRETARY_PHASE2_TIMEOUT, PHASE2_PROMPT_FILE
+_TIMEOUT = SECRETARY_PHASE2_TIMEOUT
 
-_SYSTEM_PHASE2 = """\
-You are the Action Planner for the AIPacs DICOM workstation.
-You will receive one or more MODULE DOCUMENTS that describe what actions are
-available.  Your job is to read the user's request and produce ONE executable
-JSON action plan that exactly follows the output contract in the module document.
+def _load_phase2_prompt() -> str:
+    try:
+        return PHASE2_PROMPT_FILE.read_text(encoding="utf-8").strip()
+    except Exception as exc:
+        log.error("Could not load Phase 2 system prompt: %s", exc)
+        return ""
 
-STRICT RULES:
-- Return a single JSON object only.  No prose, no markdown fences.
-- The JSON must contain exactly these top-level keys:
-    action, entities, confidence, needs_confirmation, reason
-- Use the entity schema and confirmation policy from the module document.
-- If the user request maps to a side-effect action, set needs_confirmation=true.
-- confidence is a float 0.0–1.0.
 
-CONVERSATION MEMORY RULES (CRITICAL — apply before anything else):
-- When the prompt contains a "=== CONVERSATION MEMORY ===" block, it represents
-  results from the user's previous commands in this session.
-- Each memory cycle contains a [Patient List] section with structured rows:
-  ID:<patient_id> | Name:<name> | Modality:<code> | Body:<body_part> | ...
-- When the user refers to a patient by modality, body part, name fragment, index
-  ("the 5th patient"), or any characteristic that matches a memory list entry:
-  1. FIND that patient in the [Patient List] of the most-recent matching cycle.
-  2. Extract the patient's exact numeric ID (the value after "ID:").
-  3. Use that numeric ID as the patient_code entity in your action plan.
-  4. NEVER use the modality code (e.g. "MR"), body-part name (e.g. "BREAST"),
-     or any descriptive word as patient_code — patient_code must be a real ID.
-  5. When the match is UNIQUE (exactly one row matched), set needs_confirmation=false
-     for download_patient and open_patient — the ID is already confirmed by memory.
-     The system will execute immediately without asking the user to say "yes".
-- If the memory list contains multiple matches, pick the best match and set
-  needs_confirmation=true so the user can confirm which patient to act on.
-- If the memory does not contain enough data to resolve the patient, produce a
-  list_patients action to re-fetch with appropriate filters instead.
-"""
+_SYSTEM_PHASE2: str = _load_phase2_prompt()
 
 # ── Dispatcher map ────────────────────────────────────────────────────────────
 # Maps action name → the name of the executor method to call.

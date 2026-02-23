@@ -38,6 +38,49 @@ class ZetaBoostEngine:
     Engine is active only while its tab is the currently viewed tab.
     """
 
+    # ── Change #7: Global download counter (class-level, shared across ALL instances) ──
+    # Tracks how many study downloads are currently active in the whole application.
+    # When this counter is > 0, ALL engine instances block warmup/background lanes,
+    # preventing cross-study ITK CPU saturation (Root Cause #2 in Mode B analysis).
+    _global_active_download_count: int = 0
+    _global_download_lock: "threading.Lock" = None  # lazily initialised below
+
+    @classmethod
+    def _get_global_lock(cls):
+        """Return (and lazily create) the class-level global download lock."""
+        if cls._global_download_lock is None:
+            import threading as _threading
+            cls._global_download_lock = _threading.Lock()
+        return cls._global_download_lock
+
+    @classmethod
+    def notify_global_download_start(cls) -> None:
+        """
+        Call when ANY study download begins anywhere in the application.
+        Blocks warmup/background lanes on ALL engine instances immediately.
+        """
+        with cls._get_global_lock():
+            cls._global_active_download_count += 1
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            f"[ZetaBoost][Global] Download started. "
+            f"Active downloads: {cls._global_active_download_count}"
+        )
+
+    @classmethod
+    def notify_global_download_stop(cls) -> None:
+        """
+        Call when ANY study download completes or is cancelled.
+        Unblocks warmup/background lanes when no more downloads are active.
+        """
+        with cls._get_global_lock():
+            cls._global_active_download_count = max(0, cls._global_active_download_count - 1)
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            f"[ZetaBoost][Global] Download stopped. "
+            f"Active downloads: {cls._global_active_download_count}"
+        )
+
     def __init__(
         self,
         *,
@@ -534,6 +577,13 @@ class ZetaBoostEngine:
         return sum(len(self._inflight[lane]) for lane in self._lane_order)
 
     def _can_start_lane_locked(self, lane: str) -> bool:
+        # ── Change #7: Block warmup/background if ANY download is active globally ──
+        # Using class-level counter ensures that Patient A's engine is blocked
+        # when Patient B's study is downloading (cross-study ITK saturation fix).
+        if (ZetaBoostEngine._global_active_download_count > 0
+                and lane in ("warmup", "background")):
+            return False
+
         if self._total_inflight_locked() >= self._max_parallel_loads:
             return False
         if lane == "interactive":
@@ -562,6 +612,12 @@ class ZetaBoostEngine:
     def _wait_reason_locked(self, lane: str) -> str:
         """Diagnostic: why is this lane blocked right now?"""
         reasons = []
+        # Change #7: global download gate
+        if (ZetaBoostEngine._global_active_download_count > 0
+                and lane in ("warmup", "background")):
+            reasons.append(
+                f"global_download_active({ZetaBoostEngine._global_active_download_count})"
+            )
         if not self._active:
             reasons.append("engine_inactive")
         if not self._queue[lane]:

@@ -515,7 +515,13 @@ class SeriesDownloader:
             
             logger.info(f"    💾 [DB-INSERT] Processing {len(dicom_files)} DICOM files for series {series_info.series_number or series_info.series_uid[:20]}...")
             
-            for dcm_file in dicom_files:
+            # Change #9C: Yield GIL every 5 files.
+            # pydicom.dcmread() is pure Python (~15-30ms per file, GIL held the whole time).
+            # asyncio.sleep(0) lets the event loop run its I/O selector → brief GIL release
+            # → main thread can proceed with VTK render between these pydicom bursts.
+            for _dcm_idx, dcm_file in enumerate(dicom_files):
+                if _dcm_idx % 5 == 0:
+                    await asyncio.sleep(0)
                 try:
                     # Read DICOM file
                     dcm = pydicom.dcmread(dcm_file, stop_before_pixels=True)
