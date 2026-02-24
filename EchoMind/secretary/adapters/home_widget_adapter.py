@@ -80,7 +80,9 @@ class HomeWidgetAdapter:
     def search(self, source: str, criteria: dict[str, Any], timeout_s: int = 45) -> None:
         if not self.home:
             raise RuntimeError("Home widget is unavailable")
-        src = (source or "server").lower()
+        src = (source or "server").lower().strip()
+        if src in {"active_tab", "active", "current"}:
+            src = self.get_active_source()
         self._set_active_source(src)
 
         payload = {

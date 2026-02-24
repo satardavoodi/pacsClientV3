@@ -1,6 +1,7 @@
 import sys
 import os
 import multiprocessing
+import logging
 
 # Required for multiprocessing.Process with PyInstaller frozen executables
 # (spawn start-method on Windows): must be called before any other code.
@@ -37,6 +38,7 @@ import asyncio
 #     sys.exit(app.exec())
 from PacsClient.utils import IMAGES_LOGIN_PATH
 from PacsClient.utils.disk_alert_service import DiskUsageAlertService
+from PacsClient.utils.diagnostic_logging import configure_diagnostic_logging
 
 import os
 
@@ -62,6 +64,9 @@ if __name__ == "__main__":
     if getattr(sys, 'frozen', False):
         # Running as PyInstaller executable
         os.chdir(sys._MEIPASS)
+
+    configure_diagnostic_logging(process_role="main", force=True)
+    logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
     
     # Set Qt attributes BEFORE creating QApplication
     QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)  # Compatible with software rendering

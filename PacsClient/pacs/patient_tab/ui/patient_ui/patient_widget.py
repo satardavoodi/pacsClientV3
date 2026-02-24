@@ -751,19 +751,37 @@ class PatientWidget(QWidget):
         """Return True if series folder exists with DICOM files."""
         try:
             series_key = self.resolve_series_key(str(series_identifier))
-            if not series_key.isdigit():
-                return False
-
             study_path = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
             base_path = Path(study_path) if study_path else Path(self.import_folder_path or "")
             if not base_path or not base_path.exists():
                 return False
 
-            series_path = base_path / str(series_key)
-            if not series_path.exists() or not series_path.is_dir():
-                return False
+            candidates = []
 
-            return bool(list(series_path.glob("*.dcm")) or list(series_path.glob("*.DCM")))
+            if str(series_key).isdigit():
+                candidates.append(base_path / str(series_key))
+
+            info = getattr(self, '_server_series_info', {}).get(str(series_key), {}) or {}
+            raw_series_path = str(info.get('series_path') or '')
+            if raw_series_path:
+                candidates.append(Path(raw_series_path))
+
+            series_uid = str(info.get('series_uid') or info.get('series_instance_uid') or '')
+            if series_uid:
+                candidates.append(base_path / series_uid)
+
+            seen = set()
+            for series_path in candidates:
+                norm = str(series_path).lower()
+                if norm in seen:
+                    continue
+                seen.add(norm)
+                if not series_path.exists() or not series_path.is_dir():
+                    continue
+                if bool(list(series_path.glob("*.dcm")) or list(series_path.glob("*.DCM"))):
+                    return True
+
+            return False
         except Exception:
             return False
 
@@ -4144,13 +4162,18 @@ class PatientWidget(QWidget):
         # بهینه‌سازی: کاش نتایج گذشتهٔ get_name_file_from_path
         cached_name = getattr(self, '_cached_series_names', {})
         
+        canonical_series_key = str(key_thumbnail)
+
         if metadata:  # it means that we loaded vtk_image_data, metadata
             # add new thumbnails
             if not metadata['series'].get('main_thumbnail', True):
                 return thumb_index  # we don't add new thumbnail
 
-            series_name = str(metadata['series']['series_number'])
+            series_name = canonical_series_key
             series_info = metadata['series']
+            if str(series_info.get('series_number', '')) != canonical_series_key:
+                print(f"⚠️ [THUMB FIX] metadata series_number mismatch: meta={series_info.get('series_number')} key={canonical_series_key} -> using key")
+            series_info['series_number'] = canonical_series_key
             
             # ✅ CRITICAL: Ensure series_info has the correct image_count from loaded instances
             if 'image_count' not in series_info or not series_info['image_count']:
@@ -4158,7 +4181,10 @@ class PatientWidget(QWidget):
                 
         elif series_info:
             # Use series_info from server (passed as parameter)
-            series_name = str(series_info.get('series_number', cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))))
+            if str(series_info.get('series_number', '')) != canonical_series_key:
+                print(f"⚠️ [THUMB FIX] server series_number mismatch: server={series_info.get('series_number')} key={canonical_series_key} -> using key")
+            series_info['series_number'] = canonical_series_key
+            series_name = canonical_series_key
         else:
             series_name = cached_name.get(file_path_thumbnail, get_name_file_from_path(file_path_thumbnail))
             # Cache the name for future use

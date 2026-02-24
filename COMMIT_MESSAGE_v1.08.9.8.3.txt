@@ -1,5 +1,0 @@
-Release v1.08.9.8.3
-
-- Align app/module version strings with v1.08.9.8.3
-- Update pipeline/MPR docs with current stable version/date
-- Consolidate release and deployment documentation

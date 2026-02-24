@@ -40,6 +40,7 @@ from .styles.theme import ModernTheme, get_current_theme
 from .styles.colors import ColorPalette
 from .components.priority_group import PriorityGroupHeader
 from .components.status_badge import StatusBadge
+from PacsClient.utils.diagnostic_logging import now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -2033,6 +2034,13 @@ class DownloadManagerWidget(QWidget):
         Returns:
             True if started, False otherwise
         """
+        t_download_start_marker = now_ms()
+        logger.info(
+            "download-impact-window marker=download_start_before_worker_start ts_ms=%.3f study=%s",
+            t_download_start_marker,
+            study_uid[:40],
+            extra={"component": "download", "study_uid": study_uid, "stage": "download_start_impact"},
+        )
         logger.info(f"🚀 [WORKER-START] Starting worker for {study_uid[:40]}...")
 
         try:
@@ -2113,6 +2121,32 @@ class DownloadManagerWidget(QWidget):
                 logger.info(f"🚀 [WORKER-START] Starting worker thread...")
                 worker.start()
                 logger.info(f"🚀 [WORKER-START] Worker thread started")
+                logger.info(
+                    "download-impact-window marker=download_start_after_worker_start delta_ms=%.2f",
+                    now_ms() - t_download_start_marker,
+                    extra={"component": "download", "study_uid": study_uid, "stage": "download_start_impact"},
+                )
+
+                for _delay in (250, 1500, 5000):
+                    QTimer.singleShot(
+                        _delay,
+                        lambda d=_delay: logger.info(
+                            "download-impact-window marker=viewer_post_start_probe delay_ms=%d elapsed_ms=%.2f active_workers=%d",
+                            d,
+                            now_ms() - t_download_start_marker,
+                            self.worker_pool.get_active_count(),
+                            extra={"component": "viewer", "study_uid": study_uid, "stage": "download_start_impact"},
+                        ),
+                    )
+
+                # TASK 1 FIX: Wire global download counter
+                # Blocks ZetaBoost warmup/background lanes during ANY download
+                try:
+                    from PacsClient.pacs.patient_tab.zeta_boost.engine import ZetaBoostEngine
+                    ZetaBoostEngine.notify_global_download_start()
+                    logger.info(f"✅ [ZETABOOST-TASK1] Global download counter INCREMENTED")
+                except Exception as e:
+                    logger.warning(f"⚠️ [ZETABOOST-TASK1] Failed to notify download start: {e}")
 
                 # Log database update for download start
                 updated_state = self.state_store.get(study_uid)
@@ -2295,6 +2329,14 @@ class DownloadManagerWidget(QWidget):
     
     def _on_worker_completed(self, study_uid: str, success: bool) -> None:
         """Handle worker completion signal"""
+        # TASK 1 FIX: Wire global download counter (stop side)
+        try:
+            from PacsClient.pacs.patient_tab.zeta_boost.engine import ZetaBoostEngine
+            ZetaBoostEngine.notify_global_download_stop()
+            logger.info(f"✅ [ZETABOOST-TASK1] Global download counter DECREMENTED")
+        except Exception as e:
+            logger.warning(f"⚠️ [ZETABOOST-TASK1] Failed to notify download stop: {e}")
+        
         try:
             logger.info(f"✅ [COMPLETION] Worker completed: {study_uid[:40]}... (success={success})")
 

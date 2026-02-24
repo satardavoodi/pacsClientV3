@@ -3,6 +3,7 @@ import gc
 import time
 import warnings
 import sys
+import logging
 
 import SimpleITK as sitk
 import pydicom
@@ -20,6 +21,7 @@ from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_p
     update_study_counts_by_uid, get_connection_database, get_series_path_with_study_pk_and_series_number
 import gc
 from .utils import find_series_folder_by_series_number
+from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 
 # Suppress noisy ResourceWarning from external libraries during GC
 warnings.filterwarnings("ignore", category=ResourceWarning)
@@ -32,6 +34,68 @@ try:
         sys.stderr.reconfigure(errors="replace")
 except Exception:
     pass
+
+
+logger = logging.getLogger(__name__)
+
+
+def _is_itk_region_mismatch_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return (
+        "requested region is (at least partially) outside the largest possible region" in msg
+        or ("largest possible region" in msg and "requested region" in msg)
+        or "input image information has changed" in msg
+    )
+
+
+def _select_dominant_size_dicom_files(dicom_names):
+    """Keep only the dominant Rows×Columns cohort, preserving input order."""
+    size_buckets = {}
+    unknown_size_files = []
+
+    for path_obj in dicom_names:
+        path = str(path_obj)
+        try:
+            ds = pydicom.dcmread(path, stop_before_pixels=True, force=True, specific_tags=['Rows', 'Columns'])
+            rows = int(getattr(ds, 'Rows', 0) or 0)
+            cols = int(getattr(ds, 'Columns', 0) or 0)
+            if rows > 0 and cols > 0:
+                key = (rows, cols)
+                if key not in size_buckets:
+                    size_buckets[key] = []
+                size_buckets[key].append(path)
+            else:
+                unknown_size_files.append(path)
+        except Exception:
+            unknown_size_files.append(path)
+
+    if not size_buckets:
+        return [str(p) for p in dicom_names], None, {}
+
+    dominant_size, dominant_files = max(size_buckets.items(), key=lambda kv: len(kv[1]))
+    if unknown_size_files:
+        dominant_files = dominant_files + unknown_size_files
+
+    skipped = {
+        f"{size[0]}x{size[1]}": len(files)
+        for size, files in size_buckets.items()
+        if size != dominant_size
+    }
+    return dominant_files, dominant_size, skipped
+
+
+def _execute_series_reader(dicom_names, use_gdcm: bool = False):
+    reader = sitk.ImageSeriesReader()
+    reader.MetaDataDictionaryArrayUpdateOff()
+    reader.SetFileNames([str(p) for p in dicom_names])
+    if use_gdcm:
+        try:
+            reader.SetImageIO("GDCMImageIO")
+        except Exception:
+            pass
+    image = reader.Execute()
+    del reader
+    return image
 
 
 def get_orientation(itk_image):
@@ -47,43 +111,45 @@ def get_itk_image(dicom_names):
     import time
     _start = time.time()
     
+    file_names = [str(p) for p in dicom_names]
+
     # For large series (>50 files), use optimized reading strategy
-    if len(dicom_names) > 50:
+    if len(file_names) > 50:
         try:
-            # Use SimpleITK's built-in parallel capabilities
-            reader = sitk.ImageSeriesReader()
-            
-            # CRITICAL: Disable metadata reading for speed
-            reader.MetaDataDictionaryArrayUpdateOff()
-            
-            # Set file names
-            reader.SetFileNames(dicom_names)
-            
-            # Use GDCM backend for faster reading (if available)
-            reader.SetImageIO("GDCMImageIO")
-            
-            # Execute with parallel reading
-            itk_image = reader.Execute()
-            
-            del reader
+            itk_image = _execute_series_reader(file_names, use_gdcm=True)
             
             _elapsed = time.time() - _start
-            print(f"         Parallel DICOM read: {len(dicom_names)} files in {_elapsed:.3f}s ({len(dicom_names)/_elapsed:.0f} fps)")
+            print(f"         Parallel DICOM read: {len(file_names)} files in {_elapsed:.3f}s ({len(file_names)/_elapsed:.0f} fps)")
             
             return itk_image
             
         except Exception as e:
+            if _is_itk_region_mismatch_error(e):
+                fallback_files, dominant_size, skipped = _select_dominant_size_dicom_files(file_names)
+                if fallback_files and len(fallback_files) < len(file_names):
+                    print(
+                        f"         WARN: Mixed-size DICOM series detected after parallel read; "
+                        f"using dominant {dominant_size} with {len(fallback_files)} files, skipping {skipped}"
+                    )
+                    return _execute_series_reader(fallback_files, use_gdcm=False)
             print(f"         WARN: Parallel read failed ({e}), using standard method")
             # Fall back to standard method
     
     # Standard method for small series
-    reader = sitk.ImageSeriesReader()
-    reader.MetaDataDictionaryArrayUpdateOff()
-    reader.SetFileNames(dicom_names)
-    itk_image = reader.Execute()
-    del reader
-    
-    return itk_image
+    try:
+        return _execute_series_reader(file_names, use_gdcm=False)
+    except Exception as e:
+        if _is_itk_region_mismatch_error(e):
+            fallback_files, dominant_size, skipped = _select_dominant_size_dicom_files(file_names)
+            if fallback_files and len(fallback_files) < len(file_names):
+                print(
+                    f"         WARN: Mixed-size DICOM series detected; "
+                    f"using dominant {dominant_size} with {len(fallback_files)} files, skipping {skipped}"
+                )
+                if len(fallback_files) == 1:
+                    return sitk.ReadImage(fallback_files[0])
+                return _execute_series_reader(fallback_files, use_gdcm=False)
+        raise
 
 
 # ✅ NEW: Cache for series metadata to avoid redundant DB queries
@@ -288,18 +354,8 @@ def get_itk_image_fast_first(dicom_names):
         if len(dicom_names) < 10:
             return reader.Execute()
 
-        # برای سری‌های بزرگ‌تر، بررسی کنیم آیا نیاز به پردازش خاص داریم
-        try:
-            # سعی می‌کنیم با روش معمولی بخوانیم (اغلب سریع‌تر است)
-            return reader.Execute()
-        except Exception:
-            # اگر مشکل داشت، از روش بهینه‌سازی شده استفاده کنیم
-            from . import utils
-            if hasattr(utils, 'get_itk_image_optimized'):
-                return utils.get_itk_image_optimized(dicom_names)
-            else:
-                # fallback به روش معمولی
-                raise
+        # برای سری‌های بزرگ‌تر، همان مسیر استاندارد پایدار را استفاده می‌کنیم
+        return get_itk_image(dicom_names)
 
     except Exception as e:
         print(f"WARN: Fast first series loading failed: {e}, using standard method")
@@ -700,6 +756,7 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
     """
     import time
     _func_start = time.time()
+    t_total = now_ms()
     
     # Path resolution
     _path_start = time.time()
@@ -750,6 +807,11 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
     
     _path_time = time.time() - _path_start
     print(f"      Path resolution: {_path_time:.3f}s")
+    logger.info(
+        "viewer-data stage=path_resolution duration_ms=%.2f",
+        _path_time * 1000.0,
+        extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "path_resolution"},
+    )
     
     # Check if series_path exists after all attempts
     if not series_path or not series_path.exists():
@@ -824,6 +886,11 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     # We have instances in DB - use them directly
                     _db_check_time = time.time() - _db_check_start
                     print(f"      DB check: {_db_check_time:.3f}s")
+                    logger.info(
+                        "db-query stage=find_series_pk_and_instances duration_ms=%.2f query_type=viewer_read",
+                        _db_check_time * 1000.0,
+                        extra={"component": "db", "function": "image_io.load_single_series_by_number", "stage": "viewer_db_read"},
+                    )
                     
                     # Load DICOM files from instance paths
                     _dicom_start = time.time()
@@ -833,6 +900,11 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     itk_image = get_itk_image(dicom_files)
                     _dicom_time = time.time() - _dicom_start
                     print(f"      DICOM load (from DB paths): {_dicom_time:.3f}s")
+                    logger.info(
+                        "viewer-data stage=disk_read duration_ms=%.2f source=db_paths",
+                        _dicom_time * 1000.0,
+                        extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "disk_read"},
+                    )
 
                     # ── CPU yield: CRITICAL for UI responsiveness ──
                     # DICOM reading holds GIL during C++ marshalling.
@@ -844,6 +916,11 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     metadata = _get_cached_metadata(series_pk, instances)
                     _meta_time = time.time() - _meta_start
                     print(f"      Metadata: {_meta_time:.3f}s")
+                    logger.info(
+                        "viewer-data stage=metadata_build duration_ms=%.2f",
+                        _meta_time * 1000.0,
+                        extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "metadata_build"},
+                    )
 
                     # Backfill NULL IOP/IPP from DICOM headers (fixes
                     # reference-line failure for series imported without
@@ -862,6 +939,11 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     itk_image = apply_filters(itk_image, metadata)
                     _filter_time = time.time() - _filter_start
                     print(f"      ITK filters: {_filter_time:.3f}s")
+                    logger.info(
+                        "viewer-data stage=itk_filter_chain duration_ms=%.2f",
+                        _filter_time * 1000.0,
+                        extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "itk_filter_chain"},
+                    )
 
                     # ── CPU yield: CRITICAL for UI responsiveness ──
                     # ITK filter chain is CPU-intensive and holds GIL during
@@ -873,6 +955,11 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     vtk_image_data = utils.convert_itk2vtk(itk_image)
                     _convert_time = time.time() - _convert_start
                     print(f"      ITK->VTK convert: {_convert_time:.3f}s")
+                    logger.info(
+                        "viewer-data stage=itk_to_vtk_convert duration_ms=%.2f",
+                        _convert_time * 1000.0,
+                        extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "itk_to_vtk"},
+                    )
                     
                     # Cleanup - do NOT call gc.collect() here, it freezes UI thread
                     itk_image = None
@@ -881,6 +968,14 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     
                     _func_total = time.time() - _func_start
                     print(f"      TOTAL (DB path): {_func_total:.3f}s")
+                    log_stage_timing(
+                        logger,
+                        component="viewer",
+                        function="image_io.load_single_series_by_number",
+                        stage="load_single_series_total",
+                        start_ms=t_total,
+                        source="db_path",
+                    )
                     
                     yield vtk_image_data, metadata, (patient_pk, study_pk)
                     return
@@ -896,6 +991,11 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
         size_dict = {("single_series", len(dicom_files)): dicom_files}
     _group_time = time.time() - _group_start
     print(f"      Group images: {_group_time:.3f}s")
+    logger.info(
+        "viewer-data stage=group_images duration_ms=%.2f",
+        _group_time * 1000.0,
+        extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "group_images"},
+    )
 
     if not size_dict:
         print(f"      ERROR: No DICOM files found for series {series_number}")
@@ -910,6 +1010,19 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
     _func_total = time.time() - _func_start
     print(f"      Process groups: {_process_time:.3f}s")
     print(f"      TOTAL load_single_series: {_func_total:.3f}s")
+    logger.info(
+        "viewer-data stage=process_groups duration_ms=%.2f",
+        _process_time * 1000.0,
+        extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "process_groups"},
+    )
+    log_stage_timing(
+        logger,
+        component="viewer",
+        function="image_io.load_single_series_by_number",
+        stage="load_single_series_total",
+        start_ms=t_total,
+        source="filesystem_path",
+    )
 
 
 def load_series_preview(study_path, series_number, patient_pk=None, study_pk=None, max_files: int = 1):

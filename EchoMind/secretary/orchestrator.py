@@ -198,6 +198,12 @@ class SecretaryOrchestrator:
         }
 
     def _run_plan(self, plan: SecretaryActionPlan, state: dict[str, Any], confirmed: bool) -> SecretaryResult:
+        plan = copy.deepcopy(plan)
+        entities = dict(plan.get("entities") or {})
+        source = str(entities.get("source") or "").strip().lower()
+        if not source or source in {"active_tab", "active", "current"}:
+            entities["source"] = self.adapter.get_active_source()
+            plan["entities"] = entities
         result = self.executor.execute(plan, state, confirmed=confirmed)
         if result.get("ok"):
             payload = result.get("data")

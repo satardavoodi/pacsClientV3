@@ -76,7 +76,9 @@ class SecretaryExecutor:
             }
 
         entities = plan.get("entities", {})
-        source = str(entities.get("source") or self.adapter.get_active_source())
+        source = str(entities.get("source") or "").strip().lower()
+        if not source or source in {"active_tab", "active", "current"}:
+            source = self.adapter.get_active_source()
         date_raw = str(entities.get("date") or "")
         date_from, date_to = self._normalize_date_filter(date_raw)
         modality_filter = str(entities.get("modality") or "").upper()

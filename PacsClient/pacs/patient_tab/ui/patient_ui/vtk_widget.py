@@ -1,5 +1,6 @@
 import time
 import logging
+import os
 
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
@@ -12,6 +13,7 @@ import gc  # For manual garbage collection
 from PacsClient.pacs.patient_tab.utils import read_segment_nifti
 import vtkmodules.all as vtk
 from PySide6.QtWidgets import QApplication
+from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +137,24 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._target_cursor = None
         self._sync_last_move_time = 0.0  # throttle mouse-move events
         self._on_slice_changed_cb = None  # Lock Sync callback
+        self._last_scroll_event_ms = None
+        self._timing_log_counter = 0
+
+    def _should_log_timing(self, duration_ms: float, stage: str) -> bool:
+        """Rate-limit very high-frequency timing logs while keeping slow spikes.
+
+        Always logs slow events and samples normal events every N calls.
+        """
+        min_ms = float(os.getenv("AIPACS_VIEWER_TIMING_MIN_MS", "35") or "35")
+        sample_every = int(os.getenv("AIPACS_VIEWER_TIMING_SAMPLE_EVERY", "25") or "25")
+        sample_every = max(1, sample_every)
+        self._timing_log_counter += 1
+
+        if duration_ms >= min_ms:
+            return True
+        if stage in ("set_slice_total", "scroll_event_total") and (self._timing_log_counter % sample_every == 0):
+            return True
+        return False
 
     def _schedule_render(self, delay_ms=None):
         """
@@ -172,6 +192,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         """
         ANTI-FLICKERING: Execute actual render with safety checks
         """
+        render_start = now_ms()
         try:
             # Check if image_viewer exists before rendering
             if self.image_viewer is None:
@@ -184,9 +205,17 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self._last_render_time = time.time() * 1000
             
             # Batch all updates together before single render
+            t_map = now_ms()
             self.image_viewer.image_reslice.Update()
             self.image_viewer.UpdateDisplayExtent()
             self.image_viewer.update_corners_actors()
+            log_stage_timing(
+                logger,
+                component="viewer",
+                function="VTKWidget._do_render",
+                stage="vtk_data_mapping",
+                start_ms=t_map,
+            )
             
             # Update slider without triggering signals
             if hasattr(self, 'slider') and self.slider is not None:
@@ -195,7 +224,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
                 self.slider.blockSignals(False)
             
             # Single render call at the end
+            t_render = now_ms()
             self.image_viewer.Render()
+            log_stage_timing(
+                logger,
+                component="viewer",
+                function="VTKWidget._do_render",
+                stage="render_complete",
+                start_ms=t_render,
+            )
             
             # Check if image has valid dimensions (detect incomplete renders)
             if hasattr(self.image_viewer, 'vtk_image_data') and self.image_viewer.vtk_image_data:
@@ -210,6 +247,13 @@ class VTKWidget(QVTKRenderWindowInteractor):
             import traceback
             logger.error(traceback.format_exc())
         finally:
+            log_stage_timing(
+                logger,
+                component="viewer",
+                function="VTKWidget._do_render",
+                stage="frame_total",
+                start_ms=render_start,
+            )
             self._render_pending = False
 
     def get_sync_viewer_id(self):
@@ -911,6 +955,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.setUpdatesEnabled(False)
         
         try:
+            t_switch = now_ms()
             # OPTIMIZATION: Reuse existing viewer instead of recreating it!
             if self.image_viewer is not None:
                 # Viewer already exists - just update the image data
@@ -937,6 +982,14 @@ class VTKWidget(QVTKRenderWindowInteractor):
                             logger.debug(f"[SERIES SWITCH]   Using FAST PATH (viewer reuse)")
                             self.image_viewer.reset_image_viewer(vtk_image_data, metadata)
                             self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
+                            log_stage_timing(
+                                logger,
+                                component="viewer",
+                                function="VTKWidget.switch_series",
+                                stage="vtk_data_mapping",
+                                start_ms=t_switch,
+                                path="fast",
+                            )
                             
                             # ✅ CRITICAL: Update _protected_parallel_scale to match the 
                             # zoom_to_fit scale that reset_image_viewer calculated.
@@ -968,6 +1021,14 @@ class VTKWidget(QVTKRenderWindowInteractor):
                             if hasattr(self, 'slider') and self.slider is not None:
                                 self.slider.blockSignals(False)
                             QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
+                            log_stage_timing(
+                                logger,
+                                component="viewer",
+                                function="VTKWidget.switch_series",
+                                stage="series_switch_total",
+                                start_ms=t_switch,
+                                path="fast",
+                            )
                             return True
                             
                 except Exception as e:
@@ -1007,8 +1068,26 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
             # ⚡ SINGLE BATCHED RENDER at the end (not multiple renders)
             logger.debug(f"[SERIES SWITCH]   UpdateDisplayExtent + Render")
+            t_map = now_ms()
             self.image_viewer.UpdateDisplayExtent()
+            log_stage_timing(
+                logger,
+                component="viewer",
+                function="VTKWidget.switch_series",
+                stage="vtk_data_mapping",
+                start_ms=t_map,
+                path="slow",
+            )
+            t_render = now_ms()
             self.render_window.Render()
+            log_stage_timing(
+                logger,
+                component="viewer",
+                function="VTKWidget.switch_series",
+                stage="vtk_render_pipeline",
+                start_ms=t_render,
+                path="slow",
+            )
 
             self.last_series_show = series_index
             self.save_status_camera(self.image_viewer)
@@ -1041,6 +1120,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # Ensure spinner is properly positioned after viewer is created
         if hasattr(self, 'viewport_spinner') and self.viewport_spinner.spinner:
             self.viewport_spinner.spinner.center_in_parent()
+
+        log_stage_timing(
+            logger,
+            component="viewer",
+            function="VTKWidget.switch_series",
+            stage="series_switch_total",
+            start_ms=t_switch,
+            path="slow",
+        )
 
         return True
     
@@ -1082,6 +1170,16 @@ class VTKWidget(QVTKRenderWindowInteractor):
     def set_slice(self, slice_index):
         if self.image_viewer is None:
             return
+        t_set_slice = now_ms()
+        queue_delay_ms = -1.0
+        if self._last_scroll_event_ms is not None:
+            queue_delay_ms = max(0.0, t_set_slice - self._last_scroll_event_ms)
+            if self._should_log_timing(queue_delay_ms, "event_queue_delay"):
+                logger.info(
+                    "viewer-scroll stage=event_queue_delay_ms duration_ms=%.2f",
+                    queue_delay_ms,
+                    extra={"component": "viewer", "function": "VTKWidget.set_slice", "stage": "event_queue_delay"},
+                )
         
         # ✅ CRITICAL: Save current camera zoom before slice change
         saved_scale = None
@@ -1096,7 +1194,17 @@ class VTKWidget(QVTKRenderWindowInteractor):
         except:
             pass
         
+        t_slice_apply = now_ms()
         self.image_viewer.set_slice(slice_index)
+        slice_apply_ms = max(0.0, now_ms() - t_slice_apply)
+        if self._should_log_timing(slice_apply_ms, "slice_apply"):
+            log_stage_timing(
+                logger,
+                component="viewer",
+                function="VTKWidget.set_slice",
+                stage="slice_apply",
+                start_ms=t_slice_apply,
+            )
         self.image_viewer.last_index_slice_saved = slice_index
         
         # ✅ CRITICAL: Force restore camera zoom after slice change
@@ -1109,7 +1217,17 @@ class VTKWidget(QVTKRenderWindowInteractor):
                     logger.warning(f"[set_slice] Zoom change detected! scale={current_scale} → reverting to {saved_scale}")
                     camera.SetParallelScale(saved_scale)
                     self._protected_parallel_scale = saved_scale
+                    t_render = now_ms()
                     self.image_viewer.Render()
+                    render_ms = max(0.0, now_ms() - t_render)
+                    if self._should_log_timing(render_ms, "render_complete"):
+                        log_stage_timing(
+                            logger,
+                            component="viewer",
+                            function="VTKWidget.set_slice",
+                            stage="render_complete",
+                            start_ms=t_render,
+                        )
         except:
             pass
 
@@ -1130,6 +1248,16 @@ class VTKWidget(QVTKRenderWindowInteractor):
                 self._on_slice_changed_cb(self)
             except Exception:
                 pass
+        set_slice_total_ms = max(0.0, now_ms() - t_set_slice)
+        if self._should_log_timing(set_slice_total_ms, "set_slice_total"):
+            log_stage_timing(
+                logger,
+                component="viewer",
+                function="VTKWidget.set_slice",
+                stage="set_slice_total",
+                start_ms=t_set_slice,
+                queue_delay_ms=f"{queue_delay_ms:.2f}",
+            )
 
     def set_slider(self, slider):
         self.slider = slider
@@ -1155,6 +1283,14 @@ class VTKWidget(QVTKRenderWindowInteractor):
         CRITICAL: Prevents VTK zoom by consuming the event and NOT calling super().wheelEvent()
         """
         # ✅ ALWAYS log to confirm this method is being called
+        t_event_receive = now_ms()
+        self._last_scroll_event_ms = t_event_receive
+        try:
+            viewer_controller = getattr(self.patient_widget, "viewer_controller", None)
+            if viewer_controller is not None and hasattr(viewer_controller, "notify_viewer_interaction"):
+                viewer_controller.notify_viewer_interaction(reason="wheel_scroll")
+        except Exception:
+            pass
         logger.debug(f"[WHEEL] Called - image_viewer={'present' if self.image_viewer else 'None'}, slider={'present' if self.slider else 'None'}")
         
         try:
@@ -1214,7 +1350,17 @@ class VTKWidget(QVTKRenderWindowInteractor):
             logger.debug(f"[WHEEL] current={current_slice}, next={next_slice}, step={step}")
             
             # Update slider (triggers rendering via signal)
+            t_render_req = now_ms()
             self.slider.setValue(next_slice)
+            render_req_ms = max(0.0, now_ms() - t_render_req)
+            if self._should_log_timing(render_req_ms, "render_request"):
+                log_stage_timing(
+                    logger,
+                    component="viewer",
+                    function="VTKWidget.wheelEvent",
+                    stage="render_request",
+                    start_ms=t_render_req,
+                )
             
             # Update ruler/measurement visibility
             try:
@@ -1243,6 +1389,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # ✅ CRITICAL: CONSUME the event - DO NOT let parent handle it
             logger.debug("[WHEEL] Accepting event (slice changed)")
             event.accept()
+            scroll_total_ms = max(0.0, now_ms() - t_event_receive)
+            if self._should_log_timing(scroll_total_ms, "scroll_event_total"):
+                log_stage_timing(
+                    logger,
+                    component="viewer",
+                    function="VTKWidget.wheelEvent",
+                    stage="scroll_event_total",
+                    start_ms=t_event_receive,
+                )
             
         except Exception as e:
             # ✅ Even on error, CONSUME the event to prevent VTK zoom fallback

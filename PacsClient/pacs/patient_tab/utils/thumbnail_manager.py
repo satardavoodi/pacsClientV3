@@ -1003,17 +1003,21 @@ class ThumbnailManager(QObject):
     def create_thumbnail_widget(self, pixmap: QPixmap, label_text: str, sop_instance_uid='test uid', thumbnail_index=0, series_info=None, show_progress=False):
         """Create unified and consistent thumbnail widget for all scenarios"""
         try:
-            # ✅ CRITICAL FIX: Extract real series_number from series_info, NOT from thumbnail_index
-            # thumbnail_index is just 0,1,2... but we need the actual series number (e.g., 5, 10, 15...)
+            # Canonical series key priority:
+            # 1) thumbnail_index (caller passes key_thumbnail/series number)
+            # 2) series_info
+            # 3) label_text
             series_number = None
-            if series_info and isinstance(series_info, dict):
+            if thumbnail_index not in (None, ""):
+                series_number = str(thumbnail_index)
+
+            if (series_number is None or series_number == "") and series_info and isinstance(series_info, dict):
                 if 'series' in series_info and isinstance(series_info['series'], dict):
                     series_number = series_info['series'].get('series_number')
                 elif 'series_number' in series_info:
                     series_number = series_info['series_number']
-            
-            # Fallback to label_text if series_number not found
-            if series_number is None:
+
+            if series_number is None or series_number == "":
                 series_number = label_text
             
             # Use series_number as the key (NOT thumbnail_index)

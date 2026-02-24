@@ -832,126 +832,19 @@ def get_itk_image_optimized(files):
     - بهبود یافته برای handle کردن تصاویر با origin و spacing متفاوت
     """
     try:
-        # For large series, use optimized reading
-        if len(files) > 10:  # Reduced threshold for better compatibility
-            # Use parallel processing for large series
-            import concurrent.futures
-            from functools import partial
+        if len(files) == 1:
+            return sitk.ReadImage(str(files[0]))
 
-            def read_dicom_file(file_path):
-                try:
-                    return sitk.ReadImage(file_path)
-                except:
-                    return None
-
-            # Read files in parallel
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                images = list(executor.map(read_dicom_file, files))
-
-            # Filter out None results
-            images = [img for img in images if img is not None]
-
-            if images:
-                try:
-                    # Check if images have compatible properties
-                    if len(images) > 1:
-                        # Get reference image properties
-                        ref_spacing = images[0].GetSpacing()
-                        ref_origin = images[0].GetOrigin()
-                        ref_size = images[0].GetSize()
-                        ref_direction = images[0].GetDirection()
-
-                        # Check if all images have compatible properties
-                        compatible = True
-                        for img in images[1:]:
-                            if (img.GetSpacing() != ref_spacing or
-                                    img.GetSize() != ref_size or
-                                    img.GetDirection() != ref_direction):
-                                compatible = False
-                                break
-
-                        if compatible:
-                            # Try to align origins if they're close but not exactly the same
-                            try:
-                                # Use SimpleITK's built-in series reader which handles alignment better
-                                reader = sitk.ImageSeriesReader()
-                                reader.SetFileNames(files)
-                                aligned_image = reader.Execute()
-                                return aligned_image
-                            except Exception as align_error:
-                                print(f"⚠️ ImageSeriesReader failed: {align_error}, trying JoinSeries")
-                                # Fallback to JoinSeries
-                                return sitk.JoinSeries(images)
-                        else:
-                            # Images are not compatible, use original method
-                            try:
-                                reader = sitk.ImageSeriesReader()
-                                reader.SetFileNames(files)
-                                return reader.Execute()
-                            except Exception as reader_error:
-                                print(f"⚠️ ImageSeriesReader failed: {reader_error}, using original method")
-                                try:
-                                    from .image_io import get_itk_image
-                                    return get_itk_image(files)
-                                except ImportError:
-                                    # If import fails, use SimpleITK directly
-                                    reader = sitk.ImageSeriesReader()
-                                    reader.SetFileNames(files)
-                                    return reader.Execute()
-                    else:
-                        # Single image, return as is
-                        return images[0]
-
-                except Exception as join_error:
-                    print(f"⚠️ Advanced processing failed: {join_error}, using ImageSeriesReader")
-                    # Fallback to ImageSeriesReader
-                    try:
-                        reader = sitk.ImageSeriesReader()
-                        reader.SetFileNames(files)
-                        return reader.Execute()
-                    except Exception as reader_error:
-                        print(f"⚠️ ImageSeriesReader failed: {reader_error}, using original method")
-                        # Final fallback to original method
-                        try:
-                            from .image_io import get_itk_image
-                            return get_itk_image(files)
-                        except ImportError:
-                            # If import fails, use SimpleITK directly
-                            reader = sitk.ImageSeriesReader()
-                            reader.SetFileNames(files)
-                            return reader.Execute()
-            else:
-                # Fallback to original method - import from image_io
-                try:
-                    from .image_io import get_itk_image
-                    return get_itk_image(files)
-                except ImportError:
-                    # If import fails, use SimpleITK directly
-                    reader = sitk.ImageSeriesReader()
-                    reader.SetFileNames(files)
-                    return reader.Execute()
-        else:
-            # For smaller series, use original method
-            try:
-                from .image_io import get_itk_image
-                return get_itk_image(files)
-            except ImportError:
-                # If import fails, use SimpleITK directly
-                reader = sitk.ImageSeriesReader()
-                reader.SetFileNames(files)
-                return reader.Execute()
+        # Delegate to the stable loader path in image_io, which now handles
+        # mixed-size ITK region mismatch deterministically.
+        from .image_io import get_itk_image
+        return get_itk_image(files)
 
     except Exception as e:
         print(f"Error in get_itk_image_optimized: {e}")
-        # Fallback to original method
-        try:
-            from .image_io import get_itk_image
-            return get_itk_image(files)
-        except ImportError:
-            # If import fails, use SimpleITK directly
-            reader = sitk.ImageSeriesReader()
-            reader.SetFileNames(files)
-            return reader.Execute()
+        reader = sitk.ImageSeriesReader()
+        reader.SetFileNames([str(f) for f in files])
+        return reader.Execute()
 
 
 def create_random_string():

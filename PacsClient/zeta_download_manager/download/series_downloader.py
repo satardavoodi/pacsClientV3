@@ -11,6 +11,7 @@ Coordinates downloading all series for a study with:
 
 import logging
 import asyncio
+import os
 from typing import List, Optional, Callable
 from pathlib import Path
 from datetime import datetime
@@ -25,6 +26,7 @@ from .progress_tracker import ProgressTracker
 
 # Import token manager for authentication
 from PacsClient.utils.socket_token_manager import get_socket_token_manager
+from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 
 # ✅ CRITICAL FIX: Import DICOM reading and database functions
 try:
@@ -419,6 +421,7 @@ class SeriesDownloader:
         
         progress_pct = (total_done / total_images * 100) if total_images > 0 else 0
         
+        t_progress = now_ms()
         # Clean progress logging
         logger.info(f"    📊 Progress: {completed_series_count}/{len(series_list)} series | {progress_pct:.1f}% ({total_done}/{total_images} images)")
         
@@ -437,6 +440,15 @@ class SeriesDownloader:
             progress_percent=progress_pct,
             downloaded_count=total_done,
             total_count=total_images
+        )
+        log_stage_timing(
+            logger,
+            component="download",
+            function="SeriesDownloader._update_progress",
+            stage="progress_update",
+            start_ms=t_progress,
+            completed_series=str(completed_series_count),
+            total_series=str(len(series_list)),
         )
     
     async def _update_series_path_in_db(
@@ -457,16 +469,34 @@ class SeriesDownloader:
             # the asyncio / Qt event loop is not blocked during the DB commit.
             _uid = series_uid
             _path = series_path
+            t_db_update = now_ms()
             def _sync_update():
                 with get_db_connection() as conn:
                     cur = conn.cursor()
+                    t_exec = now_ms()
                     cur.execute(
                         "UPDATE series SET series_path = ? WHERE series_uid = ?",
                         (_path, _uid)
                     )
+                    log_stage_timing(
+                        logger,
+                        component="db",
+                        function="SeriesDownloader._update_series_path_in_db",
+                        stage="query_update_series_path",
+                        start_ms=t_exec,
+                        query_type="download_write",
+                    )
                     conn.commit()
             _loop = asyncio.get_running_loop()
             await _loop.run_in_executor(None, _sync_update)
+            log_stage_timing(
+                logger,
+                component="db",
+                function="SeriesDownloader._update_series_path_in_db",
+                stage="db_update_total",
+                start_ms=t_db_update,
+                query_type="download_write",
+            )
             logger.debug(f"💾 Updated series_path in database: {series_uid[:40]}... -> {series_path}")
         except Exception as e:
             logger.warning(f"⚠️ Failed to update series_path: {e}")
@@ -498,8 +528,11 @@ class SeriesDownloader:
         # How often to yield the GIL to the viewer (every N DICOM reads).
         # Reduced 20 → 5: 20 files × 3 ms = 60 ms hold; 5 × 3 ms = 15 ms.
         _DICOM_YIELD_INTERVAL = 5
+        _DB_INSERT_CHUNK_SIZE = max(25, int(os.getenv("AIPACS_DB_INSERT_CHUNK_SIZE", "120")))
+        _DB_INSERT_CHUNK_YIELD_MS = max(0, int(os.getenv("AIPACS_DB_INSERT_CHUNK_YIELD_MS", "5")))
 
         try:
+            t_db_total = now_ms()
             if not PYDICOM_AVAILABLE:
                 logger.warning(f"⚠️ pydicom not available - skipping instance database insertion")
                 return
@@ -511,7 +544,16 @@ class SeriesDownloader:
             series_pk = None
             with get_db_connection() as conn:
                 cur = conn.cursor()
+                t_query = now_ms()
                 cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_info.series_uid,))
+                log_stage_timing(
+                    logger,
+                    component="db",
+                    function="SeriesDownloader._save_series_instances_to_db",
+                    stage="query_select_series_pk",
+                    start_ms=t_query,
+                    query_type="download_write",
+                )
                 series_row = cur.fetchone()
                 if not series_row:
                     logger.warning(f"⚠️ Series not found in database: {series_info.series_uid}")
@@ -531,6 +573,7 @@ class SeriesDownloader:
             skipped_count = 0
 
             logger.info(f"    💾 [DB-INSERT] Processing {len(dicom_files)} DICOM files for series {series_info.series_number or series_info.series_uid[:20]}...")
+            t_decode_headers = now_ms()
 
             for file_idx, dcm_file in enumerate(dicom_files):
                 # Periodic GIL yield: let the Qt main thread render between batches.
@@ -606,8 +649,16 @@ class SeriesDownloader:
 
             # Yield once more before the batch DB write.
             await asyncio.sleep(0.005)
+            log_stage_timing(
+                logger,
+                component="download",
+                function="SeriesDownloader._save_series_instances_to_db",
+                stage="dicom_header_decode_total",
+                start_ms=t_decode_headers,
+                files=str(len(dicom_files)),
+            )
 
-            # Batch insert all instances.
+            # Batch insert instances (chunked for smoother latency on weak hardware).
             # CRITICAL: run in executor thread so the asyncio/Qt event loop is
             # NOT blocked during the SQLite write (~50-150 ms for 120 rows).
             # Without this, every scroll event queued while the write runs is
@@ -617,16 +668,46 @@ class SeriesDownloader:
                 try:
                     _db_mgr = self.database_manager
                     _series_pk = series_pk
-                    _insts = instances_to_insert
                     _loop = asyncio.get_running_loop()
-                    count = await _loop.run_in_executor(
-                        None,
-                        lambda: _db_mgr.batch_insert_instances(
-                            series_pk=_series_pk,
-                            instances=_insts,
+                    total_instances = len(instances_to_insert)
+                    chunk_count = (total_instances + _DB_INSERT_CHUNK_SIZE - 1) // _DB_INSERT_CHUNK_SIZE
+
+                    for chunk_idx, chunk_start in enumerate(range(0, total_instances, _DB_INSERT_CHUNK_SIZE), start=1):
+                        _insts = instances_to_insert[chunk_start:chunk_start + _DB_INSERT_CHUNK_SIZE]
+                        t_insert = now_ms()
+                        count = await _loop.run_in_executor(
+                            None,
+                            lambda chunk=_insts: _db_mgr.batch_insert_instances(
+                                series_pk=_series_pk,
+                                instances=chunk,
+                            )
                         )
+                        inserted_count += count if count is not None else 0
+                        log_stage_timing(
+                            logger,
+                            component="db",
+                            function="SeriesDownloader._save_series_instances_to_db",
+                            stage="batch_insert_instances",
+                            start_ms=t_insert,
+                            query_type="download_write",
+                            inserted=str(len(_insts)),
+                            chunk_index=str(chunk_idx),
+                            chunk_count=str(chunk_count),
+                        )
+
+                        if chunk_idx < chunk_count and _DB_INSERT_CHUNK_YIELD_MS > 0:
+                            await asyncio.sleep(_DB_INSERT_CHUNK_YIELD_MS / 1000.0)
+
+                    log_stage_timing(
+                        logger,
+                        component="db",
+                        function="SeriesDownloader._save_series_instances_to_db",
+                        stage="batch_insert_instances_total",
+                        start_ms=t_db_total,
+                        query_type="download_write",
+                        inserted=str(inserted_count),
+                        chunk_count=str(chunk_count),
                     )
-                    inserted_count = count if count is not None else 0
                     logger.info(f"    ✅ Inserted {inserted_count} instances to database for series {series_info.series_number or series_info.series_uid[:20]}")
                 except Exception as db_err:
                     logger.error(f"    ❌ Database batch insert failed: {db_err}")
@@ -636,6 +717,16 @@ class SeriesDownloader:
                 logger.warning(f"    ⚠️ Skipped {skipped_count} DICOM files with read errors")
 
             logger.info(f"    💾 [DB-INSERT] Series {series_info.series_number or series_info.series_uid[:20]}: {inserted_count} instances saved to database")
+            log_stage_timing(
+                logger,
+                component="db",
+                function="SeriesDownloader._save_series_instances_to_db",
+                stage="save_series_instances_total",
+                start_ms=t_db_total,
+                query_type="download_write",
+                inserted=str(inserted_count),
+                skipped=str(skipped_count),
+            )
 
         except Exception as e:
             logger.error(f"❌ Failed to save series instances to database: {e}")

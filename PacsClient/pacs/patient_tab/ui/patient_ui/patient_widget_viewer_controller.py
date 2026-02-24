@@ -49,6 +49,7 @@ from PacsClient.zeta_download_manager.core.enums import DownloadPriority
 from PacsClient.utils.config import SOCKET_CONFIG_PATH
 from PacsClient.pacs.patient_tab.zeta_boost import ZetaBoostEngine, ImageSliceBooster
 from PacsClient.utils.boost_viewer_config import load_boost_viewer_enabled
+from PacsClient.utils.diagnostic_logging import new_correlation_id, set_log_context, now_ms, log_stage_timing
 
 GRID_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "modality_grid.json"
 
@@ -257,7 +258,10 @@ class ViewerController:
         self._deferred_heavy_warmup_series = []
         self._deferred_heavy_warmup_retry_count = 0
         self._last_user_interaction_ts = time.time()
-        self._heavy_warmup_idle_sec = 2.5
+        self._heavy_warmup_idle_sec = float(os.getenv("AIPACS_HEAVY_WARMUP_IDLE_SEC", "2.5") or "2.5")
+        self._plan_a_viewer_first = os.getenv("AIPACS_PLAN_A_VIEWER_FIRST", "1") == "1"
+        self._viewer_interaction_pause_ms = int(os.getenv("AIPACS_VIEWER_INTERACTION_PAUSE_MS", "350") or "350")
+        self._interaction_release_token = 0
 
         # Deterministic full-series cache — now single-layer (ZetaBoost only).
         # Legacy dict fields kept as empty stubs for any residual references.
@@ -1286,6 +1290,7 @@ class ViewerController:
         Returns: (vtk_image_data, metadata, index) or (None, None, -1)
         """
         series_str = str(series_number)
+        t_lookup = now_ms()
 
         def _entry_is_valid(entry) -> bool:
             try:
@@ -1317,6 +1322,14 @@ class ViewerController:
             hot_entry = self._hot_series_cache[series_str]
             if _entry_is_valid(hot_entry):
                 print(f"🔍 [FAST_LOOKUP] series={series_str} → HOT CACHE HIT")
+                log_stage_timing(
+                    self.logger,
+                    component="viewer",
+                    function="ViewerController._get_series_by_number_fast",
+                    stage="cache_lookup",
+                    start_ms=t_lookup,
+                    cache_result="hot_hit",
+                )
                 return hot_entry
             self._hot_series_cache.pop(series_str, None)
             print(f"🔍 [FAST_LOOKUP] series={series_str} → hot cache stale, removed")
@@ -1327,6 +1340,14 @@ class ViewerController:
             if _entry_is_valid(result):
                 self._hot_series_cache[series_str] = result
                 print(f"🔍 [FAST_LOOKUP] series={series_str} → MAIN CACHE HIT")
+                log_stage_timing(
+                    self.logger,
+                    component="viewer",
+                    function="ViewerController._get_series_by_number_fast",
+                    stage="cache_lookup",
+                    start_ms=t_lookup,
+                    cache_result="main_hit",
+                )
                 return result
             self._series_cache.pop(series_str, None)
             print(f"🔍 [FAST_LOOKUP] series={series_str} → main cache stale, removed")
@@ -1347,6 +1368,14 @@ class ViewerController:
                         self._hot_series_cache.pop(next(iter(self._hot_series_cache)))
                     self._hot_series_cache[series_str] = result
                     print(f"🔍 [FAST_LOOKUP] series={series_str} → RETURNING from index lookup")
+                    log_stage_timing(
+                        self.logger,
+                        component="viewer",
+                        function="ViewerController._get_series_by_number_fast",
+                        stage="cache_lookup",
+                        start_ms=t_lookup,
+                        cache_result="index_hit",
+                    )
                     return result
                 else:
                     print(f"🔍 [FAST_LOOKUP] series={series_str} → item has None data, continuing to full cache")
@@ -1373,11 +1402,27 @@ class ViewerController:
                     self._series_cache[series_str] = result
                     self._hot_series_cache[series_str] = result
                     print(f"🔍 [FAST_LOOKUP] series={series_str} → RETURNING from full cache")
+                    log_stage_timing(
+                        self.logger,
+                        component="viewer",
+                        function="ViewerController._get_series_by_number_fast",
+                        stage="cache_lookup",
+                        start_ms=t_lookup,
+                        cache_result="full_cache_hit",
+                    )
                     return result
         else:
             print(f"🔍 [FAST_LOOKUP] series={series_str} → NOT in full cache")
         
         print(f"🔍 [FAST_LOOKUP] series={series_str} → FINAL RETURN: None, None, -1")
+        log_stage_timing(
+            self.logger,
+            component="viewer",
+            function="ViewerController._get_series_by_number_fast",
+            stage="cache_lookup",
+            start_ms=t_lookup,
+            cache_result="miss",
+        )
         return None, None, -1
 
     def _get_paired_series_fast(self, series_name: str, exclude_number: str = None) -> list:
@@ -2095,8 +2140,22 @@ class ViewerController:
         """
         try:
             _t0 = time.perf_counter()
-            self._last_user_interaction_ts = time.time()
+            t_change_ms = now_ms()
+            self.notify_viewer_interaction(reason="change_series")
             series_number = str(series_index)
+            viewer_event_id = new_correlation_id("view")
+            study_uid = str(getattr(self.parent_widget, "study_uid", "-"))
+            set_log_context(viewer_event_id=viewer_event_id, study_uid=study_uid, series_uid=series_number)
+            self.logger.info(
+                "viewer-event start change_series_on_viewer series=%s",
+                series_number,
+                extra={
+                    "component": "viewer",
+                    "viewer_event_id": viewer_event_id,
+                    "study_uid": study_uid,
+                    "series_uid": series_number,
+                },
+            )
             target_widget_for_spinner = vtk_widget
 
             # Fail-safe: never let spinner run forever if switching stalls.
@@ -2183,6 +2242,14 @@ class ViewerController:
             # ⚡ FAST PATH: O(1) series lookup with caching
             vtk_image_data, metadata, series_idx = self._get_series_by_number_fast(series_number)
             cache_hit = metadata is not None
+            log_stage_timing(
+                self.logger,
+                component="viewer",
+                function="ViewerController.change_series_on_viewer",
+                stage="cache_lookup",
+                start_ms=t_change_ms,
+                cache_hit=str(cache_hit),
+            )
 
             # Canonicalize index before switching to avoid stale-index false no-op.
             if metadata is not None:
@@ -2227,6 +2294,14 @@ class ViewerController:
             self._perform_series_switch_optimized(vtk_widget, metadata, vtk_image_data, series_idx, slider,
                                                   allow_paired=allow_paired,
                                                   expected_token=expected_token)
+            log_stage_timing(
+                self.logger,
+                component="viewer",
+                function="ViewerController.change_series_on_viewer",
+                stage="viewer_switch_apply",
+                start_ms=t_change_ms,
+                cache_hit=str(cache_hit),
+            )
             print(
                 f"[PROFILE] change_series_on_viewer: series={series_number} cache_hit={cache_hit} "
                 f"total={(time.perf_counter() - _t0)*1000:.1f}ms"
@@ -2240,6 +2315,14 @@ class ViewerController:
             except Exception:
                 pass
         finally:
+            log_stage_timing(
+                self.logger,
+                component="viewer",
+                function="ViewerController.change_series_on_viewer",
+                stage="viewer_event_total",
+                start_ms=t_change_ms,
+                series=str(series_index),
+            )
             self._interactive_load_in_progress = False
             self._set_zeta_external_interactive_busy(bool(self._async_switch_inflight), reason="switch_finally")
 
@@ -2379,6 +2462,15 @@ class ViewerController:
             return None
 
         path = Path(self.parent_widget.import_folder_path)
+
+        # If path itself is a series folder (numeric OR UID-named) and contains
+        # DICOM files, use parent study folder.
+        try:
+            has_dicom = bool(next(path.glob("*.dcm"), None) or next(path.glob("*.DCM"), None))
+        except Exception:
+            has_dicom = False
+        if has_dicom and path.parent.exists():
+            return str(path.parent)
 
         # If current path has numeric subfolders that are series, we're at study level
         # If current path is numeric and exists inside another folder, go up
@@ -3197,6 +3289,15 @@ class ViewerController:
             if not self._deferred_heavy_warmup_series:
                 return
 
+            # Viewer-first guard: wait for a short idle window before heavy warmup.
+            if self._plan_a_viewer_first:
+                idle_sec = max(0.0, time.time() - float(self._last_user_interaction_ts or 0.0))
+                if idle_sec < self._heavy_warmup_idle_sec:
+                    if self._deferred_heavy_warmup_retry_count < 12:
+                        self._deferred_heavy_warmup_retry_count += 1
+                        QTimer.singleShot(800, self._start_deferred_heavy_warmup)
+                    return
+
             # Only defer if the user is *actively* interacting right now.
             # Lane-level scheduling is handled by the engine; we don't
             # need to wait for lane-idle here.
@@ -3727,6 +3828,7 @@ class ViewerController:
 
         try:
             _start = time.perf_counter()
+            t_load_total = now_ms()
 
             # ✅ FIX: Use provided study_path or correctly determine it
             if study_path is None:
@@ -3759,6 +3861,12 @@ class ViewerController:
             _cache_probe_t = time.perf_counter()
             cached_full = self._full_cache_get(str(series_number))
             _cache_probe_ms = (time.perf_counter() - _cache_probe_t) * 1000
+            self.logger.info(
+                "viewer-data stage=cache_lookup_fullcache duration_ms=%.2f hit=%s",
+                _cache_probe_ms,
+                str(cached_full is not None),
+                extra={"component": "viewer", "function": "ViewerController._load_single_series_on_demand", "stage": "cache_lookup"},
+            )
             if cached_full is not None:
                 cached_vtk, cached_meta = cached_full[0], cached_full[1]
                 if cached_vtk is not None and isinstance(cached_meta, dict):
@@ -3846,35 +3954,16 @@ class ViewerController:
                         return True
                     return False
 
-            # Verify series folder exists
-            series_folder = Path(study_path) / str(series_number)
-            if not series_folder.exists():
-                print(f"❌ Series folder not found: {series_folder}")
-                with self._series_load_lock:
-                    evt = self._series_load_events.pop(series_key, None)
-                    self._loading_series_numbers.discard(series_key)
-                if evt is not None:
-                    evt.set()
-                return False
-
-            # Check for DICOM files
-            raw_dicom_files = list(series_folder.glob("*.dcm")) + list(series_folder.glob("*.DCM"))
-            dicom_files = []
-            seen_dcm = set()
-            for _p in raw_dicom_files:
-                _k = str(_p).lower()
-                if _k in seen_dcm:
-                    continue
-                seen_dcm.add(_k)
-                dicom_files.append(_p)
-            if not dicom_files:
-                print(f"❌ No DICOM files in {series_folder}")
-                with self._series_load_lock:
-                    evt = self._series_load_events.pop(series_key, None)
-                    self._loading_series_numbers.discard(series_key)
-                if evt is not None:
-                    evt.set()
-                return False
+            # Do NOT hard-fail on study_path/series_number existence.
+            # Series folders may be UID-named; load_single_series_by_number()
+            # has DB/alternative resolution logic.
+            estimated_file_count = 0
+            try:
+                tentative_folder = Path(study_path) / str(series_number)
+                if tentative_folder.exists() and tentative_folder.is_dir():
+                    estimated_file_count = len(list(tentative_folder.glob("*.dcm"))) + len(list(tentative_folder.glob("*.DCM")))
+            except Exception:
+                estimated_file_count = 0
 
             # Load full series with correct path (preview path disabled by design)
             _dicom_t = time.perf_counter()
@@ -3886,10 +3975,16 @@ class ViewerController:
                 ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
             )
             _dicom_ms = (time.perf_counter() - _dicom_t) * 1000
-            print(f"📊 [LOAD] DICOM+ITK for series={series_number} took {_dicom_ms:.0f}ms files={len(dicom_files)} (thread={threading.current_thread().name})")
+            print(f"📊 [LOAD] DICOM+ITK for series={series_number} took {_dicom_ms:.0f}ms files~={estimated_file_count} (thread={threading.current_thread().name})")
+            self.logger.info(
+                "viewer-data stage=itk_pipeline_total duration_ms=%.2f files=%d",
+                _dicom_ms,
+                estimated_file_count,
+                extra={"component": "viewer", "function": "ViewerController._load_single_series_on_demand", "stage": "itk_pipeline"},
+            )
 
-            if not result:
-                print(f"❌ [LOAD FAIL] series={series_number} no result from loader")
+            if result is None:
+                print(f"❌ [LOAD FAIL] series={series_number} loader returned None")
                 with self._series_load_lock:
                     evt = self._series_load_events.pop(series_key, None)
                     self._loading_series_numbers.discard(series_key)
@@ -3897,7 +3992,8 @@ class ViewerController:
                     evt.set()
                 return False
 
-            # Process results
+            # Process results; generator may be empty on path miss.
+            loaded_any = False
             for item in result:
                 if not self._tab_active:
                     print(f"⏭️ [LOAD SKIP] tab inactive during apply for series {series_number}")
@@ -3907,9 +4003,27 @@ class ViewerController:
                     return False
                 vtk_image_data, metadata, (patient_pk, study_pk) = item
                 self._apply_loaded_series_data_threadsafe(series_number, vtk_image_data, metadata, patient_pk, study_pk)
+                loaded_any = True
+
+            if not loaded_any:
+                print(f"❌ [LOAD FAIL] series={series_number} loader produced no items")
+                with self._series_load_lock:
+                    evt = self._series_load_events.pop(series_key, None)
+                    self._loading_series_numbers.discard(series_key)
+                if evt is not None:
+                    evt.set()
+                return False
 
             _elapsed = time.perf_counter() - _start
             print(f"✅ [LOAD] Series {series_number} loaded in {_elapsed:.3f}s")
+            log_stage_timing(
+                self.logger,
+                component="viewer",
+                function="ViewerController._load_single_series_on_demand",
+                stage="load_single_series_total",
+                start_ms=t_load_total,
+                series=str(series_number),
+            )
             self._prefetch_loaded.add(series_key)
             # Keep full decoded series for repeat drag-drop.
             try:
@@ -4053,6 +4167,37 @@ class ViewerController:
         except Exception:
             pass
 
+    def notify_viewer_interaction(self, reason: str = "viewer_input"):
+        """Viewer-first scheduling hook (reversible via env).
+
+        During active user interaction (scroll/series switch), temporarily pause
+        warmup/background lanes to reduce UI contention on weaker hardware.
+        """
+        try:
+            self._last_user_interaction_ts = time.time()
+            if not self._plan_a_viewer_first:
+                return
+
+            self._set_zeta_external_interactive_busy(True, reason=reason)
+            self._interaction_release_token += 1
+            token = self._interaction_release_token
+
+            def _release_if_latest():
+                try:
+                    if token != self._interaction_release_token:
+                        return
+                    idle_ms = (time.time() - self._last_user_interaction_ts) * 1000.0
+                    if idle_ms < self._viewer_interaction_pause_ms:
+                        QTimer.singleShot(max(1, int(self._viewer_interaction_pause_ms - idle_ms)), _release_if_latest)
+                        return
+                    self._set_zeta_external_interactive_busy(False, reason="viewer_idle")
+                except Exception:
+                    pass
+
+            QTimer.singleShot(max(1, self._viewer_interaction_pause_ms), _release_if_latest)
+        except Exception:
+            pass
+
     def _mark_download_active(self):
         """Signal the orchestrator that a download-completed series arrived.
 
@@ -4183,15 +4328,13 @@ class ViewerController:
         """Trigger server download if series not available locally"""
         try:
             series_number = self.parent_widget.resolve_series_key(series_number)
-            # Check if we have server info
+            series_uid = None
             if hasattr(self.parent_widget, '_server_series_info') and self.parent_widget._server_series_info:
-                if series_number in self.parent_widget._server_series_info:
-                    print(f"   📥 Triggering server download for series {series_number}")
-                    # Emit signal or call download method
-                    if hasattr(self.parent_widget, 'series_downloaded'):
-                        self.parent_widget.series_downloaded.emit(series_number)
-                    return
-            print(f"   ℹ️ No server info available for download")
+                series_info = self.parent_widget._server_series_info.get(series_number)
+                if isinstance(series_info, dict):
+                    series_uid = str(series_info.get('series_uid') or series_info.get('series_instance_uid') or '') or None
+
+            print(f"   📥 Triggering server download for series {series_number}")
 
             # Fallback: trigger per-series retry via Download Manager
             inflight = getattr(self.parent_widget, '_retry_series_inflight', None)
@@ -4206,7 +4349,7 @@ class ViewerController:
                 self.parent_widget._on_retry_series_download(
                     series_number=str(series_number),
                     study_uid=str(getattr(self.parent_widget, 'study_uid', '') or ''),
-                    series_uid=None,
+                    series_uid=series_uid,
                 )
             finally:
                 QTimer.singleShot(2000, lambda: inflight.discard(series_number))
@@ -4810,10 +4953,6 @@ class ViewerController:
             print(f"📁 Directory: {series_dir}")
             print(f"{'='*80}")
 
-            # Update folder path if needed
-            if series_dir and series_dir != self.parent_widget.import_folder_path:
-                self.parent_widget.import_folder_path = series_dir
-
             # Check DICOM files
             from pathlib import Path
             series_path = Path(series_dir)
@@ -4821,6 +4960,14 @@ class ViewerController:
             if not dicom_files:
                 print(f"❌ No DICOM files found in {series_dir}")
                 return
+
+            # Keep import_folder_path at study level (not inside a series folder).
+            try:
+                resolved_study_path = str(series_path.parent) if series_path.parent.exists() else series_dir
+                if resolved_study_path and resolved_study_path != self.parent_widget.import_folder_path:
+                    self.parent_widget.import_folder_path = resolved_study_path
+            except Exception:
+                pass
 
             # Skip if already loaded
             series_key = f"series_{series_number}"

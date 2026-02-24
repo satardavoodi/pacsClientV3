@@ -34,11 +34,13 @@ from ..core.constants import (
     RETRY_DELAY,
 )
 from .health_monitor import ConnectionHealthMonitor
+from PacsClient.utils.diagnostic_logging import DownloadProgressAggregator, set_log_context, now_ms, log_stage_timing
 
 # Import token manager for authentication
 from PacsClient.utils.socket_token_manager import get_socket_token_manager
 
 logger = logging.getLogger(__name__)
+_download_progress_aggregator = DownloadProgressAggregator(logger, interval_seconds=2.0)
 
 # Singleton health monitor instance (shared across all socket clients)
 _health_monitor: Optional[ConnectionHealthMonitor] = None
@@ -117,8 +119,18 @@ class SocketDicomClient:
 
         # Adaptive batch size (persists across series to avoid repeated oversized requests)
         self._adaptive_batch_size = SocketDicomClient._global_adaptive_batch_size
+        self._last_retry_count = 0
+
+        # Reversible load-shaping knobs (weak-hardware friendly).
+        # Set to 0 to disable pacing behavior immediately.
+        self._batch_size_cap = max(1, int(os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_CAP", "10") or "10"))
+        self._inter_batch_pause_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_INTER_BATCH_PAUSE_MS", "3") or "3") / 1000.0)
+        self._post_request_yield_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_POST_REQUEST_YIELD_MS", "5") or "5") / 1000.0)
         
-        logger.info(f"🔌 SocketDicomClient initialized ({self.host}:{self.port})")
+        logger.info(
+            f"🔌 SocketDicomClient initialized ({self.host}:{self.port})",
+            extra={"component": "download"},
+        )
     
     def connect(self) -> bool:
         """
@@ -388,17 +400,28 @@ class SocketDicomClient:
         Returns:
             Response dict or None on error
         """
-        logger.info(f"📤 send_request: {endpoint} - acquiring lock...")
+        logger.debug(f"📤 send_request: {endpoint} - acquiring lock...")
+        t_req_total = now_ms()
+        t_lock_wait = now_ms()
+        self.lock.acquire()
+        log_stage_timing(
+            logger,
+            component="ipc",
+            function="SocketDicomClient.send_request",
+            stage="request_lock_wait",
+            start_ms=t_lock_wait,
+            endpoint=endpoint,
+        )
 
-        with self.lock:
-            logger.info(f"📤 send_request: {endpoint} - lock acquired")
+        try:
+            logger.debug(f"📤 send_request: {endpoint} - lock acquired")
 
             if not self.connected:
-                logger.info(f"📤 send_request: Not connected, attempting connection...")
+                logger.debug(f"📤 send_request: Not connected, attempting connection...")
                 if not self.connect():
                     logger.error(f"❌ send_request: Connection failed!")
                     return None
-                logger.info(f"📤 send_request: Connected successfully")
+                logger.debug(f"📤 send_request: Connected successfully")
 
             try:
                 # Build request
@@ -412,26 +435,48 @@ class SocketDicomClient:
                 if endpoint != 'Login':
                     if self.auth_token:
                         request["token"] = self.auth_token
-                        logger.info(f"🔐 Added explicit auth token to {endpoint} request")
+                        logger.debug(f"🔐 Added explicit auth token to {endpoint} request")
                     elif self.token_manager and self.token_manager.has_token():
                         request = self.token_manager.add_token_to_request(request)
-                        logger.info(f"🔐 Added token from manager to {endpoint} request")
+                        logger.debug(f"🔐 Added token from manager to {endpoint} request")
                     else:
                         logger.warning(f"⚠️ No auth token available for {endpoint}")
 
                 # Serialize to JSON
+                t_serialize = now_ms()
                 request_json = json.dumps(request, ensure_ascii=False)
                 request_bytes = request_json.encode('utf-8')
+                log_stage_timing(
+                    logger,
+                    component="ipc",
+                    function="SocketDicomClient.send_request",
+                    stage="request_serialize",
+                    start_ms=t_serialize,
+                    endpoint=endpoint,
+                )
 
-                logger.info(f"📤 Sending {endpoint} request ({len(request_bytes)} bytes)...")
+                logger.info(
+                    f"📤 Sending {endpoint} request ({len(request_bytes)} bytes)",
+                    extra={"component": "ipc"},
+                )
 
                 # Send length prefix (4 bytes, big endian)
+                t_send = now_ms()
                 length_bytes = len(request_bytes).to_bytes(4, byteorder='big')
                 self.socket.sendall(length_bytes)
 
                 # Send request data
                 self.socket.sendall(request_bytes)
-                logger.info(f"📤 Request sent, waiting for response...")
+                log_stage_timing(
+                    logger,
+                    component="ipc",
+                    function="SocketDicomClient.send_request",
+                    stage="request_send",
+                    start_ms=t_send,
+                    endpoint=endpoint,
+                    request_bytes=str(len(request_bytes)),
+                )
+                logger.debug(f"📤 Request sent, waiting for response...")
 
                 # Loop to handle broadcasts and wait for actual response
                 max_broadcast_retries = 10
@@ -439,10 +484,19 @@ class SocketDicomClient:
                 
                 while broadcast_count < max_broadcast_retries:
                     # Receive response length
-                    logger.info(f"📥 Waiting for response header (4 bytes)...")
+                    logger.debug(f"📥 Waiting for response header (4 bytes)...")
+                    t_recv_header = now_ms()
                     response_length_bytes = self._safe_recv(4)
                     if not response_length_bytes:
                         raise NetworkError("Connection closed by server")
+                    log_stage_timing(
+                        logger,
+                        component="ipc",
+                        function="SocketDicomClient.send_request",
+                        stage="response_header_recv",
+                        start_ms=t_recv_header,
+                        endpoint=endpoint,
+                    )
 
                     response_length = int.from_bytes(response_length_bytes, byteorder='big')
                     
@@ -450,33 +504,83 @@ class SocketDicomClient:
                     if response_length > 50 * 1024 * 1024:  # 50MB limit
                         raise NetworkError(f"Response too large: {response_length} bytes")
 
-                    logger.info(f"📥 Receiving response body ({response_length} bytes)...")
+                    logger.info(
+                        f"📥 Receiving response body ({response_length} bytes)",
+                        extra={"component": "download"},
+                    )
 
                     # Receive response data
+                    t_body_recv = now_ms()
                     response_data = b''
+                    summary_key = (
+                        f"{endpoint}:{str(params.get('series_uid', 'na'))[:24]}:"
+                        f"{params.get('batch_index', 'na')}"
+                    )
                     while len(response_data) < response_length:
                         chunk_size = min(SOCKET_CHUNK_SIZE, response_length - len(response_data))
                         chunk = self._safe_recv(chunk_size)
                         if not chunk:
                             raise NetworkError("Connection lost while receiving data")
                         response_data += chunk
-                        if response_length > 100000:  # Log progress for large responses
-                            logger.info(f"📥 Received {len(response_data)}/{response_length} bytes ({100*len(response_data)//response_length}%)")
+                        if response_length > 100000:
+                            _download_progress_aggregator.update(
+                                key=summary_key,
+                                response_length=response_length,
+                                bytes_received=len(response_data),
+                                retries=0,
+                                study_uid="-",
+                                series_uid=str(params.get("series_uid", "-")),
+                            )
 
-                    logger.info(f"📥 Response received completely ({len(response_data)} bytes)")
+                    logger.info(
+                        f"📥 Response received completely ({len(response_data)} bytes)",
+                        extra={"component": "download", "series_uid": str(params.get("series_uid", "-"))},
+                    )
+                    log_stage_timing(
+                        logger,
+                        component="download",
+                        function="SocketDicomClient.send_request",
+                        stage="response_body_recv",
+                        start_ms=t_body_recv,
+                        endpoint=endpoint,
+                        response_bytes=str(len(response_data)),
+                    )
 
                     # Parse response
+                    t_parse = now_ms()
                     response = json.loads(response_data.decode('utf-8'))
+                    log_stage_timing(
+                        logger,
+                        component="ipc",
+                        function="SocketDicomClient.send_request",
+                        stage="response_parse",
+                        start_ms=t_parse,
+                        endpoint=endpoint,
+                    )
                     
                     # Check if this is a broadcast message
                     if response.get('type') == 'broadcast':
                         broadcast_count += 1
                         event_type = response.get('event_type', 'unknown')
-                        logger.info(f"📡 Received broadcast message (type: {event_type}), continuing to wait for actual response... ({broadcast_count}/{max_broadcast_retries})")
+                        logger.debug(
+                            f"📡 Received broadcast message (type: {event_type}), continuing to wait for actual response... ({broadcast_count}/{max_broadcast_retries})"
+                        )
                         continue  # Skip this broadcast and wait for the actual response
                     
                     # This is the actual response
-                    logger.info(f"📥 Response parsed: status={response.get('status', 'unknown')}")
+                    logger.info(
+                        f"📥 Response parsed: status={response.get('status', 'unknown')}",
+                        extra={"component": "ipc"},
+                    )
+                    log_stage_timing(
+                        logger,
+                        component="ipc",
+                        function="SocketDicomClient.send_request",
+                        stage="request_total",
+                        start_ms=t_req_total,
+                        endpoint=endpoint,
+                        result=str(response.get("status", "unknown")),
+                    )
                     return response
                 
                 # If we exit the loop, we received too many broadcasts without a response
@@ -514,6 +618,11 @@ class SocketDicomClient:
                     # R30: Record failure for health monitoring
                     self.health_monitor.record_failure()
                 return None
+        finally:
+            try:
+                self.lock.release()
+            except Exception:
+                pass
 
     def _safe_recv(self, size: int) -> bytes:
         """
@@ -579,8 +688,11 @@ class SocketDicomClient:
         # Convert batch_start to batch_index (batch_start / batch_size)
         batch_index = batch_start // batch_size if batch_size > 0 else 0
         
-        logger.info(f"📥 download_batch: series={series_uid[:40]}..., batch_index={batch_index}, size={batch_size}")
-        logger.info(f"📥 Sending GetSeriesImages request...")
+        set_log_context(study_uid=study_uid, series_uid=series_uid)
+        logger.info(
+            f"📥 download_batch: series={series_uid[:40]}..., batch_index={batch_index}, size={batch_size}",
+            extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+        )
         
         # Use correct endpoint: GetSeriesImages (not DownloadDicomBatch)
         response = self.send_request('GetSeriesImages', {
@@ -591,7 +703,10 @@ class SocketDicomClient:
         })
         
         if response:
-            logger.info(f"📥 download_batch: Got response with status={response.get('status', 'unknown')}")
+            logger.info(
+                f"📥 download_batch: status={response.get('status', 'unknown')}",
+                extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+            )
         else:
             logger.warning(f"📥 download_batch: No response received!")
         
@@ -620,7 +735,11 @@ class SocketDicomClient:
         series_number = series_info.series_number
         expected_count = series_info.image_count
         
-        logger.info(f"📥 Downloading series {series_number} ({expected_count} images)")
+        set_log_context(study_uid=study_uid, series_uid=series_uid)
+        logger.info(
+            f"📥 Downloading series {series_number} ({expected_count} images)",
+            extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+        )
         
         # Create output directory
         logger.info(f"📁 Creating output directory: {output_dir}")
@@ -633,8 +752,8 @@ class SocketDicomClient:
         skipped_count = len(existing_files)
         logger.info(f"📊 Found {skipped_count} existing files")
         
-        # Calculate batches (adaptive)
-        batch_size = min(self._adaptive_batch_size, 10)
+        # Calculate batches (adaptive + configurable cap)
+        batch_size = min(self._adaptive_batch_size, self._batch_size_cap)
         min_batch_size = 1
         total_batches = (expected_count + batch_size - 1) // batch_size
         downloaded_count = 0
@@ -642,6 +761,11 @@ class SocketDicomClient:
         logger.info(f"📦 Will download in {total_batches} batches (batch size: {batch_size})")
         
         start_time = time.time()
+        summary_last_t = time.monotonic()
+        summary_last_count = 0
+        total_disk_write_ms = 0.0
+        total_decode_ms = 0.0
+        total_decompress_ms = 0.0
         
         # Ensure we're connected before starting batches
         logger.info(f"🔌 Ensuring socket connection...")
@@ -679,7 +803,10 @@ class SocketDicomClient:
                     error_message="Download cancelled (preemption)"
                 )
             
-            logger.info(f"📦 Starting batch {batch_idx + 1}/{total_batches} (start: {batch_start}, size: {batch_size})")
+            logger.info(
+                f"📦 Starting batch {batch_idx + 1}/{total_batches} (start: {batch_start}, size: {batch_size})",
+                extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+            )
             
             # R33: Check connection health before operation
             if self.health_monitor.should_test_connection():
@@ -698,7 +825,7 @@ class SocketDicomClient:
                 batch_size
             )
             
-            logger.info(f"📦 Batch {batch_idx + 1} response received: {response is not None}")
+            logger.debug(f"📦 Batch {batch_idx + 1} response received: {response is not None}")
             
             if not response or response.get('status') != 'success':
                 # Better error extraction with full response logging
@@ -735,7 +862,10 @@ class SocketDicomClient:
             data = response.get('data', {})
             instances = data.get('instances', [])
             
-            logger.info(f"📦 Batch {batch_idx + 1}: Got {len(instances)} instances")
+            logger.info(
+                f"📦 Batch {batch_idx + 1}: Got {len(instances)} instances",
+                extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+            )
             
             for _inst_idx, instance_data in enumerate(instances):
                 dicom_data_b64 = instance_data.get('dicom_data', '')
@@ -761,12 +891,17 @@ class SocketDicomClient:
                     continue
                 
                 try:
+                    t_write = time.monotonic()
                     # Decode base64
+                    t_decode = now_ms()
                     dicom_bytes = base64.b64decode(dicom_data_b64)
+                    total_decode_ms += max(0.0, now_ms() - t_decode)
                     
                     # Decompress if needed
                     if is_compressed:
+                        t_decompress = now_ms()
                         dicom_bytes = gzip.decompress(dicom_bytes)
+                        total_decompress_ms += max(0.0, now_ms() - t_decompress)
                     
                     # Ensure directory exists (defensive check for preemption recovery)
                     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -776,6 +911,7 @@ class SocketDicomClient:
                         f.write(dicom_bytes)
                     
                     downloaded_count += 1
+                    total_disk_write_ms += (time.monotonic() - t_write) * 1000.0
                     
                 except Exception as e:
                     logger.error(f"❌ Error saving instance {instance_number}: {e}")
@@ -795,6 +931,29 @@ class SocketDicomClient:
                         expected_count
                     )
 
+                    now = time.monotonic()
+                    if (downloaded_count + skipped_count == expected_count) or (now - summary_last_t >= 2.0):
+                        delta_items = (downloaded_count + skipped_count) - summary_last_count
+                        delta_t = max(now - summary_last_t, 1e-6)
+                        throughput_items = delta_items / delta_t
+                        logger.info(
+                            "series-summary series=%s downloaded=%d skipped=%d total=%d throughput_items=%.2f/s queue=%d active=%d disk_write_ms=%.2f decode_ms=%.2f decompress_ms=%.2f retries=%d",
+                            series_number,
+                            downloaded_count,
+                            skipped_count,
+                            expected_count,
+                            throughput_items,
+                            max(total_batches - (batch_idx + 1), 0),
+                            1,
+                            total_disk_write_ms,
+                            total_decode_ms,
+                            total_decompress_ms,
+                            int(getattr(self, "_last_retry_count", 0)),
+                            extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                        )
+                        summary_last_t = now
+                        summary_last_count = downloaded_count + skipped_count
+
                 # Yield GIL every 3 instances: a real 2 ms OS sleep releases
                 # the Python GIL so the Qt viewer thread can render between
                 # consecutive base64 decode calls without stalling ~50 ms.
@@ -807,6 +966,11 @@ class SocketDicomClient:
                 logger.info(f"📦 Server indicates no more batches")
                 break
 
+            # Small paced gap between batches to reduce burst CPU/network pressure
+            # on low-end systems while preserving steady download progress.
+            if self._inter_batch_pause_s > 0:
+                await asyncio.sleep(self._inter_batch_pause_s)
+
             batch_idx += 1
             batch_start += batch_size
         
@@ -815,6 +979,15 @@ class SocketDicomClient:
         logger.info(
             f"✅ Series {series_number} complete: "
             f"{downloaded_count} downloaded, {skipped_count} skipped ({elapsed:.1f}s)"
+        )
+        logger.info(
+            "download-pipeline-summary series=%s elapsed_s=%.2f disk_write_ms=%.2f decode_ms=%.2f decompress_ms=%.2f",
+            series_number,
+            elapsed,
+            total_disk_write_ms,
+            total_decode_ms,
+            total_decompress_ms,
+            extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
         )
         
         return SeriesDownloadResult(
@@ -871,7 +1044,8 @@ class SocketDicomClient:
         Returns:
             Response dict or None on failure
         """
-        logger.info(f"🔄 _download_batch_with_retry called: series={series_uid[:30]}..., start={batch_start}, size={batch_size}")
+        logger.debug(f"🔄 _download_batch_with_retry called: series={series_uid[:30]}..., start={batch_start}, size={batch_size}")
+        self._last_retry_count = 0
         
         for attempt in range(MAX_RETRIES):
             # R25: Check for cancellation before each attempt
@@ -882,21 +1056,22 @@ class SocketDicomClient:
             request_start = time.time()
             
             try:
-                logger.info(f"🔄 Attempt {attempt + 1}/{MAX_RETRIES}: Calling download_batch...")
+                logger.debug(f"🔄 Attempt {attempt + 1}/{MAX_RETRIES}: Calling download_batch...")
                 response = self.download_batch(study_uid, series_uid, batch_start, batch_size)
-                logger.info(f"🔄 Attempt {attempt + 1}: Got response: {response is not None}")
+                logger.debug(f"🔄 Attempt {attempt + 1}: Got response: {response is not None}")
 
                 # Yield GIL immediately after the blocking recv+json.loads call
                 # so the Qt main thread can advance its render loop before we
                 # start processing the batch payload.
-                # sleep(0.005) is a real 5 ms OS sleep that releases the GIL to
+                # sleep(0.005) is a real OS sleep that releases the GIL to
                 # other threads (viewer, warmup); sleep(0) only yields within
                 # the same event-loop and does NOT reliably free the GIL.
-                await asyncio.sleep(0.005)
+                if self._post_request_yield_s > 0:
+                    await asyncio.sleep(self._post_request_yield_s)
 
                 if response:
                     status = response.get('status', 'unknown')
-                    logger.info(f"🔄 Response status: {status}")
+                    logger.debug(f"🔄 Response status: {status}")
                     
                     # R30: Record success with latency
                     latency_ms = (time.time() - request_start) * 1000
@@ -910,6 +1085,7 @@ class SocketDicomClient:
             
             except Exception as e:
                 logger.warning(f"⚠️ Batch download attempt {attempt + 1} failed: {e}")
+                self._last_retry_count = attempt + 1
                 import traceback
                 logger.warning(f"⚠️ Traceback: {traceback.format_exc()}")
                 
@@ -924,18 +1100,18 @@ class SocketDicomClient:
                     # R32: Adaptive throttling based on health
                     if not self.health_monitor.is_healthy():
                         delay *= 2  # Double delay if connection unhealthy
-                        logger.info(f"⚠️ Unhealthy connection - doubling retry delay")
+                        logger.info(f"⚠️ Unhealthy connection - doubling retry delay", extra={"component": "download"})
                     
-                    logger.info(f"⏳ Retrying in {delay:.1f}s...")
+                    logger.info(f"⏳ Retrying in {delay:.1f}s...", extra={"component": "download"})
                     await asyncio.sleep(delay)
                     
                     # Reconnect
-                    logger.info(f"🔌 Reconnecting...")
+                    logger.info(f"🔌 Reconnecting...", extra={"component": "download"})
                     self.disconnect()
                     if not self.connect():
                         logger.error(f"❌ Reconnection failed")
                         continue
-                    logger.info(f"✅ Reconnected")
+                    logger.info(f"✅ Reconnected", extra={"component": "download"})
         
         # All retries failed
         logger.error(f"❌ Batch download failed after {MAX_RETRIES} attempts")

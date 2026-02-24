@@ -3,8 +3,10 @@ import sqlite3
 import threading
 import contextlib
 import json
+import logging
 from typing import Optional
 import hashlib
+from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 # from typing import Optional, Dict, Any
 
 # Thread-local storage for database connections (for per-thread reuse)
@@ -18,12 +20,14 @@ _db_lock = threading.Lock()
 _connection_pool = {}  # thread_id -> sqlite3.Connection
 _pool_lock = threading.Lock()
 _max_pool_size = 5  # Max connections per thread
+logger = logging.getLogger(__name__)
 
 
 @contextlib.contextmanager
 def get_db_connection():
     """Context manager for database connections with automatic cleanup and pooling."""
     conn = None
+    t_txn = now_ms()
     try:
         # Get connection from pool or create new one
         conn = _get_pooled_connection()
@@ -43,20 +47,47 @@ def get_db_connection():
                 _return_to_pool(conn)
             except Exception as e:
                 print(f"⚠️ Error returning connection to pool: {e}")
+        log_stage_timing(
+            logger,
+            component="db",
+            function="database.get_db_connection",
+            stage="transaction_scope",
+            start_ms=t_txn,
+            query_type="mixed",
+        )
 
 
 def _get_pooled_connection():
     """Get a reusable connection from pool or create new one."""
     thread_id = threading.current_thread().ident
     
-    with _pool_lock:
+    t_lock = now_ms()
+    _pool_lock.acquire()
+    log_stage_timing(
+        logger,
+        component="db",
+        function="database._get_pooled_connection",
+        stage="pool_lock_wait",
+        start_ms=t_lock,
+        query_type="mixed",
+    )
+    try:
         if thread_id in _connection_pool:
             conns = _connection_pool[thread_id]
             if conns:
+                t_validate = now_ms()
                 conn = conns.pop()
                 # Validate connection is still open
                 try:
                     conn.execute("SELECT 1")
+                    log_stage_timing(
+                        logger,
+                        component="db",
+                        function="database._get_pooled_connection",
+                        stage="reuse_validate",
+                        start_ms=t_validate,
+                        query_type="mixed",
+                    )
                     return conn
                 except sqlite3.OperationalError:
                     # Connection is dead, create new one
@@ -64,7 +95,19 @@ def _get_pooled_connection():
         
         # Create new raw connection (do NOT call get_connection_database() here
         # to avoid double-wrapping in _PooledConnection).
-        return _create_sqlite_connection()
+        t_create = now_ms()
+        conn = _create_sqlite_connection()
+        log_stage_timing(
+            logger,
+            component="db",
+            function="database._get_pooled_connection",
+            stage="create_connection",
+            start_ms=t_create,
+            query_type="mixed",
+        )
+        return conn
+    finally:
+        _pool_lock.release()
 
 
 def _return_to_pool(conn):

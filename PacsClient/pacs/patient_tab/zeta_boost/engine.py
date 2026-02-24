@@ -83,7 +83,8 @@ class ZetaBoostEngine:
         import logging as _logging
         _logging.getLogger(__name__).info(
             f"[ZetaBoost][Global] Download started. "
-            f"Active downloads: {cls._global_active_download_count}"
+            f"Active downloads: {cls._global_active_download_count}",
+            extra={"component": "zetaboost"},
         )
 
     @classmethod
@@ -97,7 +98,8 @@ class ZetaBoostEngine:
         import logging as _logging
         _logging.getLogger(__name__).info(
             f"[ZetaBoost][Global] Download stopped. "
-            f"Active downloads: {cls._global_active_download_count}"
+            f"Active downloads: {cls._global_active_download_count}",
+            extra={"component": "zetaboost"},
         )
 
     def __init__(
