@@ -1,0 +1,7 @@
+# Build toolchain (pin and validate together in .venv_build)
+PyInstaller==6.11.1
+pyinstaller-hooks-contrib==2025.0
+setuptools>=68
+wheel>=0.41
+packaging>=23
+

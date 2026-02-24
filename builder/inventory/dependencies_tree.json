@@ -1,0 +1,180 @@
+{
+  "generated_at_utc": "2026-02-23T23:02:33.982630+00:00",
+  "declared_dependencies": {
+    "requirements_txt_exists": true,
+    "requirements_txt": [
+      "PySide6==6.10.2",
+      "pynetdicom==2.1.1",
+      "pydicom>=2.4.0",
+      "grpcio",
+      "google==3.0.0",
+      "google-api-python-client==2.168.0",
+      "vtk",
+      "SimpleITK==2.5.3",
+      "natsort==8.4.0",
+      "sounddevice==0.5.2",
+      "soundfile==0.13.1",
+      "qasync",
+      "numpy",
+      "QtAwesome",
+      "pandas",
+      "openai==1.97.0",
+      "python-dotenv",
+      "comtypes>=1.3.0",
+      "SpeechRecognition>=3.10.0",
+      "pyaudio",
+      "webrtcvad"
+    ],
+    "pyproject_toml": {
+      "exists": false,
+      "dependencies": [],
+      "optional_dependencies": {}
+    }
+  },
+  "inferred_dependencies_from_imports": [
+    {
+      "import_root": "PySide6",
+      "package_hint": "PySide6",
+      "count": 147
+    },
+    {
+      "import_root": "vtkmodules",
+      "package_hint": "vtk",
+      "count": 55
+    },
+    {
+      "import_root": "numpy",
+      "package_hint": "numpy",
+      "count": 49
+    },
+    {
+      "import_root": "qtawesome",
+      "package_hint": "QtAwesome",
+      "count": 26
+    },
+    {
+      "import_root": "pydicom",
+      "package_hint": "pydicom",
+      "count": 16
+    },
+    {
+      "import_root": "vtk",
+      "package_hint": "vtk",
+      "count": 15
+    },
+    {
+      "import_root": "SimpleITK",
+      "package_hint": "SimpleITK",
+      "count": 15
+    },
+    {
+      "import_root": "soundfile",
+      "package_hint": "soundfile",
+      "count": 10
+    },
+    {
+      "import_root": "sounddevice",
+      "package_hint": "sounddevice",
+      "count": 6
+    },
+    {
+      "import_root": "grpc",
+      "package_hint": "grpcio",
+      "count": 6
+    },
+    {
+      "import_root": "pynetdicom",
+      "package_hint": "pynetdicom",
+      "count": 3
+    },
+    {
+      "import_root": "pandas",
+      "package_hint": "pandas",
+      "count": 2
+    },
+    {
+      "import_root": "qasync",
+      "package_hint": "qasync",
+      "count": 1
+    },
+    {
+      "import_root": "comtypes",
+      "package_hint": "comtypes",
+      "count": 1
+    }
+  ],
+  "environment_dependencies": {
+    "attempted": false,
+    "ran": false,
+    "controlled_venv": false,
+    "venv_path": null,
+    "pip_freeze": [],
+    "reason": "No active venv; skipped by policy (only run in .venv_build)"
+  },
+  "recommended_pinned_versions": [
+    {
+      "package": "PyInstaller",
+      "recommended": "PyInstaller==<pin-me>"
+    },
+    {
+      "package": "pyinstaller-hooks-contrib",
+      "recommended": "pyinstaller-hooks-contrib==<pin-me>"
+    },
+    {
+      "package": "PySide6",
+      "recommended": "PySide6==6.10.2"
+    },
+    {
+      "package": "vtk",
+      "recommended": "vtk==<pin-me>"
+    },
+    {
+      "package": "SimpleITK",
+      "recommended": "SimpleITK==2.5.3"
+    },
+    {
+      "package": "qasync",
+      "recommended": "qasync==<pin-me>"
+    },
+    {
+      "package": "numpy",
+      "recommended": "numpy==<pin-me>"
+    },
+    {
+      "package": "QtAwesome",
+      "recommended": "QtAwesome==<pin-me>"
+    },
+    {
+      "package": "pydicom",
+      "recommended": "pydicom==<pin-me>"
+    },
+    {
+      "package": "soundfile",
+      "recommended": "soundfile==0.13.1"
+    },
+    {
+      "package": "sounddevice",
+      "recommended": "sounddevice==0.5.2"
+    },
+    {
+      "package": "grpcio",
+      "recommended": "grpcio==<pin-me>"
+    },
+    {
+      "package": "pynetdicom",
+      "recommended": "pynetdicom==2.1.1"
+    },
+    {
+      "package": "pandas",
+      "recommended": "pandas==<pin-me>"
+    },
+    {
+      "package": "comtypes",
+      "recommended": "comtypes==<pin-me>"
+    }
+  ],
+  "notes": [
+    "Re-run audit in .venv_build after installing dependencies to capture accurate pip freeze.",
+    "Validate PySide6/VTK/SimpleITK compatibility before pinning build toolchain."
+  ]
+}

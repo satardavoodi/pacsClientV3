@@ -1,0 +1,125 @@
+{
+  "generated_at_utc": "2026-02-23T23:03:53.111750+00:00",
+  "available": true,
+  "pyside6_detected_in_imports": true,
+  "pyside6_webengine_detected_in_imports": true,
+  "qt_plugins_path": "C:/Users/vahid/AppData/Roaming/Python/Python312/site-packages/PySide6/plugins",
+  "qt_qml_path": "C:/Users/vahid/AppData/Roaming/Python/Python312/site-packages/PySide6/qml",
+  "qt_plugins_path_exists": true,
+  "plugin_subdir_file_counts": {
+    "assetimporters": 1,
+    "canbus": 6,
+    "designer": 4,
+    "generic": 1,
+    "geometryloaders": 2,
+    "geoservices": 2,
+    "iconengines": 1,
+    "imageformats": 10,
+    "multimedia": 2,
+    "networkinformation": 1,
+    "platforminputcontexts": 1,
+    "platforms": 4,
+    "position": 3,
+    "qmllint": 2,
+    "qmltooling": 12,
+    "renderers": 2,
+    "renderplugins": 1,
+    "sceneparsers": 3,
+    "scxmldatamodel": 1,
+    "sensors": 2,
+    "sqldrivers": 6,
+    "styles": 1,
+    "texttospeech": 3,
+    "tls": 3,
+    "webview": 2
+  },
+  "important_plugin_subdirs_present": {
+    "platforms": true,
+    "imageformats": true,
+    "styles": true,
+    "iconengines": true,
+    "tls": true,
+    "networkinformation": true,
+    "multimedia": true,
+    "printsupport": false,
+    "sqldrivers": true,
+    "webenginecore": false,
+    "webview": true
+  },
+  "important_plugin_files_sample": {
+    "platforms": [
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\platforms\\qdirect2d.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\platforms\\qminimal.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\platforms\\qoffscreen.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\platforms\\qwindows.dll"
+    ],
+    "imageformats": [
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\imageformats\\qgif.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\imageformats\\qicns.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\imageformats\\qico.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\imageformats\\qjpeg.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\imageformats\\qpdf.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\imageformats\\qsvg.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\imageformats\\qtga.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\imageformats\\qtiff.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\imageformats\\qwbmp.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\imageformats\\qwebp.dll"
+    ],
+    "styles": [
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\styles\\qmodernwindowsstyle.dll"
+    ],
+    "iconengines": [
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\iconengines\\qsvgicon.dll"
+    ],
+    "tls": [
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\tls\\qcertonlybackend.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\tls\\qopensslbackend.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\tls\\qschannelbackend.dll"
+    ],
+    "networkinformation": [
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\networkinformation\\qnetworklistmanager.dll"
+    ],
+    "multimedia": [
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\multimedia\\ffmpegmediaplugin.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\multimedia\\windowsmediaplugin.dll"
+    ],
+    "sqldrivers": [
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\sqldrivers\\qsqlibase.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\sqldrivers\\qsqlite.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\sqldrivers\\qsqlmimer.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\sqldrivers\\qsqloci.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\sqldrivers\\qsqlodbc.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\sqldrivers\\qsqlpsql.dll"
+    ],
+    "webview": [
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\webview\\qtwebview_webengine.dll",
+      "C:\\Users\\vahid\\AppData\\Roaming\\Python\\Python312\\site-packages\\PySide6\\plugins\\webview\\qtwebview_webview2.dll"
+    ]
+  },
+  "qt_qml_path_exists": true,
+  "qml_top_level_modules_sample": [
+    "Qt",
+    "Qt3D",
+    "Qt5Compat",
+    "QtCharts",
+    "QtCore",
+    "QtDataVisualization",
+    "QtGraphs",
+    "QtLocation",
+    "QtMultimedia",
+    "QtNetwork",
+    "QtPositioning",
+    "QtQml",
+    "QtQuick",
+    "QtQuick3D",
+    "QtRemoteObjects",
+    "QtScxml",
+    "QtSensors",
+    "QtTest",
+    "QtTextToSpeech",
+    "QtWebChannel",
+    "QtWebEngine",
+    "QtWebSockets",
+    "QtWebView"
+  ]
+}

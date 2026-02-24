@@ -1,0 +1,300 @@
+{
+  "appA": {
+    "name": "AIPacs",
+    "entrypoint": "main.py",
+    "how_detected": "score=27; candidate filename main.py; __main__ guard; QApplication creation; Qt app exec() call; freeze_support; repo root main.py"
+  },
+  "appB": {
+    "name": "AIPacsAdvancedViewerLauncher",
+    "entrypoint": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/launch_slicer.py",
+    "how_detected": "score=22; slicer launch filename; __main__ guard; argparse CLI; slicer content/path; AIPacsAdvancedViewer.exe reference"
+  },
+  "candidates": [
+    {
+      "path": "main.py",
+      "score": 27,
+      "reasons": [
+        "candidate filename main.py",
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call",
+        "freeze_support",
+        "repo root main.py"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/launch_slicer.py",
+      "score": 22,
+      "reasons": [
+        "slicer launch filename",
+        "__main__ guard",
+        "argparse CLI",
+        "slicer content/path",
+        "AIPacsAdvancedViewer.exe reference"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": true,
+      "mentions_slicer": true
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_launcher.py",
+      "score": 17,
+      "reasons": [
+        "slicer launch filename",
+        "slicer content/path",
+        "AIPacsAdvancedViewer.exe reference"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": false,
+      "mentions_slicer": true
+    },
+    {
+      "path": "EchoMind/echomind_main.py",
+      "score": 15,
+      "reasons": [
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "LicenseGenerator/license_generator.py",
+      "score": 15,
+      "reasons": [
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/components/socket_patient_service.py",
+      "score": 15,
+      "reasons": [
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/pacs/education/education_module_redesigned.py",
+      "score": 15,
+      "reasons": [
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/orthogonal_mpr/example_usage.py",
+      "score": 15,
+      "reasons": [
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/ui/ai_module_ui/service_tab/example_usage.py",
+      "score": 15,
+      "reasons": [
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/viewers/filter_config_widget.py",
+      "score": 15,
+      "reasons": [
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/settings_ui/filter_config.py",
+      "score": 15,
+      "reasons": [
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/utils/license_generator_gui.py",
+      "score": 15,
+      "reasons": [
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/ui/ai_module_ui/test_reception_tab.py",
+      "score": 10,
+      "reasons": [
+        "__main__ guard",
+        "QApplication creation",
+        "Qt app exec() call",
+        "test penalty"
+      ],
+      "has_qapplication": true,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/customize_slicer_app.py",
+      "score": 8,
+      "reasons": [
+        "__main__ guard",
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": true,
+      "mentions_slicer": true
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/startup_script.py",
+      "score": 8,
+      "reasons": [
+        "__main__ guard",
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": true,
+      "mentions_slicer": true
+    },
+    {
+      "path": "build_nuitka.py",
+      "score": 5,
+      "reasons": [
+        "__main__ guard",
+        "argparse CLI"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": true,
+      "mentions_slicer": false
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/curved_mpr_module.py",
+      "score": 5,
+      "reasons": [
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": false,
+      "mentions_slicer": true
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/__init__.py",
+      "score": 5,
+      "reasons": [
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": false,
+      "mentions_slicer": true
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/unified_logging.py",
+      "score": 5,
+      "reasons": [
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": false,
+      "mentions_slicer": true
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/NewMPR2Slicer/Modules/Scripted/Home/Home.py",
+      "score": 5,
+      "reasons": [
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": false,
+      "mentions_slicer": true
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/NewMPR2Slicer/Modules/Scripted/Home/__init__.py",
+      "score": 5,
+      "reasons": [
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": false,
+      "mentions_slicer": true
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/NewMPR2Slicer/Modules/Scripted/NewMPR2MPR/NewMPR2MPR.py",
+      "score": 5,
+      "reasons": [
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": false,
+      "mentions_slicer": true
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/NewMPR2Slicer/Modules/Scripted/NewMPR2MPR/__init__.py",
+      "score": 5,
+      "reasons": [
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": false,
+      "mentions_slicer": true
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget.py",
+      "score": 5,
+      "reasons": [
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": false,
+      "mentions_slicer": true
+    },
+    {
+      "path": "PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/toolbar_manager.py",
+      "score": 5,
+      "reasons": [
+        "slicer content/path"
+      ],
+      "has_qapplication": false,
+      "has_main_guard": false,
+      "mentions_slicer": true
+    }
+  ],
+  "generated_at_utc": "2026-02-23T23:02:33.976395+00:00"
+}

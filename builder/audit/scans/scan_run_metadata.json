@@ -1,0 +1,15 @@
+{
+  "generated_at_utc": "2026-02-23T23:03:53.480865+00:00",
+  "repo_root": "C:\\AI-Pacs codes\\PacsClient V2(5jan)\\PacsClientV2",
+  "python_files_scanned": 420,
+  "inventory_outputs": [
+    "builder/inventory/entrypoints.json",
+    "builder/inventory/imports_summary.json",
+    "builder/inventory/dependencies_tree.json",
+    "builder/inventory/dll_inventory.json",
+    "builder/inventory/qt_plugins_inventory.json",
+    "builder/inventory/resource_inventory.json",
+    "builder/inventory/runtime_data_paths_inventory.json",
+    "builder/audit/reports/AUDIT_SUMMARY.md"
+  ]
+}
