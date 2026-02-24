@@ -9,6 +9,25 @@ from typing import Callable, Optional
 
 from .disk_cache import ZetaBoostDiskCache
 
+# ── Global download-activity flag ──────────────────────────────────────────
+# True when ANY study is currently downloading system-wide.
+# All ZetaBoost warmup workers check this; when True they use the same
+# generous 2-second inter-series sleep used for the active-download case,
+# preventing warmup ITK pipelines from competing with the downloader and UI.
+# Updated by home_ui via set_global_download_active() on download start/end.
+_GLOBAL_DOWNLOAD_ACTIVE: bool = False
+
+
+def set_global_download_active(active: bool) -> None:
+    """Set whether ANY study is currently downloading system-wide.
+
+    When True, ALL ZetaBoost warmup workers throttle to a 2-second
+    inter-series sleep, keeping CPU and GIL free for the viewer and
+    download thread even when the download is for a different patient.
+    """
+    global _GLOBAL_DOWNLOAD_ACTIVE
+    _GLOBAL_DOWNLOAD_ACTIVE = bool(active)
+
 
 def _set_thread_low_priority():
     """Lower current thread's OS scheduling priority.
@@ -130,6 +149,9 @@ class ZetaBoostEngine:
         self._external_interactive_busy = False
         self._download_active = False  # True while Zeta download is running
         self._study_download_complete = True  # Definitive flag from PipelineOrchestrator
+        # Mode B: when True, put() is a no-op — ImageSliceBooster handles
+        # the active series and no series-level data enters the 1.2 GB RAM pool.
+        self._image_boost_mode: bool = False
 
         self._stats = {
             "mem_hit": 0,
@@ -339,6 +361,35 @@ class ZetaBoostEngine:
                 )
             self._cv.notify_all()
 
+    def set_image_boost_mode(self, active: bool) -> None:
+        """Enable / disable Image Boost Mode (Mode B).
+
+        When *active* is True:
+        - ``put()`` is a no-op — series-level data does NOT enter the RAM pool.
+        - warmup/background lanes are already blocked (``_study_download_complete``
+          is False during Mode B), so no extra gate is needed here.
+        - Interactive lane still delivers data to the viewer but bypasses the cache.
+
+        The ViewerController calls this from ``_on_pipeline_state_changed``:
+        - ``DOWNLOADING``    → ``set_image_boost_mode(True)``
+        - ``POST_DOWNLOAD``  → ``set_image_boost_mode(False)``
+        """
+        with self._cv:
+            was = self._image_boost_mode
+            self._image_boost_mode = bool(active)
+            if was != self._image_boost_mode:
+                self._log_info(
+                    f"IMAGE_BOOST_MODE={self._image_boost_mode} "
+                    f"{self._cache_summary()}"
+                )
+            self._cv.notify_all()
+
+    @property
+    def is_image_boost_mode(self) -> bool:
+        """True during Mode B (image-level boost only; series cache disabled)."""
+        with self._lock:
+            return bool(self._image_boost_mode)
+
     def clear_all(self):
         self.deactivate(clear_cache=True)
         try:
@@ -463,7 +514,13 @@ class ZetaBoostEngine:
     def put(self, series_number: str, vtk_image_data, metadata, persist_disk: bool = True, promote_immediately: bool = False):
         """
         Put series into cache with optional immediate promotion.
-        
+
+        In Image Boost Mode (Mode B) this method is a deliberate no-op:
+        the full-series VTK volume must NOT enter the 1.2 GB RAM pool while a
+        3 000-image study is downloading concurrently.  The viewer keeps its own
+        reference to the loaded ``vtkImageData``; ZetaBoost caching is resumed
+        automatically when the download completes (POST_DOWNLOAD transition).
+
         Args:
             series_number: Series identifier
             vtk_image_data: VTK image data
@@ -472,6 +529,14 @@ class ZetaBoostEngine:
             promote_immediately: If True, prioritize memory over disk write latency
                                  (used during user-initiated drag & drop)
         """
+        # Mode B guard: skip series-level caching to bound RAM footprint.
+        with self._lock:
+            _ibm = self._image_boost_mode
+        if _ibm:
+            self._log_info(
+                f"PUT_SKIPPED_IMAGE_BOOST series={series_number} (Mode B active)"
+            )
+            return
         key = str(series_number)
         est_bytes = 0
         try:
@@ -586,6 +651,13 @@ class ZetaBoostEngine:
 
         if self._total_inflight_locked() >= self._max_parallel_loads:
             return False
+        # While a Zeta download is running, block ALL lanes — including
+        # interactive — to prevent CPU/GIL contention with the viewer.
+        # The viewer will fall back to direct DICOM loading for any series
+        # not yet in the ZetaBoost in-memory cache.
+        # (Mode B: _download_active is False, so nothing is blocked here.)
+        if self._download_active:
+            return False
         if lane == "interactive":
             return True
         if self._external_interactive_busy:
@@ -628,8 +700,9 @@ class ZetaBoostEngine:
             reasons.append("interactive_busy")
         if not self._study_download_complete and lane != "interactive":
             reasons.append("study_download_pending")
-        if self._download_active and lane != "interactive":
-            reasons.append("download_active")
+        if self._download_active:
+            # All lanes blocked while download is running (including interactive)
+            reasons.append("download_active(all_lanes)")
         if lane == "warmup" and len(self._queue.get("interactive", [])):
             reasons.append("interactive_queued")
         if lane == "background":
@@ -1021,10 +1094,14 @@ class ZetaBoostEngine:
             # share of processor time.  Warmup/background yield MUCH longer
             # because they are pure background work and must NEVER cause the
             # user to perceive lag on the interactive viewer path.
+            # _GLOBAL_DOWNLOAD_ACTIVE: True when ANY patient is downloading,
+            # even if this tab's own study is already complete.  Keeps warmup
+            # from saturating CPU/GIL while an unrelated study downloads.
+            _any_dl = self._download_active or _GLOBAL_DOWNLOAD_ACTIVE
             if lane == "interactive":
                 time.sleep(0.08)   # 80ms — small yield for interactive
-            elif self._download_active:
-                time.sleep(2.0)    # 2s — very generous yield when downloads active
+            elif _any_dl:
+                time.sleep(2.0)    # 2s — very generous yield when ANY download active
             else:
                 time.sleep(0.5)    # 500ms — generous yield for background warmup
 

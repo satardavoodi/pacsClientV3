@@ -35,8 +35,7 @@ from PacsClient.pacs.patient_tab.ui.ai_module_ui.service_tab.reception_data_serv
 from ..network.socket_client import SocketDicomClient
 from ..storage.database_manager import DatabaseManager
 from ..workers.worker_pool import WorkerPool
-from ..workers.download_worker import DownloadWorker  # kept as fallback
-from ..workers.subprocess_worker import SubprocessDownloadWorker
+from ..workers.download_process_worker import DownloadProcessWorker as DownloadWorker
 from .styles.theme import ModernTheme, get_current_theme
 from .styles.colors import ColorPalette
 from .components.priority_group import PriorityGroupHeader
@@ -2078,12 +2077,10 @@ class DownloadManagerWidget(QWidget):
 
             logger.info(f"🚀 [WORKER-START] Found task with {len(task.series_list)} series")
 
-            # Create worker
-            logger.info(f"🚀 [WORKER-START] Creating SubprocessDownloadWorker instance...")
-            # SubprocessDownloadWorker: runs download in a separate OS process (own GIL).
-            # This ensures the viewer's VTK render thread is NEVER blocked by download
-            # Python code regardless of how download-heavy the operation is (Mode B fix).
-            worker = SubprocessDownloadWorker(task, self.executor)
+            # Create worker — DownloadProcessWorker runs the download in a
+            # separate Python process (own GIL) so the viewer is never starved.
+            logger.info(f"🚀 [WORKER-START] Creating DownloadProcessWorker instance...")
+            worker = DownloadWorker(task, self.executor)
             logger.info(f"🚀 [WORKER-START] Worker created: {type(worker).__name__}")
 
             # Connect signals
@@ -2116,16 +2113,6 @@ class DownloadManagerWidget(QWidget):
                 logger.info(f"🚀 [WORKER-START] Starting worker thread...")
                 worker.start()
                 logger.info(f"🚀 [WORKER-START] Worker thread started")
-
-                # Change #7: Increment global ZetaBoost download counter so that
-                # ALL ZetaBoost engine instances block warmup/background lanes while
-                # this download is active (prevents cross-study ITK CPU saturation).
-                try:
-                    from PacsClient.pacs.patient_tab.zeta_boost.engine import ZetaBoostEngine
-                    ZetaBoostEngine.notify_global_download_start()
-                    logger.info("[Change#7] ZetaBoost global download counter incremented")
-                except Exception as _e:
-                    logger.debug(f"[Change#7] ZetaBoost gate not available: {_e}")
 
                 # Log database update for download start
                 updated_state = self.state_store.get(study_uid)
@@ -2167,13 +2154,9 @@ class DownloadManagerWidget(QWidget):
                     total
                 )
 
-                # Emit study progress for widget integration (overall)
-                self.studyProgressUpdated.emit(
-                    study_uid,
-                    overall_downloaded,
-                    overall_total,
-                    overall_percent
-                )
+                # NOTE: studyProgressUpdated is now batched in _pending_progress
+                # and emitted by _apply_throttled_progress every 100ms —
+                # not here, to avoid flooding the main-thread event queue.
 
                 # Resolve series info from task
                 task = self._tasks.get(study_uid)
@@ -2195,8 +2178,8 @@ class DownloadManagerWidget(QWidget):
                     self.log_message(f"📊 [{study_uid[:10]}...] Series {series_number} started: {series_desc}")
                     self.seriesDownloadStarted.emit(study_uid, series_uid, series_desc)
 
-                # Emit series progress
-                self.seriesProgressUpdated.emit(study_uid, series_uid, downloaded, total)
+                # NOTE: seriesProgressUpdated is batched below in _pending_progress
+                # and emitted by _apply_throttled_progress every 100ms.
 
                 # Emit series completed once
                 if total > 0 and downloaded >= total:
@@ -2220,13 +2203,22 @@ class DownloadManagerWidget(QWidget):
                 self._pending_progress[study_uid]['progress_percent'] = overall_percent
                 self._pending_progress[study_uid]['downloaded_count'] = overall_downloaded
                 self._pending_progress[study_uid]['total_count'] = overall_total
+                # Store latest signal args so _apply_throttled_progress emits them
+                # at 100ms intervals instead of per-image (primary lag fix).
+                self._pending_progress[study_uid]['_study_progress_args'] = (
+                    study_uid, overall_downloaded, overall_total, overall_percent
+                )
+                self._pending_progress[study_uid]['_series_progress_args'] = (
+                    study_uid, series_uid, downloaded, total
+                )
 
                 # Start throttle timer if not already running
                 if not self._progress_throttle_timer.isActive():
                     self._progress_throttle_timer.start()
-                    
-                # Log progress update for monitoring
-                logger.info(f"📊 [PROGRESS] {study_uid[:40]}... - {overall_percent:.1f}% ({overall_downloaded}/{overall_total} images), Series: {series_number} ({downloaded}/{total})")
+
+                # Per-image at DEBUG level only — avoids GIL + string-fmt cost on main thread
+                logger.debug(f"📊 [PROGRESS] {study_uid[:40]}... - {overall_percent:.1f}% "
+                             f"({overall_downloaded}/{overall_total} images), Series: {series_number} ({downloaded}/{total})")
                 
                 # Log to UI log area periodically (not every image to avoid spam)
                 if overall_downloaded % 100 == 0 or overall_percent == 100:  # Log every 100 images or when complete
@@ -2276,8 +2268,21 @@ class DownloadManagerWidget(QWidget):
             for study_uid, updates in updates_to_apply.items():
                 try:
                     if updates:  # Only update if there are changes
-                        self.state_store.update(study_uid, **updates)
-                        # logger.debug(f"📊 Applied throttled progress for {study_uid}")
+                        # Pop signal-only keys so they are not forwarded to state_store.
+                        study_progress_args = updates.pop('_study_progress_args', None)
+                        series_progress_args = updates.pop('_series_progress_args', None)
+
+                        # Persist state (remaining keys after pop)
+                        if updates:
+                            self.state_store.update(study_uid, **updates)
+
+                        # Emit throttled UI signals — at most once per 100ms per study
+                        # instead of once per downloaded image (100x–1000x reduction).
+                        if study_progress_args:
+                            self.studyProgressUpdated.emit(*study_progress_args)
+                        if series_progress_args:
+                            self.seriesProgressUpdated.emit(*series_progress_args)
+
                 except Exception as e:
                     logger.error(f"❌ Error applying throttled update for {study_uid}: {e}")
             
@@ -2290,16 +2295,6 @@ class DownloadManagerWidget(QWidget):
     
     def _on_worker_completed(self, study_uid: str, success: bool) -> None:
         """Handle worker completion signal"""
-        # Change #7: Decrement global ZetaBoost download counter FIRST so that
-        # warmup/background lanes are unblocked as soon as this download ends.
-        # Must happen before any other state update to propagate immediately.
-        try:
-            from PacsClient.pacs.patient_tab.zeta_boost.engine import ZetaBoostEngine
-            ZetaBoostEngine.notify_global_download_stop()
-            logger.info("[Change#7] ZetaBoost global download counter decremented")
-        except Exception as _e:
-            logger.debug(f"[Change#7] ZetaBoost gate not available: {_e}")
-
         try:
             logger.info(f"✅ [COMPLETION] Worker completed: {study_uid[:40]}... (success={success})")
 

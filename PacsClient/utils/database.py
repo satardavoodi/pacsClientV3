@@ -62,8 +62,9 @@ def _get_pooled_connection():
                     # Connection is dead, create new one
                     pass
         
-        # Create new connection if pool is empty or invalid
-        return get_connection_database()
+        # Create new raw connection (do NOT call get_connection_database() here
+        # to avoid double-wrapping in _PooledConnection).
+        return _create_sqlite_connection()
 
 
 def _return_to_pool(conn):
@@ -94,48 +95,107 @@ def _return_to_pool(conn):
                 pass
 
 
-def get_connection_database():
-    """Return a SQLite connection **with foreign‑key constraints enabled**."""
+class _PooledConnection:
+    """Thin proxy around sqlite3.Connection that auto-returns to the pool.
+
+    Every ``get_connection_database()`` call returns one of these.  When the
+    caller never calls ``close()`` the connection is silently returned to the
+    pool (or closed cleanly) in ``__del__``, preventing the
+    ``ResourceWarning: unclosed database`` flood that otherwise appears
+    whenever any frame triggers GC.
+    """
+
+    __slots__ = ('_conn', '_closed')
+
+    def __init__(self, conn):
+        object.__setattr__(self, '_conn', conn)
+        object.__setattr__(self, '_closed', False)
+
+    # ── delegate all attribute access to the real connection ──────────
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, '_conn'), name)
+
+    def __setattr__(self, name, value):
+        setattr(object.__getattribute__(self, '_conn'), name, value)
+
+    # ── context-manager support (with conn: ...) ──────────────────────
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+    # ── explicit or GC-triggered cleanup ─────────────────────────────
+    def close(self):
+        if not object.__getattribute__(self, '_closed'):
+            object.__setattr__(self, '_closed', True)
+            _return_to_pool(object.__getattribute__(self, '_conn'))
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    # sqlite3.Connection iteration protocol (used by some helpers)
+    def __iter__(self):
+        return iter(object.__getattribute__(self, '_conn'))
+
+
+def _create_sqlite_connection():
+    """Create a brand-new raw ``sqlite3.Connection`` with standard PRAGMAs.
+
+    Internal use only.  Pool machinery and ``get_connection_database()`` both
+    call this so the pool never stores ``_PooledConnection`` proxies.
+    """
     import time
     import random
-    
+
     db = 'dicom.db'
-    max_retries = 15  # Increased retries for better reliability
-    
+    max_retries = 15
+
     for attempt in range(max_retries):
         try:
-            # Use longer timeout and better connection parameters
-            # CRITICAL: Using DEFERRED isolation level ensures data integrity for medical data
             conn = sqlite3.connect(
-                db, 
-                timeout=300.0,  # Increased timeout to 300 seconds
-                check_same_thread=False,  # Allow multi-threading with proper locking
-                isolation_level="DEFERRED"  # FIXED: Use DEFERRED transactions (safe default)
+                db,
+                timeout=300.0,
+                check_same_thread=False,
+                isolation_level="DEFERRED"
             )
-            conn.execute("PRAGMA foreign_keys = ON;")  # Enforce referential integrity
-            conn.execute("PRAGMA journal_mode = WAL;")  # Enable WAL mode for better concurrency
-            conn.execute("PRAGMA synchronous = NORMAL;")  # Balanced safety/performance
-            conn.execute("PRAGMA busy_timeout = 120000;")  # 120 second busy timeout
-            conn.execute("PRAGMA temp_store = MEMORY;")  # Use memory for temp tables
-            conn.execute("PRAGMA cache_size = -10000;")  # FIXED: 10MB cache (negative = KB)
-            conn.execute("PRAGMA mmap_size = 104857600;")  # FIXED: 100MB mmap (was 512MB)
-            conn.execute("PRAGMA wal_autocheckpoint = 500;")  # Checkpoint every 500 pages
-            conn.execute("PRAGMA locking_mode = NORMAL;")  # Normal locking mode
-            # REMOVED: PRAGMA read_uncommitted = 1 (CRITICAL: This was allowing dirty reads on medical data!)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
+            conn.execute("PRAGMA busy_timeout = 120000;")
+            conn.execute("PRAGMA temp_store = MEMORY;")
+            conn.execute("PRAGMA cache_size = -10000;")
+            conn.execute("PRAGMA mmap_size = 104857600;")
+            conn.execute("PRAGMA wal_autocheckpoint = 2000;")
+            conn.execute("PRAGMA locking_mode = NORMAL;")
             return conn
         except sqlite3.OperationalError as e:
             if "database is locked" in str(e) and attempt < max_retries - 1:
-                # Wait with exponential backoff and jitter
                 wait_time = (2 ** attempt) + random.uniform(0, 3)
                 print(f"⚠️ Database locked, retrying in {wait_time:.1f}s... (attempt {attempt + 1}/{max_retries})")
-                time.sleep(wait_time)
+                import time as _time
+                _time.sleep(wait_time)
                 continue
             else:
                 print(f"❌ Database connection failed after {max_retries} attempts: {e}")
                 raise
-            
-    
+
     raise sqlite3.OperationalError("Failed to connect to database after all retries")
+
+
+def get_connection_database():
+    """Return a ``_PooledConnection`` proxy with foreign-key constraints enabled.
+
+    All attribute access is forwarded to the underlying ``sqlite3.Connection``.
+    The connection is automatically returned to the thread-local pool (or
+    closed) when the proxy is closed explicitly **or** when it is garbage
+    collected, eliminating ``ResourceWarning: unclosed database`` for every
+    call-site that does not call ``conn.close()``.
+    """
+    return _PooledConnection(_get_pooled_connection())
 
 
 def cleanup_connection_pools():

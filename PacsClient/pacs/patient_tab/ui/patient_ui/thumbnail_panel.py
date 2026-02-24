@@ -11,10 +11,11 @@ from PySide6.QtWidgets import (
     QLabel, QScrollArea, QApplication
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QImage
 
 from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachment_folder, open_folder, \
     check_and_get_thumbnails, get_name_file_from_path
+from PacsClient.utils.thumbnail_store import ThumbnailStore, make_pixmap_from_bytes  # type: ignore
 
 
 class ThumbnailPanel(QWidget):
@@ -251,7 +252,21 @@ class ThumbnailPanel(QWidget):
             return thumb_index  # we don't add new thumbnail
 
         print('file_path_thumbnail:', file_path_thumbnail)
-        pixmap = QPixmap(file_path_thumbnail)
+        # ── ThumbnailStore fast path: probe in-memory cache before disk read ──
+        # The download executor populates the store when thumbnails arrive from
+        # the server.  A cache hit here means zero disk I/O on the main thread.
+        pixmap = None
+        try:
+            study_uid = str(getattr(self.parent_widget, 'study_uid', '') or '')
+            if study_uid:
+                thumb_bytes = ThumbnailStore.instance().get_bytes(study_uid, series_name)
+                if thumb_bytes:
+                    pixmap = make_pixmap_from_bytes(thumb_bytes)
+        except Exception:
+            pixmap = None
+        if pixmap is None or (hasattr(pixmap, 'isNull') and pixmap.isNull()):
+            # Fallback: synchronous disk read (original behaviour).
+            pixmap = QPixmap(file_path_thumbnail)
         
         # Extract series info from metadata or database
         series_info = None

@@ -47,7 +47,7 @@ from PacsClient.pacs.patient_tab.zeta_sync import (
 )
 from PacsClient.zeta_download_manager.core.enums import DownloadPriority
 from PacsClient.utils.config import SOCKET_CONFIG_PATH
-from PacsClient.pacs.patient_tab.zeta_boost import ZetaBoostEngine
+from PacsClient.pacs.patient_tab.zeta_boost import ZetaBoostEngine, ImageSliceBooster
 from PacsClient.utils.boost_viewer_config import load_boost_viewer_enabled
 
 GRID_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "modality_grid.json"
@@ -300,6 +300,11 @@ class ViewerController:
             logger=self.logger,
         )
         self._boostviewer_enabled = self._is_boostviewer_enabled_runtime()
+        # Mode B: Image Slice Booster — lightweight ±20 slice window cache for
+        # the single active series.  Zero RAM impact on other series.
+        self._image_slice_booster: ImageSliceBooster = ImageSliceBooster(
+            logger=self.logger
+        )
         print(
             f"🔧 [ZetaBoost][CAPACITY] tier={_cap['tier']} RAM={_cap['total_ram_mb']}MB "
             f"budget={_cap['byte_budget']//(1024*1024)}MB entries={_cap['max_entries']} "
@@ -374,49 +379,49 @@ class ViewerController:
             return {
                 'tier': '30GB+',
                 'total_ram_mb': total_mb,
-                'byte_budget': 800 * MB,    # was 4000 → 800: only cache viewed + few adjacent
-                'max_entries': 8,            # was 60 → 8: focus on viewed series only
-                'max_parallel_loads': 1,     # was 2 → 1: NEVER run >1 concurrent ITK load
-                'warmup_workers': 2,         # was 3 → 2: less background pressure
-                'background_workers': 1,     # was 2 → 1: minimal background work
-                'warmup_max_slices': 500,
-                'disk_persist_max': 600 * MB, # was 1500 → 600: limit disk I/O overhead
+                'byte_budget': 2000 * MB,   # enough for 40+ typical CT series
+                'max_entries': 40,           # cover large multi-series studies
+                'max_parallel_loads': 1,     # NEVER run >1 concurrent ITK load
+                'warmup_workers': 3,
+                'background_workers': 2,
+                'warmup_max_slices': 700,
+                'disk_persist_max': 800 * MB,
             }
         elif total_mb >= 15360:  # ≥15 GB
             return {
                 'tier': '15GB+',
                 'total_ram_mb': total_mb,
-                'byte_budget': 600 * MB,    # was 2400 → 600
-                'max_entries': 6,            # was 48 → 6
-                'max_parallel_loads': 1,     # was 2 → 1
-                'warmup_workers': 2,         # was 3 → 2
-                'background_workers': 1,     # was 2 → 1
-                'warmup_max_slices': 350,
-                'disk_persist_max': 500 * MB, # was 1200 → 500
+                'byte_budget': 1200 * MB,   # ~24 series × 50 MB each
+                'max_entries': 24,
+                'max_parallel_loads': 1,
+                'warmup_workers': 2,
+                'background_workers': 1,
+                'warmup_max_slices': 600,
+                'disk_persist_max': 600 * MB,
             }
         elif total_mb >= 7680:  # ≥7.5 GB
             return {
                 'tier': '8GB+',
                 'total_ram_mb': total_mb,
-                'byte_budget': 400 * MB,    # was 1600 → 400
-                'max_entries': 4,            # was 36 → 4
-                'max_parallel_loads': 1,     # kept at 1
-                'warmup_workers': 1,         # was 2 → 1
-                'background_workers': 1,     # was 2 → 1
-                'warmup_max_slices': 250,
-                'disk_persist_max': 300 * MB, # was 800 → 300
+                'byte_budget': 800 * MB,    # ~16 series × 50 MB each; safe on 8 GB
+                'max_entries': 16,           # covers full 10-series study + headroom
+                'max_parallel_loads': 1,     # single ITK load to avoid GIL contention
+                'warmup_workers': 2,
+                'background_workers': 1,
+                'warmup_max_slices': 500,    # raised from 250 → series with 356 slices now eligible
+                'disk_persist_max': 500 * MB,
             }
         else:  # <7.5 GB
             return {
                 'tier': 'low',
                 'total_ram_mb': total_mb,
-                'byte_budget': 300 * MB,    # was 1200 → 300
-                'max_entries': 3,            # was 24 → 3
-                'max_parallel_loads': 1,     # kept at 1
-                'warmup_workers': 1,         # was 2 → 1
-                'background_workers': 1,     # was 2 → 1
-                'warmup_max_slices': 180,
-                'disk_persist_max': 200 * MB, # was 520 → 200
+                'byte_budget': 400 * MB,    # ~8 series × 50 MB each
+                'max_entries': 8,
+                'max_parallel_loads': 1,
+                'warmup_workers': 1,
+                'background_workers': 1,
+                'warmup_max_slices': 250,
+                'disk_persist_max': 300 * MB,
             }
 
     def _is_drag_drop_action_id(self, action_id) -> bool:
@@ -656,13 +661,21 @@ class ViewerController:
             # This unlocks ZetaBoost warmup immediately.
             if self.pipeline.state == PipelineState.IDLE:
                 self.pipeline.mark_pre_downloaded()
-            # Force-sync ZetaBoost flags with current pipeline state on every
-            # activation.  This is the belt-and-suspenders fix: even if the
-            # pipeline callback didn't fire (e.g. state was already POST_DOWNLOAD
-            # from previous activation), we ensure the engine flags are correct.
+            # Force-sync ZetaBoost engine flags with current pipeline state on every
+            # activation.  Handles the case where download started while the tab was
+            # inactive (engine was deactivated by _on_pipeline_state_changed).
             if self.pipeline.state in (PipelineState.POST_DOWNLOAD, PipelineState.READY):
                 self.zeta_boost.set_study_download_complete(True)
                 self.zeta_boost.set_download_active(False)
+            elif self.pipeline.state == PipelineState.DOWNLOADING:
+                # Tab is being activated while a download is still in progress.
+                # Sync engine flags so it knows warmup is blocked.  Workers are
+                # alive again (activate() was called above) but gated by download_active.
+                self.zeta_boost.set_study_download_complete(False)
+                self.zeta_boost.set_download_active(True)
+                self.zeta_boost.set_image_boost_mode(True)
+            # Schedule warmup check.  _start_open_tab_warmup guards itself with
+            # pipeline.is_warmup_allowed, so this is a no-op if downloading.
             QTimer.singleShot(900, self._start_open_tab_warmup)
         except Exception:
             pass
@@ -2553,6 +2566,31 @@ class ViewerController:
                     except Exception:
                         pass
 
+                    # Mode B — Image Slice Booster: activate \u00b120 slice window
+                    # for the newly displayed series.  Only fires while a download
+                    # is in progress; no-op in Mode A (post-download).
+                    try:
+                        if self.pipeline.is_download_active:
+                            _instances = metadata.get('instances') or []
+                            _inst_paths = [
+                                str(inst.get('instance_path', ''))
+                                for inst in _instances
+                                if inst.get('instance_path')
+                            ]
+                            _center = 0
+                            try:
+                                _viewer = getattr(vtk_widget, 'image_viewer', None)
+                                if _viewer is not None:
+                                    _center = max(0, int(_viewer.GetSlice()))
+                            except Exception:
+                                pass
+                            if _inst_paths:
+                                self._image_slice_booster.set_active(
+                                    series_number, _inst_paths, _center
+                                )
+                    except Exception:
+                        pass
+
                     self._refresh_zeta_protected_series()
 
                     # ── Look-ahead warmup: pre-cache adjacent series ──
@@ -2868,6 +2906,15 @@ class ViewerController:
             if not self._tab_active:
                 return
             if not self.zeta_boost.is_active():
+                return
+            # STRICT ISOLATION: Never warm up while downloads are in progress.
+            # The pipeline is authoritative: if it says warmup is not allowed
+            # (IDLE or DOWNLOADING state), stop here without retry.
+            if not self.pipeline.is_warmup_allowed:
+                print(
+                    f"[WARMUP] Skipped — pipeline={self.pipeline.state.name} "
+                    f"(warmup only allowed in POST_DOWNLOAD/READY)"
+                )
                 return
 
             # Let first visible series settle before warmup to keep tab-open responsive.
@@ -4052,27 +4099,49 @@ class ViewerController:
                 # 1. Unlock ZetaBoost warmup/background lanes.
                 self.zeta_boost.set_study_download_complete(True)
                 self.zeta_boost.set_download_active(False)
-                # 2. Discard lightweight previews (full volumes coming soon).
+                # 2. Exit Mode B: re-enable series-level RAM caching.
+                self.zeta_boost.set_image_boost_mode(False)
+                self._image_slice_booster.clear()
+                # 3. Discard lightweight previews (full volumes coming soon).
                 self._preview_engine.clear()
-                # 3. Schedule warmup for ALL series after a short grace period.
-                #    Must be on UI thread since _start_open_tab_warmup
-                #    touches Qt objects.
-                try:
-                    QMetaObject.invokeMethod(
-                        self.parent_widget,
-                        lambda: QTimer.singleShot(500, self._start_open_tab_warmup),
-                        Qt.ConnectionType.QueuedConnection,
-                    )
-                except Exception:
-                    # Fallback: direct call (may already be on UI thread)
-                    QTimer.singleShot(500, self._start_open_tab_warmup)
-                print(f"[Pipeline] POST_DOWNLOAD → warmup scheduled")
+                # 4. Schedule warmup ONLY if this tab is currently visible.
+                #    If the tab is inactive (physician viewing a different patient),
+                #    warmup must NOT start in the background.  It will be triggered
+                #    naturally by on_tab_activated when the physician opens this tab.
+                if self._tab_active:
+                    try:
+                        QMetaObject.invokeMethod(
+                            self.parent_widget,
+                            lambda: QTimer.singleShot(500, self._start_open_tab_warmup),
+                            Qt.ConnectionType.QueuedConnection,
+                        )
+                    except Exception:
+                        # Fallback: direct call (may already be on UI thread)
+                        QTimer.singleShot(500, self._start_open_tab_warmup)
+                    print(f"[Pipeline] POST_DOWNLOAD → warmup scheduled (tab active)")
+                else:
+                    print(f"[Pipeline] POST_DOWNLOAD → warmup deferred (tab inactive — starts on next activation)")
 
             elif new_state == PipelineState.DOWNLOADING:
                 # Downloads starting — block ZetaBoost warmup/background.
                 self.zeta_boost.set_study_download_complete(False)
                 self.zeta_boost.set_download_active(True)
-                print(f"[Pipeline] DOWNLOADING → warmup blocked")
+                # Enter Mode B: disable series-level caching, activate
+                # Image Slice Booster for the current active series instead.
+                self.zeta_boost.set_image_boost_mode(True)
+                # STRICT ISOLATION: if this tab is NOT currently visible,
+                # stop all warmup workers entirely.  Workers serve no purpose
+                # during downloading for an inactive tab; they waste GIL time
+                # spinning in the BLOCKED state.  Workers are recreated when
+                # the physician activates this tab via on_tab_activated.
+                if not self._tab_active:
+                    try:
+                        self.zeta_boost.deactivate(clear_cache=False)
+                    except Exception:
+                        pass
+                    print(f"[Pipeline] DOWNLOADING → engine deactivated (tab inactive, all workers stopped)")
+                else:
+                    print(f"[Pipeline] DOWNLOADING → warmup blocked, Image Boost active")
 
             elif new_state == PipelineState.READY:
                 print(f"[Pipeline] READY → all series cached")
@@ -4080,6 +4149,8 @@ class ViewerController:
             elif new_state == PipelineState.IDLE:
                 self.zeta_boost.set_study_download_complete(False)
                 self.zeta_boost.set_download_active(False)
+                self.zeta_boost.set_image_boost_mode(False)
+                self._image_slice_booster.clear()
         except Exception as e:
             print(f"[Pipeline] state change error: {e}")
 

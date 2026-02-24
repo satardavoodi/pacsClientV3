@@ -20,7 +20,7 @@ from PacsClient.zeta_download_manager.network.socket_client import SocketDicomCl
 from PacsClient.zeta_download_manager.storage.database_manager import DatabaseManager
 from PacsClient.zeta_download_manager.ui.main_widget import DownloadManagerWidget
 from PacsClient.zeta_download_manager.workers.worker_pool import WorkerPool
-from PacsClient.zeta_download_manager.workers.download_worker import DownloadWorker
+from PacsClient.zeta_download_manager.workers.download_process_worker import DownloadProcessWorker as DownloadWorker
 from PacsClient.utils.config import SOURCE_PATH
 
 logger = logging.getLogger(__name__)
@@ -201,7 +201,7 @@ def start_zeta_download(
         # This ensures the health check can find the original task
         dm_widget._tasks[task.study_uid] = task
 
-        # Create worker
+        # Create worker — DownloadProcessWorker: fully separate process, own GIL.
         worker = DownloadWorker(task, executor)
 
         # Connect callbacks if provided

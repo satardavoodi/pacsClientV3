@@ -172,57 +172,57 @@ class DatabaseManager:
                         update_study_missing_fields,
                         update_series_missing_fields
                     )
-                    from PacsClient.utils.database import get_connection_database
-                    
-                    conn = get_connection_database()
-                    cur = conn.cursor()
-                    
-                    # Get patient_pk
-                    cur.execute("SELECT patient_pk FROM patients WHERE patient_id = ?", (task.patient_id,))
-                    patient_row = cur.fetchone()
-                    patient_pk = patient_row[0] if patient_row else None
-                    
-                    # Update patient with missing fields
-                    if patient_pk:
-                        update_patient_missing_fields(
-                            patient_pk,
-                            birth_date=patient_birth_date,
-                            sex=patient_sex,
-                            age=patient_age
-                        )
-                        logger.info(f"💾 Updated patient {patient_pk} with complete information")
-                    
-                    # Get study_pk
-                    cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (task.study_uid,))
-                    study_row = cur.fetchone()
-                    study_pk = study_row[0] if study_row else None
-                    
-                    # Update study with missing fields
-                    if study_pk:
-                        update_study_missing_fields(
-                            study_pk,
-                            study_time=study_time,
-                            study_description=task.description,
-                            modality=task.modality,
-                            body_part=body_part,
-                            study_path=str(task.output_dir) if task.output_dir else None
-                        )
-                        logger.info(f"💾 Updated study {study_pk} with complete information (body_part={body_part})")
-                    
-                    # Get series_pks and update each with body_part_examined
-                    series_pks = {}
-                    for series_info in metadata.series_list:
-                        cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_info.series_uid,))
-                        series_row = cur.fetchone()
-                        if series_row:
-                            series_pk = series_row[0]
-                            series_pks[series_info.series_uid] = series_pk
-                            # Update series with missing body_part_examined
-                            if series_info.body_part_examined:
-                                update_series_missing_fields(
-                                    series_pk,
-                                    body_part_examined=series_info.body_part_examined
-                                )
+                    from PacsClient.utils.database import get_db_connection
+
+                    with get_db_connection() as conn:
+                        cur = conn.cursor()
+
+                        # Get patient_pk
+                        cur.execute("SELECT patient_pk FROM patients WHERE patient_id = ?", (task.patient_id,))
+                        patient_row = cur.fetchone()
+                        patient_pk = patient_row[0] if patient_row else None
+
+                        # Update patient with missing fields
+                        if patient_pk:
+                            update_patient_missing_fields(
+                                patient_pk,
+                                birth_date=patient_birth_date,
+                                sex=patient_sex,
+                                age=patient_age
+                            )
+                            logger.info(f"💾 Updated patient {patient_pk} with complete information")
+
+                        # Get study_pk
+                        cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (task.study_uid,))
+                        study_row = cur.fetchone()
+                        study_pk = study_row[0] if study_row else None
+
+                        # Update study with missing fields
+                        if study_pk:
+                            update_study_missing_fields(
+                                study_pk,
+                                study_time=study_time,
+                                study_description=task.description,
+                                modality=task.modality,
+                                body_part=body_part,
+                                study_path=str(task.output_dir) if task.output_dir else None
+                            )
+                            logger.info(f"💾 Updated study {study_pk} with complete information (body_part={body_part})")
+
+                        # Get series_pks and update each with body_part_examined
+                        series_pks = {}
+                        for series_info in metadata.series_list:
+                            cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_info.series_uid,))
+                            series_row = cur.fetchone()
+                            if series_row:
+                                series_pk = series_row[0]
+                                series_pks[series_info.series_uid] = series_pk
+                                # Update series with missing body_part_examined
+                                if series_info.body_part_examined:
+                                    update_series_missing_fields(
+                                        series_pk,
+                                        body_part_examined=series_info.body_part_examined
+                                    )
                     
                     logger.info(
                         f"💾 DB records updated: Patient PK={patient_pk}, Study PK={study_pk}, "

@@ -92,13 +92,11 @@ class DownloadStateStore:
                 old_values={}
             )
             self._history.append(change)
-            
-            # Notify observers
-            self._notify_observers('created', task.study_uid, state)
-            
             logger.info(f"✅ Created state for {task.patient_name} ({task.study_uid[:40]}...)")
-            
-            return state
+
+        # Fire outside lock to avoid holding _lock while Qt-thread observers run.
+        self._notify_observers('created', task.study_uid, state)
+        return state
     
     def update(self, study_uid: str, **changes) -> None:
         """
@@ -204,12 +202,24 @@ class DownloadStateStore:
             )
             self._history.append(change)
 
-            # Notify observers for each field change
-            for field_name, new_value in changes.items():
-                old_value = old_values.get(field_name)
-                self._notify_observers('updated', study_uid, state, field_name, old_value, new_value)
+            # Collect notifications BEFORE releasing the lock so we capture a
+            # consistent snapshot; we fire them OUTSIDE the lock below.
+            # This prevents cross-thread lock contention: the download worker
+            # thread no longer holds _lock while Qt-signal observers run on
+            # the main thread (which also needs _lock for state reads).
+            pending_notifications = [
+                (field_name, old_values.get(field_name), new_value)
+                for field_name, new_value in changes.items()
+            ]
 
             logger.debug(f"Updated state for {study_uid[:40]}...: {changes}")
+
+        # ── Fire observer notifications OUTSIDE the lock ──────────────────
+        # The lock is now released. Main-thread observers (Qt signal
+        # handlers, UI updates) can freely call state_store.get() without
+        # deadlocking against this update path.
+        for field_name, old_value, new_value in pending_notifications:
+            self._notify_observers('updated', study_uid, state, field_name, old_value, new_value)
     
     def get(self, study_uid: str) -> Optional[DownloadState]:
         """
@@ -255,10 +265,12 @@ class DownloadStateStore:
             study_uid: Study UID to remove
         """
         with self._lock:
-            if study_uid in self._states:
-                state = self._states.pop(study_uid)
-                self._notify_observers('removed', study_uid, state)
-                logger.info(f"🗑️ Removed state for {study_uid[:40]}...")
+            if study_uid not in self._states:
+                return
+            state = self._states.pop(study_uid)
+            logger.info(f"🗑️ Removed state for {study_uid[:40]}...")
+        # Fire outside lock – same reason as create/update.
+        self._notify_observers('removed', study_uid, state)
     
     def reset(self, study_uid: str) -> None:
         """
@@ -338,11 +350,11 @@ class DownloadStateStore:
                 old_values=old_values
             )
             self._history.append(change)
-            
-            # Notify observers for status change
-            self._notify_observers('updated', study_uid, new_state, 'status', old_values['status'], DownloadStatus.PENDING)
-            
+
             logger.info(f"✅ 🔄 FORCE RESET study {study_uid[:40]}... to PENDING (bypassed terminal state check)")
+
+        # Fire outside lock – same pattern as update/create/remove.
+        self._notify_observers('updated', study_uid, new_state, 'status', old_values['status'], DownloadStatus.PENDING)
     
     def get_by_status(self, status: DownloadStatus) -> List[DownloadState]:
         """

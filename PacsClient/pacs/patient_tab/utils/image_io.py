@@ -617,6 +617,24 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
                         window_width = window_width if window_width is not None else 400
                         window_center = window_center if window_center is not None else 40
                 
+                # Extract orientation/position/spacing so reference-line
+                # code never raises KeyError on filesystem-loaded series.
+                try:
+                    raw_iop = dcm.get('ImageOrientationPatient', None)
+                    _iop = [float(v) for v in raw_iop] if raw_iop is not None else None
+                except Exception:
+                    _iop = None
+                try:
+                    raw_ipp = dcm.get('ImagePositionPatient', None)
+                    _ipp = [float(v) for v in raw_ipp] if raw_ipp is not None else None
+                except Exception:
+                    _ipp = None
+                try:
+                    raw_ps = dcm.get('PixelSpacing', None)
+                    _ps = [float(v) for v in raw_ps] if raw_ps is not None else None
+                except Exception:
+                    _ps = None
+
                 instance = {
                     'instance_number': i,
                     'instance_path': str(dicom_file),
@@ -626,6 +644,9 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
                     'window_center': window_center,
                     'is_rgb': dcm.PhotometricInterpretation in ['RGB', 'YBR_FULL', 'YBR_FULL_422'],
                     'sop_uid': dcm.get('SOPInstanceUID', f'generated_{i}'),
+                    'image_orientation_patient': _iop,
+                    'image_position_patient': _ipp,
+                    'pixel_spacing': _ps,
                 }
                 instances.append(instance)
             except Exception as e:

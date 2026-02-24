@@ -6213,8 +6213,10 @@ class PatientWidget(QWidget):
                 t_slice = iv.GetSlice()
                 t_inst = iv.metadata['instances'][t_slice]
 
-                target_image_orientation_patient = t_inst['image_orientation_patient']
-                target_image_position_patient = t_inst['image_position_patient']
+                # Use .get() to avoid KeyError when instances come from the
+                # filesystem-load path which may not store IOP/IPP keys.
+                target_image_orientation_patient = t_inst.get('image_orientation_patient')
+                target_image_position_patient = t_inst.get('image_position_patient')
                 if (target_image_orientation_patient is None) or (target_image_position_patient is None):
                     reference_line.rl_hide_actor_if_any(iv)
                     continue  # skip this target, process remaining viewers

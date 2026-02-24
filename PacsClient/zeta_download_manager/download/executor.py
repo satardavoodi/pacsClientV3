@@ -401,11 +401,27 @@ class DownloadExecutor:
             thumb_dir = THUMBNAIL_PATH / study_uid
             thumb_dir.mkdir(parents=True, exist_ok=True)
 
+            # Write-through to ThumbnailStore so the viewer reads from memory
+            # instead of hitting disk on every thumbnail request.
+            try:
+                from PacsClient.utils.thumbnail_store import ThumbnailStore  # type: ignore
+                _thumb_store = ThumbnailStore.instance()
+            except Exception:
+                _thumb_store = None
+
             for series_number, image_bytes in thumbnails.items():
                 # UI expects {series_number}.png in THUMBNAIL_PATH
                 thumb_path = thumb_dir / f"{series_number}.png"
                 with open(thumb_path, 'wb') as f:
                     f.write(image_bytes)
+
+                # Populate shared in-memory thumbnail cache so both the
+                # home-page panel and the viewer panel skip the disk read.
+                if _thumb_store is not None and image_bytes:
+                    try:
+                        _thumb_store.put(study_uid, str(series_number), image_bytes)
+                    except Exception:
+                        pass
 
                 logger.debug(f"💾 Saved thumbnail: {thumb_path.name}")
 

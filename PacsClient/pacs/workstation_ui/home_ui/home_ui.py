@@ -1407,8 +1407,13 @@ class HomePanelWidget(QWidget):
             
             # Add downloads to Zeta
             zeta_manager.add_downloads(selected_studies, start_immediately=True)
-            
-            print(f"✅ {len(selected_studies)} studies added to Download Manager")
+            # Throttle all ZetaBoost warmup workers globally while any download runs.
+            try:
+                from PacsClient.pacs.patient_tab.zeta_boost.engine import set_global_download_active
+                set_global_download_active(True)
+                print("[GlobalDL] set_global_download_active=True")
+            except Exception:
+                pass
 
         except Exception as e:
             print(f"❌ Error in _on_download_requested: {str(e)}")
@@ -1467,7 +1472,14 @@ class HomePanelWidget(QWidget):
             print(f"[Zeta NPR] Adding {len(selected_studies)} studies to manager")
             download_manager.add_downloads(selected_studies, start_immediately=True)
             print(f"[Zeta NPR] Studies added and downloads started automatically")
-            
+            # Throttle all ZetaBoost warmup workers globally while any download runs.
+            try:
+                from PacsClient.pacs.patient_tab.zeta_boost.engine import set_global_download_active
+                set_global_download_active(True)
+                print("[GlobalDL] set_global_download_active=True")
+            except Exception:
+                pass
+
             if len(selected_studies) > 0:
                 print(f"[Zeta NPR] ✅ Added {len(selected_studies)} studies to queue")
                 # UI feedback - downloads will appear in Download Manager tab
@@ -1605,6 +1617,8 @@ class HomePanelWidget(QWidget):
                         pass
             
             def on_series_progress(uid, series_uid, current, total):
+                # This slot is now called at most 10x/sec via the 100ms throttle
+                # timer in DownloadManagerWidget — no additional modulo guard needed.
                 if uid == study_uid and widget:
                     try:
                         series_number = _resolve_series_number(series_uid)
@@ -1733,12 +1747,31 @@ class HomePanelWidget(QWidget):
                     self._auto_open_downloaded_study(study_uid)
             
             print(f"{'='*70}\n")
-            
+            # Re-evaluate global warmup throttle flag (may clear if no active downloads).
+            self._refresh_global_download_flag()
+
         except Exception as e:
             print(f"❌ [FATAL] Error: {e}")
             import traceback
             traceback.print_exc()
-    
+
+    def _refresh_global_download_flag(self):
+        """Update the ZetaBoost global download flag from the live state store.
+
+        Clears the flag (allowing full-speed warmup) when no downloads are
+        active; leaves it set when at least one study is still downloading.
+        Called after each study completes or fails.
+        """
+        try:
+            from PacsClient.zeta_download_manager.state.state_store import get_state_store
+            from PacsClient.pacs.patient_tab.zeta_boost.engine import set_global_download_active
+            active_list = get_state_store().get_active_downloads()
+            active = bool(active_list)
+            set_global_download_active(active)
+            print(f"[GlobalDL] set_global_download_active={active} (remaining_active={len(active_list)})")
+        except Exception as _e:
+            print(f"[GlobalDL] refresh error: {_e}")
+
     def _get_study_info_for_completed_download(self, study_uid: str) -> dict:
         """Get study info for a completed download from local files or database"""
         try:
@@ -1850,17 +1883,9 @@ class HomePanelWidget(QWidget):
                 self.patient_table_widget.update_study_download_status(study_uid, 'error')
                 print(f"✓ Updated patient table for {study_uid}: error")
             
-        except Exception as e:
-            print(f"Error handling study download failure: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    def _auto_open_downloaded_study(self, study_uid: str):
-        """Automatically open a study after it's downloaded"""
-        try:
-            # Find the study in the table
-            if not hasattr(self, 'patient_table_widget'):
-                return
+            # Re-evaluate global warmup throttle flag.
+            self._refresh_global_download_flag()
+
             
             for row in range(self.patient_table_widget.results_table.rowCount()):
                 uid_item = self.patient_table_widget.results_table.item(row, COL['study_uid'])

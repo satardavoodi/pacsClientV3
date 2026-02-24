@@ -452,18 +452,22 @@ class SeriesDownloader:
             series_path: Path to series directory on disk
         """
         try:
-            from PacsClient.utils.database import get_connection_database
-            conn = get_connection_database()
-            cur = conn.cursor()
-            
-            cur.execute(
-                "UPDATE series SET series_path = ? WHERE series_uid = ?",
-                (series_path, series_uid)
-            )
-            conn.commit()
-            
+            from PacsClient.utils.database import get_db_connection
+            # Offload the synchronous SQLite write to a thread-pool executor so
+            # the asyncio / Qt event loop is not blocked during the DB commit.
+            _uid = series_uid
+            _path = series_path
+            def _sync_update():
+                with get_db_connection() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "UPDATE series SET series_path = ? WHERE series_uid = ?",
+                        (_path, _uid)
+                    )
+                    conn.commit()
+            _loop = asyncio.get_running_loop()
+            await _loop.run_in_executor(None, _sync_update)
             logger.debug(f"💾 Updated series_path in database: {series_uid[:40]}... -> {series_path}")
-        
         except Exception as e:
             logger.warning(f"⚠️ Failed to update series_path: {e}")
     
@@ -475,63 +479,76 @@ class SeriesDownloader:
     ) -> None:
         """
         Save instances from downloaded DICOM files to database (R37)
-        
+
         ✅ CRITICAL FIX: This ensures instances are recorded in the database
         after download, enabling local tab display and print functionality.
-        
+
+        Viewer-isolation fixes applied:
+        - Uses get_db_connection() context manager so connections are always
+          closed → eliminates ResourceWarning: unclosed database spam.
+        - Yields the GIL every _DICOM_YIELD_INTERVAL files via
+          ``await asyncio.sleep(0)``, giving the viewer render loop a chance
+          to run between reads instead of monopolising the GIL for 10–30 s.
+
         Args:
             study_uid: Study UID
             series_info: Series information
             series_output_dir: Path to downloaded DICOM files
         """
+        # How often to yield the GIL to the viewer (every N DICOM reads).
+        # Reduced 20 → 5: 20 files × 3 ms = 60 ms hold; 5 × 3 ms = 15 ms.
+        _DICOM_YIELD_INTERVAL = 5
+
         try:
             if not PYDICOM_AVAILABLE:
                 logger.warning(f"⚠️ pydicom not available - skipping instance database insertion")
                 return
-            
-            # Get series_pk from database
-            from PacsClient.utils.database import get_connection_database
-            conn = get_connection_database()
-            cur = conn.cursor()
-            
-            cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_info.series_uid,))
-            series_row = cur.fetchone()
-            if not series_row:
-                logger.warning(f"⚠️ Series not found in database: {series_info.series_uid}")
-                return
-            
-            series_pk = series_row[0]
-            
+
+            # Get series_pk from database.
+            # IMPORTANT: use the context-manager form so the connection is
+            # guaranteed to close even on early returns or exceptions.
+            from PacsClient.utils.database import get_db_connection
+            series_pk = None
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_info.series_uid,))
+                series_row = cur.fetchone()
+                if not series_row:
+                    logger.warning(f"⚠️ Series not found in database: {series_info.series_uid}")
+                    return
+                series_pk = series_row[0]
+
             # Find all DICOM files in series directory
             dicom_files = sorted(series_output_dir.glob("*.dcm"))
             if not dicom_files:
                 logger.warning(f"⚠️ No DICOM files found in {series_output_dir}")
                 return
-            
-            # Read DICOM metadata and prepare instance records
+
+            # Read DICOM metadata and prepare instance records.
+            # Yield GIL every _DICOM_YIELD_INTERVAL reads so the viewer stays smooth.
+            import json as _json
             instances_to_insert = []
-            inserted_count = 0
             skipped_count = 0
-            
+
             logger.info(f"    💾 [DB-INSERT] Processing {len(dicom_files)} DICOM files for series {series_info.series_number or series_info.series_uid[:20]}...")
-            
-            # Change #9C: Yield GIL every 5 files.
-            # pydicom.dcmread() is pure Python (~15-30ms per file, GIL held the whole time).
-            # asyncio.sleep(0) lets the event loop run its I/O selector → brief GIL release
-            # → main thread can proceed with VTK render between these pydicom bursts.
-            for _dcm_idx, dcm_file in enumerate(dicom_files):
-                if _dcm_idx % 5 == 0:
-                    await asyncio.sleep(0)
+
+            for file_idx, dcm_file in enumerate(dicom_files):
+                # Periodic GIL yield: let the Qt main thread render between batches.
+                # asyncio.sleep(0.002) produces a real 2ms OS timer sleep, releasing
+                # the GIL entirely so warmup workers and the viewer main thread can run.
+                if file_idx % _DICOM_YIELD_INTERVAL == 0 and file_idx > 0:
+                    await asyncio.sleep(0.005)
+
                 try:
-                    # Read DICOM file
+                    # Read DICOM header only (stop_before_pixels keeps it fast)
                     dcm = pydicom.dcmread(dcm_file, stop_before_pixels=True)
-                    
+
                     # Extract instance information
                     sop_uid = dcm.get('SOPInstanceUID', str(dcm_file))
                     instance_number = dcm.get('InstanceNumber', 0)
                     rows = dcm.get('Rows', 0)
                     columns = dcm.get('Columns', 0)
-                    
+
                     # Extract window/level from DICOM tags
                     window_width = None
                     window_center = None
@@ -544,9 +561,32 @@ class SeriesDownloader:
                             window_center = float(wc[0]) if hasattr(wc, '__iter__') and not isinstance(wc, str) else float(wc)
                     except (ValueError, TypeError, IndexError):
                         pass
-                    
-                    # Create instance record
-                    instance_record = {
+
+                    # Extract orientation/position/spacing — stored now so the viewer
+                    # never needs to run _backfill_instance_orientation on load.
+                    iop_json = None
+                    ipp_json = None
+                    ps_json = None
+                    try:
+                        raw_iop = dcm.get('ImageOrientationPatient', None)
+                        if raw_iop is not None:
+                            iop_json = _json.dumps([float(v) for v in raw_iop])
+                    except Exception:
+                        pass
+                    try:
+                        raw_ipp = dcm.get('ImagePositionPatient', None)
+                        if raw_ipp is not None:
+                            ipp_json = _json.dumps([float(v) for v in raw_ipp])
+                    except Exception:
+                        pass
+                    try:
+                        raw_ps = dcm.get('PixelSpacing', None)
+                        if raw_ps is not None:
+                            ps_json = _json.dumps([float(v) for v in raw_ps])
+                    except Exception:
+                        pass
+
+                    instances_to_insert.append({
                         'sop_uid': str(sop_uid),
                         'series_fk': series_pk,
                         'instance_path': str(dcm_file),
@@ -554,33 +594,49 @@ class SeriesDownloader:
                         'rows': int(rows),
                         'columns': int(columns),
                         'window_width': window_width,
-                        'window_center': window_center
-                    }
-                    
-                    instances_to_insert.append(instance_record)
-                    
+                        'window_center': window_center,
+                        'image_orientation_patient': iop_json,
+                        'image_position_patient': ipp_json,
+                        'pixel_spacing': ps_json,
+                    })
+
                 except Exception as dcm_err:
                     logger.debug(f"    ⚠️ Error reading DICOM {dcm_file.name}: {dcm_err}")
                     skipped_count += 1
-            
-            # Batch insert all instances
+
+            # Yield once more before the batch DB write.
+            await asyncio.sleep(0.005)
+
+            # Batch insert all instances.
+            # CRITICAL: run in executor thread so the asyncio/Qt event loop is
+            # NOT blocked during the SQLite write (~50-150 ms for 120 rows).
+            # Without this, every scroll event queued while the write runs is
+            # delayed until the write completes → visible scroll stutter.
+            inserted_count = 0
             if instances_to_insert:
                 try:
-                    count = self.database_manager.batch_insert_instances(
-                        series_pk=series_pk,
-                        instances=instances_to_insert
+                    _db_mgr = self.database_manager
+                    _series_pk = series_pk
+                    _insts = instances_to_insert
+                    _loop = asyncio.get_running_loop()
+                    count = await _loop.run_in_executor(
+                        None,
+                        lambda: _db_mgr.batch_insert_instances(
+                            series_pk=_series_pk,
+                            instances=_insts,
+                        )
                     )
-                    inserted_count = count
+                    inserted_count = count if count is not None else 0
                     logger.info(f"    ✅ Inserted {inserted_count} instances to database for series {series_info.series_number or series_info.series_uid[:20]}")
                 except Exception as db_err:
                     logger.error(f"    ❌ Database batch insert failed: {db_err}")
                     return
-            
+
             if skipped_count > 0:
                 logger.warning(f"    ⚠️ Skipped {skipped_count} DICOM files with read errors")
-            
+
             logger.info(f"    💾 [DB-INSERT] Series {series_info.series_number or series_info.series_uid[:20]}: {inserted_count} instances saved to database")
-        
+
         except Exception as e:
             logger.error(f"❌ Failed to save series instances to database: {e}")
             import traceback
