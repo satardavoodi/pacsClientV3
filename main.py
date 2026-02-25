@@ -7,6 +7,99 @@ import logging
 # (spawn start-method on Windows): must be called before any other code.
 multiprocessing.freeze_support()
 
+# ============================================================================
+# CRITICAL: Graphics/OpenGL Configuration MUST happen before any Qt/VTK imports
+# ============================================================================
+
+def configure_graphics_fallback():
+    """
+    Configure comprehensive graphics fallback for maximum compatibility.
+    
+    This prevents VTK/OpenGL crashes on systems with:
+    - Missing or outdated GPU drivers
+    - Incompatible OpenGL versions
+    - No dedicated GPU (integrated graphics only)
+    - Remote desktop / virtual machine environments
+    
+    Exit codes for critical failures:
+    - 1: Graphics subsystem initialization failed (fatal)
+    """
+    if sys.platform != "win32":
+        return  # Only needed on Windows
+    
+    frozen = getattr(sys, 'frozen', False)
+    
+    # ========================================================================
+    # Qt Graphics Configuration
+    # ========================================================================
+    
+    # Force software OpenGL rendering (bypasses GPU/driver issues)
+    os.environ["QT_OPENGL"] = "software"
+    os.environ["QT_QUICK_BACKEND"] = "software"
+    
+    # Disable Qt's native OpenGL detection (prevents crashes on driver mismatch)
+    os.environ["QT_XCB_GL_INTEGRATION"] = "none"
+    
+    # Force ANGLE to use software WARP renderer (DirectX software fallback)
+    os.environ["ANGLE_DEFAULT_PLATFORM"] = "warp"
+    
+    # ========================================================================
+    # VTK Graphics Configuration
+    # ========================================================================
+    
+    # Force VTK to use Mesa software rendering if hardware OpenGL fails
+    os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+    
+    # Disable VTK hardware detection (prevents GPU-specific crashes)
+    os.environ["VTK_USE_HARDWARE"] = "0"
+    
+    # ========================================================================
+    # Chromium/WebEngine Configuration (for embedded browser)
+    # ========================================================================
+    
+    chromium_flags = [
+        "--disable-gpu",                    # Disable GPU acceleration
+        "--in-process-gpu",                 # Run GPU in main process (safer)
+        "--disable-gpu-compositing",        # Disable GPU-based compositing
+        "--disable-features=VizDisplayCompositor,UseSkiaRenderer",
+        "--enable-media-stream",            # Required for camera/mic if needed
+        "--ignore-gpu-blocklist",           # Bypass GPU blocklist checks
+        "--disable-software-rasterizer"     # Use CPU rasterizer
+    ]
+    
+    if not frozen:
+        # Development mode: explicitly use SwiftShader software renderer
+        os.environ["QTWEBENGINE_DISABLE_GPU"] = "1"
+        chromium_flags.append("--use-angle=swiftshader")
+    else:
+        # Production (frozen): use WARP for best compatibility
+        chromium_flags.append("--use-angle=warp")
+    
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(chromium_flags)
+    
+    # ========================================================================
+    # Windows-Specific Graphics DLL Search
+    # ========================================================================
+    
+    if frozen:
+        # Ensure _internal directory is in DLL search path
+        internal_dir = os.path.join(os.path.dirname(sys.executable), "_internal")
+        if os.path.exists(internal_dir):
+            # Add _internal to PATH for DLL loading
+            os.environ["PATH"] = internal_dir + os.pathsep + os.environ.get("PATH", "")
+    
+    # ========================================================================
+    # Logging (minimal, before logging subsystem fully initialized)
+    # ========================================================================
+    
+    print(f"[GRAPHICS] Mode: {'FROZEN' if frozen else 'DEVELOPMENT'}")
+    print(f"[GRAPHICS] QT_OPENGL: software")
+    print(f"[GRAPHICS] ANGLE_DEFAULT_PLATFORM: warp")
+    print(f"[GRAPHICS] VTK software fallback: enabled")
+
+# Configure graphics BEFORE any Qt/VTK imports
+configure_graphics_fallback()
+
 # Fix Windows console encoding for emoji support
 if sys.platform == 'win32':
     try:
@@ -40,30 +133,32 @@ from PacsClient.utils import IMAGES_LOGIN_PATH
 from PacsClient.utils.disk_alert_service import DiskUsageAlertService
 from PacsClient.utils.diagnostic_logging import configure_diagnostic_logging
 
-import os
-
-# os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-#     "--disable-gpu --in-process-gpu --disable-gpu-compositing "
-#     "--disable-features=VizDisplayCompositor,UseSkiaRenderer "
-#     "--use-angle=d3d11 --ignore-gpu-blocklist"
-# )
-
-if sys.platform == "win32":
-    # Use software rendering for maximum compatibility
-    os.environ["QT_OPENGL"] = "software"
-    os.environ["QT_QUICK_BACKEND"] = "software"
-    chromium_flags = "--disable-gpu --in-process-gpu --disable-gpu-compositing --enable-media-stream"
-    if not getattr(sys, "frozen", False):
-        os.environ["QTWEBENGINE_DISABLE_GPU"] = "1"
-        chromium_flags += " --use-angle=swiftshader"
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = chromium_flags
-
+# Graphics configuration has been moved to configure_graphics_fallback() function
+# at the top of this file (before any Qt/VTK imports) for maximum compatibility
 
 if __name__ == "__main__":
     # Set working directory to _internal for PyInstaller builds
     if getattr(sys, 'frozen', False):
         # Running as PyInstaller executable
         os.chdir(sys._MEIPASS)
+
+    # Load environment variables from .env file if present (for production logging control)
+    try:
+        from dotenv import load_dotenv
+        from pathlib import Path
+        # Try loading from installation directory (for production)
+        install_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path.cwd()
+        env_file = install_dir / '.env'
+        if env_file.exists():
+            load_dotenv(dotenv_path=env_file, override=True)
+            print(f"[CONFIG] Loaded environment from: {env_file}")
+        # Also try config/production_logging.env
+        config_env = install_dir / 'config' / 'production_logging.env'
+        if config_env.exists():
+            load_dotenv(dotenv_path=config_env, override=False)  # Don't override .env if it exists
+            print(f"[CONFIG] Loaded production logging config: {config_env}")
+    except Exception as e:
+        print(f"[CONFIG] Could not load .env file: {e}")
 
     configure_diagnostic_logging(process_role="main", force=True)
     logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
@@ -85,7 +180,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("2.2.3.0")
+    app.setApplicationVersion("2.2.3.0.1")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

@@ -1176,6 +1176,13 @@ class SecretaryButtonWidget(QWidget):
     def _on_active_changed(self, active):
         if active:
             self._stage_lines = []
+            
+            # Check microphone availability first
+            if not self._check_microphone_available():
+                self._set_active_silent(False)
+                QTimer.singleShot(0, lambda: self.set_ui_state("error"))
+                return
+            
             if not self._ensure_echomind_login():
                 self._set_active_silent(False)
                 QTimer.singleShot(0, lambda: self.set_ui_state("error"))
@@ -1347,6 +1354,68 @@ class SecretaryButtonWidget(QWidget):
                 lines.append(f"Selected: {pid} - {name} | {suid}")
 
         return "\n".join([line for line in lines if line])
+
+    def _check_microphone_available(self) -> bool:
+        """
+        Check if a microphone is available and active.
+        Returns True if microphone is available, False otherwise.
+        Shows an error message to the user if microphone is not available.
+        """
+        try:
+            # Get list of input devices
+            devices = sd.query_devices()
+            if not devices:
+                QMessageBox.warning(
+                    self,
+                    "Microphone Not Found",
+                    "No audio input devices detected. Please connect a microphone and try again.",
+                )
+                self._post_log("system", "Error: No audio input devices found.")
+                return False
+            
+            # Check if default input device is available
+            try:
+                default_input = sd.query_devices(kind='input')
+                if default_input is None:
+                    QMessageBox.warning(
+                        self,
+                        "Microphone Not Available",
+                        "No default input device is configured. Please check your audio settings.",
+                    )
+                    self._post_log("system", "Error: No default input device configured.")
+                    return False
+                
+                # Check if the device has input channels
+                max_input_channels = default_input.get('max_input_channels', 0)
+                if max_input_channels <= 0:
+                    QMessageBox.warning(
+                        self,
+                        "Microphone Inactive",
+                        "The default input device has no active input channels. Please enable your microphone.",
+                    )
+                    self._post_log("system", "Error: Default input device has no active channels.")
+                    return False
+                
+                self._post_log("system", f"Microphone check OK: {default_input.get('name', 'Unknown device')}")
+                return True
+                
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Microphone Error",
+                    f"Unable to access the microphone. Please check your audio settings.\n\nError: {str(e)}",
+                )
+                self._post_log("system", f"Error: Failed to query input device: {e}")
+                return False
+                
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Audio System Error",
+                f"Failed to check audio devices. Please verify your audio drivers are installed.\n\nError: {str(e)}",
+            )
+            self._post_log("system", f"Error: Failed to check audio devices: {e}")
+            return False
 
     def _ensure_echomind_login(self) -> bool:
         mgr = APIKeyManager.instance()

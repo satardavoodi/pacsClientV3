@@ -38,3 +38,15 @@
 - When changing image pipeline or sync mapping, update `docs/IMAGE_PIPELINE_REFERENCE.md`.
 - When changing Zeta MPR internals, update `PacsClient/pacs/patient_tab/zeta mpr/ZETA_MPR_PIPELINE_REFERENCE.md`.
 - When bumping versions, update `VERSION_*.md` with date, tag, and commit.
+
+## Cross-PC improvement cycle (mandatory)
+- **PC roles:** treat the current development machine as **PC A (Developer PC)**. Other machines (e.g., PC B) are validation targets.
+- **Standard cycle for every optimization/debugging change:**
+	1. Apply code changes locally on **PC A**.
+	2. Validate locally on **PC A** (focused run/log check for the changed flow).
+	3. Push updated code from **PC A** to GitHub.
+	4. Pull the same commit on **PC B**.
+	5. Re-run the same scenario on **PC B** and compare behavior/logs.
+	6. Decide next iteration based on **PC A vs PC B** deltas, then repeat.
+- **Scope:** use this cycle for all future cross-PC performance, stability, and debugging work.
+- **Reference:** `docs/CROSS_PC_IMPROVEMENT_WORKFLOW.md`.

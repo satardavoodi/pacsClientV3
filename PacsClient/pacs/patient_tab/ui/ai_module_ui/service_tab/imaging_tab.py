@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QObject
+from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QObject, QEventLoop
 from PySide6.QtGui import QStandardItemModel, QStandardItem, QMovie
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QFileDialog, QGroupBox, QHBoxLayout,
@@ -308,6 +308,9 @@ class CheckComboBox(QComboBox):
 # ------------------------------ Main Tab ------------------------------
 
 class ImagingToolsTab(AbstractTab):
+    # Signal emitted when tab is fully loaded and rendered
+    fully_loaded = Signal()
+    
     def __init__(self, study_uid: Optional[str] = None):
         super().__init__()
         self.tool_access = ToolAccess()
@@ -336,22 +339,7 @@ class ImagingToolsTab(AbstractTab):
         self.left_sidebar_layout.setContentsMargins(0, 0, 0, 0)
         self.left_sidebar_root_layout.addWidget(self.left_sidebar_widget)
 
-        # ---- Create main stack for VTK loading
-        self.main_stack = QStackedWidget()
-        
-        # Placeholder widget
-        self.placeholder_widget = QWidget()
-        placeholder_layout = QVBoxLayout(self.placeholder_widget)
-        placeholder_layout.setAlignment(Qt.AlignCenter)
-        
-        self.loading_label = QLabel("Loading medical images...")
-        self.loading_label.setAlignment(Qt.AlignCenter)
-        self.loading_label.setStyleSheet("font-size: 18px; color: #666; font-weight: bold;")
-        placeholder_layout.addWidget(self.loading_label)
-        
-        self.main_stack.addWidget(self.placeholder_widget)  # Index 0
-
-        # Patient widget container
+        # ---- Create patient widget directly (no loading placeholder)
         self.patient_widget_container = QWidget()
         self.patient_widget_layout = QVBoxLayout(self.patient_widget_container)
         self.patient_widget_layout.setContentsMargins(0, 0, 0, 0)
@@ -361,11 +349,9 @@ class ImagingToolsTab(AbstractTab):
             study_uid=study_uid,
             imaging_tab_ui=self
         )
-        self.patient_widget_container.hide()
         self.patient_widget_layout.addWidget(self.patient_widget)
-        self.main_stack.addWidget(self.patient_widget_container)  # Index 1
 
-        self.vertical_layout.addWidget(self.main_stack, stretch=5)
+        self.vertical_layout.addWidget(self.patient_widget_container, stretch=5)
 
         # Remove unnecessary buttons
         self._remove_patient_widget_buttons()
@@ -440,16 +426,19 @@ class ImagingToolsTab(AbstractTab):
 
     def _post_init_setup(self):
         """اجرای عملیات سنگین پس از نمایش UI اولیه"""
-        # نمایش patient widget container
-        self.patient_widget_container.show()
+        # Patient widget is already visible, just finalize setup
+        QTimer.singleShot(100, self._finalize_loading)
         
-        # تغییر به patient widget
-        QTimer.singleShot(500, lambda: self.main_stack.setCurrentIndex(1))
+    def _finalize_loading(self):
+        """Complete the loading process and emit ready signal."""
+        # Process pending events to ensure full render
+        QApplication.processEvents()
+        QApplication.processEvents()
         
-        # فعال‌سازی tab پیش‌فرض
+        # فعال‌سازی tab پیش‌فرض (فقط button style، بدون switch برای جلوگیری از لودینگ دوباره)
         if hasattr(self.patient_widget, 'btn_ai_module'):
             self.patient_widget.btn_ai_module.setChecked(True)
-            self.patient_widget.switch_right_panel("ai_module")
+            # Don't call switch_right_panel here - it's already called and causes double loading
         
         # بارگذاری سایدبار
         QTimer.singleShot(150, self.left_sidebar_layout_ui)
@@ -463,10 +452,13 @@ class ImagingToolsTab(AbstractTab):
         except Exception:
             pass
 
+        # Emit signal immediately - tab is visible and ready for user
+        self.fully_loaded.emit()
+        print("[ImagingToolsTab] Tab visible, emitting fully_loaded signal")
         
-        # Load MG runs if needed
+        # Load MG runs in background (after loading overlay is removed)
         if self.detect_modality() == "MG":
-            self._load_mg_runs_into_dropdown()
+            QTimer.singleShot(100, self._load_mg_runs_into_dropdown)
 
     def _init_mg_widgets(self):
         """

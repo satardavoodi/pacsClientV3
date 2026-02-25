@@ -220,6 +220,7 @@ class ViewerController:
         
         self._viewer_batch_queue = []
         self._async_switch_inflight = set()  # {(viewer_id, series_number)}
+        self._viewer_switch_inflight = set()  # {(viewer_id, series_number)}
         
         # Performance optimization flags
         self._critical_sections_running = 0
@@ -261,6 +262,7 @@ class ViewerController:
         self._heavy_warmup_idle_sec = float(os.getenv("AIPACS_HEAVY_WARMUP_IDLE_SEC", "2.5") or "2.5")
         self._plan_a_viewer_first = os.getenv("AIPACS_PLAN_A_VIEWER_FIRST", "1") == "1"
         self._viewer_interaction_pause_ms = int(os.getenv("AIPACS_VIEWER_INTERACTION_PAUSE_MS", "350") or "350")
+        self._open_warmup_min_idle_sec = max(0.0, float(os.getenv("AIPACS_OPEN_WARMUP_MIN_IDLE_SEC", "1.2") or "1.2"))
         self._interaction_release_token = 0
         self._interactive_preview_enabled = os.getenv("AIPACS_INTERACTIVE_PREVIEW_ENABLED", "0") == "1"
         self._interactive_preview_max_slices = max(1, int(os.getenv("AIPACS_INTERACTIVE_PREVIEW_MAX_SLICES", "64") or "64"))
@@ -671,8 +673,12 @@ class ViewerController:
             # activation.  Handles the case where download started while the tab was
             # inactive (engine was deactivated by _on_pipeline_state_changed).
             if self.pipeline.state in (PipelineState.POST_DOWNLOAD, PipelineState.READY):
-                self.zeta_boost.set_study_download_complete(True)
-                self.zeta_boost.set_download_active(False)
+                if not self._global_downloads_active():
+                    self.zeta_boost.set_study_download_complete(True)
+                    self.zeta_boost.set_download_active(False)
+                else:
+                    self.zeta_boost.set_study_download_complete(False)
+                    self.zeta_boost.set_download_active(True)
             elif self.pipeline.state == PipelineState.DOWNLOADING:
                 # Tab is being activated while a download is still in progress.
                 # Sync engine flags so it knows warmup is blocked.  Workers are
@@ -682,7 +688,13 @@ class ViewerController:
                 self.zeta_boost.set_image_boost_mode(True)
             # Schedule warmup check.  _start_open_tab_warmup guards itself with
             # pipeline.is_warmup_allowed, so this is a no-op if downloading.
-            QTimer.singleShot(900, self._start_open_tab_warmup)
+            if not self._global_downloads_active():
+                QTimer.singleShot(900, self._start_open_tab_warmup)
+            else:
+                print(
+                    f"[WARMUP] Activation warmup deferred — global downloads active "
+                    f"count={int(getattr(ZetaBoostEngine, '_global_active_download_count', 0) or 0)}"
+                )
         except Exception:
             pass
 
@@ -2140,6 +2152,7 @@ class ViewerController:
         - Fast paired series detection with index
         - Removes artificial delays
         """
+        switch_key = None
         try:
             _t0 = time.perf_counter()
             t_change_ms = now_ms()
@@ -2189,6 +2202,19 @@ class ViewerController:
                 print(f"❌ [SWITCH FAIL] Invalid target viewport for series {series_number}")
                 self._hide_spinner_for_widget(target_widget_for_spinner)
                 return
+
+            # Re-entrancy guard: prevent duplicate same-series switch requests from
+            # overlapping on the same viewport during active downloads.
+            try:
+                viewer_id = self._get_viewer_id(vtk_widget)
+                switch_key = (viewer_id, series_number)
+                if switch_key in self._viewer_switch_inflight:
+                    print(f"⏳ [SWITCH DEDUP] Suppressed duplicate switch series={series_number} viewer={viewer_id}")
+                    self._hide_spinner_for_widget(target_widget_for_spinner)
+                    return
+                self._viewer_switch_inflight.add(switch_key)
+            except Exception:
+                switch_key = None
 
             # Fast no-op path: same series already displayed on this viewport.
             # Prevents expensive load-on-demand + reset work on repeated drops.
@@ -2317,6 +2343,11 @@ class ViewerController:
             except Exception:
                 pass
         finally:
+            try:
+                if switch_key is not None:
+                    self._viewer_switch_inflight.discard(switch_key)
+            except Exception:
+                pass
             log_stage_timing(
                 self.logger,
                 component="viewer",
@@ -3004,6 +3035,12 @@ class ViewerController:
                 return
             if not self.zeta_boost.is_active():
                 return
+            if self._global_downloads_active():
+                print(
+                    f"[WARMUP] Skipped — global downloads active "
+                    f"count={int(getattr(ZetaBoostEngine, '_global_active_download_count', 0) or 0)}"
+                )
+                return
             # STRICT ISOLATION: Never warm up while downloads are in progress.
             # The pipeline is authoritative: if it says warmup is not allowed
             # (IDLE or DOWNLOADING state), stop here without retry.
@@ -3023,6 +3060,14 @@ class ViewerController:
                     return
             except Exception:
                 pass
+
+            # Keep warmup off while user is actively interacting to avoid
+            # subtle stutter during download-time scrolling.
+            if self._is_user_interaction_hot():
+                if self._open_warmup_retry_count < 10:
+                    self._open_warmup_retry_count += 1
+                    QTimer.singleShot(350, self._start_open_tab_warmup)
+                return
 
             # Ensure thumbnails are already visible before warmup starts.
             try:
@@ -3074,6 +3119,9 @@ class ViewerController:
                 self._warmup_gather_running = False
                 return
             if not self.zeta_boost.is_active():
+                self._warmup_gather_running = False
+                return
+            if self._global_downloads_active() or (not self.pipeline.is_warmup_allowed):
                 self._warmup_gather_running = False
                 return
 
@@ -3856,6 +3904,21 @@ class ViewerController:
 
             print(f"📂 [LOAD] Loading series {series_number} from {study_path} (thread={threading.current_thread().name})")
 
+            # Fast no-op: same series already displayed in target viewport.
+            # Prevents duplicate full ITK pipeline when a second request arrives
+            # while the first switch has already applied.
+            try:
+                if target_vtk_widget is not None and getattr(target_vtk_widget, 'image_viewer', None) is not None:
+                    shown_series = str(
+                        getattr(target_vtk_widget.image_viewer, 'metadata', {}).get('series', {}).get('series_number', '')
+                    )
+                    if shown_series and shown_series == str(series_number):
+                        if int(target_vtk_widget.get_count_of_slices() or 0) > 0:
+                            print(f"⏭️ [LOAD SKIP] same series already visible series={series_number}")
+                            return True
+            except Exception:
+                pass
+
             # Bail out early if tab was deactivated while queued (e.g. user pressed F5).
             # Allow explicit user-driven loads even if tab_active flag is stale.
             if not self._tab_active and not self._interactive_load_in_progress:
@@ -4202,6 +4265,21 @@ class ViewerController:
             QTimer.singleShot(max(1, self._viewer_interaction_pause_ms), _release_if_latest)
         except Exception:
             pass
+
+    def _global_downloads_active(self) -> bool:
+        """Best-effort check for any active download in the app."""
+        try:
+            return int(getattr(ZetaBoostEngine, '_global_active_download_count', 0) or 0) > 0
+        except Exception:
+            return False
+
+    def _is_user_interaction_hot(self) -> bool:
+        """True when the user has interacted recently (scroll/drag/switch)."""
+        try:
+            idle_s = max(0.0, time.time() - float(self._last_user_interaction_ts or 0.0))
+            return idle_s < float(self._open_warmup_min_idle_sec)
+        except Exception:
+            return False
 
     def _mark_download_active(self):
         """Signal the orchestrator that a download-completed series arrived.

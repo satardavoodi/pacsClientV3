@@ -30,6 +30,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget, grow_vtk_inplace
 from PacsClient.pacs.patient_tab.utils import load_images, save_image_as_png, delete_widgets_in_layout, NodeViewer, \
     get_count_dicom_files_exist, load_images_from_server, VerticalButton
+from PacsClient.pacs.patient_tab.utils.button_safeguard import ButtonSafeguard, safeguard_action
 from PacsClient.pacs.workstation_ui.settings_ui.filter_config import FilterConfigWidget
 # from PacsClient.pacs.patient_tab.viewers.advanced_tools_panel import AdvancedToolsPanel  # REMOVED: File deleted during merge
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import ToolbarManager, reference_line
@@ -113,6 +114,11 @@ class PatientWidget(QWidget):
 
         # Initialize the viewer controller
         self.viewer_controller = ViewerController(self)
+
+        # ========== BUTTON SAFEGUARD ==========
+        # Prevents multiple simultaneous button clicks that could cause hangs
+        self.button_safeguard = ButtonSafeguard(self)
+        logger.info("[PatientWidget] Button safeguard initialized")
 
         # Zeta Sync manager (2D viewer sync point)
         self.sync_manager = SyncManager()
@@ -513,6 +519,9 @@ class PatientWidget(QWidget):
                 # (no download needed), trigger first-series display via signal path.
                 QTimer.singleShot(300, self._check_and_load_local_first_series)
                 print("✅ Pipeline flag reset to False")
+                
+                # ✅ Register buttons with safeguard after UI is ready
+                QTimer.singleShot(100, self._register_buttons_with_safeguard)
 
         except Exception as e:
             print(f"❌ _run_pipeline_safely error: {e}")
@@ -522,6 +531,49 @@ class PatientWidget(QWidget):
             self._is_initializing = False
             self.setUpdatesEnabled(True)  # Re-enable on error
             self._hide_init_overlay()
+
+    def _register_buttons_with_safeguard(self):
+        """
+        Register all interactive buttons with the button safeguard.
+        This prevents multiple simultaneous button clicks that could cause hangs.
+        """
+        try:
+            buttons_to_register = []
+            
+            # Sidebar buttons
+            if hasattr(self, 'btn_series'):
+                buttons_to_register.append(self.btn_series)
+            if hasattr(self, 'btn_reception'):
+                buttons_to_register.append(self.btn_reception)
+            if hasattr(self, 'btn_ai_chat'):
+                buttons_to_register.append(self.btn_ai_chat)
+            if hasattr(self, 'btn_ai_module'):
+                buttons_to_register.append(self.btn_ai_module)
+            if hasattr(self, 'btn_advanced_tools'):
+                buttons_to_register.append(self.btn_advanced_tools)
+            
+            # Advanced Analysis buttons
+            if hasattr(self, 'btn_advanced_mpr'):
+                buttons_to_register.append(self.btn_advanced_mpr)
+            if hasattr(self, 'btn_stitching'):
+                buttons_to_register.append(self.btn_stitching)
+            
+            # Reception panel buttons
+            if hasattr(self, 'btn_open_folder_attachments'):
+                buttons_to_register.append(self.btn_open_folder_attachments)
+            
+            # Register all buttons
+            self.button_safeguard.register_buttons(buttons_to_register)
+            
+            # Also auto-discover any other buttons we might have missed
+            self.button_safeguard.auto_discover_buttons()
+            
+            logger.info(f"[PatientWidget] Registered {len(buttons_to_register)} buttons with safeguard")
+            
+        except Exception as e:
+            logger.error(f"[PatientWidget] Error registering buttons with safeguard: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _ensure_initial_series_visible(self):
         """Legacy watchdog — neutered.  First-series display is now signal-driven.
@@ -3151,8 +3203,20 @@ class PatientWidget(QWidget):
                 self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
             self._apply_sidebar_button_styles(ai_module=True)
             self._auto_open_first_series_for_eagle_eye()
+            
+            # ✅ Show modal loading overlay that blocks all interaction
+            self._show_eagle_eye_loading_ui()
+            
+            # Force process events to ensure loading overlay is rendered
+            QApplication.processEvents()
+            QApplication.processEvents()
+            
+            # Safety timeout: Force remove loading after 10 seconds no matter what
+            QTimer.singleShot(10000, lambda: self._force_hide_eagle_eye_loading())
+            
+            # Open Eagle Eye tab with minimal delay
             if self.method_add_new_tab:
-                self.method_add_new_tab(open_ai_client_tab=True, study_uid=self.study_uid)
+                QTimer.singleShot(50, lambda: self._open_eagle_eye_tab_with_loading())
 
         elif option == 'advanced_tools':
             print("[PatientWidget] Advanced Analysis requested")
@@ -3738,6 +3802,15 @@ class PatientWidget(QWidget):
         work (socket timeout inside send_remote_command, etc.) happens.
         """
         print("[PatientWidget] Advanced MPR button clicked")
+        
+        # ========== BUTTON SAFEGUARD: Prevent concurrent operations ==========
+        if not self.button_safeguard.start_operation("Advanced MPR Launch"):
+            QMessageBox.warning(
+                self, "Operation In Progress",
+                "Another operation is currently running. Please wait for it to complete."
+            )
+            return
+        # ======================================================================
 
         # ── Resolve selected series ──────────────────────────────────────
         # Priority: use the *currently active viewer* (blue-bordered tab)
@@ -3801,12 +3874,16 @@ class PatientWidget(QWidget):
                 "Please select a series from the thumbnails panel.\n\n"
                 "No active series available."
             )
+            # End safeguard operation on early return
+            self.button_safeguard.end_operation(success=False, operation_name="Advanced MPR Launch")
             return
         if not os.path.exists(dicom_directory):
             QMessageBox.warning(
                 self, "Directory Not Found",
                 f"DICOM directory not found:\n{dicom_directory}"
             )
+            # End safeguard operation on early return
+            self.button_safeguard.end_operation(success=False, operation_name="Advanced MPR Launch")
             return
 
         # ── Show the overlay NOW and force it to paint ───────────────────
@@ -3850,6 +3927,83 @@ class PatientWidget(QWidget):
                 overlay, fade_ms=500, delay_ms=delay_ms,
             )
             self._advanced_mpr_loading_overlay = None
+
+    # ------------------------------------------------------------------
+    #  Eagle Eye Loading overlay (modal and blocks interaction)
+    # ------------------------------------------------------------------
+    def _show_eagle_eye_loading_ui(self) -> None:
+        """Show modal loading overlay for Eagle Eye that blocks all user interaction."""
+        from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+        self._hide_eagle_eye_loading_ui()  # Remove any existing overlay
+        
+        # Parent to the main window to create a full-screen modal overlay
+        # This will block ALL interaction across the entire application
+        main_window = self.window()
+        
+        self._eagle_eye_loading_overlay = AiPacsLoadingOverlay.show_overlay(
+            parent=main_window,
+            title="EAGLE EYE AI Analysis",
+            status="Loading AI Analysis Module",
+            subtitle="Please wait while the AI module initializes"
+        )
+        
+        # Make it application modal to block ALL user interaction
+        self._eagle_eye_loading_overlay.setWindowModality(Qt.ApplicationModal)
+        
+        # Force immediate paint so loading appears before heavy operations
+        QApplication.processEvents()
+        QApplication.processEvents()  # Double process to ensure full render
+
+    def _hide_eagle_eye_loading_ui(self, *, delay_ms: int = 0) -> None:
+        """Remove the Eagle Eye loading overlay immediately."""
+        from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+        overlay = getattr(self, '_eagle_eye_loading_overlay', None)
+        if overlay is not None:
+            # No fade animation - hide immediately
+            AiPacsLoadingOverlay.hide_overlay(
+                overlay, fade_ms=0, delay_ms=0,
+            )
+            self._eagle_eye_loading_overlay = None
+    
+    def _force_hide_eagle_eye_loading(self) -> None:
+        """Force remove Eagle Eye loading after timeout (safety mechanism)."""
+        overlay = getattr(self, '_eagle_eye_loading_overlay', None)
+        if overlay is not None:
+            print("⚠️ [PatientWidget] Force removing Eagle Eye loading after 10s timeout")
+            from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+            try:
+                AiPacsLoadingOverlay.hide_overlay(overlay, fade_ms=0, delay_ms=0)
+            except Exception as e:
+                print(f"⚠️ Error force hiding overlay: {e}")
+                # Force delete the overlay widget
+                try:
+                    overlay.close()
+                    overlay.deleteLater()
+                except Exception:
+                    pass
+            self._eagle_eye_loading_overlay = None
+    
+    def _open_eagle_eye_tab_with_loading(self) -> None:
+        """Open Eagle Eye tab and hide loading overlay when visible."""
+        try:
+            # Open the Eagle Eye tab
+            if self.method_add_new_tab:
+                ai_widget = self.method_add_new_tab(open_ai_client_tab=True, study_uid=self.study_uid)
+                
+                # Tab is now visible - hide loading after a short delay for UI to render
+                # Process events to ensure tab is painted
+                QApplication.processEvents()
+                QApplication.processEvents()
+                
+                # Hide loading overlay after short delay to ensure tab is visible
+                QTimer.singleShot(500, lambda: self._hide_eagle_eye_loading_ui())
+                print("[PatientWidget] Eagle Eye tab opened, scheduling loading removal")
+        except Exception as e:
+            print(f"⚠️ Error opening Eagle Eye tab: {e}")
+            # Hide loading on error
+            self._hide_eagle_eye_loading_ui()
+            import traceback
+            traceback.print_exc()
     def _launch_advanced_mpr_async(
         self,
         dicom_dir: str,
@@ -3896,6 +4050,11 @@ class PatientWidget(QWidget):
             import traceback
             traceback.print_exc()
             self._hide_advanced_mpr_loading_ui()
+            
+            # ========== BUTTON SAFEGUARD: End operation on exception ==========
+            self.button_safeguard.end_operation(success=False, operation_name="Advanced MPR Launch")
+            # ==================================================================
+            
             QMessageBox.critical(
                 self, "Error",
                 f"Failed to launch Advanced MPR:\n{str(e)}"
@@ -3913,6 +4072,10 @@ class PatientWidget(QWidget):
         if overlay is not None:
             overlay.set_status("3D Slicer launched successfully")
         self._hide_advanced_mpr_loading_ui(delay_ms=1500)
+        
+        # ========== BUTTON SAFEGUARD: End operation on success ==========
+        self.button_safeguard.end_operation(success=True, operation_name="Advanced MPR Launch")
+        # ================================================================
 
     def _on_advanced_mpr_finished(self, exit_code: int) -> None:
         """Handle Advanced MPR process completion (Slicer closed)."""
@@ -3923,6 +4086,10 @@ class PatientWidget(QWidget):
         """Handle Advanced MPR launch error."""
         print(f"[PatientWidget] Advanced MPR error: {error_msg}")
         self._hide_advanced_mpr_loading_ui()
+        
+        # ========== BUTTON SAFEGUARD: End operation on error ==========
+        self.button_safeguard.end_operation(success=False, operation_name="Advanced MPR Launch")
+        # ==============================================================
 
     # ==================================================================
     #  Stitching Module — button handler + launcher + overlay
@@ -3931,6 +4098,15 @@ class PatientWidget(QWidget):
     def _on_stitching_clicked(self) -> None:
         """Handle Stitching button click — mirrors _on_advanced_mpr_clicked."""
         print("[PatientWidget] Stitching button clicked")
+        
+        # ========== BUTTON SAFEGUARD: Prevent concurrent operations ==========
+        if not self.button_safeguard.start_operation("Stitching Launch"):
+            QMessageBox.warning(
+                self, "Operation In Progress",
+                "Another operation is currently running. Please wait for it to complete."
+            )
+            return
+        # ======================================================================
 
         # ── Resolve selected series (same logic as Advanced MPR) ─────
         selected_series = None
@@ -3983,12 +4159,16 @@ class PatientWidget(QWidget):
                 "Please select a series from the thumbnails panel.\n\n"
                 "No active series available."
             )
+            # End safeguard operation on early return
+            self.button_safeguard.end_operation(success=False, operation_name="Stitching Launch")
             return
         if not os.path.exists(dicom_directory):
             QMessageBox.warning(
                 self, "Directory Not Found",
                 f"DICOM directory not found:\n{dicom_directory}"
             )
+            # End safeguard operation on early return
+            self.button_safeguard.end_operation(success=False, operation_name="Stitching Launch")
             return
 
         # ── Show overlay & defer launch ──────────────────────────────
@@ -4070,6 +4250,11 @@ class PatientWidget(QWidget):
             import traceback
             traceback.print_exc()
             self._hide_stitching_loading_ui()
+            
+            # ========== BUTTON SAFEGUARD: End operation on exception ==========
+            self.button_safeguard.end_operation(success=False, operation_name="Stitching Launch")
+            # ==================================================================
+            
             QMessageBox.critical(
                 self, "Error",
                 f"Failed to launch Stitching module:\n{str(e)}"
@@ -4083,6 +4268,10 @@ class PatientWidget(QWidget):
         if overlay is not None:
             overlay.set_status("Stitching module launched successfully")
         self._hide_stitching_loading_ui(delay_ms=1500)
+        
+        # ========== BUTTON SAFEGUARD: End operation on success ==========
+        self.button_safeguard.end_operation(success=True, operation_name="Stitching Launch")
+        # ================================================================
 
     def _on_stitching_finished(self, exit_code: int) -> None:
         print(f"[PatientWidget] Stitching finished with exit code: {exit_code}")
@@ -4091,6 +4280,10 @@ class PatientWidget(QWidget):
     def _on_stitching_error(self, error_msg: str) -> None:
         print(f"[PatientWidget] Stitching error: {error_msg}")
         self._hide_stitching_loading_ui()
+        
+        # ========== BUTTON SAFEGUARD: End operation on error ==========
+        self.button_safeguard.end_operation(success=False, operation_name="Stitching Launch")
+        # ==============================================================
 
     def _launch_advanced_analysis_with_params(
         self,
@@ -6029,6 +6222,13 @@ class PatientWidget(QWidget):
         """تمام resources را با سرعت تمیز کن"""
         try:
             print("🔴 exit_patient_widget: Starting cleanup...")
+            
+            # Clean up any loading overlays
+            try:
+                self._hide_eagle_eye_loading_ui()
+            except Exception:
+                pass
+            
             # Ensure home loading overlay is hidden if this widget is closed early
             try:
                 from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
