@@ -1020,7 +1020,19 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if self.last_series_show == series_index:
             logger.info(f"[SERIES SWITCH] ⏭ SKIP - Already showing series {series_index}")
             return False
-        
+
+        # Discard any pending scroll state from the previous series.
+        # Without this, _last_scroll_event_ms stays at the old-series scroll time,
+        # making event_queue_delay_ms show 14-17 s on the new series (false alarm).
+        # Also prevents a stale _pending_wheel_slice from jumping to the wrong slice
+        # the moment the new series finishes loading.
+        try:
+            self._wheel_coalesce_timer.stop()
+            self._pending_wheel_slice = None
+            self._last_scroll_event_ms = None
+        except Exception:
+            pass
+
         # Save current camera scale before switch
         saved_scale = None
         try:
