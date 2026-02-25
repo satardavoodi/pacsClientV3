@@ -8,6 +8,7 @@ Image Filtering Module for Medical Image Enhancement
 تمامی پارامترها بر اساس واحد میلی‌متر تنظیم شده‌اند و نسبت به spacing تصویر تطبیق می‌یابند.
 """
 
+import os
 import SimpleITK as sitk
 import numpy as np
 import time
@@ -702,6 +703,18 @@ def apply_filters(
     max_spacing = max(spacing) if spacing else 0
     mild_mode = (modality == "MR") and (max_spacing > 1.5)
 
+    # ── v2.2.3.0.6: Cap ITK internal C++ thread pool to 1 during the filter  ──
+    # pipeline.  ITK spawns its own native thread pool that runs at Windows     ──
+    # NORMAL priority regardless of the Python thread's IDLE priority.          ──
+    # Without this, warmup ITK workers (1–4s per series) compete directly with  ──
+    # VTK renders on the main thread (PC B GLES2: 35ms → 50-114ms per render).  ──
+    # Single-thread ITK costs ~20-30% per-series but keeps scroll smooth.       ──
+    _itk_cpu_count = os.cpu_count() or 4
+    try:
+        sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(1)
+    except Exception:
+        pass
+
     # ------------------------------------------------------------------
     # Noise reduction
     # ------------------------------------------------------------------
@@ -767,6 +780,14 @@ def apply_filters(
     # Timing end
     _dt = time.time() - t0
     #logger.info(f"Filtering completed for {series_name} in {_dt:.3f}s")
+
+    # ── v2.2.3.0.6: Restore ITK thread count so any subsequent interactive  ──
+    # loads (series switch before warmup finishes) get full CPU speed.       ──
+    try:
+        sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(_itk_cpu_count)
+    except Exception:
+        pass
+
     return itk_image
 
 def enhance_resolution(itk_image: sitk.Image, scale_factor: float = 1.5) -> sitk.Image:
