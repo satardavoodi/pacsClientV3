@@ -139,6 +139,22 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._on_slice_changed_cb = None  # Lock Sync callback
         self._last_scroll_event_ms = None
         self._timing_log_counter = 0
+        self._lag_probe_enabled = os.getenv("AIPACS_SCROLL_LAG_PROBE_ENABLED", "1") == "1"
+        self._lag_probe_window_sec = max(3.0, float(os.getenv("AIPACS_SCROLL_LAG_PROBE_WINDOW_SEC", "12") or "12"))
+        self._lag_probe_min_samples = max(20, int(os.getenv("AIPACS_SCROLL_LAG_PROBE_MIN_SAMPLES", "40") or "40"))
+        self._lag_probe_samples = []
+        self._lag_probe_window_start_ms = 0.0
+
+        # Scroll coalescing: batch rapid wheel events into one VTK render.
+        # On slow GPUs (GLES2 software fallback) each Render() takes 60-80ms —
+        # coalescing skips intermediate frames so the Qt event loop stays
+        # responsive. Configurable: AIPACS_SCROLL_COALESCE_MS (default 16 ≈ 60fps).
+        self._pending_wheel_slice = None
+        _coalesce_ms = max(0, int(os.getenv("AIPACS_SCROLL_COALESCE_MS", "16") or "16"))
+        self._wheel_coalesce_timer = QTimer(self)
+        self._wheel_coalesce_timer.setSingleShot(True)
+        self._wheel_coalesce_timer.setInterval(_coalesce_ms)
+        self._wheel_coalesce_timer.timeout.connect(self._flush_pending_wheel_slice)
 
     def _should_log_timing(self, duration_ms: float, stage: str) -> bool:
         """Rate-limit very high-frequency timing logs while keeping slow spikes.
@@ -155,6 +171,78 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if stage in ("set_slice_total", "scroll_event_total") and (self._timing_log_counter % sample_every == 0):
             return True
         return False
+
+    @staticmethod
+    def _percentile(sorted_values, pct: float) -> float:
+        if not sorted_values:
+            return 0.0
+        if pct <= 0:
+            return float(sorted_values[0])
+        if pct >= 100:
+            return float(sorted_values[-1])
+        idx = int(round((len(sorted_values) - 1) * (pct / 100.0)))
+        idx = max(0, min(len(sorted_values) - 1, idx))
+        return float(sorted_values[idx])
+
+    def _is_global_download_active_for_probe(self) -> bool:
+        try:
+            viewer_controller = getattr(self.patient_widget, "viewer_controller", None)
+            if viewer_controller is not None and hasattr(viewer_controller, "_global_downloads_active"):
+                return bool(viewer_controller._global_downloads_active())
+        except Exception:
+            pass
+
+        try:
+            from PacsClient.pacs.patient_tab.zeta_boost.engine import ZetaBoostEngine
+            return int(getattr(ZetaBoostEngine, '_global_active_download_count', 0) or 0) > 0
+        except Exception:
+            return False
+
+    def _record_scroll_lag_probe(self, total_ms: float, queue_delay_ms: float, slice_apply_ms: float):
+        if not self._lag_probe_enabled:
+            return
+        if not self._is_global_download_active_for_probe():
+            self._lag_probe_samples.clear()
+            self._lag_probe_window_start_ms = 0.0
+            return
+
+        now = time.time() * 1000.0
+        if self._lag_probe_window_start_ms <= 0.0:
+            self._lag_probe_window_start_ms = now
+
+        self._lag_probe_samples.append((float(total_ms), float(max(0.0, queue_delay_ms)), float(slice_apply_ms)))
+
+        elapsed_ms = now - self._lag_probe_window_start_ms
+        if elapsed_ms < (self._lag_probe_window_sec * 1000.0):
+            return
+
+        if len(self._lag_probe_samples) < self._lag_probe_min_samples:
+            self._lag_probe_window_start_ms = now
+            self._lag_probe_samples.clear()
+            return
+
+        totals = sorted(v[0] for v in self._lag_probe_samples)
+        queues = sorted(v[1] for v in self._lag_probe_samples)
+        applies = sorted(v[2] for v in self._lag_probe_samples)
+
+        logger.info(
+            (
+                "viewer-scroll-probe window_sec=%.1f samples=%d "
+                "set_slice_p50_ms=%.2f set_slice_p95_ms=%.2f set_slice_max_ms=%.2f "
+                "queue_p95_ms=%.2f slice_apply_p95_ms=%.2f"
+            ),
+            (elapsed_ms / 1000.0),
+            len(totals),
+            self._percentile(totals, 50),
+            self._percentile(totals, 95),
+            self._percentile(totals, 100),
+            self._percentile(queues, 95),
+            self._percentile(applies, 95),
+            extra={"component": "viewer", "function": "VTKWidget.set_slice", "stage": "scroll_probe"},
+        )
+
+        self._lag_probe_window_start_ms = now
+        self._lag_probe_samples.clear()
 
     def _schedule_render(self, delay_ms=None):
         """
@@ -1167,6 +1255,24 @@ class VTKWidget(QVTKRenderWindowInteractor):
             return 0
         return self.image_viewer.get_count_of_slices()
 
+    def _flush_pending_wheel_slice(self):
+        """Render the latest coalesced scroll position (deferred from wheelEvent).
+
+        Fires AIPACS_SCROLL_COALESCE_MS after the first wheel event in a burst.
+        Any wheel events that arrive while the timer is running just update
+        _pending_wheel_slice — only the final position is rendered.
+        After a slow render (e.g. GLES2 ~65ms), re-arms if more events arrived
+        during the render block so the last position is always displayed.
+        """
+        idx = self._pending_wheel_slice
+        self._pending_wheel_slice = None
+        if idx is not None:
+            logger.debug(f"[SCROLL_COALESCE] flush slice={idx}")
+            self.set_slice(idx)
+        # Re-arm if more scroll events queued during the render block
+        if self._pending_wheel_slice is not None:
+            self._wheel_coalesce_timer.start()
+
     def set_slice(self, slice_index):
         if self.image_viewer is None:
             return
@@ -1258,6 +1364,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
                 start_ms=t_set_slice,
                 queue_delay_ms=f"{queue_delay_ms:.2f}",
             )
+        self._record_scroll_lag_probe(set_slice_total_ms, queue_delay_ms, slice_apply_ms)
 
     def set_slider(self, slider):
         self.slider = slider
@@ -1349,18 +1456,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
             
             logger.debug(f"[WHEEL] current={current_slice}, next={next_slice}, step={step}")
             
-            # Update slider (triggers rendering via signal)
-            t_render_req = now_ms()
-            self.slider.setValue(next_slice)
-            render_req_ms = max(0.0, now_ms() - t_render_req)
-            if self._should_log_timing(render_req_ms, "render_request"):
-                log_stage_timing(
-                    logger,
-                    component="viewer",
-                    function="VTKWidget.wheelEvent",
-                    stage="render_request",
-                    start_ms=t_render_req,
-                )
+            # Coalesce rapid scroll events — on slow GPUs (PC B GLES2 fallback)
+            # each VTK Render() takes 60-80ms; coalescing skips intermediate
+            # frames, rendering only the latest slice in the burst.
+            self._pending_wheel_slice = next_slice
+            self.slider.blockSignals(True)
+            self.slider.setValue(next_slice)   # update UI position without triggering set_slice
+            self.slider.blockSignals(False)
+            if not self._wheel_coalesce_timer.isActive():
+                self._wheel_coalesce_timer.start()
             
             # Update ruler/measurement visibility
             try:
