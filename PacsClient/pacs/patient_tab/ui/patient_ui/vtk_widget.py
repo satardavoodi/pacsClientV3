@@ -145,10 +145,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._lag_probe_samples = []
         self._lag_probe_window_start_ms = 0.0
 
-        # Scroll coalescing: batch rapid wheel events into one VTK render.
+        # Scroll coalescing (debounce): batch rapid wheel events into one VTK render.
         # On slow GPUs (GLES2 software fallback) each Render() takes 60-80ms —
-        # coalescing skips intermediate frames so the Qt event loop stays
-        # responsive. Configurable: AIPACS_SCROLL_COALESCE_MS (default 16 ≈ 60fps).
+        # debounce pattern: timer RESTARTS on every wheel event; fires 16ms after
+        # the LAST event in a burst so only the final slice position is rendered.
+        # Configurable: AIPACS_SCROLL_COALESCE_MS (default 16 ms ≈ debounce window).
         self._pending_wheel_slice = None
         _coalesce_ms = max(0, int(os.getenv("AIPACS_SCROLL_COALESCE_MS", "16") or "16"))
         self._wheel_coalesce_timer = QTimer(self)
@@ -1256,11 +1257,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
         return self.image_viewer.get_count_of_slices()
 
     def _flush_pending_wheel_slice(self):
-        """Render the latest coalesced scroll position (deferred from wheelEvent).
+        """Render the latest coalesced scroll position (debounce callback).
 
-        Fires AIPACS_SCROLL_COALESCE_MS after the first wheel event in a burst.
-        Any wheel events that arrive while the timer is running just update
-        _pending_wheel_slice — only the final position is rendered.
+        Fires AIPACS_SCROLL_COALESCE_MS ms after the LAST wheel event in a burst
+        (debounce — timer restarts on every event). Only the final slice position
+        in a rapid burst is rendered; intermediate positions are silently skipped.
         After a slow render (e.g. GLES2 ~65ms), re-arms if more events arrived
         during the render block so the last position is always displayed.
         """
@@ -1456,15 +1457,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
             
             logger.debug(f"[WHEEL] current={current_slice}, next={next_slice}, step={step}")
             
-            # Coalesce rapid scroll events — on slow GPUs (PC B GLES2 fallback)
-            # each VTK Render() takes 60-80ms; coalescing skips intermediate
-            # frames, rendering only the latest slice in the burst.
+            # Debounce rapid scroll events — on slow GPUs (PC B GLES2 fallback)
+            # each VTK Render() takes 60-80ms; debounce restarts the timer on
+            # every event so the render fires only after the burst ends (16ms
+            # of no new events), guaranteeing the latest slice is always shown.
             self._pending_wheel_slice = next_slice
             self.slider.blockSignals(True)
             self.slider.setValue(next_slice)   # update UI position without triggering set_slice
             self.slider.blockSignals(False)
-            if not self._wheel_coalesce_timer.isActive():
-                self._wheel_coalesce_timer.start()
+            self._wheel_coalesce_timer.start()  # always restart → true debounce
             
             # Update ruler/measurement visibility
             try:
