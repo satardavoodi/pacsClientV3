@@ -426,14 +426,16 @@ def apply_laplacian_sharpening(img: sitk.Image, alpha: float = 0.3) -> sitk.Imag
     orig_type = img.GetPixelID()
     imgf = sitk.Cast(img, sitk.sitkFloat32)
 
-    # محاسبه لاپلاسین-گاوسی با سیگمای 0.5mm - sigma is already in mm, so we can use it directly
-    laplacian = sitk.LaplacianRecursiveGaussian(imgf, sigma=0.5)
+    # v2.2.3.0.8: Gaussian kernel in ITK; arithmetic in numpy.
+    orig_arr = sitk.GetArrayFromImage(imgf).astype(np.float32)
+    laplacian_arr = sitk.GetArrayFromImage(
+        sitk.LaplacianRecursiveGaussian(imgf, sigma=0.5)
+    ).astype(np.float32)
+    sharpened_arr = orig_arr - laplacian_arr * float(alpha)
 
-    # اعمال لاپلاسین منفی برای تیز کردن
-    # لاپلاسین منفی در مرکز مثبت است که لبه‌ها را تقویت می‌کند
-    sharpened = sitk.Subtract(imgf, sitk.Multiply(laplacian, alpha))
-
-    return sitk.Cast(sharpened, orig_type)
+    result = sitk.GetImageFromArray(sharpened_arr)
+    result.CopyInformation(imgf)
+    return sitk.Cast(result, orig_type)
 
 
 def apply_adaptive_sharpening(
@@ -487,23 +489,27 @@ def apply_adaptive_sharpening(
     orig_type = img.GetPixelID()
     imgf = sitk.Cast(img, sitk.sitkFloat32)
 
-    # محاسبه گرادیان برای تشخیص لبه‌ها - sigma is already in mm, so we can use it directly
-    gradient = sitk.GradientMagnitudeRecursiveGaussian(imgf, sigma=sigma)
+    # v2.2.3.0.8: Only 2 ITK calls (GradientMagnitude + Smooth); all arithmetic numpy.
+    # OLD: 10 ITK pipeline calls  →  NEW: 2 ITK calls + numpy ops (~0ms overhead)
+    orig_arr = sitk.GetArrayFromImage(imgf).astype(np.float32)
+    gradient_arr = sitk.GetArrayFromImage(
+        sitk.GradientMagnitudeRecursiveGaussian(imgf, sigma=sigma)
+    ).astype(np.float32)
+    blurred_arr = sitk.GetArrayFromImage(
+        sitk.SmoothingRecursiveGaussian(imgf, sigma=sigma)
+    ).astype(np.float32)
 
-    # نرمالایز کردن گرادیان به محدوده [0, 1]
-    gradient_norm = sitk.RescaleIntensity(gradient, 0.0, 1.0)
+    # Normalize gradient to [0, 1] in numpy
+    g_min, g_max = gradient_arr.min(), gradient_arr.max()
+    gradient_norm = (gradient_arr - g_min) / (g_max - g_min + 1e-8)
 
-    # ایجاد نقشه وزنی: لبه‌ها وزن بیشتر
-    edge_weight = sitk.Add(base_amount, sitk.Multiply(gradient_norm, edge_boost))
+    edge_weight = float(base_amount) + gradient_norm * float(edge_boost)
+    details = orig_arr - blurred_arr
+    sharpened_arr = orig_arr + details * edge_weight
 
-    # محاسبه جزئیات با Unsharp Masking - sigma is already in mm, so we can use it directly
-    blurred = sitk.SmoothingRecursiveGaussian(imgf, sigma=sigma)
-    details = sitk.Subtract(imgf, blurred)
-
-    # اعمال تیز کردن با وزن‌های تطبیقی
-    sharpened = sitk.Add(imgf, sitk.Multiply(details, edge_weight))
-
-    return sitk.Cast(sharpened, orig_type)
+    result = sitk.GetImageFromArray(sharpened_arr.astype(np.float32))
+    result.CopyInformation(imgf)
+    return sitk.Cast(result, orig_type)
 
 
 def apply_multiscale_sharpening(
@@ -551,21 +557,28 @@ def apply_multiscale_sharpening(
     orig_type = img.GetPixelID()
     imgf = sitk.Cast(img, sitk.sitkFloat32)
 
-    # شروع با تصویر اصلی
-    sharpened = imgf
+    # v2.2.3.0.8: Use numpy for arithmetic; ITK only for the Gaussian kernel.
+    # sitk.Add/Subtract/Multiply each trigger a full ITK pipeline rebuild
+    # (~1-3ms each); replacing them with numpy ops drops that overhead to ~0.
+    sharpened_arr = sitk.GetArrayFromImage(imgf).astype(np.float32)
 
     # اعمال تیز کردن در هر مقیاس - sigmas are already in mm, so we can use them directly
     for sigma, amount in zip(sigmas, amounts):
         # ── GIL yield between multiscale iterations ──
         time.sleep(0.01)
-        # محاسبه جزئیات در این مقیاس - sigma is already in mm, so we can use it directly
-        blurred = sitk.SmoothingRecursiveGaussian(sharpened, sigma=sigma)
-        details = sitk.Subtract(sharpened, blurred)
+        # Run Gaussian in ITK (RecursiveGaussian is C++ and fastest available)
+        tmp = sitk.GetImageFromArray(sharpened_arr)
+        tmp.CopyInformation(imgf)
+        blurred_arr = sitk.GetArrayFromImage(
+            sitk.SmoothingRecursiveGaussian(tmp, sigma=sigma)
+        )
+        # numpy arithmetic — near-zero cost
+        details_arr = sharpened_arr - blurred_arr
+        sharpened_arr = sharpened_arr + details_arr * float(amount)
 
-        # اضافه کردن جزئیات تقویت شده
-        sharpened = sitk.Add(sharpened, sitk.Multiply(details, amount))
-
-    return sitk.Cast(sharpened, orig_type)
+    result = sitk.GetImageFromArray(sharpened_arr)
+    result.CopyInformation(imgf)
+    return sitk.Cast(result, orig_type)
 
 
 def apply_filters(
@@ -703,15 +716,14 @@ def apply_filters(
     max_spacing = max(spacing) if spacing else 0
     mild_mode = (modality == "MR") and (max_spacing > 1.5)
 
-    # ── v2.2.3.0.6: Cap ITK internal C++ thread pool to 1 during the filter  ──
-    # pipeline.  ITK spawns its own native thread pool that runs at Windows     ──
-    # NORMAL priority regardless of the Python thread's IDLE priority.          ──
-    # Without this, warmup ITK workers (1–4s per series) compete directly with  ──
-    # VTK renders on the main thread (PC B GLES2: 35ms → 50-114ms per render).  ──
-    # Single-thread ITK costs ~20-30% per-series but keeps scroll smooth.       ──
+    # ── v2.2.3.0.8: Use 2 ITK threads during filter pipeline.                 ──
+    # v2.2.3.0.6 used 1 thread to avoid VTK render starvation, but that caused  ──
+    # 29s filter times on thick-slice MR (500×640×24).  v2.2.3.0.4 added        ──
+    # wait_for_inflight_drain() so interactive loads never overlap warmup ITK;  ──
+    # 2 threads now halves all Gaussian pass times with minimal render impact.  ──
     _itk_cpu_count = os.cpu_count() or 4
     try:
-        sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(1)
+        sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(2)
     except Exception:
         pass
 
@@ -746,6 +758,12 @@ def apply_filters(
         if ms_cfg.get("enabled", True):
             sigmas = ms_cfg.get("mild_sigmas", ms_cfg.get("sigmas", [0.5, 1.0, 2.0])) if mild_mode else ms_cfg.get("sigmas", [0.5, 1.0, 2.0])
             amounts = ms_cfg.get("mild_amounts", ms_cfg.get("amounts", [0.25, 0.12, 0.06])) if mild_mode else ms_cfg.get("amounts", [0.25, 0.12, 0.06])
+            # v2.2.3.0.8: thick-slice MR (mild_mode, spacing>1.5mm) cannot resolve
+            # fine sub-pixel detail — limit to 2 scales.  Removing 2 of 4 sigma
+            # passes saves ~2 × 3.5s = ~7s on PC B single-core warmup.
+            if mild_mode:
+                sigmas = list(sigmas)[:2]
+                amounts = list(amounts)[:2]
             itk_image = apply_multiscale_sharpening(itk_image, sigmas=sigmas, amounts=amounts)
 
         # ── GIL yield: let UI thread process events between filter stages ──
@@ -767,15 +785,20 @@ def apply_filters(
     # ------------------------------------------------------------------
         ad_cfg = modality_settings.get("adaptive_sharpening", {})
         if ad_cfg.get("enabled", True):
-            base_amount = ad_cfg.get("mild_base_amount", ad_cfg.get("base_amount", 0.12)) if mild_mode else ad_cfg.get("base_amount", 0.12)
-            edge_boost = ad_cfg.get("mild_edge_boost", ad_cfg.get("edge_boost", 0.90)) if mild_mode else ad_cfg.get("edge_boost", 0.90)
-            sigma_val = ad_cfg.get("mild_sigma", ad_cfg.get("sigma", 0.70)) if mild_mode else ad_cfg.get("sigma", 0.70)
-            itk_image = apply_adaptive_sharpening(
-                itk_image,
-                base_amount=float(base_amount),
-                edge_boost=float(edge_boost),
-                sigma=float(sigma_val),
-            )
+            # v2.2.3.0.8: skip adaptive sharpening in mild_mode (thick slices >1.5mm).
+            # Runs 2 full 3D Gaussians + 5 element-wise ops on the full volume, but
+            # thick-slice MR has no fine detail to recover at these scales.
+            # Skipping saves ~7-10s on PC B (GLES2 / 2-thread warmup path).
+            if not mild_mode:
+                base_amount = ad_cfg.get("base_amount", 0.12)
+                edge_boost = ad_cfg.get("edge_boost", 0.90)
+                sigma_val = ad_cfg.get("sigma", 0.70)
+                itk_image = apply_adaptive_sharpening(
+                    itk_image,
+                    base_amount=float(base_amount),
+                    edge_boost=float(edge_boost),
+                    sigma=float(sigma_val),
+                )
 
     # Timing end
     _dt = time.time() - t0
