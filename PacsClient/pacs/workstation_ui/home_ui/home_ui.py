@@ -4129,6 +4129,12 @@ Study UID: {study_uid}
                 # Add to main tab widget
                 self.tab_widget.addTab(ai_client, "AI Analysis")
                 self.tab_widget.setCurrentWidget(ai_client)
+                
+                # Force process events to ensure tab is rendered
+                from PySide6.QtWidgets import QApplication
+                QApplication.processEvents()
+                QApplication.processEvents()
+                
                 return ai_client
             except Exception as e:
                 print(f"Error opening AI client: {str(e)}")

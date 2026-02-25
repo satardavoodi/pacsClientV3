@@ -6,11 +6,14 @@ from PySide6.QtWidgets import (
     QMainWindow, QTabWidget
 )
 from .service_tab import ImagingToolsTab, ModelTrainingTab, ReceptionDataTab, DataSetTab
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QApplication
 
 
 class AiMainWindow(QMainWindow):
+    # Signal emitted when Eagle Eye is fully loaded and ready
+    eagle_eye_ready = Signal()
+    
     def __init__(self, study_uid=None):
         print("\n" + "=" * 80)
         print("[AiMainWindow] Initializing AiMainWindow.")
@@ -46,9 +49,19 @@ class AiMainWindow(QMainWindow):
         # Auto refresh when user opens Data Set tab
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         QTimer.singleShot(0, self.dataset_tab.refresh)
+        
+        # Connect imaging tab ready signal
+        self.imaging_tab.fully_loaded.connect(self._on_imaging_tab_ready)
+        
         print("[AiMainWindow] AiMainWindow initialized successfully!")
         print("=" * 80 + "\n")
 
+    def _on_imaging_tab_ready(self):
+        """Called when ImagingToolsTab is fully loaded and rendered."""
+        print("[AiMainWindow] Imaging tab fully loaded, emitting eagle_eye_ready signal")
+        # Emit immediately - no delay needed
+        self.eagle_eye_ready.emit()
+    
     def _on_tab_changed(self, index: int):
         w = self.tab_widget.widget(index)
         if w is self.dataset_tab:
