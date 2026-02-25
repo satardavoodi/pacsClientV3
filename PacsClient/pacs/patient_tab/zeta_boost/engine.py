@@ -331,6 +331,24 @@ class ZetaBoostEngine:
             self._external_interactive_busy = bool(busy)
             self._cv.notify_all()
 
+    def wait_for_inflight_drain(self, timeout_sec: float = 3.0) -> bool:
+        """Wait until no inflight loads remain in any lane.
+
+        Called by the interactive switch worker before starting its own ITK pipeline
+        so the two pipelines do not compete for CPU on weak hardware (e.g. GLES2/PC B).
+        Running alone is faster (1.7-4s) than competing concurrently (3-6s).
+
+        Returns True if all inflight work drained within the timeout, False otherwise.
+        """
+        deadline = time.time() + float(timeout_sec)
+        with self._cv:
+            while self._total_inflight_locked() > 0:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return False
+                self._cv.wait(timeout=min(remaining, 0.25))
+        return True
+
     def set_download_active(self, active: bool):
         """Legacy signal that a Zeta download is in progress.
 

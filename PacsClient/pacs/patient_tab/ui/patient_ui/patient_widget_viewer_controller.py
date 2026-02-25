@@ -2421,6 +2421,21 @@ class ViewerController:
             except Exception:
                 pass
 
+            # Concurrent ITK guard: wait for any in-flight warmup/background ITK to
+            # finish before starting this interactive ITK pipeline.  On weak hardware
+            # (PC B, GLES2) two simultaneous ITK runs compete for CPU and each takes
+            # 2x longer.  Waiting up to 3s for the current warmup to drain, then
+            # running alone, is faster than 4-6s of concurrent execution.
+            # _set_zeta_external_interactive_busy(True) already prevents NEW warmup
+            # items from starting; this waits for the CURRENT inflight item to finish.
+            try:
+                if hasattr(self, 'zeta_boost') and self.zeta_boost is not None:
+                    _drained = self.zeta_boost.wait_for_inflight_drain(timeout_sec=3.0)
+                    if not _drained:
+                        print(f"[ASYNC SWITCH] warmup still inflight after 3s, proceeding with contention for series={series_number}")
+            except Exception:
+                pass
+
             try:
                 ok = self._load_single_series_on_demand(
                     int(series_number),
@@ -3240,6 +3255,13 @@ class ViewerController:
                 _filter_details.append(f"{sn}:QUEUE")
             print(f"🔧 [WARMUP_FILTER] detail: {' | '.join(_filter_details[:40])}")
             candidates = filtered_candidates
+            # Sort light candidates: small (fast-loading) series first so users get
+            # near-instant access to them while slower series load in background.
+            # e.g. series_8 (3 slices, ~0.2s ITK) before series_6 (20 slices, ~4s ITK).
+            try:
+                candidates.sort(key=lambda s: self._get_series_expected_slices(s) or 9999)
+            except Exception:
+                pass
             heavy_candidates = [
                 sn for sn in heavy_candidates
                 if sn not in self._zeta_boost_failed_series and (not self._is_series_in_memory_only(sn))
