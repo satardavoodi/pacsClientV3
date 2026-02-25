@@ -262,6 +262,8 @@ class ViewerController:
         self._plan_a_viewer_first = os.getenv("AIPACS_PLAN_A_VIEWER_FIRST", "1") == "1"
         self._viewer_interaction_pause_ms = int(os.getenv("AIPACS_VIEWER_INTERACTION_PAUSE_MS", "350") or "350")
         self._interaction_release_token = 0
+        self._interactive_preview_enabled = os.getenv("AIPACS_INTERACTIVE_PREVIEW_ENABLED", "0") == "1"
+        self._interactive_preview_max_slices = max(1, int(os.getenv("AIPACS_INTERACTIVE_PREVIEW_MAX_SLICES", "64") or "64"))
 
         # Deterministic full-series cache — now single-layer (ZetaBoost only).
         # Legacy dict fields kept as empty stubs for any residual references.
@@ -2350,7 +2352,10 @@ class ViewerController:
             # Preview-first path: show a very fast first-slice preview while full load runs.
             try:
                 exp_slices = self._get_series_expected_slices(series_number)
-                use_preview = bool(exp_slices <= 0 or exp_slices <= 64)
+                use_preview = bool(
+                    self._interactive_preview_enabled and
+                    (exp_slices <= 0 or exp_slices <= self._interactive_preview_max_slices)
+                )
                 if use_preview:
                     preview = load_series_preview(
                         study_path=study_path,

@@ -747,10 +747,55 @@ class PatientWidget(QWidget):
 
         return series_key
 
-    def _is_series_downloaded(self, series_identifier: str) -> bool:
-        """Return True if series folder exists with DICOM files."""
+    def _get_expected_series_image_count(self, series_identifier: str) -> int:
+        """Return expected image count for a series when known (server/local metadata)."""
         try:
             series_key = self.resolve_series_key(str(series_identifier))
+
+            info = getattr(self, '_server_series_info', {}).get(str(series_key), {}) or {}
+            for key in ('image_count', 'number_of_instances', 'instances_count', 'expected_instances', 'total_instances'):
+                val = info.get(key)
+                if val is not None:
+                    try:
+                        iv = int(val)
+                        if iv > 0:
+                            return iv
+                    except Exception:
+                        pass
+
+            for item in getattr(self, 'lst_thumbnails_data', []) or []:
+                metadata = item.get('metadata') or {}
+                series_info = metadata.get('series') or {}
+                item_series = str(series_info.get('series_number', ''))
+                if item_series != str(series_key):
+                    continue
+
+                if bool(metadata.get('preview_only', False)):
+                    continue
+
+                instances = metadata.get('instances') or []
+                if isinstance(instances, list) and len(instances) > 0:
+                    return int(len(instances))
+
+                for key in ('image_count', 'number_of_instances', 'instances_count'):
+                    val = series_info.get(key)
+                    if val is not None:
+                        try:
+                            iv = int(val)
+                            if iv > 0:
+                                return iv
+                        except Exception:
+                            pass
+
+            return 0
+        except Exception:
+            return 0
+
+    def _is_series_downloaded(self, series_identifier: str) -> bool:
+        """Return True only when local DICOM availability satisfies expected completeness."""
+        try:
+            series_key = self.resolve_series_key(str(series_identifier))
+            expected_count = self._get_expected_series_image_count(series_key)
             study_path = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
             base_path = Path(study_path) if study_path else Path(self.import_folder_path or "")
             if not base_path or not base_path.exists():
@@ -778,7 +823,17 @@ class PatientWidget(QWidget):
                 seen.add(norm)
                 if not series_path.exists() or not series_path.is_dir():
                     continue
-                if bool(list(series_path.glob("*.dcm")) or list(series_path.glob("*.DCM"))):
+                dicom_count = 0
+                for p in series_path.iterdir():
+                    if not p.is_file():
+                        continue
+                    sfx = p.suffix.lower()
+                    if sfx == '.dcm':
+                        dicom_count += 1
+                        if expected_count > 0 and dicom_count >= expected_count:
+                            return True
+
+                if expected_count <= 0 and dicom_count > 0:
                     return True
 
             return False
@@ -1896,6 +1951,7 @@ class PatientWidget(QWidget):
         add_by_head = True
         inserted_index = None
         metadata = new_data['metadata']
+        incoming_is_preview = bool(metadata.get('preview_only', False))
 
         for i in range(len(self.lst_thumbnails_data)):
             existing_series = self.lst_thumbnails_data[i].get('metadata', {}).get('series', {})
@@ -1904,7 +1960,14 @@ class PatientWidget(QWidget):
 
             # If same series_number already exists, avoid duplicate insert.
             if existing_series_number == series_number:
-                if len(metadata['instances']) == len(self.lst_thumbnails_data[i]['metadata']['instances']):
+                existing_metadata = self.lst_thumbnails_data[i].get('metadata', {})
+                existing_is_preview = bool(existing_metadata.get('preview_only', False))
+                if incoming_is_preview and (not existing_is_preview):
+                    return False
+
+                incoming_len = len(metadata.get('instances', []) or [])
+                existing_len = len(existing_metadata.get('instances', []) or [])
+                if incoming_len == existing_len and incoming_is_preview == existing_is_preview:
                     return False
                 self.lst_thumbnails_data[i] = new_data
                 inserted_index = i
@@ -1948,14 +2011,17 @@ class PatientWidget(QWidget):
         try:
             series_no = str(metadata['series']['series_number'])
             # حالا این سری آماده است
-            self.thumbnail_manager.set_series_ready(series_no)
+            if incoming_is_preview:
+                self.thumbnail_manager.set_series_pending(series_no)
+            else:
+                self.thumbnail_manager.set_series_ready(series_no)
 
             # Update thumbnail image count from actual loaded instances
             try:
                 actual_count = len(metadata.get('instances', []) or [])
             except Exception:
                 actual_count = 0
-            if actual_count > 0:
+            if (not incoming_is_preview) and actual_count > 0:
                 if hasattr(self, '_server_series_info') and series_no in self._server_series_info:
                     self._server_series_info[series_no]['image_count'] = actual_count
                 self.thumbnail_manager.update_series_image_count(series_no, actual_count)
@@ -1972,6 +2038,7 @@ class PatientWidget(QWidget):
             self.lst_thumbnails_data = []
 
         series_number_str = str(series_number)
+        incoming_is_preview = bool((metadata or {}).get('preview_only', False))
         new_data = {
             'vtk_image_data': vtk_image_data,
             'metadata': metadata,
@@ -1984,6 +2051,12 @@ class PatientWidget(QWidget):
             try:
                 item_series_str = str(item.get('metadata', {}).get('series', {}).get('series_number'))
                 if item_series_str == series_number_str:
+                    existing_meta = item.get('metadata', {}) or {}
+                    existing_is_preview = bool(existing_meta.get('preview_only', False))
+                    if incoming_is_preview and (not existing_is_preview):
+                        print(f"[REPLACE_SERIES_DATA] Ignoring preview payload for full series={series_number_str}")
+                        return idx
+
                     print(f"[REPLACE_SERIES_DATA] Found existing at idx={idx}, replacing")
                     self.lst_thumbnails_data[idx] = new_data
                     series_name = str(metadata.get('series', {}).get('series_name'))
@@ -1991,12 +2064,15 @@ class PatientWidget(QWidget):
                     self.viewer_controller._hot_series_cache[series_number_str] = (vtk_image_data, metadata, idx)
                     self.viewer_controller._series_name_cache[series_number_str] = series_name
                     try:
-                        self.thumbnail_manager.set_series_ready(series_number_str)
+                        if incoming_is_preview:
+                            self.thumbnail_manager.set_series_pending(series_number_str)
+                        else:
+                            self.thumbnail_manager.set_series_ready(series_number_str)
                         try:
                             actual_count = len(metadata.get('instances', []) or [])
                         except Exception:
                             actual_count = 0
-                        if actual_count > 0:
+                        if (not incoming_is_preview) and actual_count > 0:
                             if hasattr(self, '_server_series_info') and series_number_str in self._server_series_info:
                                 self._server_series_info[series_number_str]['image_count'] = actual_count
                             self.thumbnail_manager.update_series_image_count(series_number_str, actual_count)
