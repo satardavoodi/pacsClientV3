@@ -740,16 +740,21 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             return
         det_thr = dlg.value()
 
-        # 2) Progress dialog
-        progress = QProgressDialog(
-            "Processing analysis... Please wait.",
-            "Cancel", 0, 0,
-            self.image_viewer.vtk_widget
+        # 2) Loading overlay (consistent with Eagle Eye tab)
+        from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+        from PySide6.QtCore import Qt as QtCore_Qt, QTimer
+        
+        main_window = self.image_viewer.vtk_widget.window()
+        loading_overlay = AiPacsLoadingOverlay.show_overlay(
+            parent=main_window,
+            title="EAGLE EYE AI Analysis",
+            status="Processing Mammography Analysis",
+            subtitle="Please wait while the AI analyzes the images"
         )
-        progress.setWindowModality(Qt.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.setRange(0, 0)
-        progress.show()
+        loading_overlay.setWindowModality(QtCore_Qt.ApplicationModal)
+        
+        # Store reference to overlay for cleanup
+        overlay_ref = {'overlay': loading_overlay, 'timer': None}
 
         # 3) Worker
         breast_url = get_server_url('breast')
@@ -757,7 +762,17 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         self._current_worker = worker
 
         def on_finished(out: dict):
-            progress.close()
+            # Cancel safety timeout
+            if overlay_ref['timer']:
+                overlay_ref['timer'].stop()
+            
+            # Hide loading overlay safely
+            if overlay_ref['overlay']:
+                try:
+                    AiPacsLoadingOverlay.hide_overlay(overlay_ref['overlay'], fade_ms=0, delay_ms=0)
+                except RuntimeError:
+                    pass  # Already deleted
+                overlay_ref['overlay'] = None
 
             det_path = out.get("csv")
             cls_path = out.get("csv_classification")
@@ -785,10 +800,28 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             self.open_ai_module()
 
         worker.finished.connect(on_finished)
-        worker.error.connect(lambda msg: (progress.close(), show_message(msg)))
-        progress.canceled.connect(
-            lambda: (setattr(worker, "canceled", True), worker.wait(5000))
-        )
+        worker.error.connect(lambda msg: (
+            overlay_ref['timer'].stop() if overlay_ref.get('timer') else None,
+            AiPacsLoadingOverlay.hide_overlay(overlay_ref['overlay'], fade_ms=0, delay_ms=0) if overlay_ref.get('overlay') else None,
+            overlay_ref.update({'overlay': None}),
+            show_message(msg)
+        ))
+        
+        # Safety timeout: Force remove loading after 120 seconds (server processing can take 60s+)
+        def force_hide_overlay():
+            if overlay_ref.get('overlay'):
+                try:
+                    print("⚠️ [MG Analysis] Force removing loading after 120s timeout")
+                    AiPacsLoadingOverlay.hide_overlay(overlay_ref['overlay'], fade_ms=0, delay_ms=0)
+                except RuntimeError:
+                    pass
+                overlay_ref['overlay'] = None
+        
+        safety_timer = QTimer()
+        safety_timer.setSingleShot(True)
+        safety_timer.timeout.connect(force_hide_overlay)
+        safety_timer.start(120000)  # 120 seconds for server-side analysis
+        overlay_ref['timer'] = safety_timer
 
         worker.start()
 
@@ -801,15 +834,21 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         print(f'patient sex : {patient_sex}\n')
         # اگر key واقعی چیز دیگری است، فقط همین خط را عوض کن.
 
-        # 1) فقط Progress dialog (بدون دیالوگ Threshold)
-        progress = QProgressDialog("Estimating bone age... Please wait.",
-                                   "Cancel", 0, 0,
-                                   self.image_viewer.vtk_widget)
-        progress.setWindowModality(Qt.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.setRange(0, 0)
-        progress.setValue(0)
-        progress.show()
+        # 1) Loading overlay (consistent with Eagle Eye tab)
+        from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+        from PySide6.QtCore import Qt as QtCore_Qt, QTimer
+        
+        main_window = self.image_viewer.vtk_widget.window()
+        loading_overlay = AiPacsLoadingOverlay.show_overlay(
+            parent=main_window,
+            title="EAGLE EYE AI Analysis",
+            status="Estimating Bone Age",
+            subtitle="Please wait while the AI analyzes the bone structure"
+        )
+        loading_overlay.setWindowModality(QtCore_Qt.ApplicationModal)
+        
+        # Store reference to overlay for cleanup
+        overlay_ref = {'overlay': loading_overlay, 'timer': None}
         boneage_url = get_server_url('boneage')
 
         worker = BoneAgeWorker(
@@ -820,7 +859,17 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         self._current_worker = worker
 
         def on_finished(data: dict):
-            progress.close()
+            # Cancel safety timeout
+            if overlay_ref['timer']:
+                overlay_ref['timer'].stop()
+            
+            # Hide loading overlay safely
+            if overlay_ref['overlay']:
+                try:
+                    AiPacsLoadingOverlay.hide_overlay(overlay_ref['overlay'], fade_ms=0, delay_ms=0)
+                except RuntimeError:
+                    pass  # Already deleted
+                overlay_ref['overlay'] = None
 
             # بر اساس خروجی واقعی سرور:
             # {'predicted_bone_age_months': 157.56, 'predicted_bone_age_years': 13.13, ...}
@@ -846,8 +895,29 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             self.open_ai_module()
 
         worker.finished.connect(on_finished)
-        worker.error.connect(lambda msg: (progress.close(), show_message(msg)))
-        progress.canceled.connect(lambda: (setattr(worker, "canceled", True), worker.wait(5000)))
+        worker.error.connect(lambda msg: (
+            overlay_ref['timer'].stop() if overlay_ref.get('timer') else None,
+            AiPacsLoadingOverlay.hide_overlay(overlay_ref['overlay'], fade_ms=0, delay_ms=0) if overlay_ref.get('overlay') else None,
+            overlay_ref.update({'overlay': None}),
+            show_message(msg)
+        ))
+        
+        # Safety timeout: Force remove loading after 60 seconds (bone age analysis can take time)
+        def force_hide_overlay():
+            if overlay_ref.get('overlay'):
+                try:
+                    print("⚠️ [Bone Age Analysis] Force removing loading after 60s timeout")
+                    AiPacsLoadingOverlay.hide_overlay(overlay_ref['overlay'], fade_ms=0, delay_ms=0)
+                except RuntimeError:
+                    pass
+                overlay_ref['overlay'] = None
+        
+        safety_timer = QTimer()
+        safety_timer.setSingleShot(True)
+        safety_timer.timeout.connect(force_hide_overlay)
+        safety_timer.start(60000)  # 60 seconds for bone age analysis
+        overlay_ref['timer'] = safety_timer
+        
         worker.start()
 
 
