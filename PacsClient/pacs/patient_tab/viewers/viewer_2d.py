@@ -1236,8 +1236,19 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 window_width = scalar_range[1] - scalar_range[0]
                 window_center = (scalar_range[0] + scalar_range[1]) / 2
 
-        # print(f'slice: {slice_index}\t width: {window_width}\t center: {window_center}')
-        # window_width = window_width * (window_width / (window_center * 2))
+        # ── v2.2.3.0.7: WL scroll-cache ─────────────────────────────────────
+        # VTK vtkSetMacro unconditionally calls Modified() even when the value
+        # is identical to the current value.  On WARP/software-OpenGL this
+        # dirtied the color_mapper pipeline on EVERY slice scroll, forcing a
+        # full pipeline re-execution + duplicate update_corners_actors() call
+        # in set_window_level.  Guard: skip if WL is unchanged.
+        # Cache is reset to None on series switch (ImageViewer2D is recreated).
+        if (getattr(self, '_wl_scroll_cache_ww', None) == window_width and
+                getattr(self, '_wl_scroll_cache_wc', None) == window_center):
+            return
+        self._wl_scroll_cache_ww = window_width
+        self._wl_scroll_cache_wc = window_center
+        # ─────────────────────────────────────────────────────────────────────
 
         self.set_window_level(window_width, window_center, flag_default=True)
 
@@ -1245,6 +1256,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         is_rgb = self.metadata['instances'][self.GetSlice()]['is_rgb']
         if is_rgb:
             return
+
+        # v2.2.3.0.7: if user manually changes WL, clear the scroll-cache so
+        # the next apply_default_window_level (after a WL reset) always re-applies.
+        if not flag_default:
+            self._wl_scroll_cache_ww = None
+            self._wl_scroll_cache_wc = None
 
         self.color_mapper.SetWindow(window_width)
         self.color_mapper.SetLevel(window_center)

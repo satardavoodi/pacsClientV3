@@ -1696,6 +1696,17 @@ class DicomTagsActors:
         self.im_hospital_name_actor = None
 
     def change_actor_text(self, actor, text):
+        # v2.2.3.0.7: VTK vtkTextActor.SetInput() unconditionally calls Modified()
+        # even when the text string is identical.  On WARP/software-OpenGL this
+        # forces VTK to re-rasterize every text actor on every scroll frame —
+        # including 6-7 actors whose content never changes while scrolling
+        # (study date, series name, slice thickness, size, etc.).
+        # Guard: compare the current input string before calling SetInput().
+        try:
+            if actor.GetInput() == str(text):
+                return
+        except Exception:
+            pass
         actor.SetInput(text)
 
     def all_actors(self):
