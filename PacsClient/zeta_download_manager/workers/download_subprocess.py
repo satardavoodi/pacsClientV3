@@ -95,6 +95,22 @@ def run_download_subprocess(
         f"| study={task.study_uid[:30]}..."
     )
 
+    # ── 1b. Lower this process's OS priority so VTK scroll in the viewer
+    # process is not starved when the download subprocess does CPU-heavy
+    # response_parse or memory-heavy body transfer.
+    # BELOW_NORMAL_PRIORITY_CLASS (0x4000) on Windows gives the viewer
+    # higher scheduler priority without stalling the download.
+    import sys as _sys
+    if _sys.platform == "win32":
+        try:
+            import ctypes as _ctypes
+            _BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+            _kernel32 = _ctypes.windll.kernel32
+            _kernel32.SetPriorityClass(_kernel32.GetCurrentProcess(), _BELOW_NORMAL_PRIORITY_CLASS)
+            logger.info("[SP] Process priority set to BELOW_NORMAL (viewer gets priority)")
+        except Exception as _e:
+            logger.debug(f"[SP] Could not set process priority: {_e}")
+
     # ── 2. Lazy imports (nothing Qt-related) ─────────────────────────────────
     import asyncio
     from pathlib import Path as _Path

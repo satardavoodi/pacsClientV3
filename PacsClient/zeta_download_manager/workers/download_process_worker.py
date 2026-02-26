@@ -85,6 +85,7 @@ class DownloadProcessWorker(QThread):
             parent:   QObject parent (optional).
         """
         super().__init__(parent)
+        self.setObjectName(f"DownloadProcessWorker-{str(task.patient_name)[:24]}")
         self.task = task
         self.executor = executor
         self.download_job_id = f"job-{uuid.uuid4().hex[:12]}"

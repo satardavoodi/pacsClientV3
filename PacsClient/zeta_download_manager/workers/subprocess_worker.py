@@ -102,6 +102,7 @@ class SubprocessDownloadWorker(QThread):
         parent : QObject, optional
         """
         super().__init__(parent)
+        self.setObjectName(f"SubprocessWorker-{str(task.patient_name)[:24]}")
 
         self.task     = task
         # executor is kept for API compatibility but ignored; the subprocess

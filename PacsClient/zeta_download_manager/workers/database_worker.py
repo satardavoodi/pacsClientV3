@@ -48,6 +48,7 @@ class DatabaseWorker(QThread):
             parent: Parent QObject
         """
         super().__init__(parent)
+        self.setObjectName("DatabaseWorker")
         
         self.operation = operation
         self.args = args
