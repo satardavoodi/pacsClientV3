@@ -561,6 +561,9 @@ class ViewerController:
                     return True
 
             # Load DICOM+ITK independently (no shared lock with viewer).
+            # max_itk_threads=2: cap warmup to 2 ITK threads so background
+            # loading doesn't saturate the CPU and cause VTK render spikes
+            # during Mode A scrolling (same cap used for Mode B DL_WARMUP).
             result_gen = load_single_series_by_number(
                 study_path=study_path,
                 series_number=int(sn),
@@ -568,6 +571,7 @@ class ViewerController:
                 study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
                 ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
                 skip_fs_validation=True,  # warmup: trust DB paths, skip glob+exists
+                max_itk_threads=2,       # cap: keep CPU free for VTK render
             )
 
             def _mark_failed(reason: str):
@@ -4022,8 +4026,16 @@ class ViewerController:
                     print(f"🔑 [LOAD] series={series_key} took ownership (thread={threading.current_thread().name})")
 
             if not is_owner:
-                # Another interactive load is already working on this series.
-                # Wait for it (legitimate dedup — same user action).
+                # ⚡ CRITICAL: NEVER block the Qt main thread on this wait.
+                # load_series_immediately / load_first_series_only are called
+                # from QTimer.singleShot callbacks (main thread).  If warmup
+                # currently owns the lock the 10-second wait would freeze the
+                # entire UI.  Return False so the caller can schedule a retry.
+                if threading.current_thread() is threading.main_thread():
+                    print(f"⚠️ [LOAD] Main-thread call for series={series_key} is already in-flight "
+                          f"(owned by warmup/background) — returning False for QTimer retry")
+                    return False
+                # Background thread: legitimate dedup wait.
                 _wait_t = time.perf_counter()
                 if load_event is not None:
                     load_event.wait(timeout=10.0)
@@ -4480,6 +4492,12 @@ class ViewerController:
                     study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
                     ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
                     skip_fs_validation=True,
+                    # ⚡ Mode B: cap ITK to 1 thread so VTK render thread is never
+                    # starved.  With 2 threads the ITK pool competed with VTK causing
+                    # 94–100ms scroll spikes (confirmed by log timing correlation).
+                    # 1 thread roughly doubles ITK time (~1.1s) but still comfortably
+                    # fits within the 3s inter-series delay.
+                    max_itk_threads=1,
                 )
                 cached_ok = False
                 for item in result_gen:
@@ -4748,6 +4766,22 @@ class ViewerController:
             try:
                 if self.zeta_boost.is_active():
                     if not self._first_series_displayed:
+                        # Skip trivially-small series (localizers/scouts <4 slices) as
+                        # first display.  They match the image-filter skip threshold and
+                        # would confuse the user when shown instead of the intended
+                        # diagnostic series that is still downloading.  Route to warmup
+                        # so they are cached but not displayed as the first image.
+                        try:
+                            _exp_slices = self._get_series_expected_slices(series_number_str)
+                            if _exp_slices > 0 and _exp_slices < 4:
+                                self.logger.debug(
+                                    f"load_series_on_demand: series={series_number_str} only "
+                                    f"{_exp_slices} slice(s) — routing to warmup (skip first-display)"
+                                )
+                                self._enqueue_download_warmup(series_number_str)
+                                return
+                        except Exception:
+                            pass
                         # First series: thread-based load + display (not ZetaBoost).
                         # Mark as loading to prevent duplicate triggering.
                         if not hasattr(self, '_first_series_loading'):
@@ -5253,6 +5287,12 @@ class ViewerController:
             try:
                 success = self._load_single_series_on_demand(int(series_number))
 
+                # Warmup worker currently owns the lock — retry via QTimer.
+                if not success and str(int(series_number)) in self._loading_series_numbers:
+                    print(f"🔁 [FIRST-SERIES] Series {series_number} being cached by warmup — retrying in 250 ms")
+                    QTimer.singleShot(250, lambda fp=folder_path, sn=series_number: self.load_first_series_only(fp, sn))
+                    return
+
                 if success:
                     self.parent_widget.lst_series_name.add(series_key)
                     print(f"✅ Series {series_number} loaded successfully")
@@ -5327,6 +5367,12 @@ class ViewerController:
             # Load the series
             success = self._load_single_series_on_demand(series_int)
             if not success:
+                # Warmup worker currently owns the load lock for this series.
+                # Retry in 250 ms so the main thread is never blocked.
+                if str(series_int) in self._loading_series_numbers:
+                    print(f"🔁 [PRIORITY LOAD] Series {series_int} being cached by warmup — retrying in 250 ms")
+                    QTimer.singleShot(250, lambda sn=series_number, sd=series_dir: self.load_series_immediately(sn, sd))
+                    return
                 print(f"❌ Failed to load series {series_int}")
                 return
 

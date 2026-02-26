@@ -750,7 +750,8 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
 
 
 def load_single_series_by_number(study_path, series_number, patient_pk=None, study_pk=None,
-                                 ordering_by_instances_number=None, skip_fs_validation=False):
+                                 ordering_by_instances_number=None, skip_fs_validation=False,
+                                 max_itk_threads=None):
     """
     ✅ OPTIMIZED: Load a single series by number with detailed timing
     """
@@ -936,7 +937,7 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     # Apply ITK filters before conversion
                     _filter_start = time.time()
                     from PacsClient.pacs.patient_tab.utils.image_filters import apply_filters
-                    itk_image = apply_filters(itk_image, metadata)
+                    itk_image = apply_filters(itk_image, metadata, max_itk_threads=max_itk_threads)
                     _filter_time = time.time() - _filter_start
                     print(f"      ITK filters: {_filter_time:.3f}s")
                     logger.info(
@@ -1003,7 +1004,7 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
 
     # Process series groups
     _process_start = time.time()
-    for item in process_series_groups(series_path, size_dict, patient_pk, study_pk):
+    for item in process_series_groups(series_path, size_dict, patient_pk, study_pk, max_itk_threads=max_itk_threads):
         yield item
     _process_time = time.time() - _process_start
     
@@ -1138,10 +1139,11 @@ def load_series_preview(study_path, series_number, patient_pk=None, study_pk=Non
 
     return vtk_image_data, metadata, (patient_pk, study_pk), total_files
 
-def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_pk):
+def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_pk, max_itk_threads=None):
     """
         base_path: Path to series/subfolder
         size_groups: map of (rows, cols) -> list[file paths] where each is a series
+        max_itk_threads: optional cap on ITK thread count (None = use default).
     """
     # TIMING: Import time module
     import time
@@ -1235,7 +1237,7 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             # Apply ITK filters before conversion
             _filter_start = time.time()
             from PacsClient.pacs.patient_tab.utils.image_filters import apply_filters
-            itk_image = apply_filters(itk_image, metadata)
+            itk_image = apply_filters(itk_image, metadata, max_itk_threads=max_itk_threads)
             _filter_time = time.time() - _filter_start
             print(f"            ITK filters: {_filter_time:.3f}s")
 

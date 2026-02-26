@@ -1064,6 +1064,7 @@ class ZetaBoostEngine:
                 f"series={series_number} {self._cache_summary()}"
             )
 
+            _job_t0 = time.time()
             failed = False
             try:
                 # Fast path: if the series exists in the disk cache, promote it
@@ -1085,6 +1086,7 @@ class ZetaBoostEngine:
                     except Exception:
                         pass
             finally:
+                _job_elapsed_ms = (time.time() - _job_t0) * 1000.0
                 with self._cv:
                     self._inflight[lane].discard(series_number)
                     self._stats["processed"] += 1
@@ -1095,7 +1097,7 @@ class ZetaBoostEngine:
                         self._consecutive_failures = 0
                     self._log_info(
                         f"PROCESS_DONE lane={lane} worker={worker_index + 1} "
-                        f"series={series_number} {self._cache_summary()}"
+                        f"series={series_number} elapsed_ms={_job_elapsed_ms:.0f} {self._cache_summary()}"
                     )
                     self._maybe_log_health_locked(force=False)
                     # Detect when ALL work across all lanes is complete.

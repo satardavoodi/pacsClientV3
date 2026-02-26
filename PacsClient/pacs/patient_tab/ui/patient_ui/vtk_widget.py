@@ -144,6 +144,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._lag_probe_min_samples = max(20, int(os.getenv("AIPACS_SCROLL_LAG_PROBE_MIN_SAMPLES", "40") or "40"))
         self._lag_probe_samples = []
         self._lag_probe_window_start_ms = 0.0
+        self._lag_probe_last_dl_active: bool = False  # tracks mode transitions for clean window resets
 
         # Scroll coalescing (debounce): batch rapid wheel events into one VTK render.
         # On slow GPUs (GLES2 software fallback) each Render() takes 60-80ms —
@@ -200,14 +201,25 @@ class VTKWidget(QVTKRenderWindowInteractor):
             return False
 
     def _record_scroll_lag_probe(self, total_ms: float, queue_delay_ms: float, slice_apply_ms: float):
+        """Record a scroll timing sample.
+
+        Probes BOTH Mode A (no download) and Mode B (download active).
+        When the download state changes mid-window the samples are flushed
+        so Mode A and Mode B metrics are never mixed in the same report.
+        Log tag: ``viewer-scroll-probe mode=mode_a|mode_b``
+        """
         if not self._lag_probe_enabled:
-            return
-        if not self._is_global_download_active_for_probe():
-            self._lag_probe_samples.clear()
-            self._lag_probe_window_start_ms = 0.0
             return
 
         now = time.time() * 1000.0
+        is_dl_active = self._is_global_download_active_for_probe()
+
+        # Flush window cleanly when download state changes (avoid mixing modes).
+        if is_dl_active != self._lag_probe_last_dl_active:
+            self._lag_probe_samples.clear()
+            self._lag_probe_window_start_ms = 0.0
+            self._lag_probe_last_dl_active = is_dl_active
+
         if self._lag_probe_window_start_ms <= 0.0:
             self._lag_probe_window_start_ms = now
 
@@ -225,13 +237,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
         totals = sorted(v[0] for v in self._lag_probe_samples)
         queues = sorted(v[1] for v in self._lag_probe_samples)
         applies = sorted(v[2] for v in self._lag_probe_samples)
+        mode_tag = "mode_b" if is_dl_active else "mode_a"
 
         logger.info(
             (
-                "viewer-scroll-probe window_sec=%.1f samples=%d "
+                "viewer-scroll-probe mode=%s window_sec=%.1f samples=%d "
                 "set_slice_p50_ms=%.2f set_slice_p95_ms=%.2f set_slice_max_ms=%.2f "
                 "queue_p95_ms=%.2f slice_apply_p95_ms=%.2f"
             ),
+            mode_tag,
             (elapsed_ms / 1000.0),
             len(totals),
             self._percentile(totals, 50),
@@ -1258,15 +1272,26 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self.image_viewer.last_index_slice_saved = slice_index
         
         # ✅ CRITICAL: Force restore camera zoom after slice change
+        # Phase 1 fix (v2.2.3.1.6): compare against _protected_parallel_scale
+        # (the user's last explicitly set zoom), not against saved_scale which
+        # was captured at the top of this call and may already include VTK
+        # floating-point drift.  Tolerance widened from 0.001 → 0.05 so minor
+        # per-frame FP jitter in SetSlice() no longer fires a second Render()
+        # on every scroll (was measured as 60–80ms extra per scroll in Mode B).
         try:
             camera = self.image_viewer.renderer.GetActiveCamera()
             if saved_scale is not None and camera:
                 current_scale = camera.GetParallelScale()
-                # If scale changed at all, restore it
-                if abs(current_scale - saved_scale) > 0.001:  # Very tight tolerance
-                    logger.warning(f"[set_slice] Zoom change detected! scale={current_scale} → reverting to {saved_scale}")
-                    camera.SetParallelScale(saved_scale)
-                    self._protected_parallel_scale = saved_scale
+                _ref_scale = (
+                    self._protected_parallel_scale
+                    if self._protected_parallel_scale is not None
+                    else saved_scale
+                )
+                # Only re-render if zoom deviated meaningfully from user's intended scale
+                if abs(current_scale - _ref_scale) > 0.05:
+                    logger.warning(f"[set_slice] Zoom change detected! scale={current_scale:.4f} → reverting to {_ref_scale:.4f}")
+                    camera.SetParallelScale(_ref_scale)
+                    self._protected_parallel_scale = _ref_scale
                     t_render = now_ms()
                     self.image_viewer.Render()
                     render_ms = max(0.0, now_ms() - t_render)

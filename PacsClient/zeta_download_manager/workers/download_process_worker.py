@@ -46,6 +46,14 @@ logger = logging.getLogger(__name__)
 # CPU cost of polling is negligible (<0.1 % of one core).
 _QUEUE_POLL_TIMEOUT_S = 0.02
 
+# Maximum rate at which `progress` signals are emitted to the main thread.
+# Without this, a large series (500+ images) floods the Qt event queue:
+# each queued signal calls _on_worker_progress on the main thread, which
+# adds up to seconds of blockage → `event_queue_delay` grows to 16+ s.
+# 10 Hz matches the 100 ms throttle already in _on_worker_progress, so
+# no visible update quality is lost.
+_PROGRESS_EMIT_MIN_INTERVAL_S = 0.10  # emit at most 10×/s
+
 
 class DownloadProcessWorker(QThread):
     """
@@ -152,6 +160,10 @@ class DownloadProcessWorker(QThread):
             # ── Poll loop ──────────────────────────────────────────────────
             terminal_message_received = False
             process_dead_since: Optional[float] = None
+            # Rate-limiting state for progress signals.
+            _last_progress_emit_s: float = 0.0
+            _pending_progress_msg: Optional[dict] = None  # latest unsent value
+            _last_series_number: Optional[str] = None
             while True:
                 try:
                     msg = self._result_queue.get(timeout=_QUEUE_POLL_TIMEOUT_S)
@@ -190,16 +202,44 @@ class DownloadProcessWorker(QThread):
                 process_dead_since = None
 
                 if msg_type == "progress":
-                    self.progress.emit(
-                        study_uid,
-                        msg.get("event_type", ""),
-                        msg.get("series_number", ""),
-                        float(msg.get("progress_pct", 0.0)),
-                        int(msg.get("downloaded", 0)),
-                        int(msg.get("total", 0)),
-                    )
+                    _raw_series = msg.get("series_number", "")
+                    _raw_dl = int(msg.get("downloaded", 0))
+                    _raw_tot = int(msg.get("total", 0))
+                    _series_changed = (_raw_series != _last_series_number)
+                    _series_done = (_raw_tot > 0 and _raw_dl >= _raw_tot)
+                    _now_s = time.monotonic()
+                    _due = (_now_s - _last_progress_emit_s) >= _PROGRESS_EMIT_MIN_INTERVAL_S
+                    if _series_changed or _series_done or _due:
+                        # Emit and reset pending buffer.
+                        _last_series_number = _raw_series
+                        _last_progress_emit_s = _now_s
+                        _pending_progress_msg = None
+                        self.progress.emit(
+                            study_uid,
+                            msg.get("event_type", ""),
+                            _raw_series,
+                            float(msg.get("progress_pct", 0.0)),
+                            _raw_dl,
+                            _raw_tot,
+                        )
+                    else:
+                        # Suppress this signal; keep latest value for next flush.
+                        _pending_progress_msg = msg
 
                 elif msg_type == "completed":
+                    # Flush any pending progress before the completed signal
+                    # so progress bars reach 100 % before the completion UI fires.
+                    if _pending_progress_msg is not None:
+                        _pm = _pending_progress_msg
+                        _pending_progress_msg = None
+                        self.progress.emit(
+                            study_uid,
+                            _pm.get("event_type", ""),
+                            _pm.get("series_number", ""),
+                            float(_pm.get("progress_pct", 0.0)),
+                            int(_pm.get("downloaded", 0)),
+                            int(_pm.get("total", 0)),
+                        )
                     success = bool(msg.get("success", False))
                     terminal_message_received = True
                     self.completed.emit(study_uid, success)

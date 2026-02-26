@@ -809,7 +809,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             columns = self.metadata['instances'][current_slice]['columns']
             series_size = f"{rows} * {columns}"
 
-            window_width, window_center = int(self.get_window_level()[0]), int(self.get_window_level()[1])
+            _wl = self.get_window_level()
+            window_width, window_center = int(_wl[0]), int(_wl[1])
 
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_series_thk_actor, f'Thk:{series_thk} mm')
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_series_size_actor, f'Size:{series_size}')

@@ -3065,7 +3065,18 @@ class DownloadManagerWidget(QWidget):
                 logger.warning(
                     f"⚠️ [SERIES RETRY] Series {target_num or series_number} not found in completed/failed lists"
                 )
-            
+                # Guard: if there is an active worker and the study is still DOWNLOADING,
+                # the series is currently in-progress.  Deleting its files or trying to
+                # start a second worker would corrupt the running download.  Bail out.
+                _active_count = self.worker_pool.get_active_count()
+                if _active_count > 0 and state.status == DownloadStatus.DOWNLOADING:
+                    logger.info(
+                        f"⏳ [SERIES RETRY] Series {target_num or series_number} is currently being "
+                        f"downloaded by active worker (pool={_active_count}, status=DOWNLOADING). "
+                        f"Skipping retry — download will complete normally."
+                    )
+                    return
+
             # CRITICAL: Delete series files from disk to force re-download
             # Otherwise downloader will skip the series thinking it's already complete
             try:
