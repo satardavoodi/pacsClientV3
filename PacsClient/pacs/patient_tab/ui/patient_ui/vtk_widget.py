@@ -919,77 +919,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # Run garbage collection to help free memory
         gc.collect()
 
-    def switch_series_backup(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
-                      metadata_fixed=None):
-        """
-        ANTI-FLICKERING: Series switch without processEvents
-        """
-        # Check this series has showed
-        if self.last_series_show == series_index:
-            return False
-
-        # Show loading spinner (non-blocking)
-        self.viewport_spinner.show_loading("Switching series...")
-
-        # Detect first-time load (placeholder → real series)
-        _is_first_load = (self.image_viewer is None)
-        
-        # =====================================================
-        # ANTI-FLICKERING: Disable updates during switch
-        # =====================================================
-        self.setUpdatesEnabled(False)
-
-        self.cleanup_image_viewer()
-
-        if (vtk_image_data_2 is not None) and (metadata_2 is not None):
-            self.image_viewer = CustomCombineImageViewers(
-                self.render_window, self.interactor, self.height_viewer, vtk_image_data1=vtk_image_data,
-                metadata1=metadata,
-                vtk_image_data2=vtk_image_data_2, metadata2=metadata_2, metadata_fixed=metadata_fixed,
-                apply_default_filter=self.apply_default_filter, vtk_widget=self)
-
-        else:
-            self.image_viewer = ImageViewer2D(self.render_window, self.interactor, self.height_viewer, vtk_image_data,
-                                              metadata, metadata_fixed, self.apply_default_filter, vtk_widget=self)
-
-        self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
-        # add new renderer
-        new_renderer = self.image_viewer.GetRenderer()
-        self.render_window.AddRenderer(new_renderer)
-
-        # set interactor style again
-        self.style = AbstractInteractorStyle(self.image_viewer)
-        self.current_style = self.style
-        self.interactor.SetInteractorStyle(self.style)
-        # self.style.interactionOccurred.connect(self.change_container_border)
-        self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
-
-        self.image_viewer.UpdateDisplayExtent()
-
-        # FIX: On first load (placeholder → real series), reset camera properly
-        # to prevent black screen
-        if _is_first_load:
-            self.image_viewer.renderer.ResetCamera()
-            self.image_viewer.renderer.ResetCameraClippingRange()
-            if hasattr(self.image_viewer, 'zoom_to_fit'):
-                # ✅ Save the initial scale after zoom_to_fit
-                initial_scale = self.image_viewer.zoom_to_fit()
-                if initial_scale:
-                    self._protected_parallel_scale = initial_scale
-                    logger.debug(f"[switch_series] Saved initial scale: {initial_scale}")
-
-        # Single render call (not both viewer and window)
-        self.render_window.Render()
-
-        self.last_series_show = series_index
-        self.save_status_camera(self.image_viewer)
-        
-        # =====================================================
-        # ANTI-FLICKERING: Re-enable updates and hide spinner
-        # =====================================================
-        self.setUpdatesEnabled(True)
-        QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
-        return True
+    # v2.2.3.1.0: Removed switch_series_backup() — dead code, superseded by switch_series().
+    # Was ~72 lines with no callers in the codebase.
 
     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
                       metadata_fixed=None):

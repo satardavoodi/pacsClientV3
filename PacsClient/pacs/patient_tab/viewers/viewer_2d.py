@@ -51,20 +51,8 @@ class ImageReslice(vtk.vtkImageReslice):  # for set orientation and return image
         # ⚡ CRITICAL: Update is expensive, so ensure it's called only once
         self.Update()
 
-    def apply_orientation(self):
-        orientation = self.metadata['series']['orientation']
-        # print('orientation:', orientation)
-        pass
-
-
-def flip_image_y(img):
-    f = vtk.vtkImageFlip()
-    f.SetInputData(img)
-    f.SetFilteredAxis(1)  # 0=X, 1=Y, 2=Z
-    f.Update()
-    out = vtk.vtkImageData()
-    out.DeepCopy(f.GetOutput())  # مستقل از فیلتر
-    return out
+    # v2.2.3.1.0: Removed apply_orientation() — empty stub (just pass), never called.
+    # v2.2.3.1.0: Removed flip_image_y() — dead code, only referenced in comments.
 
 
 def display_upsample_xy(vtk_img, factor=1.0):
@@ -500,9 +488,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         actor.SetDisplayExtent(*extent)
 
-        self.image_reslice.Update()
-        self.UpdateDisplayExtent()
-        self.Render()
+        # v2.2.3.1.0: removed self.image_reslice.Update(), self.UpdateDisplayExtent(),
+        # and self.Render() here — the calling set_slice() already drives the base
+        # pipeline and calls Render() at the end, so doing them inside the overlay
+        # repositioning was redundant duplicated work.
 
     # def _schedule_render(self, delay_ms=33):
     #     if getattr(self, "_render_pending", False):
@@ -1266,7 +1255,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.color_mapper.SetWindow(window_width)
         self.color_mapper.SetLevel(window_center)
         self.color_mapper.Update()
-        self.update_corners_actors()
+        # v2.2.3.1.0: skip corner update on scroll path — set_slice() always
+        # calls update_corners_actors() after apply_default_window_level(),
+        # so calling it here too was a duplicate (~2-5ms wasted per scroll).
+        if not flag_default:
+            self.update_corners_actors()
 
     def get_window_level(self):
         window_width = self.color_mapper.GetWindow()

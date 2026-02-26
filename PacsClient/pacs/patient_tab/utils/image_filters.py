@@ -388,7 +388,7 @@ def apply_gaussian_sharpening(img: sitk.Image, sigma: float = 0.8, alpha: float 
     return sitk.Cast(sharpened, orig_type)
 
 
-def apply_laplacian_sharpening(img: sitk.Image, alpha: float = 0.3) -> sitk.Image:
+def apply_laplacian_sharpening(img: sitk.Image, alpha: float = 0.3, _pre_cast: bool = False) -> sitk.Image:
     """
     تیز کردن تصویر با استفاده از لاپلاسین-گاوسی.
 
@@ -422,27 +422,31 @@ def apply_laplacian_sharpening(img: sitk.Image, alpha: float = 0.3) -> sitk.Imag
     - منفی کردن لاپلاسین ضروری است زیرا لاپلاسین در مرکز منفی و در اطراف مثبت است
     - برای تیز کردن لبه‌های تیز بسیار موثر است
     """
-    # ذخیره نوع داده اصلی
-    orig_type = img.GetPixelID()
-    imgf = sitk.Cast(img, sitk.sitkFloat32)
+    # v2.2.3.1.0: cast-once — skip redundant Cast when called from apply_filters chain
+    if not _pre_cast:
+        orig_type = img.GetPixelID()
+        img = sitk.Cast(img, sitk.sitkFloat32)
 
     # v2.2.3.0.8: Gaussian kernel in ITK; arithmetic in numpy.
-    orig_arr = sitk.GetArrayFromImage(imgf).astype(np.float32)
+    orig_arr = sitk.GetArrayFromImage(img).astype(np.float32)
     laplacian_arr = sitk.GetArrayFromImage(
-        sitk.LaplacianRecursiveGaussian(imgf, sigma=0.5)
+        sitk.LaplacianRecursiveGaussian(img, sigma=0.5)
     ).astype(np.float32)
     sharpened_arr = orig_arr - laplacian_arr * float(alpha)
 
     result = sitk.GetImageFromArray(sharpened_arr)
-    result.CopyInformation(imgf)
-    return sitk.Cast(result, orig_type)
+    result.CopyInformation(img)
+    if not _pre_cast:
+        return sitk.Cast(result, orig_type)
+    return result
 
 
 def apply_adaptive_sharpening(
     img: sitk.Image,
     base_amount: float = 0.3,
     edge_boost: float = 1.5,
-    sigma: float = 0.6
+    sigma: float = 0.6,
+    _pre_cast: bool = False,
 ) -> sitk.Image:
     """
     تیز کردن تطبیقی که بر اساس قدرت لبه‌ها، شدت تیز کردن را تنظیم می‌کند.
@@ -485,18 +489,19 @@ def apply_adaptive_sharpening(
     - از oversharpening نواحی هموار جلوگیری می‌کند
     - edge_boost=2.0 برای CT و edge_boost=1.0 برای MR مناسب است
     """
-    # ذخیره نوع داده اصلی
-    orig_type = img.GetPixelID()
-    imgf = sitk.Cast(img, sitk.sitkFloat32)
+    # v2.2.3.1.0: cast-once — skip redundant Cast when called from apply_filters chain
+    if not _pre_cast:
+        orig_type = img.GetPixelID()
+        img = sitk.Cast(img, sitk.sitkFloat32)
 
     # v2.2.3.0.8: Only 2 ITK calls (GradientMagnitude + Smooth); all arithmetic numpy.
     # OLD: 10 ITK pipeline calls  →  NEW: 2 ITK calls + numpy ops (~0ms overhead)
-    orig_arr = sitk.GetArrayFromImage(imgf).astype(np.float32)
+    orig_arr = sitk.GetArrayFromImage(img).astype(np.float32)
     gradient_arr = sitk.GetArrayFromImage(
-        sitk.GradientMagnitudeRecursiveGaussian(imgf, sigma=sigma)
+        sitk.GradientMagnitudeRecursiveGaussian(img, sigma=sigma)
     ).astype(np.float32)
     blurred_arr = sitk.GetArrayFromImage(
-        sitk.SmoothingRecursiveGaussian(imgf, sigma=sigma)
+        sitk.SmoothingRecursiveGaussian(img, sigma=sigma)
     ).astype(np.float32)
 
     # Normalize gradient to [0, 1] in numpy
@@ -508,14 +513,17 @@ def apply_adaptive_sharpening(
     sharpened_arr = orig_arr + details * edge_weight
 
     result = sitk.GetImageFromArray(sharpened_arr.astype(np.float32))
-    result.CopyInformation(imgf)
-    return sitk.Cast(result, orig_type)
+    result.CopyInformation(img)
+    if not _pre_cast:
+        return sitk.Cast(result, orig_type)
+    return result
 
 
 def apply_multiscale_sharpening(
     img: sitk.Image,
     sigmas: list[float] = [0.8, 1.5, 2.5],
-    amounts: list[float] = [0.4, 0.2, 0.1]
+    amounts: list[float] = [0.4, 0.2, 0.1],
+    _pre_cast: bool = False,
 ) -> sitk.Image:
     """
     تیز کردن چندمقیاسه برای تقویت همزمان جزئیات در مقیاس‌های مختلف.
@@ -553,14 +561,15 @@ def apply_multiscale_sharpening(
     - مقدارهای پیشنهادی برای CT: [0.6, 1.2, 2.4] با مقادیر [0.3, 0.15, 0.05]
     - می‌تواند زمان محاسبه بیشتری نسبت به روش‌های تک‌مقیاسه داشته باشد
     """
-    # ذخیره نوع داده اصلی
-    orig_type = img.GetPixelID()
-    imgf = sitk.Cast(img, sitk.sitkFloat32)
+    # v2.2.3.1.0: cast-once — skip redundant Cast when called from apply_filters chain
+    if not _pre_cast:
+        orig_type = img.GetPixelID()
+        img = sitk.Cast(img, sitk.sitkFloat32)
 
     # v2.2.3.0.8: Use numpy for arithmetic; ITK only for the Gaussian kernel.
     # sitk.Add/Subtract/Multiply each trigger a full ITK pipeline rebuild
     # (~1-3ms each); replacing them with numpy ops drops that overhead to ~0.
-    sharpened_arr = sitk.GetArrayFromImage(imgf).astype(np.float32)
+    sharpened_arr = sitk.GetArrayFromImage(img).astype(np.float32)
 
     # اعمال تیز کردن در هر مقیاس - sigmas are already in mm, so we can use them directly
     for sigma, amount in zip(sigmas, amounts):
@@ -568,7 +577,7 @@ def apply_multiscale_sharpening(
         time.sleep(0.01)
         # Run Gaussian in ITK (RecursiveGaussian is C++ and fastest available)
         tmp = sitk.GetImageFromArray(sharpened_arr)
-        tmp.CopyInformation(imgf)
+        tmp.CopyInformation(img)
         blurred_arr = sitk.GetArrayFromImage(
             sitk.SmoothingRecursiveGaussian(tmp, sigma=sigma)
         )
@@ -577,8 +586,10 @@ def apply_multiscale_sharpening(
         sharpened_arr = sharpened_arr + details_arr * float(amount)
 
     result = sitk.GetImageFromArray(sharpened_arr)
-    result.CopyInformation(imgf)
-    return sitk.Cast(result, orig_type)
+    result.CopyInformation(img)
+    if not _pre_cast:
+        return sitk.Cast(result, orig_type)
+    return result
 
 
 def apply_filters(
@@ -754,6 +765,13 @@ def apply_filters(
     # Multiscale sharpening
     # ------------------------------------------------------------------
     if modality == "MR":
+        # v2.2.3.1.0: cast-once — single Cast(float32) before the sharpening
+        # chain and single Cast(orig_type) after, eliminating 6 intermediate
+        # Casts (2 per filter × 3 filters).  Saves ~100-300ms per MR series.
+        _orig_pixel_type = itk_image.GetPixelID()
+        if _orig_pixel_type != sitk.sitkFloat32:
+            itk_image = sitk.Cast(itk_image, sitk.sitkFloat32)
+
         ms_cfg = modality_settings.get("multiscale_sharpening", {})
         if ms_cfg.get("enabled", True):
             sigmas = ms_cfg.get("mild_sigmas", ms_cfg.get("sigmas", [0.5, 1.0, 2.0])) if mild_mode else ms_cfg.get("sigmas", [0.5, 1.0, 2.0])
@@ -764,7 +782,7 @@ def apply_filters(
             if mild_mode:
                 sigmas = list(sigmas)[:2]
                 amounts = list(amounts)[:2]
-            itk_image = apply_multiscale_sharpening(itk_image, sigmas=sigmas, amounts=amounts)
+            itk_image = apply_multiscale_sharpening(itk_image, sigmas=sigmas, amounts=amounts, _pre_cast=True)
 
         # ── GIL yield: let UI thread process events between filter stages ──
         time.sleep(0.05)
@@ -775,7 +793,7 @@ def apply_filters(
         lap_cfg = modality_settings.get("laplacian_sharpening", {})
         if lap_cfg.get("enabled", True):
             alpha = lap_cfg.get("mild_alpha", lap_cfg.get("alpha", 0.12)) if mild_mode else lap_cfg.get("alpha", 0.12)
-            itk_image = apply_laplacian_sharpening(itk_image, alpha=float(alpha))
+            itk_image = apply_laplacian_sharpening(itk_image, alpha=float(alpha), _pre_cast=True)
 
         # ── GIL yield: let UI thread process events between filter stages ──
         time.sleep(0.05)
@@ -798,7 +816,12 @@ def apply_filters(
                     base_amount=float(base_amount),
                     edge_boost=float(edge_boost),
                     sigma=float(sigma_val),
+                    _pre_cast=True,
                 )
+
+        # v2.2.3.1.0: cast back to original pixel type once
+        if _orig_pixel_type != sitk.sitkFloat32:
+            itk_image = sitk.Cast(itk_image, _orig_pixel_type)
 
     # Timing end
     _dt = time.time() - t0
