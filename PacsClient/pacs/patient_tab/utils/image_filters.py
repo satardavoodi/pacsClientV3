@@ -598,15 +598,36 @@ def apply_filters(
     filter_settings_path: Path = FILTER_CONFIG_PATH
 ) -> sitk.Image:
     """
-    Stable medical image filtering pipeline (v1.08.9.8.3 behavior).
+    PooyanPacs-inspired fast filtering pipeline (v2.2.3.1.5).
 
-    - MR: noise reduction + multiscale sharpening + laplacian sharpening + adaptive sharpening
+    - MR: XY-only noise reduction + single XY-only unsharp mask (clamped)
     - CT: noise reduction only
 
-    Notes
-    -----
-    This intentionally applies ONLY the filters that were applied in the previous
-    stable build. Extra keys present in filter_settings.json are ignored here.
+    v2.2.3.1.5 fixes (over v2.2.3.1.4)
+    ------------------------------------
+    - Fixed white line artifacts at tissue/background edges by clamping
+      the unsharp mask output to the original data range.  PooyanPacs
+      avoids this naturally because it operates on 8-bit [0,255]
+      BitmapSource; 16-bit DICOM data needs explicit clamping.
+    - Reduced unsharp amount from 0.40 to 0.25 (mild: 0.20) since
+      16-bit data has much sharper edge transitions than 8-bit.
+    - Reduced inter-stage sleep from 50ms to 5ms (only 2 lightweight
+      stages now; 50ms × 9 series = 450ms wasted during warmup).
+    - Increased ITK thread count from 2 to min(cpu, 4) since the
+      pipeline is much lighter; halves RecursiveGaussian wall time.
+
+    v2.2.3.1.4 redesign
+    --------------------
+    Replaced the 4-stage 3D pipeline (noise + multiscale_sharpening +
+    laplacian_sharpening + adaptive_sharpening = 7+ full 3D Gaussian passes)
+    with a lightweight 2-stage XY-only pipeline derived from PooyanPacs:
+
+    1. XY-only Gaussian noise reduction (σ=0.25, no Z-pass)
+    2. Single XY-only unsharp mask (σ=1.0, amount=0.25, clamped)
+
+    The PooyanPacs unsharp mask formula:
+        output = original + amount * (original - GaussianBlur(original))
+    with clamping to [min, max] of original data range.
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -623,39 +644,32 @@ def apply_filters(
         return base
 
     # ------------------------------------------------------------------
-    # Default filter configuration (stable)
+    # Default filter configuration (v2.2.3.1.5 — PooyanPacs-style, clamped)
     # ------------------------------------------------------------------
     DEFAULT_FILTERS = {
         "MR": {
             "enabled": True,
             "min_slices": 4,
             "noise_reduction": {
-                # "enabled" existed in JSON in stable; keep it supported here.
                 "enabled": True,
                 "sigma": 0.25,
                 "mild_sigma": 0.30,
             },
-            "multiscale_sharpening": {
+            # v2.2.3.1.5: Unsharp mask with clamping.  Amount reduced from
+            # 0.40 to 0.25 because 16-bit data has sharper edge transitions
+            # than PooyanPacs's 8-bit images; 0.25 on 16-bit gives similar
+            # visual effect as 0.40 on 8-bit.
+            "unsharp_mask": {
                 "enabled": True,
-                "sigmas": [0.5, 1.0, 2.0],
-                "amounts": [0.25, 0.12, 0.06],
-                "mild_sigmas": [0.5, 1.0, 2.0, 4.0],
-                "mild_amounts": [0.20, 0.10, 0.05, 0.025],
+                "sigma": 1.0,
+                "amount": 0.25,
+                "mild_sigma": 1.0,
+                "mild_amount": 0.20,
             },
-            "laplacian_sharpening": {
-                "enabled": True,
-                "alpha": 0.12,
-                "mild_alpha": 0.10,
-            },
-            "adaptive_sharpening": {
-                "enabled": True,
-                "base_amount": 0.12,
-                "edge_boost": 0.90,
-                "sigma": 0.70,
-                "mild_base_amount": 0.10,
-                "mild_edge_boost": 0.80,
-                "mild_sigma": 0.80,
-            },
+            # Legacy keys retained for JSON backward compatibility — disabled by default.
+            "multiscale_sharpening": {"enabled": False},
+            "laplacian_sharpening": {"enabled": False},
+            "adaptive_sharpening": {"enabled": False},
         },
         "CT": {
             "enabled": True,
@@ -727,99 +741,78 @@ def apply_filters(
     max_spacing = max(spacing) if spacing else 0
     mild_mode = (modality == "MR") and (max_spacing > 1.5)
 
-    # ── v2.2.3.0.8: Use 2 ITK threads during filter pipeline.                 ──
-    # v2.2.3.0.6 used 1 thread to avoid VTK render starvation, but that caused  ──
-    # 29s filter times on thick-slice MR (500×640×24).  v2.2.3.0.4 added        ──
-    # wait_for_inflight_drain() so interactive loads never overlap warmup ITK;  ──
-    # 2 threads now halves all Gaussian pass times with minimal render impact.  ──
+    # ── v2.2.3.1.5: Use up to 4 ITK threads.  The pipeline is now much ──
+    # lighter (2 XY-only stages vs 7+ full 3D), so we can afford more    ──
+    # ITK parallelism without starving the VTK render thread.            ──
     _itk_cpu_count = os.cpu_count() or 4
+    _filter_threads = min(_itk_cpu_count, 4)
     try:
-        sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(2)
+        sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(_filter_threads)
     except Exception:
         pass
 
     # ------------------------------------------------------------------
-    # Noise reduction
+    # Noise reduction (XY-only for MR — PooyanPacs 2D approach)
     # ------------------------------------------------------------------
     noise_cfg = modality_settings.get("noise_reduction", {})
     if noise_cfg.get("enabled", True):
         sigma = noise_cfg.get("mild_sigma", noise_cfg.get("sigma", 0.25)) if mild_mode else noise_cfg.get("sigma", 0.25)
-        # High-slice CT fast path:
-        # For deep stacks (e.g., 350-600 slices), full 3D smoothing spends a lot
-        # of time in Z-processing. Use XY-only recursive smoothing to preserve
-        # in-plane denoising with lower latency.
         ct_high_slice_threshold = int(noise_cfg.get("ct_high_slice_threshold", 320))
-        if modality == "CT" and int(nz) >= ct_high_slice_threshold:
-            itk_image = _smooth_xy_recursive(
-                itk_image,
-                sigma_xy=float(sigma),
-                sigma_z=0.0,
-            )
+        # v2.2.3.1.4: MR always uses XY-only noise reduction (matches PooyanPacs
+        # 2D-per-slice philosophy).  CT uses XY-only for deep stacks, full 3D
+        # for moderate stacks where Z-smoothing still helps.
+        use_xy_only = (modality == "MR") or (modality == "CT" and int(nz) >= ct_high_slice_threshold)
+        if use_xy_only:
+            itk_image = _smooth_xy_recursive(itk_image, sigma_xy=float(sigma), sigma_z=0.0)
         else:
             itk_image = sitk.SmoothingRecursiveGaussian(itk_image, sigma=float(sigma))
-    
-    # ── GIL yield: let UI thread process events between filter stages ──
-    time.sleep(0.05)
+
+    # ── GIL yield: brief pause between stages (5ms vs old 50ms) ──
+    time.sleep(0.005)
 
     # ------------------------------------------------------------------
-    # Multiscale sharpening
+    # PooyanPacs-style single XY-only unsharp mask (v2.2.3.1.5, clamped)
     # ------------------------------------------------------------------
+    # Replaces the previous 3-stage sharpening chain with a single XY-only
+    # unsharp mask.  v2.2.3.1.5: output is clamped to the original data range
+    # to prevent white line overshoot at tissue/background edges.
     if modality == "MR":
-        # v2.2.3.1.0: cast-once — single Cast(float32) before the sharpening
-        # chain and single Cast(orig_type) after, eliminating 6 intermediate
-        # Casts (2 per filter × 3 filters).  Saves ~100-300ms per MR series.
         _orig_pixel_type = itk_image.GetPixelID()
         if _orig_pixel_type != sitk.sitkFloat32:
             itk_image = sitk.Cast(itk_image, sitk.sitkFloat32)
 
-        ms_cfg = modality_settings.get("multiscale_sharpening", {})
-        if ms_cfg.get("enabled", True):
-            sigmas = ms_cfg.get("mild_sigmas", ms_cfg.get("sigmas", [0.5, 1.0, 2.0])) if mild_mode else ms_cfg.get("sigmas", [0.5, 1.0, 2.0])
-            amounts = ms_cfg.get("mild_amounts", ms_cfg.get("amounts", [0.25, 0.12, 0.06])) if mild_mode else ms_cfg.get("amounts", [0.25, 0.12, 0.06])
-            # v2.2.3.0.8: thick-slice MR (mild_mode, spacing>1.5mm) cannot resolve
-            # fine sub-pixel detail — limit to 2 scales.  Removing 2 of 4 sigma
-            # passes saves ~2 × 3.5s = ~7s on PC B single-core warmup.
-            if mild_mode:
-                sigmas = list(sigmas)[:2]
-                amounts = list(amounts)[:2]
-            itk_image = apply_multiscale_sharpening(itk_image, sigmas=sigmas, amounts=amounts, _pre_cast=True)
+        usm_cfg = modality_settings.get("unsharp_mask", {})
+        if usm_cfg.get("enabled", True):
+            usm_sigma = (
+                usm_cfg.get("mild_sigma", usm_cfg.get("sigma", 1.0))
+                if mild_mode
+                else usm_cfg.get("sigma", 1.0)
+            )
+            usm_amount = (
+                usm_cfg.get("mild_amount", usm_cfg.get("amount", 0.25))
+                if mild_mode
+                else usm_cfg.get("amount", 0.25)
+            )
 
-        # ── GIL yield: let UI thread process events between filter stages ──
-        time.sleep(0.05)
+            # XY-only Gaussian blur — skip Z to match PooyanPacs 2D behavior
+            blurred = _smooth_xy_recursive(itk_image, sigma_xy=float(usm_sigma), sigma_z=0.0)
 
-    # ------------------------------------------------------------------
-    # Laplacian sharpening
-    # ------------------------------------------------------------------
-        lap_cfg = modality_settings.get("laplacian_sharpening", {})
-        if lap_cfg.get("enabled", True):
-            alpha = lap_cfg.get("mild_alpha", lap_cfg.get("alpha", 0.12)) if mild_mode else lap_cfg.get("alpha", 0.12)
-            itk_image = apply_laplacian_sharpening(itk_image, alpha=float(alpha), _pre_cast=True)
+            # Unsharp mask: sharpened = original + amount * (original - blurred)
+            orig_arr = sitk.GetArrayFromImage(itk_image).astype(np.float32)
+            blur_arr = sitk.GetArrayFromImage(blurred).astype(np.float32)
+            sharpened_arr = orig_arr + float(usm_amount) * (orig_arr - blur_arr)
 
-        # ── GIL yield: let UI thread process events between filter stages ──
-        time.sleep(0.05)
+            # v2.2.3.1.5: Clamp to original data range to prevent white line
+            # artifacts at tissue/background edges.  PooyanPacs avoids this
+            # naturally via 8-bit [0,255] BitmapSource clamping; for 16-bit
+            # DICOM data we need explicit bounds.
+            np.clip(sharpened_arr, orig_arr.min(), orig_arr.max(), out=sharpened_arr)
 
-    # ------------------------------------------------------------------
-    # Adaptive sharpening
-    # ------------------------------------------------------------------
-        ad_cfg = modality_settings.get("adaptive_sharpening", {})
-        if ad_cfg.get("enabled", True):
-            # v2.2.3.0.8: skip adaptive sharpening in mild_mode (thick slices >1.5mm).
-            # Runs 2 full 3D Gaussians + 5 element-wise ops on the full volume, but
-            # thick-slice MR has no fine detail to recover at these scales.
-            # Skipping saves ~7-10s on PC B (GLES2 / 2-thread warmup path).
-            if not mild_mode:
-                base_amount = ad_cfg.get("base_amount", 0.12)
-                edge_boost = ad_cfg.get("edge_boost", 0.90)
-                sigma_val = ad_cfg.get("sigma", 0.70)
-                itk_image = apply_adaptive_sharpening(
-                    itk_image,
-                    base_amount=float(base_amount),
-                    edge_boost=float(edge_boost),
-                    sigma=float(sigma_val),
-                    _pre_cast=True,
-                )
+            result = sitk.GetImageFromArray(sharpened_arr)
+            result.CopyInformation(itk_image)
+            itk_image = result
 
-        # v2.2.3.1.0: cast back to original pixel type once
+        # Cast back to original pixel type
         if _orig_pixel_type != sitk.sitkFloat32:
             itk_image = sitk.Cast(itk_image, _orig_pixel_type)
 
