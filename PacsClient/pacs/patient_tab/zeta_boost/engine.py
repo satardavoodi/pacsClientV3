@@ -531,7 +531,7 @@ class ZetaBoostEngine:
 
         return None
 
-    def put(self, series_number: str, vtk_image_data, metadata, persist_disk: bool = True, promote_immediately: bool = False):
+    def put(self, series_number: str, vtk_image_data, metadata, persist_disk: bool = True, promote_immediately: bool = False, force_during_download: bool = False):
         """
         Put series into cache with optional immediate promotion.
 
@@ -541,6 +541,12 @@ class ZetaBoostEngine:
         reference to the loaded ``vtkImageData``; ZetaBoost caching is resumed
         automatically when the download completes (POST_DOWNLOAD transition).
 
+        When ``force_during_download=True`` the Mode B guard is bypassed.
+        This is used by the controlled per-series download warmup path which
+        caches a small number of already-completed series while the study
+        download is still in progress.  The caller is responsible for
+        enforcing RAM / concurrency limits.
+
         Args:
             series_number: Series identifier
             vtk_image_data: VTK image data
@@ -548,11 +554,14 @@ class ZetaBoostEngine:
             persist_disk: Whether to persist to disk cache (default True)
             promote_immediately: If True, prioritize memory over disk write latency
                                  (used during user-initiated drag & drop)
+            force_during_download: If True, bypass Mode B guard (used by
+                                   per-series download warmup only)
         """
         # Mode B guard: skip series-level caching to bound RAM footprint.
+        # Bypassed when force_during_download=True (controlled per-series warmup).
         with self._lock:
             _ibm = self._image_boost_mode
-        if _ibm:
+        if _ibm and not force_during_download:
             self._log_info(
                 f"PUT_SKIPPED_IMAGE_BOOST series={series_number} (Mode B active)"
             )

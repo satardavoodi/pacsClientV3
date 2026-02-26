@@ -8,6 +8,7 @@ import gc
 import time
 import os
 import copy
+from collections import deque
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from pathlib import Path
 import numpy as np
@@ -285,6 +286,23 @@ class ViewerController:
         self._warmup_corrupt_skip_threshold = 3
         self._zeta_external_busy_last = None
         self._zeta_manual_triggered = False
+
+        # ── Per-series download warmup (controlled Mode B caching) ──
+        # Allows caching a small number of already-completed series while
+        # the rest of the study is still downloading.  Strict controls
+        # prevent the RAM/CPU problems that old uncontrolled Mode B caching had.
+        self._dl_warmup_queue: deque = deque()
+        self._dl_warmup_thread = None  # type: threading.Thread | None
+        self._dl_warmup_lock = threading.Lock()
+        self._dl_warmup_stop = threading.Event()
+        self._dl_warmup_cached_count: int = 0
+        _DL_WARMUP_MAX_CACHED = int(os.getenv("AIPACS_DL_WARMUP_MAX_CACHED", "4") or "4")
+        _DL_WARMUP_MAX_SLICES = int(os.getenv("AIPACS_DL_WARMUP_MAX_SLICES", "80") or "80")
+        _DL_WARMUP_INTER_DELAY = float(os.getenv("AIPACS_DL_WARMUP_INTER_DELAY", "3.0") or "3.0")
+        self._DL_WARMUP_MAX_CACHED = max(1, _DL_WARMUP_MAX_CACHED)
+        self._DL_WARMUP_MAX_SLICES = max(10, _DL_WARMUP_MAX_SLICES)
+        self._DL_WARMUP_INTER_DELAY = max(1.0, _DL_WARMUP_INTER_DELAY)
+        self._dl_warmup_enqueued = set()  # prevent duplicate enqueue
 
         # ── Pipeline orchestrator (replaces timer-based download gating) ──
         self.pipeline = PipelineOrchestrator(
@@ -4303,6 +4321,191 @@ class ViewerController:
         except Exception:
             return False
 
+    # ── Per-series download warmup (controlled Mode B caching) ──────────
+
+    def _enqueue_download_warmup(self, series_number: str):
+        """Queue a completed series for background warmup during active download.
+
+        Strict controls:
+        - Max ``_DL_WARMUP_MAX_CACHED`` series cached during a single download session.
+        - Worker thread processes one series at a time with generous delays.
+        - Skips large series (> ``_DL_WARMUP_MAX_SLICES``).
+        - Pauses while user is actively scrolling/interacting.
+        """
+        try:
+            if not self._tab_active or not self._boostviewer_enabled:
+                return
+            sn = str(series_number)
+            with self._dl_warmup_lock:
+                if self._dl_warmup_cached_count >= self._DL_WARMUP_MAX_CACHED:
+                    print(f"[DL_WARMUP] Skip series={sn} — max cached ({self._DL_WARMUP_MAX_CACHED}) reached")
+                    return
+                if sn in self._dl_warmup_enqueued:
+                    return
+                # Skip currently displayed series (already loaded interactively).
+                try:
+                    if self.parent_widget.lst_thumbnails_data:
+                        primary_sn = str(
+                            self.parent_widget.lst_thumbnails_data[0]
+                            .get('metadata', {}).get('series', {}).get('series_number', '')
+                        )
+                        if sn == primary_sn:
+                            return
+                except Exception:
+                    pass
+                if self.zeta_boost.has_in_memory(sn):
+                    return
+                self._dl_warmup_queue.append(sn)
+                self._dl_warmup_enqueued.add(sn)
+                print(f"[DL_WARMUP] Queued series={sn} (pending={len(self._dl_warmup_queue)})")
+
+            # Start worker thread if not already running.
+            if self._dl_warmup_thread is None or not self._dl_warmup_thread.is_alive():
+                self._dl_warmup_stop.clear()
+                self._dl_warmup_thread = threading.Thread(
+                    target=self._dl_warmup_worker,
+                    daemon=True,
+                    name="DL-Warmup-Worker",
+                )
+                self._dl_warmup_thread.start()
+        except Exception as e:
+            print(f"[DL_WARMUP] enqueue error: {e}")
+
+    def _dl_warmup_worker(self):
+        """Background thread — load completed series one at a time during download.
+
+        Safety controls:
+        1. Only 1 series loaded at a time (this thread is the only loader).
+        2. ``_DL_WARMUP_INTER_DELAY`` seconds between series (CPU yield).
+        3. Pauses while user is scrolling (``_is_user_interaction_hot``).
+        4. Skips series with too many slices (> ``_DL_WARMUP_MAX_SLICES``).
+        5. Stops when ``_dl_warmup_stop`` event is set (POST_DOWNLOAD cleanup).
+        6. ITK thread cap is already set to 2 by v2.2.3.0.8.
+        """
+        import sys
+        # Lower thread priority to avoid competing with download & UI.
+        try:
+            if sys.platform == 'win32':
+                import ctypes
+                handle = ctypes.windll.kernel32.GetCurrentThread()
+                ctypes.windll.kernel32.SetThreadPriority(handle, -15)  # IDLE priority
+        except Exception:
+            pass
+
+        print(f"[DL_WARMUP] Worker started (max={self._DL_WARMUP_MAX_CACHED}, max_slices={self._DL_WARMUP_MAX_SLICES}, delay={self._DL_WARMUP_INTER_DELAY}s)")
+
+        while not self._dl_warmup_stop.is_set():
+            # ── Dequeue next series ──
+            with self._dl_warmup_lock:
+                if not self._dl_warmup_queue:
+                    break
+                if self._dl_warmup_cached_count >= self._DL_WARMUP_MAX_CACHED:
+                    print(f"[DL_WARMUP] Max cached reached ({self._DL_WARMUP_MAX_CACHED}), stopping")
+                    break
+                sn = self._dl_warmup_queue.popleft()
+
+            # Skip if tab went inactive.
+            if not self._tab_active:
+                print(f"[DL_WARMUP] Tab inactive, stopping")
+                break
+
+            # Skip if already cached.
+            if self.zeta_boost.has_in_memory(sn):
+                print(f"[DL_WARMUP] series={sn} already in memory, skip")
+                continue
+
+            # ── Wait while user is interacting (avoid scroll stutter) ──
+            _wait_count = 0
+            while self._is_user_interaction_hot() and not self._dl_warmup_stop.is_set():
+                time.sleep(0.3)
+                _wait_count += 1
+                if _wait_count > 30:  # ~9s max wait
+                    break
+            if self._dl_warmup_stop.is_set():
+                break
+
+            # ── Check slice count (quick heuristic from folders) ──
+            try:
+                study_path = self._get_correct_study_path()
+                if not study_path:
+                    print(f"[DL_WARMUP] series={sn} no study_path, skip")
+                    continue
+                series_dir = Path(study_path) / sn
+                if series_dir.is_dir():
+                    dcm_count = sum(1 for f in series_dir.iterdir() if f.suffix.lower() == '.dcm')
+                    if dcm_count > self._DL_WARMUP_MAX_SLICES:
+                        print(f"[DL_WARMUP] series={sn} too large ({dcm_count} slices > {self._DL_WARMUP_MAX_SLICES}), skip")
+                        continue
+                    if dcm_count == 0:
+                        print(f"[DL_WARMUP] series={sn} no DCM files yet, skip")
+                        continue
+                else:
+                    print(f"[DL_WARMUP] series={sn} dir not found, skip")
+                    continue
+            except Exception:
+                continue
+
+            # ── Load series (DICOM + ITK filter + VTK conversion) ──
+            print(f"[DL_WARMUP] Loading series={sn} ({dcm_count} slices)...")
+            _t0 = time.perf_counter()
+            try:
+                result_gen = load_single_series_by_number(
+                    study_path=study_path,
+                    series_number=int(sn),
+                    patient_pk=self.parent_widget.metadata_fixed.get('patient_pk', None),
+                    study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
+                    ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
+                    skip_fs_validation=True,
+                )
+                cached_ok = False
+                for item in result_gen:
+                    vtk_image_data, metadata, _patient_study = item
+                    if vtk_image_data is None or not isinstance(metadata, dict):
+                        continue
+                    dims = vtk_image_data.GetDimensions() if hasattr(vtk_image_data, 'GetDimensions') else (0, 0, 0)
+                    if int(dims[0]) <= 0 or int(dims[1]) <= 0:
+                        continue
+                    # Force-put into cache, bypassing Mode B guard.
+                    self.zeta_boost.put(
+                        sn, vtk_image_data, metadata,
+                        persist_disk=True,
+                        force_during_download=True,
+                    )
+                    cached_ok = True
+                    break  # Only first group
+
+                _elapsed = (time.perf_counter() - _t0) * 1000
+                if cached_ok:
+                    with self._dl_warmup_lock:
+                        self._dl_warmup_cached_count += 1
+                    print(f"[DL_WARMUP] ✓ Cached series={sn} in {_elapsed:.0f}ms (count={self._dl_warmup_cached_count}/{self._DL_WARMUP_MAX_CACHED})")
+                else:
+                    print(f"[DL_WARMUP] series={sn} load returned no data ({_elapsed:.0f}ms)")
+            except Exception as e:
+                print(f"[DL_WARMUP] Error loading series={sn}: {e}")
+
+            # ── Generous inter-series delay (avoid CPU contention) ──
+            for _ in range(int(self._DL_WARMUP_INTER_DELAY * 10)):
+                if self._dl_warmup_stop.is_set():
+                    break
+                time.sleep(0.1)
+
+        print(f"[DL_WARMUP] Worker finished. cached={self._dl_warmup_cached_count}/{self._DL_WARMUP_MAX_CACHED}")
+
+    def _stop_download_warmup(self):
+        """Stop the per-series download warmup and reset state.
+
+        Called on POST_DOWNLOAD (normal warmup takes over) and tab deactivation.
+        """
+        try:
+            self._dl_warmup_stop.set()
+            with self._dl_warmup_lock:
+                self._dl_warmup_queue.clear()
+                self._dl_warmup_cached_count = 0
+                self._dl_warmup_enqueued.clear()
+        except Exception:
+            pass
+
     def _mark_download_active(self):
         """Signal the orchestrator that a download-completed series arrived.
 
@@ -4346,6 +4549,8 @@ class ViewerController:
         try:
             if new_state == PipelineState.POST_DOWNLOAD:
                 # Study download is definitively complete.
+                # 0. Stop per-series download warmup (normal warmup takes over).
+                self._stop_download_warmup()
                 # 1. Unlock ZetaBoost warmup/background lanes.
                 self.zeta_boost.set_study_download_complete(True)
                 self.zeta_boost.set_download_active(False)
@@ -4397,6 +4602,7 @@ class ViewerController:
                 print(f"[Pipeline] READY → all series cached")
 
             elif new_state == PipelineState.IDLE:
+                self._stop_download_warmup()
                 self.zeta_boost.set_study_download_complete(False)
                 self.zeta_boost.set_download_active(False)
                 self.zeta_boost.set_image_boost_mode(False)
@@ -4545,11 +4751,12 @@ class ViewerController:
                             getattr(self, '_first_series_loading', set()).discard(series_number_str)
                             pass  # No running loop — fall through to legacy path
                     else:
-                        # Subsequent download completions: do NOT enqueue warmup
-                        # during active downloads.  The orchestrator will trigger
-                        # _start_open_tab_warmup after study download completes.
-                        # This prevents ZetaBoost from competing with downloads
-                        # for GIL time.
+                        # Subsequent download completions: enqueue for controlled
+                        # per-series warmup during active download.  This caches
+                        # a limited number of small completed series so they are
+                        # instantly available when the user switches to them,
+                        # without waiting for the full study download to finish.
+                        self._enqueue_download_warmup(series_number_str)
                         return
             except Exception:
                 pass
