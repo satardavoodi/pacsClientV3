@@ -137,6 +137,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._target_cursor = None
         self._sync_last_move_time = 0.0  # throttle mouse-move events
         self._on_slice_changed_cb = None  # Lock Sync callback
+        self._stale_scroll_skip_count = 0  # counts stale-drain skips for throttled logging
         self._last_scroll_event_ms = None
         self._timing_log_counter = 0
         self._lag_probe_enabled = os.getenv("AIPACS_SCROLL_LAG_PROBE_ENABLED", "1") == "1"
@@ -975,6 +976,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self._wheel_coalesce_timer.stop()
             self._pending_wheel_slice = None
             self._last_scroll_event_ms = None
+            self._stale_scroll_skip_count = 0
         except Exception:
             pass
 
@@ -1244,7 +1246,53 @@ class VTKWidget(QVTKRenderWindowInteractor):
                     queue_delay_ms,
                     extra={"component": "viewer", "function": "VTKWidget.set_slice", "stage": "event_queue_delay"},
                 )
-        
+
+        # v2.2.3.2.1: Stale-event fast-drain guard.
+        # -----------------------------------------
+        # If this scroll event has been waiting in the Qt event queue longer than
+        # _STALE_SCROLL_MS (500ms) the main thread was briefly blocked and we now
+        # have a large backlog of backed-up events.  Processing each one with a
+        # full VTK render (~50ms) would freeze the viewer for many seconds.
+        # Instead: skip the render for stale events, just slide the UI position
+        # tracker forward.  The _pending_wheel_slice + coalesce timer guarantees
+        # the FINAL (freshest) position is always rendered after the backlog drains.
+        _STALE_SCROLL_MS = 500.0
+        if queue_delay_ms > _STALE_SCROLL_MS:
+            try:
+                if self.slider is not None:
+                    self.slider.blockSignals(True)
+                    self.slider.setValue(slice_index)
+                    self.slider.blockSignals(False)
+            except Exception:
+                pass
+            # Store the position so the coalesce timer renders it once
+            self._pending_wheel_slice = slice_index
+            try:
+                if not self._wheel_coalesce_timer.isActive():
+                    self._wheel_coalesce_timer.start()
+            except Exception:
+                pass
+            self.image_viewer.last_index_slice_saved = slice_index
+            # Log only 1st, 10th, 50th, 100th... stale skip to avoid log spam
+            self._stale_scroll_skip_count += 1
+            _cnt = self._stale_scroll_skip_count
+            if _cnt == 1 or _cnt % 10 == 0:
+                logger.info(
+                    "viewer-scroll stage=stale_scroll_skip_ms duration_ms=%.2f slice=%d skip_count=%d",
+                    queue_delay_ms, slice_index, _cnt,
+                    extra={"component": "viewer", "function": "VTKWidget.set_slice", "stage": "stale_scroll_skip"},
+                )
+            return
+
+        # Reset drain counter when a non-stale render runs (log how many were skipped)
+        if self._stale_scroll_skip_count > 0:
+            logger.info(
+                "viewer-scroll stage=stale_drain_complete skipped=%d queue_delay_ms=%.2f slice=%d",
+                self._stale_scroll_skip_count, queue_delay_ms, slice_index,
+                extra={"component": "viewer", "function": "VTKWidget.set_slice", "stage": "stale_drain_complete"},
+            )
+            self._stale_scroll_skip_count = 0
+
         # ✅ CRITICAL: Save current camera zoom before slice change
         saved_scale = None
         try:
