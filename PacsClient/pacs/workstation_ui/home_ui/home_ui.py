@@ -995,8 +995,11 @@ class HomePanelWidget(QWidget):
                             images_count = sum(s.get('image_count', 0) for s in series_list)
                         else:
                             # Fetch series info from server if not available
+                            # v2.2.3.2.7: offload synchronous gRPC call to a background thread
+                            # so the main thread event loop stays responsive (1-5s network latency).
                             try:
-                                study_info = self._get_or_fetch_series_info(study_uid, patient_id)
+                                import asyncio as _aio
+                                study_info = await _aio.to_thread(self._get_or_fetch_series_info, study_uid, patient_id)
                                 if study_info:
                                     series_list = study_info.get('series', [])
                                     series_count = study_info.get('count_of_series', len(series_list))

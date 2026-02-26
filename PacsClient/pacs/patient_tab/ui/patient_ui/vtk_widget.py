@@ -1233,6 +1233,16 @@ class VTKWidget(QVTKRenderWindowInteractor):
         idx = self._pending_wheel_slice
         self._pending_wheel_slice = None
         if idx is not None:
+            # v2.2.3.2.7: Break stale-drain infinite re-arm loop.
+            # When the main thread was blocked for long periods (e.g., during
+            # study-open VTK widget creation on software OpenGL), _last_scroll_event_ms
+            # points to the original wheelEvent time (potentially 45+ seconds ago).
+            # set_slice() would see queue_delay > 500ms, skip the render, re-store
+            # _pending_wheel_slice, and re-arm this timer — creating an infinite loop
+            # with event_queue_delay growing unboundedly (44,000-48,000ms observed).
+            # Fix: reset the scroll timestamp to "now" so the coalesced position
+            # (which IS the most recent user intent) always renders immediately.
+            self._last_scroll_event_ms = now_ms()
             logger.debug(f"[SCROLL_COALESCE] flush slice={idx}")
             self.set_slice(idx)
         # Re-arm if more scroll events queued during the render block

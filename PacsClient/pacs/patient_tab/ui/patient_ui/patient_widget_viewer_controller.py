@@ -1564,6 +1564,18 @@ class ViewerController:
                     node = self._create_fallback_viewer()
                     self.lst_nodes_viewer.append(node)
 
+                # v2.2.3.2.7: Yield to Qt event loop between viewer creations.
+                # On software OpenGL each VTK widget creation takes 5-15s.
+                # Without this yield, scroll events and timers starve for
+                # the entire creation loop (10-60s for 2-4 viewers).
+                # setUpdatesEnabled(False) is still active so no flicker.
+                if i < required_count - 1:
+                    try:
+                        from PySide6.QtWidgets import QApplication
+                        QApplication.processEvents()
+                    except Exception:
+                        pass
+
             # 3. Arrange in grid
             for i, node in enumerate(self.lst_nodes_viewer):
                 if i >= required_count:
