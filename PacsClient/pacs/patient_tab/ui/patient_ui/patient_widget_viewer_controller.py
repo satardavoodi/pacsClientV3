@@ -4424,29 +4424,53 @@ class ViewerController:
             if self._dl_warmup_stop.is_set():
                 break
 
-            # ── Check slice count (quick heuristic from folders) ──
+            # ── Get image count from reliable source (server/DB metadata) ──
+            dcm_count = 0
+            _series_desc = ""
+            _series_modality = ""
             try:
-                study_path = self._get_correct_study_path()
-                if not study_path:
-                    print(f"[DL_WARMUP] series={sn} no study_path, skip")
-                    continue
-                series_dir = Path(study_path) / sn
-                if series_dir.is_dir():
-                    dcm_count = sum(1 for f in series_dir.iterdir() if f.suffix.lower() == '.dcm')
-                    if dcm_count > self._DL_WARMUP_MAX_SLICES:
-                        print(f"[DL_WARMUP] series={sn} too large ({dcm_count} slices > {self._DL_WARMUP_MAX_SLICES}), skip")
-                        continue
-                    if dcm_count == 0:
-                        print(f"[DL_WARMUP] series={sn} no DCM files yet, skip")
-                        continue
-                else:
-                    print(f"[DL_WARMUP] series={sn} dir not found, skip")
-                    continue
+                # Primary: parent_widget._get_expected_series_image_count (server + DB)
+                pw = self.parent_widget
+                dcm_count = pw._get_expected_series_image_count(sn) if hasattr(pw, '_get_expected_series_image_count') else 0
+                # Also grab series description & modality for logging
+                _sinfo = getattr(pw, '_server_series_info', {}).get(sn, {}) or {}
+                _series_desc = _sinfo.get('series_description', '') or _sinfo.get('description', '') or ''
+                _series_modality = _sinfo.get('modality', '') or ''
             except Exception:
+                pass
+
+            # Fallback: count DCM files on disk if metadata unavailable
+            study_path = None
+            if dcm_count <= 0:
+                try:
+                    study_path = self._get_correct_study_path()
+                    if study_path:
+                        series_dir = Path(study_path) / sn
+                        if series_dir.is_dir():
+                            dcm_count = sum(1 for f in series_dir.iterdir() if f.suffix.lower() == '.dcm')
+                except Exception:
+                    pass
+
+            if dcm_count <= 0:
+                print(f"[DL_WARMUP] series={sn} no image count available, skip")
+                continue
+            if dcm_count > self._DL_WARMUP_MAX_SLICES:
+                print(f"[DL_WARMUP] series={sn} too large ({dcm_count} slices > {self._DL_WARMUP_MAX_SLICES}), skip")
+                continue
+
+            # Resolve study_path if not yet set (needed for load)
+            if not study_path:
+                try:
+                    study_path = self._get_correct_study_path()
+                except Exception:
+                    pass
+            if not study_path:
+                print(f"[DL_WARMUP] series={sn} no study_path, skip")
                 continue
 
             # ── Load series (DICOM + ITK filter + VTK conversion) ──
-            print(f"[DL_WARMUP] Loading series={sn} ({dcm_count} slices)...")
+            _desc_tag = f" [{_series_modality}] {_series_desc}" if _series_desc else ""
+            print(f"[DL_WARMUP] Loading series={sn} ({dcm_count} slices){_desc_tag}...")
             _t0 = time.perf_counter()
             try:
                 result_gen = load_single_series_by_number(
