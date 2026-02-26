@@ -1323,6 +1323,21 @@ class VTKWidget(QVTKRenderWindowInteractor):
                 self._on_slice_changed_cb(self)
             except Exception:
                 pass
+
+        # v2.2.3.1.8: Notify ImageSliceBooster so the prefetch window follows scroll.
+        # Without this the booster stays frozen at center=0 (the only set_active call)
+        # for the entire session — slices 0-20 are the only ones ever pre-fetched.
+        try:
+            _vc = getattr(getattr(self, 'patient_widget', None), 'viewer_controller', None)
+            if _vc is not None:
+                _booster = getattr(_vc, '_image_slice_booster', None)
+                if _booster is not None and _booster.is_active:
+                    _sn = _booster.active_series
+                    if _sn is not None:
+                        _booster.on_slice_changed(_sn, slice_index)
+        except Exception:
+            pass
+
         set_slice_total_ms = max(0.0, now_ms() - t_set_slice)
         if self._should_log_timing(set_slice_total_ms, "set_slice_total"):
             log_stage_timing(

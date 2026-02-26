@@ -183,6 +183,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.image_reslice = ImageReslice(self.vtk_image_data, self.metadata)
         self.SetInputData(self.image_reslice.GetOutput())  # without color map (window level)
         self.vtk_image_data = self.image_reslice.GetOutput()
+        # v2.2.3.1.7: Track which VTK output object the viewer pipeline is connected to.
+        # reset_image_viewer compares against this to skip the expensive SetInputData when
+        # the same image_reslice object is updated in-place (saves ~1.4s per series switch).
+        self._connected_reslice_output = self.image_reslice.GetOutput()
         
         # --- PIPELINE LOG: Viewer init summary ---
         _pre_img = self.image_reslice.vtk_image_data  # original (has field data)
@@ -1111,16 +1115,35 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         _setup_start = time.time()
         
         _set_input_start = time.time()
-        # ✅ OPTIMIZATION: Disable automatic update during SetInputData
-        old_global_warning = vtk.vtkObject.GetGlobalWarningDisplay()
-        vtk.vtkObject.GlobalWarningDisplayOff()
-        
-        self.SetInputData(self.image_reslice.GetOutput())  # without color map (window level)
-        self.vtk_image_data = self.image_reslice.GetOutput()  # <-- IMPORTANT: refresh cached image ref
-        
-        vtk.vtkObject.SetGlobalWarningDisplay(old_global_warning)
-        _set_input_time = time.time() - _set_input_start
-        print(f"         • SetInputData: {_set_input_time:.3f}s")
+        # v2.2.3.1.7: Skip the expensive vtkResliceImageViewer.SetInputData() when the
+        # image_reslice output is the SAME Python/VTK object as last time.  After
+        # image_reslice.Update() VTK propagates Modified() timestamps automatically;
+        # the viewer re-executes the pipeline on the next Render().  UpdateDisplayExtent()
+        # below refreshes actor extent for any dimension change (e.g. 46→276 slices).
+        # Only reconnect when image_reslice was recreated (new Python object) — that case
+        # is rare and needs SetInputData so VTK discovers the new output port.
+        _current_reslice_output = self.image_reslice.GetOutput()
+        _needs_reconnect = (
+            getattr(self, '_connected_reslice_output', None) is not _current_reslice_output
+        )
+        if _needs_reconnect:
+            # New reslice object — must wire up the viewer pipeline once.
+            _prev_suppress = getattr(self, '_suppress_render', False)
+            self._suppress_render = True
+            old_global_warning = vtk.vtkObject.GetGlobalWarningDisplay()
+            vtk.vtkObject.GlobalWarningDisplayOff()
+            try:
+                self.SetInputData(_current_reslice_output)
+            finally:
+                vtk.vtkObject.SetGlobalWarningDisplay(old_global_warning)
+                self._suppress_render = _prev_suppress
+            self._connected_reslice_output = _current_reslice_output
+            _set_input_time = time.time() - _set_input_start
+            print(f"         • SetInputData: {_set_input_time:.3f}s (reconnect)")
+        else:
+            # Same output object — pipeline already connected; Modified() propagated.
+            print(f"         • SetInputData: SKIPPED (reslice output unchanged — saves ~1.4s)")
+        self.vtk_image_data = _current_reslice_output  # refresh Python-side ref
 
         # Update metadata
         _metadata_start = time.time()
