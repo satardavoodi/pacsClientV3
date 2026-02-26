@@ -619,12 +619,10 @@ class ZetaBoostEngine:
                     except Exception as _exc:
                         _log(f"DISK_WRITE_ERR series={key} error={_exc}")
 
-                # ✅ OPTIMIZATION: اگر promote_immediately، disk write را بیس‌تر اولویت دهید
                 threading.Thread(
                     target=_async_disk_write,
                     daemon=True,
                     name=f"ZB-DiskW-{key[:20]}",
-                    priority=-1 if promote_immediately else None,  # Higher priority for drag & drop
                 ).start()
             else:
                 self._log_info(

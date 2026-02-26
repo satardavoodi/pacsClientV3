@@ -297,7 +297,7 @@ class ViewerController:
         self._dl_warmup_stop = threading.Event()
         self._dl_warmup_cached_count: int = 0
         _DL_WARMUP_MAX_CACHED = int(os.getenv("AIPACS_DL_WARMUP_MAX_CACHED", "4") or "4")
-        _DL_WARMUP_MAX_SLICES = int(os.getenv("AIPACS_DL_WARMUP_MAX_SLICES", "80") or "80")
+        _DL_WARMUP_MAX_SLICES = int(os.getenv("AIPACS_DL_WARMUP_MAX_SLICES", "200") or "200")
         _DL_WARMUP_INTER_DELAY = float(os.getenv("AIPACS_DL_WARMUP_INTER_DELAY", "3.0") or "3.0")
         self._DL_WARMUP_MAX_CACHED = max(1, _DL_WARMUP_MAX_CACHED)
         self._DL_WARMUP_MAX_SLICES = max(10, _DL_WARMUP_MAX_SLICES)
