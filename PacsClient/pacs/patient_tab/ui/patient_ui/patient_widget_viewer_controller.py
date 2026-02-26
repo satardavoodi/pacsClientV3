@@ -298,7 +298,7 @@ class ViewerController:
         self._dl_warmup_cached_count: int = 0
         _DL_WARMUP_MAX_CACHED = int(os.getenv("AIPACS_DL_WARMUP_MAX_CACHED", "4") or "4")
         _DL_WARMUP_MAX_SLICES = int(os.getenv("AIPACS_DL_WARMUP_MAX_SLICES", "200") or "200")
-        _DL_WARMUP_INTER_DELAY = float(os.getenv("AIPACS_DL_WARMUP_INTER_DELAY", "3.0") or "3.0")
+        _DL_WARMUP_INTER_DELAY = float(os.getenv("AIPACS_DL_WARMUP_INTER_DELAY", "1.5") or "1.5")
         self._DL_WARMUP_MAX_CACHED = max(1, _DL_WARMUP_MAX_CACHED)
         self._DL_WARMUP_MAX_SLICES = max(10, _DL_WARMUP_MAX_SLICES)
         self._DL_WARMUP_INTER_DELAY = max(1.0, _DL_WARMUP_INTER_DELAY)
@@ -419,7 +419,7 @@ class ViewerController:
                 'total_ram_mb': total_mb,
                 'byte_budget': 1200 * MB,   # ~24 series × 50 MB each
                 'max_entries': 24,
-                'max_parallel_loads': 1,
+                'max_parallel_loads': 2,  # v2.2.3.2.2: 2 parallel warmup workers (safe: BELOW_NORMAL priority + stale guard)
                 'warmup_workers': 2,
                 'background_workers': 1,
                 'warmup_max_slices': 600,
@@ -431,7 +431,7 @@ class ViewerController:
                 'total_ram_mb': total_mb,
                 'byte_budget': 800 * MB,    # ~16 series × 50 MB each; safe on 8 GB
                 'max_entries': 16,           # covers full 10-series study + headroom
-                'max_parallel_loads': 1,     # single ITK load to avoid GIL contention
+                'max_parallel_loads': 2,     # v2.2.3.2.2: allow 2 parallel warmup loads (BELOW_NORMAL priority guards VTK)
                 'warmup_workers': 2,
                 'background_workers': 1,
                 'warmup_max_slices': 500,    # raised from 250 → series with 356 slices now eligible
@@ -4492,12 +4492,11 @@ class ViewerController:
                     study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
                     ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
                     skip_fs_validation=True,
-                    # ⚡ Mode B: cap ITK to 1 thread so VTK render thread is never
-                    # starved.  With 2 threads the ITK pool competed with VTK causing
-                    # 94–100ms scroll spikes (confirmed by log timing correlation).
-                    # 1 thread roughly doubles ITK time (~1.1s) but still comfortably
-                    # fits within the 3s inter-series delay.
-                    max_itk_threads=1,
+                    # v2.2.3.2.2: raised from 1→2 now that the stale-event drain guard
+                    # (v2.2.3.2.1) + BELOW_NORMAL OS priority (v2.2.3.2.0) prevent ITK
+                    # from competing with VTK scroll renders.  Halves warmup time:
+                    # 24-slice MR 500×640 → ~1.5s instead of ~3.0s.
+                    max_itk_threads=2,
                 )
                 cached_ok = False
                 for item in result_gen:
