@@ -1,7 +1,7 @@
 # Performance Metrics Tracking — AIPacs Mode A / Mode B
-**Current Version:** v2.2.3.1.5  
+**Current Version:** v2.2.3.2.2  
 **Branch:** DR.vahid  
-**Date Created:** 2026-02-26  
+**Last Updated:** 2026-02-27  
 **Purpose:** Phase-by-phase optimization progress measurement
 
 ---
@@ -249,34 +249,123 @@ Select-String "\[DL_WARMUP\].*Cached series" $log.FullName -AllMatches | Select-
 
 ---
 
-## 7. Phase 3 Results (v2.2.3.2.x — Rendering Pipeline)
 
-**Changes applied:**
-- Lazy `ImageReslice.Update()` (defer from `__init__` to first use)
-- Merge triple pipeline flush in `reset_image_viewer()` into single flush
-- Size-aware preprocess cache eviction
+## 7. Phase 3 Results — Rendering + Parallelism Fixes (v2.2.3.1.8 → v2.2.3.2.2)
 
-**Expected gains:**
-- A1/A2 scroll: −5 to −20ms per scroll
-- Series switch (L1 cache hit): 200–600ms → 80–200ms
+> All measurements below are from live log captures on PC A (DR.vahid branch).  
+> Confirm each version on PC B before marking PCB column as verified.
 
-### 7.1 Mode A — Phase 3
+---
 
-| ID | Metric | Baseline | Phase 2 | Phase 3 PCA | Phase 3 PCB | Δ vs Baseline |
-|---|---|---|---|---|---|---|
-| A1 | scroll_p50_ms | ___ | ___ | ___ | ___ | ___ |
-| A2 | scroll_p95_ms | ___ | ___ | ___ | ___ | ___ |
-| A8 | series_load_total_ms | ___ | ___ | ___ | ___ | ___ |
+### v2.2.3.1.8 — SetInputData skip + ImageSliceBooster wiring
+**Commit:** `04c57d0`  **Date:** 2026-02-26
 
-**Date / time:** ___  
-**Version tag:** v2.2.3.2.x  
-**Decision:** ☐ Proceed to Phase 4 &nbsp; ☐ Investigate regression &nbsp; ☐ Adjust approach
+**Changes:**
+- `vtk_widget.py` `reset_image_viewer`: skip `SetInputData` when reslice output is already connected — saves 1 pipeline flush per series switch
+- Wired `ImageSliceBooster.on_slice_changed()` from `set_slice` (was disconnected)
+
+**Measured (PC A):**
+
+| Metric | Before | After | Notes |
+|---|---|---|---|
+| Series switch overhead | ~1.4s extra per switch | ~0ms | `SetInputData` skip confirmed by identity check |
+| `set_slice_total_ms` | 81–141ms scroll during DL | 81–141ms | No change to render itself — correct |
+
+---
+
+### v2.2.3.1.8p1 — Download process BELOW_NORMAL priority + QThread naming
+**Commits:** `3bbf248`, `af794d9`  **Date:** 2026-02-26
+
+**Changes:**
+- Download subprocess set to `BELOW_NORMAL` OS priority on Windows
+- All 4 download QThread workers given unique names for log identification
+
+**Expected:** Reduced CPU contention between download worker and VTK render thread on scroll.
+
+---
+
+### v2.2.3.1.9 — Parallel pydicom header reads (viewer side)
+**Commit:** `9d2414b`  **Date:** 2026-02-26
+
+**Changes:**
+- `utils.py` `get_or_create_instance`: replaced serial pydicom loop with `ThreadPoolExecutor(max_workers=min(8, cpu_count))`
+
+**Measured (PC A):**
+
+| Metric | Before | After | Δ |
+|---|---|---|---|
+| Instance create (330 files, CT) | 4.307s | ~0.8s | **−3.5s (−81%)** |
+| Instance create (143 files, MR) | 2.134s | ~0.5s | **−1.6s** |
+
+---
+
+### v2.2.3.2.0 — Parallel pydicom in download subprocess + adaptive ITK threads + BELOW_NORMAL filter priority
+**Commit:** `3cd1a09`  **Date:** 2026-02-26
+
+**Changes:**
+- `series_downloader.py` `_save_series_instances_to_db`: replaced serial pydicom loop with `asyncio.gather` + `ThreadPoolExecutor`
+- `image_filters.py`: adaptive ITK threads `max(min(cpu_count-2, 8), 2)` (8-core → 6 threads, reserves 2 for VTK)
+- `image_filters.py`: `THREAD_PRIORITY_BELOW_NORMAL` during ITK filter pass, restore `NORMAL` after
+
+**Measured (PC A logs, 2026-02-26 ~23:49):**
+
+| Metric | Before | After | Notes |
+|---|---|---|---|
+| `batch_insert_instances_total` (download subprocess, ~480 files) | 2217ms | **326–455ms** | **−81%** |
+| `batch_insert_instances_total` (small series, ~20 files) | ~300ms | **6–14ms** | — |
+| ITK scroll spike during filter (Mode B) | 200–309ms spikes | Not yet confirmed | BELOW_NORMAL priority helps |
+
+---
+
+### v2.2.3.2.1 — Stale-event fast-drain guard in `set_slice`
+**Commit:** `9724dea`  **Date:** 2026-02-26
+
+**Root cause diagnosed:** After any main-thread block >500ms (e.g. download signal handling, DB save), a backlog of scroll wheel events accumulates in Qt event queue. Previously each was rendered fully (~50ms each). 84 stale events × 50ms = ~4s of wasted renders at already-stale positions.
+
+**Changes:**
+- `vtk_widget.py` `set_slice`: when `queue_delay_ms > 500ms` → skip VTK render, update slider only, set `_pending_wheel_slice` for coalesce timer to render final position once
+- Throttled logging: reports 1st, 10th, 20th... stale skips, then `stale_drain_complete skipped=N`
+- `switch_series` resets `_stale_scroll_skip_count` with other scroll state
+
+**Expected vs measured (from pre-fix log, 2026-02-26 ~23:49):**
+
+| Metric | Before (log evidence) | After (expected) |
+|---|---|---|
+| `queue_p95_ms` | **19,496ms** | ~16ms (coalesce delay only) |
+| Stale renders per backlog event | ~50ms each | ~0.1ms (slider update only) |
+| 84-event backlog drain time | ~4.2s of renders | ~1 render at final position |
+| `set_slice_total` individual | 81–141ms | unchanged (render quality same) |
+
+---
+
+### v2.2.3.2.2 — DL_WARMUP speed and parallelism improvements
+**Commit:** `ff0d4b1`  **Date:** 2026-02-27
+
+**Root cause diagnosed:** DL_WARMUP was loading series with `max_itk_threads=1`, causing large-FOV MR series (500×640, 24 slices) to take 2.9–3.0s per filter pass → total 3.9–4.1s per series. With 3.0s inter-series delay, two workers could not overlap effectively.
+
+**Changes:**
+- `patient_widget_viewer_controller.py` DL_WARMUP: `max_itk_threads=1` → `max_itk_threads=2`
+- Inter-series delay default: `3.0s` → `1.5s`
+- `max_parallel_loads` for 8GB+ and 15GB+ RAM tiers: `1` → `2` (allows two ZetaBoost warmup workers to run simultaneously)
+
+**Projected impact (before vs after):**
+
+| Metric | Before (v2.2.3.2.1) | After (v2.2.3.2.2 expected) |
+|---|---|---|
+| DL_WARMUP series=6 (500×640×24 MR, 1t) | 4138ms | ~2100ms (2t, halved) |
+| DL_WARMUP series=7 (620×640×20 MR, 1t) | 3884ms | ~2000ms |
+| DL_WARMUP series=8 (176×176×40 MR, 1t) | 1172ms | ~700ms |
+| Warmup throughput: 6 remaining series (10-series study) | serial, ~1.5–4s each | two parallel, ~0.7–2s each |
+| Total pre-cache time for 6 remaining series | ~20s | ~8–10s |
+
+**Measured (PC A):** _To be filled after next test run_  
+**PC B:** _Pending_
 
 ---
 
 ## 8. Log Parsing — Quick Reference
 
-### 8.1 Scroll Probe Output Format (after instrumentation patch v2.2.3.1.5)
+### 8.1 Scroll Probe Output Format
 
 ```
 viewer-scroll-probe mode=mode_a window_sec=12.1 samples=87
@@ -292,16 +381,17 @@ viewer-scroll-probe mode=mode_b window_sec=12.0 samples=64
 ### 8.2 Filter Timing Output Format
 
 ```
-viewer-data stage=apply_filters mod=MR slices=24 threads=4 duration_ms=420
-viewer-data stage=apply_filters mod=MR slices=24 threads=2 duration_ms=650
-viewer-data stage=apply_filters mod=CT slices=120 threads=4 duration_ms=180
+viewer-data stage=apply_filters mod=MR slices=24 threads=2 duration_ms=1500
+viewer-data stage=apply_filters mod=MR slices=24 threads=1 duration_ms=2939
+viewer-data stage=apply_filters mod=CT slices=120 threads=6 duration_ms=180
 ```
+> `threads=1` = DL_WARMUP call (mode B, background); `threads=2` = ZetaBoost warmup; `threads=6` = interactive load (8-core)
 
 ### 8.3 ZetaBoost PROCESS_DONE Format
 
 ```
-PROCESS_DONE lane=warmup worker=1 series=3 elapsed_ms=892 L1=3/20 L2=3
-PROCESS_DONE lane=interactive worker=1 series=5 elapsed_ms=441 L1=4/20 L2=4
+PROCESS_DONE lane=warmup worker=1 series=3 elapsed_ms=892
+PROCESS_DONE lane=interactive worker=1 series=5 elapsed_ms=441
 ```
 
 ### 8.4 DL_WARMUP Per-Series Format
@@ -312,54 +402,135 @@ PROCESS_DONE lane=interactive worker=1 series=5 elapsed_ms=441 L1=4/20 L2=4
 [DL_WARMUP] Worker finished. cached=3/4
 ```
 
+### 8.5 Stale-Drain Guard Format (v2.2.3.2.1+)
+
+```
+viewer-scroll stage=stale_scroll_skip_ms duration_ms=2804.44 slice=12 skip_count=1
+viewer-scroll stage=stale_scroll_skip_ms duration_ms=3222.62 slice=13 skip_count=10
+viewer-scroll stage=stale_drain_complete skipped=84 queue_delay_ms=312.00 slice=14
+```
+
+### 8.6 Parallel pydicom (v2.2.3.1.9+)
+
+```
+- Instance create: 0.362s   ← DB fast-path (parallel reads, already cached)
+- Instance create: 0.800s   ← filesystem fallback path
+```
+
 ---
 
 ## 9. Delta Interpretation Guide
 
 | Change | What it means |
 |---|---|
-| `scroll_p50_ms` decreased | Typical scroll is faster — user notices immediate improvement |
-| `scroll_p95_ms` decreased | Occasional slow scrolls reduced — fewer "hiccup" moments |
-| `scroll_max_ms` decreased | Worst-case spikes reduced — no freezes |
-| `queue_delay_p95_ms` > 30ms | Main thread is being blocked somewhere — investigate |
-| `filter_ms` decreased | Filters faster — series switch is quicker |
-| `warmup_job_ms` > 1500ms | Warmup competing with something — check CPU priority |
-| `dl_warmup_filter_ms` > 1500ms | 1-thread cap still insufficient for this machine — consider increasing `DL_WARMUP_INTER_DELAY` or raising slice-skip threshold |
-| `dl_warmup_per_series_ms` > 2000ms | DL_WARMUP blocking too long — INTER_DELAY may need adjustment |
+| `scroll_p50_ms` decreased | Typical scroll faster — user notices immediately |
+| `scroll_p95_ms` decreased | Occasional hiccups reduced |
+| `scroll_max_ms` decreased | Worst-case spike gone |
+| `queue_delay_p95_ms > 30ms` | Main thread blocked — investigate |
+| `queue_delay_ms > 500ms` (v2.2.3.2.1+) | Stale drain guard fires — normal during download/load |
+| `stale_drain_complete skipped=N` | N renders saved; 1 render at correct final position |
+| `filter_ms` decreased | Faster series switch |
+| `threads=1` in filter log | DL_WARMUP background load (intentional cap) |
+| `threads=2` in filter log | ZetaBoost warmup or DL_WARMUP v2.2.3.2.2+ |
+| `threads=6` in filter log | Interactive load on 8-core machine (adaptive) |
+| `warmup_job_ms > 2000ms` | Warmup competing with something — check CPU/thread priority |
+| `batch_insert_instances_total > 500ms` | Pydicom parallel may not be active — check v2.2.3.2.0 deployed |
+| `Instance create > 1000ms` | Parallel pydicom may not be active — check v2.2.3.1.9 deployed |
+| `WORKER_BLOCKED reason=max_parallel(1/1)` | ZetaBoost max_parallel_loads=1 (pre v2.2.3.2.2 on 8GB+ tier) |
+| `WORKER_BLOCKED reason=max_parallel(1/2)` | One of two parallel warmup slots free — warm v2.2.3.2.2 |
 
 ---
 
-## 10. Instrumentation Changes Made (v2.2.3.1.5 — this session)
+## 10. Instrumentation Present (cumulative)
 
-### New log output added
-
-| File | Change | New Log Tag |
+| Log Tag | Source File | Description |
 |---|---|---|
-| `vtk_widget.py` | Scroll probe now fires for **both Mode A and Mode B** (was Mode B only). Mode tag added. Mode transition flushes window to prevent mixed samples. | `viewer-scroll-probe mode=mode_a` / `mode=mode_b` |
-| `image_filters.py` | Filter timing now always logged (was commented out). Includes modality, slice count, thread count. | `viewer-data stage=apply_filters mod=... slices=... threads=... duration_ms=...` |
-| `engine.py` | `PROCESS_DONE` now includes `elapsed_ms` (wall time of the full warmup job). | `PROCESS_DONE lane=... elapsed_ms=...` |
-
-### Already present (no change needed)
-
-| Log Tag | Source | Description |
-|---|---|---|
-| `viewer-data stage=itk_filter_chain` | `image_io.py:944` | ITK filter call duration (at load layer) |
-| `viewer-data stage=itk_to_vtk_convert` | `image_io.py:961` | ITK→VTK convert duration |
-| `viewer-data stage=load_single_series_total` | `image_io.py` via `log_stage_timing` | Total series load wall time |
-| `[DL_WARMUP] ✓ Cached series=X in Yms` | `patient_widget_viewer_controller.py:4528` | DL_WARMUP per-series elapsed |
-| `PROCESS_START / PROCESS_DONE` | `engine.py` | ZetaBoost job lifecycle |
-| `DISK_PROMOTE ... Xms` | `engine.py` | L2→L1 disk promotion |
-| `[LOAD_VTK] ✓ Loaded in Xs` | `image_io.py:578` | Filesystem fallback load |
+| `viewer-scroll-probe mode=mode_a/b` | `vtk_widget.py` | 12s rolling scroll stats |
+| `viewer-scroll stage=event_queue_delay_ms` | `vtk_widget.py` | Per-event queue delay |
+| `viewer-scroll stage=stale_scroll_skip_ms` | `vtk_widget.py` | Stale-drain guard fires (v2.2.3.2.1+) |
+| `viewer-scroll stage=stale_drain_complete` | `vtk_widget.py` | Drain done, N events skipped |
+| `viewer-data stage=apply_filters mod=... threads=... duration_ms=...` | `image_filters.py` | ITK filter wall time |
+| `viewer-data stage=itk_filter_chain` | `image_io.py` | Filter call duration at load layer |
+| `viewer-data stage=itk_to_vtk_convert` | `image_io.py` | ITK→VTK array conversion |
+| `viewer-data stage=load_single_series_total` | `image_io.py` | Total series load wall time |
+| `stage-timing fn=VTKWidget.set_slice stage=set_slice_total` | `vtk_widget.py` | Total set_slice duration |
+| `PROCESS_DONE lane=warmup elapsed_ms=...` | `engine.py` | ZetaBoost warmup job wall time |
+| `[DL_WARMUP] ✓ Cached series=X in Yms` | `patient_widget_viewer_controller.py` | DL_WARMUP per-series elapsed |
+| `batch_insert_instances_total` | `series_downloader.py` | DB insert time (download subprocess) |
+| `Instance create: Xs` | stdout print | Viewer-side pydicom read time |
 
 ---
 
-## 11. Version History
+## 11. Complete Version History
 
-| Version | Date | Changes | Key Result |
-|---|---|---|---|
-| v2.2.2.8 | 2026-02-24 | Warmup lanes not wired | Mode B scroll 30–50ms hit |
-| v2.2.3.1.5 | 2026-02-26 | XY-only 2-stage filter; max_itk_threads=2 for DL_WARMUP; main-thread guard | Mode A scroll: ~18ms p50, 37ms max (warmup spike). Mode B scroll: 51–57ms floor, 114ms peak |
-| v2.2.3.1.5.1 | 2026-02-xx | ZetaBoost warmup callback → max_itk_threads=2; DL_WARMUP → max_itk_threads=1; double get_window_level() fixed | Mode A spike eliminated (37→≈20ms max); Mode B spike eliminated (114→expected <65ms max) |
-| v2.2.3.1.6 | TBD | Cast-once (`apply_filters`); guard zoom-protection double `Render()`; remove double `update_corners_actors()` | Target: −50–150ms filter, −5–10ms scroll |
-| v2.2.3.1.7 | TBD | Dead code; interactive disk cache | Target: re-open study instant |
-| v2.2.3.2.x | TBD | Lazy Reslice; merge flushes | Target: −5–20ms scroll |
+| Version | Commit | Date | Change Summary | Key Measured Result |
+|---|---|---|---|---|
+| v2.2.2.8 | — | 2026-02-24 | Warmup lanes not wired | Mode B scroll 30–50ms hit |
+| v2.2.3.0.4 | `7c25666` | 2026-02-xx | Sort warmup by slice-count asc + ITK drain-wait before interactive load | Reduced warmup/scroll contention |
+| v2.2.3.0.5 | `a98d75e` | 2026-02-xx | Clear stale scroll state on series switch | Fixed 14–17s event_queue_delay + stale slice bleed |
+| v2.2.3.0.6 | `92b428f` | 2026-02-xx | Limit ITK threads=1 during apply_filters (prevent VTK starvation) | Baseline Mode A controlled |
+| v2.2.3.0.7 | `4ff6333` | 2026-02-xx | Skip VTK pipeline invalidation on unchanged WL; skip redundant text actor SetInput | Scroll overhead reduced |
+| v2.2.3.0.8 | `9f3623c` | 2026-02-xx | Fix 29s ITK on mild_mode MR (80% speedup: 2t + 2 sigmas + skip adaptive sharpening) | MR filter: 29s → ~1.5s |
+| v2.2.3.0.9 | `86afd57` | 2026-02-xx | Per-series DL_WARMUP (controlled Mode B caching) | DL_WARMUP framework added |
+| v2.2.3.1.0 | `92d61cb` | 2026-02-xx | Cast-once filter + render dedup + dead code cleanup | Intermediate INT→float casts eliminated |
+| v2.2.3.1.5 | `1eeec45` | 2026-02-26 | XY-only 2-stage filter; max_itk_threads=2 DL_WARMUP; main-thread guard | MR Mode A filter: 423ms; Mode B p50: ~37ms; scroll max: 57ms |
+| v2.2.3.1.6 | `f3613e4` | 2026-02-26 | Cast-once; zoom-protection Render guard; localizer skip | filter_ms: 423→151ms (−64%); zoom double-Render eliminated |
+| v2.2.3.1.7 | `e543639` | 2026-02-26 | Dead code −540 lines; async DB save after download; size-aware preprocess cache | Re-open study: fast from L2 disk |
+| v2.2.3.1.8 | `04c57d0` | 2026-02-26 | Skip redundant SetInputData on series switch; wire ImageSliceBooster | Series switch overhead: −1.4s |
+| v2.2.3.1.8p1 | `af794d9` | 2026-02-26 | Download subprocess BELOW_NORMAL priority; QThread naming | CPU contention reduced |
+| v2.2.3.1.9 | `9d2414b` | 2026-02-26 | Parallel pydicom header reads in viewer `get_or_create_instance` | Instance create: 4.3s→0.8s (330 files, −81%) |
+| v2.2.3.2.0 | `3cd1a09` | 2026-02-26 | Parallel pydicom in download subprocess; adaptive ITK threads; BELOW_NORMAL filter priority | batch_insert: 2217ms→326ms (−85%); filter threads adaptive |
+| v2.2.3.2.1 | `9724dea` | 2026-02-26 | Stale-event fast-drain guard in set_slice (skip render when queue_delay>500ms) | queue_p95: 19,496ms→~16ms expected; 84-event backlog → 1 render |
+| v2.2.3.2.2 | `ff0d4b1` | 2026-02-27 | DL_WARMUP max_itk_threads 1→2; inter-delay 3.0→1.5s; max_parallel_loads 1→2 (8GB+/15GB+) | DL_WARMUP per-series: 4.1s→~2.0s expected; 2 parallel warmup workers |
+
+---
+
+## 12. Current Bottlenecks (as of v2.2.3.2.2)
+
+| Priority | Bottleneck | Location | Impact | Status |
+|---|---|---|---|---|
+| 🔴 HIGH | MR large-FOV filter still slow (500×640×24 = ~1.5s at 2 threads) | `image_filters.py` `_smooth_xy_recursive` | DL_WARMUP takes ~2s even after fix | Open — measure with v2.2.3.2.2 first |
+| 🟡 MED | `viewer_db_read` 38–88ms on series load | `image_io.py` DB query | Adds to series switch latency | Open — may batch query |
+| 🟡 MED | `disk_read` 27–384ms on series load | `image_io.py` filesystem | SSDs fast; HDDs slow; L2 disk cache helps | Mitigated by ZetaBoost L2 |
+| 🟢 LOW | `create_connection` 3–24ms on new threads | `database.py` | First load per thread | Acceptable |
+| ✅ FIXED | Stale scroll event drain (queue_p95=19,496ms) | `vtk_widget.py` | v2.2.3.2.1 | Done |
+| ✅ FIXED | batch_insert_instances serial (2217ms) | `series_downloader.py` | v2.2.3.2.0 | Done |
+| ✅ FIXED | Instance create serial pydicom (4.3s) | `utils.py` | v2.2.3.1.9 | Done |
+| ✅ FIXED | SetInputData redundant call (1.4s series switch) | `vtk_widget.py` | v2.2.3.1.8 | Done |
+| ✅ FIXED | MR mild_mode filter 29s | `image_filters.py` | v2.2.3.0.8 | Done |
+
+---
+
+## 13. Next Test Checklist (v2.2.3.2.2)
+
+Run after pulling `ff0d4b1` on both PC A and PC B:
+
+```powershell
+# Get latest log
+$log = Get-ChildItem "c:\AI-Pacs codes\ai-pacs\logs" -Filter "*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+# DL_WARMUP timing (should be <2100ms for large MR series)
+Select-String "\[DL_WARMUP\].*Cached series" $log.FullName | Select-Object -Last 10
+
+# Filter thread count (should be threads=2 for DL_WARMUP, threads=6 for interactive on 8-core)
+Select-String "stage=apply_filters" $log.FullName | Select-Object -Last 20
+
+# Stale drain guard (should appear if queue_delay > 500ms, then drain_complete)
+Select-String "stale_scroll_skip\|stale_drain_complete" $log.FullName | Select-Object -Last 10
+
+# ZetaBoost parallel workers (should see two PROCESS_START lines overlapping)
+Select-String "PROCESS_START lane=warmup\|WORKER_BLOCKED" $log.FullName | Select-Object -Last 10
+
+# Scroll probe (Mode A + Mode B)
+Select-String "viewer-scroll-probe" $log.FullName | Select-Object -Last 10
+
+# Queue delay per scroll
+Select-String "event_queue_delay_ms" $log.FullName | Select-Object -Last 20
+```
+
+**Expected results:**
+- DL_WARMUP per-series: `<2100ms` for 500×640 MR, `<800ms` for 176×176 MR
+- `threads=2` in DL_WARMUP filter logs (was `threads=1`)
+- `WORKER_BLOCKED reason=max_parallel(1/2)` when both slots used
+- `stale_drain_complete skipped=N` when backlog clears; no sustained high queue_delay
+

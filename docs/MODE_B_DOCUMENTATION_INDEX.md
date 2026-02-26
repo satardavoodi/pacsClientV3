@@ -1,18 +1,32 @@
 # Mode B Performance — Documentation Index
 
-**Version:** v2.2.2.8  
-**Updated:** February 24, 2026  
-**Status:** ✅ Consolidated & Organized
+**Version:** v2.2.3.2.2  
+**Updated:** 2026-02-27  
+**Status:** ✅ Active — see PERFORMANCE_STATUS.md for current snapshot
 
 ---
 
-## 📚 Core Documentation (Active)
+## 📌 Start Here
 
-| Document | Purpose | Size | Audience | When to Use |
-|----------|---------|------|----------|------------|
-| [MODE_B_BOTTLENECK_ANALYSIS_v2.2.2.8.md](MODE_B_BOTTLENECK_ANALYSIS_v2.2.2.8.md) | **Root cause analysis + verified solutions** | 12 KB | Architects, Developers | Understanding why lag occurs and how to fix it |
-| [MODE_B_QUICK_START_GUIDE.md](MODE_B_QUICK_START_GUIDE.md) | **Implementation quickstart** | 3 KB | Developers | Copying/pasting code fixes to apply immediately |
-| [PERFORMANCE_DECISION_LOG_2026-02-24.md](PERFORMANCE_DECISION_LOG_2026-02-24.md) | **Data points + decisions + actions log** | ~8 KB | Developers, Maintainers | Trace incremental measurements, steps taken, and why decisions were made |
+| Document | Purpose | When to Use |
+|----------|---------|-------------|
+| **[PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)** | **One-page current state: what's fixed, what's open, key numbers** | **Start here every session** |
+| [METRICS_TRACKING_v2.2.3.x.md](METRICS_TRACKING_v2.2.3.x.md) | Phase-by-phase measurements and version history (v2.2.3.0.x → v2.2.3.2.2) | Review baseline vs current; fill in new measurements |
+| [PERFORMANCE_DECISION_LOG_2026-02-27.md](PERFORMANCE_DECISION_LOG_2026-02-27.md) | Decisions from 2026-02-26/27 session | Trace why recent changes were made |
+| [PERFORMANCE_DECISION_LOG_2026-02-24.md](PERFORMANCE_DECISION_LOG_2026-02-24.md) | Decisions from 2026-02-24 session | Historical context; log rotation, first B-mode diagnostics |
+| [CROSS_PC_IMPROVEMENT_WORKFLOW.md](CROSS_PC_IMPROVEMENT_WORKFLOW.md) | PC A → GitHub → PC B validation cycle | After every code change |
+
+---
+
+## 📚 Reference Documents (Background / Historical)
+
+| Document | Purpose |
+|----------|---------|
+| [MODE_B_BOTTLENECK_ANALYSIS_v2.2.2.8.md](MODE_B_BOTTLENECK_ANALYSIS_v2.2.2.8.md) | Root cause analysis at v2.2.2.8 (pre-optimization baseline) |
+| [MODE_B_QUICK_START_GUIDE.md](MODE_B_QUICK_START_GUIDE.md) | Implementation quickstart from v2.2.2.8 era |
+| [MODE_AB_ARCHITECTURE_REVIEW_v2.2.3.1.5.md](MODE_AB_ARCHITECTURE_REVIEW_v2.2.3.1.5.md) | Architecture review at v2.2.3.1.5 |
+| [ZETABOOST_PIPELINE_ANALYSIS.md](ZETABOOST_PIPELINE_ANALYSIS.md) | ZetaBoost engine design reference |
+| [IMAGE_PIPELINE_REFERENCE.md](IMAGE_PIPELINE_REFERENCE.md) | Image load pipeline: DICOM → ITK → VTK |
 
 ---
 
