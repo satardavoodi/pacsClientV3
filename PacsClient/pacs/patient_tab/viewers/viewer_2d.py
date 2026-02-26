@@ -102,8 +102,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     # Shared cache for preprocessed display volumes across viewers.
     _global_preprocess_cache = {}
     _global_preprocess_cache_order = []
-    _global_preprocess_cache_max = 8
-    _global_preprocess_cache_max_slices = 160
+    _global_preprocess_cache_sizes: dict = {}     # key → bytes (Phase 3D)
+    _global_preprocess_cache_total_bytes: int = 0  # running total (Phase 3D)
+    _global_preprocess_cache_max = 8              # hard count cap (secondary guard)
+    _global_preprocess_cache_max_slices = 160     # kept for compatibility
+    # v2.2.3.1.7 Phase 3D: primary eviction limit in bytes (default 300 MB).
+    # Large studies (512×512×508 float32) are ~500 MB each; 300 MB keeps one
+    # full study preprocessed without blowing up RAM on repeated series opens.
+    _PREPROCESS_CACHE_MAX_BYTES: int = 300 * 1024 * 1024  # 300 MB
     _global_preprocess_cache_lock = threading.Lock()  # Thread safety for class-level cache
 
     def __init__(self, render_window, interactor, height, vtk_image_data: vtk.vtkImageData, metadata,
@@ -302,15 +308,46 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     @classmethod
     def _cache_put_preprocessed(cls, key, vtk_img):
+        """Insert a preprocessed volume into the shared class-level cache.
+
+        v2.2.3.1.7 Phase 3D: Eviction is now size-aware.  The cache tracks the
+        actual byte footprint of each stored VTK image and evicts oldest entries
+        when the total exceeds ``_PREPROCESS_CACHE_MAX_BYTES`` (300 MB).  The
+        legacy count cap (``_global_preprocess_cache_max``) remains as a
+        secondary guard to prevent an unbounded number of tiny entries.
+        """
         try:
             with cls._global_preprocess_cache_lock:
+                # Measure the byte footprint of the incoming volume.
+                try:
+                    entry_bytes = int(vtk_img.GetActualMemorySize()) * 1024  # KB → bytes
+                except Exception:
+                    entry_bytes = 0
+
+                # If this key already exists, subtract the old size first.
+                if key in cls._global_preprocess_cache_sizes:
+                    cls._global_preprocess_cache_total_bytes -= cls._global_preprocess_cache_sizes[key]
+                    cls._global_preprocess_cache_order = [
+                        k for k in cls._global_preprocess_cache_order if k != key
+                    ]
+
                 cls._global_preprocess_cache[key] = vtk_img
+                cls._global_preprocess_cache_sizes[key] = entry_bytes
+                cls._global_preprocess_cache_total_bytes += entry_bytes
                 cls._global_preprocess_cache_order.append(key)
-                # Drop oldest entries if cache is too large
-                while len(cls._global_preprocess_cache_order) > cls._global_preprocess_cache_max:
+
+                # Evict oldest entries while over the byte budget OR count cap.
+                while (
+                    cls._global_preprocess_cache_order and (
+                        cls._global_preprocess_cache_total_bytes > cls._PREPROCESS_CACHE_MAX_BYTES
+                        or len(cls._global_preprocess_cache_order) > cls._global_preprocess_cache_max
+                    )
+                ):
                     old = cls._global_preprocess_cache_order.pop(0)
                     if old in cls._global_preprocess_cache:
                         del cls._global_preprocess_cache[old]
+                    if old in cls._global_preprocess_cache_sizes:
+                        cls._global_preprocess_cache_total_bytes -= cls._global_preprocess_cache_sizes.pop(old)
         except Exception:
             pass
 

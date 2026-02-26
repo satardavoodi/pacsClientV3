@@ -1660,43 +1660,48 @@ class HomePanelWidget(QWidget):
             print(f"⚠️ Error connecting Download Manager to widget: {e}")
     
     def _on_study_download_completed(self, study_uid: str):
-        """Update patient list when a study download completes"""
+        """Update patient list when a study download completes.
+
+        v2.2.3.1.7 Phase 3A: The heavy DB-save work (study info retrieval +
+        DB write + study_path update) is now offloaded to an executor thread
+        via ``_save_study_to_db_async``.  Only the fast, UI-critical operations
+        stay on the main thread: pipeline signal, table status update, auto-open.
+        This eliminates the ~80–200ms main-thread block that showed up as a Mode B
+        queue spike in the B4 log metric.
+        """
         try:
             from PacsClient.pacs.patient_tab.utils.utils import check_study_complete
-            from PacsClient.utils.config import SOURCE_PATH
-            from PacsClient.utils.db_manager import find_study_pk_with_study_uid, update_study_missing_fields
-            
+
             print(f"\n{'='*70}")
             print(f"📥 [DOWNLOAD_COMPLETE] Study download completed: {study_uid}")
             print(f"{'='*70}")
-            
-            # Re-check download status with detailed info
+
+            # 1. Determine status (fast DB/file check — stays on main thread).
             result = check_study_complete(study_uid)
             print(f"[CHECK_STATUS] check_study_complete returned: {result}")
-            
-            # Determine status
+
             if isinstance(result, dict):
                 if result.get('is_complete', False):
                     status = 'complete'
-                    print(f"[STATUS] ✓ Study is completely downloaded")
-                    print(f"[STATUS] Confirmed {result.get('series_downloaded', 0)}/{result.get('series_expected', 0)} series")
+                    print(f"[STATUS] ✓ Study completely downloaded: "
+                          f"{result.get('series_downloaded', 0)}/{result.get('series_expected', 0)} series")
                 elif result.get('series_downloaded', 0) > 0:
                     status = 'partial'
-                    print(f"[STATUS] ⚠️ Study is partially downloaded: {result.get('series_downloaded')}/{result.get('series_expected')} series")
+                    print(f"[STATUS] ⚠️ Partial: "
+                          f"{result.get('series_downloaded')}/{result.get('series_expected')} series")
                 else:
                     status = 'not_downloaded'
-                    print(f"[STATUS] ✗ Study has no downloaded series")
+                    print(f"[STATUS] ✗ No downloaded series")
             elif isinstance(result, bool):
                 status = 'complete' if result else 'not_downloaded'
                 print(f"[STATUS] Result is bool: {status}")
             else:
                 status = 'not_downloaded'
                 print(f"[STATUS] Unknown result type: {type(result)}")
-            
-            # ✅ Save study info to database when download is complete
+
+            # 2. Fire pipeline signal immediately (unlocks ZetaBoost warmup).
+            #    Must run on the main/UI thread.
             if status == 'complete':
-                # ── Pipeline orchestrator: definitive study-complete signal ──
-                # This unlocks ZetaBoost warmup on the viewer controller.
                 try:
                     widget = self._find_widget_by_study_uid(study_uid)
                     if widget and hasattr(widget, 'viewer_controller'):
@@ -1704,54 +1709,96 @@ class HomePanelWidget(QWidget):
                         print(f"[PIPELINE] ✅ Signaled viewer controller: study download complete")
                 except Exception as pipe_err:
                     print(f"[PIPELINE] ⚠️ Failed to signal viewer controller: {pipe_err}")
-                try:
-                    print(f"[SAVE_TO_DB] Retrieving study info for {study_uid}...")
-                    study_info = self._get_study_info_for_completed_download(study_uid)
-                    if study_info:
-                        print(f"[SAVE_TO_DB] Got study info: patient={study_info.get('patient_name')}, series_count={len(study_info.get('series', []))}")
-                        saved = self.save_complete_study_info(study_uid, study_info=study_info)
-                        if saved:
-                            print(f"[SAVE_TO_DB] ✅ Study saved to database")
-                            self._refresh_local_tab_after_download()
-                        else:
-                            print(f"[SAVE_TO_DB] ❌ Failed to save study to database")
-                    else:
-                        print(f"[SAVE_TO_DB] ❌ Could not retrieve study info")
-                except Exception as e:
-                    print(f"[SAVE_TO_DB] ❌ Error: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
-            # Ensure study_path is populated for local search visibility
-            try:
-                study_pk = find_study_pk_with_study_uid(study_uid)
-                if study_pk:
-                    study_path = str(SOURCE_PATH / study_uid)
-                    from PacsClient.utils.db_manager import update_study_missing_fields
-                    update_study_missing_fields(study_pk, study_path=study_path)
-                    print(f"[LOCAL_SYNC] Updated study_path: {study_path}")
-                else:
-                    print(f"[LOCAL_SYNC] ❌ Study not found in database after download")
-            except Exception as update_error:
-                print(f"[LOCAL_SYNC] ❌ Failed to update study_path: {update_error}")
 
-            # Update patient table widget
+            # 3. Quick UI updates (main thread only).
             if hasattr(self, 'patient_table_widget'):
                 self.patient_table_widget.update_study_download_status(study_uid, status)
                 print(f"[UI_UPDATE] Updated patient table for {study_uid}: {status}")
-            
-            # ✅ Auto-open study if it's completely downloaded and setting is enabled
+
             if status == 'complete' and hasattr(self, '_auto_open_after_download'):
                 if self._auto_open_after_download:
                     print(f"[AUTO_OPEN] Opening study {study_uid}...")
                     self._auto_open_downloaded_study(study_uid)
-            
+
             print(f"{'='*70}\n")
-            # Re-evaluate global warmup throttle flag (may clear if no active downloads).
+
+            # 4. Global download flag (fast — stays on main thread).
             self._refresh_global_download_flag()
+
+            # 5. Offload heavy DB-save work to background executor.
+            #    Avoids blocking the UI/VTK thread with file-I/O and DB writes.
+            if status in ('complete', 'partial'):
+                try:
+                    asyncio.ensure_future(self._save_study_to_db_async(study_uid, status))
+                except Exception as sched_err:
+                    print(f"[SAVE_TO_DB] ⚠️ Could not schedule async DB save: {sched_err}")
 
         except Exception as e:
             print(f"❌ [FATAL] Error: {e}")
+            import traceback
+            traceback.print_exc()
+
+    async def _save_study_to_db_async(self, study_uid: str, status: str):
+        """Background executor task for DB-heavy post-download work.
+
+        Called from ``_on_study_download_completed`` after all UI-critical work
+        is done.  Runs the time-consuming DB reads/writes off the main thread so
+        the VTK render loop and ZetaBoost warmup are not blocked.
+
+        After the executor completes, ``_refresh_local_tab_after_download`` is
+        called back on the Qt/asyncio event loop to refresh the patient list UI.
+        """
+        try:
+            from PacsClient.utils.config import SOURCE_PATH
+            from PacsClient.utils.db_manager import find_study_pk_with_study_uid, update_study_missing_fields
+
+            loop = asyncio.get_event_loop()
+
+            def _bg_work():
+                results = {}
+
+                # ── Retrieve and persist study info ──
+                try:
+                    print(f"[SAVE_TO_DB] Retrieving study info for {study_uid}...")
+                    study_info = self._get_study_info_for_completed_download(study_uid)
+                    if study_info:
+                        print(f"[SAVE_TO_DB] Got study info: "
+                              f"patient={study_info.get('patient_name')}, "
+                              f"series_count={len(study_info.get('series', []))}")
+                        saved = self.save_complete_study_info(study_uid, study_info=study_info)
+                        results['saved'] = saved
+                        print(f"[SAVE_TO_DB] {'✅ Saved' if saved else '❌ Failed to save'} study to database")
+                    else:
+                        print(f"[SAVE_TO_DB] ❌ Could not retrieve study info")
+                        results['saved'] = False
+                except Exception as e:
+                    print(f"[SAVE_TO_DB] ❌ Error: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    results['saved'] = False
+
+                # ── Ensure study_path is populated for local search visibility ──
+                try:
+                    study_pk = find_study_pk_with_study_uid(study_uid)
+                    if study_pk:
+                        study_path = str(SOURCE_PATH / study_uid)
+                        update_study_missing_fields(study_pk, study_path=study_path)
+                        print(f"[LOCAL_SYNC] Updated study_path: {study_path}")
+                    else:
+                        print(f"[LOCAL_SYNC] ❌ Study not found in database after download")
+                except Exception as update_error:
+                    print(f"[LOCAL_SYNC] ❌ Failed to update study_path: {update_error}")
+
+                return results
+
+            results = await loop.run_in_executor(None, _bg_work)
+
+            # ── Refresh patient list UI back on the event-loop thread ──
+            if results.get('saved'):
+                self._refresh_local_tab_after_download()
+
+        except Exception as e:
+            print(f"[SAVE_TO_DB_ASYNC] ❌ Error: {e}")
             import traceback
             traceback.print_exc()
 
