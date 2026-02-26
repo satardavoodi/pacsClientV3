@@ -742,17 +742,34 @@ def apply_filters(
     max_spacing = max(spacing) if spacing else 0
     mild_mode = (modality == "MR") and (max_spacing > 1.5)
 
-    # ── v2.2.3.1.5: Use up to 4 ITK threads for interactive loads.  ──
-    # DL_WARMUP background loads pass max_itk_threads=2 to leave CPU  ──
-    # headroom for the VTK render thread (Mode B scroll smoothness).  ──
+    # v2.2.3.2.0: Adaptive ITK thread count — reserve 2 cores for VTK render.
+    # • 4-core: 2 threads  (smoother scroll during load, ITK takes a bit longer)
+    # • 6-core: 4 threads  (same as previous cap)
+    # • 8-core: 6 threads  (faster ITK AND still leaves 2 cores for VTK)
+    # DL_WARMUP background loads still override via max_itk_threads=2.
     _itk_cpu_count = os.cpu_count() or 4
-    _filter_threads = min(_itk_cpu_count, 4)
+    _filter_threads = max(min(_itk_cpu_count - 2, 8), 2)
     if max_itk_threads is not None:
         _filter_threads = min(_filter_threads, max(1, int(max_itk_threads)))
     try:
         sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(_filter_threads)
     except Exception:
         pass
+
+    # v2.2.3.2.0: Lower this worker thread's OS scheduling priority during the
+    # heavy ITK Gaussian pass so VTK render (main thread, NORMAL priority)
+    # always wins CPU time → eliminates 100-300ms scroll spikes during load.
+    import sys as _sys
+    _lowered_priority = False
+    if _sys.platform == 'win32':
+        try:
+            import ctypes as _ct
+            _ct.windll.kernel32.SetThreadPriority(
+                _ct.windll.kernel32.GetCurrentThread(), -1  # THREAD_PRIORITY_BELOW_NORMAL
+            )
+            _lowered_priority = True
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Phase 1 (v2.2.3.1.6): Cast-once to float32 before all filter stages.
@@ -843,12 +860,20 @@ def apply_filters(
         extra={"component": "viewer", "function": "image_filters.apply_filters", "stage": "apply_filters"},
     )
 
-    # ── v2.2.3.0.6: Restore ITK thread count so any subsequent interactive  ──
-    # loads (series switch before warmup finishes) get full CPU speed.       ──
+    # Restore ITK thread count so any subsequent interactive loads get full CPU.
     try:
         sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(_itk_cpu_count)
     except Exception:
         pass
+
+    # Restore normal thread priority so subsequent work (DB writes, etc.) are not penalised.
+    if _lowered_priority:
+        try:
+            _ct.windll.kernel32.SetThreadPriority(
+                _ct.windll.kernel32.GetCurrentThread(), 0  # THREAD_PRIORITY_NORMAL
+            )
+        except Exception:
+            pass
 
     return itk_image
 
