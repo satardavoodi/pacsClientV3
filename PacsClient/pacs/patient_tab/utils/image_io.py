@@ -841,6 +841,11 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                             f"      DB group fallback: using group_id={selected_group_id} "
                             f"with {len(instances)} instances"
                         )
+                if not instances:
+                    print(
+                        f"      INFO: series_pk={series_pk} found in DB but no instance records "
+                        f"(download subprocess hasn't written them yet) → filesystem fallback"
+                    )
                 if instances and len(instances) > 0:
                     # Validate DB instance completeness against filesystem to avoid
                     # partial-stack bug (e.g., only first image loaded).
