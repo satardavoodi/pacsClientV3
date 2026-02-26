@@ -83,6 +83,26 @@ def _run_download_in_process(
         config_dict.get("base_output_dir"), bool(config_dict.get("auth_token")),
     )
 
+    # ── 2b. Lower this subprocess's OS priority (Windows) ────────────────────
+    # The download subprocess's response_parse CPU bursts (25-84ms every ~1.8s)
+    # compete with the viewer's VTK scroll rendering on shared CPU cores.
+    # BELOW_NORMAL_PRIORITY_CLASS lets the OS scheduler favour the viewer thread
+    # during scroll while still allowing download to proceed at full I/O speed.
+    import sys as _sys
+    if _sys.platform == "win32":
+        try:
+            import ctypes as _ctypes
+            _BELOW_NORMAL = 0x00004000  # BELOW_NORMAL_PRIORITY_CLASS
+            _ctypes.windll.kernel32.SetPriorityClass(
+                _ctypes.windll.kernel32.GetCurrentProcess(), _BELOW_NORMAL
+            )
+            logger.info(
+                "  Process priority → BELOW_NORMAL_PRIORITY_CLASS (viewer gets CPU headroom)",
+                extra={"component": "ipc", "study_uid": study_uid},
+            )
+        except Exception as _pe:
+            logger.debug("  Could not lower process priority: %s", _pe)
+
     try:
         # ── 3. Lazy imports (no Qt in the import chain) ───────────────────────
         from pathlib import Path
