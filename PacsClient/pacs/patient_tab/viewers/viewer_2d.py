@@ -216,7 +216,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         # Smooth zooming on the image actor
         self.GetImageActor().InterpolateOn()
-        self.renderer.UseFXAAOn()
+        # v2.2.3.2.5: FXAA OFF — the CPU-based post-processing anti-aliasing
+        # pass costs 20-50ms per Render() on software OpenGL (WARP / Mesa).
+        # 2D DICOM images don't benefit from FXAA (pixel-exact display +
+        # FreeType text rendering have their own smoothing).  FXAA also
+        # slightly blurs corner-annotation text, reducing readability.
+        self.renderer.UseFXAAOff()
 
         self.UpdateDisplayExtent()
         # ❌ FLICKER FIX: Skip initial render - will render once after all setup is complete
@@ -1224,19 +1229,40 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
           3) Update corner text
           4) Sync all overlay actors to this slice
         """
+        _t0 = time.perf_counter_ns()
+
         # 1) Move to the requested slice
         self.SetSlice(slice_index)
+        _t1 = time.perf_counter_ns()
 
         # 2) Apply default window/level only if the user hasn't set a custom WL
         if not self.flag_set_custom_window_level:
             self.apply_default_window_level(slice_index)
+        _t2 = time.perf_counter_ns()
 
         # 3) Update on-screen corner annotations
         self.update_corners_actors()
+        _t3 = time.perf_counter_ns()
 
         # 4) Make overlays follow the current slice and render
         self._sync_all_overlays_extent()
         self.Render()
+        _t4 = time.perf_counter_ns()
+
+        # v2.2.3.2.5: Sub-stage timing for scroll performance analysis.
+        # Only log when total exceeds 30ms to avoid flooding on fast GPUs.
+        _total_ms = (_t4 - _t0) / 1_000_000
+        if _total_ms > 30.0:
+            _render_ms = (_t4 - _t3) / 1_000_000
+            logger.info(
+                "viewer-scroll sub-timing: SetSlice=%.1fms WL=%.1fms corners=%.1fms Render=%.1fms total=%.1fms",
+                (_t1 - _t0) / 1_000_000,
+                (_t2 - _t1) / 1_000_000,
+                (_t3 - _t2) / 1_000_000,
+                _render_ms,
+                _total_ms,
+                extra={"component": "viewer", "function": "ImageViewer2D.set_slice", "stage": "sub_timing"},
+            )
 
     def set_viewer_type(self, viewer_type):
         self.viewer_type = viewer_type
@@ -1315,7 +1341,15 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         self.color_mapper.SetWindow(window_width)
         self.color_mapper.SetLevel(window_center)
-        self.color_mapper.Update()
+        # v2.2.3.2.5: Skip color_mapper.Update() on the scroll path.
+        # SetWindow/SetLevel call vtkSetMacro which marks the mapper as
+        # Modified().  The subsequent Render() in set_slice() will
+        # automatically update the pipeline, making this explicit Update()
+        # a redundant full-pipeline flush (~5-15ms wasted on software GL).
+        # On the manual-WL path (flag_default=False) we still flush so the
+        # caller gets an immediately up-to-date output.
+        if not flag_default:
+            self.color_mapper.Update()
         # v2.2.3.1.0: skip corner update on scroll path — set_slice() always
         # calls update_corners_actors() after apply_default_window_level(),
         # so calling it here too was a duplicate (~2-5ms wasted per scroll).

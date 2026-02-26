@@ -1633,15 +1633,74 @@ class HomePanelWidget(QWidget):
                     except Exception:
                         pass
             
+            # ── v2.2.3.2.6: Coalesced series-completion handler ──────────
+            # Multiple series can complete within a few hundred ms during
+            # bulk downloads.  Processing each one individually on the main
+            # thread (thumbnail border update + pipeline signal + warmup
+            # enqueue + viewer display) blocked the Qt event loop for
+            # seconds, starving scroll events (event_queue_delay 600–5400ms).
+            #
+            # Fix: accumulate completed series and flush them in one batch
+            # after a short debounce (100ms).  The first series in a burst
+            # is still emitted immediately (critical for first-series
+            # display latency), subsequent ones are batched.
+
+            _pending_completed: list = []
+            _flush_timer = QTimer()
+            _flush_timer.setSingleShot(True)
+            _flush_timer.setInterval(100)  # 100ms coalesce window
+            _first_series_emitted = {'done': False}
+
+            def _flush_pending_completions():
+                """Process all accumulated series completions in one batch."""
+                batch = list(_pending_completed)
+                _pending_completed.clear()
+                if not batch:
+                    return
+                try:
+                    _ = widget.isVisible()
+                except (RuntimeError, AttributeError):
+                    return  # Widget deleted
+                for i, sn in enumerate(batch):
+                    try:
+                        if hasattr(widget, 'thumbnail_manager'):
+                            widget.thumbnail_manager.complete_series_download(sn)
+                        if hasattr(widget, 'series_downloaded'):
+                            widget.series_downloaded.emit(sn)
+                    except (RuntimeError, AttributeError):
+                        break  # Widget deleted mid-loop
+                    except Exception:
+                        pass
+                    # Yield to event loop every 2 series so scroll events can drain
+                    if i % 2 == 1 and i < len(batch) - 1:
+                        try:
+                            from PySide6.QtWidgets import QApplication
+                            QApplication.processEvents()
+                        except Exception:
+                            pass
+
+            _flush_timer.timeout.connect(_flush_pending_completions)
+
             def on_series_completed(uid, series_uid):
                 if uid == study_uid and widget:
                     try:
                         series_number = _resolve_series_number(series_uid)
-                        if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.complete_series_download(series_number)
-                        # Also notify the widget that a series is ready for display
-                        if hasattr(widget, 'series_downloaded'):
-                            widget.series_downloaded.emit(series_number)
+
+                        # First completed series is dispatched immediately so
+                        # the viewer starts loading without waiting for the
+                        # coalesce window.
+                        if not _first_series_emitted['done']:
+                            _first_series_emitted['done'] = True
+                            if hasattr(widget, 'thumbnail_manager'):
+                                widget.thumbnail_manager.complete_series_download(series_number)
+                            if hasattr(widget, 'series_downloaded'):
+                                widget.series_downloaded.emit(series_number)
+                            return
+
+                        # Subsequent completions are batched.
+                        _pending_completed.append(series_number)
+                        if not _flush_timer.isActive():
+                            _flush_timer.start()
                     except Exception:
                         pass
             

@@ -437,18 +437,26 @@ def get_quickly_series_info(path):
         return None
 
 
-def get_or_create_instance(files, itk_image: sitk.Image, series_pk, group_id):
+def get_or_create_instance(files, itk_image: sitk.Image, series_pk, group_id, max_workers=None):
     """
     OPTIMIZED: Use bulk operations instead of individual queries for each instance.
     v2.2.3.1.9: Parallelise pydicom header reads (stop_before_pixels) with a
     ThreadPoolExecutor.  For 330 files sequentially on HDD this takes ~4.3s;
     with 8 workers it drops to ~0.8s because header reads are pure I/O.
     Thread count is capped at min(8, cpu_count) to avoid over-subscription.
+
+    v2.2.3.2.4: Added *max_workers* parameter.  When the caller runs inside
+    the viewer process (first-series Mode B load) we pass max_workers=2 so
+    the pydicom ThreadPool does not flood the GIL with 8 concurrent header
+    parsers while the UI thread is trying to render scroll frames.
     """
     import concurrent.futures as _cf
     import os as _os
 
-    _MAX_HREAD_WORKERS = min(8, max(1, (_os.cpu_count() or 4)))
+    if max_workers is None:
+        _MAX_HREAD_WORKERS = min(8, max(1, (_os.cpu_count() or 4)))
+    else:
+        _MAX_HREAD_WORKERS = max(1, int(max_workers))
 
     def _read_header(file):
         meta = _safe_dcmread(file, stop_before_pixels=True)

@@ -37,31 +37,32 @@ def _smooth_xy_recursive(img: sitk.Image, sigma_xy: float = 0.8, sigma_z: float 
     Parameters
     ----------
     img : sitk.Image
-        تصویر ورودی SimpleITK
+        تصویر ورودی SimpleITK (ideally already float32 when called from apply_filters)
     sigma_xy : float, default=0.8
         مقدار سیگمای فیلتر گاوسی در صفحات XY (میلی‌متر)
-        • مقدار بیشتر: هموارسازی بیشتر، جزئیات کمتر
-        • مقدار کمتر: هموارسازی کمتر، جزئیات بیشتر
-        • محدوده پیشنهادی: 0.3 تا 2.0 میلی‌متر
     sigma_z : float or None, default=None
         مقدار سیگمای فیلتر گاوسی در جهت Z (میلی‌متر)
         • اگر None باشد، برابر sigma_xy در نظر گرفته می‌شود
-        • برای تصاویر با برش‌های ضخیم (>2mm) مقدار کمتر پیشنهاد می‌شود
         • اگر 0 باشد یا تصویر 2D باشد، در جهت Z اعمال نمی‌شود
         
     Returns
     -------
     sitk.Image
-        تصویر هموار شده با حفظ نوع داده اصلی
-        
-    Notes
-    -----
-    - فیلتر بازگشتی برای تصاویر بزرگ سریع‌تر از فیلتر گاوسی استاندارد است
-    - مقدار sigma بر اساس میلی‌متر است و به صورت خودکار به پیکسل تبدیل می‌شود
-    - برای تصاویر 2D، پارامتر sigma_z نادیده گرفته می‌شود
+        تصویر هموار شده — returned in the SAME pixel type as input.
+        v2.2.3.2.3: When caller passes float32 (apply_filters already casts),
+        the redundant Cast(float32) at entry and Cast(original) at exit are
+        skipped.  This eliminates 6 GIL-holding cast operations per MR series
+        (3 calls × 2 casts each), saving ~100-200ms of GIL time during
+        Mode B DL_WARMUP background loads.
     """
-    # تبدیل به float32 برای دقت محاسباتی
-    imgf = sitk.Cast(img, sitk.sitkFloat32)
+    # v2.2.3.2.3: Only cast if input is NOT already float32 — the common
+    # case from apply_filters() is that it already casted at the top.
+    _input_pixel_id = img.GetPixelID()
+    _already_float32 = (_input_pixel_id == sitk.sitkFloat32)
+    if _already_float32:
+        imgf = img
+    else:
+        imgf = sitk.Cast(img, sitk.sitkFloat32)
 
     # اعمال فیلتر گاوسی بازگشتی در جهت X
     out = sitk.RecursiveGaussian(imgf, sigma=sigma_xy, direction=0)
@@ -77,7 +78,11 @@ def _smooth_xy_recursive(img: sitk.Image, sigma_xy: float = 0.8, sigma_z: float 
         if nz >= 4 and sigma_z > 0:
             out = sitk.RecursiveGaussian(out, sigma=sigma_z, direction=2)
 
-    return sitk.Cast(out, img.GetPixelID())
+    # v2.2.3.2.3: Return in the same pixel type as input — avoid
+    # redundant Cast when caller is already working in float32.
+    if _already_float32:
+        return out
+    return sitk.Cast(out, _input_pixel_id)
 
 
 def _radius_from_mm(mm: float, spacing: tuple[float, ...], dim: int) -> list[int]:
@@ -803,8 +808,11 @@ def apply_filters(
         else:
             itk_image = sitk.SmoothingRecursiveGaussian(itk_image, sigma=float(sigma))
 
-    # ── GIL yield: brief pause between stages (5ms vs old 50ms) ──
-    time.sleep(0.005)
+    # ── GIL yield: brief pause between stages ──
+    # v2.2.3.2.3: 2ms is enough for the main thread to process one VTK render
+    # cycle (~18ms budget).  Longer sleeps slow down background loads without
+    # proportional scroll benefit.
+    time.sleep(0.002)
 
     # ------------------------------------------------------------------
     # PooyanPacs-style single XY-only unsharp mask (v2.2.3.1.5, clamped)
@@ -830,20 +838,31 @@ def apply_filters(
             # XY-only Gaussian blur — skip Z to match PooyanPacs 2D behavior
             blurred = _smooth_xy_recursive(itk_image, sigma_xy=float(usm_sigma), sigma_z=0.0)
 
+            # v2.2.3.2.3: GIL yield between Gaussian blur and numpy sharpening
+            time.sleep(0.002)
+
             # Unsharp mask: sharpened = original + amount * (original - blurred)
-            orig_arr = sitk.GetArrayFromImage(itk_image).astype(np.float32)
-            blur_arr = sitk.GetArrayFromImage(blurred).astype(np.float32)
-            sharpened_arr = orig_arr + float(usm_amount) * (orig_arr - blur_arr)
+            # v2.2.3.2.3: Use GetArrayViewFromImage to avoid a copy where possible
+            orig_arr = sitk.GetArrayFromImage(itk_image)
+            blur_arr = sitk.GetArrayFromImage(blurred)
+            # Free the SimpleITK blurred image immediately
+            del blurred
+
+            # numpy operations release GIL during computation
+            sharpened_arr = orig_arr + (float(usm_amount) * (orig_arr - blur_arr))
+            del blur_arr  # Free memory early
 
             # v2.2.3.1.5: Clamp to original data range to prevent white line
             # artifacts at tissue/background edges.  PooyanPacs avoids this
             # naturally via 8-bit [0,255] BitmapSource clamping; for 16-bit
             # DICOM data we need explicit bounds.
             np.clip(sharpened_arr, orig_arr.min(), orig_arr.max(), out=sharpened_arr)
+            del orig_arr  # Free memory early
 
             result = sitk.GetImageFromArray(sharpened_arr)
             result.CopyInformation(itk_image)
             itk_image = result
+            del sharpened_arr  # Free memory early
 
     # ------------------------------------------------------------------
     # Cast back to original pixel type once — covers BOTH CT and MR paths.

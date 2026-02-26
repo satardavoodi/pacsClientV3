@@ -105,6 +105,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # =====================================================
         self.render_window.SetDoubleBuffer(True)
         self.render_window.SetSwapBuffers(True)
+        # v2.2.3.2.5: Disable multisampling — VTK defaults to 8x MSAA.
+        # On software OpenGL (WARP / Mesa / SwiftShader) each sample
+        # multiplies the per-pixel work.  For 2D medical images
+        # displayed through vtkImageActor, multisampling provides zero
+        # visual benefit (pixel-exact raster, no polygon edges to AA).
+        self.render_window.SetMultiSamples(0)
         
         # Initialize interactor without processEvents (causes flickering)
         self.interactor.Initialize()

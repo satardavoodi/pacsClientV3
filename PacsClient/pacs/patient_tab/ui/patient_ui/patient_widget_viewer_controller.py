@@ -49,6 +49,9 @@ from PacsClient.pacs.patient_tab.zeta_sync import (
 from PacsClient.zeta_download_manager.core.enums import DownloadPriority
 from PacsClient.utils.config import SOCKET_CONFIG_PATH
 from PacsClient.pacs.patient_tab.zeta_boost import ZetaBoostEngine, ImageSliceBooster
+from PacsClient.pacs.patient_tab.zeta_boost.warmup_subprocess import (
+    WarmupSubprocessManager, WarmupRequest, WarmupResult, result_to_vtk,
+)
 from PacsClient.utils.boost_viewer_config import load_boost_viewer_enabled
 from PacsClient.utils.diagnostic_logging import new_correlation_id, set_log_context, now_ms, log_stage_timing
 
@@ -288,9 +291,13 @@ class ViewerController:
         self._zeta_manual_triggered = False
 
         # ── Per-series download warmup (controlled Mode B caching) ──
-        # Allows caching a small number of already-completed series while
-        # the rest of the study is still downloading.  Strict controls
-        # prevent the RAM/CPU problems that old uncontrolled Mode B caching had.
+        # v2.2.3.2.3: Moved from in-process thread to SEPARATE SUBPROCESS.
+        # The old thread-based approach caused GIL contention even at IDLE
+        # priority because pydicom header reads + SimpleITK wrapper calls
+        # acquire/release the GIL at high frequency.  The subprocess has
+        # its own GIL — zero contention with VTK render on the main thread.
+        #
+        # Legacy thread fields kept for fallback (AIPACS_DL_WARMUP_SUBPROCESS=0).
         self._dl_warmup_queue: deque = deque()
         self._dl_warmup_thread = None  # type: threading.Thread | None
         self._dl_warmup_lock = threading.Lock()
@@ -303,6 +310,11 @@ class ViewerController:
         self._DL_WARMUP_MAX_SLICES = max(10, _DL_WARMUP_MAX_SLICES)
         self._DL_WARMUP_INTER_DELAY = max(1.0, _DL_WARMUP_INTER_DELAY)
         self._dl_warmup_enqueued = set()  # prevent duplicate enqueue
+
+        # v2.2.3.2.3: Subprocess-based warmup (GIL-free Mode B caching)
+        self._dl_warmup_use_subprocess = os.getenv("AIPACS_DL_WARMUP_SUBPROCESS", "1") == "1"
+        self._warmup_subprocess_mgr: WarmupSubprocessManager | None = None
+        self._warmup_result_timer: QTimer | None = None
 
         # ── Pipeline orchestrator (replaces timer-based download gating) ──
         self.pipeline = PipelineOrchestrator(
@@ -572,6 +584,7 @@ class ViewerController:
                 ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
                 skip_fs_validation=True,  # warmup: trust DB paths, skip glob+exists
                 max_itk_threads=2,       # cap: keep CPU free for VTK render
+                max_pydicom_workers=2,   # v2.2.3.2.5: cap pydicom threads to reduce GIL contention
             )
 
             def _mark_failed(reason: str):
@@ -3612,6 +3625,17 @@ class ViewerController:
                 )
 
             self._mark_first_series_displayed()
+            # v2.2.3.2.6: Yield to Qt event loop after first-series viewer
+            # init.  The VTK switch_series + Render for 2 viewers can take
+            # 200-500ms on software OpenGL.  Queued scroll events and
+            # subsequent series_downloaded signals are starving.  A single
+            # processEvents lets pending wheel-scroll timers fire before
+            # the next completion handler runs.
+            try:
+                from PySide6.QtWidgets import QApplication
+                QApplication.processEvents()
+            except Exception:
+                pass
             return True
         except Exception as e:
             self.logger.debug(f"Error displaying first series: {e}")
@@ -3786,6 +3810,12 @@ class ViewerController:
                 self._series_load_events.clear()
 
             self._render_batch_pending = False
+
+            # v2.2.3.2.3: Kill warmup subprocess on tab close
+            try:
+                self._shutdown_warmup_subprocess()
+            except Exception:
+                pass
 
             # Ensure stale nodes are cleared after cleanup
             try:
@@ -4086,6 +4116,14 @@ class ViewerController:
                 estimated_file_count = 0
 
             # Load full series with correct path (preview path disabled by design)
+            # v2.2.3.2.4: Cap ITK threads to 2 for in-process first-series loads.
+            # Without this cap SimpleITK spawns N (= cpu_count) internal threads
+            # during apply_filters(), each periodically acquiring the GIL.
+            # With 8-16 ITK threads + 8 pydicom workers all in the viewer
+            # process, the UI/render thread starves for GIL access, producing
+            # the 50–60 ms scroll stalls seen in Mode B.  Capping to 2 threads
+            # keeps filter throughput high while reducing GIL contention to a
+            # level the Qt event loop can absorb without perceptible lag.
             _dicom_t = time.perf_counter()
             result = load_single_series_by_number(
                 study_path=study_path,  # Pass correct study path, not series path
@@ -4093,6 +4131,8 @@ class ViewerController:
                 patient_pk=self.parent_widget.metadata_fixed.get('patient_pk', None),
                 study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
                 ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
+                max_itk_threads=2,
+                max_pydicom_workers=2,
             )
             _dicom_ms = (time.perf_counter() - _dicom_t) * 1000
             print(f"📊 [LOAD] DICOM+ITK for series={series_number} took {_dicom_ms:.0f}ms files~={estimated_file_count} (thread={threading.current_thread().name})")
@@ -4338,11 +4378,13 @@ class ViewerController:
     def _enqueue_download_warmup(self, series_number: str):
         """Queue a completed series for background warmup during active download.
 
+        v2.2.3.2.3: Routes to subprocess (GIL-free) by default.
+        Set AIPACS_DL_WARMUP_SUBPROCESS=0 to fall back to in-process thread.
+
         Strict controls:
         - Max ``_DL_WARMUP_MAX_CACHED`` series cached during a single download session.
-        - Worker thread processes one series at a time with generous delays.
         - Skips large series (> ``_DL_WARMUP_MAX_SLICES``).
-        - Pauses while user is actively scrolling/interacting.
+        - Skips already-cached series.
         """
         try:
             if not self._tab_active or not self._boostviewer_enabled:
@@ -4367,11 +4409,17 @@ class ViewerController:
                     pass
                 if self.zeta_boost.has_in_memory(sn):
                     return
-                self._dl_warmup_queue.append(sn)
                 self._dl_warmup_enqueued.add(sn)
-                print(f"[DL_WARMUP] Queued series={sn} (pending={len(self._dl_warmup_queue)})")
 
-            # Start worker thread if not already running.
+            # ── v2.2.3.2.3: Subprocess path (default) ──
+            if self._dl_warmup_use_subprocess:
+                self._enqueue_warmup_subprocess(sn)
+                return
+
+            # ── Legacy thread path (fallback) ──
+            with self._dl_warmup_lock:
+                self._dl_warmup_queue.append(sn)
+            print(f"[DL_WARMUP] Queued series={sn} (pending={len(self._dl_warmup_queue)})")
             if self._dl_warmup_thread is None or not self._dl_warmup_thread.is_alive():
                 self._dl_warmup_stop.clear()
                 self._dl_warmup_thread = threading.Thread(
@@ -4382,6 +4430,104 @@ class ViewerController:
                 self._dl_warmup_thread.start()
         except Exception as e:
             print(f"[DL_WARMUP] enqueue error: {e}")
+
+    # ── v2.2.3.2.3: Subprocess-based warmup (GIL-free) ─────────────────
+
+    def _enqueue_warmup_subprocess(self, sn: str):
+        """Send a warmup request to the GIL-free subprocess."""
+        try:
+            # Slice count check (skip huge series)
+            dcm_count = 0
+            try:
+                pw = self.parent_widget
+                dcm_count = pw._get_expected_series_image_count(sn) if hasattr(pw, '_get_expected_series_image_count') else 0
+            except Exception:
+                pass
+            if 0 < dcm_count > self._DL_WARMUP_MAX_SLICES:
+                print(f"[DL_WARMUP_SUB] series={sn} too large ({dcm_count} > {self._DL_WARMUP_MAX_SLICES}), skip")
+                return
+
+            study_path = self._get_correct_study_path()
+            if not study_path:
+                print(f"[DL_WARMUP_SUB] series={sn} no study_path, skip")
+                return
+
+            # Lazy-start the subprocess and poll timer
+            if self._warmup_subprocess_mgr is None:
+                self._warmup_subprocess_mgr = WarmupSubprocessManager()
+            if not self._warmup_subprocess_mgr.is_alive:
+                self._warmup_subprocess_mgr.start()
+            if self._warmup_result_timer is None:
+                self._warmup_result_timer = QTimer(self.parent_widget)
+                self._warmup_result_timer.setInterval(100)  # 100ms poll
+                self._warmup_result_timer.timeout.connect(self._poll_warmup_subprocess_results)
+            if not self._warmup_result_timer.isActive():
+                self._warmup_result_timer.start()
+
+            req = WarmupRequest(
+                series_number=sn,
+                study_path=str(study_path),
+                patient_pk=self.parent_widget.metadata_fixed.get('patient_pk', None),
+                study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
+                ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
+                max_itk_threads=2,
+            )
+            ok = self._warmup_subprocess_mgr.submit(req)
+            if ok:
+                print(f"[DL_WARMUP_SUB] Submitted series={sn} to subprocess (pending={self._warmup_subprocess_mgr.pending_count})")
+            else:
+                print(f"[DL_WARMUP_SUB] series={sn} submit skipped (dup or full)")
+        except Exception as e:
+            print(f"[DL_WARMUP_SUB] enqueue error: {e}")
+
+    def _poll_warmup_subprocess_results(self):
+        """QTimer callback (100ms) — pick up completed results from subprocess.
+
+        Runs on the Qt main thread.  result_to_vtk() is ~5-15ms (memcpy),
+        then zeta_boost.put() stores the VTK image in the cache.
+        This is lightweight enough to never cause scroll lag.
+        """
+        if self._warmup_subprocess_mgr is None:
+            return
+
+        # Process at most 2 results per tick to avoid occasional batching delays
+        for _ in range(2):
+            result = self._warmup_subprocess_mgr.try_get_result()
+            if result is None:
+                break
+
+            sn = result.series_number
+            if not result.success:
+                print(f"[DL_WARMUP_SUB] ✗ series={sn} failed: {result.error} ({result.elapsed_ms:.0f}ms)")
+                continue
+
+            try:
+                vtk_image, metadata = result_to_vtk(result)
+                if vtk_image is None:
+                    print(f"[DL_WARMUP_SUB] ✗ series={sn} VTK reconstruction failed")
+                    continue
+
+                # Force-put into ZetaBoost cache (bypasses Mode B guard)
+                self.zeta_boost.put(
+                    sn, vtk_image, metadata,
+                    persist_disk=True,
+                    force_during_download=True,
+                )
+                with self._dl_warmup_lock:
+                    self._dl_warmup_cached_count += 1
+                print(
+                    f"[DL_WARMUP_SUB] ✓ Cached series={sn} in {result.elapsed_ms:.0f}ms "
+                    f"(count={self._dl_warmup_cached_count}/{self._DL_WARMUP_MAX_CACHED})"
+                )
+            except Exception as e:
+                print(f"[DL_WARMUP_SUB] ✗ series={sn} cache error: {e}")
+
+        # Stop polling when nothing is pending and subprocess has drained
+        if (self._warmup_subprocess_mgr.pending_count <= 0
+                and self._warmup_result_timer is not None
+                and self._warmup_result_timer.isActive()):
+            # Keep timer alive for a short grace period in case more series arrive
+            pass  # timer will stop in _stop_download_warmup
 
     def _dl_warmup_worker(self):
         """Background thread — load completed series one at a time during download.
@@ -4497,6 +4643,7 @@ class ViewerController:
                     # from competing with VTK scroll renders.  Halves warmup time:
                     # 24-slice MR 500×640 → ~1.5s instead of ~3.0s.
                     max_itk_threads=2,
+                    max_pydicom_workers=2,   # v2.2.3.2.5: cap GIL contention from pydicom
                 )
                 cached_ok = False
                 for item in result_gen:
@@ -4537,13 +4684,51 @@ class ViewerController:
         """Stop the per-series download warmup and reset state.
 
         Called on POST_DOWNLOAD (normal warmup takes over) and tab deactivation.
+        v2.2.3.2.3: Also stops subprocess result-poll timer and resets subprocess state.
+        The subprocess itself is NOT killed here — it finishes its current item
+        and then sits idle.  It will be reused if another download starts, or
+        killed on tab close / app exit.
         """
         try:
+            # ── Stop subprocess poll timer ──
+            if self._warmup_result_timer is not None:
+                try:
+                    self._warmup_result_timer.stop()
+                except Exception:
+                    pass
+
+            # ── Reset subprocess tracking (let current item finish) ──
+            if self._warmup_subprocess_mgr is not None:
+                try:
+                    self._warmup_subprocess_mgr.reset()
+                except Exception:
+                    pass
+
+            # ── Legacy thread stop ──
             self._dl_warmup_stop.set()
             with self._dl_warmup_lock:
                 self._dl_warmup_queue.clear()
                 self._dl_warmup_cached_count = 0
                 self._dl_warmup_enqueued.clear()
+        except Exception:
+            pass
+
+    def _shutdown_warmup_subprocess(self):
+        """Kill the warmup subprocess entirely.  Called on tab close / app exit."""
+        try:
+            if self._warmup_result_timer is not None:
+                try:
+                    self._warmup_result_timer.stop()
+                except Exception:
+                    pass
+                self._warmup_result_timer = None
+
+            if self._warmup_subprocess_mgr is not None:
+                try:
+                    self._warmup_subprocess_mgr.shutdown(timeout=2.0)
+                except Exception:
+                    pass
+                self._warmup_subprocess_mgr = None
         except Exception:
             pass
 

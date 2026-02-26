@@ -751,9 +751,13 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
 
 def load_single_series_by_number(study_path, series_number, patient_pk=None, study_pk=None,
                                  ordering_by_instances_number=None, skip_fs_validation=False,
-                                 max_itk_threads=None):
+                                 max_itk_threads=None, max_pydicom_workers=None):
     """
     ✅ OPTIMIZED: Load a single series by number with detailed timing
+
+    v2.2.3.2.4: Added *max_pydicom_workers* — forwarded to
+    process_series_groups → get_or_create_instance so the viewer process
+    can limit GIL contention from pydicom ThreadPool during Mode B.
     """
     import time
     _func_start = time.time()
@@ -912,10 +916,13 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                         extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "disk_read"},
                     )
 
-                    # ── CPU yield: CRITICAL for UI responsiveness ──
-                    # DICOM reading holds GIL during C++ marshalling.
-                    # Yield generously so UI thread can process events.
-                    time.sleep(0.05)
+                    # ── CPU yield: brief pause for UI responsiveness ──
+                    # v2.2.3.2.3: Reduced from 50ms→5ms.  DL_WARMUP now runs in
+                    # a subprocess so this path is only hit by interactive loads
+                    # (Mode A) and first-series display (Mode B).  5ms is enough
+                    # for one Qt event loop iteration without adding 100ms to
+                    # perceived series load time.
+                    time.sleep(0.005)
                     
                     # Get metadata (cached) - needed before filters
                     _meta_start = time.time()
@@ -951,10 +958,9 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                         extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "itk_filter_chain"},
                     )
 
-                    # ── CPU yield: CRITICAL for UI responsiveness ──
-                    # ITK filter chain is CPU-intensive and holds GIL during
-                    # numpy/SimpleITK data marshalling. Yield generously.
-                    time.sleep(0.05)
+                    # ── CPU yield: brief pause for UI responsiveness ──
+                    # v2.2.3.2.3: Reduced from 50ms→5ms (see note above).
+                    time.sleep(0.005)
                     
                     # Convert to VTK
                     _convert_start = time.time()
@@ -1009,7 +1015,9 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
 
     # Process series groups
     _process_start = time.time()
-    for item in process_series_groups(series_path, size_dict, patient_pk, study_pk, max_itk_threads=max_itk_threads):
+    for item in process_series_groups(series_path, size_dict, patient_pk, study_pk,
+                                      max_itk_threads=max_itk_threads,
+                                      max_pydicom_workers=max_pydicom_workers):
         yield item
     _process_time = time.time() - _process_start
     
@@ -1144,11 +1152,15 @@ def load_series_preview(study_path, series_number, patient_pk=None, study_pk=Non
 
     return vtk_image_data, metadata, (patient_pk, study_pk), total_files
 
-def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_pk, max_itk_threads=None):
+def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_pk,
+                          max_itk_threads=None, max_pydicom_workers=None):
     """
         base_path: Path to series/subfolder
         size_groups: map of (rows, cols) -> list[file paths] where each is a series
         max_itk_threads: optional cap on ITK thread count (None = use default).
+        max_pydicom_workers: optional cap on pydicom header-read ThreadPool workers
+            (None = use default of 8).  v2.2.3.2.4: viewer-process callers
+            pass 2 to reduce GIL contention during first-series Mode B loads.
     """
     # TIMING: Import time module
     import time
@@ -1220,7 +1232,8 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
 
             # Insert new instances (only new ones are registered; duplicates are skipped)
             _instance_start = time.time()
-            utils.get_or_create_instance(files, itk_image, series_pk, group_id=i)
+            utils.get_or_create_instance(files, itk_image, series_pk, group_id=i,
+                                         max_workers=max_pydicom_workers)
             _instance_time = time.time() - _instance_start
             print(f"               - Instance create: {_instance_time:.3f}s")
 
@@ -1237,7 +1250,9 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             print(f"            Database operations: {_db_time:.3f}s")
 
             # ── CPU yield: let UI/download threads breathe after DB + DICOM I/O ──
-            time.sleep(0.05)
+            # v2.2.3.2.4: Reduced 50ms→5ms.  DL_WARMUP runs in a subprocess
+            # now; long yields just slow first-series display.
+            time.sleep(0.005)
 
             # Apply ITK filters before conversion
             _filter_start = time.time()
@@ -1247,7 +1262,8 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             print(f"            ITK filters: {_filter_time:.3f}s")
 
             # ── CPU yield: let UI/download threads breathe after ITK filters ──
-            time.sleep(0.05)
+            # v2.2.3.2.4: Reduced 50ms→5ms (see above note).
+            time.sleep(0.005)
 
             # Convert to VTK
             _convert_start = time.time()

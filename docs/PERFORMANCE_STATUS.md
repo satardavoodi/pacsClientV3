@@ -1,5 +1,5 @@
 # AIPacs Performance Status
-**Version:** v2.2.3.2.2 | **Branch:** DR.vahid | **Updated:** 2026-02-27
+**Version:** v2.2.3.2.6 | **Branch:** DR.vahid | **Updated:** 2026-02-27
 
 > **Quick-start:** Start here. After reading this file, go to `METRICS_TRACKING_v2.2.3.x.md` for detailed measurements, or `docs/CROSS_PC_IMPROVEMENT_WORKFLOW.md` for the PC A/B validation process.
 
@@ -26,18 +26,23 @@ User double-clicks study
                  │      ├─ ITK filter chain (150ms–3s, adaptive threads)
                  │      └─ ITK→VTK convert (2–45ms)
                  │
+                 ├─ FIRST-SERIES DISPLAY (Mode B, asyncio.to_thread)
+                 │    v2.2.3.2.4: max_itk_threads=2, max_pydicom_workers=2
+                 │    (was unlimited → massive GIL contention with UI thread)
+                 │
                  ├─ ZETA BOOST WARMUP (background, post-download)
                  │    lane=warmup, 2 workers, max_parallel_loads=2 (8GB+)
                  │    max_itk_threads=2, BELOW_NORMAL OS priority
                  │
-                 └─ DL_WARMUP (background, DURING download)
-                      1 worker thread, IDLE OS priority
-                      max_itk_threads=2 (v2.2.3.2.2), inter-delay=1.5s
+                 └─► [DL_WARMUP SUBPROCESS pid=M] ← separate process (v2.2.3.2.3)
+                      warmup_subprocess.py, own GIL, IDLE priority
+                      max_itk_threads=2, results polled via QTimer (100ms)
+                      queue_p95_ms dropped from 200-510ms → 0.00ms
 ```
 
 ---
 
-## 2. Current Performance Numbers (v2.2.3.2.2, PC A, MR brain study)
+## 2. Current Performance Numbers (v2.2.3.2.6, PC A, MR brain study)
 
 ### Mode A — No download active
 
@@ -51,17 +56,18 @@ User double-clicks study
 | Series load, ZetaBoost hit | `load_single_series_total` | ~200ms | <300ms ✅ |
 | ITK filter, MR ~20sl | `apply_filters duration_ms` | 150–500ms (interactive, 6t) | <500ms |
 
-### Mode B — Download active (DL_WARMUP running)
+### Mode B — Download active (DL_WARMUP running in subprocess)
 
 | What | Metric | Value | Target |
 |---|---|---|---|
-| Scroll response (typical) | `set_slice_p50_ms` | ~31–57ms | <25ms (hard floor: SQLite I/O) |
-| Queue delay during DL | `queue_p95_ms` | 80–3500ms bursts (signals) | <30ms — **partially open** |
+| Scroll response (typical) | `set_slice_p50_ms` | ~31–57ms → **expected <35ms** (v2.2.3.2.5+v2.2.3.2.6) | <25ms |
+| Queue delay during DL (scroll) | `queue_p95_ms` | **0.00ms** (subprocess DL_WARMUP, v2.2.3.2.3) | <30ms ✅ |
+| Queue delay during DL (signals) | `queue_p95_ms` | 620–5437ms → **expected <200ms** (v2.2.3.2.6 coalescing) | <30ms — **mitigated** |
 | Stale-event drain (v2.2.3.2.1) | `stale_drain_complete skipped=N` | N events skipped, 1 render | eliminates 4s+ backlog ✅ |
-| DL_WARMUP per-series (large MR) | `[DL_WARMUP] ✓ Cached` | ~4s (v2.2.3.2.1) → ~2s (v2.2.3.2.2) | <2000ms |
-| DL_WARMUP per-series (small MR) | `[DL_WARMUP] ✓ Cached` | ~700–1200ms | <1200ms |
+| DL_WARMUP per-series (large MR) | `[DL_WARMUP_SUB] ✓ Cached` | ~402ms (subprocess, v2.2.3.2.3) | <2000ms ✅ |
+| DL_WARMUP per-series (small MR) | `[DL_WARMUP_SUB] ✓ Cached` | ~200–500ms | <1200ms ✅ |
 | DB insert (download subprocess) | `batch_insert_instances_total` | 6–455ms (was 2217ms) | <500ms ✅ |
-| Instance create (viewer side) | `Instance create` | 0.36–0.8s (was 4.3s) | <1s ✅ |
+| First-series GIL pressure | ITK threads + pydicom workers | **2+2** (v2.2.3.2.4, was N+8) | low contention ✅ |
 
 ---
 
@@ -69,6 +75,10 @@ User double-clicks study
 
 | Version | Symptom Fixed | How |
 |---|---|---|
+| **v2.2.3.2.6** | SERIES_DOWNLOAD_COMPLETE signals fire back-to-back, blocking Qt event loop 620–5437ms | Coalesced `on_series_completed` handler in `home_ui.py`: first series immediate, rest batched with 100ms debounce + processEvents yield every 2 series; added `processEvents()` yield after first-series viewer init in controller |
+| **v2.2.3.2.5** | VTK render overhead on software OpenGL: FXAA +20-50ms/frame, MSAA 8x, redundant `color_mapper.Update()` on scroll | FXAA off (`renderer.UseFXAAOff()`); `SetMultiSamples(0)`; skip `color_mapper.Update()` on default-WL scroll path (Render() auto-updates); sub-timing instrumentation in `set_slice` |
+| **v2.2.3.2.4** | First-series load floods GIL (unlimited ITK threads + 8 pydicom workers in viewer process) | `max_itk_threads=2, max_pydicom_workers=2` for in-process first-series load; `process_series_groups` yields 50ms→5ms |
+| **v2.2.3.2.3** | DL_WARMUP thread in viewer process causes 200–510ms `queue_p95_ms` during scroll | Moved DL_WARMUP to `multiprocessing.Process` (own GIL); results polled via QTimer 100ms; `queue_p95_ms` → **0.00ms** |
 | **v2.2.3.2.2** | DL_WARMUP taking 4s per large MR series | `max_itk_threads=1→2`, delay 3.0→1.5s, max_parallel_loads 1→2 |
 | **v2.2.3.2.1** | Scroll backlog: 84 events × 50ms = 4s freeze after any main-thread block | Stale-event drain guard: skip render when queue_delay>500ms, 1 render at final pos |
 | **v2.2.3.2.0** | Download DB insert 2217ms (serial pydicom); ITK scroll spikes during filter | Parallel asyncio pydicom; adaptive threads + BELOW_NORMAL OS priority |
@@ -83,20 +93,31 @@ User double-clicks study
 
 ## 4. Open Issues (Ranked)
 
-### 🔴 P1 — Mode B queue delay still spikes on download signals
-- `queue_delay_ms` reaches 2.8–3.6s during `SERIES_DOWNLOAD_COMPLETE` signal handling
-- v2.2.3.2.1 stale guard drains the resulting backlog in <1ms but the signal handlers themselves still block the queue
-- **Root cause:** DB pool_lock_wait calls and study-save sequence run on Qt main thread
-- **Next step:** Profile which specific SERIES_DOWNLOAD_COMPLETE callback holds the main thread longest; offload to `asyncio.get_event_loop().run_in_executor` or a dedicated saver coroutine
+### � P1 — Mode B queue delay mitigated but not eliminated
+- v2.2.3.2.6 coalesces `SERIES_DOWNLOAD_COMPLETE` signals (100ms debounce, processEvents yield)
+- Expected: queue_delay reduced from 620–5437ms to <200ms during bulk completion bursts
+- **Residual:** Individual completion handler (thumbnail border update + warmup enqueue) still ~50-100ms on main thread
+- **Next step:** Measure v2.2.3.2.6 in practice; if still >200ms, offload thumbnail updates to executor
 
-### 🟡 P2 — ITK large-FOV MR filter still ~1.5s at 2 threads
-- 500×640×24 slices MR: `apply_filters` = ~1.5s with `threads=2`
-- Slowing DL_WARMUP even after v2.2.3.2.2
-- **Next step:** Investigate `_smooth_xy_recursive` per-slice loop — currently N=24 sequential SimpleITK calls on float32 500×640 planes; consider batch via numpy
+### 🟡 P2 — First-series in-process load still ~2.4s
+- v2.2.3.2.4 caps threads+workers to 2+2, reducing GIL contention during the load
+- But the load itself still runs in the viewer process via `asyncio.to_thread()`
+- **Ideal fix:** Route first-series through the warmup subprocess too (eliminates ALL in-process GIL contention during Mode B first-series load)
+- **Complexity:** Subprocess must load → serialize result → QTimer polls → `_display_first_series_in_all_viewers()` — requires refactoring display path
 
-### 🟡 P3 — `viewer_db_read` (38–88ms) on every series load
+### 🟡 P3 — `update_corners_actors()` runs 6+ VTK text updates per scroll
+- Currently does metadata dict lookups + string formatting + 6 `change_actor_text()` calls on every scroll frame
+- Only `im_slice_actor` and `im_series_window_level` actually change per-scroll; others (date, series name, thickness, size) are constant within a series
+- **Next step:** Split into `_update_scroll_varying_actors()` (slice count + WL only) and `_update_series_constant_actors()` (called once on series switch)
+- **Expected savings:** ~5-10ms per scroll frame on software-GL renderer
+
+### 🟡 P4 — `viewer_db_read` (38–88ms) on every series load
 - DB query runs on worker thread so it doesn't block scroll, but adds to perceived load time
 - **Next step:** After study download, cache series_pk and instance paths in a simple dict — eliminates DB query on repeated open
+
+### 🟡 P5 — Lock Sync callback runs coordinate math on every scroll
+- `_do_lock_sync()` in patient_widget.py does IPP interpolation + applies to target viewers on every slice change when Lock Sync is enabled
+- Consider debouncing to every 2nd or 3rd scroll event (user won't notice 1-frame delay in synced viewer)
 
 ### 🟢 P4 — ITK→VTK convert 11–44ms on large series
 - `itk_to_vtk_convert` duration grows with size (500×640×24 ≈ 44ms)
@@ -113,7 +134,8 @@ User double-clicks study
 | `PacsClient/pacs/patient_tab/utils/image_filters.py` | ITK filter chain, adaptive threads, BELOW_NORMAL priority |
 | `PacsClient/pacs/patient_tab/utils/image_io.py` | Series load pipeline: DB path, disk read, ITK, VTK conversion |
 | `PacsClient/pacs/patient_tab/utils/utils.py` | `get_or_create_instance` — parallel pydicom reads (viewer side) |
-| `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` | ZetaBoost engine, DL_WARMUP worker, RAM tier config |
+| `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` | ZetaBoost engine, DL_WARMUP subprocess integration, RAM tier config |
+| `PacsClient/pacs/patient_tab/zeta_boost/warmup_subprocess.py` | **NEW v2.2.3.2.3** — GIL-free DL_WARMUP in separate process (`multiprocessing.Process`) |
 | `PacsClient/zeta_download_manager/download/series_downloader.py` | Download pydicom reads, DB batch insert (download subprocess) |
 | `PacsClient/zeta_download_manager/network/socket_client.py` | DICOM server communication |
 
@@ -126,6 +148,7 @@ User double-clicks study
 | `AIPACS_DL_WARMUP_MAX_CACHED` | `4` | Max series DL_WARMUP pre-caches per download session |
 | `AIPACS_DL_WARMUP_MAX_SLICES` | `200` | Skip series with more slices than this |
 | `AIPACS_DL_WARMUP_INTER_DELAY` | `1.5` | Seconds between DL_WARMUP jobs (v2.2.3.2.2: was 3.0) |
+| `AIPACS_DL_WARMUP_SUBPROCESS` | `1` | Enable subprocess-based DL_WARMUP (v2.2.3.2.3; set 0 to fall back to in-process thread) |
 | `AIPACS_VIEWER_TIMING_MIN_MS` | `35` | Only log scroll timings ≥ this threshold |
 | `AIPACS_VIEWER_TIMING_SAMPLE_EVERY` | `25` | Sample normal-speed scroll events 1-in-N |
 | `AIPACS_LOG_MAX_BYTES` | `20971520` | Rotating log file max size (20MB) |
