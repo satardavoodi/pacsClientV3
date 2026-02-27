@@ -377,6 +377,9 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
 
             if 0 <= next_slice < max_slice:  # if slice valid
                 if hasattr(self, 'slider') and self.slider is not None:
+                    # slider.setValue triggers on_slider_value_changed →
+                    # vtk_widget.set_slice → image_viewer.set_slice (which
+                    # already calls Render).  No extra Render needed.
                     self.slider.setValue(next_slice)
                 else:
                     try:
@@ -388,7 +391,11 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
                     except Exception:
                         return
 
-            self.image_viewer.Render()
+            # v2.2.3.3.4: Removed unconditional Render() that was here.
+            # The slider path fires on_slider_value_changed synchronously,
+            # which calls vtk_widget.set_slice → image_viewer.set_slice
+            # → Render.  The second Render was redundant (8-30ms wasted
+            # on software GL per drag event).
             self.last_pos = current_pos
 
     def change_window_level(self):

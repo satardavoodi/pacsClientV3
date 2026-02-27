@@ -2529,6 +2529,14 @@ class PatientWidget(QWidget):
                         target_slider.setValue(new_slice)
                         target_slider.blockSignals(False)
 
+            # v2.2.3.3.4: Debounced reference line update after lock sync.
+            # Target viewers have moved to new slices, so the source plane's
+            # intersection with each target quad has changed.  Without this,
+            # reference lines stayed stale during the entire lock-sync drag.
+            # The 80ms debounce from _schedule_reference_line_update()
+            # prevents expensive Render-per-target from blocking the drag.
+            self._schedule_reference_line_update()
+
         except Exception as e:
             logger.warning("[LOCK SYNC] Auto-sync error: %s", e)
 
