@@ -164,10 +164,11 @@ def rl_ensure_line_actor(iv, color=(1.0, 0.2, 0.2), width=2.5):
 
 
 def rl_hide_actor_if_any(iv):
-    """Hide the reference-line actor if it exists."""
+    """Hide the reference-line actor if it exists.
+
+    v2.2.3.3.5: No longer calls Render() — just toggles visibility.
+    Caller is responsible for scheduling a repaint (e.g. vtk_widget.update()).
+    This avoids an 8-30ms synchronous Render per target on software GL.
+    """
     if hasattr(iv, "_ref_actor"):
         iv._ref_actor.VisibilityOff()
-        try:
-            iv.renderer.GetRenderWindow().Render()
-        except Exception:
-            pass

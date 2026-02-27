@@ -6460,24 +6460,56 @@ class PatientWidget(QWidget):
             event.accept()
 
     def _schedule_reference_line_update(self):
-        """Debounced reference line request — at most once per 80ms.
+        """Throttled reference line update — leading + trailing edge.
 
-        v2.2.3.3.3: manage_reference_line() calls Render() on every target
-        viewer (8-30ms each on software GL).  During rapid scroll, calling it
-        per-event adds 24-90ms overhead that accumulates as growing event-queue
-        delays.  This debounce timer coalesces rapid calls so the expensive
-        computation runs at most 12.5 fps — visually smooth, without blocking
-        the scroll input pipeline.
+        v2.2.3.3.5: Changed from restart-debounce to leading-edge throttle.
 
-        Series-switch and viewport-selection callers still invoke
-        manage_reference_line() directly for immediate visual feedback.
+        Previous behavior (v2.2.3.3.3-v2.2.3.3.4):
+          80ms restart-debounce: timer.start() on every call restarted the
+          countdown.  During continuous scroll the timer NEVER fired — it
+          only executed 80ms after the final event.  Result: reference line
+          frozen during scroll, jumps to correct position after stop.
+
+        New behavior (v2.2.3.3.5):
+          Leading-edge throttle: the FIRST call executes immediately (0ms
+          latency) and starts a cooldown window.  Calls during the window
+          are coalesced into a single trailing-edge execution when the
+          window expires.  This guarantees:
+            - Real-time updates during continuous scroll (~30fps)
+            - The final position is always rendered (trailing edge)
+            - No stacking of expensive recomputation
+
+        manage_reference_line() itself now uses non-blocking vtk_widget.
+        update() instead of synchronous Render(), so even the leading-edge
+        call adds only ~0.5ms to the scroll path (geometry compute only).
         """
-        if not hasattr(self, '_rl_debounce_timer'):
-            self._rl_debounce_timer = QTimer()
-            self._rl_debounce_timer.setSingleShot(True)
-            self._rl_debounce_timer.setInterval(80)
-            self._rl_debounce_timer.timeout.connect(self.manage_reference_line)
-        self._rl_debounce_timer.start()  # (re)start resets the 80ms countdown
+        if not hasattr(self, '_rl_throttle_timer'):
+            self._rl_throttle_timer = QTimer()
+            self._rl_throttle_timer.setSingleShot(True)
+            self._rl_throttle_timer.setInterval(33)  # ~30fps cap
+            self._rl_throttle_timer.timeout.connect(self._rl_throttle_fire)
+            self._rl_pending = False
+
+        if not self._rl_throttle_timer.isActive():
+            # Leading edge — execute immediately, start cooldown
+            self.manage_reference_line()
+            self._rl_throttle_timer.start()
+        else:
+            # Inside cooldown window — defer to trailing edge
+            self._rl_pending = True
+            # Track merged (coalesced) events for instrumentation
+            if hasattr(self, '_rl_merged_count'):
+                self._rl_merged_count += 1
+
+    def _rl_throttle_fire(self):
+        """Trailing-edge callback for reference line throttle."""
+        if self._rl_pending:
+            self._rl_pending = False
+            self.manage_reference_line()
+            # Re-arm: if more events arrived during manage_reference_line(),
+            # _rl_pending may have been set again by a concurrent call.
+            if self._rl_pending:
+                self._rl_throttle_timer.start()
 
     def manage_reference_line(self):
         """
@@ -6490,7 +6522,12 @@ class PatientWidget(QWidget):
           3) Apply display-space transforms (optional 90° CCW, Flip-X, Flip-Y) to match viewer.
           4) Map to target index space -> target world (origin/spacing of the VTK image being rendered).
           5) Update a cached vtkLineSource/Actor per viewer.
+
+        v2.2.3.3.5: Uses vtk_widget.update() (non-blocking, Qt-coalesced) instead
+        of synchronous Render() per target.  Geometry compute is inline (~0.3ms),
+        actual VTK renders happen asynchronously in Qt's paint cycle.
         """
+        _t_rl_start = time.perf_counter()
 
         if len(self.lst_nodes_viewer) == 1:
             return
@@ -6540,6 +6577,7 @@ class PatientWidget(QWidget):
             # Skip drawing on the source viewer itself
             if vtk_widget is self.selected_widget:
                 reference_line.rl_hide_actor_if_any(iv)
+                vtk_widget.update()  # schedule repaint to show hidden line
                 continue
 
             try:
@@ -6552,6 +6590,7 @@ class PatientWidget(QWidget):
                 target_image_position_patient = t_inst.get('image_position_patient')
                 if (target_image_orientation_patient is None) or (target_image_position_patient is None):
                     reference_line.rl_hide_actor_if_any(iv)
+                    vtk_widget.update()
                     continue  # skip this target, process remaining viewers
 
                 # rows = int(t_inst['rows'])
@@ -6583,6 +6622,7 @@ class PatientWidget(QWidget):
                 ok, seg = reference_line.rl_clip_plane_with_quad(p1, n1, quad)
                 if not ok:
                     reference_line.rl_hide_actor_if_any(iv)
+                    vtk_widget.update()
                     continue
 
                 P0_lps, P1_lps = seg
@@ -6616,14 +6656,30 @@ class PatientWidget(QWidget):
                 ls.SetPoint1(float(P0_w[0]), float(P0_w[1]), float(P0_w[2]))
                 ls.SetPoint2(float(P1_w[0]), float(P1_w[1]), float(P1_w[2]))
                 act.VisibilityOn()
-                try:
-                    iv.renderer.GetRenderWindow().Render()
-                except Exception:
-                    pass
+                # v2.2.3.3.5: Non-blocking repaint — Qt coalesces multiple
+                # update() calls into one paintEvent per event loop cycle.
+                # No synchronous Render() cost on the scroll path.
+                vtk_widget.update()
 
             except Exception as e:
                 print("reference-line: target error:", e)
                 reference_line.rl_hide_actor_if_any(iv)
+                vtk_widget.update()
+
+        # ── Instrumentation: latency tracking (v2.2.3.3.5) ──────────
+        _t_elapsed = (time.perf_counter() - _t_rl_start) * 1000  # ms
+        if not hasattr(self, '_rl_latencies'):
+            from collections import deque
+            self._rl_latencies = deque(maxlen=200)
+            self._rl_call_count = 0
+            self._rl_merged_count = 0
+        self._rl_latencies.append(_t_elapsed)
+        self._rl_call_count += 1
+        if self._rl_call_count % 100 == 0:
+            arr = np.array(self._rl_latencies)
+            p50, p95 = float(np.percentile(arr, 50)), float(np.percentile(arr, 95))
+            print(f"[ref-line] p50={p50:.1f}ms  p95={p95:.1f}ms  "
+                  f"merged={self._rl_merged_count}  calls={self._rl_call_count}")
 
     def _on_advanced_tool_applied(self, tool_name: str, result):
         """

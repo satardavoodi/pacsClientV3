@@ -1479,11 +1479,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
         except Exception:
             pass
 
-        # v2.2.3.3.3: Debounced reference line update on wheel scroll.
-        # Previously reference lines only updated on slider-value change,
-        # leaving them stale during wheel scroll.  The debounce timer in
-        # _schedule_reference_line_update() ensures the expensive Render()
-        # calls on target viewers happen at most once per 80ms.
+        # v2.2.3.3.5: Throttled reference line update on wheel scroll.
+        # Leading-edge fires immediately for 0-latency first update;
+        # subsequent events coalesce to trailing-edge within 33ms cooldown.
+        # manage_reference_line() uses non-blocking vtk_widget.update()
+        # instead of synchronous Render(), so cost here is ~0.3ms geometry.
         try:
             _pw = getattr(self, 'patient_widget', None)
             if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):
