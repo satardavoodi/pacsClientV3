@@ -1479,11 +1479,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
         except Exception:
             pass
 
-        # v2.2.3.3.6: Throttled reference line update on wheel scroll.
+        # v2.2.3.3.7: Throttled reference line update on wheel scroll.
         # Leading-edge fires geometry-only (repaint=False, ~1ms) for instant
-        # actor positioning.  Trailing-edge (80ms) triggers actual target
-        # viewer paints.  This prevents 20ms×N paintEvents from blocking
-        # the scroll event loop between source-viewer frames.
+        # actor positioning.  Trailing-edge (50ms) paints ONE target viewer
+        # (round-robin) to cap event-loop blocking at ~20ms per tick.
+        # Scroll-end tick repaints ALL targets for full visual correctness.
         try:
             _pw = getattr(self, 'patient_widget', None)
             if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):

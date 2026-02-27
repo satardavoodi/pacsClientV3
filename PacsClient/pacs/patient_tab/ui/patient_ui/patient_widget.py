@@ -6462,31 +6462,31 @@ class PatientWidget(QWidget):
     def _schedule_reference_line_update(self):
         """Throttled reference line update — leading + trailing edge.
 
-        v2.2.3.3.6: Leading edge = geometry-only (repaint=False), trailing
-        edge = geometry + repaint.  This prevents target-viewer paintEvents
-        (~20ms × N on software GL) from blocking the scroll event loop.
+        v2.2.3.3.7: Round-robin target repaint for smooth reference line sync.
 
-        Previous behavior (v2.2.3.3.5):
-          33ms throttle with update() on every manage_reference_line call.
-          Each update() posted a paintEvent per target viewer that executed
-          synchronously in the event loop (~20ms × N), adding 50-60ms of
-          dead time between scroll frames → ~10fps effective.
+        Previous behavior (v2.2.3.3.6):
+          Leading-edge geometry-only + 80ms trailing-edge full repaint.
+          Trailing-edge painted ALL target viewers at once (~20ms × N),
+          causing ~60ms event-loop blocking every 80ms.  Queue delays
+          accumulated to 400-500ms with stale-scroll skips.  Reference
+          lines appeared jumpy during fast scroll.
 
-        New behavior (v2.2.3.3.6):
-          Leading-edge: compute geometry + position VTK actors instantly
-          (costs ~1ms) but NO repaint.  Actors are ready for the next
-          natural paint cycle.
-          Trailing-edge (80ms): compute geometry AND trigger repaint on
-          all target widgets.  Reference lines visually update at ~12fps
-          while the source viewer scrolls at full speed (~20-25fps).
-          80ms chosen to balance responsiveness vs paint overhead.
+        New behavior (v2.2.3.3.7):
+          Leading-edge: geometry-only (repaint=False, ~1ms) — instant.
+          Trailing-edge (50ms): geometry-only + paint ONE target viewer
+          (round-robin, ~20ms).  Each target gets painted every N×50ms
+          where N = number of targets.  Event-loop blocking is capped
+          at ~20ms per tick instead of ~60ms.
+          Scroll-end: when no new events arrive, the final tick repaints
+          ALL targets once to ensure full visual correctness.
         """
         if not hasattr(self, '_rl_throttle_timer'):
             self._rl_throttle_timer = QTimer()
             self._rl_throttle_timer.setSingleShot(True)
-            self._rl_throttle_timer.setInterval(80)  # ~12fps paint cap
+            self._rl_throttle_timer.setInterval(50)  # 50ms tick for round-robin
             self._rl_throttle_timer.timeout.connect(self._rl_throttle_fire)
             self._rl_pending = False
+            self._rl_rr_index = 0  # round-robin paint index
 
         if not self._rl_throttle_timer.isActive():
             # Leading edge — geometry only, no repaint
@@ -6500,14 +6500,41 @@ class PatientWidget(QWidget):
                 self._rl_merged_count += 1
 
     def _rl_throttle_fire(self):
-        """Trailing-edge callback — geometry + repaint."""
+        """Trailing-edge callback — round-robin paint or scroll-end all-repaint."""
         if self._rl_pending:
+            # Still scrolling — update geometry + paint ONE target (round-robin)
             self._rl_pending = False
+            self.manage_reference_line(repaint=False)
+            self._rl_repaint_next_target()
+            # Re-arm for next tick
+            self._rl_throttle_timer.start()
+        else:
+            # Scroll ended — final repaint ALL targets for visual correctness
             self.manage_reference_line(repaint=True)
-            # Re-arm: if more events arrived during manage_reference_line(),
-            # _rl_pending may have been set again by a concurrent call.
-            if self._rl_pending:
-                self._rl_throttle_timer.start()
+
+    def _rl_repaint_next_target(self):
+        """Paint ONE target viewer's reference line (round-robin).
+
+        Limits event-loop blocking to ~20ms per tick (one VTK Render)
+        instead of ~20ms × N for all targets simultaneously.
+        """
+        targets = self._rl_get_target_widgets()
+        if not targets:
+            return
+        idx = self._rl_rr_index % len(targets)
+        self._rl_rr_index = idx + 1
+        targets[idx].update()
+
+    def _rl_get_target_widgets(self):
+        """Get list of VTK widgets that are reference-line targets (not source)."""
+        targets = []
+        for node in self.lst_nodes_viewer:
+            vtk_widget = getattr(node, 'vtk_widget', None)
+            if vtk_widget is None or vtk_widget is self.selected_widget:
+                continue
+            if getattr(vtk_widget, 'image_viewer', None) is not None:
+                targets.append(vtk_widget)
+        return targets
 
     def manage_reference_line(self, repaint=True):
         """
