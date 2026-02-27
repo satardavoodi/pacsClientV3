@@ -175,46 +175,47 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._adaptive_frame_gap_ms = 4.0      # auto-adapts: 25% of last frame time
         self._last_interaction_notify_ms = 0.0  # throttle notify_viewer_interaction
 
-        # v2.2.3.2.9 / v2.2.3.3.0: GC suppression during scroll bursts.
-        # Python's cyclic garbage collector can pause the main thread for
-        # 100-400ms when it runs a gen-1 or gen-2 collection.  During rapid
-        # scrolling, these pauses cause visible stutters.
+        # v2.2.3.2.9 / v2.2.3.3.0 / v2.2.3.3.2: GC suppression during scroll.
+        # Python's cyclic GC pauses the main thread for 100-400ms on gen-1/2
+        # collections.  During scrolling these cause visible stutters.
         #
-        # v2.2.3.3.0 revision: On heavy volumes (512×512×517 CT = 270MB),
-        # the v2.2.3.2.9 approach of gc.collect(0) on re-enable cascades into
-        # gen-1/gen-2 collections (graduating gen-0 objects pushes gen-1 over
-        # its threshold).  Three fixes:
-        #   1. Remove gc.collect(0) from re-enable — let Python handle it
-        #      naturally when the user is no longer scrolling.
-        #   2. Extend re-enable timer 300→500ms so natural scroll pauses
-        #      (e.g. user briefly lifts finger) don't trigger re-enable.
-        #   3. Raise gen-1/gen-2 thresholds during scroll (700,50,50 vs
-        #      default 700,10,10) so even if GC is momentarily re-enabled
-        #      between bursts, gen-1/gen-2 collections are 5× less frequent.
+        # v2.2.3.3.2 revision: PC B logs showed a precise 660-700ms periodic
+        # lag pattern: 500ms timer + ~150ms GC collection.  The 500ms timer
+        # fired during natural scroll pauses, restoring low thresholds which
+        # triggered immediate expensive gen-1 collections.  Fixes:
+        #   1. Extend timer 500→2000ms.  All observed scroll gaps are <2s,
+        #      so the timer never fires mid-session.  GC only re-enables
+        #      when the user truly stops scrolling for 2 full seconds.
+        #   2. Do NOT restore original thresholds on re-enable — keep
+        #      (700,50,50) until series switch.  This prevents the
+        #      threshold-restore-triggered collection that caused the
+        #      ~150ms pause component of the periodic lag.
+        #   3. Save original thresholds only once (not on re-enter after
+        #      re-enable) to avoid saving already-elevated values.
         self._gc_suppressed = False
-        self._gc_saved_thresholds = None  # (gen0, gen1, gen2) to restore
+        self._gc_saved_thresholds = None  # original (gen0, gen1, gen2)
         self._gc_reenable_timer = QTimer(self)
         self._gc_reenable_timer.setSingleShot(True)
-        self._gc_reenable_timer.setInterval(500)
+        self._gc_reenable_timer.setInterval(2000)
         self._gc_reenable_timer.timeout.connect(self._reenable_gc)
         self._last_booster_notify_ms = 0.0  # throttle ImageSliceBooster
 
     def _reenable_gc(self):
-        """Re-enable garbage collection after scroll burst ends."""
+        """Re-enable garbage collection after scroll burst ends.
+
+        v2.2.3.3.2: Keep elevated thresholds (700,50,50) — do NOT restore
+        original (700,10,10).  Restoring causes Python to immediately run an
+        expensive gen-1 collection (~150ms) because objects accumulated during
+        suppression push gen-1 count over the restored low threshold.
+        Original thresholds are only restored on series switch where the pause
+        is acceptable.  _gc_saved_thresholds is intentionally NOT cleared here
+        so it remains available for series switch to restore.
+        """
         if self._gc_suppressed:
             self._gc_suppressed = False
-            # Restore original GC thresholds before re-enabling.
-            if self._gc_saved_thresholds is not None:
-                try:
-                    gc.set_threshold(*self._gc_saved_thresholds)
-                except Exception:
-                    pass
-                self._gc_saved_thresholds = None
+            # Keep thresholds at (700,50,50) — gen-1 only runs every 50th
+            # gen-0 collection, making expensive pauses extremely rare.
             gc.enable()
-            # v2.2.3.3.0: Do NOT call gc.collect(0) here.
-            # On heavy volumes (270MB+), gen-0 collect graduates enough objects
-            # to trigger automatic gen-1/gen-2 collections (300-474ms pauses).
-            # Just re-enable and let Python GC run naturally at next allocation.
 
     def _should_log_timing(self, duration_ms: float, stage: str) -> bool:
         """Rate-limit very high-frequency timing logs while keeping slow spikes.
@@ -1308,10 +1309,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # Gives Qt event loop breathing room proportional to render cost.
             _frame_ms = max(1.0, _t_end - _t_start)
             self._adaptive_frame_gap_ms = max(4.0, min(50.0, _frame_ms * 0.25))
-            # v2.2.3.2.9/v2.2.3.3.0: Schedule GC re-enable 500ms after last
-            # render.  Restarts on every render so GC stays suppressed during
-            # the burst.  500ms margin prevents premature re-enable during
-            # natural scroll pauses on heavy volumes.
+            # v2.2.3.3.2: Schedule GC re-enable 2000ms after last render.
+            # Restarts on every render so GC stays suppressed during the
+            # burst.  2000ms ensures GC never fires mid-session (all observed
+            # scroll gaps are <2s).  Previous 500ms timer caused a 660-700ms
+            # periodic lag (500ms wait + ~150ms GC collection).
             self._gc_reenable_timer.start()
         # Re-arm if more scroll events queued during the render block
         if self._pending_wheel_slice is not None:
@@ -1515,13 +1517,16 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # ✅ ALWAYS log to confirm this method is being called
         t_event_receive = now_ms()
         self._last_scroll_event_ms = t_event_receive
-        # v2.2.3.2.9 / v2.2.3.3.0: Suppress GC during scroll burst.
-        # Also raise gen-1/gen-2 thresholds to prevent cascading collections
-        # if GC is momentarily re-enabled between bursts.
-        if not self._gc_suppressed and gc.isenabled():
-            self._gc_saved_thresholds = gc.get_threshold()
+        # v2.2.3.3.2: Suppress GC during scroll burst.
+        # Save original thresholds only once — if we already have saved
+        # values (from a previous burst where _reenable_gc kept elevated
+        # thresholds), don't overwrite with the elevated (700,50,50).
+        if not self._gc_suppressed:
+            if self._gc_saved_thresholds is None:
+                self._gc_saved_thresholds = gc.get_threshold()
             gc.set_threshold(700, 50, 50)  # 5× less frequent gen-1/gen-2
-            gc.disable()
+            if gc.isenabled():
+                gc.disable()
             self._gc_suppressed = True
         # v2.2.3.2.8: Throttle notify_viewer_interaction to once per 500ms
         # instead of per-wheel-event.  Each call creates a QTimer.singleShot
