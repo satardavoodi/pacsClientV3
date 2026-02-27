@@ -6017,9 +6017,12 @@ class PatientWidget(QWidget):
         """Optimized slider value change handler"""
         if vtk_widget and hasattr(vtk_widget, 'set_slice'):
             vtk_widget.set_slice(value)
-            # Only update reference line if it's being used
-            if hasattr(self, 'manage_reference_line'):
-                self.manage_reference_line()
+            # v2.2.3.3.3: Debounce reference line updates during rapid scroll.
+            # manage_reference_line() calls Render() on every target viewer
+            # (8-30ms each on software GL), causing 24-90ms overhead per scroll
+            # event.  With debounce at 80ms, reference lines update at 12.5fps
+            # — visually smooth — without blocking scroll input processing.
+            self._schedule_reference_line_update()
 
     def _ensure_loading_dialog(self):
         if getattr(self, "_loading_dlg", None) is not None:
@@ -6447,6 +6450,26 @@ class PatientWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error in closeEvent: {e}")
             event.accept()
+
+    def _schedule_reference_line_update(self):
+        """Debounced reference line request — at most once per 80ms.
+
+        v2.2.3.3.3: manage_reference_line() calls Render() on every target
+        viewer (8-30ms each on software GL).  During rapid scroll, calling it
+        per-event adds 24-90ms overhead that accumulates as growing event-queue
+        delays.  This debounce timer coalesces rapid calls so the expensive
+        computation runs at most 12.5 fps — visually smooth, without blocking
+        the scroll input pipeline.
+
+        Series-switch and viewport-selection callers still invoke
+        manage_reference_line() directly for immediate visual feedback.
+        """
+        if not hasattr(self, '_rl_debounce_timer'):
+            self._rl_debounce_timer = QTimer()
+            self._rl_debounce_timer.setSingleShot(True)
+            self._rl_debounce_timer.setInterval(80)
+            self._rl_debounce_timer.timeout.connect(self.manage_reference_line)
+        self._rl_debounce_timer.start()  # (re)start resets the 80ms countdown
 
     def manage_reference_line(self):
         """
