@@ -45,6 +45,14 @@ def _is_itk_region_mismatch_error(exc: Exception) -> bool:
         "requested region is (at least partially) outside the largest possible region" in msg
         or ("largest possible region" in msg and "requested region" in msg)
         or "input image information has changed" in msg
+        # v2.2.3.3.8: ITK ImageSeriesReader raises "Size mismatch" when files
+        # in a series have different dimensions (e.g., incomplete download
+        # leaves a truncated/wrong-size file).  Without this check the
+        # dominant-size filter in get_itk_image() never triggers, causing
+        # 3-4 redundant full-read retries that block warmup workers for
+        # 5-12 seconds per failing series.
+        or "size mismatch" in msg
+        or "does not match the required size" in msg
     )
 
 
@@ -906,7 +914,31 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     _dicom_start = time.time()
                     # DB query is already ordered by instance_number; avoid extra filesystem sorting.
                     dicom_files = [str(inst.get('instance_path')) for inst in instances if inst.get('instance_path')]
-                    
+
+                    # v2.2.3.3.8: Quick size pre-check — sample first and last
+                    # file headers (~2ms) to detect incomplete-download size
+                    # mismatch BEFORE attempting the expensive ITK read.
+                    # Without this, get_itk_image() reads ALL files from disk
+                    # before discovering the mismatch, wasting 2-5 seconds.
+                    if len(dicom_files) >= 2:
+                        try:
+                            _ds_first = pydicom.dcmread(dicom_files[0], stop_before_pixels=True, force=True, specific_tags=['Rows', 'Columns'])
+                            _ds_last = pydicom.dcmread(dicom_files[-1], stop_before_pixels=True, force=True, specific_tags=['Rows', 'Columns'])
+                            _r0 = int(getattr(_ds_first, 'Rows', 0) or 0)
+                            _c0 = int(getattr(_ds_first, 'Columns', 0) or 0)
+                            _r1 = int(getattr(_ds_last, 'Rows', 0) or 0)
+                            _c1 = int(getattr(_ds_last, 'Columns', 0) or 0)
+                            if _r0 > 0 and _c0 > 0 and _r1 > 0 and _c1 > 0 and (_r0, _c0) != (_r1, _c1):
+                                print(
+                                    f"      WARN: Size pre-check mismatch: first={_r0}x{_c0} last={_r1}x{_c1}"
+                                    f" → pre-filtering {len(dicom_files)} files by dominant size"
+                                )
+                                dicom_files, _dom_size, _dom_skipped = _select_dominant_size_dicom_files(dicom_files)
+                                if _dom_size:
+                                    print(f"      Pre-filtered to {len(dicom_files)} files of {_dom_size}, skipped {_dom_skipped}")
+                        except Exception:
+                            pass  # pre-check failed, proceed normally
+
                     itk_image = get_itk_image(dicom_files)
                     _dicom_time = time.time() - _dicom_start
                     print(f"      DICOM load (from DB paths): {_dicom_time:.3f}s")
@@ -994,13 +1026,23 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
         except Exception as e:
             print(f"      WARN: DB fast path failed: {e}, falling back to file grouping")
 
-    # Fallback: fast single-series enumeration (avoid expensive regroup scan).
+    # Fallback: enumerate + size-group before attempting any ITK read.
+    # v2.2.3.3.8: Previously used a single-entry size_dict without real size
+    # grouping, so mixed-size series (from incomplete downloads) caused the
+    # expensive get_itk_image → retry → re-raise cascade to run 3-4 times
+    # (5-12 seconds per failing series).  Now we use group_images_base_on_size
+    # to pre-filter, matching _load_series_from_filesystem behaviour.
     _group_start = time.time()
-    dicom_files = _list_unique_dicom_files(series_path)
     size_dict = {}
-    if dicom_files:
-        # process_series_groups iterates values only; key is placeholder.
-        size_dict = {("single_series", len(dicom_files)): dicom_files}
+    try:
+        size_dict = utils.group_images_base_on_size(series_path, ordering_by_instance_number=False)
+    except Exception:
+        pass
+    if not size_dict:
+        # Fallback if group_images_base_on_size fails/returns empty
+        dicom_files = _list_unique_dicom_files(series_path)
+        if dicom_files:
+            size_dict = {("single_series", len(dicom_files)): dicom_files}
     _group_time = time.time() - _group_start
     print(f"      Group images: {_group_time:.3f}s")
     logger.info(
