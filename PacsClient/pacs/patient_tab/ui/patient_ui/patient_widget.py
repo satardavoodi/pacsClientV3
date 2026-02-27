@@ -6022,15 +6022,15 @@ class PatientWidget(QWidget):
             print(f"⚠️ Error in reset_slider: {e}")
 
     def on_slider_value_changed(self, vtk_widget, value):
-        """Optimized slider value change handler"""
+        """Optimized slider value change handler.
+
+        v2.2.3.3.6: Removed the redundant _schedule_reference_line_update()
+        call.  VTKWidget.set_slice() already calls it internally (added in
+        v2.2.3.3.3).  The duplicate was harmless (throttle absorbed it) but
+        added unnecessary hasattr / timer-check overhead per slider tick.
+        """
         if vtk_widget and hasattr(vtk_widget, 'set_slice'):
             vtk_widget.set_slice(value)
-            # v2.2.3.3.3: Debounce reference line updates during rapid scroll.
-            # manage_reference_line() calls Render() on every target viewer
-            # (8-30ms each on software GL), causing 24-90ms overhead per scroll
-            # event.  With debounce at 80ms, reference lines update at 12.5fps
-            # — visually smooth — without blocking scroll input processing.
-            self._schedule_reference_line_update()
 
     def _ensure_loading_dialog(self):
         if getattr(self, "_loading_dlg", None) is not None:
@@ -6462,37 +6462,35 @@ class PatientWidget(QWidget):
     def _schedule_reference_line_update(self):
         """Throttled reference line update — leading + trailing edge.
 
-        v2.2.3.3.5: Changed from restart-debounce to leading-edge throttle.
+        v2.2.3.3.6: Leading edge = geometry-only (repaint=False), trailing
+        edge = geometry + repaint.  This prevents target-viewer paintEvents
+        (~20ms × N on software GL) from blocking the scroll event loop.
 
-        Previous behavior (v2.2.3.3.3-v2.2.3.3.4):
-          80ms restart-debounce: timer.start() on every call restarted the
-          countdown.  During continuous scroll the timer NEVER fired — it
-          only executed 80ms after the final event.  Result: reference line
-          frozen during scroll, jumps to correct position after stop.
+        Previous behavior (v2.2.3.3.5):
+          33ms throttle with update() on every manage_reference_line call.
+          Each update() posted a paintEvent per target viewer that executed
+          synchronously in the event loop (~20ms × N), adding 50-60ms of
+          dead time between scroll frames → ~10fps effective.
 
-        New behavior (v2.2.3.3.5):
-          Leading-edge throttle: the FIRST call executes immediately (0ms
-          latency) and starts a cooldown window.  Calls during the window
-          are coalesced into a single trailing-edge execution when the
-          window expires.  This guarantees:
-            - Real-time updates during continuous scroll (~30fps)
-            - The final position is always rendered (trailing edge)
-            - No stacking of expensive recomputation
-
-        manage_reference_line() itself now uses non-blocking vtk_widget.
-        update() instead of synchronous Render(), so even the leading-edge
-        call adds only ~0.5ms to the scroll path (geometry compute only).
+        New behavior (v2.2.3.3.6):
+          Leading-edge: compute geometry + position VTK actors instantly
+          (costs ~1ms) but NO repaint.  Actors are ready for the next
+          natural paint cycle.
+          Trailing-edge (80ms): compute geometry AND trigger repaint on
+          all target widgets.  Reference lines visually update at ~12fps
+          while the source viewer scrolls at full speed (~20-25fps).
+          80ms chosen to balance responsiveness vs paint overhead.
         """
         if not hasattr(self, '_rl_throttle_timer'):
             self._rl_throttle_timer = QTimer()
             self._rl_throttle_timer.setSingleShot(True)
-            self._rl_throttle_timer.setInterval(33)  # ~30fps cap
+            self._rl_throttle_timer.setInterval(80)  # ~12fps paint cap
             self._rl_throttle_timer.timeout.connect(self._rl_throttle_fire)
             self._rl_pending = False
 
         if not self._rl_throttle_timer.isActive():
-            # Leading edge — execute immediately, start cooldown
-            self.manage_reference_line()
+            # Leading edge — geometry only, no repaint
+            self.manage_reference_line(repaint=False)
             self._rl_throttle_timer.start()
         else:
             # Inside cooldown window — defer to trailing edge
@@ -6502,30 +6500,31 @@ class PatientWidget(QWidget):
                 self._rl_merged_count += 1
 
     def _rl_throttle_fire(self):
-        """Trailing-edge callback for reference line throttle."""
+        """Trailing-edge callback — geometry + repaint."""
         if self._rl_pending:
             self._rl_pending = False
-            self.manage_reference_line()
+            self.manage_reference_line(repaint=True)
             # Re-arm: if more events arrived during manage_reference_line(),
             # _rl_pending may have been set again by a concurrent call.
             if self._rl_pending:
                 self._rl_throttle_timer.start()
 
-    def manage_reference_line(self):
+    def manage_reference_line(self, repaint=True):
         """
         Compute and draw the reference line: intersection of the source viewer's slice plane
         with the current slice rectangle of each target viewer (no MPR needed).
 
-        Pipeline:
-          1) Build source plane (from DICOM IOP/IPP).
-          2) For each target: build slice quad in LPS, intersect with source plane -> segment.
-          3) Apply display-space transforms (optional 90° CCW, Flip-X, Flip-Y) to match viewer.
-          4) Map to target index space -> target world (origin/spacing of the VTK image being rendered).
-          5) Update a cached vtkLineSource/Actor per viewer.
+        Args:
+            repaint: If True, call vtk_widget.update() on modified target viewers
+                     to schedule a Qt paintEvent → VTK Render.  If False, only
+                     update VTK actor geometry (SetPoint1/SetPoint2, Visibility)
+                     without triggering a paint — the actors will be rendered on
+                     the next natural paint cycle.
 
-        v2.2.3.3.5: Uses vtk_widget.update() (non-blocking, Qt-coalesced) instead
-        of synchronous Render() per target.  Geometry compute is inline (~0.3ms),
-        actual VTK renders happen asynchronously in Qt's paint cycle.
+        v2.2.3.3.6: repaint parameter controls whether target viewer paints
+        are triggered.  The scroll throttle uses repaint=False on leading edge
+        (geometry only, ~1ms) and repaint=True on trailing edge (~80ms interval)
+        to avoid blocking the scroll event loop with paintEvents.
         """
         _t_rl_start = time.perf_counter()
 
@@ -6577,7 +6576,8 @@ class PatientWidget(QWidget):
             # Skip drawing on the source viewer itself
             if vtk_widget is self.selected_widget:
                 reference_line.rl_hide_actor_if_any(iv)
-                vtk_widget.update()  # schedule repaint to show hidden line
+                if repaint:
+                    vtk_widget.update()
                 continue
 
             try:
@@ -6590,7 +6590,8 @@ class PatientWidget(QWidget):
                 target_image_position_patient = t_inst.get('image_position_patient')
                 if (target_image_orientation_patient is None) or (target_image_position_patient is None):
                     reference_line.rl_hide_actor_if_any(iv)
-                    vtk_widget.update()
+                    if repaint:
+                        vtk_widget.update()
                     continue  # skip this target, process remaining viewers
 
                 # rows = int(t_inst['rows'])
@@ -6622,7 +6623,8 @@ class PatientWidget(QWidget):
                 ok, seg = reference_line.rl_clip_plane_with_quad(p1, n1, quad)
                 if not ok:
                     reference_line.rl_hide_actor_if_any(iv)
-                    vtk_widget.update()
+                    if repaint:
+                        vtk_widget.update()
                     continue
 
                 P0_lps, P1_lps = seg
@@ -6656,15 +6658,17 @@ class PatientWidget(QWidget):
                 ls.SetPoint1(float(P0_w[0]), float(P0_w[1]), float(P0_w[2]))
                 ls.SetPoint2(float(P1_w[0]), float(P1_w[1]), float(P1_w[2]))
                 act.VisibilityOn()
-                # v2.2.3.3.5: Non-blocking repaint — Qt coalesces multiple
-                # update() calls into one paintEvent per event loop cycle.
-                # No synchronous Render() cost on the scroll path.
-                vtk_widget.update()
+                # v2.2.3.3.6: Only trigger repaint when requested.
+                # Leading-edge scroll calls use repaint=False (geometry only)
+                # to avoid 20ms×N paintEvents blocking the event loop.
+                if repaint:
+                    vtk_widget.update()
 
             except Exception as e:
                 print("reference-line: target error:", e)
                 reference_line.rl_hide_actor_if_any(iv)
-                vtk_widget.update()
+                if repaint:
+                    vtk_widget.update()
 
         # ── Instrumentation: latency tracking (v2.2.3.3.5) ──────────
         _t_elapsed = (time.perf_counter() - _t_rl_start) * 1000  # ms

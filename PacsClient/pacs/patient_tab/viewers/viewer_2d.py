@@ -1887,7 +1887,15 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self._sync_point_actor = actor
 
     def set_sync_point(self, world_pos, adjust_slice=True):
-        """Show/update the sync point; optionally move slice to match the point."""
+        """Show/update the sync point; optionally move slice to match the point.
+
+        v2.2.3.3.6: Removed the unconditional self.Render() at the bottom.
+        When adjust_slice is True, self.set_slice() already calls Render()
+        internally.  The extra Render() was a double-render per target viewer
+        during lock-sync drag (~20-30ms wasted on software GL per target).
+        Now only renders once if the slice changed, or once for the sync-point
+        actor visibility toggle if the slice didn't change.
+        """
         if world_pos is None:
             self.hide_sync_point()
             return
@@ -1898,7 +1906,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self._sync_point_source.SetCenter(world_pos)
 
         orientation = self.GetSliceOrientation()
-        
+        _did_render = False
+
         if adjust_slice:
             slice_index, delta_world, spacing_axis = self._slice_index_from_world(world_pos, return_delta=True)
             logger.debug(
@@ -1912,6 +1921,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 slice_index = max(0, min(slice_index, max_slice))
                 if delta_world is None or spacing_axis is None or delta_world <= spacing_axis:
                     self.set_slice(slice_index)
+                    _did_render = True  # set_slice already calls Render()
                     logger.debug("[SYNC POINT] Navigated to slice %d", slice_index)
                 else:
                     logger.debug(
@@ -1922,7 +1932,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         if self._sync_point_actor is not None:
             self._sync_point_actor.VisibilityOn()
         self._sync_point_visible = True
-        self.Render()
+        # Only Render if set_slice didn't already do it
+        if not _did_render:
+            self.Render()
 
     def hide_sync_point(self):
         if self._sync_point_actor is not None:
