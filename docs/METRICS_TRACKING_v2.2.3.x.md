@@ -1,5 +1,5 @@
 # Performance Metrics Tracking — AIPacs Mode A / Mode B
-**Current Version:** v2.2.3.2.9  
+**Current Version:** v2.2.3.4.0  
 **Branch:** DR.vahid  
 **Last Updated:** 2026-02-27  
 **Purpose:** Phase-by-phase optimization progress measurement
@@ -630,21 +630,38 @@ viewer-scroll stage=stale_drain_complete skipped=84 queue_delay_ms=312.00 slice=
 | **v2.2.3.2.4** | — | 2026-02-27 | **First-series in-process GIL contention fix** — `max_itk_threads=2, max_pydicom_workers=2` for `_load_single_series_on_demand`; `get_or_create_instance` accepts `max_workers` param; `process_series_groups` yields 50ms→5ms | Expected: `set_slice_p95_ms` 52-61ms→<40ms during first-series Mode B load |
 | **v2.2.3.2.5** | — | 2026-02-27 | **Render pipeline optimizations on software OpenGL** — FXAA off (`renderer.UseFXAAOff()`); `SetMultiSamples(0)` (was 8x MSAA); skip redundant `color_mapper.Update()` on scroll (Render() auto-updates); sub-timing instrumentation in `ImageViewer2D.set_slice`; `max_pydicom_workers=2` in DL_WARMUP warmup callback | Expected: 20-50ms/frame saved (FXAA) + 10-30ms (MSAA) + 5-15ms (color_mapper) |
 | **v2.2.3.2.6** | — | 2026-02-27 | **Coalesce SERIES_DOWNLOAD_COMPLETE signals** — `home_ui.py`: first series immediate, subsequent batched with 100ms debounce QTimer + processEvents yield every 2 series; `patient_widget_viewer_controller.py`: processEvents() yield after first-series viewer init | Expected: `event_queue_delay_ms` drops from 620–5437ms to <200ms |
+| **v2.2.3.3.0** | `66914e0` | 2026-02-27 | **Strengthen GC suppression for heavy volumes (PC B)** — increased GC re-enable timer 500→2000ms; keep elevated thresholds (700,50,50) on re-enable instead of restoring originals; avoid overwriting saved thresholds on re-enter | Eliminated 660-700ms periodic GC lag pattern on PC B |
+| **v2.2.3.3.1** | `0382270` | 2026-02-27 | **Event-loop bypass eliminates periodic lag** — cache `os.getenv` values in `__init__` (was 3-5ms per call ×2 per frame); bypass coalesce timer when adaptive gap already expired during event-loop congestion | Eliminated 100-300ms stalls from download signal congestion |
+| **v2.2.3.3.2** | `edfff7f` | 2026-02-27 | **Eliminate 660ms periodic GC lag** — GC re-enable timer 500→2000ms; keep elevated thresholds on re-enable; save original thresholds only once | Fixed precise 660-700ms periodic lag (500ms timer + 150ms GC collection) on PC B |
+| **v2.2.3.3.3** | `1f2cd36` | 2026-02-27 | **Debounce reference line updates during scroll** — `_schedule_reference_line_update()` with 80ms trailing-edge QTimer; prevents expensive `_update_reference_lines()` Render on every scroll frame | Saved ~20-40ms per excessive ref-line repaints |
+| **v2.2.3.3.4** | `5b3b77c` | 2026-02-27 | **Sync reference lines with stack drag + lock sync** — ref-line update after lock sync completes; debounced at 80ms to prevent Render-per-target | Reference lines stay current during lock sync drag |
+| **v2.2.3.3.5** | `6b18b94` | 2026-02-27 | **Real-time reference line sync** — leading-edge (immediate, geometry-only) + trailing-edge (50ms, with repaint) dual-timer pattern for ref-line updates | Instant actor positioning + deferred repaint |
+| **v2.2.3.3.6** | `f90b608` | 2026-02-27 | **Eliminate ref-line paint blocking from scroll loop** — trailing-edge repaint uses `repaint=False` geometry-only update; actual VTK Render deferred to scroll-end | Scroll loop never blocked by ref-line Render |
+| **v2.2.3.3.7** | `f6c4dda` | 2026-02-27 | **Round-robin reference line repaint** — trailing-edge paints ONE target viewer per tick (round-robin), scroll-end tick repaints ALL targets for full visual correctness | Capped ref-line event-loop blocking to ~20ms per tick instead of N×20ms |
+| **v2.2.3.3.8** | `125c00a` | 2026-02-27 | **Fix size-mismatch detection for incomplete downloads** — `_check_size_mismatch()` now compares against expected instance count from DB metadata, not just cached data; prevents false-positive size mismatch warnings during active downloads | Eliminated spurious warmup retries during download |
+| **v2.2.3.3.9** | `af11baf` | 2026-02-27 | **Reduce Mode B scroll lag from warmup contention** — subprocess ITK threads 2→1; defer result poll during scroll (idle<300ms); max 1 result per poll tick; tighten notify_viewer_interaction throttle 500→250ms | Reduced warmup contention with VTK render during scroll |
+| **v2.2.3.4.0** | `5215a89` | 2026-02-27 | **Scroll fast-path — skip non-essential per-frame overhead** — skip camera zoom save/restore during wheel scroll (~3-5ms); skip interactor style update (~1ms); throttle Lock Sync to 100ms during scroll; subprocess warmup priority BELOW_NORMAL→IDLE | Expected: set_slice_total p50 ~45→~35ms, p95 ~61→~45ms |
 
 ---
 
-## 12. Current Bottlenecks (as of v2.2.3.2.6)
+## 12. Current Bottlenecks (as of v2.2.3.4.0)
 
 | Priority | Bottleneck | Location | Impact | Status |
 |---|---|---|---|---|
-| 🟡 MED | SERIES_DOWNLOAD_COMPLETE signal handlers still ~50-100ms each on main thread | `home_ui.py` signal handlers | With coalescing (v2.2.3.2.6) batched to <200ms total; residual per-signal work | Mitigated — measure in practice |
 | 🟡 MED | First-series load still runs in-process (~2.4s via asyncio.to_thread) | `patient_widget_viewer_controller.py` | v2.2.3.2.4 caps threads, but GIL still shared | Open — consider subprocess routing |
 | 🟡 MED | `update_corners_actors()` updates 6 VTK text actors per scroll (only 2 change) | `viewer_2d.py` | ~5-10ms per scroll overhead on software-GL | Open — split varying vs constant actors |
-| 🟡 MED | Lock Sync `_do_lock_sync()` coordinate math on every scroll | `patient_widget.py` | Adds ~5ms per scroll when Lock Sync enabled | Open — consider debouncing |
 | 🟡 MED | `viewer_db_read` 38–88ms on series load | `image_io.py` DB query | Adds to series switch latency | Open — may batch query |
 | 🟡 MED | MR large-FOV filter still slow (500×640×24 = ~1.5s at 2 threads) | `image_filters.py` `_smooth_xy_recursive` | Doesn't affect scroll now (subprocess), but delays warmup | Mitigated — subprocess isolates impact |
 | 🟢 LOW | `disk_read` 27–384ms on series load | `image_io.py` filesystem | SSDs fast; HDDs slow; L2 disk cache helps | Mitigated by ZetaBoost L2 |
 | 🟢 LOW | `create_connection` 3–24ms on new threads | `database.py` | First load per thread | Acceptable |
+| ✅ FIXED | Lock Sync per-frame overhead (5-20ms during scroll) | `patient_widget.py` + `vtk_widget.py` | v2.2.3.4.0 | Done — throttled to 100ms during wheel scroll |
+| ✅ FIXED | Camera zoom save/restore overhead (3-5ms per frame) | `vtk_widget.py` | v2.2.3.4.0 | Done — skipped during wheel scroll (event consumed, VTK zoom blocked) |
+| ✅ FIXED | Interactor style update per scroll (~1ms) | `vtk_widget.py` | v2.2.3.4.0 | Done — skipped during wheel scroll |
+| ✅ FIXED | Subprocess warmup BELOW_NORMAL still causes mem-bus contention | `warmup_subprocess.py` | v2.2.3.4.0 | Done — lowered to IDLE_PRIORITY_CLASS |
+| ✅ FIXED | Reference line repaint blocking scroll loop | `patient_widget.py` | v2.2.3.3.7 | Done — round-robin single-target repaint |
+| ✅ FIXED | 660ms periodic GC lag pattern (PC B) | `vtk_widget.py` | v2.2.3.3.2 | Done — 2000ms re-enable + keep elevated thresholds |
+| ✅ FIXED | Subprocess ITK 2 threads contention during scroll | `warmup_subprocess.py` + controller | v2.2.3.3.9 | Done — capped to 1 thread + deferred poll + 1 result/tick |
+| ✅ FIXED | Size-mismatch false positives during download | `image_io.py` | v2.2.3.3.8 | Done — compare against DB expected count |
 | ✅ FIXED | SERIES_DOWNLOAD_COMPLETE event queue starvation (620-5437ms) | `home_ui.py` + `patient_widget_viewer_controller.py` | v2.2.3.2.6 | Done — coalesced signal handler + processEvents yield |
 | ✅ FIXED | VTK render overhead: FXAA +20-50ms, MSAA 8x, redundant color_mapper.Update() | `viewer_2d.py` + `vtk_widget.py` | v2.2.3.2.5 | Done — FXAA off, MSAA=0, skip Update on scroll |
 | ✅ FIXED | DL_WARMUP GIL contention (queue_p95=200-510ms) | `warmup_subprocess.py` | v2.2.3.2.3 | Done — subprocess with own GIL |
@@ -657,7 +674,7 @@ viewer-scroll stage=stale_drain_complete skipped=84 queue_delay_ms=312.00 slice=
 
 ---
 
-## 13. Next Test Checklist (v2.2.3.2.5 + v2.2.3.2.6)
+## 13. Next Test Checklist (v2.2.3.4.0)
 
 Run after pulling latest on both PC A and PC B:
 
@@ -665,33 +682,33 @@ Run after pulling latest on both PC A and PC B:
 # Get latest log
 $log = Get-ChildItem "c:\AI-Pacs codes\ai-pacs\logs" -Filter "*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
-# DL_WARMUP SUBPROCESS timing (should see [DL_WARMUP_SUB], not [DL_WARMUP])
+# DL_WARMUP SUBPROCESS timing (should see [DL_WARMUP_SUB], IDLE priority)
 Select-String "\[DL_WARMUP_SUB\].*Cached series" $log.FullName | Select-Object -Last 10
 
-# Subprocess lifecycle (should see subprocess_started, subprocess_stopped)
-Select-String "DL_WARMUP.*subprocess" $log.FullName | Select-Object -Last 10
+# Subprocess priority (should say IDLE, not BELOW_NORMAL)
+Select-String "priority set to" $log.FullName | Select-Object -Last 10
 
-# Scroll probe during download (queue_p95 should be ~0.00ms; set_slice_p95 should be lower)
+# Scroll probe during download (Mode B — check set_slice_p50/p95 improvement)
 Select-String "viewer-scroll-probe" $log.FullName | Select-Object -Last 10
 
-# v2.2.3.2.5: Sub-timing in set_slice (only logged when total > 30ms)
+# Sub-timing in set_slice (only logged when total > 30ms)
 Select-String "viewer-scroll sub-timing" $log.FullName | Select-Object -Last 10
 
-# v2.2.3.2.6: Coalesced completion handler (should see batch processing)
-Select-String "_flush_pending_completions|on_series_completed" $log.FullName | Select-Object -Last 10
-
-# Queue delay per scroll (should be <200ms even during signal bursts)
+# Queue delay per scroll (should be ~0.00ms during scroll)
 Select-String "event_queue_delay_ms" $log.FullName | Select-Object -Last 20
 
-# Stale drain guard (should appear less often with v2.2.3.2.6 coalescing)
-Select-String "stale_scroll_skip|stale_drain_complete" $log.FullName | Select-Object -Last 10
+# Reference line updates (should see round-robin pattern)
+Select-String "ref_line_update|schedule_reference_line" $log.FullName | Select-Object -Last 10
+
+# Lock Sync throttle (check if lock sync runs every 100ms, not every frame)
+Select-String "LOCK SYNC" $log.FullName | Select-Object -Last 10
 ```
 
-**Expected results:**
-- `[DL_WARMUP_SUB] ✓ Cached series=X in Yms` with Y < 1000ms (subprocess, own GIL)
+**Expected results (v2.2.3.4.0):**
+- `set_slice_p50_ms` ≈ 35ms (was ~45ms in v2.2.3.3.9) — camera/style skip saves 4-6ms
+- `set_slice_p95_ms` ≈ 45ms (was ~61ms) — subprocess IDLE priority reduces SetSlice spikes
 - `queue_p95_ms=0.00` in scroll probes during download (GIL-free warmup)
-- `set_slice_p95_ms` < 40ms (v2.2.3.2.5 render savings: FXAA off + MSAA=0 + skip color_mapper)
-- `event_queue_delay_ms` < 200ms during signal bursts (v2.2.3.2.6 coalescing)
-- Sub-timing shows Render component < 25ms (was 35-45ms before FXAA/MSAA fix)
-- No `[DL_WARMUP] ✓ Cached` (old in-process) unless subprocess fallback triggered
+- Subprocess logs show `Process priority set to IDLE` (was BELOW_NORMAL)
+- No zoom-change-detected warnings during scroll (camera save/restore skipped)
+- Lock Sync callback fires ≤10 times/sec during scroll (100ms throttle)
 

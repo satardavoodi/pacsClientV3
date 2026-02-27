@@ -1,5 +1,5 @@
 # AIPacs Performance Status
-**Version:** v2.2.3.2.9 | **Branch:** DR.vahid | **Updated:** 2026-02-27
+**Version:** v2.2.3.4.0 | **Branch:** DR.vahid | **Updated:** 2026-02-27
 
 > **Quick-start:** Start here. After reading this file, go to `METRICS_TRACKING_v2.2.3.x.md` for detailed measurements, or `docs/CROSS_PC_IMPROVEMENT_WORKFLOW.md` for the PC A/B validation process.
 
@@ -35,14 +35,14 @@ User double-clicks study
                  │    max_itk_threads=2, BELOW_NORMAL OS priority
                  │
                  └─► [DL_WARMUP SUBPROCESS pid=M] ← separate process (v2.2.3.2.3)
-                      warmup_subprocess.py, own GIL, IDLE priority
-                      max_itk_threads=2, results polled via QTimer (100ms)
+                      warmup_subprocess.py, own GIL, IDLE priority (v2.2.3.4.0)
+                      max_itk_threads=1 (v2.2.3.3.9), results polled via QTimer (100ms)
                       queue_p95_ms dropped from 200-510ms → 0.00ms
 ```
 
 ---
 
-## 2. Current Performance Numbers (v2.2.3.2.9, PC A, MR brain study)
+## 2. Current Performance Numbers (v2.2.3.4.0, PC A)
 
 ### Mode A — No download active
 
@@ -63,7 +63,8 @@ User double-clicks study
 
 | What | Metric | Value | Target |
 |---|---|---|---|
-| Scroll response (typical) | `set_slice_p50_ms` | ~30–45ms (v2.2.3.2.8 measured) | <25ms |
+| Scroll response (typical) | `set_slice_p50_ms` | ~35ms (expected v2.2.3.4.0, was ~45ms) | <25ms |
+| Scroll response (95th pct) | `set_slice_p95_ms` | ~45ms (expected, was ~61ms) | <50ms |
 | Queue delay during DL (scroll) | `queue_p95_ms` | **0.00ms** (subprocess DL_WARMUP, v2.2.3.2.3) | <30ms ✅ |
 | Queue delay during DL (signals) | `queue_p95_ms` | 620–5437ms → **<200ms** (v2.2.3.2.6 coalescing) | <30ms — **mitigated** |
 | Stale-event drain (v2.2.3.2.1) | `stale_drain_complete skipped=N` | N events skipped, 1 render | eliminates 4s+ backlog ✅ |
@@ -72,6 +73,9 @@ User double-clicks study
 | DB insert (download subprocess) | `batch_insert_instances_total` | 6–455ms (was 2217ms) | <500ms ✅ |
 | First-series GIL pressure | ITK threads + pydicom workers | **2+2** (v2.2.3.2.4, was N+8) | low contention ✅ |
 | Series switch (VTK data mapping) | `switch_series()` | ~718ms (once, not per-scroll) | — |
+| Subprocess warmup priority | OS priority class | **IDLE** (v2.2.3.4.0, was BELOW_NORMAL) | minimal contention ✅ |
+| Camera save/restore on scroll | per-frame overhead | **0ms** (v2.2.3.4.0, skipped) | was ~3-5ms |
+| Lock Sync during scroll | callback rate | **≤10/sec** (v2.2.3.4.0, 100ms throttle) | was every frame |
 
 ---
 
@@ -79,6 +83,17 @@ User double-clicks study
 
 | Version | Symptom Fixed | How |
 |---|---|---|
+| **v2.2.3.4.0** | 5-15ms per-frame overhead in set_slice during wheel scroll (camera save/restore, style update, Lock Sync) + subprocess warmup memory-bus contention | Wheel-scroll fast-path: skip camera zoom save/restore (~3-5ms), skip interactor style update (~1ms), throttle Lock Sync to 100ms; subprocess priority BELOW_NORMAL→IDLE |
+| **v2.2.3.3.9** | Mode B scroll lag from warmup subprocess contention (ITK 2 threads + unthrottled result poll + frequent notify) | Subprocess ITK threads 2→1; defer poll during scroll (idle<300ms); max 1 result/tick; notify throttle 500→250ms |
+| **v2.2.3.3.8** | Size-mismatch false positives during active downloads triggering warmup retries | Compare against DB expected count, not just cached data |
+| **v2.2.3.3.7** | Reference line repaint blocking scroll loop (N×20ms per tick) | Round-robin: paint ONE target viewer per tick; scroll-end repaints ALL targets |
+| **v2.2.3.3.6** | Ref-line Render() called during scroll loop blocking main thread | Trailing-edge uses geometry-only update (repaint=False); actual Render deferred to scroll-end |
+| **v2.2.3.3.5** | Reference lines lagging behind scroll (only updating on trailing edge) | Dual-timer: leading-edge immediate geometry-only + trailing-edge 50ms with repaint |
+| **v2.2.3.3.4** | Reference lines stale during lock sync drag | Ref-line update fires after lock sync completes; debounced at 80ms |
+| **v2.2.3.3.3** | _update_reference_lines() Render on every scroll frame (~20-40ms) | Debounced via `_schedule_reference_line_update()` with 80ms trailing-edge QTimer |
+| **v2.2.3.3.2** | 660ms periodic lag on PC B (500ms GC timer + 150ms GC collection) | GC re-enable timer 500→2000ms; keep elevated thresholds on re-enable; save originals only once |
+| **v2.2.3.3.1** | 100-300ms stalls from event-loop congestion between download signals | Cache `os.getenv` in `__init__` (was 3-5ms/call ×2/frame); bypass coalesce timer when gap expired |
+| **v2.2.3.3.0** | Sporadic 400-660ms GC stalls on PC B during heavy volume scroll | Strengthened GC suppression: longer timer, elevated thresholds kept on re-enable |
 | **v2.2.3.2.9** | Sporadic ~100–400ms freezes during smooth scrolling (Python GC pauses) | GC suppressed during scroll bursts (`gc.disable()`), re-enabled 300ms after last render with soft gen-0 collect; ImageSliceBooster `on_slice_changed` throttled to once per 200ms (was every render) |
 | **v2.2.3.2.8** | Scroll debounce added 16ms latency to EVERY frame, ~5–8fps on sw GL | Adaptive THROTTLE replaces debounce: immediate render on first scroll, paced subsequent renders with adaptive gap (25% of frame time); skip redundant per-event ruler/border/camera checks; throttle `notify_viewer_interaction` to once per 500ms |
 | **v2.2.3.2.7** | Infinite stale-drain re-arm loop froze UI for 44s+; gRPC on main thread; viewer creation starvation | Fixed re-arm loop in `_flush_pending_wheel_slice` (reset `_last_scroll_event_ms` on each flush); `processEvents()` yield between viewer creations; gRPC offloaded to `asyncio.to_thread` |

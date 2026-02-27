@@ -1,6 +1,6 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v2.2.2 (2026-02-19)
+**Current Stable Version:** v2.2.3.4.0 (2026-02-27)
 
 ## Architecture map (start here)
 - App entry is `main.py` → `AppHandler` (login) → `MainWindowWidget` → `ControlPanelInterface` → `HomePanelWidget` for patient list and downloads.
@@ -12,6 +12,10 @@
 ## Critical rules (learned the hard way)
 - **Do NOT re-sort metadata['instances'] by IPP.** VTK slices are in instance_number order (files are `Instance_NNNN.dcm` loaded via `natsort`). Metadata from DB is already in the correct order. Re-sorting by IPP broke reference lines in v1.09.5-v1.09.7.
 - **The stored DirectionMatrix in field data has row 1 negated** (Y-flip compensation from `convert_itk2vtk`). Do not use it directly for DICOM normal comparisons without un-negating row 1 first.
+- **Scroll fast-path (`_in_wheel_scroll` flag):** During wheelEvent-driven scroll, `set_slice()` skips camera zoom save/restore, interactor style update, and throttles Lock Sync to 100ms.  Do NOT add expensive per-frame operations inside `set_slice()` without guarding them with `if not _wheel:`. See v2.2.3.4.0.
+- **DL_WARMUP subprocess runs at IDLE priority** (v2.2.3.4.0). It has its own GIL. Do not bump priority above IDLE — it causes memory-bus contention that spikes the viewer's SetSlice from 8→45ms.
+- **GC is suppressed during scroll bursts** (`gc.disable()` in wheelEvent, re-enabled 2000ms after last render). Do not call `gc.collect()` during scroll. See v2.2.3.3.2.
+- **Reference line repaint during scroll uses round-robin** (v2.2.3.3.7): trailing-edge timer paints ONE target viewer per tick. Do not change to paint-all-targets per tick — it blocks the event loop N×20ms.
 - **Local backup of this stable version:** `backups/v2.2.2_2026-02-19/`
 
 ## Key flows to preserve
@@ -33,11 +37,17 @@
 - Patient UI and tabs: `PacsClient/pacs/patient_tab/**`.
 - MPR modules: `PacsClient/pacs/patient_tab/zeta mpr/**` and `advance_mpr_3d_slicer/**`.
 - Download engine + state: `PacsClient/zeta_download_manager/{core,download,network,storage,state,ui}`.
+- Scroll performance: `PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget.py` (set_slice, wheelEvent, adaptive throttle, GC suppression).
+- DL_WARMUP subprocess: `PacsClient/pacs/patient_tab/zeta_boost/warmup_subprocess.py`.
+- Image pipeline / ITK filters: `PacsClient/pacs/patient_tab/utils/image_filters.py` and `image_io.py`.
+- Reference lines during scroll: `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget.py` (`_schedule_reference_line_update`, `_do_lock_sync`).
 
 ## Documentation rules for AI
 - When changing image pipeline or sync mapping, update `docs/IMAGE_PIPELINE_REFERENCE.md`.
 - When changing Zeta MPR internals, update `PacsClient/pacs/patient_tab/zeta mpr/ZETA_MPR_PIPELINE_REFERENCE.md`.
 - When bumping versions, update `VERSION_*.md` with date, tag, and commit.
+- When changing scroll performance, update `docs/PERFORMANCE_STATUS.md`, `docs/METRICS_TRACKING_v2.2.3.x.md`, and `docs/PERFORMANCE_DECISION_LOG_2026-02-27.md`.
+- When adding new per-frame overhead to `set_slice()`, guard it with `_in_wheel_scroll` check and document in `PERFORMANCE_STATUS.md`.
 
 ## Cross-PC improvement cycle (mandatory)
 - **PC roles:** treat the current development machine as **PC A (Developer PC)**. Other machines (e.g., PC B) are validation targets.

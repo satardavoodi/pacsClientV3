@@ -300,9 +300,148 @@
 
 ---
 
+## Session 2026-02-27 (continued) — GC Hardening + Event-Loop Bypass (v2.2.3.3.0–v2.2.3.3.2)
+
+### Data Observed (PC B test with heavy volumes)
+
+| Stage | Measured | Problem |
+|---|---|---|
+| Periodic lag pattern (PC B) | **660–700ms** every few seconds | 500ms GC re-enable timer + ~150ms gen-1 GC collection |
+| `os.getenv` per frame | 3–5ms × 2 calls = 6–10ms | Per-frame overhead in `_should_log_timing` |
+| Coalesce timer bypass | Timer stuck behind queued signals | Event-loop congestion delayed timer callback 100–300ms |
+
+### Decisions Made
+
+**v2.2.3.3.0** (`66914e0`) — Strengthen GC suppression for heavy volumes (PC B)
+- Increased GC re-enable timer from 500ms → 2000ms
+- Keep elevated thresholds (700,50,50) on re-enable instead of restoring originals
+- Avoid overwriting saved thresholds on re-enter
+- Result: Eliminated 660ms periodic lag pattern on PC B
+
+**v2.2.3.3.1** (`0382270`) — Event-loop bypass eliminates periodic lag
+- Cache `os.getenv` values in `__init__` (was 3–5ms per call × 2 per frame)
+- Bypass coalesce timer when adaptive gap already expired during event-loop congestion
+- Result: Eliminated 100–300ms stalls from download signal congestion
+
+**v2.2.3.3.2** (`edfff7f`) — Eliminate 660ms periodic GC lag
+- Final refinement of GC suppression: save original thresholds only once (not on re-enter)
+- Combined fix verified on PC B: no more periodic lag pattern
+
+---
+
+## Session 2026-02-27 (continued) — Reference Line Optimization Sprint (v2.2.3.3.3–v2.2.3.3.7)
+
+### Data Observed
+
+| Stage | Measured | Problem |
+|---|---|---|
+| `_update_reference_lines()` per scroll | 20–40ms Render per target viewer | Blocks main thread on every scroll frame |
+| N viewers × Render per tick | N × 20ms overhead | Linear scaling with viewer count |
+
+### Decisions Made (progressive refinement)
+
+**v2.2.3.3.3** (`1f2cd36`) — Debounce reference line updates during scroll
+- `_schedule_reference_line_update()` with 80ms trailing-edge QTimer
+- Result: Reference line Render no longer fires on every scroll frame
+
+**v2.2.3.3.4** (`5b3b77c`) — Sync reference lines with stack drag + lock sync
+- Ref-line update fires after lock sync completes
+- Debounced at 80ms to prevent Render-per-target
+- Result: Reference lines stay current during lock sync drag
+
+**v2.2.3.3.5** (`6b18b94`) — Real-time reference line sync
+- Dual-timer pattern: leading-edge (immediate, geometry-only) + trailing-edge (50ms, with repaint)
+- Result: Instant actor positioning + deferred repaint
+
+**v2.2.3.3.6** (`f90b608`) — Eliminate ref-line paint blocking from scroll loop
+- Trailing-edge uses `repaint=False` geometry-only update
+- Actual VTK Render deferred to scroll-end
+- Result: Scroll loop never blocked by ref-line Render
+
+**v2.2.3.3.7** (`f6c4dda`) — Round-robin reference line repaint
+- Trailing-edge paints ONE target viewer per tick (round-robin)
+- Scroll-end tick repaints ALL targets for full visual correctness
+- Result: Capped ref-line event-loop blocking to ~20ms per tick
+
+---
+
+## Session 2026-02-27 (continued) — Mode B Contention Fix (v2.2.3.3.8–v2.2.3.3.9)
+
+### Data Observed (CT study, 34 slices, Mode B with active download)
+
+| Stage | Measured | Problem |
+|---|---|---|
+| Size-mismatch false positives | Multiple during download | Compared against cached count instead of DB expected count |
+| Subprocess apply_filters (2 ITK threads) | 7161ms for 34 CT slices | Memory-bus contention spiked SetSlice 8→45ms |
+| Result poll during scroll | Unthrottled | Poll could fire mid-scroll, causing stalls |
+| notify_viewer_interaction throttle | 500ms | Left 150ms gap where warmup workers could start |
+
+### Decisions Made
+
+**v2.2.3.3.8** (`125c00a`) — Fix size-mismatch detection for incomplete downloads
+- Compare against DB expected instance count, not just cached data
+- Result: Eliminated spurious warmup retries during download
+
+**v2.2.3.3.9** (`af11baf`) — Reduce Mode B scroll lag from warmup contention
+- Subprocess ITK threads 2→1 (memory-bus contention reduction)
+- Defer result poll during scroll (idle<300ms guard)
+- Max 1 result per poll tick (was 2)
+- Tighten notify_viewer_interaction throttle 500→250ms
+- Result: Reduced SetSlice spikes during warmup window
+
+---
+
+## Session 2026-02-27 (final) — Scroll Fast-Path (v2.2.3.4.0)
+
+### Data Observed (CT study, 34 slices, Mode B)
+
+Scroll probe: `mode=mode_b p50=44.80ms p95=60.87ms max=91.76ms queue_p95=0.00ms`
+
+| Stage | Measured | Problem |
+|---|---|---|
+| Camera zoom save/restore | ~3–5ms per frame | VTK→Python round-trips + comparison on every scroll |
+| Interactor style update | ~1ms per frame | Ruler tool hook with no visual effect during scroll |
+| Lock Sync callback | 5–20ms per frame (when active) | World-coord computation + sync ALL target viewers on every frame |
+| Subprocess warmup (BELOW_NORMAL) | SetSlice 20→45ms during warmup | Memory-bus contention from ITK allocations |
+| Gap: viewer total vs set_slice_total | 5–15ms per frame | Sum of above overhead items |
+
+### Decisions Made
+
+**v2.2.3.4.0** (`5215a89`) — Scroll fast-path: skip non-essential per-frame overhead
+- **Camera zoom save/restore:** Skip during wheel scroll. The wheel event is consumed (`event.accept`) so VTK's built-in zoom is blocked. `_protected_parallel_scale` remains valid from the last non-scroll interaction. Saves ~3–5ms/frame.
+- **Interactor style update:** Skip `style.update_slice()` during wheel scroll. Ruler tools are not meaningfully updated during rapid scrolling. Saves ~1ms/frame.
+- **Lock Sync throttle:** `_on_slice_changed_cb` throttled to once per 100ms during wheel scroll (was every frame). `_do_lock_sync()` computes world coordinates + syncs all target viewers. At 10–15fps, calling on every frame wastes 5–20ms of immediately-superseded work. 100ms spacing is visually smooth. Saves 0–20ms/frame.
+- **Subprocess warmup priority:** `BELOW_NORMAL_PRIORITY_CLASS` (0x4000) → `IDLE_PRIORITY_CLASS` (0x40). IDLE lets the OS fully favour the viewer process during scroll; subprocess runs in scroll-pause gaps. Reduces SetSlice spikes from 20→45ms to near baseline.
+
+**Implementation:**
+- `vtk_widget.py`: Added `_in_wheel_scroll` flag (set True in `_flush_pending_wheel_slice`, False in finally block). `set_slice()` checks flag to skip camera save/restore, interactor style, and throttle Lock Sync.
+- `warmup_subprocess.py`: Changed `SetPriorityClass` constant from `0x00004000` to `0x00000040`.
+
+**Expected:** `set_slice_total` p50: ~45ms → ~35ms (4–5ms overhead skip + reduced contention); p95: ~61ms → ~45ms (warmup spike attenuation from IDLE priority).
+
+---
+
+## Open Questions for Next Session (post v2.2.3.4.0)
+
+1. **Does v2.2.3.4.0 actually reduce `set_slice_p50_ms` to ~35ms during Mode B scroll?**
+   Run Mode B test: scroll during active download with CT study, check scroll probe.
+
+2. **Does IDLE priority cause the warmup to finish too slowly?**
+   Check `[DL_WARMUP_SUB] ✓ Cached series=X in Yms` — should still be <2000ms per series.
+
+3. **Can `update_corners_actors()` be split into scroll-varying vs series-constant parts?**
+   Only `im_slice_actor` (slice count) and `im_series_window_level` (WL) change per-scroll.
+
+4. **Should first-series also route through subprocess?**
+   Would eliminate ALL in-process GIL contention in Mode B.
+
+5. **What still causes 38–88ms `viewer_db_read` per series load?**
+
+---
+
 ## Rollback Notes
 
-If any v2.2.3.2.x change causes regression:
+If any v2.2.3.x change causes regression:
 
 | Issue | Rollback |
 |---|---|
@@ -316,9 +455,13 @@ If any v2.2.3.2.x change causes regression:
 | Subprocess DL_WARMUP produces corrupt images | Check `result_to_vtk()` in `warmup_subprocess.py` — verify array shape/dtype matches |
 | First-series threads=2 too slow for large studies | Remove `max_itk_threads=2` from `_load_single_series_on_demand` call (~line 4116 of controller) |
 | First-series pydicom workers=2 too slow | Remove `max_pydicom_workers=2` from `_load_single_series_on_demand` call |
-| DL_WARMUP threads=2 causes scroll spikes (unlikely with subprocess) | Set `max_itk_threads=1` in subprocess config |
+| DL_WARMUP threads=1 too slow for warmup | Set `max_itk_threads=2` in subprocess config (reverts v2.2.3.3.9) |
 | max_parallel_loads=2 causes overshooting | Set `max_parallel_loads=1` in the tier config block (~line 420) |
 | Inter-delay 1.5s too aggressive | Set `AIPACS_DL_WARMUP_INTER_DELAY=3.0` env var (no code change needed) |
 | GC suppression leaks memory | Remove `gc.disable()` from `wheelEvent` in vtk_widget.py; delete `_gc_reenable_timer` setup from `__init__` |
 | Adaptive throttle skips frames | Set `AIPACS_SCROLL_COALESCE_MS=16` and revert `wheelEvent` to debounce pattern (restart timer on every event) |
 | Booster throttle causes stale prefetch | Remove `_last_booster_notify_ms` guard in `set_slice` — call `on_slice_changed` on every render |
+| Scroll fast-path skips needed camera restore | Set `_in_wheel_scroll = False` always (remove flag from `_flush_pending_wheel_slice`) — restores full per-frame overhead |
+| Lock Sync throttle causes visible desync | Remove `_last_lock_sync_ms` throttle in `set_slice` — restore per-frame Lock Sync callback |
+| IDLE priority stalls warmup | Revert `IDLE_PRIORITY_CLASS` to `BELOW_NORMAL_PRIORITY_CLASS` (0x00004000) in `warmup_subprocess.py` |
+| Ref-line round-robin leaves stale lines | Increase `_ref_line_rr_repaint_ms` or revert to full repaint on every trailing-edge tick |
