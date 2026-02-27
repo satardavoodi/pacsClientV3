@@ -1540,11 +1540,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
             if gc.isenabled():
                 gc.disable()
             self._gc_suppressed = True
-        # v2.2.3.2.8: Throttle notify_viewer_interaction to once per 500ms
-        # instead of per-wheel-event.  Each call creates a QTimer.singleShot
-        # and toggles ZetaBoost pausing — wasteful at 10-15 events/sec.
+        # v2.2.3.3.9: Tighten throttle from 500ms→250ms so the busy flag
+        # stays True continuously during scroll (with 350ms release delay,
+        # 500ms left a 150ms gap where warmup workers could start).
         try:
-            if t_event_receive - self._last_interaction_notify_ms > 500.0:
+            if t_event_receive - self._last_interaction_notify_ms > 250.0:
                 self._last_interaction_notify_ms = t_event_receive
                 viewer_controller = getattr(self.patient_widget, "viewer_controller", None)
                 if viewer_controller is not None and hasattr(viewer_controller, "notify_viewer_interaction"):

@@ -4476,13 +4476,19 @@ class ViewerController:
             if not self._warmup_result_timer.isActive():
                 self._warmup_result_timer.start()
 
+            # v2.2.3.3.9: Reduce from 2→1 ITK threads in subprocess.
+            # The subprocess is a separate process (no GIL contention) but
+            # still competes for CPU cores and memory bandwidth, causing
+            # VTK SetSlice to spike from ~14ms to ~50ms during scroll.
+            # 1 thread halves bandwidth contention at the cost of ~50%
+            # longer per-series warmup (acceptable tradeoff for smooth scroll).
             req = WarmupRequest(
                 series_number=sn,
                 study_path=str(study_path),
                 patient_pk=self.parent_widget.metadata_fixed.get('patient_pk', None),
                 study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
                 ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
-                max_itk_threads=2,
+                max_itk_threads=1,
             )
             ok = self._warmup_subprocess_mgr.submit(req)
             if ok:
@@ -4497,13 +4503,27 @@ class ViewerController:
 
         Runs on the Qt main thread.  result_to_vtk() is ~5-15ms (memcpy),
         then zeta_boost.put() stores the VTK image in the cache.
-        This is lightweight enough to never cause scroll lag.
+
+        v2.2.3.3.9: Defer processing while user is actively scrolling.
+        result_to_vtk + put blocks the event loop for 5-15ms per result,
+        plus CPU cache pollution increases the next SetSlice by ~30ms.
+        Results stay in the subprocess queue and are picked up when
+        scrolling pauses (< 300ms idle).
         """
         if self._warmup_subprocess_mgr is None:
             return
 
-        # Process at most 2 results per tick to avoid occasional batching delays
-        for _ in range(2):
+        # v2.2.3.3.9: Skip during active scroll to avoid main-thread blocking
+        try:
+            _idle_ms = (time.time() - (self._last_user_interaction_ts or 0.0)) * 1000.0
+            if _idle_ms < 300:
+                return  # defer — results accumulate in subprocess queue
+        except Exception:
+            pass
+
+        # Process at most 1 result per tick (was 2) to limit main-thread
+        # blocking to ~5-15ms instead of ~10-30ms.
+        for _ in range(1):
             result = self._warmup_subprocess_mgr.try_get_result()
             if result is None:
                 break
