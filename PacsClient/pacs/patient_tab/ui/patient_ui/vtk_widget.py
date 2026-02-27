@@ -170,17 +170,27 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._adaptive_frame_gap_ms = 4.0      # auto-adapts: 25% of last frame time
         self._last_interaction_notify_ms = 0.0  # throttle notify_viewer_interaction
 
-        # v2.2.3.2.9: GC suppression during scroll bursts.
+        # v2.2.3.2.9 / v2.2.3.3.0: GC suppression during scroll bursts.
         # Python's cyclic garbage collector can pause the main thread for
         # 100-400ms when it runs a gen-1 or gen-2 collection.  During rapid
-        # scrolling, these pauses cause visible stutters (e.g. the 338ms gap
-        # observed in v2.2.3.2.8 logs).  Fix: disable GC at the start of a
-        # scroll burst and re-enable 300ms after the last render, with a
-        # soft gen-0 collect to prevent memory buildup.
+        # scrolling, these pauses cause visible stutters.
+        #
+        # v2.2.3.3.0 revision: On heavy volumes (512×512×517 CT = 270MB),
+        # the v2.2.3.2.9 approach of gc.collect(0) on re-enable cascades into
+        # gen-1/gen-2 collections (graduating gen-0 objects pushes gen-1 over
+        # its threshold).  Three fixes:
+        #   1. Remove gc.collect(0) from re-enable — let Python handle it
+        #      naturally when the user is no longer scrolling.
+        #   2. Extend re-enable timer 300→500ms so natural scroll pauses
+        #      (e.g. user briefly lifts finger) don't trigger re-enable.
+        #   3. Raise gen-1/gen-2 thresholds during scroll (700,50,50 vs
+        #      default 700,10,10) so even if GC is momentarily re-enabled
+        #      between bursts, gen-1/gen-2 collections are 5× less frequent.
         self._gc_suppressed = False
+        self._gc_saved_thresholds = None  # (gen0, gen1, gen2) to restore
         self._gc_reenable_timer = QTimer(self)
         self._gc_reenable_timer.setSingleShot(True)
-        self._gc_reenable_timer.setInterval(300)
+        self._gc_reenable_timer.setInterval(500)
         self._gc_reenable_timer.timeout.connect(self._reenable_gc)
         self._last_booster_notify_ms = 0.0  # throttle ImageSliceBooster
 
@@ -188,9 +198,18 @@ class VTKWidget(QVTKRenderWindowInteractor):
         """Re-enable garbage collection after scroll burst ends."""
         if self._gc_suppressed:
             self._gc_suppressed = False
+            # Restore original GC thresholds before re-enabling.
+            if self._gc_saved_thresholds is not None:
+                try:
+                    gc.set_threshold(*self._gc_saved_thresholds)
+                except Exception:
+                    pass
+                self._gc_saved_thresholds = None
             gc.enable()
-            # Soft gen-0 collect only — fast (~0.1ms) but prevents buildup
-            gc.collect(0)
+            # v2.2.3.3.0: Do NOT call gc.collect(0) here.
+            # On heavy volumes (270MB+), gen-0 collect graduates enough objects
+            # to trigger automatic gen-1/gen-2 collections (300-474ms pauses).
+            # Just re-enable and let Python GC run naturally at next allocation.
 
     def _should_log_timing(self, duration_ms: float, stage: str) -> bool:
         """Rate-limit very high-frequency timing logs while keeping slow spikes.
@@ -1016,6 +1035,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self._last_booster_notify_ms = 0.0
             if self._gc_suppressed:
                 self._gc_suppressed = False
+                if self._gc_saved_thresholds is not None:
+                    try:
+                        gc.set_threshold(*self._gc_saved_thresholds)
+                    except Exception:
+                        pass
+                    self._gc_saved_thresholds = None
                 gc.enable()
         except Exception:
             pass
@@ -1279,8 +1304,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # Gives Qt event loop breathing room proportional to render cost.
             _frame_ms = max(1.0, _t_end - _t_start)
             self._adaptive_frame_gap_ms = max(4.0, min(50.0, _frame_ms * 0.25))
-            # v2.2.3.2.9: Schedule GC re-enable 300ms after last render.
-            # Restarts on every render so GC stays suppressed during the burst.
+            # v2.2.3.2.9/v2.2.3.3.0: Schedule GC re-enable 500ms after last
+            # render.  Restarts on every render so GC stays suppressed during
+            # the burst.  500ms margin prevents premature re-enable during
+            # natural scroll pauses on heavy volumes.
             self._gc_reenable_timer.start()
         # Re-arm if more scroll events queued during the render block
         if self._pending_wheel_slice is not None:
@@ -1484,9 +1511,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # ✅ ALWAYS log to confirm this method is being called
         t_event_receive = now_ms()
         self._last_scroll_event_ms = t_event_receive
-        # v2.2.3.2.9: Suppress GC during scroll burst to eliminate ~300ms
-        # gen-1/gen-2 collection pauses that cause visible stutters.
+        # v2.2.3.2.9 / v2.2.3.3.0: Suppress GC during scroll burst.
+        # Also raise gen-1/gen-2 thresholds to prevent cascading collections
+        # if GC is momentarily re-enabled between bursts.
         if not self._gc_suppressed and gc.isenabled():
+            self._gc_saved_thresholds = gc.get_threshold()
+            gc.set_threshold(700, 50, 50)  # 5× less frequent gen-1/gen-2
             gc.disable()
             self._gc_suppressed = True
         # v2.2.3.2.8: Throttle notify_viewer_interaction to once per 500ms
