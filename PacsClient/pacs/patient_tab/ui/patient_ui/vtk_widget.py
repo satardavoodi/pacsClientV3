@@ -146,6 +146,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._stale_scroll_skip_count = 0  # counts stale-drain skips for throttled logging
         self._last_scroll_event_ms = None
         self._timing_log_counter = 0
+        # v2.2.3.4.0: Wheel-scroll fast-path flag.  When True, set_slice()
+        # skips non-essential post-processing (camera zoom save/restore,
+        # interactor-style update) that add 3-5ms per frame and are only
+        # meaningful for non-scroll slice changes (slider click, etc.).
+        self._in_wheel_scroll = False
+        self._last_lock_sync_ms = 0.0  # throttle Lock Sync during scroll
         # v2.2.3.3.1: Cache env-var settings for per-frame timing checks.
         # os.getenv is slow on Windows (~3-5ms per call); calling it 2× per
         # frame in _should_log_timing adds 6-10ms overhead to every scroll.
@@ -1302,7 +1308,13 @@ class VTKWidget(QVTKRenderWindowInteractor):
             _t_start = now_ms()
             self._last_scroll_event_ms = _t_start
             logger.debug(f"[SCROLL_COALESCE] flush slice={idx}")
-            self.set_slice(idx)
+            # v2.2.3.4.0: Flag wheel-scroll context so set_slice() skips
+            # non-essential overhead (camera save/restore, style.update_slice).
+            self._in_wheel_scroll = True
+            try:
+                self.set_slice(idx)
+            finally:
+                self._in_wheel_scroll = False
             _t_end = now_ms()
             self._last_render_end_ms = _t_end
             # Adaptive gap: 25% of frame time, clamped [4ms, 50ms].
@@ -1381,17 +1393,24 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self._stale_scroll_skip_count = 0
 
         # ✅ CRITICAL: Save current camera zoom before slice change
+        # v2.2.3.4.0: Skip during wheel scroll — the wheel event is consumed
+        # (event.accept) so VTK's built-in zoom is blocked.  Camera save/
+        # restore costs ~3-5ms per frame (VTK → Python round-trips + comparison).
+        # The _protected_parallel_scale remains valid from the last non-scroll
+        # set_slice or explicit user zoom, so skipping here is safe.
+        _wheel = getattr(self, '_in_wheel_scroll', False)
         saved_scale = None
-        try:
-            camera = self.image_viewer.renderer.GetActiveCamera()
-            if camera:
-                saved_scale = camera.GetParallelScale()
-                # Update protected scale only if not already set or if changed by user zoom
-                if self._protected_parallel_scale is None or abs(saved_scale - self._protected_parallel_scale) > 0.01:
-                    self._protected_parallel_scale = saved_scale
-                logger.debug(f"[set_slice] Protected scale={self._protected_parallel_scale}")
-        except:
-            pass
+        if not _wheel:
+            try:
+                camera = self.image_viewer.renderer.GetActiveCamera()
+                if camera:
+                    saved_scale = camera.GetParallelScale()
+                    # Update protected scale only if not already set or if changed by user zoom
+                    if self._protected_parallel_scale is None or abs(saved_scale - self._protected_parallel_scale) > 0.01:
+                        self._protected_parallel_scale = saved_scale
+                    logger.debug(f"[set_slice] Protected scale={self._protected_parallel_scale}")
+            except:
+                pass
         
         t_slice_apply = now_ms()
         self.image_viewer.set_slice(slice_index)
@@ -1413,49 +1432,64 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # floating-point drift.  Tolerance widened from 0.001 → 0.05 so minor
         # per-frame FP jitter in SetSlice() no longer fires a second Render()
         # on every scroll (was measured as 60–80ms extra per scroll in Mode B).
-        try:
-            camera = self.image_viewer.renderer.GetActiveCamera()
-            if saved_scale is not None and camera:
-                current_scale = camera.GetParallelScale()
-                _ref_scale = (
-                    self._protected_parallel_scale
-                    if self._protected_parallel_scale is not None
-                    else saved_scale
-                )
-                # Only re-render if zoom deviated meaningfully from user's intended scale
-                if abs(current_scale - _ref_scale) > 0.05:
-                    logger.warning(f"[set_slice] Zoom change detected! scale={current_scale:.4f} → reverting to {_ref_scale:.4f}")
-                    camera.SetParallelScale(_ref_scale)
-                    self._protected_parallel_scale = _ref_scale
-                    t_render = now_ms()
-                    self.image_viewer.Render()
-                    render_ms = max(0.0, now_ms() - t_render)
-                    if self._should_log_timing(render_ms, "render_complete"):
-                        log_stage_timing(
-                            logger,
-                            component="viewer",
-                            function="VTKWidget.set_slice",
-                            stage="render_complete",
-                            start_ms=t_render,
-                        )
-        except:
-            pass
+        # v2.2.3.4.0: Skip during wheel scroll (same rationale as camera save).
+        if not _wheel:
+            try:
+                camera = self.image_viewer.renderer.GetActiveCamera()
+                if saved_scale is not None and camera:
+                    current_scale = camera.GetParallelScale()
+                    _ref_scale = (
+                        self._protected_parallel_scale
+                        if self._protected_parallel_scale is not None
+                        else saved_scale
+                    )
+                    # Only re-render if zoom deviated meaningfully from user's intended scale
+                    if abs(current_scale - _ref_scale) > 0.05:
+                        logger.warning(f"[set_slice] Zoom change detected! scale={current_scale:.4f} → reverting to {_ref_scale:.4f}")
+                        camera.SetParallelScale(_ref_scale)
+                        self._protected_parallel_scale = _ref_scale
+                        t_render = now_ms()
+                        self.image_viewer.Render()
+                        render_ms = max(0.0, now_ms() - t_render)
+                        if self._should_log_timing(render_ms, "render_complete"):
+                            log_stage_timing(
+                                logger,
+                                component="viewer",
+                                function="VTKWidget.set_slice",
+                                stage="render_complete",
+                                start_ms=t_render,
+                            )
+            except:
+                pass
 
         # Notify interactor style if it's a ruler style
-        try:
-            style = self.interactor.GetInteractorStyle()
-            if hasattr(style, 'update_slice'):
-                style.update_slice()
+        # v2.2.3.4.0: Skip during wheel scroll — ruler tools are not
+        # meaningfully updated during rapid scrolling and the VTK call +
+        # Python wrapper costs ~1ms per frame.
+        if not _wheel:
+            try:
+                style = self.interactor.GetInteractorStyle()
+                if hasattr(style, 'update_slice'):
+                    style.update_slice()
 
-        except Exception as e:
-            logger.debug(f"Error updating on slice change: {e}")
+            except Exception as e:
+                logger.debug(f"Error updating on slice change: {e}")
 
         self._update_overlay_extent()
 
         # Lock Sync callback — fires on EVERY slice change regardless of source
+        # v2.2.3.4.0: Throttle to once per 100ms during wheel scroll.
+        # _do_lock_sync() computes world-space coordinates and syncs ALL target
+        # viewers (including their Render).  At 10-15fps scroll rate, calling
+        # on every frame wastes 5-20ms/frame on work that is immediately
+        # superseded.  100ms spacing keeps target viewers visually tracked
+        # without saturating the event loop.
         if self._on_slice_changed_cb is not None:
             try:
-                self._on_slice_changed_cb(self)
+                _t_now = now_ms()
+                if not _wheel or (_t_now - self._last_lock_sync_ms >= 100.0):
+                    self._last_lock_sync_ms = _t_now
+                    self._on_slice_changed_cb(self)
             except Exception:
                 pass
 

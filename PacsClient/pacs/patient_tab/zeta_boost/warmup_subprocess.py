@@ -107,16 +107,23 @@ def _warmup_subprocess_main(
     )
     _log = logging.getLogger("warmup_subprocess")
 
-    # ── Set process priority to BELOW_NORMAL (Windows) ──
+    # ── Set process priority to IDLE (Windows) ──
+    # v2.2.3.4.0: Lowered from BELOW_NORMAL to IDLE.  During wheel scroll
+    # (the user's primary interaction mode), even BELOW_NORMAL causes
+    # memory-bus contention from ITK allocations that spikes the UI
+    # thread's SetSlice from 8-15ms up to 20-45ms.  IDLE priority lets
+    # the OS scheduler fully favour the viewer process; the warmup runs
+    # during natural scroll pauses and between frames.  The warmup is
+    # background cache-fill work, so taking longer is acceptable.
     try:
         if sys.platform == "win32":
             import ctypes
-            BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+            IDLE_PRIORITY_CLASS = 0x00000040
             ctypes.windll.kernel32.SetPriorityClass(
                 ctypes.windll.kernel32.GetCurrentProcess(),
-                BELOW_NORMAL_PRIORITY_CLASS,
+                IDLE_PRIORITY_CLASS,
             )
-            _log.info("Process priority set to BELOW_NORMAL")
+            _log.info("Process priority set to IDLE")
     except Exception as e:
         _log.warning(f"Could not set process priority: {e}")
 
