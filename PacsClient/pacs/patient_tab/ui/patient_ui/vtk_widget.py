@@ -146,6 +146,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._stale_scroll_skip_count = 0  # counts stale-drain skips for throttled logging
         self._last_scroll_event_ms = None
         self._timing_log_counter = 0
+        # v2.2.3.3.1: Cache env-var settings for per-frame timing checks.
+        # os.getenv is slow on Windows (~3-5ms per call); calling it 2× per
+        # frame in _should_log_timing adds 6-10ms overhead to every scroll.
+        self._timing_min_ms = float(os.getenv("AIPACS_VIEWER_TIMING_MIN_MS", "35") or "35")
+        self._timing_sample_every = max(1, int(os.getenv("AIPACS_VIEWER_TIMING_SAMPLE_EVERY", "25") or "25"))
         self._lag_probe_enabled = os.getenv("AIPACS_SCROLL_LAG_PROBE_ENABLED", "1") == "1"
         self._lag_probe_window_sec = max(3.0, float(os.getenv("AIPACS_SCROLL_LAG_PROBE_WINDOW_SEC", "12") or "12"))
         self._lag_probe_min_samples = max(20, int(os.getenv("AIPACS_SCROLL_LAG_PROBE_MIN_SAMPLES", "40") or "40"))
@@ -215,15 +220,14 @@ class VTKWidget(QVTKRenderWindowInteractor):
         """Rate-limit very high-frequency timing logs while keeping slow spikes.
 
         Always logs slow events and samples normal events every N calls.
+        v2.2.3.3.1: Uses cached env-var values (set in __init__) to avoid
+        per-frame os.getenv calls (~3-5ms each on Windows).
         """
-        min_ms = float(os.getenv("AIPACS_VIEWER_TIMING_MIN_MS", "35") or "35")
-        sample_every = int(os.getenv("AIPACS_VIEWER_TIMING_SAMPLE_EVERY", "25") or "25")
-        sample_every = max(1, sample_every)
         self._timing_log_counter += 1
 
-        if duration_ms >= min_ms:
+        if duration_ms >= self._timing_min_ms:
             return True
-        if stage in ("set_slice_total", "scroll_event_total") and (self._timing_log_counter % sample_every == 0):
+        if stage in ("set_slice_total", "scroll_event_total") and (self._timing_log_counter % self._timing_sample_every == 0):
             return True
         return False
 
@@ -1592,8 +1596,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self.slider.setValue(next_slice)   # update UI position without triggering set_slice
             self.slider.blockSignals(False)
 
+            _since_last = t_event_receive - self._last_render_end_ms
             if not self._wheel_coalesce_timer.isActive():
-                _since_last = t_event_receive - self._last_render_end_ms
                 if _since_last >= self._adaptive_frame_gap_ms:
                     # Enough time since last render → render immediately (0ms latency)
                     self._flush_pending_wheel_slice()
@@ -1602,7 +1606,16 @@ class VTKWidget(QVTKRenderWindowInteractor):
                     _remaining = max(1, int(self._adaptive_frame_gap_ms - _since_last))
                     self._wheel_coalesce_timer.setInterval(_remaining)
                     self._wheel_coalesce_timer.start()
-            # else: timer already running, will fire and render the latest pending
+            elif _since_last >= self._adaptive_frame_gap_ms:
+                # v2.2.3.3.1: Timer is running but event-loop congestion
+                # (download signals, thumbnail updates, warmup results) has
+                # delayed the callback by 100-300ms.  The adaptive gap already
+                # expired, so bypass the timer and render immediately.
+                # Without this fix, the coalesce timer waits behind queued
+                # signals in the Qt event loop, limiting scroll to ~5fps
+                # during active downloads despite 30ms frame times.
+                self._wheel_coalesce_timer.stop()
+                self._flush_pending_wheel_slice()
 
             # v2.2.3.2.8: Skip per-event ruler/border/camera checks.
             # set_slice() already handles ruler update (style.update_slice),
