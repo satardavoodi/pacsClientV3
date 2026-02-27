@@ -1,6 +1,6 @@
 # Mode B Performance — Documentation Index
 
-**Version:** v2.2.3.2.2  
+**Version:** v2.2.3.2.9  
 **Updated:** 2026-02-27  
 **Status:** ✅ Active — see PERFORMANCE_STATUS.md for current snapshot
 

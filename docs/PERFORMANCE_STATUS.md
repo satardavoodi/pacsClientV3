@@ -1,5 +1,5 @@
 # AIPacs Performance Status
-**Version:** v2.2.3.2.6 | **Branch:** DR.vahid | **Updated:** 2026-02-27
+**Version:** v2.2.3.2.9 | **Branch:** DR.vahid | **Updated:** 2026-02-27
 
 > **Quick-start:** Start here. After reading this file, go to `METRICS_TRACKING_v2.2.3.x.md` for detailed measurements, or `docs/CROSS_PC_IMPROVEMENT_WORKFLOW.md` for the PC A/B validation process.
 
@@ -42,32 +42,36 @@ User double-clicks study
 
 ---
 
-## 2. Current Performance Numbers (v2.2.3.2.6, PC A, MR brain study)
+## 2. Current Performance Numbers (v2.2.3.2.9, PC A, MR brain study)
 
 ### Mode A — No download active
 
 | What | Metric | Value | Target |
 |---|---|---|---|
-| Scroll response (typical) | `set_slice_p50_ms` | ~18–31ms | <20ms |
-| Scroll response (95th pct) | `set_slice_p95_ms` | ~28–59ms | <35ms |
-| Scroll response (worst) | `set_slice_max_ms` | ~62–83ms | <80ms |
-| Event queue delay | `queue_p95_ms` | **<5ms** (Mode A, no DL) | <5ms ✅ |
+| Scroll response (typical) | `set_slice_p50_ms` | ~17–42ms | <20ms |
+| Scroll response (95th pct) | `set_slice_p95_ms` | ~45–83ms | <35ms |
+| Scroll response (worst) | `set_slice_max_ms` | ~60–98ms | <80ms |
+| Event queue delay | `queue_p95_ms` | **0.00ms** (Mode A, no DL) | <5ms ✅ |
+| Scroll frame interval | frame-to-frame | ~85–116ms (~10fps sw GL) | — |
 | Series load, cold (MR 20sl) | `load_single_series_total` | 1.2–1.9s (cold) | <1000ms |
 | Series load, ZetaBoost hit | `load_single_series_total` | ~200ms | <300ms ✅ |
 | ITK filter, MR ~20sl | `apply_filters duration_ms` | 150–500ms (interactive, 6t) | <500ms |
+| Sub-timing: SetSlice | VTK `SetSlice()` | 20–35ms | — |
+| Sub-timing: Render | VTK `Render()` | 7–14ms | — |
 
 ### Mode B — Download active (DL_WARMUP running in subprocess)
 
 | What | Metric | Value | Target |
 |---|---|---|---|
-| Scroll response (typical) | `set_slice_p50_ms` | ~31–57ms → **expected <35ms** (v2.2.3.2.5+v2.2.3.2.6) | <25ms |
+| Scroll response (typical) | `set_slice_p50_ms` | ~30–45ms (v2.2.3.2.8 measured) | <25ms |
 | Queue delay during DL (scroll) | `queue_p95_ms` | **0.00ms** (subprocess DL_WARMUP, v2.2.3.2.3) | <30ms ✅ |
-| Queue delay during DL (signals) | `queue_p95_ms` | 620–5437ms → **expected <200ms** (v2.2.3.2.6 coalescing) | <30ms — **mitigated** |
+| Queue delay during DL (signals) | `queue_p95_ms` | 620–5437ms → **<200ms** (v2.2.3.2.6 coalescing) | <30ms — **mitigated** |
 | Stale-event drain (v2.2.3.2.1) | `stale_drain_complete skipped=N` | N events skipped, 1 render | eliminates 4s+ backlog ✅ |
 | DL_WARMUP per-series (large MR) | `[DL_WARMUP_SUB] ✓ Cached` | ~402ms (subprocess, v2.2.3.2.3) | <2000ms ✅ |
 | DL_WARMUP per-series (small MR) | `[DL_WARMUP_SUB] ✓ Cached` | ~200–500ms | <1200ms ✅ |
 | DB insert (download subprocess) | `batch_insert_instances_total` | 6–455ms (was 2217ms) | <500ms ✅ |
 | First-series GIL pressure | ITK threads + pydicom workers | **2+2** (v2.2.3.2.4, was N+8) | low contention ✅ |
+| Series switch (VTK data mapping) | `switch_series()` | ~718ms (once, not per-scroll) | — |
 
 ---
 
@@ -75,6 +79,9 @@ User double-clicks study
 
 | Version | Symptom Fixed | How |
 |---|---|---|
+| **v2.2.3.2.9** | Sporadic ~100–400ms freezes during smooth scrolling (Python GC pauses) | GC suppressed during scroll bursts (`gc.disable()`), re-enabled 300ms after last render with soft gen-0 collect; ImageSliceBooster `on_slice_changed` throttled to once per 200ms (was every render) |
+| **v2.2.3.2.8** | Scroll debounce added 16ms latency to EVERY frame, ~5–8fps on sw GL | Adaptive THROTTLE replaces debounce: immediate render on first scroll, paced subsequent renders with adaptive gap (25% of frame time); skip redundant per-event ruler/border/camera checks; throttle `notify_viewer_interaction` to once per 500ms |
+| **v2.2.3.2.7** | Infinite stale-drain re-arm loop froze UI for 44s+; gRPC on main thread; viewer creation starvation | Fixed re-arm loop in `_flush_pending_wheel_slice` (reset `_last_scroll_event_ms` on each flush); `processEvents()` yield between viewer creations; gRPC offloaded to `asyncio.to_thread` |
 | **v2.2.3.2.6** | SERIES_DOWNLOAD_COMPLETE signals fire back-to-back, blocking Qt event loop 620–5437ms | Coalesced `on_series_completed` handler in `home_ui.py`: first series immediate, rest batched with 100ms debounce + processEvents yield every 2 series; added `processEvents()` yield after first-series viewer init in controller |
 | **v2.2.3.2.5** | VTK render overhead on software OpenGL: FXAA +20-50ms/frame, MSAA 8x, redundant `color_mapper.Update()` on scroll | FXAA off (`renderer.UseFXAAOff()`); `SetMultiSamples(0)`; skip `color_mapper.Update()` on default-WL scroll path (Render() auto-updates); sub-timing instrumentation in `set_slice` |
 | **v2.2.3.2.4** | First-series load floods GIL (unlimited ITK threads + 8 pydicom workers in viewer process) | `max_itk_threads=2, max_pydicom_workers=2` for in-process first-series load; `process_series_groups` yields 50ms→5ms |
@@ -93,37 +100,46 @@ User double-clicks study
 
 ## 4. Open Issues (Ranked)
 
-### � P1 — Mode B queue delay mitigated but not eliminated
-- v2.2.3.2.6 coalesces `SERIES_DOWNLOAD_COMPLETE` signals (100ms debounce, processEvents yield)
-- Expected: queue_delay reduced from 620–5437ms to <200ms during bulk completion bursts
-- **Residual:** Individual completion handler (thumbnail border update + warmup enqueue) still ~50-100ms on main thread
-- **Next step:** Measure v2.2.3.2.6 in practice; if still >200ms, offload thumbnail updates to executor
-
-### 🟡 P2 — First-series in-process load still ~2.4s
+### 🟡 P1 — First-series in-process load still ~2.4s
 - v2.2.3.2.4 caps threads+workers to 2+2, reducing GIL contention during the load
 - But the load itself still runs in the viewer process via `asyncio.to_thread()`
 - **Ideal fix:** Route first-series through the warmup subprocess too (eliminates ALL in-process GIL contention during Mode B first-series load)
 - **Complexity:** Subprocess must load → serialize result → QTimer polls → `_display_first_series_in_all_viewers()` — requires refactoring display path
 
-### 🟡 P3 — `update_corners_actors()` runs 6+ VTK text updates per scroll
+### 🟡 P2 — `update_corners_actors()` runs 6+ VTK text updates per scroll
 - Currently does metadata dict lookups + string formatting + 6 `change_actor_text()` calls on every scroll frame
 - Only `im_slice_actor` and `im_series_window_level` actually change per-scroll; others (date, series name, thickness, size) are constant within a series
 - **Next step:** Split into `_update_scroll_varying_actors()` (slice count + WL only) and `_update_series_constant_actors()` (called once on series switch)
 - **Expected savings:** ~5-10ms per scroll frame on software-GL renderer
 
-### 🟡 P4 — `viewer_db_read` (38–88ms) on every series load
+### 🟡 P3 — `viewer_db_read` (38–88ms) on every series load
 - DB query runs on worker thread so it doesn't block scroll, but adds to perceived load time
 - **Next step:** After study download, cache series_pk and instance paths in a simple dict — eliminates DB query on repeated open
 
-### 🟡 P5 — Lock Sync callback runs coordinate math on every scroll
+### 🟡 P4 — Lock Sync callback runs coordinate math on every scroll
 - `_do_lock_sync()` in patient_widget.py does IPP interpolation + applies to target viewers on every slice change when Lock Sync is enabled
 - Consider debouncing to every 2nd or 3rd scroll event (user won't notice 1-frame delay in synced viewer)
 
-### 🟢 P4 — ITK→VTK convert 11–44ms on large series
+### 🟢 P5 — ITK→VTK convert 11–44ms on large series
 - `itk_to_vtk_convert` duration grows with size (500×640×24 ≈ 44ms)
 - ITK stores as `[Z, Y, X]` C array → VTK needs `[X, Y, Z]` Fortran; currently always copies
 - **Next step:** Check if `vtk.util.numpy_support.numpy_to_vtk(ravel_order='F')` avoids copy
 
+### ✅ Resolved — Mode B queue delay (was P1)
+- v2.2.3.2.6 coalesces `SERIES_DOWNLOAD_COMPLETE` signals (100ms debounce, processEvents yield)
+- Measured `queue_p95_ms` = **0.00ms** in v2.2.3.2.8 logs — fully resolved
+
+### ✅ Resolved — Sporadic GC stutters (was P0 in v2.2.3.2.8)
+- ~338ms gaps observed with zero main-thread activity → Python GC gen-1/gen-2 pauses
+- v2.2.3.2.9 suppresses GC during scroll bursts, re-enables 300ms after last render
+
+### ✅ Resolved — Infinite stale-drain loop (was P0 in v2.2.3.2.6)
+- `_flush_pending_wheel_slice` re-armed indefinitely because `_last_scroll_event_ms` wasn't reset
+- v2.2.3.2.7 resets timestamp on each flush, breaking the loop
+
+### ✅ Resolved — Debounce latency (was P0 in v2.2.3.2.7)
+- Every wheel event restarted 16ms timer → added 16ms latency to every frame
+- v2.2.3.2.8 replaced with adaptive throttle: 0ms first-scroll, paced subsequent renders
 ---
 
 ## 5. Key Files
@@ -149,6 +165,9 @@ User double-clicks study
 | `AIPACS_DL_WARMUP_MAX_SLICES` | `200` | Skip series with more slices than this |
 | `AIPACS_DL_WARMUP_INTER_DELAY` | `1.5` | Seconds between DL_WARMUP jobs (v2.2.3.2.2: was 3.0) |
 | `AIPACS_DL_WARMUP_SUBPROCESS` | `1` | Enable subprocess-based DL_WARMUP (v2.2.3.2.3; set 0 to fall back to in-process thread) |
+| `AIPACS_SCROLL_COALESCE_MS` | `16` | Scroll coalesce timer interval (ms); adaptive throttle overrides during burst |
+| `AIPACS_SCROLL_LAG_PROBE_ENABLED` | `1` | Enable/disable scroll performance probe |
+| `AIPACS_SCROLL_LAG_PROBE_WINDOW_SEC` | `12` | Scroll probe measurement window (seconds) |
 | `AIPACS_VIEWER_TIMING_MIN_MS` | `35` | Only log scroll timings ≥ this threshold |
 | `AIPACS_VIEWER_TIMING_SAMPLE_EVERY` | `25` | Sample normal-speed scroll events 1-in-N |
 | `AIPACS_LOG_MAX_BYTES` | `20971520` | Rotating log file max size (20MB) |

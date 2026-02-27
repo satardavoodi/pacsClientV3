@@ -194,6 +194,112 @@
 
 ---
 
+## Session 2026-02-27 (night) — Scroll Optimization Sprint v2.2.3.2.7–v2.2.3.2.9
+
+### v2.2.3.2.7 — Fixed infinite stale-drain re-arm loop
+
+**Data Observed (post v2.2.3.2.6 test):**
+
+| Stage | Measured | Problem |
+|---|---|---|
+| UI freeze on scroll | **44,000ms** (44 seconds) | `_flush_pending_wheel_slice` re-armed indefinitely |
+| Root cause | `_last_scroll_event_ms` never reset | Stale-drain guard always saw "stale" → skipped render → re-armed timer → infinite loop |
+| Main-thread starvation | Viewer creation blocked | No `processEvents()` between creating multiple VTK viewers |
+| gRPC on main thread | Synchronous `authorize_user` | Blocked event loop during login |
+
+**Fixes applied:**
+1. `_flush_pending_wheel_slice`: Reset `_last_scroll_event_ms = now_ms()` on each flush — breaks infinite re-arm
+2. `processEvents()` yield between viewer creations in controller
+3. gRPC `authorize_user` offloaded to `asyncio.to_thread()`
+
+**Result:** 44s freeze eliminated. Scrolling now ~8fps on software GL.
+
+**Commit:** `8fb6629`
+
+---
+
+### v2.2.3.2.8 — Adaptive throttle replaces debounce (~2x frame rate)
+
+**Data Observed (post v2.2.3.2.7 test, user: "better but there is some small lags"):**
+
+| Stage | Measured | Problem |
+|---|---|---|
+| `scroll_probe p50` | 42.85ms | Acceptable |
+| `scroll_probe p95` | 82.85ms | Elevated |
+| `queue_p95_ms` | **0.00ms** | ✅ Stale drain fixed |
+| Frame interval | 125–237ms (5–8fps) | Debounce timer restarts on every event → 16ms latency per frame |
+| Per-event overhead | Ruler update, border check, camera save | Redundant work on each wheelEvent (10–15/sec) |
+| `notify_viewer_interaction` | Called per-event | Creates QTimer.singleShot + toggles ZetaBoost pausing 15x/sec |
+
+**Fixes applied:**
+1. **Adaptive THROTTLE** replaces debounce: render immediately on first scroll after idle, pace subsequent renders with adaptive gap (25% of frame time, clamped [4ms, 50ms])
+2. **Skip per-event overhead**: Removed ruler update, border check, camera save from `wheelEvent` (these run in `set_slice` anyway)
+3. **Throttle `notify_viewer_interaction`** to once per 500ms (was per-event)
+
+**Result:** User reports "great its much better we have few lag". Measured:
+- `set_slice_total`: 17–60ms, mostly 40–58ms (was 30–98ms)
+- Frame interval: ~85–116ms (~10fps, was 125–237ms / 5–8fps)
+- **~2x frame rate improvement**
+
+**Commit:** `e34c6b1`
+
+---
+
+### v2.2.3.2.9 — GC suppression during scroll + booster throttle
+
+**Data Observed (post v2.2.3.2.8 test, user: "great its much better we have few lag"):**
+
+| Stage | Measured | Problem |
+|---|---|---|
+| Frame intervals (typical) | 85–116ms (~10fps) | ✅ Consistently smooth |
+| Frame interval (sporadic gap) | **338ms** (04:26:33.536→33.926) | Zero main-thread activity in logs → **Python GC pause** |
+| `set_slice_total` | 17–60ms | Good for sw GL |
+| Sub-timing: SetSlice | 20–35ms | VTK pipeline baseline |
+| Sub-timing: Render | 7–14ms | Draw call baseline |
+| ImageSliceBooster | Called per-render | Prefetch window re-centered every frame during rapid scroll |
+| Series switch (203) | 718ms | VTK data mapping — one-time cost, not per-scroll |
+| `_load_single_series_on_demand` | 5746ms (background) | asyncio.to_thread — does NOT block main thread |
+
+**Analysis:**
+- 338ms gap with zero main-thread log entries = classic Python GC gen-1/gen-2 pause
+- GC can collect 100–400ms worth of cyclic references when gen counts reach threshold
+- During scroll at 10fps, ~10 VTK/numpy objects created per second → triggers thresholds
+- ImageSliceBooster.on_slice_changed called per-render wastes CPU scheduling prefetch that's immediately invalidated
+
+**Fixes applied:**
+1. **GC suppression during scroll bursts:**
+   - `gc.disable()` on first `wheelEvent` of a burst
+   - `_gc_reenable_timer` (QTimer, 300ms, singleShot) restarts after every render
+   - When timer fires (300ms idle): `gc.enable()` + `gc.collect(0)` (gen-0 only, ~0.1ms)
+   - `switch_series` also re-enables GC to avoid state leaks
+2. **Throttle ImageSliceBooster notification:**
+   - `on_slice_changed` now called at most once per 200ms (was every render)
+   - At 10fps, 4 out of 5 calls were wasted (prefetch window immediately invalidated)
+
+**Expected:** Eliminates random 100–400ms GC-induced stutters. Reduces per-frame overhead from booster.
+
+**Commit:** `495a61a`
+
+---
+
+## Open Questions for Next Session (post v2.2.3.2.9)
+
+1. **Does v2.2.3.2.9 actually eliminate the sporadic ~338ms gaps?**
+   Run scroll test for 30+ seconds, check for gaps >200ms in logs.
+
+2. **Can `update_corners_actors()` be split into scroll-varying vs series-constant parts?**
+   Only `im_slice_actor` (slice count) and `im_series_window_level` (WL) change per-scroll.
+
+3. **Should first-series also route through subprocess?**
+   Would eliminate ALL in-process GIL contention in Mode B.
+
+4. **Does Lock Sync `_do_lock_sync()` need debouncing?**
+   Runs coordinate math on every scroll event.
+
+5. **What still causes 38–88ms `viewer_db_read` per series load?**
+
+---
+
 ## Rollback Notes
 
 If any v2.2.3.2.x change causes regression:
@@ -213,3 +319,6 @@ If any v2.2.3.2.x change causes regression:
 | DL_WARMUP threads=2 causes scroll spikes (unlikely with subprocess) | Set `max_itk_threads=1` in subprocess config |
 | max_parallel_loads=2 causes overshooting | Set `max_parallel_loads=1` in the tier config block (~line 420) |
 | Inter-delay 1.5s too aggressive | Set `AIPACS_DL_WARMUP_INTER_DELAY=3.0` env var (no code change needed) |
+| GC suppression leaks memory | Remove `gc.disable()` from `wheelEvent` in vtk_widget.py; delete `_gc_reenable_timer` setup from `__init__` |
+| Adaptive throttle skips frames | Set `AIPACS_SCROLL_COALESCE_MS=16` and revert `wheelEvent` to debounce pattern (restart timer on every event) |
+| Booster throttle causes stale prefetch | Remove `_last_booster_notify_ms` guard in `set_slice` — call `on_slice_changed` on every render |
