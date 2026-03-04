@@ -373,23 +373,32 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
             # step = 1 if dy > 0 else -1 if dy < 0 else 0  # determine increase/decrease slice
             step = round(dy / basic_slice_change)  # determine increase/decrease slice
 
-            next_slice = self.image_viewer.GetSlice() + self.image_viewer.skip_slices - step
+            base_slice = self.image_viewer.GetSlice() + self.image_viewer.skip_slices
+            if hasattr(self, 'slider') and self.slider is not None:
+                try:
+                    base_slice = int(self.slider.value())
+                except Exception:
+                    pass
+            next_slice = int(base_slice) - step
 
             if 0 <= next_slice < max_slice:  # if slice valid
-                if hasattr(self, 'slider') and self.slider is not None:
-                    # slider.setValue triggers on_slider_value_changed →
-                    # vtk_widget.set_slice → image_viewer.set_slice (which
-                    # already calls Render).  No extra Render needed.
-                    self.slider.setValue(next_slice)
-                else:
-                    try:
-                        vtk_widget = getattr(self.image_viewer, 'vtk_widget', None)
-                        if vtk_widget is not None and hasattr(vtk_widget, 'set_slice'):
-                            vtk_widget.set_slice(next_slice)
-                        else:
-                            self.image_viewer.set_slice(next_slice)
-                    except Exception:
-                        return
+                try:
+                    vtk_widget = getattr(self.image_viewer, 'vtk_widget', None)
+                    if vtk_widget is not None and hasattr(vtk_widget, 'queue_interactive_slice_target'):
+                        direction = 1 if int(next_slice) > int(base_slice) else -1
+                        vtk_widget.queue_interactive_slice_target(
+                            slice_index=int(next_slice),
+                            source='stack_drag',
+                            direction=int(direction),
+                        )
+                    elif hasattr(self, 'slider') and self.slider is not None:
+                        self.slider.setValue(next_slice)
+                    elif vtk_widget is not None and hasattr(vtk_widget, 'set_slice'):
+                        vtk_widget.set_slice(next_slice)
+                    else:
+                        self.image_viewer.set_slice(next_slice)
+                except Exception:
+                    return
 
             # v2.2.3.3.4: Removed unconditional Render() that was here.
             # The slider path fires on_slider_value_changed synchronously,

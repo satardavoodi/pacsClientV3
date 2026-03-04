@@ -650,8 +650,13 @@ def apply_filters(
         return base
 
     # ------------------------------------------------------------------
-    # Default filter configuration (v2.2.3.1.5 — PooyanPacs-style, clamped)
+    # Default filter configuration (v2.2.3.4.1 — PooyanPacs OpenCV mode)
     # ------------------------------------------------------------------
+    # v2.2.3.4.1: Added "pooyan_opencv" stage — exact port of PooyanPacs C#
+    # ``ImageFilter.FilterCenter`` (GaussianBlur + AddWeighted unsharp mask).
+    # When enabled, replaces the ITK-based unsharp mask with an OpenCV
+    # pipeline that is mathematically identical to the C# version.
+    # This ensures image quality is consistent with PooyanPacs.
     DEFAULT_FILTERS = {
         "MR": {
             "enabled": True,
@@ -661,16 +666,24 @@ def apply_filters(
                 "sigma": 0.25,
                 "mild_sigma": 0.30,
             },
-            # v2.2.3.1.5: Unsharp mask with clamping.  Amount reduced from
-            # 0.40 to 0.25 because 16-bit data has sharper edge transitions
-            # than PooyanPacs's 8-bit images; 0.25 on 16-bit gives similar
-            # visual effect as 0.40 on 8-bit.
+            # v2.2.3.1.5: ITK unsharp mask — NOW DISABLED by default in
+            # favour of "pooyan_opencv" which gives exact C# parity.
             "unsharp_mask": {
-                "enabled": True,
+                "enabled": False,
                 "sigma": 1.0,
                 "amount": 0.25,
                 "mild_sigma": 1.0,
                 "mild_amount": 0.20,
+            },
+            # v2.2.3.4.1: PooyanPacs-exact OpenCV filter stage.
+            # Params match C# DisplayRenderOptions defaults:
+            #   sigmaX=1.0, alpha=1.4, beta=-0.5
+            "pooyan_opencv": {
+                "enabled": True,
+                "sigma_x": 1.0,
+                "alpha": 1.4,
+                "beta": -0.5,
+                "invert": False,
             },
             # Legacy keys retained for JSON backward compatibility — disabled by default.
             "multiscale_sharpening": {"enabled": False},
@@ -684,6 +697,14 @@ def apply_filters(
                 "enabled": True,
                 "sigma": 0.25,
                 "mild_sigma": 0.30,
+            },
+            # v2.2.3.4.1: PooyanPacs-exact OpenCV filter for CT too.
+            "pooyan_opencv": {
+                "enabled": True,
+                "sigma_x": 1.0,
+                "alpha": 1.4,
+                "beta": -0.5,
+                "invert": False,
             },
         },
     }
@@ -863,6 +884,65 @@ def apply_filters(
             result.CopyInformation(itk_image)
             itk_image = result
             del sharpened_arr  # Free memory early
+
+    # ------------------------------------------------------------------
+    # PooyanPacs-exact OpenCV filter (v2.2.3.4.1)
+    # Applies the identical GaussianBlur + AddWeighted unsharp mask that
+    # PooyanPacs C# uses (ImageFilter.FilterCenter / OpenCvSharp).
+    # Works slice-by-slice on uint8 (matching C# 8-bit BitmapSource path).
+    # ------------------------------------------------------------------
+    opencv_cfg = modality_settings.get("pooyan_opencv", {})
+    if opencv_cfg.get("enabled", False):
+        try:
+            from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import (
+                PooyanFilterParams,
+                apply_pooyan_opencv_to_sitk,
+            )
+
+            _ocv_params = PooyanFilterParams(
+                sigma_x=float(opencv_cfg.get("sigma_x", 1.0)),
+                alpha=float(opencv_cfg.get("alpha", 1.4)),
+                beta=float(opencv_cfg.get("beta", -0.5)),
+                enabled=True,
+                preserve_dimensions=True,  # never change volume geometry
+                invert=bool(opencv_cfg.get("invert", False)),
+            )
+
+            # Extract window/level from first instance metadata for normalisation
+            _wc, _ww = None, None
+            try:
+                instances = metadata.get("instances", [])
+                if instances:
+                    _wc = instances[0].get("window_center")
+                    _ww = instances[0].get("window_width")
+                    if _wc is not None:
+                        _wc = float(_wc)
+                    if _ww is not None:
+                        _ww = float(_ww)
+            except Exception:
+                pass
+
+            _ocv_t0 = time.time()
+            itk_image = apply_pooyan_opencv_to_sitk(
+                itk_image, _ocv_params, window_center=_wc, window_width=_ww,
+            )
+            _ocv_dt = (time.time() - _ocv_t0) * 1000.0
+            logger.info(
+                "viewer-data stage=pooyan_opencv mod=%s slices=%d duration_ms=%.0f",
+                modality, nz, _ocv_dt,
+                extra={
+                    "component": "viewer",
+                    "function": "image_filters.apply_filters",
+                    "stage": "pooyan_opencv",
+                },
+            )
+        except ImportError:
+            logger.warning(
+                "PooyanPacs OpenCV filter requested but opencv_filter_pipeline module "
+                "not available (is opencv-python-headless installed?)"
+            )
+        except Exception as _ocv_err:
+            logger.error("PooyanPacs OpenCV filter failed: %s", _ocv_err, exc_info=True)
 
     # ------------------------------------------------------------------
     # Cast back to original pixel type once — covers BOTH CT and MR paths.

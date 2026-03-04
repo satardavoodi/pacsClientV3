@@ -1816,6 +1816,15 @@ class PatientWidget(QWidget):
         except Exception as e:
             print(f"⚠️ Error applying modality grid config: {e}")
 
+    def apply_viewer_backend_config(self):
+        """Apply backend setting updates to already-open viewers."""
+        try:
+            if not getattr(self, "viewer_controller", None):
+                return
+            self.viewer_controller.apply_backend_setting_to_open_viewers()
+        except Exception as e:
+            print(f"Error applying viewer backend config: {e}")
+
     def init_grid_config():
         """فایل config اولیه را ایجاد می‌کند اگر وجود نداشته باشد"""
         if not GRID_CONFIG_PATH.exists():
@@ -2700,6 +2709,24 @@ class PatientWidget(QWidget):
             was_outside,
         )
 
+    @staticmethod
+    def _ensure_instances_sorted_for_geometry(viewer):
+        """Ensure metadata slice order matches geometric slice order."""
+        try:
+            metadata = getattr(viewer, "metadata", None)
+            if not isinstance(metadata, dict):
+                return
+            if metadata.get("_instances_geometry_sorted", False):
+                return
+            instances = metadata.get("instances")
+            if not isinstance(instances, list) or len(instances) <= 1:
+                metadata["_instances_geometry_sorted"] = True
+                return
+            metadata["instances"] = reference_line.rl_sort_instances_by_ipp(instances)
+            metadata["_instances_geometry_sorted"] = True
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     # DICOM-based sync mapping (consistent with reference_line.py)
     # ------------------------------------------------------------------
@@ -2723,6 +2750,8 @@ class PatientWidget(QWidget):
             -> target index -> VTK world (target)
         """
         from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import reference_line
+        PatientWidget._ensure_instances_sorted_for_geometry(source_viewer)
+        PatientWidget._ensure_instances_sorted_for_geometry(target_viewer)
 
         # ---- source geometry ----
         src_img   = source_viewer.vtk_image_data
@@ -6574,6 +6603,7 @@ class PatientWidget(QWidget):
 
         # -------- 1) Source plane from DICOM (LPS) --------
         src_iv = self.selected_widget.image_viewer
+        self._ensure_instances_sorted_for_geometry(src_iv)
         src_slice = src_iv.GetSlice()
         try:
             src_inst = src_iv.metadata['instances'][src_slice]
@@ -6599,6 +6629,7 @@ class PatientWidget(QWidget):
             iv = getattr(vtk_widget, "image_viewer", None)
             if iv is None:
                 continue
+            self._ensure_instances_sorted_for_geometry(iv)
 
             # Skip drawing on the source viewer itself
             if vtk_widget is self.selected_widget:

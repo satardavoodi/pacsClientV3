@@ -167,6 +167,8 @@ class HomePanelWidget(QWidget):
             widget = tab_data.get("widget")
             if widget and hasattr(widget, "apply_modality_grid_config"):
                 widget.apply_modality_grid_config()
+            if widget and hasattr(widget, "apply_viewer_backend_config"):
+                widget.apply_viewer_backend_config()
 
     def show_loading_message(self):
         if self.loading_message is None:

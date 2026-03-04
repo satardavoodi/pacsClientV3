@@ -2,10 +2,40 @@ import sys
 import os
 import multiprocessing
 import logging
+import subprocess
+import importlib.util
 
 # Required for multiprocessing.Process with PyInstaller frozen executables
 # (spawn start-method on Windows): must be called before any other code.
 multiprocessing.freeze_support()
+
+
+def _maybe_run_tests_and_exit() -> None:
+    """Allow test execution via application entrypoint.
+
+    Usage:
+      python main.py --run-tests
+      python main.py --run-tests tests/test_pydicom_backend_geometry.py -q
+    """
+    if "--run-tests" not in sys.argv:
+        return
+
+    arg_index = sys.argv.index("--run-tests")
+    pytest_args = sys.argv[arg_index + 1:] or ["tests/test_pydicom_backend_geometry.py"]
+
+    if importlib.util.find_spec("pytest") is None:
+        print("[TEST] pytest is not installed.")
+        print("[TEST] Install dev dependencies:")
+        print("       python -m pip install -r requirements-dev.txt")
+        sys.exit(2)
+
+    cmd = [sys.executable, "-m", "pytest", *pytest_args]
+    print(f"[TEST] Running: {' '.join(cmd)}")
+    rc = subprocess.call(cmd)
+    sys.exit(int(rc))
+
+
+_maybe_run_tests_and_exit()
 
 # ============================================================================
 # CRITICAL: Graphics/OpenGL Configuration MUST happen before any Qt/VTK imports

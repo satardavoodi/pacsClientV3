@@ -1,5 +1,6 @@
 from math import sqrt
 import sys
+import os
 
 import vtkmodules.all as vtk
 from PySide6.QtCore import QTimer
@@ -36,11 +37,12 @@ class ImageReslice(vtk.vtkImageReslice):  # for set orientation and return image
         self.metadata = metadata
         self.SetInputData(self.vtk_image_data)
         self.SetOutputDimensionality(3)  # output is 3d image
+        self._configure_output_from_input()
         # self.SetResliceAxesDirectionCosines(1, 0, 0, 0, -1, 0, 0, 0, 1)  # Roll 180 degrees (RAI)
 
         # self.apply_orientation()
         
-        # ✅ BALANCED: Use CUBIC interpolation (good quality + reasonable speed)
+        # âœ… BALANCED: Use CUBIC interpolation (good quality + reasonable speed)
         # Cubic is 3-5x faster than Sinc/Lanczos but maintains good visual quality
         self.SetInterpolationModeToCubic()  # Good balance between quality and speed
         
@@ -48,13 +50,31 @@ class ImageReslice(vtk.vtkImageReslice):  # for set orientation and return image
         self.OptimizationOn()  # Enable VTK optimizations
         self.SetAutoCropOutput(False)  # Disable auto-cropping for speed
         
-        # ⚡ CRITICAL: Update is expensive, so ensure it's called only once
+        # âڑ، CRITICAL: Update is expensive, so ensure it's called only once
         self.Update()
 
-    # v2.2.3.1.0: Removed apply_orientation() — empty stub (just pass), never called.
-    # v2.2.3.1.0: Removed flip_image_y() — dead code, only referenced in comments.
+    # v2.2.3.1.0: Removed apply_orientation() â€” empty stub (just pass), never called.
+    # v2.2.3.1.0: Removed flip_image_y() â€” dead code, only referenced in comments.
 
 
+
+    def _configure_output_from_input(self):
+        try:
+            if self.vtk_image_data is None:
+                return
+            dims = self.vtk_image_data.GetDimensions()
+            spacing = self.vtk_image_data.GetSpacing()
+            origin = self.vtk_image_data.GetOrigin()
+            if not dims or len(dims) < 3:
+                return
+            x_max = max(0, int(dims[0]) - 1)
+            y_max = max(0, int(dims[1]) - 1)
+            z_max = max(0, int(dims[2]) - 1)
+            self.SetOutputSpacing(float(spacing[0]), float(spacing[1]), float(spacing[2]))
+            self.SetOutputOrigin(float(origin[0]), float(origin[1]), float(origin[2]))
+            self.SetOutputExtent(0, x_max, 0, y_max, 0, z_max)
+        except Exception:
+            pass
 def display_upsample_xy(vtk_img, factor=1.0):
     try:
         s = time.time()
@@ -62,9 +82,9 @@ def display_upsample_xy(vtk_img, factor=1.0):
         res.SetInputData(vtk_img)
         res.SetAxisMagnificationFactor(0, factor)  # X
         res.SetAxisMagnificationFactor(1, factor)  # Y
-        res.SetAxisMagnificationFactor(2, 1.0)  # Z را دست نزن
+        res.SetAxisMagnificationFactor(2, 1.0)  # Z ط±ط§ ط¯ط³طھ ظ†ط²ظ†
         
-        # ✅ BALANCED: Use Cubic interpolation (good quality + reasonable speed)
+        # âœ… BALANCED: Use Cubic interpolation (good quality + reasonable speed)
         res.SetInterpolationModeToCubic()
         res.Update()
         
@@ -102,12 +122,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     # Shared cache for preprocessed display volumes across viewers.
     _global_preprocess_cache = {}
     _global_preprocess_cache_order = []
-    _global_preprocess_cache_sizes: dict = {}     # key → bytes (Phase 3D)
+    _global_preprocess_cache_sizes: dict = {}     # key â†’ bytes (Phase 3D)
     _global_preprocess_cache_total_bytes: int = 0  # running total (Phase 3D)
     _global_preprocess_cache_max = 8              # hard count cap (secondary guard)
     _global_preprocess_cache_max_slices = 160     # kept for compatibility
     # v2.2.3.1.7 Phase 3D: primary eviction limit in bytes (default 300 MB).
-    # Large studies (512×512×508 float32) are ~500 MB each; 300 MB keeps one
+    # Large studies (512أ—512أ—508 float32) are ~500 MB each; 300 MB keeps one
     # full study preprocessed without blowing up RAM on repeated series opens.
     _PREPROCESS_CACHE_MAX_BYTES: int = 300 * 1024 * 1024  # 300 MB
     _global_preprocess_cache_lock = threading.Lock()  # Thread safety for class-level cache
@@ -125,6 +145,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.vtk_widget = vtk_widget
         self.viewer_height = height
         self.flag_set_custom_window_level = False
+        self.last_wl_convert_ms = 0.0
         # self.flag_flipped = False
         self.color_mapper = None
         self.skip_slices = 0  # this helper for CombineViewer
@@ -173,6 +194,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # Performance optimization flags
         self._render_pending = False
         self._render_timer = None
+        self._last_fast_annotation_update_ms = 0.0
+        self._last_fast_overlay_sync_ms = 0.0
+        self._fast_corner_overlay_interval_ms = max(
+            40.0,
+            float(os.getenv("AIPACS_FAST_ANNOTATION_INTERVAL_MS", "110") or "110"),
+        )
 
         # self.run_test()
         self.SetRenderWindow(self.image_render_window)
@@ -216,7 +243,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         # Smooth zooming on the image actor
         self.GetImageActor().InterpolateOn()
-        # v2.2.3.2.5: FXAA OFF — the CPU-based post-processing anti-aliasing
+        # v2.2.3.2.5: FXAA OFF â€” the CPU-based post-processing anti-aliasing
         # pass costs 20-50ms per Render() on software OpenGL (WARP / Mesa).
         # 2D DICOM images don't benefit from FXAA (pixel-exact display +
         # FreeType text rendering have their own smoothing).  FXAA also
@@ -224,7 +251,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.renderer.UseFXAAOff()
 
         self.UpdateDisplayExtent()
-        # ❌ FLICKER FIX: Skip initial render - will render once after all setup is complete
+        # â‌Œ FLICKER FIX: Skip initial render - will render once after all setup is complete
         # self.Render()
 
         # self.last_index_slice_saved = self.get_count_of_slices() // 2
@@ -239,7 +266,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # self._baseline_scale = self.renderer.GetActiveCamera().GetParallelScale()
         # print('self.base_zoom_scale:', self.base_zoom_scale)
 
-        # ✅ FIX: Use zoom_to_fit for ALL modalities to ensure proper display
+        # âœ… FIX: Use zoom_to_fit for ALL modalities to ensure proper display
         # The fixed scale was causing all non-CT images to display at the same zoom level,
         # making some images appear too large or too small regardless of their actual FOV.
         modality = str(self.metadata.get('series', {}).get('modality', '')).upper().strip()
@@ -261,13 +288,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         logger.info(f"[CAMERA INIT]   Camera position: {camera.GetPosition()}")
         logger.info(f"[CAMERA INIT]   Camera focal point: {camera.GetFocalPoint()}")
 
-        # ❌ FLICKER FIX: Load actors without rendering - will render once at the end
+        # â‌Œ FLICKER FIX: Load actors without rendering - will render once at the end
         self.load_top_right_actors(render=False)
         self.load_top_left_actors(render=False)
         self.load_bottom_left_actors(render=False)
         self.load_bottom_right_actors(render=False)
         
-        # ✅ FLICKER FIX: Single render after all initialization is complete
+        # âœ… FLICKER FIX: Single render after all initialization is complete
         self.image_render_window.Render()
 
     def Render(self):
@@ -329,7 +356,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             with cls._global_preprocess_cache_lock:
                 # Measure the byte footprint of the incoming volume.
                 try:
-                    entry_bytes = int(vtk_img.GetActualMemorySize()) * 1024  # KB → bytes
+                    entry_bytes = int(vtk_img.GetActualMemorySize()) * 1024  # KB â†’ bytes
                 except Exception:
                     entry_bytes = 0
 
@@ -407,7 +434,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         mm_per_screen_px = (2.0 * new_scale) / H
         spacing = vtk_image_data.GetSpacing()
-        ppv_y = spacing[1] / mm_per_screen_px  # screen px per image px (تقریب محور Y)
+        ppv_y = spacing[1] / mm_per_screen_px  # screen px per image px (طھظ‚ط±غŒط¨ ظ…ط­ظˆط± Y)
 
         # print('ppv_y:', ppv_y)
         return ppv_y
@@ -424,7 +451,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         except Exception:
             pass
 
-        # ✅ DISABLE UNIFORM SCALING FOR ALL MODALITIES EXCEPT CT
+        # âœ… DISABLE UNIFORM SCALING FOR ALL MODALITIES EXCEPT CT
         # Each modality keeps its natural spacing so images display at their true physical scale.
         # This means:
         # - MR images show at their actual field-of-view size
@@ -504,7 +531,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             pass
 
     def clear_overlay(self):
-        """حذف اوورلی از رندرر و آزادسازی مرجع‌ها"""
+        """ط­ط°ظپ ط§ظˆظˆط±ظ„غŒ ط§ط² ط±ظ†ط¯ط±ط± ظˆ ط¢ط²ط§ط¯ط³ط§ط²غŒ ظ…ط±ط¬ط¹â€Œظ‡ط§"""
         if hasattr(self, "_overlay") and self._overlay:
             try:
                 actor = self._overlay.get("actor")
@@ -515,7 +542,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self._overlay = {}
 
     def _update_overlay_extent(self):
-        """DisplayExtent اوورلی را با توجه به اسلایس و اورینتیشن فعلی تنظیم می‌کند."""
+        """DisplayExtent ط§ظˆظˆط±ظ„غŒ ط±ط§ ط¨ط§ طھظˆط¬ظ‡ ط¨ظ‡ ط§ط³ظ„ط§غŒط³ ظˆ ط§ظˆط±غŒظ†طھغŒط´ظ† ظپط¹ظ„غŒ طھظ†ط¸غŒظ… ظ…غŒâ€Œع©ظ†ط¯."""
         if not hasattr(self, "_overlay") or not self._overlay:
             return
         actor = self._overlay.get("actor")
@@ -524,7 +551,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         if not actor or not ov_img or not base_img:
             return
 
-        # از ویوِر اصلی ابعاد و اسلایس فعلی را بگیر
+        # ط§ط² ظˆغŒظˆظگط± ط§طµظ„غŒ ط§ط¨ط¹ط§ط¯ ظˆ ط§ط³ظ„ط§غŒط³ ظپط¹ظ„غŒ ط±ط§ ط¨ع¯غŒط±
         slice_idx = self.GetSlice()
         dims = base_img.GetDimensions()
         # slice_idx = dims[2] - (slice_idx + 2)
@@ -535,7 +562,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         actor.SetDisplayExtent(*extent)
 
         # v2.2.3.1.0: removed self.image_reslice.Update(), self.UpdateDisplayExtent(),
-        # and self.Render() here — the calling set_slice() already drives the base
+        # and self.Render() here â€” the calling set_slice() already drives the base
         # pipeline and calls Render() at the end, so doing them inside the overlay
         # repositioning was redundant duplicated work.
 
@@ -695,44 +722,44 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     def grow_input_image_inplace(self, new_vtk_image_data, new_metadata=None):
         """
-        رشد درجا با کمترین هزینه:
-        - بدون تعویض actor/mapper
-        - بدون Render/Update فوری (caller اگر خواست throttle کند)
-        - بهینه‌سازی شده برای سرعت بیشتر
+        ط±ط´ط¯ ط¯ط±ط¬ط§ ط¨ط§ ع©ظ…طھط±غŒظ† ظ‡ط²غŒظ†ظ‡:
+        - ط¨ط¯ظˆظ† طھط¹ظˆغŒط¶ actor/mapper
+        - ط¨ط¯ظˆظ† Render/Update ظپظˆط±غŒ (caller ط§ع¯ط± ط®ظˆط§ط³طھ throttle ع©ظ†ط¯)
+        - ط¨ظ‡غŒظ†ظ‡â€Œط³ط§ط²غŒ ط´ط¯ظ‡ ط¨ط±ط§غŒ ط³ط±ط¹طھ ط¨غŒط´طھط±
         """
         old_input = self.image_reslice.vtk_image_data
         ox, oy, oz = old_input.GetDimensions()
         nx, ny, nz = new_vtk_image_data.GetDimensions()
 
-        # 1) اگر چیزی اضافه نشده، فقط Modified سبک بده و برگرد
+        # 1) ط§ع¯ط± ع†غŒط²غŒ ط§ط¶ط§ظپظ‡ ظ†ط´ط¯ظ‡طŒ ظپظ‚ط· Modified ط³ط¨ع© ط¨ط¯ظ‡ ظˆ ط¨ط±ع¯ط±ط¯
         if (nx <= ox and ny <= oy and nz <= oz):
             old_input.Modified()
             self.image_reslice.Modified()
             return False
 
-        # 2) XY باید ثابت باشد؛ در غیر این صورت، از تخریب حافظه جلوگیری کن
+        # 2) XY ط¨ط§غŒط¯ ط«ط§ط¨طھ ط¨ط§ط´ط¯ط› ط¯ط± ط؛غŒط± ط§غŒظ† طµظˆط±طھطŒ ط§ط² طھط®ط±غŒط¨ ط­ط§ظپط¸ظ‡ ط¬ظ„ظˆع¯غŒط±غŒ ع©ظ†
         if (ox, oy) != (nx, ny):
-            # اگر XY تغییر کرده، برای جلوگیری از کراش/مصرف سنگین، فعلاً رد کن
-            # (در صورت نیاز می‌توان مسیر ایمن دیگری پیاده کرد)
+            # ط§ع¯ط± XY طھط؛غŒغŒط± ع©ط±ط¯ظ‡طŒ ط¨ط±ط§غŒ ط¬ظ„ظˆع¯غŒط±غŒ ط§ط² ع©ط±ط§ط´/ظ…طµط±ظپ ط³ظ†ع¯غŒظ†طŒ ظپط¹ظ„ط§ظ‹ ط±ط¯ ع©ظ†
+            # (ط¯ط± طµظˆط±طھ ظ†غŒط§ط² ظ…غŒâ€Œطھظˆط§ظ† ظ…ط³غŒط± ط§غŒظ…ظ† ط¯غŒع¯ط±غŒ ظ¾غŒط§ط¯ظ‡ ع©ط±ط¯)
             return False
 
-        # 3) فقط در صورت تغییر، spacing/origin را به‌روز کن
+        # 3) ظپظ‚ط· ط¯ط± طµظˆط±طھ طھط؛غŒغŒط±طŒ spacing/origin ط±ط§ ط¨ظ‡â€Œط±ظˆط² ع©ظ†
         if old_input.GetSpacing() != new_vtk_image_data.GetSpacing():
             old_input.SetSpacing(new_vtk_image_data.GetSpacing())
         if old_input.GetOrigin() != new_vtk_image_data.GetOrigin():
             old_input.SetOrigin(new_vtk_image_data.GetOrigin())
 
-        # 4) ابعاد/extent جدید
+        # 4) ط§ط¨ط¹ط§ط¯/extent ط¬ط¯غŒط¯
         old_input.SetDimensions(nx, ny, nz)
         old_input.SetExtent(0, nx - 1, 0, ny - 1, 0, nz - 1)
 
-        # 5) کم‌هزینه‌ترین آپدیت اسکالرها: به‌جای DeepCopy، SetScalars (تعویض اشاره‌گر)
+        # 5) ع©ظ…â€Œظ‡ط²غŒظ†ظ‡â€Œطھط±غŒظ† ط¢ظ¾ط¯غŒطھ ط§ط³ع©ط§ظ„ط±ظ‡ط§: ط¨ظ‡â€Œط¬ط§غŒ DeepCopyطŒ SetScalars (طھط¹ظˆغŒط¶ ط§ط´ط§ط±ظ‡â€Œع¯ط±)
         new_scalars = new_vtk_image_data.GetPointData().GetScalars()
         old_input.GetPointData().SetScalars(new_scalars)
 
-        # 6) متادیتا (در صورت نیاز) - بهینه‌سازی شده
+        # 6) ظ…طھط§ط¯غŒطھط§ (ط¯ط± طµظˆط±طھ ظ†غŒط§ط²) - ط¨ظ‡غŒظ†ظ‡â€Œط³ط§ط²غŒ ط´ط¯ظ‡
         if new_metadata is not None:
-            # فقط فیلدهای ضروری را جایگزین کن تا کپی‌های بزرگ اجتناب شود
+            # ظپظ‚ط· ظپغŒظ„ط¯ظ‡ط§غŒ ط¶ط±ظˆط±غŒ ط±ط§ ط¬ط§غŒع¯ط²غŒظ† ع©ظ† طھط§ ع©ظ¾غŒâ€Œظ‡ط§غŒ ط¨ط²ط±ع¯ ط§ط¬طھظ†ط§ط¨ ط´ظˆط¯
             if 'series' in new_metadata:
                 # Merge only essential fields to avoid deep copying
                 for key in ['series_name', 'series_description', 'series_thk']:
@@ -745,7 +772,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 # Direct assignment for instances to avoid copying
                 self.metadata['instances'] = new_metadata['instances']
 
-        # 7) علامت‌زدن تغییر؛ بدون Render/Update فوری
+        # 7) ط¹ظ„ط§ظ…طھâ€Œط²ط¯ظ† طھط؛غŒغŒط±ط› ط¨ط¯ظˆظ† Render/Update ظپظˆط±غŒ
         old_input.GetPointData().Modified()
         old_input.Modified()
         self.image_reslice.Modified()
@@ -760,7 +787,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         return True
 
     def set_color_mapper(self):
-        # ✅ OPTIMIZATION: Reuse existing color_mapper instead of creating new one
+        # âœ… OPTIMIZATION: Reuse existing color_mapper instead of creating new one
         if hasattr(self, 'color_mapper') and self.color_mapper is not None:
             # Just reconnect to new input (much faster than creating new mapper)
             try:
@@ -899,7 +926,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self.Render()
 
     def load_top_right_actors_no_render(self):
-        """Backward-compatible wrapper — calls load_top_right_actors(render=False)."""
+        """Backward-compatible wrapper â€” calls load_top_right_actors(render=False)."""
         self.load_top_right_actors(render=False)
 
     def load_top_left_actors(self, render=True):
@@ -926,7 +953,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self.Render()
 
     def load_top_left_actors_no_render(self):
-        """Backward-compatible wrapper — calls load_top_left_actors(render=False)."""
+        """Backward-compatible wrapper â€” calls load_top_left_actors(render=False)."""
         self.load_top_left_actors(render=False)
 
     def load_bottom_left_actors(self, render=True):
@@ -965,7 +992,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self.Render()
 
     def load_bottom_left_actors_no_render(self):
-        """Backward-compatible wrapper — calls load_bottom_left_actors(render=False)."""
+        """Backward-compatible wrapper â€” calls load_bottom_left_actors(render=False)."""
         self.load_bottom_left_actors(render=False)
 
     def load_bottom_right_actors(self, render=True):
@@ -981,14 +1008,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self.Render()
 
     def load_bottom_right_actors_no_render(self):
-        """Backward-compatible wrapper — calls load_bottom_right_actors(render=False)."""
+        """Backward-compatible wrapper â€” calls load_bottom_right_actors(render=False)."""
         self.load_bottom_right_actors(render=False)
 
     def reset_image_viewer(self, vtk_image_data, metadata):
         import time
         _reset_start = time.time()
         
-        # ✅ CRITICAL: Check if this is the same series or a different series
+        # âœ… CRITICAL: Check if this is the same series or a different series
         # Only preserve zoom scale for the SAME series (user zoom preservation)
         # For different series, always calculate proper zoom based on image dimensions
         current_series_uid = metadata.get('series', {}).get('series_uid', None)
@@ -996,7 +1023,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         is_same_series = (current_series_uid is not None and 
                           current_series_uid == cached_series_uid)
         
-        # ✅ Save current camera scale ONLY if refreshing the same series
+        # âœ… Save current camera scale ONLY if refreshing the same series
         saved_scale = None
         if is_same_series:
             try:
@@ -1011,11 +1038,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         _clear_start = time.time()
         self.clear_all_overlays()
         _clear_time = time.time() - _clear_start
-        print(f"      • Clear overlays: {_clear_time:.3f}s")
+        print(f"      â€¢ Clear overlays: {_clear_time:.3f}s")
 
         _preprocess_start = time.time()
         
-        # ✅ OPTIMIZATION: Check if we can reuse existing reslice
+        # âœ… OPTIMIZATION: Check if we can reuse existing reslice
         # If the vtk_image_data is the same (same series), skip reslice creation
 
         old_preview_only = False
@@ -1090,12 +1117,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 cached_preprocessed = None
         
         if can_reuse_reslice:
-            print(f"      ✅ Reusing cached reslice")
+            print(f"      âœ… Reusing cached reslice")
         else:
             # Need to rebuild or rebind reslice input
             if cached_preprocessed is not None:
                 vtk_image_data = cached_preprocessed
-                print(f"      ✅ Reusing cached preprocessed display volume")
+                print(f"      âœ… Reusing cached preprocessed display volume")
             else:
                 vtk_image_data = self._preprocess_vtk_image_data(vtk_image_data)
                 if allow_preprocess_cache:
@@ -1107,6 +1134,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 self.image_reslice.vtk_image_data = vtk_image_data
                 self.image_reslice.metadata = metadata
                 self.image_reslice.SetInputData(vtk_image_data)
+                if hasattr(self.image_reslice, '_configure_output_from_input'):
+                    self.image_reslice._configure_output_from_input()
                 self.image_reslice.Update()
             else:
                 self.image_reslice = ImageReslice(vtk_image_data, metadata)
@@ -1115,7 +1144,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self._cached_series_uid = current_series_uid
             
         _preprocess_time = time.time() - _preprocess_start
-        print(f"      • Preprocess + Reslice: {_preprocess_time:.3f}s")
+        print(f"      â€¢ Preprocess + Reslice: {_preprocess_time:.3f}s")
 
         _setup_start = time.time()
         
@@ -1124,15 +1153,33 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # image_reslice output is the SAME Python/VTK object as last time.  After
         # image_reslice.Update() VTK propagates Modified() timestamps automatically;
         # the viewer re-executes the pipeline on the next Render().  UpdateDisplayExtent()
-        # below refreshes actor extent for any dimension change (e.g. 46→276 slices).
-        # Only reconnect when image_reslice was recreated (new Python object) — that case
+        # below refreshes actor extent for any dimension change (e.g. 46â†’276 slices).
+        # Only reconnect when image_reslice was recreated (new Python object) â€” that case
         # is rare and needs SetInputData so VTK discovers the new output port.
         _current_reslice_output = self.image_reslice.GetOutput()
         _needs_reconnect = (
             getattr(self, '_connected_reslice_output', None) is not _current_reslice_output
         )
+        # PyDicom lazy backend updates scalar memory in-place. Force reconnect to
+        # make vtkResliceImageViewer refresh its slice range/state on series switch.
+        try:
+            if getattr(getattr(self, 'vtk_widget', None), '_active_backend', None) == 'pydicom_2d':
+                _needs_reconnect = True
+        except Exception:
+            pass
+        # Defensive fallback: if viewer still reports a single slice while the
+        # incoming output has multiple Z slices, reconnect once.
+        if not _needs_reconnect:
+            try:
+                _reported_max = int(self.GetSliceMax())
+                _out_dims = _current_reslice_output.GetDimensions()
+                _out_z = int(_out_dims[2]) if _out_dims and len(_out_dims) > 2 else 1
+                if _reported_max <= 0 and _out_z > 1:
+                    _needs_reconnect = True
+            except Exception:
+                pass
         if _needs_reconnect:
-            # New reslice object — must wire up the viewer pipeline once.
+            # New reslice object â€” must wire up the viewer pipeline once.
             _prev_suppress = getattr(self, '_suppress_render', False)
             self._suppress_render = True
             old_global_warning = vtk.vtkObject.GetGlobalWarningDisplay()
@@ -1144,49 +1191,49 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 self._suppress_render = _prev_suppress
             self._connected_reslice_output = _current_reslice_output
             _set_input_time = time.time() - _set_input_start
-            print(f"         • SetInputData: {_set_input_time:.3f}s (reconnect)")
+            print(f"         â€¢ SetInputData: {_set_input_time:.3f}s (reconnect)")
         else:
-            # Same output object — pipeline already connected; Modified() propagated.
-            print(f"         • SetInputData: SKIPPED (reslice output unchanged — saves ~1.4s)")
+            # Same output object â€” pipeline already connected; Modified() propagated.
+            print(f"         â€¢ SetInputData: SKIPPED (reslice output unchanged â€” saves ~1.4s)")
         self.vtk_image_data = _current_reslice_output  # refresh Python-side ref
 
         # Update metadata
         _metadata_start = time.time()
         self.metadata = metadata
         _metadata_time = time.time() - _metadata_start
-        print(f"         • Update metadata: {_metadata_time:.3f}s")
+        print(f"         â€¢ Update metadata: {_metadata_time:.3f}s")
 
         _color_mapper_start = time.time()
         self.set_color_mapper()
         _color_mapper_time = time.time() - _color_mapper_start
-        print(f"         • set_color_mapper: {_color_mapper_time:.3f}s")
+        print(f"         â€¢ set_color_mapper: {_color_mapper_time:.3f}s")
         
         self.flag_set_custom_window_level = False
         
         _setup_time = time.time() - _setup_start
-        print(f"      • Setup pipeline: {_setup_time:.3f}s")
+        print(f"      â€¢ Setup pipeline: {_setup_time:.3f}s")
 
         _render_start = time.time()
 
         _update_display_start = time.time()
         self.UpdateDisplayExtent()
         _update_display_time = time.time() - _update_display_start
-        print(f"         • UpdateDisplayExtent: {_update_display_time:.3f}s")
+        print(f"         â€¢ UpdateDisplayExtent: {_update_display_time:.3f}s")
 
-        # Flush before VTK Render — if VTK segfaults the above lines are preserved.
+        # Flush before VTK Render â€” if VTK segfaults the above lines are preserved.
         try:
             sys.stdout.flush()
         except Exception:
             pass
 
-        # ❌ FLICKER FIX: Skip render here - will render once after zoom_to_fit
+        # â‌Œ FLICKER FIX: Skip render here - will render once after zoom_to_fit
         # _render_call_start = time.time()
         # self.Render()
         # _render_call_time = time.time() - _render_call_start
-        # print(f"         • Render: {_render_call_time:.3f}s")
+        # print(f"         â€¢ Render: {_render_call_time:.3f}s")
 
         _zoom_start = time.time()
-        # ✅ CRITICAL FIX: Only restore saved scale for SAME series
+        # âœ… CRITICAL FIX: Only restore saved scale for SAME series
         # For different series, always call zoom_to_fit to calculate proper zoom based on dimensions
         # This fixes the bug where series with different dimensions appear at wrong zoom levels
         if saved_scale is not None and is_same_series:
@@ -1208,19 +1255,19 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # Single render after both UpdateDisplayExtent and zoom/scale restore
         self.image_render_window.Render()
         _zoom_time = time.time() - _zoom_start
-        print(f"         • zoom/scale restore: {_zoom_time:.3f}s")
+        print(f"         â€¢ zoom/scale restore: {_zoom_time:.3f}s")
 
         _render_time = time.time() - _render_start
-        print(f"      • Render + zoom: {_render_time:.3f}s")
+        print(f"      â€¢ Render + zoom: {_render_time:.3f}s")
         
         _reset_total = time.time() - _reset_start
-        print(f"      ⏱️  TOTAL reset_image_viewer: {_reset_total:.3f}s")
+        print(f"      âڈ±ï¸ڈ  TOTAL reset_image_viewer: {_reset_total:.3f}s")
         try:
             sys.stdout.flush()
         except Exception:
             pass
 
-    def set_slice(self, slice_index):
+    def set_slice(self, slice_index, fast_interaction=False, force_annotations=False):
         """
         Change the displayed slice and keep overlays in sync.
         Order matters:
@@ -1230,22 +1277,51 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
           4) Sync all overlay actors to this slice
         """
         _t0 = time.perf_counter_ns()
+        _fast = bool(fast_interaction)
+        _now_ms = _t0 / 1_000_000.0
+
+        if _fast and not bool(force_annotations):
+            try:
+                if int(self.GetSlice()) == int(slice_index):
+                    return
+            except Exception:
+                pass
 
         # 1) Move to the requested slice
         self.SetSlice(slice_index)
+        actual_slice_index = int(self.GetSlice())
         _t1 = time.perf_counter_ns()
 
         # 2) Apply default window/level only if the user hasn't set a custom WL
         if not self.flag_set_custom_window_level:
-            self.apply_default_window_level(slice_index)
+            self.apply_default_window_level(actual_slice_index)
         _t2 = time.perf_counter_ns()
+        self.last_wl_convert_ms = (_t2 - _t1) / 1_000_000
 
         # 3) Update on-screen corner annotations
-        self.update_corners_actors()
+        _update_annotations = True
+        if _fast and not bool(force_annotations):
+            if (_now_ms - float(self._last_fast_annotation_update_ms or 0.0)) < float(
+                self._fast_corner_overlay_interval_ms
+            ):
+                _update_annotations = False
+        if _update_annotations:
+            self.update_corners_actors()
+            if _fast:
+                self._last_fast_annotation_update_ms = _now_ms
         _t3 = time.perf_counter_ns()
 
         # 4) Make overlays follow the current slice and render
-        self._sync_all_overlays_extent()
+        _sync_overlays = True
+        if _fast and not bool(force_annotations) and bool(getattr(self, "_overlays", [])):
+            if (_now_ms - float(self._last_fast_overlay_sync_ms or 0.0)) < float(
+                self._fast_corner_overlay_interval_ms
+            ):
+                _sync_overlays = False
+        if _sync_overlays:
+            self._sync_all_overlays_extent()
+            if _fast:
+                self._last_fast_overlay_sync_ms = _now_ms
         self.Render()
         _t4 = time.perf_counter_ns()
 
@@ -1290,7 +1366,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         window_width = instance_metadata['window_width']  # width
         window_center = instance_metadata['window_center']  # level
 
-        # ✅ FIX: Auto-detect and fix bad/missing window/level values
+        # âœ… FIX: Auto-detect and fix bad/missing window/level values
         needs_auto_calc = False
         
         if window_width is None or window_center is None:
@@ -1312,7 +1388,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 window_width = scalar_range[1] - scalar_range[0]
                 window_center = (scalar_range[0] + scalar_range[1]) / 2
 
-        # ── v2.2.3.0.7: WL scroll-cache ─────────────────────────────────────
+        # â”€â”€ v2.2.3.0.7: WL scroll-cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # VTK vtkSetMacro unconditionally calls Modified() even when the value
         # is identical to the current value.  On WARP/software-OpenGL this
         # dirtied the color_mapper pipeline on EVERY slice scroll, forcing a
@@ -1324,7 +1400,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             return
         self._wl_scroll_cache_ww = window_width
         self._wl_scroll_cache_wc = window_center
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         self.set_window_level(window_width, window_center, flag_default=True)
 
@@ -1350,7 +1426,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # caller gets an immediately up-to-date output.
         if not flag_default:
             self.color_mapper.Update()
-        # v2.2.3.1.0: skip corner update on scroll path — set_slice() always
+        # v2.2.3.1.0: skip corner update on scroll path â€” set_slice() always
         # calls update_corners_actors() after apply_default_window_level(),
         # so calling it here too was a duplicate (~2-5ms wasted per scroll).
         if not flag_default:
@@ -1363,9 +1439,31 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         return window_width, window_center
 
     def get_count_of_slices(self):
-        self.vtk_image_data: vtk.vtkImageData
-        dims = self.vtk_image_data.GetDimensions()  # (dimX, dimY, dimZ)
-        return dims[2]
+        range_count = 0
+        try:
+            min_slice = int(self.GetSliceMin())
+            max_slice = int(self.GetSliceMax())
+            if max_slice >= min_slice:
+                range_count = (max_slice - min_slice) + 1
+        except Exception:
+            range_count = 0
+
+        dims_count = 0
+        try:
+            self.vtk_image_data: vtk.vtkImageData
+            dims = self.vtk_image_data.GetDimensions()  # (dimX, dimY, dimZ)
+            if len(dims) > 2:
+                dims_count = int(dims[2])
+        except Exception:
+            dims_count = 0
+
+        meta_count = 0
+        try:
+            meta_count = int(len(self.metadata.get('instances', []) or []))
+        except Exception:
+            meta_count = 0
+
+        return max(0, int(range_count), int(dims_count), int(meta_count))
 
     def set_zoom_1to1(self):
         """ set image to pixel to pixel"""
@@ -1430,7 +1528,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             logger.debug(f"[ZOOM_TO_FIT]   Aspect ratios - Image: {image_aspect:.3f}, Window: {window_aspect:.3f}")
 
             camera.SetParallelScale(new_scale)
-            logger.info(f"[ZOOM_TO_FIT] ✓ Applied scale: {new_scale:.2f}")
+            logger.info(f"[ZOOM_TO_FIT] âœ“ Applied scale: {new_scale:.2f}")
             
             if not skip_render:
                 self.Render()
@@ -1504,7 +1602,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 picked_pos = world_picker.GetPickPosition()
                 if picked_pos != (0.0, 0.0, 0.0):
                     point_3d = list(picked_pos)
-                    print(f"[CURVED MPR] ✓ WorldPointPicker: ({point_3d[0]:.1f}, {point_3d[1]:.1f}, {point_3d[2]:.1f})")
+                    print(f"[CURVED MPR] âœ“ WorldPointPicker: ({point_3d[0]:.1f}, {point_3d[1]:.1f}, {point_3d[2]:.1f})")
                     self._add_curved_mpr_point(point_3d)
                     return
             
@@ -1563,7 +1661,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             
             orientation_names = {0: 'Sagittal', 1: 'Coronal', 2: 'Axial'}
             print(f"[CURVED MPR] Click at screen ({click_pos[0]}, {click_pos[1]})")
-            print(f"[CURVED MPR] ✓ 3D position: ({point_3d[0]:.1f}, {point_3d[1]:.1f}, {point_3d[2]:.1f})")
+            print(f"[CURVED MPR] âœ“ 3D position: ({point_3d[0]:.1f}, {point_3d[1]:.1f}, {point_3d[2]:.1f})")
             print(f"[CURVED MPR] Orientation: {orientation_names.get(orientation, 'Unknown')}, Slice: {current_slice}")
             
             # Add point to module
@@ -1767,7 +1865,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                     picked = cell_picker.GetPickPosition()
                     if picked != (0.0, 0.0, 0.0):
                         print(
-                            f"[SYNC PICK] CellPicker: display=({display_x},{display_y}) → "
+                            f"[SYNC PICK] CellPicker: display=({display_x},{display_y}) â†’ "
                             f"world=({picked[0]:.2f}, {picked[1]:.2f}, {picked[2]:.2f})  "
                             f"orient={orientation} slice={current_slice}"
                         )
@@ -1779,13 +1877,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 picked = world_picker.GetPickPosition()
                 if picked != (0.0, 0.0, 0.0):
                     print(
-                        f"[SYNC PICK] WorldPicker: display=({display_x},{display_y}) → "
+                        f"[SYNC PICK] WorldPicker: display=({display_x},{display_y}) â†’ "
                         f"world=({picked[0]:.2f}, {picked[1]:.2f}, {picked[2]:.2f})  "
                         f"orient={orientation} slice={current_slice}"
                     )
                     return tuple(picked)
 
-            # METHOD 3: Manual coordinate conversion — simple origin+spacing
+            # METHOD 3: Manual coordinate conversion â€” simple origin+spacing
             # Since vtkResliceImageViewer uses identity reslice axes, the image is
             # rendered directly in VTK world space = origin + ijk * spacing
             coord = vtk.vtkCoordinate()
@@ -1795,16 +1893,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
             # Build the 3D point: two coords come from the 2D pick,
             # the third (out-of-plane) comes from the current slice
-            if orientation == 2:    # Axial (XY plane) — Z is the slice axis
+            if orientation == 2:    # Axial (XY plane) â€” Z is the slice axis
                 result = (world_2d[0], world_2d[1], origin[2] + current_slice * spacing[2])
-            elif orientation == 1:  # Coronal (XZ plane) — Y is the slice axis
+            elif orientation == 1:  # Coronal (XZ plane) â€” Y is the slice axis
                 result = (world_2d[0], origin[1] + current_slice * spacing[1], world_2d[1])
-            else:                   # Sagittal (YZ plane) — X is the slice axis
+            else:                   # Sagittal (YZ plane) â€” X is the slice axis
                 result = (origin[0] + current_slice * spacing[0], world_2d[0], world_2d[1])
 
             print(
                 f"[SYNC PICK] Fallback: display=({display_x},{display_y}) "
-                f"world_2d=({world_2d[0]:.2f},{world_2d[1]:.2f},{world_2d[2]:.2f}) → "
+                f"world_2d=({world_2d[0]:.2f},{world_2d[1]:.2f},{world_2d[2]:.2f}) â†’ "
                 f"result=({result[0]:.2f}, {result[1]:.2f}, {result[2]:.2f})  "
                 f"orient={orientation} slice={current_slice}"
             )
@@ -1843,17 +1941,17 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 ox, oy, oz, sx, sy, sz,
             )
             
-            if orientation == 2:  # Axial (XY) — slice along Z (k)
+            if orientation == 2:  # Axial (XY) â€” slice along Z (k)
                 spacing_axis = float(sz)
                 nearest = int(round(k))
                 delta_world = abs(k - nearest) * spacing_axis
                 return (nearest, delta_world, spacing_axis) if return_delta else nearest
-            if orientation == 1:  # Coronal (XZ) — slice along Y (j)
+            if orientation == 1:  # Coronal (XZ) â€” slice along Y (j)
                 spacing_axis = float(sy)
                 nearest = int(round(j))
                 delta_world = abs(j - nearest) * spacing_axis
                 return (nearest, delta_world, spacing_axis) if return_delta else nearest
-            # Sagittal (YZ) — slice along X (i)
+            # Sagittal (YZ) â€” slice along X (i)
             spacing_axis = float(sx)
             nearest = int(round(i))
             delta_world = abs(i - nearest) * spacing_axis
@@ -1994,14 +2092,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         return view_window
     
     def cleanup(self):
-        """آزاد کردن منابع VTK برای جلوگیری از leak حافظه."""
+        """ط¢ط²ط§ط¯ ع©ط±ط¯ظ† ظ…ظ†ط§ط¨ط¹ VTK ط¨ط±ط§غŒ ط¬ظ„ظˆع¯غŒط±غŒ ط§ط² leak ط­ط§ظپط¸ظ‡."""
         try:
             # Clean up curved MPR
             if self.curved_mpr_observer_id is not None:
                 self.image_interactor.RemoveObserver(self.curved_mpr_observer_id)
                 self.curved_mpr_observer_id = None
             self._clear_curved_mpr_visuals()
-            # حذف actorها از renderer
+            # ط­ط°ظپ actorظ‡ط§ ط§ط² renderer
             if self.renderer:
                 actors = self.renderer.GetActors()
                 actors.InitTraversal()
@@ -2018,7 +2116,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                     self.renderer.RemoveViewProp(actor2d)
                     actor2d = actors2d.GetNextItem()
 
-            # آزاد کردن mapperها و color_mapper
+            # ط¢ط²ط§ط¯ ع©ط±ط¯ظ† mapperظ‡ط§ ظˆ color_mapper
             if self.color_mapper:
                 self.color_mapper.SetInputConnection(None)
                 # self.color_mapper.Delete()
@@ -2031,7 +2129,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 # mapper = self.GetImageActor().GetMapper()
                 # del mapper
 
-            # آزاد کردن image_reslice و vtk_image_data
+            # ط¢ط²ط§ط¯ ع©ط±ط¯ظ† image_reslice ظˆ vtk_image_data
             if self.image_reslice:
                 self.image_reslice.SetInputData(None)
                 # self.image_reslice.Delete()
@@ -2040,12 +2138,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
             if self.vtk_image_data:
                 if self.vtk_image_data.GetPointData() and self.vtk_image_data.GetPointData().GetScalars():
-                    self.vtk_image_data.GetPointData().SetScalars(None)  # آزاد کردن scalars بزرگ
+                    self.vtk_image_data.GetPointData().SetScalars(None)  # ط¢ط²ط§ط¯ ع©ط±ط¯ظ† scalars ط¨ط²ط±ع¯
                 # self.vtk_image_data.Delete()
                 # del self.vtk_image_data
                 self.vtk_image_data = None
 
-            # آزاد کردن dicom_tags_actors (اگر actorهای متنی دارید)
+            # ط¢ط²ط§ط¯ ع©ط±ط¯ظ† dicom_tags_actors (ط§ع¯ط± actorظ‡ط§غŒ ظ…طھظ†غŒ ط¯ط§ط±غŒط¯)
             # if self.dicom_tags_actors:
             #     for actor in vars(self.dicom_tags_actors).values():
             #         if isinstance(actor, vtk.vtkActor2D):
@@ -2053,14 +2151,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             #             del actor
             #     self.dicom_tags_actors = None
 
-            # ریست renderer
+            # ط±غŒط³طھ renderer
             if self.renderer:
                 self.renderer.ResetCamera()
                 # self.renderer.Delete()
                 # del self.renderer
                 self.renderer = None
 
-            # تنظیم به None برای کمک به GC
+            # طھظ†ط¸غŒظ… ط¨ظ‡ None ط¨ط±ط§غŒ ع©ظ…ع© ط¨ظ‡ GC
             self.metadata = None
             self.metadata_fixed = None
             self._local_preprocess_cache = {}
@@ -2069,7 +2167,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             print(f"Error in cleanup: {e}")
 
     def clear_boxes(self):
-        """تمام باکس‌های رسم‌شده را از رندرر حذف می‌کند."""
+        """طھظ…ط§ظ… ط¨ط§ع©ط³â€Œظ‡ط§غŒ ط±ط³ظ…â€Œط´ط¯ظ‡ ط±ط§ ط§ط² ط±ظ†ط¯ط±ط± ط­ط°ظپ ظ…غŒâ€Œع©ظ†ط¯."""
         if hasattr(self, "_box_actors") and self._box_actors:
             for a in self._box_actors:
                 try:
@@ -2087,9 +2185,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     def ijk_to_world(self, i: float, j: float, k: float | None = None, *, y_flip: bool = True):
         """
-        تبدیل (i, j, k) در IJK به مختصات World.
-        اگر k=None باشد، z بر اساس اسلایس فعلی تنظیم می‌شود.
-        y_flip=True یعنی j' = (ny - 1) - j مثل منطق فعلی شما.
+        طھط¨ط¯غŒظ„ (i, j, k) ط¯ط± IJK ط¨ظ‡ ظ…ط®طھطµط§طھ World.
+        ط§ع¯ط± k=None ط¨ط§ط´ط¯طŒ z ط¨ط± ط§ط³ط§ط³ ط§ط³ظ„ط§غŒط³ ظپط¹ظ„غŒ طھظ†ط¸غŒظ… ظ…غŒâ€Œط´ظˆط¯.
+        y_flip=True غŒط¹ظ†غŒ j' = (ny - 1) - j ظ…ط«ظ„ ظ…ظ†ط·ظ‚ ظپط¹ظ„غŒ ط´ظ…ط§.
         """
         img = self.vtk_image_data
         ox, oy, oz = img.GetOrigin()
@@ -2149,7 +2247,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         return mat_vtk
 
     def ijk_to_world_physical(self, i: float, j: float, k: float | None = None):
-        """Direction-aware IJK→World mapping in physical space."""
+        """Direction-aware IJKâ†’World mapping in physical space."""
         if k is None:
             k = float(self.GetSlice())
 
@@ -2165,7 +2263,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         return float(phys[0]), float(phys[1]), float(phys[2])
 
     def world_to_ijk_physical(self, xw: float, yw: float, zw: float, clamp: bool = True, as_int: bool = False):
-        """Direction-aware World→IJK mapping in physical space."""
+        """Direction-aware Worldâ†’IJK mapping in physical space."""
         img = self.vtk_image_data
         ox, oy, oz = img.GetOrigin()
         sx, sy, sz = img.GetSpacing()
@@ -2223,9 +2321,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     def draw_boxes_ijk(self, boxes_scores: list, color=(0.0, 1.0, 0.0), line_width=2.0):
         """
-        boxes_ijk_xyxy: لیستِ باکس‌ها به صورت [[x_min, y_min, x_max, y_max], ...] در دستگاه IJK.
-        توجه: چون تصویر روی محور Y فلیپ شده، j' = (ny - 1 - j) اعمال می‌شود.
-        هر باکس روی اسلایس فعلی رسم می‌گردد.
+        boxes_ijk_xyxy: ظ„غŒط³طھظگ ط¨ط§ع©ط³â€Œظ‡ط§ ط¨ظ‡ طµظˆط±طھ [[x_min, y_min, x_max, y_max], ...] ط¯ط± ط¯ط³طھع¯ط§ظ‡ IJK.
+        طھظˆط¬ظ‡: ع†ظˆظ† طھطµظˆغŒط± ط±ظˆغŒ ظ…ط­ظˆط± Y ظپظ„غŒظ¾ ط´ط¯ظ‡طŒ j' = (ny - 1 - j) ط§ط¹ظ…ط§ظ„ ظ…غŒâ€Œط´ظˆط¯.
+        ظ‡ط± ط¨ط§ع©ط³ ط±ظˆغŒ ط§ط³ظ„ط§غŒط³ ظپط¹ظ„غŒ ط±ط³ظ… ظ…غŒâ€Œع¯ط±ط¯ط¯.
         """
         lst_boxes_object = []
         camera = self.renderer.GetActiveCamera() if self.renderer else None
@@ -2235,7 +2333,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 saved_scale = camera.GetParallelScale()
             except Exception:
                 saved_scale = None
-        # پاک‌سازی باکس‌های قبلی
+        # ظ¾ط§ع©â€Œط³ط§ط²غŒ ط¨ط§ع©ط³â€Œظ‡ط§غŒ ظ‚ط¨ظ„غŒ
         self.clear_boxes()
         self._box_actors = []
         self._box_text_actors = []
@@ -2272,14 +2370,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             classification_label = box_score.get('classification', '')
 
             if not (isinstance(box, (list, tuple)) and len(box) == 4):
-                continue  # رد باکس نامعتبر
+                continue  # ط±ط¯ ط¨ط§ع©ط³ ظ†ط§ظ…ط¹طھط¨ط±
 
             x0_i, y0_j, x1_i, y1_j = map(float, box)
 
-            p0 = self.ijk_to_world(x0_i, y0_j, None, y_flip=True)  # پایین-چپ
-            p1 = self.ijk_to_world(x1_i, y0_j, None, y_flip=True)  # پایین-راست
-            p2 = self.ijk_to_world(x1_i, y1_j, None, y_flip=True)  # بالا-راست
-            p3 = self.ijk_to_world(x0_i, y1_j, None, y_flip=True)  # بالا-چپ
+            p0 = self.ijk_to_world(x0_i, y0_j, None, y_flip=True)  # ظ¾ط§غŒغŒظ†-ع†ظ¾
+            p1 = self.ijk_to_world(x1_i, y0_j, None, y_flip=True)  # ظ¾ط§غŒغŒظ†-ط±ط§ط³طھ
+            p2 = self.ijk_to_world(x1_i, y1_j, None, y_flip=True)  # ط¨ط§ظ„ط§-ط±ط§ط³طھ
+            p3 = self.ijk_to_world(x0_i, y1_j, None, y_flip=True)  # ط¨ط§ظ„ط§-ع†ظ¾
 
             corner_ijk_points = bbox_corners_ijk([(x0_i, y0_j, 0), (x1_i, y0_j, 0), (x1_i, y1_j, 0), (x0_i, y1_j, 0)])
             print('corner_ijk_points:', corner_ijk_points)
@@ -2305,7 +2403,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self.renderer.AddActor(text_actor)
             self._box_text_actors.append(text_actor)
 
-        # هم‌ترازسازی و رندر
+        # ظ‡ظ…â€Œطھط±ط§ط²ط³ط§ط²غŒ ظˆ ط±ظ†ط¯ط±
         if hasattr(self, "_sync_all_overlays_extent"):
             self._sync_all_overlays_extent()
         if saved_scale is not None and camera is not None:
@@ -2327,22 +2425,22 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                      clamp: bool = True,
                      as_int: bool = False) -> tuple[float, float, float]:
         """
-        World → IJK برای vtkImageData همین ویور.
-        - y_flip: اگر True باشد، مثل نمایش تو j' = (ny-1) - j اعمال می‌شود.
-        - clamp: به محدوده‌ی تصویر (0..nx-1, 0..ny-1, 0..nz-1) می‌چیند.
-        - as_int: اگر True باشد، خروجی را گرد کرده‌ی عدد صحیح برمی‌گرداند.
+        World â†’ IJK ط¨ط±ط§غŒ vtkImageData ظ‡ظ…غŒظ† ظˆغŒظˆط±.
+        - y_flip: ط§ع¯ط± True ط¨ط§ط´ط¯طŒ ظ…ط«ظ„ ظ†ظ…ط§غŒط´ طھظˆ j' = (ny-1) - j ط§ط¹ظ…ط§ظ„ ظ…غŒâ€Œط´ظˆط¯.
+        - clamp: ط¨ظ‡ ظ…ط­ط¯ظˆط¯ظ‡â€ŒغŒ طھطµظˆغŒط± (0..nx-1, 0..ny-1, 0..nz-1) ظ…غŒâ€Œع†غŒظ†ط¯.
+        - as_int: ط§ع¯ط± True ط¨ط§ط´ط¯طŒ ط®ط±ظˆط¬غŒ ط±ط§ ع¯ط±ط¯ ع©ط±ط¯ظ‡â€ŒغŒ ط¹ط¯ط¯ طµط­غŒط­ ط¨ط±ظ…غŒâ€Œع¯ط±ط¯ط§ظ†ط¯.
         """
         img = self.vtk_image_data
         ox, oy, oz = img.GetOrigin()
         sx, sy, sz = img.GetSpacing()
         nx, ny, nz = img.GetDimensions()
 
-        # تبدیل مستقیم
+        # طھط¨ط¯غŒظ„ ظ…ط³طھظ‚غŒظ…
         i = (xw - ox) / sx
         j = (yw - oy) / sy
         k = (zw - oz) / sz
 
-        # فلیپ محور Y (مطابق رسم تو)
+        # ظپظ„غŒظ¾ ظ…ط­ظˆط± Y (ظ…ط·ط§ط¨ظ‚ ط±ط³ظ… طھظˆ)
         if y_flip:
             j = (ny - 1) - j
 
@@ -2357,8 +2455,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     def get_actor_points_world(self, actor: vtk.vtkActor) -> list[tuple[float, float, float]]:
         """
-        نقاط هندسه‌ای که به mapper/actor داده شده‌اند را (در فضای actor) برمی‌گرداند.
-        اگر actor ترنسفورم داشته باشد، آن را به World اعمال می‌کنیم.
+        ظ†ظ‚ط§ط· ظ‡ظ†ط¯ط³ظ‡â€Œط§غŒ ع©ظ‡ ط¨ظ‡ mapper/actor ط¯ط§ط¯ظ‡ ط´ط¯ظ‡â€Œط§ظ†ط¯ ط±ط§ (ط¯ط± ظپط¶ط§غŒ actor) ط¨ط±ظ…غŒâ€Œع¯ط±ط¯ط§ظ†ط¯.
+        ط§ع¯ط± actor طھط±ظ†ط³ظپظˆط±ظ… ط¯ط§ط´طھظ‡ ط¨ط§ط´ط¯طŒ ط¢ظ† ط±ط§ ط¨ظ‡ World ط§ط¹ظ…ط§ظ„ ظ…غŒâ€Œع©ظ†غŒظ….
         """
         mapper = actor.GetMapper()
         poly = mapper.GetInput()  # vtkPolyData
@@ -2367,9 +2465,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         if n <= 0:
             return []
 
-        # نقاط در فضای 'model' هستند؛ اگر actor ترنسفورم داشته باشد، به World ضرب می‌کنیم:
+        # ظ†ظ‚ط§ط· ط¯ط± ظپط¶ط§غŒ 'model' ظ‡ط³طھظ†ط¯ط› ط§ع¯ط± actor طھط±ظ†ط³ظپظˆط±ظ… ط¯ط§ط´طھظ‡ ط¨ط§ط´ط¯طŒ ط¨ظ‡ World ط¶ط±ط¨ ظ…غŒâ€Œع©ظ†غŒظ…:
         m = vtk.vtkMatrix4x4()
-        actor.GetMatrix(m)  # model→world
+        actor.GetMatrix(m)  # modelâ†’world
         M = np.array([[m.GetElement(r, c) for c in range(4)] for r in range(4)], dtype=float)
 
         out = []
@@ -2461,7 +2559,7 @@ class CustomCombineImageViewers(ImageViewer2D):
         self.set_color_mapper()
 
         self.flag_set_custom_window_level = False
-        # ❌ FLICKER FIX: Skip render here, caller will render
+        # â‌Œ FLICKER FIX: Skip render here, caller will render
         self.zoom_to_fit(skip_render=True)
         # Single render after all changes
         self.image_render_window.Render()
@@ -2474,9 +2572,9 @@ class CustomCombineImageViewers(ImageViewer2D):
 
 def bbox_corners_ijk(ijk_list_3d):
     """
-    ijk_list_3d: لیستی از نقاط به شکل [i, j, k]
-    خروجی: (bottom_left, top_right) در مختصات IJK
-    فرض: محور j رو به پایین زیاد می‌شود.
+    ijk_list_3d: ظ„غŒط³طھغŒ ط§ط² ظ†ظ‚ط§ط· ط¨ظ‡ ط´ع©ظ„ [i, j, k]
+    ط®ط±ظˆط¬غŒ: (bottom_left, top_right) ط¯ط± ظ…ط®طھطµط§طھ IJK
+    ظپط±ط¶: ظ…ط­ظˆط± j ط±ظˆ ط¨ظ‡ ظ¾ط§غŒغŒظ† ط²غŒط§ط¯ ظ…غŒâ€Œط´ظˆط¯.
     """
     if not ijk_list_3d:
         raise ValueError("ijk_list_3d is empty")
@@ -2484,7 +2582,7 @@ def bbox_corners_ijk(ijk_list_3d):
     is_, js, ks = zip(*ijk_list_3d)
     i_min, i_max = min(is_), max(is_)
     j_min, j_max = min(js), max(js)
-    # k = ks[0]  # فرض: همه روی یک اسلایس‌اند
+    # k = ks[0]  # ظپط±ط¶: ظ‡ظ…ظ‡ ط±ظˆغŒ غŒع© ط§ط³ظ„ط§غŒط³â€Œط§ظ†ط¯
 
     # bottom_left = (i_min, j_min, k)
     # top_right = (i_max, j_max, k)

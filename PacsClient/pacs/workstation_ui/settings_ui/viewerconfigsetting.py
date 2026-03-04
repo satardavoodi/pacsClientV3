@@ -12,6 +12,12 @@ from PacsClient.utils.boost_viewer_config import (
     load_boost_viewer_enabled,
     save_boost_viewer_enabled,
 )
+from PacsClient.utils.viewer_backend_config import (
+    BACKEND_PYDICOM,
+    BACKEND_VTK,
+    load_viewer_backend,
+    save_viewer_backend,
+)
 from .storage_cleanup_panel import StorageCleanupPanelWidget
 
 try:
@@ -309,6 +315,36 @@ class ModalityGridConfigWidget(QWidget):
 
         left_panel_layout.addLayout(boost_row)
 
+        # ---------- 2D Backend ----------
+        backend_row = QVBoxLayout()
+        backend_row.setSpacing(8)
+
+        backend_title = QLabel("2D Backend")
+        backend_title.setStyleSheet("font-weight: 600; font-size: 14px; color: #f9fafb;")
+        backend_row.addWidget(backend_title)
+
+        self.viewer_backend_combo = QComboBox()
+        self.viewer_backend_combo.addItem("VTK / SimpleITK (Current)", BACKEND_VTK)
+        self.viewer_backend_combo.addItem("PyDK (PyDicom 2D Lazy Load)", BACKEND_PYDICOM)
+        self.viewer_backend_combo.setToolTip(
+            "Choose how 2D images are loaded and rendered.\n"
+            "PyDicom backend keeps tool UX unchanged while enabling lazy slice decode."
+        )
+        backend_row.addWidget(self.viewer_backend_combo)
+
+        backend_desc = QLabel(
+            "VTK/SimpleITK: existing behavior.\n"
+            "PyDicom 2D: lazy per-slice decode with LRU cache."
+        )
+        backend_desc.setStyleSheet(
+            "color: #d1d5db; font-size: 13px; padding: 8px; "
+            "background-color: #1f2937; border-radius: 4px;"
+        )
+        backend_desc.setWordWrap(True)
+        backend_row.addWidget(backend_desc)
+
+        left_panel_layout.addLayout(backend_row)
+
         # ---------- Bottom ----------
         bottom = QHBoxLayout()
         bottom.setSpacing(15)
@@ -398,6 +434,9 @@ class ModalityGridConfigWidget(QWidget):
 
         # Load BoostViewer setting independently from modality grid config
         self.boostviewer_toggle.setChecked(load_boost_viewer_enabled(default=True))
+        active_backend = load_viewer_backend(default=BACKEND_VTK)
+        idx = self.viewer_backend_combo.findData(active_backend)
+        self.viewer_backend_combo.setCurrentIndex(max(0, idx))
         
         # اگر فایل کانفیگ وجود نداشت، آن را ایجاد می‌کنیم
         if not self.config_path.exists():
@@ -508,6 +547,8 @@ class ModalityGridConfigWidget(QWidget):
             json.dump(config_to_save, f, indent=2, ensure_ascii=False)
 
         save_boost_viewer_enabled(self.boostviewer_toggle.isChecked())
+        backend = self.viewer_backend_combo.currentData()
+        save_viewer_backend(str(backend))
 
         self.configChanged.emit()
         QMessageBox.information(self, "Saved", "Grid configuration saved.")

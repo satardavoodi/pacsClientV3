@@ -81,6 +81,7 @@ class WarmupResult:
     spacing: Optional[Tuple[float, float, float]] = None
     origin: Optional[Tuple[float, float, float]] = None
     direction: Optional[Tuple[float, ...]] = None  # 9-element direction cosine
+    scalar_components: int = 1
     metadata: Optional[Dict[str, Any]] = None
     elapsed_ms: float = 0.0
     error: str = ""
@@ -198,6 +199,7 @@ def _load_series_in_subprocess(req: WarmupRequest) -> WarmupResult:
     spacing = None
     origin = None
     direction = None
+    scalar_components = 1
     metadata = None
 
     for item in load_single_series_by_number(
@@ -208,6 +210,7 @@ def _load_series_in_subprocess(req: WarmupRequest) -> WarmupResult:
         ordering_by_instances_number=req.ordering_by_instances_number,
         skip_fs_validation=True,
         max_itk_threads=req.max_itk_threads,
+        allow_lazy_backend=False,
     ):
         vtk_image_data, meta, (_ppk, _spk) = item
 
@@ -236,15 +239,34 @@ def _load_series_in_subprocess(req: WarmupRequest) -> WarmupResult:
 
             # Extract pixel data as numpy array
             from vtk.util.numpy_support import vtk_to_numpy
-            scalars = vtk_image_data.GetPointData().GetScalars()
+            point_data = vtk_image_data.GetPointData()
+            scalars = point_data.GetScalars() if point_data is not None else None
             if scalars is None:
                 continue
-            vtk_ready_array = vtk_to_numpy(scalars).copy()
-            # Reshape to match VTK dimension order for reconstruction
-            # VTK stores in (z, y, x) flat order with Fortran-style access
-            vtk_ready_array = vtk_ready_array.reshape(
-                (dimensions[2], dimensions[1], dimensions[0])
-            )
+            scalar_components = max(1, int(scalars.GetNumberOfComponents() or 1))
+            vtk_ready_array = np.asarray(vtk_to_numpy(scalars)).copy()
+
+            point_count = int(dimensions[0] * dimensions[1] * max(1, dimensions[2]))
+            expected_size = int(point_count * scalar_components)
+            if int(vtk_ready_array.size) != expected_size:
+                logging.getLogger("warmup_subprocess").warning(
+                    "Skipping series=%s due scalar size mismatch: got=%d expected=%d dims=%s comps=%d",
+                    str(sn),
+                    int(vtk_ready_array.size),
+                    int(expected_size),
+                    str(dimensions),
+                    int(scalar_components),
+                )
+                continue
+
+            # Keep packed layout (N or NxC) so RGB/multi-component series are
+            # reconstructed without shape assumptions.
+            if scalar_components <= 1:
+                vtk_ready_array = np.ascontiguousarray(vtk_ready_array.reshape(point_count))
+            else:
+                vtk_ready_array = np.ascontiguousarray(
+                    vtk_ready_array.reshape(point_count, scalar_components)
+                )
 
             metadata = meta
         except Exception as e:
@@ -271,6 +293,7 @@ def _load_series_in_subprocess(req: WarmupRequest) -> WarmupResult:
         spacing=spacing,
         origin=origin,
         direction=direction,
+        scalar_components=int(scalar_components),
         metadata=metadata,
     )
 
@@ -436,19 +459,41 @@ def result_to_vtk(result: WarmupResult):
         import vtk
         from vtk.util.numpy_support import numpy_to_vtk
 
-        arr = result.numpy_array
+        arr = np.asarray(result.numpy_array)
         dims = result.dimensions
         spacing = result.spacing
         origin = result.origin
+        scalar_components = max(1, int(getattr(result, "scalar_components", 1) or 1))
+        if arr.ndim == 2 and int(arr.shape[1]) > 1:
+            scalar_components = int(arr.shape[1])
 
         vtk_image = vtk.vtkImageData()
         vtk_image.SetDimensions(dims[0], dims[1], dims[2])
         vtk_image.SetSpacing(spacing[0], spacing[1], spacing[2])
         vtk_image.SetOrigin(origin[0], origin[1], origin[2])
 
-        # Flatten and convert to VTK array
-        flat = arr.ravel(order='C')
-        vtk_arr = numpy_to_vtk(flat, deep=True)
+        # Preserve multi-component payloads (e.g., RGB) by reshaping to NxC.
+        point_count = int(dims[0] * dims[1] * max(1, dims[2]))
+        expected_size = int(point_count * scalar_components)
+        if int(arr.size) != expected_size:
+            logger.warning(
+                "[result_to_vtk] Scalar size mismatch series=%s got=%d expected=%d dims=%s comps=%d",
+                str(result.series_number),
+                int(arr.size),
+                int(expected_size),
+                str(dims),
+                int(scalar_components),
+            )
+            return None, None
+
+        if scalar_components <= 1:
+            vtk_payload = np.ascontiguousarray(arr.reshape(point_count))
+        else:
+            vtk_payload = np.ascontiguousarray(arr.reshape(point_count, scalar_components))
+
+        vtk_arr = numpy_to_vtk(vtk_payload, deep=True)
+        if scalar_components > 1:
+            vtk_arr.SetNumberOfComponents(int(scalar_components))
         vtk_arr.SetName("ImageScalars")
         vtk_image.GetPointData().SetScalars(vtk_arr)
 

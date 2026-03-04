@@ -1,11 +1,16 @@
 PySide6==6.10.2
 pynetdicom==2.1.1
 pydicom>=2.4.0
+pylibjpeg>=2.0.0
+pylibjpeg-libjpeg>=2.3.0
+pylibjpeg-openjpeg>=2.4.0
+pylibjpeg-rle>=2.2.0
 grpcio
 google==3.0.0
 google-api-python-client==2.168.0
 vtk
 SimpleITK==2.5.3
+opencv-python-headless
 natsort==8.4.0
 sounddevice==0.5.2
 soundfile==0.13.1

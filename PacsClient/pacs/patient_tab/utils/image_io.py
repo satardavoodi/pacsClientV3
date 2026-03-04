@@ -4,6 +4,8 @@ import time
 import warnings
 import sys
 import logging
+import importlib.metadata as importlib_metadata
+import numpy as np
 
 import SimpleITK as sitk
 import pydicom
@@ -19,6 +21,13 @@ from natsort import natsorted
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, get_series_by_study_pk, \
     get_instances_by_series_pk, get_series_by_series_pk, find_series_pk, get_study_by_study_uid, \
     update_study_counts_by_uid, get_connection_database, get_series_path_with_study_pk_and_series_number
+from PacsClient.utils.viewer_backend_config import (
+    BACKEND_PYDICOM,
+    BACKEND_VTK,
+    resolve_viewer_backend,
+)
+from PacsClient.pacs.patient_tab.viewers.backends.pydicom_lazy_volume import PyDicomLazyVolume
+from PacsClient.pacs.patient_tab.viewers.backends.lazy_volume_registry import get_loader
 import gc
 from .utils import find_series_folder_by_series_number
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
@@ -165,6 +174,7 @@ _series_metadata_cache = {}
 _cache_max_size = 100  # Maximum number of cached series
 _LAST_GC_TS = 0.0
 _GC_INTERVAL_SEC = 120.0  # was 20s → 120s: gc.collect is stop-the-world and freezes ALL threads (UI included)
+_DECODER_PREFLIGHT_LOGGED = False
 
 
 def _list_unique_dicom_files(folder: Path) -> list:
@@ -179,6 +189,308 @@ def _list_unique_dicom_files(folder: Path) -> list:
         seen.add(key)
         uniq.append(p)
     return natsorted(uniq)
+
+
+def _ensure_series_meta(metadata: dict) -> dict:
+    if not isinstance(metadata, dict):
+        return {}
+    series_meta = metadata.get("series")
+    if not isinstance(series_meta, dict):
+        series_meta = {}
+        metadata["series"] = series_meta
+    return series_meta
+
+
+def _annotate_backend_metadata(metadata: dict, backend: str, lazy_loader_key: str = "") -> None:
+    series_meta = _ensure_series_meta(metadata)
+    if not series_meta:
+        return
+    series_meta["viewer_backend"] = str(backend or BACKEND_VTK)
+    if lazy_loader_key:
+        series_meta["lazy_loader_key"] = str(lazy_loader_key)
+        series_meta["viewer_backend_label"] = "PyDicom 2D"
+    else:
+        series_meta.pop("lazy_loader_key", None)
+        series_meta.pop("viewer_backend_label", None)
+
+
+def _validate_lazy_geometry(metadata: dict) -> tuple:
+    try:
+        instances = list((metadata or {}).get("instances", []) or [])
+        if not instances:
+            return False, "no_instances"
+
+        # Validate a small sample (first + last) to avoid full scan overhead.
+        sample = [instances[0]]
+        if len(instances) > 1:
+            sample.append(instances[-1])
+
+        for inst in sample:
+            iop = inst.get("image_orientation_patient")
+            ipp = inst.get("image_position_patient")
+            ps = inst.get("pixel_spacing")
+            rows = int(inst.get("rows", 0) or 0)
+            cols = int(inst.get("columns", 0) or 0)
+            if iop is None or len(iop) < 6:
+                return False, "missing_image_orientation_patient"
+            if ipp is None or len(ipp) < 3:
+                return False, "missing_image_position_patient"
+            if ps is None or len(ps) < 2:
+                return False, "missing_pixel_spacing"
+            if rows <= 0 or cols <= 0:
+                return False, "missing_rows_columns"
+        return True, ""
+    except Exception as e:
+        return False, f"geometry_validation_error:{e}"
+
+
+def _decode_dependency_hint() -> str:
+    return (
+        "Install runtime decoders: pydicom + pylibjpeg, pylibjpeg-libjpeg, "
+        "pylibjpeg-openjpeg, pylibjpeg-rle (optional fallback: python-gdcm)."
+    )
+
+
+def _missing_decoder_packages() -> list:
+    required = [
+        "pydicom",
+        "pylibjpeg",
+        "pylibjpeg-libjpeg",
+        "pylibjpeg-openjpeg",
+        "pylibjpeg-rle",
+    ]
+    missing = []
+    for pkg in required:
+        try:
+            importlib_metadata.version(pkg)
+        except Exception:
+            missing.append(pkg)
+    return missing
+
+
+def _safe_float(value, default=None):
+    try:
+        if value is None:
+            return default
+        if isinstance(value, (list, tuple)):
+            if not value:
+                return default
+            value = value[0]
+        return float(value)
+    except Exception:
+        return default
+
+
+def _safe_float_list(value, min_len):
+    try:
+        seq = list(value)
+        if len(seq) < int(min_len):
+            return None
+        return [float(seq[i]) for i in range(int(min_len))]
+    except Exception:
+        return None
+
+
+def _direction_from_iop(iop):
+    vals = _safe_float_list(iop, 6)
+    if vals is None:
+        return None
+    row = np.asarray(vals[0:3], dtype=float)
+    col = np.asarray(vals[3:6], dtype=float)
+    row_n = float(np.linalg.norm(row))
+    col_n = float(np.linalg.norm(col))
+    if row_n <= 1e-9 or col_n <= 1e-9:
+        return None
+    row = row / row_n
+    col = col / col_n
+    normal = np.cross(row, col)
+    normal_n = float(np.linalg.norm(normal))
+    if normal_n <= 1e-9:
+        return None
+    normal = normal / normal_n
+    # Legacy DB format from ITK: flatten row-major with axis columns
+    # [row(IOP0-2), col(IOP3-5), normal].
+    mat = np.array(
+        [
+            [row[0], col[0], normal[0]],
+            [row[1], col[1], normal[1]],
+            [row[2], col[2], normal[2]],
+        ],
+        dtype=float,
+    )
+    return [float(v) for v in mat.reshape(-1)]
+
+
+def _normalize_instances_geometry_order(instances):
+    if not isinstance(instances, list) or len(instances) <= 1:
+        return False
+
+    ref_iop = None
+    for inst in instances:
+        ref_iop = _safe_float_list(inst.get("image_orientation_patient"), 6)
+        if ref_iop is not None:
+            break
+    if ref_iop is None:
+        return False
+
+    row = np.asarray(ref_iop[0:3], dtype=float)
+    col = np.asarray(ref_iop[3:6], dtype=float)
+    normal = np.cross(row, col)
+    normal_n = float(np.linalg.norm(normal))
+    if normal_n <= 1e-9:
+        return False
+    normal = normal / normal_n
+
+    decorated = []
+    for original_idx, inst in enumerate(instances):
+        ipp = _safe_float_list(inst.get("image_position_patient"), 3)
+        if ipp is None:
+            return False
+        proj = float(np.dot(np.asarray(ipp, dtype=float), normal))
+        decorated.append((proj, original_idx, inst))
+
+    sorted_instances = [inst for _, _, inst in sorted(decorated, key=lambda item: (item[0], item[1]))]
+    changed = any(sorted_instances[i] is not instances[i] for i in range(len(instances)))
+    if changed:
+        instances[:] = sorted_instances
+
+    # Keep DB-compatible direction payload populated for downstream consumers.
+    for inst in instances:
+        if inst.get("direction"):
+            continue
+        direction = _direction_from_iop(inst.get("image_orientation_patient"))
+        if direction is not None:
+            inst["direction"] = direction
+
+    return changed
+
+
+def _normalize_metadata_instances(metadata):
+    if not isinstance(metadata, dict):
+        return False
+    changed = _normalize_instances_geometry_order(metadata.get("instances"))
+    try:
+        series_meta = _ensure_series_meta(metadata)
+        if isinstance(series_meta, dict):
+            series_meta["instances_geometry_sorted"] = True
+    except Exception:
+        pass
+    return changed
+
+
+def _build_metadata_headers_only(series_path: Path, series_number):
+    dicom_files = _list_unique_dicom_files(series_path)
+    if not dicom_files:
+        return None
+
+    instances = []
+    first_dcm = None
+    for i, dicom_file in enumerate(dicom_files, 1):
+        try:
+            dcm = utils._safe_dcmread(str(dicom_file), stop_before_pixels=True)
+            if dcm is None:
+                continue
+            if first_dcm is None:
+                first_dcm = dcm
+
+            ww = dcm.get("WindowWidth", None)
+            wc = dcm.get("WindowCenter", None)
+            iop = dcm.get("ImageOrientationPatient", None)
+            ipp = dcm.get("ImagePositionPatient", None)
+            ps = dcm.get("PixelSpacing", None)
+
+            instances.append(
+                {
+                    "instance_number": int(dcm.get("InstanceNumber", i) or i),
+                    "instance_path": str(dicom_file),
+                    "rows": int(dcm.get("Rows", 0) or 0),
+                    "columns": int(dcm.get("Columns", 0) or 0),
+                    "window_width": _safe_float(ww),
+                    "window_center": _safe_float(wc),
+                    "is_rgb": str(dcm.get("PhotometricInterpretation", "")).upper() in {"RGB", "YBR_FULL", "YBR_FULL_422"},
+                    "sop_uid": str(dcm.get("SOPInstanceUID", "")),
+                    "image_orientation_patient": [float(v) for v in iop] if iop is not None else None,
+                    "image_position_patient": [float(v) for v in ipp] if ipp is not None else None,
+                    "pixel_spacing": [float(v) for v in ps] if ps is not None else None,
+                    "slice_thickness": _safe_float(dcm.get("SliceThickness", None)),
+                    "spacing_between_slices": _safe_float(dcm.get("SpacingBetweenSlices", None)),
+                    "rescale_slope": _safe_float(dcm.get("RescaleSlope", None), 1.0),
+                    "rescale_intercept": _safe_float(dcm.get("RescaleIntercept", None), 0.0),
+                    "bits_allocated": int(dcm.get("BitsAllocated", 16) or 16),
+                    "pixel_representation": int(dcm.get("PixelRepresentation", 1) or 1),
+                }
+            )
+        except Exception:
+            continue
+
+    if not instances:
+        return None
+
+    _normalize_instances_geometry_order(instances)
+
+    if first_dcm is None:
+        return None
+
+    metadata = {
+        "series": {
+            "series_number": str(series_number),
+            "series_name": str(series_number),
+            "series_description": first_dcm.get("SeriesDescription", f"Series {series_number}"),
+            "series_thk": str(first_dcm.get("SliceThickness", "1.0")),
+            "modality": first_dcm.get("Modality", "CT"),
+            "protocol_name": first_dcm.get("ProtocolName", ""),
+            "body_part_examined": first_dcm.get("BodyPartExamined", ""),
+            "series_path": str(series_path),
+            "main_thumbnail": True,
+        },
+        "instances": instances,
+    }
+    return metadata
+
+
+def _build_lazy_volume_for_metadata(series_path: Path, metadata: dict):
+    if not isinstance(metadata, dict):
+        return None, metadata
+    series_meta = _ensure_series_meta(metadata)
+    if not series_meta:
+        return None, metadata
+
+    existing_key = str(series_meta.get("lazy_loader_key", "") or "").strip()
+    if existing_key:
+        existing_loader = get_loader(existing_key)
+        if existing_loader is not None:
+            _annotate_backend_metadata(metadata, BACKEND_PYDICOM, existing_key)
+            return getattr(existing_loader, "vtk_image_data", None), metadata
+
+    try:
+        _normalize_metadata_instances(metadata)
+        lazy_volume = PyDicomLazyVolume.from_series(str(series_path), metadata=metadata)
+        loader_key = lazy_volume.register()
+        _annotate_backend_metadata(metadata, BACKEND_PYDICOM, loader_key)
+        try:
+            series_number = str((series_meta or {}).get("series_number", "-"))
+            slice_count = int(getattr(lazy_volume, "slice_count", 0) or 0)
+            instance_count = int(len(metadata.get("instances", []) or []))
+            logger.info(
+                "viewer-backend stage=open_series_bind backend=%s series=%s slices=%d instances=%d loader_key=%s",
+                BACKEND_PYDICOM,
+                series_number,
+                slice_count,
+                instance_count,
+                loader_key,
+                extra={
+                    "component": "viewer",
+                    "function": "image_io._build_lazy_volume_for_metadata",
+                    "stage": "open_series_bind",
+                },
+            )
+        except Exception:
+            pass
+        return lazy_volume.vtk_image_data, metadata
+    except Exception as e:
+        logger.warning("Lazy backend creation failed for %s: %s", series_path, e)
+        _annotate_backend_metadata(metadata, BACKEND_VTK, "")
+        return None, metadata
 
 
 def _maybe_collect_gc(force: bool = False):
@@ -249,6 +561,10 @@ def _backfill_instance_orientation(instances):
                 raw_ps = ds.get('PixelSpacing', None)
                 if raw_ps is not None:
                     inst['pixel_spacing'] = [float(v) for v in raw_ps]
+            if inst.get('direction') is None:
+                _dir = _direction_from_iop(inst.get('image_orientation_patient'))
+                if _dir is not None:
+                    inst['direction'] = _dir
 
             # Persist to DB so this only runs once per series
             inst_pk = inst.get('instance_pk')
@@ -260,12 +576,14 @@ def _backfill_instance_orientation(instances):
                         """UPDATE instances
                            SET image_orientation_patient = COALESCE(image_orientation_patient, ?),
                                image_position_patient    = COALESCE(image_position_patient, ?),
-                               pixel_spacing             = COALESCE(pixel_spacing, ?)
+                               pixel_spacing             = COALESCE(pixel_spacing, ?),
+                               direction                 = COALESCE(direction, ?)
                            WHERE instance_pk = ?""",
                         (
                             _json.dumps(inst['image_orientation_patient']) if inst.get('image_orientation_patient') else None,
                             _json.dumps(inst['image_position_patient']) if inst.get('image_position_patient') else None,
                             _json.dumps(inst['pixel_spacing']) if inst.get('pixel_spacing') else None,
+                            _json.dumps(inst['direction']) if inst.get('direction') else None,
                             inst_pk,
                         ),
                     )
@@ -278,6 +596,7 @@ def _backfill_instance_orientation(instances):
             print(f"      WARN: backfill read failed for {fpath}: {_e}")
 
     if backfilled:
+        _normalize_instances_geometry_order(instances)
         print(f"      🔧 [BACKFILL] populated IOP/IPP for {backfilled}/{len(instances)} instances")
 
     return backfilled > 0
@@ -329,10 +648,13 @@ def _get_cached_metadata(series_pk, instances):
     
     # Check if in cache
     if cache_key in _series_metadata_cache:
-        return _series_metadata_cache[cache_key]
+        cached = _series_metadata_cache[cache_key]
+        _normalize_metadata_instances(cached)
+        return cached
     
     # Generate metadata
     metadata = read_series_instances_metadata(series_pk, instances)
+    _normalize_metadata_instances(metadata)
     
     # Cache it (with size limit)
     if len(_series_metadata_cache) >= _cache_max_size:
@@ -759,7 +1081,8 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
 
 def load_single_series_by_number(study_path, series_number, patient_pk=None, study_pk=None,
                                  ordering_by_instances_number=None, skip_fs_validation=False,
-                                 max_itk_threads=None, max_pydicom_workers=None):
+                                 max_itk_threads=None, max_pydicom_workers=None,
+                                 viewer_backend=None, allow_lazy_backend: bool = True):
     """
     ✅ OPTIMIZED: Load a single series by number with detailed timing
 
@@ -832,6 +1155,87 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
         return
     
     print(f"      Loading from: {series_path}")
+    selected_backend = BACKEND_VTK if not allow_lazy_backend else viewer_backend
+    resolution = resolve_viewer_backend(metadata=None, settings=selected_backend)
+    active_backend = str(resolution.get("backend", BACKEND_VTK))
+
+    # Lazy PyDicom path: header/metadata only + on-demand slice decode.
+    if active_backend == BACKEND_PYDICOM:
+        global _DECODER_PREFLIGHT_LOGGED
+        if not _DECODER_PREFLIGHT_LOGGED:
+            _DECODER_PREFLIGHT_LOGGED = True
+            missing_pkgs = _missing_decoder_packages()
+            if missing_pkgs:
+                logger.warning(
+                    "PyDicom decoder preflight missing packages: %s. %s",
+                    ", ".join(missing_pkgs),
+                    _decode_dependency_hint(),
+                )
+        _lazy_start = time.time()
+        try:
+            lazy_metadata = None
+            if study_pk:
+                from PacsClient.utils.database import find_series_pk_by_number
+
+                series_pk = find_series_pk_by_number(series_number, study_pk)
+                if series_pk:
+                    instances = get_instances_by_series_pk(series_pk, group_id=0) or []
+                    if not instances:
+                        _gid, instances = _get_instances_from_best_group(series_pk)
+                    if instances:
+                        lazy_metadata = _get_cached_metadata(series_pk, instances)
+
+            if lazy_metadata is None:
+                lazy_metadata = _build_metadata_headers_only(series_path, series_number)
+
+            if lazy_metadata and lazy_metadata.get("instances"):
+                try:
+                    _backfill_instance_orientation(lazy_metadata.get("instances", []))
+                except Exception:
+                    pass
+                try:
+                    _normalize_metadata_instances(lazy_metadata)
+                except Exception:
+                    pass
+                _ensure_series_meta(lazy_metadata).setdefault("series_path", str(series_path))
+                geom_ok, geom_reason = _validate_lazy_geometry(lazy_metadata)
+                if not geom_ok:
+                    logger.warning(
+                        "PyDicom lazy disabled for series %s due to incomplete geometry (%s); fallback to VTK",
+                        series_number,
+                        geom_reason,
+                    )
+                    _annotate_backend_metadata(lazy_metadata, BACKEND_VTK, "")
+                else:
+                    vtk_lazy, lazy_metadata = _build_lazy_volume_for_metadata(series_path, lazy_metadata)
+                    if vtk_lazy is not None:
+                        _lazy_ms = (time.time() - _lazy_start) * 1000.0
+                        try:
+                            _ensure_series_meta(lazy_metadata)["pydicom_lazy_build_ms"] = float(_lazy_ms)
+                        except Exception:
+                            pass
+                        logger.info(
+                            "viewer-data stage=pydicom_lazy_build duration_ms=%.2f",
+                            _lazy_ms,
+                            extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "pydicom_lazy_build"},
+                        )
+                        log_stage_timing(
+                            logger,
+                            component="viewer",
+                            function="image_io.load_single_series_by_number",
+                            stage="load_single_series_total",
+                            start_ms=t_total,
+                            source="pydicom_lazy",
+                        )
+                        yield vtk_lazy, lazy_metadata, (patient_pk, study_pk)
+                        return
+        except Exception as e:
+            logger.warning(
+                "PyDicom lazy path failed for series %s: %s. %s Falling back to VTK.",
+                series_number,
+                e,
+                _decode_dependency_hint(),
+            )
     
     # ✅ OPTIMIZATION: Try to load directly from DB first (much faster!)
     if study_pk:
@@ -898,7 +1302,9 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                             )
                             fs_result = _load_series_from_filesystem(study_path, series_number, patient_pk, study_pk)
                             if fs_result:
-                                yield fs_result
+                                fs_vtk, fs_meta, fs_patient_info = fs_result
+                                _annotate_backend_metadata(fs_meta, BACKEND_VTK, "")
+                                yield fs_vtk, fs_meta, fs_patient_info
                                 return
 
                     # We have instances in DB - use them directly
@@ -977,6 +1383,10 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                             _series_metadata_cache.pop(_cache_key, None)
                     except Exception as _bf_err:
                         print(f"      WARN: IOP/IPP backfill error: {_bf_err}")
+                    try:
+                        _normalize_metadata_instances(metadata)
+                    except Exception:
+                        pass
 
                     # Apply ITK filters before conversion
                     _filter_start = time.time()
@@ -1020,7 +1430,7 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                         start_ms=t_total,
                         source="db_path",
                     )
-                    
+                    _annotate_backend_metadata(metadata, BACKEND_VTK, "")
                     yield vtk_image_data, metadata, (patient_pk, study_pk)
                     return
         except Exception as e:
@@ -1060,7 +1470,12 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
     for item in process_series_groups(series_path, size_dict, patient_pk, study_pk,
                                       max_itk_threads=max_itk_threads,
                                       max_pydicom_workers=max_pydicom_workers):
-        yield item
+        try:
+            vtk_image_data, metadata, patient_info = item
+        except Exception:
+            continue
+        _annotate_backend_metadata(metadata, BACKEND_VTK, "")
+        yield vtk_image_data, metadata, patient_info
     _process_time = time.time() - _process_start
     
     _func_total = time.time() - _func_start
@@ -1186,6 +1601,7 @@ def load_series_preview(study_path, series_number, patient_pk=None, study_pk=Non
         'preview_only': True,
         'preview_total_instances': total_files,
     }
+    _annotate_backend_metadata(metadata, BACKEND_VTK, "")
 
     itk_image = None
 

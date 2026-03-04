@@ -1,4 +1,4 @@
-"""
+﻿"""
 Viewer Controller Module
 Encapsulates all viewer-related responsibilities for PatientWidget
 """
@@ -53,6 +53,13 @@ from PacsClient.pacs.patient_tab.zeta_boost.warmup_subprocess import (
     WarmupSubprocessManager, WarmupRequest, WarmupResult, result_to_vtk,
 )
 from PacsClient.utils.boost_viewer_config import load_boost_viewer_enabled
+from PacsClient.utils.viewer_backend_config import (
+    BACKEND_VTK,
+    BACKEND_PYDICOM,
+    load_viewer_backend,
+    resolve_viewer_backend,
+)
+from PacsClient.pacs.patient_tab.viewers.backends.lazy_volume_registry import get_loader as get_lazy_loader
 from PacsClient.utils.diagnostic_logging import new_correlation_id, set_log_context, now_ms, log_stage_timing
 
 GRID_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "modality_grid.json"
@@ -61,8 +68,8 @@ GRID_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "modality_grid.json"
 class SliceTickSlider(QSlider):
     """
     Custom QSlider that paints per-slice tick marks along the groove.
-    • Non-current ticks: thin, semi-transparent.
-    • Current-position tick: wider, bright accent colour.
+    â€¢ Non-current ticks: thin, semi-transparent.
+    â€¢ Current-position tick: wider, bright accent colour.
     All painting is done *after* the base QSlider paint so the handle
     is always drawn on top.
     """
@@ -125,11 +132,11 @@ class SliceTickSlider(QSlider):
                 alpha = max(40, int(200 - distance * 2.7))
                 color = QColor(self._theme_r, self._theme_g, self._theme_b, alpha)
             else:
-                # Future / unvisited slices — neutral gray
+                # Future / unvisited slices â€” neutral gray
                 color = self._unvisited_color
 
             pen = QPen(color, 1.0)
-            pen.setCapStyle(Qt.FlatCap)  # flat ends → crisp dash, not rounded blob
+            pen.setCapStyle(Qt.FlatCap)  # flat ends â†’ crisp dash, not rounded blob
             painter.setPen(pen)
             painter.drawLine(cx - tick_half_w, y, cx + tick_half_w, y)
 
@@ -141,7 +148,7 @@ class SliceTickSlider(QSlider):
         else:
             y_cur = int(groove_bottom - frac_cur * groove_len)
 
-        dot_radius = 5  # 10 px diameter — easy to see and grab
+        dot_radius = 5  # 10 px diameter â€” easy to see and grab
         painter.setPen(Qt.NoPen)
         painter.setBrush(self._current_tick_color)
         painter.drawEllipse(cx - dot_radius, y_cur - dot_radius,
@@ -251,7 +258,7 @@ class ViewerController:
         self._prefetch_delay_ms = 120
         self._interactive_load_in_progress = False
 
-        # ── Dynamic capacity: scale limits to system RAM ──
+        # â”€â”€ Dynamic capacity: scale limits to system RAM â”€â”€
         _cap = self._compute_dynamic_capacity()
         self._capacity_tier = _cap  # keep for diagnostics
 
@@ -271,7 +278,7 @@ class ViewerController:
         self._interactive_preview_enabled = os.getenv("AIPACS_INTERACTIVE_PREVIEW_ENABLED", "0") == "1"
         self._interactive_preview_max_slices = max(1, int(os.getenv("AIPACS_INTERACTIVE_PREVIEW_MAX_SLICES", "64") or "64"))
 
-        # Deterministic full-series cache — now single-layer (ZetaBoost only).
+        # Deterministic full-series cache â€” now single-layer (ZetaBoost only).
         # Legacy dict fields kept as empty stubs for any residual references.
         self._full_series_cache = {}
         self._full_series_cache_order = []
@@ -290,12 +297,12 @@ class ViewerController:
         self._zeta_external_busy_last = None
         self._zeta_manual_triggered = False
 
-        # ── Per-series download warmup (controlled Mode B caching) ──
+        # â”€â”€ Per-series download warmup (controlled Mode B caching) â”€â”€
         # v2.2.3.2.3: Moved from in-process thread to SEPARATE SUBPROCESS.
         # The old thread-based approach caused GIL contention even at IDLE
         # priority because pydicom header reads + SimpleITK wrapper calls
         # acquire/release the GIL at high frequency.  The subprocess has
-        # its own GIL — zero contention with VTK render on the main thread.
+        # its own GIL â€” zero contention with VTK render on the main thread.
         #
         # Legacy thread fields kept for fallback (AIPACS_DL_WARMUP_SUBPROCESS=0).
         self._dl_warmup_queue: deque = deque()
@@ -316,7 +323,7 @@ class ViewerController:
         self._warmup_subprocess_mgr: WarmupSubprocessManager | None = None
         self._warmup_result_timer: QTimer | None = None
 
-        # ── Pipeline orchestrator (replaces timer-based download gating) ──
+        # â”€â”€ Pipeline orchestrator (replaces timer-based download gating) â”€â”€
         self.pipeline = PipelineOrchestrator(
             on_state_changed=self._on_pipeline_state_changed,
             logger=self.logger,
@@ -338,13 +345,13 @@ class ViewerController:
             logger=self.logger,
         )
         self._boostviewer_enabled = self._is_boostviewer_enabled_runtime()
-        # Mode B: Image Slice Booster — lightweight ±20 slice window cache for
+        # Mode B: Image Slice Booster â€” lightweight آ±20 slice window cache for
         # the single active series.  Zero RAM impact on other series.
         self._image_slice_booster: ImageSliceBooster = ImageSliceBooster(
             logger=self.logger
         )
         print(
-            f"🔧 [ZetaBoost][CAPACITY] tier={_cap['tier']} RAM={_cap['total_ram_mb']}MB "
+            f"ًں”§ [ZetaBoost][CAPACITY] tier={_cap['tier']} RAM={_cap['total_ram_mb']}MB "
             f"budget={_cap['byte_budget']//(1024*1024)}MB entries={_cap['max_entries']} "
             f"parallel={_cap['max_parallel_loads']} warmup_workers={_cap['warmup_workers']} "
             f"heavy_threshold={_cap['warmup_max_slices']}slices "
@@ -377,9 +384,9 @@ class ViewerController:
             GRID_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(GRID_CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(default_config, f, indent=2, ensure_ascii=False)
-            print(f"✅ Default modality grid config created: {GRID_CONFIG_PATH}")
+            print(f"âœ… Default modality grid config created: {GRID_CONFIG_PATH}")
         except Exception as e:
-            print(f"⚠️ Could not create default grid config: {e}")
+            print(f"âڑ ï¸ڈ Could not create default grid config: {e}")
 
     def _is_boostviewer_enabled_runtime(self) -> bool:
         try:
@@ -397,10 +404,10 @@ class ViewerController:
         - 2000+ images per series (perfusion runs)
 
         Tiers (by total physical RAM):
-            ≥30 GB  → 4 GB budget, 60 entries, 3 parallel, 3 warmup workers
-            ≥15 GB  → 2.4 GB budget, 48 entries, 3 parallel, 3 warmup workers
-            ≥7.5 GB → 1.6 GB budget, 36 entries, 2 parallel, 2 warmup workers
-            <7.5 GB → 1.2 GB budget, 24 entries, 2 parallel, 2 warmup workers
+            â‰¥30 GB  â†’ 4 GB budget, 60 entries, 3 parallel, 3 warmup workers
+            â‰¥15 GB  â†’ 2.4 GB budget, 48 entries, 3 parallel, 3 warmup workers
+            â‰¥7.5 GB â†’ 1.6 GB budget, 36 entries, 2 parallel, 2 warmup workers
+            <7.5 GB â†’ 1.2 GB budget, 24 entries, 2 parallel, 2 warmup workers
 
         Runtime RAM guards (psutil in _filter_heavy_candidates_by_capacity and
         engine._check_system_memory_ok) still throttle if available RAM drops.
@@ -413,7 +420,7 @@ class ViewerController:
 
         MB = 1024 * 1024
 
-        if total_mb >= 30720:  # ≥30 GB
+        if total_mb >= 30720:  # â‰¥30 GB
             return {
                 'tier': '30GB+',
                 'total_ram_mb': total_mb,
@@ -425,11 +432,11 @@ class ViewerController:
                 'warmup_max_slices': 700,
                 'disk_persist_max': 800 * MB,
             }
-        elif total_mb >= 15360:  # ≥15 GB
+        elif total_mb >= 15360:  # â‰¥15 GB
             return {
                 'tier': '15GB+',
                 'total_ram_mb': total_mb,
-                'byte_budget': 1200 * MB,   # ~24 series × 50 MB each
+                'byte_budget': 1200 * MB,   # ~24 series أ— 50 MB each
                 'max_entries': 24,
                 'max_parallel_loads': 2,  # v2.2.3.2.2: 2 parallel warmup workers (safe: BELOW_NORMAL priority + stale guard)
                 'warmup_workers': 2,
@@ -437,23 +444,23 @@ class ViewerController:
                 'warmup_max_slices': 600,
                 'disk_persist_max': 600 * MB,
             }
-        elif total_mb >= 7680:  # ≥7.5 GB
+        elif total_mb >= 7680:  # â‰¥7.5 GB
             return {
                 'tier': '8GB+',
                 'total_ram_mb': total_mb,
-                'byte_budget': 800 * MB,    # ~16 series × 50 MB each; safe on 8 GB
+                'byte_budget': 800 * MB,    # ~16 series أ— 50 MB each; safe on 8 GB
                 'max_entries': 16,           # covers full 10-series study + headroom
                 'max_parallel_loads': 2,     # v2.2.3.2.2: allow 2 parallel warmup loads (BELOW_NORMAL priority guards VTK)
                 'warmup_workers': 2,
                 'background_workers': 1,
-                'warmup_max_slices': 500,    # raised from 250 → series with 356 slices now eligible
+                'warmup_max_slices': 500,    # raised from 250 â†’ series with 356 slices now eligible
                 'disk_persist_max': 500 * MB,
             }
         else:  # <7.5 GB
             return {
                 'tier': 'low',
                 'total_ram_mb': total_mb,
-                'byte_budget': 400 * MB,    # ~8 series × 50 MB each
+                'byte_budget': 400 * MB,    # ~8 series أ— 50 MB each
                 'max_entries': 8,
                 'max_parallel_loads': 1,
                 'warmup_workers': 1,
@@ -503,7 +510,7 @@ class ViewerController:
             self.zeta_boost.activate()
             if reason:
                 print(
-                    f"🚀 [ZetaBoost][MANUAL_TRIGGER] study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
+                    f"ًںڑ€ [ZetaBoost][MANUAL_TRIGGER] study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
                     f"reason={reason}"
                 )
         except Exception:
@@ -512,8 +519,8 @@ class ViewerController:
     def _zeta_boost_load_series(self, series_number: str):
         """Background worker callback used by ZetaBoost to warm/cache series.
 
-        FULLY INDEPENDENT — no shared locks with the interactive/viewer path.
-        The engine worker already attempts disk→memory promotion before
+        FULLY INDEPENDENT â€” no shared locks with the interactive/viewer path.
+        The engine worker already attempts diskâ†’memory promotion before
         calling this.  If we reach here, the series must be loaded from
         DICOM source.  If the interactive viewer is already loading the
         same series, this callback yields immediately (skip) so we never
@@ -522,7 +529,7 @@ class ViewerController:
         try:
             _cb_start = time.perf_counter()
             if not self._tab_active:
-                print(f"🔧 [WARMUP_CB] series={series_number} → skip (tab inactive)")
+                print(f"ًں”§ [WARMUP_CB] series={series_number} â†’ skip (tab inactive)")
                 return True
             sn = str(series_number)
             if not sn.isdigit():
@@ -530,13 +537,13 @@ class ViewerController:
 
             # Avoid repeated expensive attempts for series that already failed deterministically.
             if sn in self._zeta_boost_failed_series:
-                print(f"🔧 [WARMUP_CB] series={sn} → skip (previously failed)")
+                print(f"ًں”§ [WARMUP_CB] series={sn} â†’ skip (previously failed)")
                 return True
 
-            # Check if engine’s disk promotion already placed it in memory
+            # Check if engineâ€™s disk promotion already placed it in memory
             # (fast O(1) memory-only check, no disk I/O).
             if self.zeta_boost.has_in_memory(sn):
-                print(f"🔧 [WARMUP_CB] series={sn} → skip (already in memory) {(time.perf_counter()-_cb_start)*1000:.1f}ms")
+                print(f"ًں”§ [WARMUP_CB] series={sn} â†’ skip (already in memory) {(time.perf_counter()-_cb_start)*1000:.1f}ms")
                 return True
 
             # Fast path: reuse already-loaded series data if available in thumbnail cache.
@@ -549,11 +556,11 @@ class ViewerController:
                         and self._is_full_volume_cache_candidate(sn, vtk_existing, meta_existing)
                     ):
                         self._full_cache_put(sn, vtk_existing, meta_existing)
-                        print(f"🔧 [WARMUP_CB] series={sn} → reused from thumbnail cache {(time.perf_counter()-_cb_start)*1000:.1f}ms")
+                        print(f"ًں”§ [WARMUP_CB] series={sn} â†’ reused from thumbnail cache {(time.perf_counter()-_cb_start)*1000:.1f}ms")
                         return True
             except Exception:
                 pass
-            print(f"🔧 [WARMUP_CB] series={sn} → starting DICOM load...")
+            print(f"ًں”§ [WARMUP_CB] series={sn} â†’ starting DICOM load...")
 
             study_path = self._get_correct_study_path()
             if not study_path:
@@ -563,13 +570,13 @@ class ViewerController:
             # already loading this series, warmup skips to avoid duplicate I/O.
             _coord_status, _coord_event = self._load_coordinator.try_acquire(sn, owner='warmup')
             if _coord_status == 'skip':
-                print(f"🔧 [WARMUP_CB] series={sn} → skip (another load in progress)")
+                print(f"ًں”§ [WARMUP_CB] series={sn} â†’ skip (another load in progress)")
                 return True
             # Also check legacy dedup set for extra safety.
             with self._series_load_lock:
                 if sn in self._loading_series_numbers:
                     self._load_coordinator.complete(sn)
-                    print(f"🔧 [WARMUP_CB] series={sn} → skip (interactive is loading)")
+                    print(f"ًں”§ [WARMUP_CB] series={sn} â†’ skip (interactive is loading)")
                     return True
 
             # Load DICOM+ITK independently (no shared lock with viewer).
@@ -590,7 +597,7 @@ class ViewerController:
             def _mark_failed(reason: str):
                 """Record the series as permanently failed with a reason tag."""
                 self._zeta_boost_failed_series.add(sn)
-                print(f"⚠️ [WARMUP_CB] series={sn} SKIP reason={reason}")
+                print(f"âڑ ï¸ڈ [WARMUP_CB] series={sn} SKIP reason={reason}")
 
             cached_ok = False
             item_count = 0
@@ -606,7 +613,7 @@ class ViewerController:
                     self._full_cache_put(sn, vtk_image_data, metadata)
                     cached_ok = True
                     
-                    # ✅ OPTIMIZATION: بعد از cache put، prefetch سریز مجاور بلافاصله
+                    # âœ… OPTIMIZATION: ط¨ط¹ط¯ ط§ط² cache putطŒ prefetch ط³ط±غŒط² ظ…ط¬ط§ظˆط± ط¨ظ„ط§ظپط§طµظ„ظ‡
                     threading.Thread(
                         target=self._prefetch_adjacent_series,
                         args=(sn,),
@@ -615,26 +622,26 @@ class ViewerController:
                     
                     break
             except Exception as iter_err:
-                print(f"⚠️ [WARMUP_CB] series={sn} iteration error: {iter_err}")
+                print(f"âڑ ï¸ڈ [WARMUP_CB] series={sn} iteration error: {iter_err}")
             finally:
                 # Release LoadCoordinator lock so interactive callers unblock.
                 self._load_coordinator.complete(sn)
 
             _load_elapsed = (time.perf_counter() - _cb_start) * 1000
             if cached_ok:
-                print(f"🔧 [WARMUP_CB] series={sn} → OK {_load_elapsed:.0f}ms")
+                print(f"ًں”§ [WARMUP_CB] series={sn} â†’ OK {_load_elapsed:.0f}ms")
                 return True
             # ---- failure categorization ----
             if item_count == 0:
                 _mark_failed("no_dicom_data")
                 print(
-                    f"🔧 [WARMUP_CB] series={sn} → FAILED(no_data) {_load_elapsed:.0f}ms "
-                    f"reason: generator yielded nothing — non-image DICOM, missing files, or unsupported format"
+                    f"ًں”§ [WARMUP_CB] series={sn} â†’ FAILED(no_data) {_load_elapsed:.0f}ms "
+                    f"reason: generator yielded nothing â€” non-image DICOM, missing files, or unsupported format"
                 )
             else:
                 _mark_failed("no_usable_vtk")
                 print(
-                    f"🔧 [WARMUP_CB] series={sn} → FAILED(no_usable_vtk) items={item_count} "
+                    f"ًں”§ [WARMUP_CB] series={sn} â†’ FAILED(no_usable_vtk) items={item_count} "
                     f"{_load_elapsed:.0f}ms reason: loaded but VTK data was None or had zero dimensions"
                 )
             return False
@@ -672,7 +679,7 @@ class ViewerController:
                 pass
             try:
                 print(
-                    f"✅ [TAB-LIFECYCLE] ACTIVE(manual-trigger) study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
+                    f"âœ… [TAB-LIFECYCLE] ACTIVE(manual-trigger) study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
                     f"boostviewer=False zeta_boost_active={self.zeta_boost.is_active()}"
                 )
             except Exception:
@@ -687,7 +694,7 @@ class ViewerController:
 
         try:
             print(
-                f"✅ [TAB-LIFECYCLE] ACTIVE study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
+                f"âœ… [TAB-LIFECYCLE] ACTIVE study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
                 f"zeta_boost_active={self.zeta_boost.is_active()}"
             )
         except Exception:
@@ -700,7 +707,7 @@ class ViewerController:
         # Start warmup shortly after tab-open bootstrap to avoid competing with first render.
         try:
             # Mode A detection: if pipeline is still IDLE when tab activates,
-            # there's no download session — all series are pre-downloaded.
+            # there's no download session â€” all series are pre-downloaded.
             # This unlocks ZetaBoost warmup immediately.
             if self.pipeline.state == PipelineState.IDLE:
                 self.pipeline.mark_pre_downloaded()
@@ -727,7 +734,7 @@ class ViewerController:
                 QTimer.singleShot(900, self._start_open_tab_warmup)
             else:
                 print(
-                    f"[WARMUP] Activation warmup deferred — global downloads active "
+                    f"[WARMUP] Activation warmup deferred â€” global downloads active "
                     f"count={int(getattr(ZetaBoostEngine, '_global_active_download_count', 0) or 0)}"
                 )
         except Exception:
@@ -749,7 +756,7 @@ class ViewerController:
             pass
         try:
             print(
-                f"🛑 [TAB-LIFECYCLE] INACTIVE study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
+                f"ًں›‘ [TAB-LIFECYCLE] INACTIVE study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
                 f"zeta_boost_active={self.zeta_boost.is_active()}"
             )
         except Exception:
@@ -785,7 +792,7 @@ class ViewerController:
         # ALWAYS instant: use engine.query() for O(1) memory-only lookup.
         # Disk-cache promotion happens exclusively inside engine workers
         # (via _try_promote_disk_to_memory).  The viewer never touches
-        # the disk cache — if ZetaBoost isn't ready, the viewer loads
+        # the disk cache â€” if ZetaBoost isn't ready, the viewer loads
         # its own data through the normal workflow.
         _fcg_start = time.perf_counter()
         try:
@@ -803,7 +810,7 @@ class ViewerController:
                     return None
                 _fcg_ms = (time.perf_counter() - _fcg_start) * 1000
                 if _fcg_ms > 50:
-                    print(f"🔍 [CACHE_GET] series={key_sn} source=zeta_boost {_fcg_ms:.0f}ms")
+                    print(f"ًں”چ [CACHE_GET] series={key_sn} source=zeta_boost {_fcg_ms:.0f}ms")
                 return val
         except Exception:
             pass
@@ -838,8 +845,95 @@ class ViewerController:
         except Exception:
             pass
 
-    # ── Look-ahead warmup: pre-cache adjacent series after drag-drop ──
+    # â”€â”€ Look-ahead warmup: pre-cache adjacent series after drag-drop â”€â”€
     _LOOKAHEAD_COUNT = 2  # number of adjacent series to pre-warm after drag-drop
+
+    def _get_requested_viewer_backend(self) -> str:
+        try:
+            resolution = resolve_viewer_backend(
+                metadata=None,
+                settings=load_viewer_backend(default=BACKEND_VTK),
+            )
+            return str(resolution.get("requested_backend", BACKEND_VTK) or BACKEND_VTK)
+        except Exception:
+            return BACKEND_VTK
+
+    def _needs_backend_rebuild(self, metadata: dict, requested_backend: str) -> bool:
+        """Return True when current payload cannot satisfy the requested backend."""
+        if str(requested_backend or BACKEND_VTK) != BACKEND_PYDICOM:
+            return False
+        if not isinstance(metadata, dict):
+            return True
+        try:
+            series_meta = metadata.get("series", {}) or {}
+            # Decode failure should stay on deterministic VTK fallback.
+            if bool(series_meta.get("force_vtk_fallback", False)):
+                return False
+
+            resolution = resolve_viewer_backend(metadata=metadata, settings=requested_backend)
+            lazy_key = str(resolution.get("lazy_loader_key", "") or "").strip()
+            if not lazy_key:
+                return True
+            return get_lazy_loader(lazy_key) is None
+        except Exception:
+            return True
+
+    def apply_backend_setting_to_open_viewers(self):
+        """Apply current backend setting to existing viewers via standard switch path."""
+        requested_backend = self._get_requested_viewer_backend()
+        self.logger.info(
+            "viewer-backend stage=settings_apply requested_backend=%s open_viewers=%d",
+            str(requested_backend),
+            int(len(self.lst_nodes_viewer or [])),
+            extra={
+                "component": "viewer",
+                "function": "ViewerController.apply_backend_setting_to_open_viewers",
+                "stage": "settings_apply",
+            },
+        )
+
+        for node in list(self.lst_nodes_viewer or []):
+            vtk_widget = getattr(node, "vtk_widget", None)
+            slider = getattr(node, "slider", None)
+            if vtk_widget is None or slider is None:
+                continue
+            image_viewer = getattr(vtk_widget, "image_viewer", None)
+            if image_viewer is None:
+                continue
+
+            metadata = getattr(image_viewer, "metadata", None)
+            if not isinstance(metadata, dict):
+                metadata = getattr(vtk_widget, "_bound_backend_metadata", None)
+            if not isinstance(metadata, dict):
+                continue
+
+            series_number = str((metadata.get("series", {}) or {}).get("series_number", "")).strip()
+            if not series_number:
+                continue
+
+            current_backend = str(getattr(vtk_widget, "_active_backend", BACKEND_VTK) or BACKEND_VTK)
+            if current_backend == requested_backend and not self._needs_backend_rebuild(metadata, requested_backend):
+                continue
+
+            self.logger.info(
+                "viewer-backend stage=settings_reload viewer=%s series=%s current=%s requested=%s",
+                str(getattr(vtk_widget, "id_vtk_widget", None)),
+                series_number,
+                current_backend,
+                requested_backend,
+                extra={
+                    "component": "viewer",
+                    "function": "ViewerController.apply_backend_setting_to_open_viewers",
+                    "stage": "settings_reload",
+                },
+            )
+            self.change_series_on_viewer(
+                series_number,
+                flag_change_selected_widget=False,
+                vtk_widget=vtk_widget,
+                slider=slider,
+                allow_paired=False,
+            )
 
     def _enqueue_lookahead_warmup(self, series_number: str):
         """After a drag-drop displays series N, enqueue the next N adjacent series for warmup.
@@ -932,7 +1026,7 @@ class ViewerController:
             if queue:
                 self.zeta_boost.enqueue_many_warmup(queue)
                 print(
-                    f"🔮 [ZetaBoost][LOOKAHEAD] series={sn} → pre-warming {len(queue)} adjacent: {queue}"
+                    f"ًں”® [ZetaBoost][LOOKAHEAD] series={sn} â†’ pre-warming {len(queue)} adjacent: {queue}"
                 )
         except Exception as e:
             try:
@@ -993,7 +1087,7 @@ class ViewerController:
             pass
 
         # NOTE: A previous "last resort" fallback called _get_series_by_number_fast(sn)
-        # here.  That triggered _full_cache_get → zeta_boost.get(memory_only=False) on
+        # here.  That triggered _full_cache_get â†’ zeta_boost.get(memory_only=False) on
         # background warmup threads, causing FULL disk decompression + VTK reconstruction
         # as a side effect of just counting slices.  This bypassed the engine's priority
         # queue entirely (every series was already in-memory by the time enqueue ran) and
@@ -1087,7 +1181,7 @@ class ViewerController:
             self._series_warmup_eligibility_cache[cache_key] = True
             return True
         except Exception:
-            return True  # cannot parse → let the loader try
+            return True  # cannot parse â†’ let the loader try
 
     def _is_series_header_consistent_for_warmup(self, series_number: str) -> bool:
         """
@@ -1225,9 +1319,9 @@ class ViewerController:
 
         SYSTEM RAM CHECK: If available system RAM is below a safety threshold,
         heavy warmup is skipped entirely so ZetaBoost doesn't pressure the system.
-        ZetaBoost is a helper — it must never degrade the main workflow.
+        ZetaBoost is a helper â€” it must never degrade the main workflow.
         """
-        # ── System RAM guard ──
+        # â”€â”€ System RAM guard â”€â”€
         # Skip heavy warmup entirely if the OS is already under memory pressure.
         # This keeps ZetaBoost from pushing the system into swap / OOM territory.
         try:
@@ -1237,12 +1331,12 @@ class ViewerController:
             _system_reserve_mb = 1200  # keep at least 1.2 GB free for OS + app
             if avail_mb < _system_reserve_mb:
                 print(
-                    f"⚠️ [ZetaBoost][RAM_GUARD] skipping heavy warmup — "
+                    f"âڑ ï¸ڈ [ZetaBoost][RAM_GUARD] skipping heavy warmup â€” "
                     f"available={avail_mb}MB < reserve={_system_reserve_mb}MB"
                 )
                 return [], list(heavy_candidates), 0, 0, 0
         except Exception:
-            pass  # psutil unavailable → fall through to budget-based check
+            pass  # psutil unavailable â†’ fall through to budget-based check
 
         try:
             snap = self.zeta_boost.get_capacity_snapshot()
@@ -1335,7 +1429,7 @@ class ViewerController:
 
     def _get_series_by_number_fast(self, series_number: str) -> tuple:
         """
-        ⚡ Fast O(1) series lookup using index.
+        âڑ، Fast O(1) series lookup using index.
         Returns: (vtk_image_data, metadata, index) or (None, None, -1)
         """
         series_str = str(series_number)
@@ -1370,7 +1464,7 @@ class ViewerController:
         if series_str in self._hot_series_cache:
             hot_entry = self._hot_series_cache[series_str]
             if _entry_is_valid(hot_entry):
-                print(f"🔍 [FAST_LOOKUP] series={series_str} → HOT CACHE HIT")
+                print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ HOT CACHE HIT")
                 log_stage_timing(
                     self.logger,
                     component="viewer",
@@ -1381,14 +1475,14 @@ class ViewerController:
                 )
                 return hot_entry
             self._hot_series_cache.pop(series_str, None)
-            print(f"🔍 [FAST_LOOKUP] series={series_str} → hot cache stale, removed")
+            print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ hot cache stale, removed")
         
         # 2. Check main cache
         if series_str in self._series_cache:
             result = self._series_cache[series_str]
             if _entry_is_valid(result):
                 self._hot_series_cache[series_str] = result
-                print(f"🔍 [FAST_LOOKUP] series={series_str} → MAIN CACHE HIT")
+                print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ MAIN CACHE HIT")
                 log_stage_timing(
                     self.logger,
                     component="viewer",
@@ -1399,24 +1493,24 @@ class ViewerController:
                 )
                 return result
             self._series_cache.pop(series_str, None)
-            print(f"🔍 [FAST_LOOKUP] series={series_str} → main cache stale, removed")
+            print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ main cache stale, removed")
         
         # 3. Check index for fallback
         if series_str in self._series_number_to_index:
             idx = self._series_number_to_index[series_str]
-            print(f"🔍 [FAST_LOOKUP] series={series_str} → found in index, idx={idx}")
+            print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ found in index, idx={idx}")
             if idx < len(self.parent_widget.lst_thumbnails_data):
                 item = self.parent_widget.lst_thumbnails_data[idx]
                 vtk_data = item.get('vtk_image_data')
                 meta = item.get('metadata')
-                print(f"🔍 [FAST_LOOKUP] series={series_str} → item retrieved: vtk={vtk_data is not None}, meta={meta is not None}")
+                print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ item retrieved: vtk={vtk_data is not None}, meta={meta is not None}")
                 if vtk_data is not None and meta is not None:
                     result = (vtk_data, meta, idx)
                     self._series_cache[series_str] = result
                     if len(self._hot_series_cache) > 3:  # Keep hot cache small
                         self._hot_series_cache.pop(next(iter(self._hot_series_cache)))
                     self._hot_series_cache[series_str] = result
-                    print(f"🔍 [FAST_LOOKUP] series={series_str} → RETURNING from index lookup")
+                    print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ RETURNING from index lookup")
                     log_stage_timing(
                         self.logger,
                         component="viewer",
@@ -1427,30 +1521,30 @@ class ViewerController:
                     )
                     return result
                 else:
-                    print(f"🔍 [FAST_LOOKUP] series={series_str} → item has None data, continuing to full cache")
+                    print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ item has None data, continuing to full cache")
             else:
-                print(f"🔍 [FAST_LOOKUP] series={series_str} → idx {idx} >= list length {len(self.parent_widget.lst_thumbnails_data)}")
+                print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ idx {idx} >= list length {len(self.parent_widget.lst_thumbnails_data)}")
         else:
-            print(f"🔍 [FAST_LOOKUP] series={series_str} → NOT in _series_number_to_index")
+            print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ NOT in _series_number_to_index")
 
         # 4. Deterministic full-series cache fallback (survives index churn)
         cached_full = self._full_cache_get(series_str)
         if cached_full is not None:
             vtk_data, meta = cached_full[0], cached_full[1]
-            print(f"🔍 [FAST_LOOKUP] series={series_str} → FULL CACHE HIT: vtk={vtk_data is not None}, meta={meta is not None}")
+            print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ FULL CACHE HIT: vtk={vtk_data is not None}, meta={meta is not None}")
             if vtk_data is not None and isinstance(meta, dict):
                 # Rehydrate parent/index caches on demand
                 try:
                     idx = self.parent_widget.replace_series_data(series_str, vtk_data, meta, meta.get('series', {}).get('thumbnail_path', ''))
-                    print(f"🔍 [FAST_LOOKUP] series={series_str} → rehydrated to lst_thumbnails_data at idx={idx}")
+                    print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ rehydrated to lst_thumbnails_data at idx={idx}")
                 except Exception as e:
-                    print(f"🔍 [FAST_LOOKUP] series={series_str} → rehydrate FAILED: {e}")
+                    print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ rehydrate FAILED: {e}")
                     idx = -1
                 if idx >= 0:
                     result = (vtk_data, meta, idx)
                     self._series_cache[series_str] = result
                     self._hot_series_cache[series_str] = result
-                    print(f"🔍 [FAST_LOOKUP] series={series_str} → RETURNING from full cache")
+                    print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ RETURNING from full cache")
                     log_stage_timing(
                         self.logger,
                         component="viewer",
@@ -1461,9 +1555,9 @@ class ViewerController:
                     )
                     return result
         else:
-            print(f"🔍 [FAST_LOOKUP] series={series_str} → NOT in full cache")
+            print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ NOT in full cache")
         
-        print(f"🔍 [FAST_LOOKUP] series={series_str} → FINAL RETURN: None, None, -1")
+        print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ FINAL RETURN: None, None, -1")
         log_stage_timing(
             self.logger,
             component="viewer",
@@ -1476,7 +1570,7 @@ class ViewerController:
 
     def _get_paired_series_fast(self, series_name: str, exclude_number: str = None) -> list:
         """
-        ⚡ Get all paired series (same name, different data) in O(1) time.
+        âڑ، Get all paired series (same name, different data) in O(1) time.
         Returns list of (vtk_data, metadata, series_number) tuples
         """
         try:
@@ -1524,9 +1618,9 @@ class ViewerController:
 
             self._current_layout = (rows, cols)
 
-            print(f"🔧 [LAYOUT] Applying {rows}x{cols} layout (need {required_count} viewers, have {current_count})")
+            print(f"ًں”§ [LAYOUT] Applying {rows}x{cols} layout (need {required_count} viewers, have {current_count})")
 
-            # ✅ FLICKER FIX: Disable updates during batch viewer creation
+            # âœ… FLICKER FIX: Disable updates during batch viewer creation
             self.parent_widget.setUpdatesEnabled(False)
             if hasattr(self.parent_widget, 'center_widget') and self.parent_widget.center_widget:
                 self.parent_widget.center_widget.setUpdatesEnabled(False)
@@ -1534,7 +1628,7 @@ class ViewerController:
             # 1. Cleanup existing viewers but preserve data
             self.cleanup_all_viewers()
             self.lst_nodes_viewer.clear()
-            print("   ✅ cleanup_all_viewers completed")  # No processEvents here
+            print("   âœ… cleanup_all_viewers completed")  # No processEvents here
 
             # 2. Create viewers with existing data assignments
             displayed_series_indices = set()
@@ -1559,7 +1653,7 @@ class ViewerController:
                             pass
 
                 except Exception as e:
-                    print(f"   ⚠️ Error creating viewer {i}: {e}")
+                    print(f"   âڑ ï¸ڈ Error creating viewer {i}: {e}")
                     # Create fallback viewer
                     node = self._create_fallback_viewer()
                     self.lst_nodes_viewer.append(node)
@@ -1593,16 +1687,16 @@ class ViewerController:
             if modify_by_user:
                 QTimer.singleShot(500, self._hide_loading_msg)
 
-            print(f"✅ [LAYOUT] Applied {rows}x{cols} layout with {len(self.lst_nodes_viewer)} viewers")
+            print(f"âœ… [LAYOUT] Applied {rows}x{cols} layout with {len(self.lst_nodes_viewer)} viewers")
 
         except Exception as e:
-            print(f"❌ [LAYOUT] Error: {e}")
+            print(f"â‌Œ [LAYOUT] Error: {e}")
             import traceback
             traceback.print_exc()
             if modify_by_user:
                 self._hide_loading_msg()
         finally:
-            # ✅ FLICKER FIX: Re-enable updates after batch creation
+            # âœ… FLICKER FIX: Re-enable updates after batch creation
             if hasattr(self.parent_widget, 'center_widget') and self.parent_widget.center_widget:
                 self.parent_widget.center_widget.setUpdatesEnabled(True)
             self.parent_widget.setUpdatesEnabled(True)
@@ -1611,7 +1705,7 @@ class ViewerController:
 
     def new_viewer(self, default_thumb_index=0):
         print(f"\n{'='*80}")
-        print(f"🔨 [new_viewer] START - thumb_index={default_thumb_index}")
+        print(f"ًں”¨ [new_viewer] START - thumb_index={default_thumb_index}")
         self.logger.info(f"Creating new viewer with thumb index {default_thumb_index}")
 
         # Count existing viewers - if too many, be more aggressive with cleanup
@@ -1619,18 +1713,18 @@ class ViewerController:
 
         # Hard limit protection
         if viewer_count >= self._max_viewers_per_session:
-            print(f"   ⚠️ PROTECTION: Reached max viewers limit ({viewer_count}/{self._max_viewers_per_session})")
-            print("   ⚠️ Creating lightweight placeholder viewer instead")
+            print(f"   âڑ ï¸ڈ PROTECTION: Reached max viewers limit ({viewer_count}/{self._max_viewers_per_session})")
+            print("   âڑ ï¸ڈ Creating lightweight placeholder viewer instead")
             try:
                 return self._create_fallback_viewer()
             except Exception as e:
-                print(f"   ❌ Even fallback failed: {e}")
+                print(f"   â‌Œ Even fallback failed: {e}")
                 self.logger.error(f"Max viewers exceeded and fallback failed: {e}", exc_info=True)
                 raise
 
         # Aggressive cleanup for high viewer counts
         if viewer_count > 15:
-            print(f"   ⚠️ WARNING: Already have {viewer_count} viewers - running lightweight cleanup")
+            print(f"   âڑ ï¸ڈ WARNING: Already have {viewer_count} viewers - running lightweight cleanup")
             # REMOVED: gc.collect() was stop-the-world on UI thread causing user-visible freezes
             gc.collect(generation=0)  # generation=0 only: fast, collects young objects
 
@@ -1638,7 +1732,7 @@ class ViewerController:
         import time
         current_time = time.time()
         if current_time - self._last_gc_time > 10.0 and viewer_count > 5:  # Every 10 seconds (was 2s)
-            print(f"   🧹 [Periodic GC] Cleaning up ({viewer_count} viewers)")
+            print(f"   ًں§¹ [Periodic GC] Cleaning up ({viewer_count} viewers)")
             gc.collect(generation=0)  # generation=0 only for minimal UI impact
             self._last_gc_time = current_time
 
@@ -1646,53 +1740,53 @@ class ViewerController:
         slider = None
 
         try:
-            # ✅ FLICKER FIX: Removed processEvents - batching UI updates instead
+            # âœ… FLICKER FIX: Removed processEvents - batching UI updates instead
             # processEvents was causing thumbnail loading to interrupt viewer creation
 
-            print("   📐 Creating grid layout...")
+            print("   ًں“گ Creating grid layout...")
             try:
                 layout = QGridLayout()
                 layout.setContentsMargins(0, 0, 0, 0)
                 layout.setSpacing(0)
-                print("   ✅ Grid layout created")
+                print("   âœ… Grid layout created")
             except Exception as le:
-                print(f"   ⚠️ Layout creation warning: {le}")
+                print(f"   âڑ ï¸ڈ Layout creation warning: {le}")
                 raise RuntimeError(f"Failed to create grid layout: {le}")
 
             # Check if we have thumbnail data
-            print("   🔍 Checking thumbnail data...")
+            print("   ًں”چ Checking thumbnail data...")
             try:
                 has_data = (hasattr(self.parent_widget, 'lst_thumbnails_data') and
                            self.parent_widget.lst_thumbnails_data and
                            len(self.parent_widget.lst_thumbnails_data) > 0)
             except Exception as ce:
-                print(f"   ⚠️ Data check warning: {ce}")
+                print(f"   âڑ ï¸ڈ Data check warning: {ce}")
                 has_data = False
 
             if not has_data:
-                print("   📦 No thumbnail data, creating lightweight VTK widget...")
+                print("   ًں“¦ No thumbnail data, creating lightweight VTK widget...")
                 try:
-                    # ✅ FLICKER FIX: Use lightweight VTK widget with deferred rendering
+                    # âœ… FLICKER FIX: Use lightweight VTK widget with deferred rendering
                     vtk_widget = self._create_lightweight_vtk_placeholder()
                     if vtk_widget is None:
                         raise RuntimeError("_create_lightweight_vtk_placeholder returned None")
-                    print("   ✅ Lightweight VTK widget created")
+                    print("   âœ… Lightweight VTK widget created")
                 except Exception as dwe:
-                    print(f"   ❌ Lightweight VTK widget creation failed: {dwe}")
+                    print(f"   â‌Œ Lightweight VTK widget creation failed: {dwe}")
                     raise
             else:
-                print(f"   ✅ Thumbnail data exists ({len(self.parent_widget.lst_thumbnails_data)} items)")
-                print("   🎨 Creating new VTK widget...")
+                print(f"   âœ… Thumbnail data exists ({len(self.parent_widget.lst_thumbnails_data)} items)")
+                print("   ًںژ¨ Creating new VTK widget...")
                 try:
                     vtk_widget = self.create_new_vtk_widget(default_thumb_index)
                     if vtk_widget is None:
-                        print("   ⚠️ create_new_vtk_widget returned None, using lightweight fallback")
+                        print("   âڑ ï¸ڈ create_new_vtk_widget returned None, using lightweight fallback")
                         vtk_widget = self._create_lightweight_vtk_placeholder()
                         if vtk_widget is None:
                             raise RuntimeError("Both create_new_vtk_widget and _create_lightweight_vtk_placeholder failed")
-                    print("   ✅ VTK widget created")
+                    print("   âœ… VTK widget created")
                 except Exception as vwe:
-                    print(f"   ❌ VTK widget creation failed: {vwe}")
+                    print(f"   â‌Œ VTK widget creation failed: {vwe}")
                     raise
 
             # Validate vtk_widget
@@ -1706,31 +1800,31 @@ class ViewerController:
             if not isinstance(vtk_widget, QWidget):
                 raise RuntimeError(f"vtk_widget is not a QWidget, got {type(vtk_widget)}")
 
-            print("   📊 Creating slider...")
+            print("   ًں“ٹ Creating slider...")
             try:
                 slider = SliceTickSlider(Qt.Vertical, vtk_widget)
                 if slider is None:
                     raise RuntimeError("QSlider constructor returned None")
                 slider.setInvertedAppearance(True)
                 slider.setMaximumWidth(12)
-                print("   ✅ Slider created")
+                print("   âœ… Slider created")
             except Exception as se:
-                print(f"   ❌ Slider creation failed: {se}")
+                print(f"   â‌Œ Slider creation failed: {se}")
                 raise RuntimeError(f"Failed to create slider: {se}")
 
         except Exception as e:
-            print(f"   ❌ ERROR in new_viewer setup: {e}")
+            print(f"   â‌Œ ERROR in new_viewer setup: {e}")
             self.logger.error(f"Error in new_viewer setup: {e}", exc_info=True)
 
             # Try to return fallback viewer
             try:
-                print("   🔄 Attempting fallback viewer creation...")
+                print("   ًں”„ Attempting fallback viewer creation...")
                 fallback = self._create_fallback_viewer()
                 if fallback:
-                    print("   ✅ Fallback viewer created successfully")
+                    print("   âœ… Fallback viewer created successfully")
                     return fallback
             except Exception as fe:
-                print(f"   ❌ Fallback viewer also failed: {fe}")
+                print(f"   â‌Œ Fallback viewer also failed: {fe}")
 
             raise
 
@@ -1747,7 +1841,7 @@ class ViewerController:
                     min-width: 10px;
                     max-width: 10px;
                 }
-                /* نوار عمودی (track) - سبک Chrome */
+                /* ظ†ظˆط§ط± ط¹ظ…ظˆط¯غŒ (track) - ط³ط¨ع© Chrome */
                 QSlider::groove:vertical {
                     background: rgba(0, 0, 0, 0.1);
                     width: 10px;
@@ -1755,7 +1849,7 @@ class ViewerController:
                     margin: 0px 0px;
                     border: none;
                 }
-                /* دسته (thumb) - مستطیلی با گوشه گرد مثل Chrome */
+                /* ط¯ط³طھظ‡ (thumb) - ظ…ط³طھط·غŒظ„غŒ ط¨ط§ ع¯ظˆط´ظ‡ ع¯ط±ط¯ ظ…ط«ظ„ Chrome */
                 QSlider::handle:vertical {
                     background: rgba(128, 128, 128, 0.5);
                     width: 10px;
@@ -1764,20 +1858,20 @@ class ViewerController:
                     margin: 0px 0px;
                     border: none;
                 }
-                /* حالت hover - تیره‌تر می‌شود */
+                /* ط­ط§ظ„طھ hover - طھغŒط±ظ‡â€Œطھط± ظ…غŒâ€Œط´ظˆط¯ */
                 QSlider::handle:vertical:hover {
                     background: rgba(128, 128, 128, 0.7);
                 }
-                /* حالت فشرده شدن - خیلی تیره */
+                /* ط­ط§ظ„طھ ظپط´ط±ط¯ظ‡ ط´ط¯ظ† - ط®غŒظ„غŒ طھغŒط±ظ‡ */
                 QSlider::handle:vertical:pressed {
                     background: rgba(96, 96, 96, 0.9);
                 }
-                /* قسمت بالای thumb - شفاف */
+                /* ظ‚ط³ظ…طھ ط¨ط§ظ„ط§غŒ thumb - ط´ظپط§ظپ */
                 QSlider::sub-page:vertical {
                     background: transparent;
                     border: none;
                 }
-                /* قسمت پایین thumb - شفاف */
+                /* ظ‚ط³ظ…طھ ظ¾ط§غŒغŒظ† thumb - ط´ظپط§ظپ */
                 QSlider::add-page:vertical {
                     background: transparent;
                     border: none;
@@ -1788,24 +1882,24 @@ class ViewerController:
             slider.setVisible(True)
             slider.setAttribute(Qt.WA_TranslucentBackground, True)
             
-            print("   ✅ Chrome-style scrollbar applied")
+            print("   âœ… Chrome-style scrollbar applied")
         except Exception as e:
-            print(f"   ⚠️ Warning: Could not apply slider styling: {e}")
+            print(f"   âڑ ï¸ڈ Warning: Could not apply slider styling: {e}")
 
         try:
-            print("   📍 Adding widgets to layout...")
+            print("   ًں“چ Adding widgets to layout...")
             # Add VTK widget to layout
             layout.addWidget(vtk_widget, 0, 0)
             
-            print("   ✅ VTK widget added to layout")
+            print("   âœ… VTK widget added to layout")
         except Exception as e:
-            print(f"   ❌ ERROR adding vtk widget to layout: {e}")
+            print(f"   â‌Œ ERROR adding vtk widget to layout: {e}")
             self.logger.error(f"Error adding widgets to layout: {e}", exc_info=True)
             raise
 
         # Use QFrame instead of QWidget - QFrame is designed for borders!
         try:
-            print("   🖼️ Creating container frame...")
+            print("   ًں–¼ï¸ڈ Creating container frame...")
             container = QFrame()
             container.setObjectName("ViewportContainer")
             container.setLayout(layout)
@@ -1819,11 +1913,11 @@ class ViewerController:
                     background-color: transparent;
                 }
             """)
-            print("   ✅ Container created")
+            print("   âœ… Container created")
             
             # CRITICAL: Add slider as DIRECT CHILD of VTK widget (not container)
             # This ensures slider is ALWAYS on top of the image
-            print("   📍 Adding Chrome-style slider overlay on VTK widget...")
+            print("   ًں“چ Adding Chrome-style slider overlay on VTK widget...")
             slider.setParent(vtk_widget)
             slider.setGeometry(
                 vtk_widget.width() - 15,  # 15px from right edge (Chrome-style)
@@ -1861,28 +1955,28 @@ class ViewerController:
                     reposition_slider()
                 vtk_widget.resizeEvent = new_vtk_resize_event
             
-            print("   ✅ Thin slider added as OVERLAY directly on VTK widget (ALWAYS on top)")
+            print("   âœ… Thin slider added as OVERLAY directly on VTK widget (ALWAYS on top)")
             
         except Exception as e:
-            print(f"   ❌ ERROR creating container: {e}")
+            print(f"   â‌Œ ERROR creating container: {e}")
             self.logger.error(f"Error creating container: {e}", exc_info=True)
             raise
 
         # Create NodeViewer
         try:
-            print("   🔗 Creating NodeViewer...")
+            print("   ًں”— Creating NodeViewer...")
             new_node = NodeViewer(container, vtk_widget, slider)
             if new_node is None:
                 raise RuntimeError("NodeViewer creation returned None")
-            print("   ✅ NodeViewer created")
+            print("   âœ… NodeViewer created")
         except Exception as e:
-            print(f"   ❌ ERROR creating NodeViewer: {e}")
+            print(f"   â‌Œ ERROR creating NodeViewer: {e}")
             self.logger.error(f"Error creating NodeViewer: {e}", exc_info=True)
             raise
 
         # Set viewer ID and configure
         try:
-            print("   🆔 Setting viewer ID...")
+            print("   ًں†” Setting viewer ID...")
             viewer_index = len(self.lst_nodes_viewer)
 
             # Safely set ID attribute
@@ -1890,19 +1984,19 @@ class ViewerController:
                 vtk_widget.id_vtk_widget = viewer_index
             else:
                 setattr(vtk_widget, 'id_vtk_widget', viewer_index)
-            print(f"   ✅ Viewer ID set to {viewer_index}")
+            print(f"   âœ… Viewer ID set to {viewer_index}")
 
-            print("   📝 Appending to lst_nodes_viewer...")
+            print("   ًں“‌ Appending to lst_nodes_viewer...")
             self.lst_nodes_viewer.append(new_node)
-            print("   ✅ Appended")
+            print("   âœ… Appended")
         except Exception as e:
-            print(f"   ❌ ERROR setting viewer ID: {e}")
+            print(f"   â‌Œ ERROR setting viewer ID: {e}")
             self.logger.error(f"Error setting viewer ID: {e}", exc_info=True)
             raise
 
         # Configure slider
         try:
-            print("   🎚️ Configuring slider...")
+            print("   ًںژڑï¸ڈ Configuring slider...")
 
             # FORCE SLIDER VISIBILITY - critical for always showing slider
             slider.setOrientation(Qt.Vertical)
@@ -1919,17 +2013,17 @@ class ViewerController:
             slider.show()
             slider.setEnabled(True)
 
-            # ✅ CRITICAL: Block signals during slider setup to prevent image number flickering
+            # âœ… CRITICAL: Block signals during slider setup to prevent image number flickering
             slider.blockSignals(True)
 
             # Check if methods exist
             if not hasattr(vtk_widget, 'set_slider'):
-                print("   ⚠️ VTK widget doesn't have set_slider yet (placeholder mode)")
+                print("   âڑ ï¸ڈ VTK widget doesn't have set_slider yet (placeholder mode)")
                 # For placeholder widgets, just set slider to default values
                 slider.setMinimum(0)
                 slider.setMaximum(0)
                 slider.setValue(0)
-                print("   ✅ Slider configured in placeholder mode (0 slices) - VISIBLE")
+                print("   âœ… Slider configured in placeholder mode (0 slices) - VISIBLE")
             else:
                 vtk_widget.set_slider(slider)
 
@@ -1943,42 +2037,42 @@ class ViewerController:
                 slider.setMinimum(0)
                 slider.setMaximum(last_slices)
                 slider.setValue(mid_slices)
-                print(f"   ✅ Slider configured (slices: {count_slices}, current: {mid_slices}) - VISIBLE")
+                print(f"   âœ… Slider configured (slices: {count_slices}, current: {mid_slices}) - VISIBLE")
         except Exception as e:
-            print(f"   ❌ ERROR configuring slider: {e}")
+            print(f"   â‌Œ ERROR configuring slider: {e}")
             # Don't raise - allow viewer creation to continue
             # Just set slider to defaults
             slider.setMinimum(0)
             slider.setMaximum(0)
             slider.setValue(0)
-            print("   ⚠️ Slider set to default values after error")
+            print("   âڑ ï¸ڈ Slider set to default values after error")
         finally:
-            # ✅ CRITICAL: Unblock signals after all slider configuration is complete
+            # âœ… CRITICAL: Unblock signals after all slider configuration is complete
             slider.blockSignals(False)
 
         # Connect signals
         try:
-            print("   🔗 Connecting slider signal...")
+            print("   ًں”— Connecting slider signal...")
             self.parent_widget.on_slider_value_changed(vtk_widget, mid_slices)
             slider.valueChanged.connect(lambda val: self.parent_widget.on_slider_value_changed(vtk_widget, val))
-            print("   ✅ Slider connected")
+            print("   âœ… Slider connected")
         except Exception as e:
-            print(f"   ⚠️ Warning: Could not connect slider signal: {e}")
+            print(f"   âڑ ï¸ڈ Warning: Could not connect slider signal: {e}")
             self.logger.warning(f"Warning connecting slider signal: {e}")
 
         # Set VTK widget methods
         try:
-            print("   🔧 Setting VTK widget methods...")
+            print("   ًں”§ Setting VTK widget methods...")
             if hasattr(vtk_widget, 'set_method_change_series_on_drop'):
                 vtk_widget.set_method_change_series_on_drop(self.parent_widget.change_series_on_viewer)
             if hasattr(vtk_widget, 'set_method_change_container_border'):
                 vtk_widget.set_method_change_container_border(self.change_container_border)
-            print("   ✅ Methods set")
+            print("   âœ… Methods set")
         except Exception as e:
-            print(f"   ⚠️ Warning: Could not set VTK widget methods: {e}")
+            print(f"   âڑ ï¸ڈ Warning: Could not set VTK widget methods: {e}")
             self.logger.warning(f"Warning setting VTK widget methods: {e}")
 
-        print(f"🔨 [new_viewer] END - Successfully created viewer with ID {viewer_index}")
+        print(f"ًں”¨ [new_viewer] END - Successfully created viewer with ID {viewer_index}")
         print(f"{'='*80}\n")
         return new_node
 
@@ -1996,10 +2090,10 @@ class ViewerController:
             if vtk_widget is None:
                 raise RuntimeError("VTKWidget constructor returned None")
 
-            # ✅ CRITICAL: Set solid background FIRST to prevent any flash
+            # âœ… CRITICAL: Set solid background FIRST to prevent any flash
             if hasattr(vtk_widget, 'renderer'):
                 vtk_widget.renderer.SetBackground(0.10, 0.10, 0.18)  # #1a1a2e in RGB
-                # ❌ FLICKER FIX: DO NOT call Render() here - it causes initial flash
+                # â‌Œ FLICKER FIX: DO NOT call Render() here - it causes initial flash
                 # The background will be set when the widget is first shown
 
             # Minimize rendering updates until real data is loaded
@@ -2011,7 +2105,7 @@ class ViewerController:
 
             return vtk_widget
         except Exception as e:
-            print(f"❌ Error creating lightweight VTK widget: {e}")
+            print(f"â‌Œ Error creating lightweight VTK widget: {e}")
             self.logger.error(f"Error creating lightweight VTK widget: {e}", exc_info=True)
             return None
 
@@ -2024,7 +2118,7 @@ class ViewerController:
         try:
             # Check if lst_thumbnails_data exists and has sufficient data
             if not hasattr(self.parent_widget, 'lst_thumbnails_data') or not self.parent_widget.lst_thumbnails_data or len(self.parent_widget.lst_thumbnails_data) <= default_thumb_index:
-                print(f"⚠️ [create_new_vtk_widget] No thumbnail data at index {default_thumb_index}, using dummy")
+                print(f"âڑ ï¸ڈ [create_new_vtk_widget] No thumbnail data at index {default_thumb_index}, using dummy")
                 return self.create_dummy_vtk_widget()
 
             # Extract data safely
@@ -2040,7 +2134,7 @@ class ViewerController:
                     raise ValueError("VTK data or metadata is None")
 
             except (IndexError, KeyError, TypeError) as e:
-                print(f"⚠️ [create_new_vtk_widget] Error extracting thumbnail data: {e}")
+                print(f"âڑ ï¸ڈ [create_new_vtk_widget] Error extracting thumbnail data: {e}")
                 return self.create_dummy_vtk_widget()
 
             # Extract metadata safely
@@ -2048,9 +2142,33 @@ class ViewerController:
                 series_name = metadata.get('series', {}).get('series_name', 'Unknown')
                 series_number = metadata.get('series', {}).get('series_number', 0)
             except (AttributeError, TypeError) as e:
-                print(f"⚠️ [create_new_vtk_widget] Error extracting series info: {e}")
+                print(f"âڑ ï¸ڈ [create_new_vtk_widget] Error extracting series info: {e}")
                 series_name = 'Unknown'
                 series_number = 0
+
+            requested_backend = self._get_requested_viewer_backend()
+            try:
+                if self._needs_backend_rebuild(metadata, requested_backend):
+                    print(
+                        f"[BACKEND_RELOAD_INIT] series={series_number} rebuilding payload for backend={requested_backend}"
+                    )
+                    if str(series_number).isdigit():
+                        self._load_single_series_on_demand(
+                            int(series_number),
+                            study_path=self._get_correct_study_path(),
+                            target_vtk_widget=None,
+                            allow_paired=False,
+                            expected_token=None,
+                            viewer_backend=requested_backend,
+                            force_reload=(requested_backend == BACKEND_PYDICOM),
+                        )
+                        rebuilt_vtk, rebuilt_meta, rebuilt_idx = self._get_series_by_number_fast(str(series_number))
+                        if rebuilt_vtk is not None and isinstance(rebuilt_meta, dict):
+                            vtk_widget_data = rebuilt_vtk
+                            metadata = copy.deepcopy(rebuilt_meta)
+                            default_thumb_index = int(rebuilt_idx) if int(rebuilt_idx) >= 0 else default_thumb_index
+            except Exception as e:
+                print(f"âڑ ï¸ڈ [create_new_vtk_widget] backend rebuild check failed: {e}")
 
             # IMPORTANT: last_series_show must always store thumbnail/list index
             # (NOT series_number) so per-viewport state comparisons remain consistent.
@@ -2062,7 +2180,7 @@ class ViewerController:
                 if vtk_widget is None:
                     raise RuntimeError("creator_vtk_widget returned None")
             except Exception as e:
-                print(f"❌ [create_new_vtk_widget] Error creating VTK widget: {e}")
+                print(f"â‌Œ [create_new_vtk_widget] Error creating VTK widget: {e}")
                 self.logger.error(f"Error creating VTK widget: {e}", exc_info=True)
                 return self.create_dummy_vtk_widget()
 
@@ -2089,7 +2207,7 @@ class ViewerController:
                     except (AttributeError, TypeError, IndexError):
                         continue
             except Exception as e:
-                print(f"⚠️ [create_new_vtk_widget] Warning during combined series check: {e}")
+                print(f"âڑ ï¸ڈ [create_new_vtk_widget] Warning during combined series check: {e}")
 
             print(f'[create_new_vtk_widget] Series: {series_name}, Number: {series_number}, Combined: {flag_open_combine_viewer}')
 
@@ -2107,12 +2225,12 @@ class ViewerController:
                 return vtk_widget
 
             except Exception as e:
-                print(f"❌ [create_new_vtk_widget] Error processing series: {e}")
+                print(f"â‌Œ [create_new_vtk_widget] Error processing series: {e}")
                 self.logger.error(f"Error processing series: {e}", exc_info=True)
                 return self.create_dummy_vtk_widget()
 
         except Exception as e:
-            print(f"❌ [create_new_vtk_widget] Unexpected error: {e}")
+            print(f"â‌Œ [create_new_vtk_widget] Unexpected error: {e}")
             self.logger.error(f"Unexpected error in create_new_vtk_widget: {e}", exc_info=True)
             return self.create_dummy_vtk_widget()
 
@@ -2125,7 +2243,7 @@ class ViewerController:
             height = self.parent_widget.sidebar.height() if hasattr(self.parent_widget, 'sidebar') and self.parent_widget.sidebar else 480
             return VTKWidget(height_viewer=height, patient_widget=self.parent_widget)
         except Exception as e:
-            print(f"❌ Error in creator_vtk_widget: {e}")
+            print(f"â‌Œ Error in creator_vtk_widget: {e}")
             self.logger.error(f"Error in creator_vtk_widget: {e}", exc_info=True)
             return None
 
@@ -2191,7 +2309,7 @@ class ViewerController:
                                 vtk_widget: VTKWidget = None, slider: QSlider = None,
                                 allow_paired: bool = True):
         """
-        ⚡ OPTIMIZED: Switch series with O(1) lookup and minimal overhead.
+        âڑ، OPTIMIZED: Switch series with O(1) lookup and minimal overhead.
         
         Performance improvements:
         - Uses hash-based series cache instead of linear search
@@ -2227,7 +2345,7 @@ class ViewerController:
             if not hasattr(self.parent_widget, 'lst_thumbnails_data'):
                 self.parent_widget.lst_thumbnails_data = []
 
-            # ✅ ENSURE VIEWERS EXIST (fail-fast check)
+            # âœ… ENSURE VIEWERS EXIST (fail-fast check)
             if not self.lst_nodes_viewer:
                 try:
                     self.apply_multi_viewer((1, 1), modify_by_user=False)
@@ -2246,7 +2364,7 @@ class ViewerController:
                 target_widget_for_spinner = vtk_widget
 
             if vtk_widget is None or slider is None:
-                print(f"❌ [SWITCH FAIL] Invalid target viewport for series {series_number}")
+                print(f"â‌Œ [SWITCH FAIL] Invalid target viewport for series {series_number}")
                 self._hide_spinner_for_widget(target_widget_for_spinner)
                 return
 
@@ -2256,30 +2374,43 @@ class ViewerController:
                 viewer_id = self._get_viewer_id(vtk_widget)
                 switch_key = (viewer_id, series_number)
                 if switch_key in self._viewer_switch_inflight:
-                    print(f"⏳ [SWITCH DEDUP] Suppressed duplicate switch series={series_number} viewer={viewer_id}")
+                    print(f"âڈ³ [SWITCH DEDUP] Suppressed duplicate switch series={series_number} viewer={viewer_id}")
                     self._hide_spinner_for_widget(target_widget_for_spinner)
                     return
                 self._viewer_switch_inflight.add(switch_key)
             except Exception:
                 switch_key = None
+            requested_backend = self._get_requested_viewer_backend()
 
             # Fast no-op path: same series already displayed on this viewport.
             # Prevents expensive load-on-demand + reset work on repeated drops.
             try:
                 current_series_no = None
+                current_metadata = None
                 if getattr(vtk_widget, 'image_viewer', None) is not None:
+                    current_metadata = getattr(vtk_widget.image_viewer, 'metadata', {}) or {}
                     current_series_no = str(
-                        getattr(vtk_widget.image_viewer, 'metadata', {}).get('series', {}).get('series_number', '')
+                        current_metadata.get('series', {}).get('series_number', '')
                     )
                 if current_series_no and current_series_no == series_number:
-                    if hasattr(vtk_widget, '_finalize_pending_action'):
-                        try:
-                            vtk_widget._finalize_pending_action(series_index, phase="switch_series_noop_same")
-                        except Exception:
-                            pass
-                    self._hide_spinner_for_widget(target_widget_for_spinner)
-                    print(f"[PROFILE] change_series_on_viewer: noop same-series series={series_number} total={(time.perf_counter() - _t0)*1000:.1f}ms")
-                    return
+                    backend_mismatch = (
+                        str(getattr(vtk_widget, "_active_backend", BACKEND_VTK) or BACKEND_VTK)
+                        != str(requested_backend or BACKEND_VTK)
+                    )
+                    rebuild_needed = self._needs_backend_rebuild(current_metadata, requested_backend)
+                    if (not backend_mismatch) and (not rebuild_needed):
+                        if hasattr(vtk_widget, '_finalize_pending_action'):
+                            try:
+                                vtk_widget._finalize_pending_action(series_index, phase="switch_series_noop_same")
+                            except Exception:
+                                pass
+                        self._hide_spinner_for_widget(target_widget_for_spinner)
+                        print(f"[PROFILE] change_series_on_viewer: noop same-series series={series_number} total={(time.perf_counter() - _t0)*1000:.1f}ms")
+                        return
+                    print(
+                        f"[BACKEND_RELOAD_SAME_SERIES] series={series_number} current={getattr(vtk_widget, '_active_backend', BACKEND_VTK)} "
+                        f"requested={requested_backend} rebuild_needed={rebuild_needed}"
+                    )
             except Exception:
                 pass
 
@@ -2313,8 +2444,19 @@ class ViewerController:
 
             self._arm_spinner_timeout(vtk_widget, timeout_ms=20000)
             expected_token = self._next_request_token(vtk_widget)
+            self.logger.info(
+                "viewer-backend stage=route series=%s viewer=%s requested_backend=%s",
+                series_number,
+                str(getattr(vtk_widget, "id_vtk_widget", None)),
+                requested_backend,
+                extra={
+                    "component": "viewer",
+                    "function": "ViewerController.change_series_on_viewer",
+                    "stage": "backend_route",
+                },
+            )
 
-            # ⚡ FAST PATH: O(1) series lookup with caching
+            # âڑ، FAST PATH: O(1) series lookup with caching
             vtk_image_data, metadata, series_idx = self._get_series_by_number_fast(series_number)
             cache_hit = metadata is not None
             log_stage_timing(
@@ -2348,6 +2490,17 @@ class ViewerController:
                         # Cache immediately for next access
                         self._series_cache[series_number] = (vtk_image_data, metadata, series_idx)
                         break
+
+            # PyDicom mode guard: cached VTK payloads must be rebuilt with lazy metadata.
+            if metadata is not None and self._needs_backend_rebuild(metadata, requested_backend):
+                print(
+                    f"[BACKEND_RELOAD] series={series_number} rebuilding payload for backend={requested_backend}"
+                )
+                self._series_cache.pop(series_number, None)
+                self._hot_series_cache.pop(series_number, None)
+                metadata = None
+                vtk_image_data = None
+                cache_hit = False
             
             # If still not found, try loading from disk
             if metadata is None:
@@ -2362,10 +2515,12 @@ class ViewerController:
                     expected_token=expected_token,
                     target_widget_for_spinner=target_widget_for_spinner,
                     total_start=_t0,
+                    viewer_backend=requested_backend,
+                    force_reload=(requested_backend == BACKEND_PYDICOM),
                 )
                 return
 
-            # ⚡ PERFORM SWITCH WITH OPTIMIZED PAIRED SERIES LOOKUP
+            # âڑ، PERFORM SWITCH WITH OPTIMIZED PAIRED SERIES LOOKUP
             self._perform_series_switch_optimized(vtk_widget, metadata, vtk_image_data, series_idx, slider,
                                                   allow_paired=allow_paired,
                                                   expected_token=expected_token)
@@ -2384,7 +2539,7 @@ class ViewerController:
 
         except Exception as e:
             self.logger.error(f"Error switching series: {e}", exc_info=True)
-            print(f"❌ [SWITCH FAIL] series={series_index} error={e}")
+            print(f"â‌Œ [SWITCH FAIL] series={series_index} error={e}")
             try:
                 self._hide_spinner_for_widget(vtk_widget)
             except Exception:
@@ -2410,12 +2565,14 @@ class ViewerController:
                                         vtk_widget: VTKWidget, slider: QSlider,
                                         allow_paired: bool, expected_token,
                                         target_widget_for_spinner,
-                                        total_start: float):
+                                        total_start: float,
+                                        viewer_backend: str = BACKEND_VTK,
+                                        force_reload: bool = False):
         """Load uncached series in background and apply on UI thread when ready."""
         viewer_id = self._get_viewer_id(vtk_widget)
         inflight_key = (viewer_id, str(series_number))
         if inflight_key in self._async_switch_inflight:
-            print(f"⏳ [ASYNC SWITCH] series={series_number} already in-flight for viewer={viewer_id}")
+            print(f"âڈ³ [ASYNC SWITCH] series={series_number} already in-flight for viewer={viewer_id}")
             return
 
         self._async_switch_inflight.add(inflight_key)
@@ -2490,6 +2647,8 @@ class ViewerController:
                     target_vtk_widget=vtk_widget,
                     allow_paired=allow_paired,
                     expected_token=expected_token,
+                    viewer_backend=viewer_backend,
+                    force_reload=force_reload,
                 )
             except Exception as e:
                 self.logger.debug(f"Async load failed for series {series_number}: {e}")
@@ -2506,7 +2665,7 @@ class ViewerController:
                     try:
                         _w_alive = vtk_widget.isVisible()
                     except RuntimeError:
-                        print(f"⚠️ [ASYNC SWITCH] vtk_widget deleted for series={series_number}, aborting apply")
+                        print(f"âڑ ï¸ڈ [ASYNC SWITCH] vtk_widget deleted for series={series_number}, aborting apply")
                         return
 
                     if not self._is_request_current(vtk_widget, expected_token):
@@ -2517,14 +2676,14 @@ class ViewerController:
                         self._trigger_download_if_needed(series_number)
                         print(f"[PROFILE] change_series_on_viewer: async load-on-demand FAILED for series {series_number} in {(time.perf_counter() - _t_load)*1000:.1f}ms")
                         if preview_applied:
-                            print(f"ℹ️ [ASYNC SWITCH] preview remained active for series={series_number} (full load failed)")
+                            print(f"â„¹ï¸ڈ [ASYNC SWITCH] preview remained active for series={series_number} (full load failed)")
                         self._hide_spinner_for_widget(target_widget_for_spinner)
                         return
 
                     print(f"[PROFILE] change_series_on_viewer: async load-on-demand OK for series {series_number} in {(time.perf_counter() - _t_load)*1000:.1f}ms")
                     vtk_image_data, metadata, series_idx = self._get_series_by_number_fast(series_number)
                     if metadata is None or vtk_image_data is None:
-                        print(f"❌ [SWITCH FAIL] series={series_number} not found in cache after async loading")
+                        print(f"â‌Œ [SWITCH FAIL] series={series_number} not found in cache after async loading")
                         self._hide_spinner_for_widget(target_widget_for_spinner)
                         return
 
@@ -2542,7 +2701,7 @@ class ViewerController:
                         f"total={(time.perf_counter() - total_start)*1000:.1f}ms"
                     )
                 except Exception as e:
-                    print(f"❌ [ASYNC SWITCH] _finish_on_ui crashed for series={series_number}: {e}")
+                    print(f"â‌Œ [ASYNC SWITCH] _finish_on_ui crashed for series={series_number}: {e}")
                     import traceback; traceback.print_exc()
                 finally:
                     self._interactive_load_in_progress = False
@@ -2584,7 +2743,7 @@ class ViewerController:
     def _perform_series_switch_optimized(self, vtk_widget, metadata, vtk_image_data, series_idx, slider,
                                          allow_paired: bool = True, expected_token=None):
         """
-        ⚡ OPTIMIZED: Perform series switch with O(1) paired series lookup.
+        âڑ، OPTIMIZED: Perform series switch with O(1) paired series lookup.
         
         Performance improvements:
         - Fast paired series detection using index
@@ -2595,10 +2754,11 @@ class ViewerController:
         try:
             if not self._is_request_current(vtk_widget, expected_token):
                 return
+            requested_backend = self._get_requested_viewer_backend()
 
             # Validate vtk_image_data before switching; attempt recovery if needed.
             if not vtk_image_data:
-                print("⚠️ [SWITCH RECOVERY] Invalid vtk_image_data (None), attempting recovery")
+                print("âڑ ï¸ڈ [SWITCH RECOVERY] Invalid vtk_image_data (None), attempting recovery")
                 series_no = str(metadata.get('series', {}).get('series_number', '')) if isinstance(metadata, dict) else ''
                 if series_no.isdigit():
                     recovered = self._load_single_series_on_demand(
@@ -2607,16 +2767,18 @@ class ViewerController:
                         target_vtk_widget=vtk_widget,
                         allow_paired=allow_paired,
                         expected_token=expected_token,
+                        viewer_backend=requested_backend,
+                        force_reload=(requested_backend == BACKEND_PYDICOM),
                     )
                     if recovered:
                         vtk_image_data, metadata, series_idx = self._get_series_by_number_fast(series_no)
                 if not vtk_image_data:
-                    print("❌ [SWITCH ABORT] Recovery failed: vtk_image_data still invalid")
+                    print("â‌Œ [SWITCH ABORT] Recovery failed: vtk_image_data still invalid")
                     return
 
             dims = vtk_image_data.GetDimensions() if hasattr(vtk_image_data, 'GetDimensions') else (0, 0, 0)
             if not dims or int(dims[0]) <= 0 or int(dims[1]) <= 0 or int(dims[2]) <= 0:
-                print(f"⚠️ [SWITCH RECOVERY] Invalid dimensions {dims}, attempting recovery")
+                print(f"âڑ ï¸ڈ [SWITCH RECOVERY] Invalid dimensions {dims}, attempting recovery")
                 series_no = str(metadata.get('series', {}).get('series_number', '')) if isinstance(metadata, dict) else ''
                 if series_no.isdigit():
                     recovered = self._load_single_series_on_demand(
@@ -2625,12 +2787,14 @@ class ViewerController:
                         target_vtk_widget=vtk_widget,
                         allow_paired=allow_paired,
                         expected_token=expected_token,
+                        viewer_backend=requested_backend,
+                        force_reload=(requested_backend == BACKEND_PYDICOM),
                     )
                     if recovered:
                         vtk_image_data, metadata, series_idx = self._get_series_by_number_fast(series_no)
                         dims = vtk_image_data.GetDimensions() if hasattr(vtk_image_data, 'GetDimensions') else (0, 0, 0)
                 if not dims or int(dims[0]) <= 0 or int(dims[1]) <= 0 or int(dims[2]) <= 0:
-                    print("❌ [SWITCH ABORT] Recovery failed: invalid dimensions remain")
+                    print("â‌Œ [SWITCH ABORT] Recovery failed: invalid dimensions remain")
                     return
 
             metadata = self._clone_metadata_for_switch(metadata)
@@ -2659,17 +2823,17 @@ class ViewerController:
                 server_image_count = None
 
             print(
-                f"🔎 [SERIES COUNT] req_series={series_number} name='{series_name}' "
+                f"ًں”ژ [SERIES COUNT] req_series={series_number} name='{series_name}' "
                 f"instances={expected_instances} vtk_slices={vtk_slice_count} "
                 f"thumb_image_count={server_image_count}"
             )
             
-            # 🎬 Show loading spinner before switch
+            # ًںژ¬ Show loading spinner before switch
             # The message is set in switch_series based on series size
             # but we can optionally enhance it here if needed
             
-            # ⚡ FAST PAIRED SERIES LOOKUP: O(1) instead of linear search
-            # ✅ CRITICAL FIX: Only pair series for MG (Mammography) modality
+            # âڑ، FAST PAIRED SERIES LOOKUP: O(1) instead of linear search
+            # âœ… CRITICAL FIX: Only pair series for MG (Mammography) modality
             # For other modalities, series with same name should NOT be combined
             vtk_widget_data_2 = None
             metadata_2 = None
@@ -2696,7 +2860,7 @@ class ViewerController:
             # Log debug info when pairing is skipped
             if allow_paired and not is_mg_modality and series_name in self._paired_series_map:
                 print(
-                    f"ℹ️ [PAIRED SKIP] series={series_number} modality={current_modality} - "
+                    f"â„¹ï¸ڈ [PAIRED SKIP] series={series_number} modality={current_modality} - "
                     f"Skipping pairing (only MG modality uses paired series)"
                 )
 
@@ -2707,13 +2871,13 @@ class ViewerController:
                     paired_dims = vtk_widget_data_2.GetDimensions() if vtk_widget_data_2 is not None else (0, 0, 0)
                     paired_slices = int(paired_dims[2]) if paired_dims and len(paired_dims) > 2 else 0
                     print(
-                        f"🔗 [SERIES COUNT] paired_series={paired_series_number} "
+                        f"ًں”— [SERIES COUNT] paired_series={paired_series_number} "
                         f"instances={paired_instances} vtk_slices={paired_slices}"
                     )
                 except Exception:
                     pass
             
-            # ⚡ PERFORM SWITCH (no delay, no blocking)
+            # âڑ، PERFORM SWITCH (no delay, no blocking)
             if hasattr(vtk_widget, 'switch_series'):
                 flag_switch = vtk_widget.switch_series(
                     vtk_image_data,
@@ -2736,12 +2900,12 @@ class ViewerController:
                         viewer_count = viewer.get_count_of_slices() if viewer is not None else 0
                         viewer_skip = getattr(viewer, 'skip_slices', None)
                         print(
-                            f"✅ [SERIES COUNT] viewer={viewer_type} series={series_number} "
+                            f"âœ… [SERIES COUNT] viewer={viewer_type} series={series_number} "
                             f"viewer_slices={viewer_count} skip={viewer_skip}"
                         )
                         if metadata_2 is None and expected_instances and viewer_count and viewer_count != expected_instances:
                             print(
-                                f"⚠️ [SERIES COUNT MISMATCH] series={series_number} "
+                                f"âڑ ï¸ڈ [SERIES COUNT MISMATCH] series={series_number} "
                                 f"instances={expected_instances} viewer_slices={viewer_count}"
                             )
                     except Exception:
@@ -2756,7 +2920,7 @@ class ViewerController:
                     except Exception:
                         pass
 
-                    # Mode B — Image Slice Booster: activate \u00b120 slice window
+                    # Mode B â€” Image Slice Booster: activate \u00b120 slice window
                     # for the newly displayed series.  Only fires while a download
                     # is in progress; no-op in Mode A (post-download).
                     try:
@@ -2783,7 +2947,7 @@ class ViewerController:
 
                     self._refresh_zeta_protected_series()
 
-                    # ── Look-ahead warmup: pre-cache adjacent series ──
+                    # â”€â”€ Look-ahead warmup: pre-cache adjacent series â”€â”€
                     # After every successful series switch, schedule warmup for
                     # the next N adjacent series so they're ready when the doctor
                     # drags-and-drops them.  This runs on a short deferred timer
@@ -2805,7 +2969,7 @@ class ViewerController:
                     try:
                         self.parent_widget.manage_reference_line()
                     except Exception as _rl_err:
-                        print(f"⚠️ [RL] manage_reference_line error after switch: {_rl_err}")
+                        print(f"âڑ ï¸ڈ [RL] manage_reference_line error after switch: {_rl_err}")
         
         except Exception as e:
             self.logger.error(f"Error in series switch: {e}", exc_info=True)
@@ -2832,7 +2996,7 @@ class ViewerController:
         self._perform_series_switch_optimized(vtk_widget, metadata, vtk_image_data, series_idx, slider)
 
     def _show_loading_spinner(self, message="Loading..."):
-        """نمایش spinner در viewport فعلی"""
+        """ظ†ظ…ط§غŒط´ spinner ط¯ط± viewport ظپط¹ظ„غŒ"""
         try:
             if hasattr(self.parent_widget, 'selected_widget') and self.parent_widget.selected_widget:
                 spinner = getattr(self.parent_widget.selected_widget, 'viewport_spinner', None)
@@ -2842,7 +3006,7 @@ class ViewerController:
             pass
 
     def _hide_loading_spinner(self):
-        """مخفی کردن spinner در viewport فعلی"""
+        """ظ…ط®ظپغŒ ع©ط±ط¯ظ† spinner ط¯ط± viewport ظپط¹ظ„غŒ"""
         try:
             if hasattr(self.parent_widget, 'selected_widget') and self.parent_widget.selected_widget:
                 spinner = getattr(self.parent_widget.selected_widget, 'viewport_spinner', None)
@@ -2946,7 +3110,7 @@ class ViewerController:
                 QTimer.singleShot(0, self._start_background_prefetch)
         except Exception:
             pass
-        # ── Warmup safety-net ──
+        # â”€â”€ Warmup safety-net â”€â”€
         # _start_open_tab_warmup may have exhausted its retry budget while
         # waiting for this flag.  Reset the counter and give warmup a fresh
         # chance now that the first series is visible.
@@ -2994,7 +3158,7 @@ class ViewerController:
                 primed.append(sn)
             if primed:
                 print(
-                    f"✅ [ZetaBoost][PRIME_FIRST] primed_visible_series={len(primed)} "
+                    f"âœ… [ZetaBoost][PRIME_FIRST] primed_visible_series={len(primed)} "
                     f"series={primed[:12]}"
                 )
         except Exception:
@@ -3084,7 +3248,7 @@ class ViewerController:
 
             # Delegate low-priority preloading to ZetaBoost background lane.
             self.zeta_boost.enqueue_many_background(queue)
-            print(f"⚡ [PREFETCH] Started for {len(queue)} series: {queue}")
+            print(f"âڑ، [PREFETCH] Started for {len(queue)} series: {queue}")
         except Exception as e:
             self.logger.debug(f"Error starting background prefetch: {e}")
 
@@ -3099,7 +3263,7 @@ class ViewerController:
                 return
             if self._global_downloads_active():
                 print(
-                    f"[WARMUP] Skipped — global downloads active "
+                    f"[WARMUP] Skipped â€” global downloads active "
                     f"count={int(getattr(ZetaBoostEngine, '_global_active_download_count', 0) or 0)}"
                 )
                 return
@@ -3108,7 +3272,7 @@ class ViewerController:
             # (IDLE or DOWNLOADING state), stop here without retry.
             if not self.pipeline.is_warmup_allowed:
                 print(
-                    f"[WARMUP] Skipped — pipeline={self.pipeline.state.name} "
+                    f"[WARMUP] Skipped â€” pipeline={self.pipeline.state.name} "
                     f"(warmup only allowed in POST_DOWNLOAD/READY)"
                 )
                 return
@@ -3149,7 +3313,7 @@ class ViewerController:
                     if self._open_warmup_retry_count < 10:
                         self._open_warmup_retry_count += 1
                         print(
-                            f"⏳ [ZetaBoost][OPEN_WARMUP] waiting pipeline retry="
+                            f"âڈ³ [ZetaBoost][OPEN_WARMUP] waiting pipeline retry="
                             f"{self._open_warmup_retry_count}/10 study={getattr(self.parent_widget, 'study_uid', 'unknown')}"
                         )
                         QTimer.singleShot(350, self._start_open_tab_warmup)
@@ -3300,7 +3464,7 @@ class ViewerController:
                     pass
                 filtered_candidates.append(sn)
                 _filter_details.append(f"{sn}:QUEUE")
-            print(f"🔧 [WARMUP_FILTER] detail: {' | '.join(_filter_details[:40])}")
+            print(f"ًں”§ [WARMUP_FILTER] detail: {' | '.join(_filter_details[:40])}")
             candidates = filtered_candidates
             # Sort light candidates: small (fast-loading) series first so users get
             # near-instant access to them while slower series load in background.
@@ -3331,7 +3495,7 @@ class ViewerController:
                 study_for_log = 'unknown'
 
             print(
-                f"ℹ️ [ZetaBoost][OPEN_WARMUP] filtered study={study_for_log} "
+                f"â„¹ï¸ڈ [ZetaBoost][OPEN_WARMUP] filtered study={study_for_log} "
                 f"total={total_candidates} skipped_active={skipped_active} skipped_primary={skipped_primary} "
                 f"skipped_large={skipped_large} skipped_corrupt={skipped_corrupt} skipped_non_image={skipped_non_image} "
                 f"skipped_failed={skipped_failed} skipped_cached={skipped_cached} "
@@ -3340,7 +3504,7 @@ class ViewerController:
 
             if dropped_heavy:
                 print(
-                    f"ℹ️ [ZetaBoost][HEAVY_ADMISSION] study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
+                    f"â„¹ï¸ڈ [ZetaBoost][HEAVY_ADMISSION] study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
                     f"admitted={len(heavy_candidates)} dropped={len(dropped_heavy)} "
                     f"cache_bytes={current_bytes}/{budget_bytes} reserve={reserve_bytes} dropped_series={dropped_heavy[:12]}"
                 )
@@ -3353,7 +3517,7 @@ class ViewerController:
                     or (skipped_active + skipped_primary + skipped_large + skipped_corrupt + skipped_non_image + skipped_failed) >= total_candidates
                 ):
                     print(
-                        f"ℹ️ [ZetaBoost][OPEN_WARMUP] completed_noop study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
+                        f"â„¹ï¸ڈ [ZetaBoost][OPEN_WARMUP] completed_noop study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
                         f"reason=all_candidates_already_handled total={total_candidates}"
                     )
                     return
@@ -3362,7 +3526,7 @@ class ViewerController:
                 if self._open_warmup_retry_count < 6:
                     self._open_warmup_retry_count += 1
                     print(
-                        f"⏳ [ZetaBoost][OPEN_WARMUP] no queueable series yet, retry="
+                        f"âڈ³ [ZetaBoost][OPEN_WARMUP] no queueable series yet, retry="
                         f"{self._open_warmup_retry_count}/6 study={getattr(self.parent_widget, 'study_uid', 'unknown')}"
                     )
                     # QTimer must be scheduled on the UI thread.
@@ -3372,7 +3536,7 @@ class ViewerController:
             if candidates:
                 self.zeta_boost.enqueue_many_warmup(candidates)
                 print(
-                    f"🚀 [ZetaBoost][OPEN_WARMUP] active_tab=True study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
+                    f"ًںڑ€ [ZetaBoost][OPEN_WARMUP] active_tab=True study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
                     f"queued_light_series={len(candidates)} series={candidates[:12]}"
                 )
 
@@ -3380,7 +3544,7 @@ class ViewerController:
                 self._deferred_heavy_warmup_series = list(heavy_candidates)
                 self._deferred_heavy_warmup_retry_count = 0
                 print(
-                    f"⏳ [ZetaBoost][HEAVY_DEFER] scheduled study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
+                    f"âڈ³ [ZetaBoost][HEAVY_DEFER] scheduled study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
                     f"queued_heavy_series={len(heavy_candidates)} delay_ms=1500 series={heavy_candidates[:12]}"
                 )
                 # QTimer must be scheduled on the UI thread.
@@ -3455,12 +3619,12 @@ class ViewerController:
             # workers (2 parallel) will process them with proper
             # scheduling, respecting max_parallel_loads and lane priority.
             # Queue heavy in warmup lane (not background) so they start
-            # immediately after light series, without waiting for the warmup→
+            # immediately after light series, without waiting for the warmupâ†’
             # background lane transition.  Light series are already at the
             # front of the warmup queue (FIFO), so ordering is preserved.
             self.zeta_boost.enqueue_many_warmup(queue)
             print(
-                f"🚀 [ZetaBoost][HEAVY_DEFER] batch-queued(warmup) study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
+                f"ًںڑ€ [ZetaBoost][HEAVY_DEFER] batch-queued(warmup) study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
                 f"series={queue[:12]} count={len(queue)}"
             )
             self._log_warmup_coverage(stage="after_heavy_warmup_queued")
@@ -3519,15 +3683,15 @@ class ViewerController:
 
             coverage_pct = (100.0 * len(full_cached) / len(candidates)) if candidates else 0.0
             print(
-                f"📌 [ZetaBoost][VERIFY] stage={stage or 'n/a'} study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
+                f"ًں“Œ [ZetaBoost][VERIFY] stage={stage or 'n/a'} study={getattr(self.parent_widget, 'study_uid', 'unknown')} "
                 f"total={len(candidates)} full_cached={len(full_cached)} loaded_not_cached={len(loaded_not_cached)} "
                 f"preview_flagged={len(preview_flagged)} failed={len(failed)} missing={len(missing)} "
                 f"coverage={coverage_pct:.1f}% primary={primary_series or 'n/a'}"
             )
             if preview_flagged:
-                print(f"⚠️ [ZetaBoost][VERIFY] preview_flagged_series={preview_flagged[:12]}")
+                print(f"âڑ ï¸ڈ [ZetaBoost][VERIFY] preview_flagged_series={preview_flagged[:12]}")
             if missing:
-                print(f"⏳ [ZetaBoost][VERIFY] not_warmed_series={missing[:12]}")
+                print(f"âڈ³ [ZetaBoost][VERIFY] not_warmed_series={missing[:12]}")
         except Exception as e:
             self.logger.debug(f"Error in warmup verification log: {e}")
 
@@ -3613,7 +3777,7 @@ class ViewerController:
                     break
 
             if vtk_image_data is None or metadata is None or series_idx is None:
-                print(f"❌ [FIRST DISPLAY] series {series_number} not found in thumbnail cache")
+                print(f"â‌Œ [FIRST DISPLAY] series {series_number} not found in thumbnail cache")
                 return False
 
             if self.lst_nodes_viewer and self.selected_widget is None:
@@ -3656,7 +3820,7 @@ class ViewerController:
     def _display_loaded_series(self, series_number, series_idx, vtk_image_data, metadata,
                                flag_change_selected_widget, vtk_widget, slider):
         """
-        ⚡ OPTIMIZED: Display series with O(1) paired series lookup.
+        âڑ، OPTIMIZED: Display series with O(1) paired series lookup.
         
         Performance improvements:
         - Fast paired series detection using index
@@ -3672,7 +3836,7 @@ class ViewerController:
                 else:
                     return
 
-            # ⚡ FAST PAIRED SERIES LOOKUP: O(1)
+            # âڑ، FAST PAIRED SERIES LOOKUP: O(1)
             vtk_widget_data_2 = None
             metadata_2 = None
             
@@ -3733,32 +3897,32 @@ class ViewerController:
         try:
             from PacsClient.pacs.patient_tab.utils import NodeViewer
 
-            print("   📝 [Fallback] Creating layout...")
+            print("   ًں“‌ [Fallback] Creating layout...")
             layout = QGridLayout()
             layout.setContentsMargins(0, 0, 0, 0)
 
-            print("   🖼️ [Fallback] Creating container...")
+            print("   ًں–¼ï¸ڈ [Fallback] Creating container...")
             container = QFrame()
             container.setLayout(layout)
 
-            print("   🎨 [Fallback] Creating dummy VTK widget...")
+            print("   ًںژ¨ [Fallback] Creating dummy VTK widget...")
             vtk_widget = self.create_dummy_vtk_widget()
             if vtk_widget is None:
                 raise RuntimeError("create_dummy_vtk_widget failed")
 
-            print("    📊 [Fallback] Creating slider...")
+            print("    ًں“ٹ [Fallback] Creating slider...")
             slider = QSlider(Qt.Vertical)
 
-            print("   🔗 [Fallback] Creating NodeViewer...")
+            print("   ًں”— [Fallback] Creating NodeViewer...")
             node = NodeViewer(container, vtk_widget, slider)
             if node is None:
                 raise RuntimeError("NodeViewer creation failed")
 
-            print("   ✅ [Fallback] Fallback viewer created successfully")
+            print("   âœ… [Fallback] Fallback viewer created successfully")
             return node
 
         except Exception as e:
-            print(f"   ❌ [Fallback] Error creating fallback viewer: {e}")
+            print(f"   â‌Œ [Fallback] Error creating fallback viewer: {e}")
             self.logger.error(f"Fallback viewer creation failed: {e}", exc_info=True)
             return None
 
@@ -3774,7 +3938,7 @@ class ViewerController:
                 self.new_viewer(last_viewer_index)
 
     def cleanup_all_viewers(self):
-        """تمیز‌کردن بهینهٔ viewers و resources"""
+        """طھظ…غŒط²â€Œع©ط±ط¯ظ† ط¨ظ‡غŒظ†ظ‡ظ” viewers ظˆ resources"""
         try:
             self._stop_background_prefetch()
 
@@ -3807,7 +3971,7 @@ class ViewerController:
                     except Exception as e:
                         self.logger.debug(f"Error cleaning up viewer node: {e}")
 
-            # Clear caches to free memory - اما با احتیاط
+            # Clear caches to free memory - ط§ظ…ط§ ط¨ط§ ط§ط­طھغŒط§ط·
             if hasattr(self, '_series_cache'):
                 self._series_cache.clear()
             if hasattr(self, '_series_name_cache'):
@@ -3835,7 +3999,7 @@ class ViewerController:
             except Exception:
                 pass
 
-            print("✅ cleanup_all_viewers completed")
+            print("âœ… cleanup_all_viewers completed")
         except Exception as e:
             self.logger.error(f"Error in cleanup_all_viewers: {e}")
 
@@ -3845,56 +4009,56 @@ class ViewerController:
         
         Returns: (vtk_preview_data, metadata) or (None, None) on failure
         
-        فایده: نمایش فوری toggle٪20ms تا حالی که full volume موازی بارگذاری می‌شود
+        ظپط§غŒط¯ظ‡: ظ†ظ…ط§غŒط´ ظپظˆط±غŒ toggleظھ20ms طھط§ ط­ط§ظ„غŒ ع©ظ‡ full volume ظ…ظˆط§ط²غŒ ط¨ط§ط±ع¯ط°ط§ط±غŒ ظ…غŒâ€Œط´ظˆط¯
         """
         try:
             _preview_start = time.perf_counter()
             
-            # سریع محاسبه: آیا قبلاً ثابت کاش داریم؟
+            # ط³ط±غŒط¹ ظ…ط­ط§ط³ط¨ظ‡: ط¢غŒط§ ظ‚ط¨ظ„ط§ظ‹ ط«ط§ط¨طھ ع©ط§ط´ ط¯ط§ط±غŒظ…طں
             try:
                 vtk_full, meta_full, _ = self._get_series_by_number_fast(str(series_number))
                 if vtk_full is not None and isinstance(meta_full, dict):
                     dims = vtk_full.GetDimensions() if hasattr(vtk_full, 'GetDimensions') else (0, 0, 0)
-                    if int(dims[2]) > 1:  # full volume موجود
+                    if int(dims[2]) > 1:  # full volume ظ…ظˆط¬ظˆط¯
                         _ms = (time.perf_counter() - _preview_start) * 1000
-                        print(f"⚡ [PREVIEW] series={series_number} cached_full {_ms:.0f}ms")
+                        print(f"âڑ، [PREVIEW] series={series_number} cached_full {_ms:.0f}ms")
                         return vtk_full, meta_full
             except Exception:
                 pass
             
-            # سریز از disk کش یا source بارگذاری کن
+            # ط³ط±غŒط² ط§ط² disk ع©ط´ غŒط§ source ط¨ط§ط±ع¯ط°ط§ط±غŒ ع©ظ†
             from PacsClient.pacs.patient_tab.utils.image_io import load_series_preview
             
             vtk_preview, metadata = load_series_preview(
                 study_path=study_path,
                 series_number=int(series_number),
-                max_slices=8  # max 8 slice برای preview
+                max_slices=8  # max 8 slice ط¨ط±ط§غŒ preview
             )
             
             _elapsed = (time.perf_counter() - _preview_start) * 1000
             if vtk_preview is not None:
-                print(f"⚡ [PREVIEW] series={series_number} loaded {_elapsed:.0f}ms")
+                print(f"âڑ، [PREVIEW] series={series_number} loaded {_elapsed:.0f}ms")
                 return vtk_preview, metadata
             else:
-                print(f"⚠️ [PREVIEW] series={series_number} failed {_elapsed:.0f}ms")
+                print(f"âڑ ï¸ڈ [PREVIEW] series={series_number} failed {_elapsed:.0f}ms")
                 return None, None
                 
         except Exception as e:
-            print(f"⚠️ [PREVIEW] exception: {e}")
+            print(f"âڑ ï¸ڈ [PREVIEW] exception: {e}")
             return None, None
 
     def _prefetch_adjacent_series(self, current_series_number: str):
         """
-        پیش‌بینی سریز‌های مجاور و queue برای warmup lane.
+        ظ¾غŒط´â€Œط¨غŒظ†غŒ ط³ط±غŒط²â€Œظ‡ط§غŒ ظ…ط¬ط§ظˆط± ظˆ queue ط¨ط±ط§غŒ warmup lane.
         
-        این متد موازی‌طوری اجرا می‌شود، بنابراین drag & drop بعدی
-        < 50ms (cache hit) خواهد بود.
+        ط§غŒظ† ظ…طھط¯ ظ…ظˆط§ط²غŒâ€Œط·ظˆط±غŒ ط§ط¬ط±ط§ ظ…غŒâ€Œط´ظˆط¯طŒ ط¨ظ†ط§ط¨ط±ط§غŒظ† drag & drop ط¨ط¹ط¯غŒ
+        < 50ms (cache hit) ط®ظˆط§ظ‡ط¯ ط¨ظˆط¯.
         """
         try:
             current_idx = None
             thumbs = getattr(self.parent_widget, 'lst_thumbnails_data', []) or []
             
-            # پیدا کردن index سریز جاری
+            # ظ¾غŒط¯ط§ ع©ط±ط¯ظ† index ط³ط±غŒط² ط¬ط§ط±غŒ
             for idx, item in enumerate(thumbs):
                 sn = str(item.get('metadata', {}).get('series', {}).get('series_number', '') or '')
                 if sn == str(current_series_number):
@@ -3904,7 +4068,7 @@ class ViewerController:
             if current_idx is None:
                 return
             
-            # Prefetch 3 سریز بعدی + 1 سریز قبلی (اگر موجود باشند)
+            # Prefetch 3 ط³ط±غŒط² ط¨ط¹ط¯غŒ + 1 ط³ط±غŒط² ظ‚ط¨ظ„غŒ (ط§ع¯ط± ظ…ظˆط¬ظˆط¯ ط¨ط§ط´ظ†ط¯)
             prefetch_indices = []
             for offset in [-1, 1, 2, 3]:
                 candidate_idx = current_idx + offset
@@ -3918,11 +4082,11 @@ class ViewerController:
                 if not sn or sn in {str(current_series_number)}:
                     continue
                 
-                # Skip اگر قبلاً queued یا in-memory
+                # Skip ط§ع¯ط± ظ‚ط¨ظ„ط§ظ‹ queued غŒط§ in-memory
                 if self.zeta_boost.has_in_memory(sn):
                     continue
                 
-                # Queue برای warmup lane (بدون blocking interactive)
+                # Queue ط¨ط±ط§غŒ warmup lane (ط¨ط¯ظˆظ† blocking interactive)
                 try:
                     self.zeta_boost.queue_load(sn, lane="warmup")
                     queued_count += 1
@@ -3930,10 +4094,10 @@ class ViewerController:
                     pass
             
             if queued_count > 0:
-                print(f"🔥 [PREFETCH] series={current_series_number} queued={queued_count} adjacent")
+                print(f"ًں”¥ [PREFETCH] series={current_series_number} queued={queued_count} adjacent")
                 
         except Exception as e:
-            print(f"⚠️ [PREFETCH] error: {e}")
+            print(f"âڑ ï¸ڈ [PREFETCH] error: {e}")
 
     def _any_viewer_empty(self) -> bool:
         """Return True if any viewer has not been initialized with image data."""
@@ -3958,7 +4122,9 @@ class ViewerController:
     def _load_single_series_on_demand(self, series_number: int, study_path: str = None,
                                       target_vtk_widget: VTKWidget = None,
                                       allow_paired: bool = True,
-                                      expected_token=None) -> bool:
+                                      expected_token=None,
+                                      viewer_backend=None,
+                                      force_reload: bool = False) -> bool:
         """
         Load a single series with correct path resolution
         """
@@ -3969,7 +4135,7 @@ class ViewerController:
             _start = time.perf_counter()
             t_load_total = now_ms()
 
-            # ✅ FIX: Use provided study_path or correctly determine it
+            # âœ… FIX: Use provided study_path or correctly determine it
             if study_path is None:
                 # Try parent widget's import folder first
                 if self.parent_widget.import_folder_path and Path(self.parent_widget.import_folder_path).exists():
@@ -3985,22 +4151,35 @@ class ViewerController:
                             study_path_obj = parent
                     study_path = str(study_path_obj)
                 else:
-                    print(f"❌ No valid study path found")
+                    print(f"â‌Œ No valid study path found")
                     return False
 
-            print(f"📂 [LOAD] Loading series {series_number} from {study_path} (thread={threading.current_thread().name})")
+            print(f"ًں“‚ [LOAD] Loading series {series_number} from {study_path} (thread={threading.current_thread().name})")
+            self.logger.info(
+                "viewer-backend stage=load_request series=%s backend=%s force_reload=%s",
+                str(series_number),
+                str(viewer_backend or BACKEND_VTK),
+                bool(force_reload),
+                extra={
+                    "component": "viewer",
+                    "function": "ViewerController._load_single_series_on_demand",
+                    "stage": "load_request",
+                },
+            )
+
+            series_key = str(series_number)
 
             # Fast no-op: same series already displayed in target viewport.
             # Prevents duplicate full ITK pipeline when a second request arrives
             # while the first switch has already applied.
             try:
-                if target_vtk_widget is not None and getattr(target_vtk_widget, 'image_viewer', None) is not None:
+                if (not force_reload) and target_vtk_widget is not None and getattr(target_vtk_widget, 'image_viewer', None) is not None:
                     shown_series = str(
                         getattr(target_vtk_widget.image_viewer, 'metadata', {}).get('series', {}).get('series_number', '')
                     )
                     if shown_series and shown_series == str(series_number):
                         if int(target_vtk_widget.get_count_of_slices() or 0) > 0:
-                            print(f"⏭️ [LOAD SKIP] same series already visible series={series_number}")
+                            print(f"âڈ­ï¸ڈ [LOAD SKIP] same series already visible series={series_number}")
                             return True
             except Exception:
                 pass
@@ -4008,12 +4187,18 @@ class ViewerController:
             # Bail out early if tab was deactivated while queued (e.g. user pressed F5).
             # Allow explicit user-driven loads even if tab_active flag is stale.
             if not self._tab_active and not self._interactive_load_in_progress:
-                print(f"⏭️ [LOAD SKIP] tab inactive for series {series_number}")
+                print(f"âڈ­ï¸ڈ [LOAD SKIP] tab inactive for series {series_number}")
                 return False
+
+            if force_reload:
+                try:
+                    self.zeta_boost.invalidate_series(series_key, clear_disk=True)
+                except Exception:
+                    pass
 
             # Deterministic full-series cache before any I/O work.
             _cache_probe_t = time.perf_counter()
-            cached_full = self._full_cache_get(str(series_number))
+            cached_full = None if force_reload else self._full_cache_get(str(series_number))
             _cache_probe_ms = (time.perf_counter() - _cache_probe_t) * 1000
             self.logger.info(
                 "viewer-data stage=cache_lookup_fullcache duration_ms=%.2f hit=%s",
@@ -4031,78 +4216,85 @@ class ViewerController:
                         series_number, cached_vtk, cached_meta,
                         self.parent_widget.metadata_fixed.get('patient_pk', None),
                         self.parent_widget.metadata_fixed.get('study_pk', None),
-                        refresh_viewer=False
+                        refresh_viewer=(target_vtk_widget is not None),
+                        target_viewer_id=getattr(target_vtk_widget, 'id_vtk_widget', None),
+                        allow_paired=allow_paired,
+                        expected_token=expected_token,
                     )
                     _apply_ms = (time.perf_counter() - _apply_t) * 1000
-                    print(f"⚡ [CACHE HIT] full-series cache hit for {series_number} probe={_cache_probe_ms:.0f}ms apply={_apply_ms:.0f}ms")
+                    print(f"âڑ، [CACHE HIT] full-series cache hit for {series_number} probe={_cache_probe_ms:.0f}ms apply={_apply_ms:.0f}ms")
                     return True
             elif _cache_probe_ms > 50:
-                print(f"🔍 [CACHE MISS] series={series_number} probe took {_cache_probe_ms:.0f}ms")
+                print(f"ًں”چ [CACHE MISS] series={series_number} probe took {_cache_probe_ms:.0f}ms")
 
             # Fast exit only when a full-volume payload is already loaded.
             # Preview-only payloads (z=1 with preview flag) must continue to full load,
             # otherwise heavy series can appear to never load.
-            try:
-                existing_vtk, existing_meta, _ = self._get_series_by_number_fast(str(series_number))
-                if existing_meta and existing_vtk is not None and self._is_full_volume_cache_candidate(str(series_number), existing_vtk, existing_meta):
-                    return True
-            except Exception:
-                pass
+            if not force_reload:
+                try:
+                    existing_vtk, existing_meta, _ = self._get_series_by_number_fast(str(series_number))
+                    if existing_meta and existing_vtk is not None and self._is_full_volume_cache_candidate(str(series_number), existing_vtk, existing_meta):
+                        return True
+                except Exception:
+                    pass
 
             # INTERACTIVE DEDUP: prevent two identical interactive drag-drops
             # from loading the same series twice.  ZetaBoost warmup is fully
             # independent (see _zeta_boost_load_series) and never participates
-            # in this lock — the viewer never waits for warmup.
-            series_key = str(series_number)
+            # in this lock â€” the viewer never waits for warmup.
             load_event = None
             is_owner = False
             with self._series_load_lock:
                 if series_key in self._loading_series_numbers:
                     load_event = self._series_load_events.get(series_key)
-                    print(f"⏳ [LOAD] series={series_key} already loading interactively (thread={threading.current_thread().name})")
+                    print(f"âڈ³ [LOAD] series={series_key} already loading interactively (thread={threading.current_thread().name})")
                 else:
                     self._loading_series_numbers.add(series_key)
                     load_event = threading.Event()
                     self._series_load_events[series_key] = load_event
                     is_owner = True
-                    print(f"🔑 [LOAD] series={series_key} took ownership (thread={threading.current_thread().name})")
+                    print(f"ًں”‘ [LOAD] series={series_key} took ownership (thread={threading.current_thread().name})")
 
             if not is_owner:
-                # ⚡ CRITICAL: NEVER block the Qt main thread on this wait.
+                # âڑ، CRITICAL: NEVER block the Qt main thread on this wait.
                 # load_series_immediately / load_first_series_only are called
                 # from QTimer.singleShot callbacks (main thread).  If warmup
                 # currently owns the lock the 10-second wait would freeze the
                 # entire UI.  Return False so the caller can schedule a retry.
                 if threading.current_thread() is threading.main_thread():
-                    print(f"⚠️ [LOAD] Main-thread call for series={series_key} is already in-flight "
-                          f"(owned by warmup/background) — returning False for QTimer retry")
+                    print(f"âڑ ï¸ڈ [LOAD] Main-thread call for series={series_key} is already in-flight "
+                          f"(owned by warmup/background) â€” returning False for QTimer retry")
                     return False
                 # Background thread: legitimate dedup wait.
                 _wait_t = time.perf_counter()
                 if load_event is not None:
                     load_event.wait(timeout=10.0)
                 _wait_ms = (time.perf_counter() - _wait_t) * 1000
-                print(f"⏳ [LOAD] series={series_key} interactive wait done {_wait_ms:.0f}ms (thread={threading.current_thread().name})")
+                print(f"âڈ³ [LOAD] series={series_key} interactive wait done {_wait_ms:.0f}ms (thread={threading.current_thread().name})")
 
-                existing_vtk, existing_meta, _ = self._get_series_by_number_fast(series_key)
-                if existing_meta and existing_vtk is not None and self._is_full_volume_cache_candidate(series_key, existing_vtk, existing_meta):
-                    return True
-
-                cached_full_after_wait = self._full_cache_get(series_key)
-                if cached_full_after_wait is not None:
-                    cached_vtk, cached_meta = cached_full_after_wait[0], cached_full_after_wait[1]
-                    if cached_vtk is not None and isinstance(cached_meta, dict):
-                        if not self._tab_active:
-                            return False
-                        self._apply_loaded_series_data_threadsafe(
-                            series_number, cached_vtk, cached_meta,
-                            self.parent_widget.metadata_fixed.get('patient_pk', None),
-                            self.parent_widget.metadata_fixed.get('study_pk', None),
-                            refresh_viewer=False
-                        )
+                if not force_reload:
+                    existing_vtk, existing_meta, _ = self._get_series_by_number_fast(series_key)
+                    if existing_meta and existing_vtk is not None and self._is_full_volume_cache_candidate(series_key, existing_vtk, existing_meta):
                         return True
 
-                # Previous interactive loader finished without result — take over.
+                    cached_full_after_wait = self._full_cache_get(series_key)
+                    if cached_full_after_wait is not None:
+                        cached_vtk, cached_meta = cached_full_after_wait[0], cached_full_after_wait[1]
+                        if cached_vtk is not None and isinstance(cached_meta, dict):
+                            if not self._tab_active:
+                                return False
+                            self._apply_loaded_series_data_threadsafe(
+                                series_number, cached_vtk, cached_meta,
+                                self.parent_widget.metadata_fixed.get('patient_pk', None),
+                                self.parent_widget.metadata_fixed.get('study_pk', None),
+                                refresh_viewer=(target_vtk_widget is not None),
+                                target_viewer_id=getattr(target_vtk_widget, 'id_vtk_widget', None),
+                                allow_paired=allow_paired,
+                                expected_token=expected_token,
+                            )
+                            return True
+
+                # Previous interactive loader finished without result â€” take over.
                 with self._series_load_lock:
                     if series_key not in self._loading_series_numbers:
                         self._loading_series_numbers.add(series_key)
@@ -4111,9 +4303,10 @@ class ViewerController:
                         is_owner = True
 
                 if not is_owner:
-                    existing_vtk, existing_meta, _ = self._get_series_by_number_fast(series_key)
-                    if existing_meta and existing_vtk is not None and self._is_full_volume_cache_candidate(series_key, existing_vtk, existing_meta):
-                        return True
+                    if not force_reload:
+                        existing_vtk, existing_meta, _ = self._get_series_by_number_fast(series_key)
+                        if existing_meta and existing_vtk is not None and self._is_full_volume_cache_candidate(series_key, existing_vtk, existing_meta):
+                            return True
                     return False
 
             # Do NOT hard-fail on study_path/series_number existence.
@@ -4133,7 +4326,7 @@ class ViewerController:
             # during apply_filters(), each periodically acquiring the GIL.
             # With 8-16 ITK threads + 8 pydicom workers all in the viewer
             # process, the UI/render thread starves for GIL access, producing
-            # the 50–60 ms scroll stalls seen in Mode B.  Capping to 2 threads
+            # the 50â€“60 ms scroll stalls seen in Mode B.  Capping to 2 threads
             # keeps filter throughput high while reducing GIL contention to a
             # level the Qt event loop can absorb without perceptible lag.
             _dicom_t = time.perf_counter()
@@ -4145,9 +4338,11 @@ class ViewerController:
                 ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
                 max_itk_threads=2,
                 max_pydicom_workers=2,
+                viewer_backend=viewer_backend,
+                allow_lazy_backend=(viewer_backend != BACKEND_VTK),
             )
             _dicom_ms = (time.perf_counter() - _dicom_t) * 1000
-            print(f"📊 [LOAD] DICOM+ITK for series={series_number} took {_dicom_ms:.0f}ms files~={estimated_file_count} (thread={threading.current_thread().name})")
+            print(f"ًں“ٹ [LOAD] DICOM+ITK for series={series_number} took {_dicom_ms:.0f}ms files~={estimated_file_count} (thread={threading.current_thread().name})")
             self.logger.info(
                 "viewer-data stage=itk_pipeline_total duration_ms=%.2f files=%d",
                 _dicom_ms,
@@ -4156,7 +4351,7 @@ class ViewerController:
             )
 
             if result is None:
-                print(f"❌ [LOAD FAIL] series={series_number} loader returned None")
+                print(f"â‌Œ [LOAD FAIL] series={series_number} loader returned None")
                 with self._series_load_lock:
                     evt = self._series_load_events.pop(series_key, None)
                     self._loading_series_numbers.discard(series_key)
@@ -4168,17 +4363,23 @@ class ViewerController:
             loaded_any = False
             for item in result:
                 if not self._tab_active:
-                    print(f"⏭️ [LOAD SKIP] tab inactive during apply for series {series_number}")
+                    print(f"âڈ­ï¸ڈ [LOAD SKIP] tab inactive during apply for series {series_number}")
                     return False
                 if target_vtk_widget is not None and not self._is_request_current(target_vtk_widget, expected_token):
-                    print(f"⏭️ [LOAD STALE] full series={series_number} ignored")
+                    print(f"âڈ­ï¸ڈ [LOAD STALE] full series={series_number} ignored")
                     return False
                 vtk_image_data, metadata, (patient_pk, study_pk) = item
-                self._apply_loaded_series_data_threadsafe(series_number, vtk_image_data, metadata, patient_pk, study_pk)
+                self._apply_loaded_series_data_threadsafe(
+                    series_number, vtk_image_data, metadata, patient_pk, study_pk,
+                    refresh_viewer=(target_vtk_widget is not None),
+                    target_viewer_id=getattr(target_vtk_widget, 'id_vtk_widget', None),
+                    allow_paired=allow_paired,
+                    expected_token=expected_token,
+                )
                 loaded_any = True
 
             if not loaded_any:
-                print(f"❌ [LOAD FAIL] series={series_number} loader produced no items")
+                print(f"â‌Œ [LOAD FAIL] series={series_number} loader produced no items")
                 with self._series_load_lock:
                     evt = self._series_load_events.pop(series_key, None)
                     self._loading_series_numbers.discard(series_key)
@@ -4187,7 +4388,7 @@ class ViewerController:
                 return False
 
             _elapsed = time.perf_counter() - _start
-            print(f"✅ [LOAD] Series {series_number} loaded in {_elapsed:.3f}s")
+            print(f"âœ… [LOAD] Series {series_number} loaded in {_elapsed:.3f}s")
             log_stage_timing(
                 self.logger,
                 component="viewer",
@@ -4212,7 +4413,7 @@ class ViewerController:
             return True
 
         except Exception as e:
-            print(f"❌ [LOAD] Error loading series {series_number}: {e}")
+            print(f"â‌Œ [LOAD] Error loading series {series_number}: {e}")
             import traceback
             traceback.print_exc()
             with self._series_load_lock:
@@ -4227,7 +4428,7 @@ class ViewerController:
                                   expected_token=None):
         try:
             dims = vtk_image_data.GetDimensions() if vtk_image_data else (0, 0, 0)
-            print(f"🔄 [APPLY] series={series_number} refresh={refresh_viewer} dims={dims}")
+            print(f"ًں”„ [APPLY] series={series_number} refresh={refresh_viewer} dims={dims}")
 
             # Populate metadata_fixed if needed
             if not self.parent_widget.metadata_fixed or len(self.parent_widget.metadata_fixed) < 3:
@@ -4248,14 +4449,14 @@ class ViewerController:
                 metadata=metadata,
                 file_path=file_path
             )
-            print(f"🔄 [APPLY] series={series_number} → replace_series_data returned idx={series_idx}")
+            print(f"ًں”„ [APPLY] series={series_number} â†’ replace_series_data returned idx={series_idx}")
 
             # Update study path if needed
             if metadata.get('series', {}).get('series_path'):
                 correct_path = Path(metadata['series']['series_path']).parent
                 if str(correct_path) != self.parent_widget.import_folder_path:
                     self.parent_widget.import_folder_path = str(correct_path)
-                    print(f"   🔄 Updated study path to: {correct_path}")
+                    print(f"   ًں”„ Updated study path to: {correct_path}")
 
             if refresh_viewer and series_idx >= 0:
                 # Update ALL viewers currently showing this series (not just selected)
@@ -4266,15 +4467,15 @@ class ViewerController:
                     if target_viewer_id is not None and getattr(vtk_w, 'id_vtk_widget', None) != target_viewer_id:
                         continue
                     if expected_token is not None and not self._is_request_current(vtk_w, expected_token):
-                        print(f"   ⏭️ [APPLY STALE] viewer[{vi}] series={series_number} skipped")
+                        print(f"   âڈ­ï¸ڈ [APPLY STALE] viewer[{vi}] series={series_number} skipped")
                         continue
                     # last_series_show stores thumbnail *index*, not series number
                     current_idx = getattr(vtk_w, 'last_series_show', None)
-                    print(f"   🔎 viewer[{vi}] last_series_show={current_idx} vs series_idx={series_idx}")
+                    print(f"   ًں”ژ viewer[{vi}] last_series_show={current_idx} vs series_idx={series_idx}")
                     if current_idx is not None and current_idx == series_idx:
                         try:
                             slider = getattr(node_viewer, 'slider', None)
-                            print(f"   ✅ Refreshing viewer[{vi}] with full data (dims={dims})")
+                            print(f"   âœ… Refreshing viewer[{vi}] with full data (dims={dims})")
                             self._perform_series_switch_optimized(
                                 vtk_w, metadata, vtk_image_data, series_idx, slider,
                                 allow_paired=allow_paired,
@@ -4307,7 +4508,7 @@ class ViewerController:
             return False
 
     def _apply_loaded_series_data_threadsafe(self, *args, **kwargs):
-        """Apply loaded data on UI thread — fire-and-forget from worker threads.
+        """Apply loaded data on UI thread â€” fire-and-forget from worker threads.
 
         Previous implementation blocked the worker with done.wait(15s), causing
         cascading stalls when multiple series complete during downloads.
@@ -4322,7 +4523,7 @@ class ViewerController:
             try:
                 self._apply_loaded_series_data(*args, **kwargs)
             except Exception as e:
-                print(f"⚠️ [UI APPLY] error: {e}")
+                print(f"âڑ ï¸ڈ [UI APPLY] error: {e}")
 
         self._queue_on_ui_thread(_ui_apply)
 
@@ -4335,7 +4536,7 @@ class ViewerController:
             self._zeta_external_busy_last = new_state
             self.zeta_boost.set_external_interactive_busy(new_state)
             if reason:
-                print(f"ℹ️ [ZetaBoost][INTERACTIVE_BUSY] busy={new_state} reason={reason}")
+                print(f"â„¹ï¸ڈ [ZetaBoost][INTERACTIVE_BUSY] busy={new_state} reason={reason}")
         except Exception:
             pass
 
@@ -4385,7 +4586,7 @@ class ViewerController:
         except Exception:
             return False
 
-    # ── Per-series download warmup (controlled Mode B caching) ──────────
+    # â”€â”€ Per-series download warmup (controlled Mode B caching) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _enqueue_download_warmup(self, series_number: str):
         """Queue a completed series for background warmup during active download.
@@ -4403,8 +4604,14 @@ class ViewerController:
                 return
             sn = str(series_number)
             with self._dl_warmup_lock:
-                if self._dl_warmup_cached_count >= self._DL_WARMUP_MAX_CACHED:
-                    print(f"[DL_WARMUP] Skip series={sn} — max cached ({self._DL_WARMUP_MAX_CACHED}) reached")
+                pending_count = 0
+                if self._dl_warmup_use_subprocess and self._warmup_subprocess_mgr is not None:
+                    pending_count = int(self._warmup_subprocess_mgr.pending_count or 0)
+                elif not self._dl_warmup_use_subprocess:
+                    pending_count = len(self._dl_warmup_queue)
+
+                if (self._dl_warmup_cached_count + pending_count) >= self._DL_WARMUP_MAX_CACHED:
+                    print(f"[DL_WARMUP] Skip series={sn} - max cached ({self._DL_WARMUP_MAX_CACHED}) reached")
                     return
                 if sn in self._dl_warmup_enqueued:
                     return
@@ -4423,12 +4630,15 @@ class ViewerController:
                     return
                 self._dl_warmup_enqueued.add(sn)
 
-            # ── v2.2.3.2.3: Subprocess path (default) ──
+            # â”€â”€ v2.2.3.2.3: Subprocess path (default) â”€â”€
             if self._dl_warmup_use_subprocess:
-                self._enqueue_warmup_subprocess(sn)
+                accepted = self._enqueue_warmup_subprocess(sn)
+                if not accepted:
+                    with self._dl_warmup_lock:
+                        self._dl_warmup_enqueued.discard(sn)
                 return
 
-            # ── Legacy thread path (fallback) ──
+            # â”€â”€ Legacy thread path (fallback) â”€â”€
             with self._dl_warmup_lock:
                 self._dl_warmup_queue.append(sn)
             print(f"[DL_WARMUP] Queued series={sn} (pending={len(self._dl_warmup_queue)})")
@@ -4443,9 +4653,9 @@ class ViewerController:
         except Exception as e:
             print(f"[DL_WARMUP] enqueue error: {e}")
 
-    # ── v2.2.3.2.3: Subprocess-based warmup (GIL-free) ─────────────────
+    # â”€â”€ v2.2.3.2.3: Subprocess-based warmup (GIL-free) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    def _enqueue_warmup_subprocess(self, sn: str):
+    def _enqueue_warmup_subprocess(self, sn: str) -> bool:
         """Send a warmup request to the GIL-free subprocess."""
         try:
             # Slice count check (skip huge series)
@@ -4457,12 +4667,12 @@ class ViewerController:
                 pass
             if 0 < dcm_count > self._DL_WARMUP_MAX_SLICES:
                 print(f"[DL_WARMUP_SUB] series={sn} too large ({dcm_count} > {self._DL_WARMUP_MAX_SLICES}), skip")
-                return
+                return False
 
             study_path = self._get_correct_study_path()
             if not study_path:
                 print(f"[DL_WARMUP_SUB] series={sn} no study_path, skip")
-                return
+                return False
 
             # Lazy-start the subprocess and poll timer
             if self._warmup_subprocess_mgr is None:
@@ -4476,7 +4686,7 @@ class ViewerController:
             if not self._warmup_result_timer.isActive():
                 self._warmup_result_timer.start()
 
-            # v2.2.3.3.9: Reduce from 2→1 ITK threads in subprocess.
+            # v2.2.3.3.9: Reduce from 2â†’1 ITK threads in subprocess.
             # The subprocess is a separate process (no GIL contention) but
             # still competes for CPU cores and memory bandwidth, causing
             # VTK SetSlice to spike from ~14ms to ~50ms during scroll.
@@ -4493,13 +4703,16 @@ class ViewerController:
             ok = self._warmup_subprocess_mgr.submit(req)
             if ok:
                 print(f"[DL_WARMUP_SUB] Submitted series={sn} to subprocess (pending={self._warmup_subprocess_mgr.pending_count})")
+                return True
             else:
                 print(f"[DL_WARMUP_SUB] series={sn} submit skipped (dup or full)")
+                return False
         except Exception as e:
             print(f"[DL_WARMUP_SUB] enqueue error: {e}")
+            return False
 
     def _poll_warmup_subprocess_results(self):
-        """QTimer callback (100ms) — pick up completed results from subprocess.
+        """QTimer callback (100ms) â€” pick up completed results from subprocess.
 
         Runs on the Qt main thread.  result_to_vtk() is ~5-15ms (memcpy),
         then zeta_boost.put() stores the VTK image in the cache.
@@ -4517,7 +4730,7 @@ class ViewerController:
         try:
             _idle_ms = (time.time() - (self._last_user_interaction_ts or 0.0)) * 1000.0
             if _idle_ms < 300:
-                return  # defer — results accumulate in subprocess queue
+                return  # defer â€” results accumulate in subprocess queue
         except Exception:
             pass
 
@@ -4530,13 +4743,20 @@ class ViewerController:
 
             sn = result.series_number
             if not result.success:
-                print(f"[DL_WARMUP_SUB] ✗ series={sn} failed: {result.error} ({result.elapsed_ms:.0f}ms)")
+                print(f"[DL_WARMUP_SUB] âœ— series={sn} failed: {result.error} ({result.elapsed_ms:.0f}ms)")
                 continue
 
             try:
+                with self._dl_warmup_lock:
+                    if self._dl_warmup_cached_count >= self._DL_WARMUP_MAX_CACHED:
+                        print(
+                            f"[DL_WARMUP_SUB] drop series={sn} - cap reached "
+                            f"({self._dl_warmup_cached_count}/{self._DL_WARMUP_MAX_CACHED})"
+                        )
+                        continue
                 vtk_image, metadata = result_to_vtk(result)
                 if vtk_image is None:
-                    print(f"[DL_WARMUP_SUB] ✗ series={sn} VTK reconstruction failed")
+                    print(f"[DL_WARMUP_SUB] âœ— series={sn} VTK reconstruction failed")
                     continue
 
                 # Force-put into ZetaBoost cache (bypasses Mode B guard)
@@ -4548,11 +4768,11 @@ class ViewerController:
                 with self._dl_warmup_lock:
                     self._dl_warmup_cached_count += 1
                 print(
-                    f"[DL_WARMUP_SUB] ✓ Cached series={sn} in {result.elapsed_ms:.0f}ms "
+                    f"[DL_WARMUP_SUB] âœ“ Cached series={sn} in {result.elapsed_ms:.0f}ms "
                     f"(count={self._dl_warmup_cached_count}/{self._DL_WARMUP_MAX_CACHED})"
                 )
             except Exception as e:
-                print(f"[DL_WARMUP_SUB] ✗ series={sn} cache error: {e}")
+                print(f"[DL_WARMUP_SUB] âœ— series={sn} cache error: {e}")
 
         # Stop polling when nothing is pending and subprocess has drained
         if (self._warmup_subprocess_mgr.pending_count <= 0
@@ -4562,7 +4782,7 @@ class ViewerController:
             pass  # timer will stop in _stop_download_warmup
 
     def _dl_warmup_worker(self):
-        """Background thread — load completed series one at a time during download.
+        """Background thread â€” load completed series one at a time during download.
 
         Safety controls:
         1. Only 1 series loaded at a time (this thread is the only loader).
@@ -4585,7 +4805,7 @@ class ViewerController:
         print(f"[DL_WARMUP] Worker started (max={self._DL_WARMUP_MAX_CACHED}, max_slices={self._DL_WARMUP_MAX_SLICES}, delay={self._DL_WARMUP_INTER_DELAY}s)")
 
         while not self._dl_warmup_stop.is_set():
-            # ── Dequeue next series ──
+            # â”€â”€ Dequeue next series â”€â”€
             with self._dl_warmup_lock:
                 if not self._dl_warmup_queue:
                     break
@@ -4604,7 +4824,7 @@ class ViewerController:
                 print(f"[DL_WARMUP] series={sn} already in memory, skip")
                 continue
 
-            # ── Wait while user is interacting (avoid scroll stutter) ──
+            # â”€â”€ Wait while user is interacting (avoid scroll stutter) â”€â”€
             _wait_count = 0
             while self._is_user_interaction_hot() and not self._dl_warmup_stop.is_set():
                 time.sleep(0.3)
@@ -4614,7 +4834,7 @@ class ViewerController:
             if self._dl_warmup_stop.is_set():
                 break
 
-            # ── Get image count from reliable source (server/DB metadata) ──
+            # â”€â”€ Get image count from reliable source (server/DB metadata) â”€â”€
             dcm_count = 0
             _series_desc = ""
             _series_modality = ""
@@ -4658,7 +4878,7 @@ class ViewerController:
                 print(f"[DL_WARMUP] series={sn} no study_path, skip")
                 continue
 
-            # ── Load series (DICOM + ITK filter + VTK conversion) ──
+            # â”€â”€ Load series (DICOM + ITK filter + VTK conversion) â”€â”€
             _desc_tag = f" [{_series_modality}] {_series_desc}" if _series_desc else ""
             print(f"[DL_WARMUP] Loading series={sn} ({dcm_count} slices){_desc_tag}...")
             _t0 = time.perf_counter()
@@ -4670,10 +4890,10 @@ class ViewerController:
                     study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
                     ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
                     skip_fs_validation=True,
-                    # v2.2.3.2.2: raised from 1→2 now that the stale-event drain guard
+                    # v2.2.3.2.2: raised from 1â†’2 now that the stale-event drain guard
                     # (v2.2.3.2.1) + BELOW_NORMAL OS priority (v2.2.3.2.0) prevent ITK
                     # from competing with VTK scroll renders.  Halves warmup time:
-                    # 24-slice MR 500×640 → ~1.5s instead of ~3.0s.
+                    # 24-slice MR 500أ—640 â†’ ~1.5s instead of ~3.0s.
                     max_itk_threads=2,
                     max_pydicom_workers=2,   # v2.2.3.2.5: cap GIL contention from pydicom
                 )
@@ -4698,13 +4918,13 @@ class ViewerController:
                 if cached_ok:
                     with self._dl_warmup_lock:
                         self._dl_warmup_cached_count += 1
-                    print(f"[DL_WARMUP] ✓ Cached series={sn} in {_elapsed:.0f}ms (count={self._dl_warmup_cached_count}/{self._DL_WARMUP_MAX_CACHED})")
+                    print(f"[DL_WARMUP] âœ“ Cached series={sn} in {_elapsed:.0f}ms (count={self._dl_warmup_cached_count}/{self._DL_WARMUP_MAX_CACHED})")
                 else:
                     print(f"[DL_WARMUP] series={sn} load returned no data ({_elapsed:.0f}ms)")
             except Exception as e:
                 print(f"[DL_WARMUP] Error loading series={sn}: {e}")
 
-            # ── Generous inter-series delay (avoid CPU contention) ──
+            # â”€â”€ Generous inter-series delay (avoid CPU contention) â”€â”€
             for _ in range(int(self._DL_WARMUP_INTER_DELAY * 10)):
                 if self._dl_warmup_stop.is_set():
                     break
@@ -4717,26 +4937,26 @@ class ViewerController:
 
         Called on POST_DOWNLOAD (normal warmup takes over) and tab deactivation.
         v2.2.3.2.3: Also stops subprocess result-poll timer and resets subprocess state.
-        The subprocess itself is NOT killed here — it finishes its current item
+        The subprocess itself is NOT killed here â€” it finishes its current item
         and then sits idle.  It will be reused if another download starts, or
         killed on tab close / app exit.
         """
         try:
-            # ── Stop subprocess poll timer ──
+            # â”€â”€ Stop subprocess poll timer â”€â”€
             if self._warmup_result_timer is not None:
                 try:
                     self._warmup_result_timer.stop()
                 except Exception:
                     pass
 
-            # ── Reset subprocess tracking (let current item finish) ──
+            # â”€â”€ Reset subprocess tracking (let current item finish) â”€â”€
             if self._warmup_subprocess_mgr is not None:
                 try:
                     self._warmup_subprocess_mgr.reset()
                 except Exception:
                     pass
 
-            # ── Legacy thread stop ──
+            # â”€â”€ Legacy thread stop â”€â”€
             self._dl_warmup_stop.set()
             with self._dl_warmup_lock:
                 self._dl_warmup_queue.clear()
@@ -4770,7 +4990,7 @@ class ViewerController:
         Each call records the series via the PipelineOrchestrator (which
         ensures DOWNLOADING state) and also sets the legacy engine flag
         for backward compatibility.  The old QTimer-based idle detection
-        is removed — warmup/background lanes are unblocked exclusively
+        is removed â€” warmup/background lanes are unblocked exclusively
         by ``on_study_download_completed()`` via the orchestrator.
         """
         try:
@@ -4779,13 +4999,13 @@ class ViewerController:
             pass
 
     def _clear_download_active(self):
-        """Legacy stub — warmup is now gated by PipelineOrchestrator.
+        """Legacy stub â€” warmup is now gated by PipelineOrchestrator.
 
         Kept for backward compatibility; does nothing harmful.
         """
         pass
 
-    # ── Pipeline orchestrator integration ──────────────────────────
+    # â”€â”€ Pipeline orchestrator integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def on_study_download_completed(self, study_uid: str = ""):
         """Called by home_ui when the entire study download finishes.
@@ -4831,12 +5051,12 @@ class ViewerController:
                     except Exception:
                         # Fallback: direct call (may already be on UI thread)
                         QTimer.singleShot(500, self._start_open_tab_warmup)
-                    print(f"[Pipeline] POST_DOWNLOAD → warmup scheduled (tab active)")
+                    print(f"[Pipeline] POST_DOWNLOAD â†’ warmup scheduled (tab active)")
                 else:
-                    print(f"[Pipeline] POST_DOWNLOAD → warmup deferred (tab inactive — starts on next activation)")
+                    print(f"[Pipeline] POST_DOWNLOAD â†’ warmup deferred (tab inactive â€” starts on next activation)")
 
             elif new_state == PipelineState.DOWNLOADING:
-                # Downloads starting — block ZetaBoost warmup/background.
+                # Downloads starting â€” block ZetaBoost warmup/background.
                 self.zeta_boost.set_study_download_complete(False)
                 self.zeta_boost.set_download_active(True)
                 # Enter Mode B: disable series-level caching, activate
@@ -4852,12 +5072,12 @@ class ViewerController:
                         self.zeta_boost.deactivate(clear_cache=False)
                     except Exception:
                         pass
-                    print(f"[Pipeline] DOWNLOADING → engine deactivated (tab inactive, all workers stopped)")
+                    print(f"[Pipeline] DOWNLOADING â†’ engine deactivated (tab inactive, all workers stopped)")
                 else:
-                    print(f"[Pipeline] DOWNLOADING → warmup blocked, Image Boost active")
+                    print(f"[Pipeline] DOWNLOADING â†’ warmup blocked, Image Boost active")
 
             elif new_state == PipelineState.READY:
-                print(f"[Pipeline] READY → all series cached")
+                print(f"[Pipeline] READY â†’ all series cached")
 
             elif new_state == PipelineState.IDLE:
                 self._stop_download_warmup()
@@ -4903,7 +5123,7 @@ class ViewerController:
                 if isinstance(series_info, dict):
                     series_uid = str(series_info.get('series_uid') or series_info.get('series_instance_uid') or '') or None
 
-            print(f"   📥 Triggering server download for series {series_number}")
+            print(f"   ًں“¥ Triggering server download for series {series_number}")
 
             # Fallback: trigger per-series retry via Download Manager
             inflight = getattr(self.parent_widget, '_retry_series_inflight', None)
@@ -4923,7 +5143,7 @@ class ViewerController:
             finally:
                 QTimer.singleShot(2000, lambda: inflight.discard(series_number))
         except Exception as e:
-            print(f"   ⚠️ Error triggering download: {e}")
+            print(f"   âڑ ï¸ڈ Error triggering download: {e}")
 
     def load_series_on_demand(self, series_number: str):
         """
@@ -4948,7 +5168,7 @@ class ViewerController:
 
             series_number_str = self.parent_widget.resolve_series_key(series_number)
 
-            # ── Pipeline orchestrator signaling ──
+            # â”€â”€ Pipeline orchestrator signaling â”€â”€
             # Notify the orchestrator that a series download completed.
             # This keeps the pipeline in DOWNLOADING state (blocking warmup)
             # until the definitive study-complete signal arrives from home_ui.
@@ -4963,13 +5183,13 @@ class ViewerController:
                 self.pipeline.on_series_download_completed(series_number_str)
                 self._mark_download_active()
 
-            # ── Dedup guard: prevent multiple concurrent loads of same series ──
+            # â”€â”€ Dedup guard: prevent multiple concurrent loads of same series â”€â”€
             if series_number_str in getattr(self, '_first_series_loading', set()):
-                print(f"⏭️ [DEDUP] series={series_number_str} already loading, skip")
+                print(f"âڈ­ï¸ڈ [DEDUP] series={series_number_str} already loading, skip")
                 return
 
             # ZetaBoost path: the FIRST series bypasses ZetaBoost entirely
-            # because the warmup callback only caches — it does not trigger
+            # because the warmup callback only caches â€” it does not trigger
             # _display_first_series_in_all_viewers().  Instead, the first
             # series is loaded via _async_load_and_display_series.
             #
@@ -4992,7 +5212,7 @@ class ViewerController:
                             if _exp_slices > 0 and _exp_slices < 4:
                                 self.logger.debug(
                                     f"load_series_on_demand: series={series_number_str} only "
-                                    f"{_exp_slices} slice(s) — routing to warmup (skip first-display)"
+                                    f"{_exp_slices} slice(s) â€” routing to warmup (skip first-display)"
                                 )
                                 self._enqueue_download_warmup(series_number_str)
                                 return
@@ -5023,7 +5243,7 @@ class ViewerController:
                             return
                         except RuntimeError:
                             getattr(self, '_first_series_loading', set()).discard(series_number_str)
-                            pass  # No running loop — fall through to legacy path
+                            pass  # No running loop â€” fall through to legacy path
                     else:
                         # Subsequent download completions: enqueue for controlled
                         # per-series warmup during active download.  This caches
@@ -5047,7 +5267,7 @@ class ViewerController:
                 # yet (e.g. loaded by show_exist_thumbnails but never shown on
                 # viewer), trigger display now.
                 if (not self._first_series_displayed) or self._any_viewer_empty():
-                    self.logger.info(f"Series {series_number_str} already loaded but not displayed — showing now")
+                    self.logger.info(f"Series {series_number_str} already loaded but not displayed â€” showing now")
                     QTimer.singleShot(0, lambda sn=series_number_str: self._display_series_after_load(sn))
                 else:
                     self.logger.debug(f"Series {series_number_str} already loaded, skipping")
@@ -5068,7 +5288,7 @@ class ViewerController:
                 async def _safe_async_load():
                     """Load series asynchronously without locks - preview-first strategy."""
                     try:
-                        # ✅ OPTIMIZATION: مرحله 1 - Preview سریع (100-200ms)
+                        # âœ… OPTIMIZATION: ظ…ط±ط­ظ„ظ‡ 1 - Preview ط³ط±غŒط¹ (100-200ms)
                         # Run preview loading in a worker thread to avoid UI/event-loop stalls.
                         study_path = self._get_correct_study_path()
                         if study_path:
@@ -5088,7 +5308,7 @@ class ViewerController:
                                 )
 
                             if vtk_preview is not None and meta_preview is not None:
-                                # Display preview فوری
+                                # Display preview ظپظˆط±غŒ
                                 try:
                                     self._apply_loaded_series_data_threadsafe(
                                         series_number_str,
@@ -5098,18 +5318,18 @@ class ViewerController:
                                         self.parent_widget.metadata_fixed.get('study_pk', None),
                                         refresh_viewer=False,
                                     )
-                                    print(f"📺 [PREVIEW] displayed for series={series_number_str}")
+                                    print(f"ًں“؛ [PREVIEW] displayed for series={series_number_str}")
                                 except Exception as e:
-                                    print(f"⚠️ [PREVIEW_APPLY] error: {e}")
+                                    print(f"âڑ ï¸ڈ [PREVIEW_APPLY] error: {e}")
                         
                         # Yield immediately to prevent blocking
                         await asyncio.sleep(0)
 
-                        # ✅ OPTIMIZATION: مرحله 2 - Full volume بارگذاری موازی
+                        # âœ… OPTIMIZATION: ظ…ط±ط­ظ„ظ‡ 2 - Full volume ط¨ط§ط±ع¯ط°ط§ط±غŒ ظ…ظˆط§ط²غŒ
                         await self._async_load_and_display_series(series_number_str)
                         
-                        # ✅ OPTIMIZATION: مرحله 3 - Prefetch سریز‌های مجاور
-                        # Run prefetch در background (non-blocking)
+                        # âœ… OPTIMIZATION: ظ…ط±ط­ظ„ظ‡ 3 - Prefetch ط³ط±غŒط²â€Œظ‡ط§غŒ ظ…ط¬ط§ظˆط±
+                        # Run prefetch ط¯ط± background (non-blocking)
                         threading.Thread(
                             target=self._prefetch_adjacent_series,
                             args=(series_number_str,),
@@ -5165,7 +5385,7 @@ class ViewerController:
 
     async def _async_load_and_display_series(self, series_number: str):
         """
-        ⚡ OPTIMIZED: Async series loading without unnecessary sleeps.
+        âڑ، OPTIMIZED: Async series loading without unnecessary sleeps.
         
         Performance improvements:
         - Removed artificial asyncio.sleep(0) calls
@@ -5194,7 +5414,7 @@ class ViewerController:
                     self.logger.warning(f"Series {series_number} not found")
                     return
 
-            # ⚡ OPTIMIZED: Use executor immediately without sleep
+            # âڑ، OPTIMIZED: Use executor immediately without sleep
             try:
                 success = await asyncio.to_thread(
                     self._load_single_series_on_demand,
@@ -5253,14 +5473,14 @@ class ViewerController:
         dlg = QProgressDialog("Processing...", None, 0, 0, self.parent_widget,
                               flags=Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.MSWindowsFixedSizeDialogHint)
         dlg.setWindowTitle("Please wait")
-        dlg.setWindowModality(Qt.NonModal)  # فقط پیام؛ UI قفل نشه
+        dlg.setWindowModality(Qt.NonModal)  # ظپظ‚ط· ظ¾غŒط§ظ…ط› UI ظ‚ظپظ„ ظ†ط´ظ‡
         dlg.setAutoClose(False)
         dlg.setAutoReset(False)
         dlg.setCancelButton(None)
         dlg.setMinimumDuration(0)
         dlg.resize(420, 120)
 
-        # 🎨 استایل تیره و مینیمال
+        # ًںژ¨ ط§ط³طھط§غŒظ„ طھغŒط±ظ‡ ظˆ ظ…غŒظ†غŒظ…ط§ظ„
         dlg.setStyleSheet("""
             QProgressDialog {
                 background: #0b1220;
@@ -5277,7 +5497,7 @@ class ViewerController:
                 border: none;
                 background: transparent;
             }
-            /* ProgressBar مارکوی نرمِ نامشخص */
+            /* ProgressBar ظ…ط§ط±ع©ظˆغŒ ظ†ط±ظ…ظگ ظ†ط§ظ…ط´ط®طµ */
             QProgressBar {
                 border: 1px solid #2b3b55;
                 border-radius: 8px;
@@ -5295,7 +5515,7 @@ class ViewerController:
             }
         """)
 
-        # جای‌گذاری وسطِ پنل مرکزی اگر موجود بود
+        # ط¬ط§غŒâ€Œع¯ط°ط§ط±غŒ ظˆط³ط·ظگ ظ¾ظ†ظ„ ظ…ط±ع©ط²غŒ ط§ع¯ط± ظ…ظˆط¬ظˆط¯ ط¨ظˆط¯
         try:
             parent_widget = getattr(self.parent_widget, "right_panel", None) or self.parent_widget
             g = parent_widget.frameGeometry()
@@ -5310,10 +5530,10 @@ class ViewerController:
         # COMMENTED OUT TO AVOID SHOWING LOADING MESSAGE TO USER
         # self._ensure_loading_dialog()
         # self.parent_widget._loading_cnt += 1
-        # # یک متن دوستانه با ایموجی تک‌رنگ (روی تم تیره خوب دیده می‌شود)
-        # pretty = f"⚙️  {text}\nThis may take a few seconds…"
+        # # غŒع© ظ…طھظ† ط¯ظˆط³طھط§ظ†ظ‡ ط¨ط§ ط§غŒظ…ظˆط¬غŒ طھع©â€Œط±ظ†ع¯ (ط±ظˆغŒ طھظ… طھغŒط±ظ‡ ط®ظˆط¨ ط¯غŒط¯ظ‡ ظ…غŒâ€Œط´ظˆط¯)
+        # pretty = f"âڑ™ï¸ڈ  {text}\nThis may take a few secondsâ€¦"
         # self.parent_widget._loading_dlg.setLabelText(pretty)
-        # self.parent_widget._loading_dlg.setRange(0, 0)  # حالت نامشخص (اسپینینگ)
+        # self.parent_widget._loading_dlg.setRange(0, 0)  # ط­ط§ظ„طھ ظ†ط§ظ…ط´ط®طµ (ط§ط³ظ¾غŒظ†غŒظ†ع¯)
         # self.parent_widget._loading_dlg.show()
         # self.parent_widget._loading_dlg.raise_()
 
@@ -5349,40 +5569,40 @@ class ViewerController:
                 with open(GRID_CONFIG_PATH, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
-                # 1. اگر مودالیتی مشخص شده، ابتدا در modality_layouts جستجو می‌کنیم
+                # 1. ط§ع¯ط± ظ…ظˆط¯ط§ظ„غŒطھغŒ ظ…ط´ط®طµ ط´ط¯ظ‡طŒ ط§ط¨طھط¯ط§ ط¯ط± modality_layouts ط¬ط³طھط¬ظˆ ظ…غŒâ€Œع©ظ†غŒظ…
                 if modality:
-                    # جستجو در modality_layouts
+                    # ط¬ط³طھط¬ظˆ ط¯ط± modality_layouts
                     modality_layouts = data.get('modality_layouts', {})
                     if modality in modality_layouts:
                         mod_cfg = modality_layouts[modality]
                         if isinstance(mod_cfg, dict):
                             rows = int(mod_cfg.get('rows', 1))
                             cols = int(mod_cfg.get('cols', 2))
-                            print(f"✅ Using layout for {modality}: {rows}x{cols}")
+                            print(f"âœ… Using layout for {modality}: {rows}x{cols}")
                             return (rows, cols)
                     
-                    # اگر در modality_layouts نبود، مستقیم در root جستجو می‌کنیم (برای سازگاری با فایل‌های قدیمی)
+                    # ط§ع¯ط± ط¯ط± modality_layouts ظ†ط¨ظˆط¯طŒ ظ…ط³طھظ‚غŒظ… ط¯ط± root ط¬ط³طھط¬ظˆ ظ…غŒâ€Œع©ظ†غŒظ… (ط¨ط±ط§غŒ ط³ط§ط²ع¯ط§ط±غŒ ط¨ط§ ظپط§غŒظ„â€Œظ‡ط§غŒ ظ‚ط¯غŒظ…غŒ)
                     if modality in data:
                         mod_cfg = data[modality]
                         if isinstance(mod_cfg, dict):
                             rows = int(mod_cfg.get('rows', 1))
                             cols = int(mod_cfg.get('cols', 2))
-                            print(f"✅ Using layout for {modality} (legacy): {rows}x{cols}")
+                            print(f"âœ… Using layout for {modality} (legacy): {rows}x{cols}")
                             return (rows, cols)
                 
-                # 2. اگر مودالیتی پیدا نشد یا مشخص نشده، از default استفاده می‌کنیم
+                # 2. ط§ع¯ط± ظ…ظˆط¯ط§ظ„غŒطھغŒ ظ¾غŒط¯ط§ ظ†ط´ط¯ غŒط§ ظ…ط´ط®طµ ظ†ط´ط¯ظ‡طŒ ط§ط² default ط§ط³طھظپط§ط¯ظ‡ ظ…غŒâ€Œع©ظ†غŒظ…
                 default_cfg = data.get('default') or data.get('DEFAULT')
                 if isinstance(default_cfg, dict):
                     rows = int(default_cfg.get('rows', 1))
                     cols = int(default_cfg.get('cols', 2))
-                    print(f"ℹ️ Using default layout: {rows}x{cols}")
+                    print(f"â„¹ï¸ڈ Using default layout: {rows}x{cols}")
                     return (rows, cols)
                     
         except Exception as e:
-            print(f"⚠️ Error reading grid config: {e}")
+            print(f"âڑ ï¸ڈ Error reading grid config: {e}")
         
-        # 3. اگر همه چیز ناموفق بود، از fallback استفاده می‌کنیم
-        print("ℹ️ Using fallback layout: 1x2")
+        # 3. ط§ع¯ط± ظ‡ظ…ظ‡ ع†غŒط² ظ†ط§ظ…ظˆظپظ‚ ط¨ظˆط¯طŒ ط§ط² fallback ط§ط³طھظپط§ط¯ظ‡ ظ…غŒâ€Œع©ظ†غŒظ…
+        print("â„¹ï¸ڈ Using fallback layout: 1x2")
         return (1, 2)
 
     def _load_first_series_sync(self, size_init_viewers):
@@ -5390,7 +5610,7 @@ class ViewerController:
         try:
             from PacsClient.pacs.patient_tab.utils import load_images
 
-            print("📂 [SYNC_LOAD] Loading first series synchronously...") # لاگ اضافه شده
+            print("ًں“‚ [SYNC_LOAD] Loading first series synchronously...") # ظ„ط§ع¯ ط§ط¶ط§ظپظ‡ ط´ط¯ظ‡
 
             first_series_loaded = False
             for vtk_image_data, metadata, patient_info in load_images(
@@ -5399,8 +5619,8 @@ class ViewerController:
                     study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
                     ordering_by_instances_number=self.parent_widget.ordering_by_instances_number
             ):
-                # ✅ FLICKER FIX: Only process events if not in initialization batch
-                # NOTE: processEvents() removed — it caused re-entrancy during
+                # âœ… FLICKER FIX: Only process events if not in initialization batch
+                # NOTE: processEvents() removed â€” it caused re-entrancy during
                 # initial load (download signals processed mid-initialization).
                 # The batch update via setUpdatesEnabled(False) handles this.
                 pass
@@ -5414,11 +5634,11 @@ class ViewerController:
 
                 if not first_series_loaded:
                     optimal_layout = self.parent_widget.get_optimal_layout_for_series(metadata)
-                    print(f"✅ [SYNC_LOAD] Determined optimal layout: {optimal_layout}") # لاگ اضافه شده
+                    print(f"âœ… [SYNC_LOAD] Determined optimal layout: {optimal_layout}") # ظ„ط§ع¯ ط§ط¶ط§ظپظ‡ ط´ط¯ظ‡
 
-                    # ⚡ OPTIMIZATION: Removed processEvents() - use batch update instead
+                    # âڑ، OPTIMIZATION: Removed processEvents() - use batch update instead
                     # Use synchronous viewer creation
-                    self._apply_multi_viewer_sync(optimal_layout) # این تابع ویوورها را تنظیم می کند
+                    self._apply_multi_viewer_sync(optimal_layout) # ط§غŒظ† طھط§ط¨ط¹ ظˆغŒظˆظˆط±ظ‡ط§ ط±ط§ طھظ†ط¸غŒظ… ظ…غŒ ع©ظ†ط¯
 
                     first_series_loaded = True
                     self._hide_loading_spinner()
@@ -5432,16 +5652,16 @@ class ViewerController:
                         self.parent_widget.logo_patient = file_path
                         self.parent_widget.update_tab_manager()
 
-                    print(f"✅ [SYNC_LOAD] First series loaded: {series_no}. Breaking loop.") # لاگ اضافه شده
-                    break  # فقط اولین سری را بارگذاری کن
+                    print(f"âœ… [SYNC_LOAD] First series loaded: {series_no}. Breaking loop.") # ظ„ط§ع¯ ط§ط¶ط§ظپظ‡ ط´ط¯ظ‡
+                    break  # ظپظ‚ط· ط§ظˆظ„غŒظ† ط³ط±غŒ ط±ط§ ط¨ط§ط±ع¯ط°ط§ط±غŒ ع©ظ†
 
         except Exception as e:
-            print(f"❌ [SYNC_LOAD] Error loading first series sync: {e}") # لاگ اضافه شده
+            print(f"â‌Œ [SYNC_LOAD] Error loading first series sync: {e}") # ظ„ط§ع¯ ط§ط¶ط§ظپظ‡ ط´ط¯ظ‡
             import traceback
             traceback.print_exc()
 
     def _apply_multi_viewer_sync(self, numbers):
-        """⚡ Optimized: Synchronous viewer layout without processEvents delays"""
+        """âڑ، Optimized: Synchronous viewer layout without processEvents delays"""
         try:
             number_of_row, number_of_column = int(numbers[0]), int(numbers[1])
 
@@ -5468,17 +5688,17 @@ class ViewerController:
                 self.parent_widget.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 0, 1)
                 self.parent_widget.change_container_border(0)
 
-            # ⚡ OPTIMIZATION: Removed processEvents() call - introduces unwanted delay
+            # âڑ، OPTIMIZATION: Removed processEvents() call - introduces unwanted delay
 
         except Exception as e:
-            print(f"❌ Error applying viewer layout sync: {e}")
+            print(f"â‌Œ Error applying viewer layout sync: {e}")
             import traceback
             traceback.print_exc()
 
     def load_first_series_only(self, folder_path, series_number):
         """
         Load only the first series when it's downloaded
-        بارگذاری فقط اولین سری وقتی دانلود شد
+        ط¨ط§ط±ع¯ط°ط§ط±غŒ ظپظ‚ط· ط§ظˆظ„غŒظ† ط³ط±غŒ ظˆظ‚طھغŒ ط¯ط§ظ†ظ„ظˆط¯ ط´ط¯
 
         This method is called by home_ui when the first series download completes.
 
@@ -5487,7 +5707,7 @@ class ViewerController:
             series_number: The series number that was downloaded
         """
         try:
-            print(f"🎯 load_first_series_only called: series {series_number}")
+            print(f"ًںژ¯ load_first_series_only called: series {series_number}")
 
             # Update folder path if needed
             if folder_path and folder_path != self.parent_widget.import_folder_path:
@@ -5496,22 +5716,22 @@ class ViewerController:
             # Check if we already have this series loaded
             series_key = f"series_{series_number}"
             if series_key in self.parent_widget.lst_series_name:
-                print(f"⏭️ Series {series_number} already loaded")
+                print(f"âڈ­ï¸ڈ Series {series_number} already loaded")
                 return
 
             # Load the series
             try:
                 success = self._load_single_series_on_demand(int(series_number))
 
-                # Warmup worker currently owns the lock — retry via QTimer.
+                # Warmup worker currently owns the lock â€” retry via QTimer.
                 if not success and str(int(series_number)) in self._loading_series_numbers:
-                    print(f"🔁 [FIRST-SERIES] Series {series_number} being cached by warmup — retrying in 250 ms")
+                    print(f"ًں”پ [FIRST-SERIES] Series {series_number} being cached by warmup â€” retrying in 250 ms")
                     QTimer.singleShot(250, lambda fp=folder_path, sn=series_number: self.load_first_series_only(fp, sn))
                     return
 
                 if success:
                     self.parent_widget.lst_series_name.add(series_key)
-                    print(f"✅ Series {series_number} loaded successfully")
+                    print(f"âœ… Series {series_number} loaded successfully")
 
                     # Display in viewer if it's the first series
                     if len(self.parent_widget.lst_series_name) == 1:
@@ -5520,13 +5740,13 @@ class ViewerController:
                         # Hide any loading spinner
                         self._hide_loading_spinner()
                 else:
-                    print(f"⚠️ Failed to load series {series_number}")
+                    print(f"âڑ ï¸ڈ Failed to load series {series_number}")
 
             except Exception as load_error:
-                print(f"❌ Error loading series {series_number}: {load_error}")
+                print(f"â‌Œ Error loading series {series_number}: {load_error}")
 
         except Exception as e:
-            print(f"❌ Error in load_first_series_only: {e}")
+            print(f"â‌Œ Error in load_first_series_only: {e}")
             import traceback
             traceback.print_exc()
 
@@ -5541,8 +5761,8 @@ class ViewerController:
         """
         try:
             print(f"{'='*80}")
-            print(f"📥 [PRIORITY LOAD] Loading series {series_number} (auto-display)")
-            print(f"📁 Directory: {series_dir}")
+            print(f"ًں“¥ [PRIORITY LOAD] Loading series {series_number} (auto-display)")
+            print(f"ًں“پ Directory: {series_dir}")
             print(f"{'='*80}")
 
             # Check DICOM files
@@ -5550,7 +5770,7 @@ class ViewerController:
             series_path = Path(series_dir)
             dicom_files = list(series_path.glob("*.dcm"))
             if not dicom_files:
-                print(f"❌ No DICOM files found in {series_dir}")
+                print(f"â‌Œ No DICOM files found in {series_dir}")
                 return
 
             # Keep import_folder_path at study level (not inside a series folder).
@@ -5564,10 +5784,10 @@ class ViewerController:
             # Skip if already loaded
             series_key = f"series_{series_number}"
             if series_key in self.parent_widget.lst_series_name:
-                print(f"⏭️ Series {series_number} already loaded")
+                print(f"âڈ­ï¸ڈ Series {series_number} already loaded")
                 return
 
-            # ✅ FIX: Handle both series numbers and Series Instance UIDs
+            # âœ… FIX: Handle both series numbers and Series Instance UIDs
             try:
                 series_int = int(series_number)
             except ValueError:
@@ -5575,9 +5795,9 @@ class ViewerController:
                 # Directory name should be the actual series number
                 try:
                     series_int = int(series_path.name)
-                    print(f"   🔍 Extracted series number {series_int} from directory name")
+                    print(f"   ًں”چ Extracted series number {series_int} from directory name")
                 except ValueError:
-                    print(f"❌ Cannot determine series number from UID {series_number} or directory {series_path.name}")
+                    print(f"â‌Œ Cannot determine series number from UID {series_number} or directory {series_path.name}")
                     return
 
             # Load the series
@@ -5586,10 +5806,10 @@ class ViewerController:
                 # Warmup worker currently owns the load lock for this series.
                 # Retry in 250 ms so the main thread is never blocked.
                 if str(series_int) in self._loading_series_numbers:
-                    print(f"🔁 [PRIORITY LOAD] Series {series_int} being cached by warmup — retrying in 250 ms")
+                    print(f"ًں”پ [PRIORITY LOAD] Series {series_int} being cached by warmup â€” retrying in 250 ms")
                     QTimer.singleShot(250, lambda sn=series_number, sd=series_dir: self.load_series_immediately(sn, sd))
                     return
-                print(f"❌ Failed to load series {series_int}")
+                print(f"â‌Œ Failed to load series {series_int}")
                 return
 
             # Auto-display in viewers
@@ -5604,9 +5824,9 @@ class ViewerController:
                 self.parent_widget.thumbnail_manager.set_series_ready(str(series_number))
                 self.parent_widget.thumbnail_manager.apply_border_states_new()
 
-            print(f"✅ Series {series_int} loaded and displayed.")
+            print(f"âœ… Series {series_int} loaded and displayed.")
         except Exception as e:
-            print(f"❌ CRITICAL ERROR in load_series_immediately: {e}")
+            print(f"â‌Œ CRITICAL ERROR in load_series_immediately: {e}")
             import traceback
             traceback.print_exc()
 
@@ -5621,21 +5841,21 @@ class ViewerController:
         try:
             series_key = self.parent_widget.resolve_series_key(series_key)
 
-            # Just mark ready — load_series_on_demand handles display via signal
+            # Just mark ready â€” load_series_on_demand handles display via signal
             if hasattr(self.parent_widget, 'thumbnail_manager') and self.parent_widget.thumbnail_manager:
                 self.parent_widget.thumbnail_manager.set_series_ready(str(series_key))
                 self.parent_widget.thumbnail_manager.apply_border_states_new()
         except Exception as e:
-            print(f"⚠️ Error triggering priority display: {e}")
+            print(f"âڑ ï¸ڈ Error triggering priority display: {e}")
 
     def _distribute_series_to_viewers(self):
         """
-        ⚡ OPTIMIZED: Distribute series to viewers with efficient tracking.
+        âڑ، OPTIMIZED: Distribute series to viewers with efficient tracking.
         
         Improvements:
         - Uses set-based deduplication instead of nested loops
         - Single pass through viewers
-        - O(n) instead of O(n²)
+        - O(n) instead of O(nآ²)
         """
         if not self.parent_widget.lst_thumbnails_data or not self.lst_nodes_viewer:
             return
@@ -5651,7 +5871,7 @@ class ViewerController:
                     displayed_series.add(node_viewer.vtk_widget.last_series_show)
                     continue
                 
-                # ⚡ FAST: Find first undisplayed series
+                # âڑ، FAST: Find first undisplayed series
                 series_idx = None
                 for idx in series_queue:
                     if idx not in displayed_series:
@@ -5692,7 +5912,7 @@ class ViewerController:
         
         except Exception as e:
             self.logger.error(f"Error distributing series: {e}", exc_info=True)
-            print(f"❌ [DISTRIBUTE] Error distributing series to viewers: {e}")
+            print(f"â‌Œ [DISTRIBUTE] Error distributing series to viewers: {e}")
             import traceback
             traceback.print_exc()
 
@@ -5711,4 +5931,5 @@ class ViewerController:
             node_viewer.vtk_widget.render_window.Render()
             node_viewer.vtk_widget.GetRenderWindow().Render()
 
-        print(f"   ✅ Viewer {viewer_idx} populated successfully")
+        print(f"   âœ… Viewer {viewer_idx} populated successfully")
+

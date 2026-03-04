@@ -598,10 +598,35 @@ class SeriesDownloader:
                     iop_json = None
                     ipp_json = None
                     ps_json = None
+                    direction_json = None
                     try:
                         raw_iop = dcm.get('ImageOrientationPatient', None)
                         if raw_iop is not None:
-                            iop_json = _json.dumps([float(v) for v in raw_iop])
+                            iop_vals = [float(v) for v in raw_iop]
+                            iop_json = _json.dumps(iop_vals)
+                            try:
+                                r0, r1, r2 = iop_vals[0:3]
+                                c0, c1, c2 = iop_vals[3:6]
+                                rn = (r0 * r0 + r1 * r1 + r2 * r2) ** 0.5
+                                cn = (c0 * c0 + c1 * c1 + c2 * c2) ** 0.5
+                                if rn > 1e-9 and cn > 1e-9:
+                                    r0, r1, r2 = (r0 / rn, r1 / rn, r2 / rn)
+                                    c0, c1, c2 = (c0 / cn, c1 / cn, c2 / cn)
+                                    nx = r1 * c2 - r2 * c1
+                                    ny = r2 * c0 - r0 * c2
+                                    nz = r0 * c1 - r1 * c0
+                                    nn = (nx * nx + ny * ny + nz * nz) ** 0.5
+                                    if nn > 1e-9:
+                                        nx, ny, nz = (nx / nn, ny / nn, nz / nn)
+                                        # ITK-style flattened direction matrix (row-major):
+                                        # [[row_x, col_x, n_x], [row_y, col_y, n_y], [row_z, col_z, n_z]]
+                                        direction_json = _json.dumps([
+                                            float(r0), float(c0), float(nx),
+                                            float(r1), float(c1), float(ny),
+                                            float(r2), float(c2), float(nz),
+                                        ])
+                            except Exception:
+                                pass
                     except Exception:
                         pass
                     try:
@@ -628,6 +653,7 @@ class SeriesDownloader:
                         'image_orientation_patient': iop_json,
                         'image_position_patient': ipp_json,
                         'pixel_spacing': ps_json,
+                        'direction': direction_json,
                     }
                 except Exception as dcm_err:
                     logger.debug(f"    ⚠️ Error reading DICOM {dcm_file.name}: {dcm_err}")
