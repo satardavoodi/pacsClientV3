@@ -269,6 +269,141 @@ class PyDicomLazyVolume(QObject):
     def register(self) -> str:
         return register_loader(self)
 
+    def grow(self) -> int:
+        """Expand volume to match backend's current file count (progressive download).
+
+        Returns the new slice_count (unchanged if no growth needed).
+
+        After ``refresh_file_list()`` the backend re-sorts ``_slices`` by IPP
+        (geometry order).  Newly downloaded files may sort into the *middle* of
+        the list, shifting existing indices.  We therefore build a
+        ``old_index -> new_index`` mapping from file paths so that already-decoded
+        pixel data lands at its correct position in the expanded volume.
+        """
+        if self._closing.is_set():
+            return self.slice_count
+
+        # Snapshot old path order BEFORE refresh re-sorts the list.
+        old_paths: list = []
+        try:
+            old_paths = [s.path for s in self.backend._slices]
+        except Exception:
+            pass
+
+        # Ask backend for its current file count (includes newly downloaded files)
+        try:
+            if hasattr(self.backend, "refresh_file_list"):
+                self.backend.refresh_file_list()
+        except Exception:
+            pass
+        new_count = self.backend.get_slice_count()
+        if new_count <= self.slice_count:
+            return self.slice_count
+
+        old_count = self.slice_count
+        logger.info("pydicom-lazy grow: %d -> %d slices", old_count, new_count)
+
+        # Build old→new index mapping from file-path identity.  If a slice that
+        # was at old position 5 is now at new position 8, its decoded pixels
+        # must move from memmap row 5 to row 8.
+        old_to_new: Optional[Dict[int, int]] = None
+        try:
+            new_paths = [s.path for s in self.backend._slices]
+            new_path_idx = {p: i for i, p in enumerate(new_paths)}
+            mapping = {}
+            for old_idx, p in enumerate(old_paths):
+                new_idx = new_path_idx.get(p)
+                if new_idx is not None:
+                    mapping[old_idx] = new_idx
+            # Only use the mapping if at least one old slice moved to a
+            # different position (otherwise a plain copy is fine).
+            if any(o != n for o, n in mapping.items()):
+                old_to_new = mapping
+                logger.info(
+                    "pydicom-lazy grow: IPP re-order detected, remapping %d decoded slices",
+                    sum(1 for o, n in mapping.items() if o != n),
+                )
+        except Exception:
+            pass
+
+        with self._load_lock:
+            # 1. Create new memmap with expanded shape
+            new_shape = (
+                (new_count, self.rows, self.cols)
+                if self.components == 1
+                else (new_count, self.rows, self.cols, self.components)
+            )
+            old_volume = self._volume
+            old_loaded = self._loaded
+
+            new_tmp = tempfile.NamedTemporaryFile(
+                prefix="aipacs_lazy_grow_", suffix=".bin", delete=False
+            )
+            new_tmp_path = new_tmp.name
+            new_tmp.close()
+
+            new_volume = np.memmap(new_tmp_path, mode="w+", dtype=self.dtype, shape=new_shape)
+            new_loaded = np.zeros((new_count,), dtype=np.bool_)
+
+            # 2. Copy already-decoded slices, respecting index remapping.
+            if old_to_new is not None:
+                for old_idx in range(old_count):
+                    if not old_loaded[old_idx]:
+                        continue
+                    new_idx = old_to_new.get(old_idx)
+                    if new_idx is not None and new_idx < new_count:
+                        new_volume[new_idx] = old_volume[old_idx]
+                        new_loaded[new_idx] = True
+            else:
+                new_volume[:old_count] = old_volume[:old_count]
+                new_loaded[:old_count] = old_loaded[:old_count]
+
+            # 3. Swap references
+            self._volume = new_volume
+            self._loaded = new_loaded
+            self.slice_count = new_count
+
+            # 4. Update VTK image data dimensions and re-link scalar array
+            self.vtk_image_data.SetDimensions(self.cols, self.rows, self.slice_count)
+            flat = (
+                self._volume.reshape(-1, self.components)
+                if self.components > 1
+                else self._volume.ravel(order="C")
+            )
+            vtk_arr = numpy_support.numpy_to_vtk(
+                num_array=flat,
+                deep=False,
+                array_type=_vtk_array_type_for(self.dtype),
+            )
+            self.vtk_image_data.GetPointData().SetScalars(vtk_arr)
+            self.vtk_image_data._numpy_backing_store = self._volume
+            self.vtk_image_data.Modified()
+
+        # 5. Resize request queue if needed
+        try:
+            new_max = max(512, new_count * 4)
+            if new_max > self._request_queue.maxsize:
+                self._request_queue = queue.PriorityQueue(maxsize=new_max)
+        except Exception:
+            pass
+
+        # 6. Cleanup old memmap
+        try:
+            old_tmp_path = self._tmp_file_path
+            self._tmp_file_path = new_tmp_path
+            if old_volume is not None:
+                old_volume.flush()
+                mmap_obj = getattr(old_volume, "_mmap", None)
+                if mmap_obj is not None:
+                    mmap_obj.close()
+            if old_tmp_path and os.path.exists(old_tmp_path):
+                os.remove(old_tmp_path)
+        except Exception:
+            pass
+
+        logger.info("pydicom-lazy grow: complete, now %d slices", self.slice_count)
+        return self.slice_count
+
     def close(self) -> None:
         if self._closing.is_set():
             return

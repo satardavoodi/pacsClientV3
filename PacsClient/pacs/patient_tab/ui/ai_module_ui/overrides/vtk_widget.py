@@ -1,4 +1,4 @@
-from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget
+from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
 import pandas as pd
 from PacsClient.utils.config import ATTACHMENT_PATH
 from pathlib import Path, PureWindowsPath

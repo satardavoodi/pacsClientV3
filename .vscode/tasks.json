@@ -1,0 +1,10 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "temp edit",
+			"type": "shell",
+			"command": "python tools/_temp_edit2.py"
+		}
+	]
+}

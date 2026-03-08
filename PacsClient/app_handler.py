@@ -336,6 +336,38 @@ class AppHandler(QDialog):
         password_layout.addLayout(password_row)
         form_layout.addWidget(password_container)
 
+        # Local login option — allows using the app without a server connection
+        local_login_container = QFrame(form_panel)
+        local_login_layout = QHBoxLayout(local_login_container)
+        local_login_layout.setContentsMargins(0, 0, 0, 0)
+        local_login_layout.setSpacing(8)
+
+        self.btn_local_login = QPushButton()
+        self.btn_local_login.setCheckable(True)
+        self.btn_local_login.setFixedSize(24, 24)
+        self.btn_local_login.setCursor(Qt.PointingHandCursor)
+        self.btn_local_login.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+        """)
+        self.btn_local_login.clicked.connect(self._toggle_local_login)
+        self._update_local_login_icon()
+
+        local_login_label = QLabel("Local Login (offline mode)")
+        local_login_label.setStyleSheet(
+            "color: #94a3b8; font-weight: 500; font-size: 13px;"
+        )
+        local_login_label.setCursor(Qt.PointingHandCursor)
+        local_login_label.mousePressEvent = lambda e: self.btn_local_login.click()
+
+        local_login_layout.addWidget(self.btn_local_login)
+        local_login_layout.addWidget(local_login_label)
+        local_login_layout.addStretch()
+        form_layout.addWidget(local_login_container)
+
         # Remember me + Forgot password
         options_row = QHBoxLayout()
         options_row.setSpacing(8)
@@ -630,6 +662,19 @@ class AppHandler(QDialog):
             self.line_edit_password.setEchoMode(QLineEdit.Password)
             self.btn_toggle_password.setIcon(qta.icon('fa5s.eye', color='#cbd5e1'))
             self.btn_toggle_password.setToolTip("Show Password")
+
+    def _toggle_local_login(self):
+        """Toggle local-login checkbox and update its icon."""
+        self._update_local_login_icon()
+
+    def _update_local_login_icon(self):
+        """Refresh the local-login toggle icon to match its checked state."""
+        if self.btn_local_login.isChecked():
+            icon = qta.icon('fa5s.check-square', color='#10b981')
+        else:
+            icon = qta.icon('fa5.square', color='#64748b')
+        self.btn_local_login.setIcon(icon)
+        self.btn_local_login.setIconSize(self.btn_local_login.size())
     
     def _show_server_settings(self):
         """Show server settings dialog"""
@@ -656,7 +701,27 @@ class AppHandler(QDialog):
     def _complete_login(self, username, password):
         """Complete the login process after authentication"""
         self._set_loading_state(False)
-        
+
+        # Local login mode — skip server authentication entirely
+        if self.btn_local_login.isChecked():
+            self._save_credentials(username, password)
+            self.auth_token = None
+            self.auth_user = {
+                "username": username or "local",
+                "full_name": username or "Local User",
+                "role": "local",
+            }
+            print("✅ Local login — bypassing server authentication")
+            fade_out = QPropertyAnimation(self, b"windowOpacity")
+            fade_out.setDuration(300)
+            fade_out.setStartValue(1.0)
+            fade_out.setEndValue(0.0)
+            fade_out.setEasingCurve(QEasingCurve.OutCubic)
+            self.fade_animation = fade_out
+            fade_out.finished.connect(self._open_main_window)
+            fade_out.start()
+            return
+
         # Try socket authentication first
         success, message = self._authenticate_with_socket(username, password)
         
@@ -758,14 +823,15 @@ class AppHandler(QDialog):
     def _open_main_window(self):
         """Open the main application window"""
         try:
-            if not self.auth_token:
+            is_local = self.btn_local_login.isChecked()
+            if not is_local and not self.auth_token:
                 self._show_error("Login required: authentication did not complete")
                 return
             self.main_page = MainWindowWidget(
                 auth_user=self.auth_user,
                 auth_token=self.auth_token
             )
-            self.main_page.showMaximized()  # Show maximized for better visibility
+            self.main_page.showMaximized()
             self.close()
         except Exception as e:
             print(f"Error opening main window: {e}")

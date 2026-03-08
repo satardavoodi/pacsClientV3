@@ -628,8 +628,15 @@ class ThumbnailManager(QObject):
         # Coalesce frequent border refresh requests to avoid UI repaint storms.
         self._border_state_update_pending = False
         self._last_border_apply_ts = 0.0
+        self._scroll_active = False
         self._set_ready_reentrant_guard = False
         self.thumbnail_image_ready.connect(self._apply_thumbnail_image)
+
+    def set_scroll_active(self, active: bool):
+        """Defer heavy thumbnail border repaints while the viewer is scrolling."""
+        self._scroll_active = bool(active)
+        if not self._scroll_active and self._border_state_update_pending:
+            QTimer.singleShot(0, lambda: self.apply_border_states_new(immediate=True))
 
     def create_placeholder_pixmap(self, size: QSize = None, text: str = "Loading...") -> QPixmap:
         """Create and cache a lightweight placeholder pixmap (GUI thread only)."""
@@ -860,6 +867,10 @@ class ThumbnailManager(QObject):
         Apply border states using new CircularProgressborder - OPTIMIZED VERSION
         """
         try:
+            if self._scroll_active:
+                self._border_state_update_pending = True
+                return
+
             # Coalesce frequent update calls into one apply per frame.
             if not immediate:
                 if self._border_state_update_pending:

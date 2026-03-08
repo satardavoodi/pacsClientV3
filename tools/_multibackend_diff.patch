@@ -1,0 +1,249 @@
+﻿diff --git a/PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget.py b/PacsClient/pacs/patient_tab/ui/patient_ui/widget_viewer.py
+index f6e4ef1..f35b035 100644
+--- a/PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget.py
++++ b/PacsClient/pacs/patient_tab/ui/patient_ui/widget_viewer.py
+@@ -371,6 +371,16 @@ class VTKWidget(QVTKRenderWindowInteractor):
+         self._gc_reenable_timer.timeout.connect(self._reenable_gc)
+         self._last_booster_notify_ms = 0.0  # throttle ImageSliceBooster
+ 
++        # =====================================================
++        # PROGRESSIVE LOADING: Incremental series display during download
++        # =====================================================
++        self._progressive_mode = False
++        self._total_expected_slices = 0       # Full series slice count (from metadata)
++        self._available_slice_count = 0       # Slices actually loaded in VTK volume
++        self._progressive_series_number = None
++        self._download_overlay_label = None   # QLabel shown when scrolling past available
++        self._progressive_grow_pending = False
++
+     def _reenable_gc(self):
+         """Re-enable garbage collection after scroll burst ends.
+ 
+@@ -429,6 +439,123 @@ class VTKWidget(QVTKRenderWindowInteractor):
+         except Exception:
+             return False
+ 
++    # =====================================================
++    # PROGRESSIVE LOADING: Incremental series display
++    # =====================================================
++
++    def enter_progressive_mode(self, total_expected_slices: int, series_number: str):
++        """Enable progressive mode: slider shows full range but only partial data loaded."""
++        self._progressive_mode = True
++        self._total_expected_slices = max(1, int(total_expected_slices))
++        self._progressive_series_number = str(series_number)
++        # _available_slice_count is set when VTK data is loaded
++        logger.info(
++            "progressive: ENTER series=%s total_expected=%d available=%d",
++            series_number, self._total_expected_slices, self._available_slice_count,
++        )
++
++    def exit_progressive_mode(self):
++        """Disable progressive mode (series fully downloaded)."""
++        if self._progressive_mode:
++            logger.info(
++                "progressive: EXIT series=%s available=%d",
++                self._progressive_series_number, self._available_slice_count,
++            )
++        self._progressive_mode = False
++        self._total_expected_slices = 0
++        self._available_slice_count = 0
++        self._progressive_series_number = None
++        self._progressive_grow_pending = False
++        self._hide_download_overlay()
++
++    def update_available_slice_count(self, count: int):
++        """Update the number of slices actually available in VTK volume."""
++        self._available_slice_count = max(0, int(count))
++        # If current slice is now within available range, hide overlay
++        if self._progressive_mode and self.image_viewer is not None:
++            try:
++                current = int(self.image_viewer.GetSlice())
++                if current < self._available_slice_count:
++                    self._hide_download_overlay()
++            except Exception:
++                pass
++
++    def grow_progressive_series(self, new_vtk_image_data, new_metadata):
++        """Grow the displayed volume in-place with newly downloaded slices.
++
++        Returns True if the grow succeeded and the viewer was updated.
++        """
++        if self.image_viewer is None:
++            return False
++        try:
++            grew = self.image_viewer.grow_input_image_inplace(new_vtk_image_data, new_metadata)
++            if grew:
++                new_dims = new_vtk_image_data.GetDimensions()
++                new_z = int(new_dims[2]) if new_dims and len(new_dims) > 2 else 0
++                self._available_slice_count = new_z
++                logger.info(
++                    "progressive: GROW series=%s available=%d/%d",
++                    self._progressive_series_number, new_z, self._total_expected_slices,
++                )
++                # If we reached total expected, exit progressive mode
++                if new_z >= self._total_expected_slices:
++                    self.exit_progressive_mode()
++                # If current slice is now available, refresh display
++                try:
++                    current = int(self.image_viewer.GetSlice())
++                    if current < self._available_slice_count:
++                        self._hide_download_overlay()
++                        self.image_viewer.Render()
++                except Exception:
++                    pass
++                return True
++        except Exception as e:
++            logger.warning("progressive: grow failed: %s", e)
++        return False
++
++    def _is_slice_available(self, slice_index: int) -> bool:
++        """Check if a slice index is available for display in progressive mode."""
++        if not self._progressive_mode:
++            return True  # All slices available when not in progressive mode
++        return int(slice_index) < self._available_slice_count
++
++    def _show_download_overlay(self):
++        """Show overlay indicating slice is still downloading."""
++        if self._download_overlay_label is None:
++            self._download_overlay_label = QLabel(self)
++            self._download_overlay_label.setAlignment(Qt.AlignCenter)
++            self._download_overlay_label.setStyleSheet(
++                "QLabel {"
++                "background-color: rgba(0, 0, 0, 180);"
++                "color: #e5e7eb;"
++                "border: 1px solid rgba(100, 100, 255, 140);"
++                "border-radius: 8px;"
++                "padding: 12px 24px;"
++                "font-size: 13px;"
++                "font-weight: 600;"
++                "}"
++            )
++            self._download_overlay_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
++        avail = self._available_slice_count
++        total = self._total_expected_slices
++        self._download_overlay_label.setText(
++            f"Downloading... {avail}/{total} images\nPlease wait"
++        )
++        self._download_overlay_label.adjustSize()
++        # Center in viewport
++        w = self.width()
++        h = self.height()
++        lw = self._download_overlay_label.sizeHint().width()
++        lh = self._download_overlay_label.sizeHint().height()
++        self._download_overlay_label.move((w - lw) // 2, (h - lh) // 2)
++        self._download_overlay_label.raise_()
++        self._download_overlay_label.show()
++
++    def _hide_download_overlay(self):
++        """Hide the download overlay."""
++        if self._download_overlay_label is not None:
++            self._download_overlay_label.hide()
++
+     def _record_scroll_lag_probe(self, total_ms: float, queue_delay_ms: float, slice_apply_ms: float):
+         """Record a scroll timing sample.
+ 
+@@ -965,12 +1092,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
+ 
+     def _update_backend_badge(self):
+         backend = self._active_backend or BACKEND_VTK
+-        if backend == BACKEND_PYDICOM_QT:
+-            text = "Qt 2D (VTK-free)"
+-        elif backend == BACKEND_PYDICOM:
+-            text = "PyDicom 2D"
++        if backend in (BACKEND_PYDICOM_QT, BACKEND_PYDICOM):
++            text = "Fast"
+         else:
+-            text = "VTK / SimpleITK"
++            text = "Advanced"
+         self._backend_badge.setText(text)
+         self._backend_badge.adjustSize()
+         margin = 8
+@@ -1809,7 +1934,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
+     # Was ~72 lines with no callers in the codebase.
+ 
+     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
+-                      metadata_fixed=None):
++                      metadata_fixed=None, progressive_total: int = 0):
+         """
+         ├ت┌ّ╪î HIGHLY OPTIMIZED: Series switch with minimal flickering
+         - Shows loading spinner immediately with smart messaging
+@@ -1873,6 +1998,17 @@ class VTKWidget(QVTKRenderWindowInteractor):
+         except Exception:
+             pass
+ 
++        # Clear progressive mode from previous series (new series starts fresh)
++        if self._progressive_mode:
++            self.exit_progressive_mode()
++
++        # ظ¤ظ¤ METADATA-FIRST: activate progressive mode BEFORE slider setup ظ¤ظ¤
++        # If the caller knows the total expected slices (from download progress
++        # metadata), enter progressive mode now so that get_count_of_slices()
++        # returns the full range when the slider max is set later.
++        if int(progressive_total) > 0:
++            self.enter_progressive_mode(int(progressive_total), str(series_number))
++
+         # ظ¤ظ¤ Qt backend fast path for series switch ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤
+         if self._active_backend == BACKEND_PYDICOM_QT and not is_combined:
+             self.viewport_spinner.show_loading("Switching series...")
+@@ -2142,6 +2278,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
+         return "Switching series..."
+ 
+     def get_count_of_slices(self):
++        # Progressive mode: always report the FULL expected count so the
++        # slider covers the entire series, even when only a partial volume
++        # is loaded.  This lets the user see the true extent of the series.
++        if self._progressive_mode and self._total_expected_slices > 0:
++            return self._total_expected_slices
+         # Qt bridge: direct slice count from pipeline
+         if self._qt_bridge_active and self.image_viewer is not None:
+             try:
+@@ -2400,6 +2541,29 @@ class VTKWidget(QVTKRenderWindowInteractor):
+         if self.image_viewer is None:
+             return
+ 
++        # ظ¤ظ¤ Progressive mode: block navigation past available slices ظ¤ظ¤
++        if self._progressive_mode and not self._is_slice_available(slice_index):
++            # Update slider position so user sees where they are
++            if self.slider is not None:
++                try:
++                    self.slider.blockSignals(True)
++                    self.slider.setValue(slice_index)
++                    self.slider.blockSignals(False)
++                except Exception:
++                    pass
++            self.image_viewer.last_index_slice_saved = int(slice_index)
++            # Throttle overlay during fast scroll to avoid per-frame overhead
++            _wheel = bool(getattr(self, "_in_wheel_scroll", False))
++            if not _wheel or (self._download_overlay_label is None
++                              or not self._download_overlay_label.isVisible()):
++                self._show_download_overlay()
++            return
++
++        # If we were showing overlay but slice is now available, hide it
++        if self._progressive_mode and self._download_overlay_label is not None:
++            if self._download_overlay_label.isVisible():
++                self._hide_download_overlay()
++
+         # ظ¤ظ¤ Qt bridge fast path: delegate entirely, skip VTK pipeline ظ¤ظ¤
+         if self._qt_bridge_active:
+             try:
+@@ -2694,7 +2858,17 @@ class VTKWidget(QVTKRenderWindowInteractor):
+                     if _booster is not None and _booster.is_active:
+                         _sn = _booster.active_series
+                         if _sn is not None:
+-                            _booster.on_slice_changed(_sn, slice_index)
++                            _viewer_sn = ''
++                            try:
++                                _viewer_sn = str(
++                                    getattr(self.image_viewer, 'metadata', {})
++                                    .get('series', {})
++                                    .get('series_number', '')
++                                )
++                            except Exception:
++                                _viewer_sn = ''
++                            if _viewer_sn and str(_viewer_sn) == str(_sn):
++                                _booster.on_slice_changed(_sn, slice_index)
+         except Exception:
+             pass
+ 

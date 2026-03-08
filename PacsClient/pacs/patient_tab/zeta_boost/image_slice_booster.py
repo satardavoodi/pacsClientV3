@@ -230,6 +230,71 @@ class ImageSliceBooster:
                 return None
             return self._pixel_cache.get(int(slice_idx))
 
+    def update_paths(self, series_number: str, instance_paths: List[str]) -> None:
+        """Update the file list for an active series without full reset.
+
+        This is called when new DICOM files arrive during a progressive
+        download.  If the file count grew, the worker is restarted only
+        when new indices fall within the current ±WINDOW range and are
+        not yet cached.  Already-cached slices are preserved.
+
+        Parameters
+        ----------
+        series_number:
+            Must match the currently active series; ignored otherwise.
+        instance_paths:
+            Updated **ordered** list of absolute DICOM file paths.
+        """
+        sn = str(series_number)
+        paths: List[str] = list(instance_paths or [])
+        with self._lock:
+            if self._active_series != sn:
+                return
+            old_total = self._total_slices
+            self._instance_paths = paths
+            self._total_slices = len(paths)
+            center = self._center_slice
+
+        new_total = len(paths)
+        if new_total <= old_total:
+            return  # No new files
+
+        # Check if any new indices fall within ±WINDOW of current center
+        # and are not yet cached.
+        need_restart = False
+        lo = max(0, center - self._window)
+        hi = min(new_total - 1, center + self._window)
+        with self._lock:
+            for idx in range(old_total, new_total):
+                if lo <= idx <= hi and idx not in self._pixel_cache:
+                    need_restart = True
+                    break
+
+        if need_restart:
+            self._cancel.set()
+            if self._worker is not None:
+                try:
+                    self._worker.join(timeout=0.3)
+                except Exception:
+                    pass
+            self._cancel.clear()
+            self._worker = threading.Thread(
+                target=self._worker_fn,
+                args=(sn, paths, center),
+                daemon=True,
+                name=f"ImgBoost-{sn[:20]}-upd",
+            )
+            self._worker.start()
+            self._log(
+                f"UPDATE_PATHS series={sn} old_total={old_total} new_total={new_total} "
+                f"center={center} restarted_worker=True"
+            )
+        else:
+            self._log(
+                f"UPDATE_PATHS series={sn} old_total={old_total} new_total={new_total} "
+                f"center={center} restarted_worker=False"
+            )
+
     def clear(self) -> None:
         """Deactivate boosting and discard all cached pixel data immediately."""
         self._cancel.set()

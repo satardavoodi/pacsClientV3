@@ -27,7 +27,7 @@ from PySide6.QtWidgets import QHBoxLayout, QSlider, QLabel, QScrollArea, QGridLa
     QButtonGroup, QStackedWidget, QSizePolicy, QFrame, QGroupBox, QMessageBox, QListWidget, QListWidgetItem, QSplitter, \
     QGraphicsOpacityEffect
 from PySide6.QtWidgets import QWidget, QVBoxLayout
-from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget, grow_vtk_inplace
+from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget, grow_vtk_inplace
 from PacsClient.pacs.patient_tab.utils import load_images, save_image_as_png, delete_widgets_in_layout, NodeViewer, \
     get_count_dicom_files_exist, load_images_from_server, VerticalButton
 from PacsClient.pacs.patient_tab.utils.button_safeguard import ButtonSafeguard, safeguard_action
@@ -67,6 +67,8 @@ PRIORITY_MANAGER_AVAILABLE = False  # Legacy priority manager removed
 class PatientWidget(QWidget):
     # Signal for progressive series loading
     series_downloaded = Signal(str)  # series_number as string
+    # Signal for per-batch download progress (incremental viewing)
+    series_images_progress = Signal(str, int, int)  # (series_number, downloaded_count, total_count)
     # Signal emitted when widget is fully loaded and ready
     loading_complete = Signal()
 
@@ -114,6 +116,11 @@ class PatientWidget(QWidget):
 
         # Initialize the viewer controller
         self.viewer_controller = ViewerController(self)
+
+        # Wire per-batch progress to viewer controller for incremental viewing
+        self.series_images_progress.connect(
+            self.viewer_controller.on_series_images_progress
+        )
 
         # ========== BUTTON SAFEGUARD ==========
         # Prevents multiple simultaneous button clicks that could cause hangs
@@ -190,6 +197,9 @@ class PatientWidget(QWidget):
 
         # Connect signal for progressive loading
         self.series_downloaded.connect(self.load_series_on_demand)
+
+        # Connect per-batch progress for incremental viewing (wired after viewer_controller init)
+        # self.series_images_progress is connected in _init_viewer_controller
 
         # Set solid background to prevent seeing through to desktop
         self.setAutoFillBackground(True)
@@ -2093,8 +2103,19 @@ class PatientWidget(QWidget):
         except Exception as e:
             print("set ready border failed:", e)
 
-    def replace_series_data(self, series_number, vtk_image_data, metadata, file_path='') -> int:
-        """Replace existing series data (preview -> full) or append if missing. Returns index."""
+    def replace_series_data(self, series_number, vtk_image_data, metadata, file_path='', allow_append_if_missing: bool = True) -> int:
+        """Replace existing series data (preview -> full) with optional append policy.
+
+        Args:
+            series_number: Target series number.
+            vtk_image_data: VTK payload.
+            metadata: Series metadata.
+            file_path: Thumbnail path.
+            allow_append_if_missing: When False, skip append-on-miss and return -1.
+
+        Returns:
+            Index of replaced/appended item, or -1 when not found (and append disallowed).
+        """
         if not hasattr(self, 'lst_thumbnails_data'):
             self.lst_thumbnails_data = []
 
@@ -2145,6 +2166,12 @@ class PatientWidget(QWidget):
             except Exception as e:
                 print(f"[REPLACE_SERIES_DATA] Error checking item {idx}: {e}")
                 continue
+
+        if not bool(allow_append_if_missing):
+            print(
+                f"[REPLACE_SERIES_DATA] series={series_number_str} not found and append disallowed, returning -1"
+            )
+            return -1
 
         print(f"[REPLACE_SERIES_DATA] Not found in list, calling add_new_data_to_lst_thumbnails_data")
         try:

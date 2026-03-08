@@ -733,7 +733,7 @@ class HomePanelWidget(QWidget):
     def _trace_action_start(self, action_type: str, context: dict = None) -> str:
         """Create a deterministic action marker and return action_id."""
         try:
-            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget
+            from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
             return VTKWidget.register_action_start(action_type, context=context or {})
         except Exception:
             return ""
@@ -743,7 +743,7 @@ class HomePanelWidget(QWidget):
         try:
             if not action_id:
                 return
-            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget
+            from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
             VTKWidget.register_action_done(action_id, phase=phase, extra=extra or {})
         except Exception:
             pass
@@ -1635,6 +1635,11 @@ class HomePanelWidget(QWidget):
                                     progress_percent=progress_percent,
                                     status_text=f"{current}/{total}"
                                 )
+                        # Emit per-batch progress for incremental viewer display
+                        if total > 0 and hasattr(widget, 'series_images_progress'):
+                            widget.series_images_progress.emit(
+                                str(series_number), int(current), int(total)
+                            )
                     except Exception:
                         pass
             

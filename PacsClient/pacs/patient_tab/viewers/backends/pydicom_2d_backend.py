@@ -508,6 +508,51 @@ class PyDicom2DBackend(QObject):
                 continue
         return out
 
+    def refresh_file_list(self) -> int:
+        """Re-scan the series directory for newly downloaded DICOM files.
+
+        Only adds files not already tracked — never removes existing entries.
+        New headers are read with ``stop_before_pixels=True`` (fast, no pixel I/O).
+        Returns the updated total slice count.
+
+        Thread-safety: should be called from a single thread (e.g. the Qt main
+        thread or a dedicated executor).  Concurrent callers should be
+        serialised externally.
+        """
+        if not self._series_path:
+            return len(self._slices)
+        series_dir = Path(self._series_path)
+        if not series_dir.is_dir():
+            return len(self._slices)
+
+        existing_paths = {s.path for s in self._slices}
+        new_files = [
+            p for p in series_dir.iterdir()
+            if p.is_file()
+            and p.suffix.lower() in {".dcm", ".dicom", ""}
+            and str(p) not in existing_paths
+        ]
+        if not new_files:
+            return len(self._slices)
+
+        new_metas: List[_SliceMeta] = []
+        for p in sorted(new_files):
+            try:
+                ds = pydicom.dcmread(str(p), stop_before_pixels=True, force=True)
+                new_metas.append(self._slice_meta_from_ds(str(p), ds))
+            except Exception:
+                continue
+
+        if new_metas:
+            self._slices.extend(new_metas)
+            self._slices = self._sort_slices(self._slices)
+            self._attach_spacing_between_slices()
+            logger.info(
+                "pydicom-backend stage=refresh_file_list added=%d total=%d path=%s",
+                len(new_metas), len(self._slices), self._series_path,
+            )
+        return len(self._slices)
+
     def _scan_series_headers(self, series_path: Path) -> List[_SliceMeta]:
         files = []
         if series_path.is_dir():

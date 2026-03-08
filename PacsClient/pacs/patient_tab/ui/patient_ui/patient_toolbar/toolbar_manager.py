@@ -950,7 +950,7 @@ class ToolbarManager:
     
     def is_vtk_widget(self, widget):
         """Check if widget is a VTKWidget (not MPR or other custom widgets)"""
-        from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget
+        from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
         from PacsClient.pacs.patient_tab.curved_mpr_panoramic_view import CurvedMPRViewport
         
         # Accept VTKWidget or CurvedMPRViewport
@@ -1186,7 +1186,7 @@ class ToolbarManager:
             print(f"      selected_widget class name: {selected_widget.__class__.__name__}", file=sys.stderr, flush=True)
             
             # Check what type it actually is
-            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget
+            from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
             from PacsClient.pacs.patient_tab.curved_mpr_panoramic_view import CurvedMPRViewport
             print(f"      isinstance(VTKWidget): {isinstance(selected_widget, VTKWidget)}", file=sys.stderr, flush=True)
             try:

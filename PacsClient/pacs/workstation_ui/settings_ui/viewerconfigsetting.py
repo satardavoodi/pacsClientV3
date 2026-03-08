@@ -282,68 +282,44 @@ class ModalityGridConfigWidget(QWidget):
 
         left_panel_layout.addLayout(add_row)
 
-        # ---------- Boost Viewer ----------
-        boost_row = QVBoxLayout()
-        boost_row.setSpacing(10)
-        
-        boost_title = QLabel("Boost Viewer")
-        boost_title.setStyleSheet("font-weight: 600; font-size: 14px; color: #f9fafb;")
-        boost_row.addWidget(boost_title)
+        # ---------- Viewer Mode (unified Fast / Advanced) ----------
+        viewer_mode_row = QVBoxLayout()
+        viewer_mode_row.setSpacing(10)
 
-        self.boostviewer_toggle = QCheckBox("Enable BoostViewer")
-        self.boostviewer_toggle.setChecked(True)
-        self.boostviewer_toggle.setStyleSheet(
-            "QCheckBox { font-size: 14px; spacing: 9px; color: #e5e7eb; } "
-            "QCheckBox::indicator { width: 18px; height: 18px; }"
-        )
-        self.boostviewer_toggle.setToolTip(
-            "When enabled, automatic ZetaBoost warm-up runs on patient tab activation.\n"
-            "When disabled, no automatic warm-up; only manually viewed series are cached."
-        )
-        boost_row.addWidget(self.boostviewer_toggle)
+        viewer_mode_title = QLabel("Viewer Mode")
+        viewer_mode_title.setStyleSheet("font-weight: 600; font-size: 14px; color: #f9fafb;")
+        viewer_mode_row.addWidget(viewer_mode_title)
 
-        boost_desc = QLabel(
-            "ON: Automatic boost/warm-up on patient open.\n"
-            "OFF: Manual-only mode (cache only what user drags/views)."
+        self.viewer_mode_combo = QComboBox()
+        self.viewer_mode_combo.addItem("⚡  Advanced  —  VTK + SimpleITK  |  Series Boost", "advanced")
+        self.viewer_mode_combo.addItem("🚀  Fast  —  PyDicom  |  Local ±20 Boost", "fast")
+        self.viewer_mode_combo.setMinimumHeight(36)
+        self.viewer_mode_combo.setToolTip(
+            "Advanced: VTK-based viewer with SimpleITK filters and full-series boost (Plan A / Plan B).\n"
+            "Fast: PyDicom-based viewer with internal decoder and local ±20 slice boost."
         )
-        boost_desc.setStyleSheet(
-            "color: #d1d5db; font-size: 14px; padding: 9px; "
+        viewer_mode_row.addWidget(self.viewer_mode_combo)
+
+        viewer_mode_desc = QLabel(
+            "Advanced: VTK rendering · SimpleITK filters · series-level boost (Plan A / Plan B).\n"
+            "Fast: PyDicom rendering · built-in decoder · local ±20 slice window boost."
+        )
+        viewer_mode_desc.setStyleSheet(
+            "color: #d1d5db; font-size: 13px; padding: 9px; "
             "background-color: #1f2937; border-radius: 4px; line-height: 1.5;"
         )
-        boost_desc.setWordWrap(True)
-        boost_row.addWidget(boost_desc)
+        viewer_mode_desc.setWordWrap(True)
+        viewer_mode_row.addWidget(viewer_mode_desc)
 
-        left_panel_layout.addLayout(boost_row)
+        left_panel_layout.addLayout(viewer_mode_row)
 
-        # ---------- 2D Backend ----------
-        backend_row = QVBoxLayout()
-        backend_row.setSpacing(8)
-
-        backend_title = QLabel("2D Backend")
-        backend_title.setStyleSheet("font-weight: 600; font-size: 14px; color: #f9fafb;")
-        backend_row.addWidget(backend_title)
-
+        # Hidden widgets kept for backward-compat persistence helpers
+        self.boostviewer_toggle = QCheckBox()
+        self.boostviewer_toggle.setVisible(False)
         self.viewer_backend_combo = QComboBox()
         self.viewer_backend_combo.addItem("VTK / SimpleITK (Current)", BACKEND_VTK)
         self.viewer_backend_combo.addItem("PyDK (PyDicom 2D Lazy Load)", BACKEND_PYDICOM)
-        self.viewer_backend_combo.setToolTip(
-            "Choose how 2D images are loaded and rendered.\n"
-            "PyDicom backend keeps tool UX unchanged while enabling lazy slice decode."
-        )
-        backend_row.addWidget(self.viewer_backend_combo)
-
-        backend_desc = QLabel(
-            "VTK/SimpleITK: existing behavior.\n"
-            "PyDicom 2D: lazy per-slice decode with LRU cache."
-        )
-        backend_desc.setStyleSheet(
-            "color: #d1d5db; font-size: 13px; padding: 8px; "
-            "background-color: #1f2937; border-radius: 4px;"
-        )
-        backend_desc.setWordWrap(True)
-        backend_row.addWidget(backend_desc)
-
-        left_panel_layout.addLayout(backend_row)
+        self.viewer_backend_combo.setVisible(False)
 
         # ---------- Bottom ----------
         bottom = QHBoxLayout()
@@ -432,9 +408,12 @@ class ModalityGridConfigWidget(QWidget):
             for k, v in self.DEFAULT_LAYOUTS.items()
         }
 
-        # Load BoostViewer setting independently from modality grid config
-        self.boostviewer_toggle.setChecked(load_boost_viewer_enabled(default=True))
+        # Load unified viewer mode and sync hidden compat widgets
         active_backend = load_viewer_backend(default=BACKEND_VTK)
+        is_fast = active_backend in (BACKEND_PYDICOM, "pydicom_qt")
+        mode_idx = self.viewer_mode_combo.findData("fast" if is_fast else "advanced")
+        self.viewer_mode_combo.setCurrentIndex(max(0, mode_idx))
+        self.boostviewer_toggle.setChecked(load_boost_viewer_enabled(default=True))
         idx = self.viewer_backend_combo.findData(active_backend)
         self.viewer_backend_combo.setCurrentIndex(max(0, idx))
         
@@ -546,9 +525,14 @@ class ModalityGridConfigWidget(QWidget):
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(config_to_save, f, indent=2, ensure_ascii=False)
 
-        save_boost_viewer_enabled(self.boostviewer_toggle.isChecked())
-        backend = self.viewer_backend_combo.currentData()
-        save_viewer_backend(str(backend))
+        # Derive backend + boost from unified viewer mode
+        viewer_mode = self.viewer_mode_combo.currentData()
+        if viewer_mode == "fast":
+            save_viewer_backend(BACKEND_PYDICOM)
+            save_boost_viewer_enabled(True)   # boost always on in Fast (local ±20)
+        else:
+            save_viewer_backend(BACKEND_VTK)
+            save_boost_viewer_enabled(True)   # boost always on in Advanced (series)
 
         self.configChanged.emit()
         QMessageBox.information(self, "Saved", "Grid configuration saved.")

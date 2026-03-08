@@ -1183,6 +1183,24 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     if not instances:
                         _gid, instances = _get_instances_from_best_group(series_pk)
                     if instances:
+                        # Validate DB completeness against disk — same check
+                        # as the VTK/ITK path.  Without this the lazy backend
+                        # opens with a partial instance list when the DB hasn't
+                        # caught up to the actual files on disk.
+                        try:
+                            _on_disk = _list_unique_dicom_files(series_path)
+                            _disk_count = len(_on_disk)
+                            _db_count = len(instances)
+                            if _disk_count > 1 and _db_count < _disk_count:
+                                logger.info(
+                                    "pydicom-lazy: DB instances incomplete for series %s "
+                                    "(db=%d disk=%d) -> using disk scan for metadata",
+                                    series_number, _db_count, _disk_count,
+                                )
+                                instances = None  # fall through to disk scan
+                        except Exception:
+                            pass
+                    if instances:
                         lazy_metadata = _get_cached_metadata(series_pk, instances)
 
             if lazy_metadata is None:

@@ -157,6 +157,15 @@ class DownloadProcessWorker(QThread):
                     "action_session_id": self.action_session_id,
                 },
             )
+            # Register PID so the viewer can suspend active download processes
+            # during wheel-scroll bursts and eliminate CPU/memory-bus contention.
+            try:
+                from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import (
+                    register_download_subprocess,
+                )
+                register_download_subprocess(self._process.pid)
+            except Exception:
+                pass
 
             # ── Poll loop ──────────────────────────────────────────────────
             terminal_message_received = False
@@ -323,6 +332,14 @@ class DownloadProcessWorker(QThread):
         pid = getattr(self._process, "pid", None)
         name = self.task.patient_name
         logger.info("[ProcessWorker] 🧹 Cleanup start: patient=%s pid=%s", name, pid)
+        if pid is not None:
+            try:
+                from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import (
+                    unregister_download_subprocess,
+                )
+                unregister_download_subprocess(pid)
+            except Exception:
+                pass
         try:
             if self._process is not None:
                 if self._process.is_alive():

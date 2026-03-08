@@ -32,7 +32,7 @@ from PacsClient.pacs.patient_tab.pipeline import (
     PipelineOrchestrator, PipelineState, LoadCoordinator, PreviewEngine,
 )
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, CallerTypes
-from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget import VTKWidget, grow_vtk_inplace
+from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget, grow_vtk_inplace
 from PacsClient.pacs.patient_tab.ui.widgets import ViewportSpinner
 from PacsClient.pacs.patient_tab.zeta_sync import (
     SyncManager,
@@ -277,6 +277,9 @@ class ViewerController:
         self._interaction_release_token = 0
         self._interactive_preview_enabled = os.getenv("AIPACS_INTERACTIVE_PREVIEW_ENABLED", "0") == "1"
         self._interactive_preview_max_slices = max(1, int(os.getenv("AIPACS_INTERACTIVE_PREVIEW_MAX_SLICES", "64") or "64"))
+        # Slice-focused architecture (default ON): keep Zeta focused on
+        # active-series slice window (±20) instead of whole-series warmup.
+        self._zeta_slice_focus_mode = os.getenv("AIPACS_ZETA_SLICE_FOCUS_MODE", "1") == "1"
 
         # Deterministic full-series cache â€” now single-layer (ZetaBoost only).
         # Legacy dict fields kept as empty stubs for any residual references.
@@ -320,6 +323,10 @@ class ViewerController:
 
         # v2.2.3.2.3: Subprocess-based warmup (GIL-free Mode B caching)
         self._dl_warmup_use_subprocess = os.getenv("AIPACS_DL_WARMUP_SUBPROCESS", "1") == "1"
+        if self._zeta_slice_focus_mode:
+            # Whole-series download warmup is intentionally disabled in
+            # slice-focused mode.
+            self._dl_warmup_use_subprocess = False
         self._warmup_subprocess_mgr: WarmupSubprocessManager | None = None
         self._warmup_result_timer: QTimer | None = None
 
@@ -350,12 +357,29 @@ class ViewerController:
         self._image_slice_booster: ImageSliceBooster = ImageSliceBooster(
             logger=self.logger
         )
+        try:
+            print(
+                f"ℹ️ [ZetaBoost] slice_focus_mode={self._zeta_slice_focus_mode} "
+                f"(active-series ±20 slice window)"
+            )
+        except Exception:
+            pass
         print(
             f"ًں”§ [ZetaBoost][CAPACITY] tier={_cap['tier']} RAM={_cap['total_ram_mb']}MB "
             f"budget={_cap['byte_budget']//(1024*1024)}MB entries={_cap['max_entries']} "
             f"parallel={_cap['max_parallel_loads']} warmup_workers={_cap['warmup_workers']} "
             f"heavy_threshold={_cap['warmup_max_slices']}slices "
             f"disk_persist_max={_cap['disk_persist_max']//(1024*1024)}MB"
+        )
+
+        # -- Progressive series loading (incremental display during download) --
+        self._progressive_series = {}  # series_number -> {total, last_grow_count}
+        self._progressive_grow_timer = QTimer()
+        self._progressive_grow_timer.setSingleShot(True)
+        self._progressive_grow_timer.setInterval(500)
+        self._progressive_grow_timer.timeout.connect(self._flush_progressive_grow)
+        self._progressive_grow_batch_size = max(
+            5, int(os.getenv("AIPACS_PROGRESSIVE_GROW_BATCH", "10") or "10")
         )
 
     def _ensure_grid_config_exists(self):
@@ -393,6 +417,15 @@ class ViewerController:
             return bool(load_boost_viewer_enabled(default=True))
         except Exception:
             return True
+
+    def _is_fast_viewer_mode(self) -> bool:
+        """True when the unified viewer mode is Fast (PyDicom + local ±20 boost).
+        In Fast mode, series-level warmup (Plan A/B) is skipped.
+        The local ±20 ImageSliceBooster still runs normally."""
+        try:
+            return load_viewer_backend() in (BACKEND_PYDICOM, "pydicom_qt")
+        except Exception:
+            return False
 
     @staticmethod
     def _compute_dynamic_capacity() -> dict:
@@ -657,6 +690,388 @@ class ViewerController:
             self.logger.debug(f"ZetaBoost callback failed for series {series_number}: {e}")
             return False
 
+    # ================================================================
+    # PROGRESSIVE SERIES LOADING — Incremental display during download
+    # ================================================================
+
+    def on_series_images_progress(self, series_number: str, downloaded: int, total: int):
+        """Called when new images for a series have been downloaded.
+
+        Triggers progressive display: first batch opens the viewer, subsequent
+        batches grow the volume in-place so the user sees progress live.
+        """
+        sn = str(series_number)
+        if total <= 0 or downloaded <= 0:
+            return
+
+        # Track this series for progressive updates
+        if sn not in self._progressive_series:
+            self._progressive_series[sn] = {"total": total, "last_grow_count": 0}
+        info = self._progressive_series[sn]
+        info["total"] = max(info["total"], total)
+
+        # Check if a viewer is already displaying this series in progressive mode
+        viewers_showing = self._find_progressive_viewers(sn)
+        if viewers_showing:
+            # Only grow when enough NEW images arrived (batch boundary)
+            delta = downloaded - info["last_grow_count"]
+            if delta >= self._progressive_grow_batch_size or downloaded >= total:
+                info["pending_downloaded"] = downloaded
+                if not self._progressive_grow_timer.isActive():
+                    self._progressive_grow_timer.start()
+            return
+
+        # Check if a viewer already shows this series (non-progressive, e.g. user
+        # clicked thumbnail before progress signals started).  If so, activate
+        # progressive mode retroactively so grows will work.
+        if downloaded < total:
+            for node in self.lst_nodes_viewer or []:
+                vtk_w = getattr(node, "vtk_widget", None)
+                if vtk_w is None or vtk_w._progressive_mode:
+                    continue
+                try:
+                    viewer_sn = str(
+                        getattr(vtk_w.image_viewer, "metadata", {})
+                        .get("series", {}).get("series_number", "")
+                    )
+                except Exception:
+                    viewer_sn = ""
+                if viewer_sn == sn:
+                    avail = vtk_w.image_viewer.get_count_of_slices() if vtk_w.image_viewer else 0
+                    vtk_w.enter_progressive_mode(total, sn)
+                    vtk_w.update_available_slice_count(avail)
+                    slider = getattr(node, "slider", None)
+                    if slider is not None:
+                        try:
+                            slider.blockSignals(True)
+                            slider.setMaximum(max(0, total - 1))
+                            slider.blockSignals(False)
+                        except Exception:
+                            pass
+                    # Fast mode: activate ±20 booster for the active series
+                    if self._is_fast_viewer_mode():
+                        try:
+                            loader = getattr(vtk_w, "_lazy_loader", None)
+                            backend = getattr(loader, "backend", None) if loader is not None else None
+                            if backend is not None:
+                                paths = backend.get_file_paths()
+                                if paths:
+                                    self._image_slice_booster.set_active(sn, paths, center_slice=0)
+                        except Exception:
+                            pass
+                    info["last_grow_count"] = avail
+                    self.logger.info(
+                        "progressive: retroactive activate series=%s avail=%d total=%d",
+                        sn, avail, total,
+                    )
+                    return  # Will grow on next progress signal
+
+        # No viewer showing this series yet — start first progressive display
+        if not self._first_series_displayed and downloaded >= self._progressive_grow_batch_size:
+            self._start_progressive_display(sn, downloaded, total)
+
+    def _find_progressive_viewers(self, series_number: str):
+        """Find all VTK widgets currently in progressive mode for a series."""
+        result = []
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is None:
+                continue
+            if (vtk_w._progressive_mode
+                    and vtk_w._progressive_series_number == str(series_number)):
+                result.append((vtk_w, node))
+        return result
+
+    def _start_progressive_display(self, series_number: str, downloaded: int, total: int):
+        """Display a partially downloaded series for the first time."""
+        import asyncio
+        self.logger.info(
+            "progressive: START first display series=%s downloaded=%d total=%d",
+            series_number, downloaded, total,
+        )
+        self._progressive_series.setdefault(series_number, {
+            "total": total, "last_grow_count": 0,
+        })
+
+        async def _load_and_show():
+            try:
+                await self._async_load_and_display_series(
+                    series_number,
+                    progressive_total=total,
+                )
+            except Exception as e:
+                self.logger.warning("progressive: first display failed: %s", e)
+
+        try:
+            loop = asyncio.get_running_loop()
+            task = asyncio.create_task(_load_and_show())
+            self.parent_widget._background_tasks.add(task)
+            task.add_done_callback(lambda t: self.parent_widget._background_tasks.discard(t))
+        except RuntimeError:
+            pass  # No event loop — fallback will happen via series_downloaded
+
+    def _flush_progressive_grow(self):
+        """Timer callback: grow all progressive viewers with newly downloaded images."""
+        import asyncio
+
+        is_fast = self._is_fast_viewer_mode()
+
+        for sn, info in list(self._progressive_series.items()):
+            pending = info.get("pending_downloaded", 0)
+            if pending <= info.get("last_grow_count", 0):
+                continue
+            viewers = self._find_progressive_viewers(sn)
+            if not viewers:
+                continue
+
+            if is_fast:
+                # Fast mode: refresh backend file list + update available count
+                # (no VTK volume reconstruction needed)
+                self._grow_progressive_fast(sn, pending, viewers)
+            else:
+                # Advanced (VTK) mode: reload from disk + grow VTK volume in-place
+                async def _grow(series_number=sn, count=pending):
+                    try:
+                        await self._grow_progressive_viewer_async(series_number, count)
+                    except Exception as e:
+                        self.logger.warning("progressive: grow failed series=%s: %s", series_number, e)
+
+                try:
+                    loop = asyncio.get_running_loop()
+                    task = asyncio.create_task(_grow())
+                    self.parent_widget._background_tasks.add(task)
+                    task.add_done_callback(lambda t: self.parent_widget._background_tasks.discard(t))
+                except RuntimeError:
+                    pass
+
+    def _grow_progressive_fast(self, series_number: str, pending_count: int,
+                               viewers: list):
+        """Fast mode growth: refresh PyDicom backend file list & update counts.
+
+        Unlike the VTK path, no volume reconstruction is needed.  The PyDicom
+        lazy backend already serves slices on-demand from disk.  We only need
+        to tell it about new files so ``get_slice_count()`` returns the correct
+        value, and update the ImageSliceBooster paths if the series is active.
+
+        Also updates lst_thumbnails_data metadata so that re-dropping the series
+        into another viewer will see the full file count (fixes stuck-slice bug).
+        """
+        info = self._progressive_series.get(series_number, {})
+        total = info.get("total", 0)
+
+        for vtk_w, node in viewers:
+            new_count = pending_count  # fallback
+            try:
+                # 1. Refresh the PyDicom backend file list + grow lazy volume
+                loader = getattr(vtk_w, "_lazy_loader", None)
+                backend = getattr(loader, "backend", None) if loader is not None else None
+                if backend is not None and hasattr(backend, "refresh_file_list"):
+                    new_count = backend.refresh_file_list()
+                    # Grow the lazy volume memmap/VTK dims to match new file count
+                    if loader is not None and hasattr(loader, "grow"):
+                        new_count = loader.grow()
+                    elif loader is not None and hasattr(loader, "slice_count"):
+                        loader.slice_count = new_count
+            except Exception as exc:
+                self.logger.debug("progressive-fast: refresh_file_list/grow failed: %s", exc)
+
+            # 2. Update available slice count on the widget
+            vtk_w.update_available_slice_count(new_count)
+
+            # 3. Update slider max (may have grown if get_count_of_slices uses
+            #    progressive total — but in case it doesn't yet, force it)
+            slider = getattr(node, "slider", None)
+            if slider is not None:
+                try:
+                    slider.blockSignals(True)
+                    slider.setMaximum(max(0, vtk_w.get_count_of_slices() - 1))
+                    slider.blockSignals(False)
+                except Exception:
+                    pass
+
+            # 4. Update ImageSliceBooster paths if active for this series
+            try:
+                loader = getattr(vtk_w, "_lazy_loader", None)
+                backend = getattr(loader, "backend", None) if loader is not None else None
+                if backend is not None:
+                    updated_paths = backend.get_file_paths()
+                else:
+                    updated_paths = []
+                if updated_paths and self._image_slice_booster.active_series == series_number:
+                    self._image_slice_booster.update_paths(series_number, updated_paths)
+            except Exception as exc:
+                self.logger.debug("progressive-fast: booster update_paths failed: %s", exc)
+
+        # 5. Update stored metadata instances so re-drop sees the real count
+        self._refresh_stored_metadata_instances(series_number, new_count)
+
+        info["last_grow_count"] = new_count
+        self.logger.info(
+            "progressive-fast: grew series=%s available=%d/%d",
+            series_number, new_count, total,
+        )
+
+        # 6. Check if download completed
+        if new_count >= total and total > 0:
+            # Final refresh of stored metadata with complete file list
+            self._refresh_stored_metadata_instances(series_number, new_count)
+            # Invalidate stale caches so next access rebuilds from full data
+            self._invalidate_series_caches(series_number)
+
+            for vtk_w, node in viewers:
+                vtk_w.exit_progressive_mode()
+            self._progressive_series.pop(series_number, None)
+            self.logger.info(
+                "progressive-fast: series=%s COMPLETE (%d slices)", series_number, new_count
+            )
+
+    async def _grow_progressive_viewer_async(self, series_number: str, expected_count: int):
+        """Background: reload partial series from disk and grow viewers in-place."""
+        import asyncio
+
+        study_path = self._get_correct_study_path()
+        if not study_path:
+            return
+
+        # Load whatever files exist on disk (runs in executor to avoid blocking UI)
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self._load_partial_series_from_disk(series_number, study_path),
+        )
+        if result is None:
+            return
+
+        new_vtk_data, new_metadata = result
+        new_dims = new_vtk_data.GetDimensions() if new_vtk_data else (0, 0, 0)
+        new_z = int(new_dims[2]) if new_dims and len(new_dims) > 2 else 0
+
+        if new_z <= 0:
+            return
+
+        # Apply growth on UI thread
+        info = self._progressive_series.get(series_number, {})
+        info["last_grow_count"] = new_z
+
+        viewers = self._find_progressive_viewers(series_number)
+        for vtk_w, node in viewers:
+            try:
+                grew = vtk_w.grow_progressive_series(new_vtk_data, new_metadata)
+                if grew:
+                    self.logger.info(
+                        "progressive: grew series=%s slices=%d", series_number, new_z
+                    )
+                    # Also update the data in lst_thumbnails_data for consistency
+                    self._apply_loaded_series_data(
+                        series_number, new_vtk_data, new_metadata,
+                        patient_pk=None, study_pk=None,
+                        refresh_viewer=False,
+                    )
+            except Exception as e:
+                self.logger.warning("progressive: grow viewer failed: %s", e)
+
+        # If we reached total, exit progressive mode
+        total = info.get("total", 0)
+        if new_z >= total and total > 0:
+            # Refresh stored metadata + invalidate stale caches
+            self._refresh_stored_metadata_instances(series_number, new_z)
+            self._invalidate_series_caches(series_number)
+            for vtk_w, node in viewers:
+                vtk_w.exit_progressive_mode()
+            self._progressive_series.pop(series_number, None)
+            self.logger.info("progressive: series=%s COMPLETE (%d slices)", series_number, new_z)
+
+    def _load_partial_series_from_disk(self, series_number: str, study_path: str):
+        """Load whatever DICOM files currently exist on disk for a series.
+
+        This is called from a background executor thread.
+        Returns (vtk_image_data, metadata) or None.
+        """
+        try:
+            from PacsClient.pacs.patient_tab.utils.image_io import load_single_series_by_number
+            result = load_single_series_by_number(
+                study_path=study_path,
+                series_number=series_number,
+                patient_pk=getattr(self.parent_widget, 'patient_pk', None),
+                study_pk=getattr(self.parent_widget, 'study_pk', None),
+                allow_lazy_backend=False,  # Force VTK backend for partial loading
+            )
+            if result is None:
+                return None
+            # load_single_series_by_number is a generator yielding
+            # (vtk_image_data, metadata, ...)
+            for item in result:
+                if item and len(item) >= 2:
+                    return (item[0], item[1])
+            return None
+        except Exception as e:
+            self.logger.warning("progressive: partial load failed series=%s: %s", series_number, e)
+            return None
+
+    def on_series_download_fully_complete(self, series_number: str):
+        """Called when a series finishes downloading completely.
+
+        Ensures progressive mode is exited and final data is loaded.
+        """
+        sn = str(series_number)
+        self._progressive_series.pop(sn, None)
+        # Exit progressive mode on any viewers showing this series
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is not None and vtk_w._progressive_series_number == sn:
+                vtk_w.exit_progressive_mode()
+
+    def _activate_progressive_mode_on_viewers(self, series_number: str, total_expected: int):
+        """After first progressive display, mark viewers for progressive growth.
+
+        In Fast mode, also activates the ImageSliceBooster for ±20 prefetch.
+        """
+        is_fast = self._is_fast_viewer_mode()
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is None:
+                continue
+            # Find viewers showing this series
+            try:
+                viewer_sn = str(
+                    getattr(vtk_w.image_viewer, "metadata", {})
+                    .get("series", {}).get("series_number", "")
+                )
+            except Exception:
+                viewer_sn = ""
+            if viewer_sn == str(series_number):
+                avail = vtk_w.get_count_of_slices()  # Current VTK Z-dim
+                vtk_w.enter_progressive_mode(total_expected, series_number)
+                vtk_w.update_available_slice_count(avail)
+                # Update slider to show full range
+                slider = getattr(node, "slider", None)
+                if slider is not None:
+                    try:
+                        slider.blockSignals(True)
+                        slider.setMaximum(max(0, total_expected - 1))
+                        slider.blockSignals(False)
+                    except Exception:
+                        pass
+
+                # Fast mode: activate ImageSliceBooster for ±20 prefetch
+                if is_fast:
+                    try:
+                        loader = getattr(vtk_w, "_lazy_loader", None)
+                        backend = getattr(loader, "backend", None) if loader is not None else None
+                        if backend is not None:
+                            paths = backend.get_file_paths()
+                            if paths:
+                                self._image_slice_booster.set_active(
+                                    str(series_number), paths, center_slice=0,
+                                )
+                    except Exception as exc:
+                        self.logger.debug("progressive: booster activation failed: %s", exc)
+
+                self.logger.info(
+                    "progressive: activated viewer series=%s avail=%d total=%d fast=%s",
+                    series_number, avail, total_expected, is_fast,
+                )
+
     def on_tab_activated(self):
         """Mark this patient tab as active and allow predictive prefetching."""
         self._tab_active = True
@@ -706,10 +1121,10 @@ class ViewerController:
             pass
         # Start warmup shortly after tab-open bootstrap to avoid competing with first render.
         try:
-            # Mode A detection: if pipeline is still IDLE when tab activates,
-            # there's no download session â€” all series are pre-downloaded.
-            # This unlocks ZetaBoost warmup immediately.
-            if self.pipeline.state == PipelineState.IDLE:
+            # Mode A detection: only if all series are pre-downloaded (study complete)
+            from PacsClient.pacs.patient_tab.utils.utils import check_study_complete
+            study_uid = getattr(self.parent_widget, 'study_uid', None)
+            if self.pipeline.state == PipelineState.IDLE and study_uid and check_study_complete(study_uid):
                 self.pipeline.mark_pre_downloaded()
             # Force-sync ZetaBoost engine flags with current pipeline state on every
             # activation.  Handles the case where download started while the tab was
@@ -751,6 +1166,10 @@ class ViewerController:
         self._deferred_heavy_warmup_series.clear()
         self._deferred_heavy_warmup_retry_count = 0
         try:
+            self._image_slice_booster.clear()
+        except Exception:
+            pass
+        try:
             self.zeta_boost.deactivate(clear_cache=True)
         except Exception:
             pass
@@ -788,6 +1207,8 @@ class ViewerController:
             return 0
 
     def _full_cache_get(self, series_number: str):
+        if self._zeta_slice_focus_mode:
+            return None
         key_sn = str(series_number)
         # ALWAYS instant: use engine.query() for O(1) memory-only lookup.
         # Disk-cache promotion happens exclusively inside engine workers
@@ -835,6 +1256,8 @@ class ViewerController:
             return False
 
     def _full_cache_put(self, series_number: str, vtk_image_data, metadata):
+        if self._zeta_slice_focus_mode:
+            return
         # OFF mode policy: write cache only after explicit manual trigger (drag/drop).
         if (not self._boostviewer_enabled) and (not self._zeta_manual_triggered):
             return
@@ -844,6 +1267,140 @@ class ViewerController:
             self.zeta_boost.put(series_number, vtk_image_data, metadata)
         except Exception:
             pass
+
+    # ── Series cache invalidation (stuck-slice fix) ──────────────────────
+
+    def _invalidate_series_caches(self, series_number: str):
+        """Remove stale entries for *series_number* from ALL cache layers.
+
+        Call this when the on-disk file count for a series has grown (progressive
+        download) so that the next ``change_series_on_viewer`` / drag-drop will
+        reload fresh data instead of returning a partial slice set.
+        """
+        sn = str(series_number)
+        self._series_cache.pop(sn, None)
+        self._hot_series_cache.pop(sn, None)
+        self._metadata_flat_cache.pop(sn, None)
+        try:
+            self.zeta_boost.invalidate_series(sn, clear_disk=True)
+        except Exception:
+            pass
+        print(f"🗑️ [CACHE_INVALIDATE] series={sn} cleared all cache layers")
+
+    def _refresh_stored_metadata_instances(self, series_number: str,
+                                           current_disk_count: int):
+        """Sync lst_thumbnails_data metadata['instances'] with actual files on disk.
+
+        When a series is opened during download, the metadata stored in
+        ``lst_thumbnails_data`` captures only the instances that existed at
+        that moment.  Without refreshing, every subsequent ``change_series_on_viewer``
+        cache-hit returns the original (partial) count, making the series appear
+        stuck at N/T slices.
+
+        This method scans the series directory for new ``.dcm`` files, appends
+        minimal instance dicts for each, and bumps the caches so code that reads
+        ``metadata['instances']`` sees the correct count.
+        """
+        sn = str(series_number)
+        try:
+            # Find the stored metadata for this series
+            idx = self._series_number_to_index.get(sn)
+            if idx is None or idx >= len(self.parent_widget.lst_thumbnails_data):
+                return
+            item = self.parent_widget.lst_thumbnails_data[idx]
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                return
+
+            existing_instances = metadata.get("instances") or []
+            existing_count = len(existing_instances)
+            if existing_count >= current_disk_count:
+                return  # already up-to-date
+
+            # Resolve series path from metadata or study path
+            series_path = (metadata.get("series", {}) or {}).get("series_path", "")
+            if not series_path:
+                study_path = self._get_correct_study_path()
+                if study_path:
+                    series_path = str(Path(study_path) / sn)
+            if not series_path or not Path(series_path).is_dir():
+                return
+
+            # Collect existing instance paths for dedup
+            existing_paths = set()
+            for inst in existing_instances:
+                p = inst.get("instance_path", "")
+                if p:
+                    existing_paths.add(str(p).lower())
+
+            # Scan disk for new files
+            from natsort import natsorted
+            all_dcm = natsorted(
+                [f for f in Path(series_path).iterdir()
+                 if f.is_file() and f.suffix.lower() in (".dcm", ".dicom")],
+                key=lambda p: str(p),
+            )
+
+            # Build template from first complete instance so stubs inherit
+            # shared per-series fields (window_width, rows, etc.).  Without
+            # these the viewer's apply_default_window_level crashes KeyError.
+            _TEMPLATE_KEYS = (
+                "window_width", "window_center", "rows", "columns",
+                "is_rgb", "pixel_spacing", "slice_thickness",
+                "bits_allocated", "pixel_representation",
+                "rescale_slope", "rescale_intercept",
+                "photometric_interpretation", "samples_per_pixel",
+                "image_orientation_patient",
+            )
+            template_fields: dict = {}
+            for _inst in existing_instances:
+                if _inst.get("window_width") is not None:
+                    template_fields = {k: _inst[k] for k in _TEMPLATE_KEYS if k in _inst}
+                    break
+
+            new_instances = list(existing_instances)  # shallow copy
+            for dcm_file in all_dcm:
+                if str(dcm_file).lower() in existing_paths:
+                    continue
+                stub = {
+                    "instance_number": len(new_instances),
+                    "instance_path": str(dcm_file),
+                }
+                stub.update(template_fields)
+                new_instances.append(stub)
+
+            if len(new_instances) <= existing_count:
+                return
+
+            # Mutate the metadata in-place so all references see the updated list
+            metadata["instances"] = new_instances
+
+            # Bump caches to reflect the updated metadata
+            vtk_data = item.get("vtk_image_data")
+            if vtk_data is not None:
+                result = (vtk_data, metadata, idx)
+                self._series_cache[sn] = result
+                self._hot_series_cache[sn] = result
+
+            print(
+                f"📋 [METADATA_REFRESH] series={sn} instances {existing_count} → {len(new_instances)}"
+            )
+        except Exception as exc:
+            self.logger.debug("_refresh_stored_metadata_instances failed for %s: %s", sn, exc)
+
+    def _count_series_files_on_disk(self, series_number: str) -> int:
+        """Return the number of .dcm files on disk for *series_number*."""
+        try:
+            study_path = self._get_correct_study_path()
+            if not study_path:
+                return 0
+            series_dir = Path(study_path) / str(series_number)
+            if not series_dir.is_dir():
+                return 0
+            return sum(1 for f in series_dir.iterdir()
+                       if f.is_file() and f.suffix.lower() in (".dcm", ".dicom"))
+        except Exception:
+            return 0
 
     # â”€â”€ Look-ahead warmup: pre-cache adjacent series after drag-drop â”€â”€
     _LOOKAHEAD_COUNT = 2  # number of adjacent series to pre-warm after drag-drop
@@ -947,6 +1504,8 @@ class ViewerController:
         order the doctor sees in the sidebar).
         """
         try:
+            if self._zeta_slice_focus_mode:
+                return
             if not self.zeta_boost.is_active():
                 return
             if not self._tab_active:
@@ -1533,13 +2092,55 @@ class ViewerController:
             vtk_data, meta = cached_full[0], cached_full[1]
             print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ FULL CACHE HIT: vtk={vtk_data is not None}, meta={meta is not None}")
             if vtk_data is not None and isinstance(meta, dict):
-                # Rehydrate parent/index caches on demand
-                try:
-                    idx = self.parent_widget.replace_series_data(series_str, vtk_data, meta, meta.get('series', {}).get('thumbnail_path', ''))
-                    print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ rehydrated to lst_thumbnails_data at idx={idx}")
-                except Exception as e:
-                    print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ rehydrate FAILED: {e}")
-                    idx = -1
+                # Rehydrate parent/index caches on demand.
+                # IMPORTANT: Never mutate PatientWidget list/index structures from a
+                # worker thread. Non-UI writes can race with Qt/UI operations and
+                # have caused unstable behavior during rapid drag-drop switching.
+                idx = -1
+                if self._is_on_ui_thread():
+                    try:
+                        idx = self.parent_widget.replace_series_data(
+                            series_str,
+                            vtk_data,
+                            meta,
+                            meta.get('series', {}).get('thumbnail_path', ''),
+                            allow_append_if_missing=False,
+                        )
+                        print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ rehydrated to lst_thumbnails_data at idx={idx}")
+                    except Exception as e:
+                        print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ rehydrate FAILED: {e}")
+                        idx = -1
+                else:
+                    # Worker thread: read-only best-effort index resolution.
+                    try:
+                        idx = int(self._series_number_to_index.get(series_str, -1))
+                    except Exception:
+                        idx = -1
+
+                    if idx < 0:
+                        try:
+                            for i, item in enumerate(self.parent_widget.lst_thumbnails_data):
+                                item_series = str(item.get('metadata', {}).get('series', {}).get('series_number', ''))
+                                if item_series == series_str:
+                                    idx = i
+                                    break
+                        except Exception:
+                            idx = -1
+
+                    # Schedule safe UI-thread rehydrate for subsequent requests.
+                    try:
+                        self._queue_on_ui_thread(
+                            lambda sn=series_str, vd=vtk_data, md=meta: self.parent_widget.replace_series_data(
+                                sn,
+                                vd,
+                                md,
+                                md.get('series', {}).get('thumbnail_path', ''),
+                                allow_append_if_missing=False,
+                            )
+                        )
+                    except Exception:
+                        pass
+
                 if idx >= 0:
                     result = (vtk_data, meta, idx)
                     self._series_cache[series_str] = result
@@ -2398,7 +2999,17 @@ class ViewerController:
                         != str(requested_backend or BACKEND_VTK)
                     )
                     rebuild_needed = self._needs_backend_rebuild(current_metadata, requested_backend)
-                    if (not backend_mismatch) and (not rebuild_needed):
+                    # Stuck-slice guard: if disk has more files than the currently
+                    # displayed metadata, the series has grown — skip no-op.
+                    series_grew = False
+                    try:
+                        displayed_count = len((current_metadata or {}).get("instances", []) or [])
+                        disk_count = self._count_series_files_on_disk(series_number)
+                        if disk_count > 0 and disk_count > displayed_count:
+                            series_grew = True
+                    except Exception:
+                        pass
+                    if (not backend_mismatch) and (not rebuild_needed) and (not series_grew):
                         if hasattr(vtk_widget, '_finalize_pending_action'):
                             try:
                                 vtk_widget._finalize_pending_action(series_index, phase="switch_series_noop_same")
@@ -2407,6 +3018,37 @@ class ViewerController:
                         self._hide_spinner_for_widget(target_widget_for_spinner)
                         print(f"[PROFILE] change_series_on_viewer: noop same-series series={series_number} total={(time.perf_counter() - _t0)*1000:.1f}ms")
                         return
+                    # Same series re-drop with growth: if a lazy loader is present,
+                    # grow it in-place instead of doing an expensive full reload
+                    # that would restart the volume from scratch.
+                    if series_grew and (not backend_mismatch) and (not rebuild_needed):
+                        _grew_ok = False
+                        try:
+                            loader = getattr(vtk_widget, "_lazy_loader", None)
+                            backend = getattr(loader, "backend", None) if loader else None
+                            if backend is not None and hasattr(backend, "refresh_file_list"):
+                                new_count = backend.refresh_file_list()
+                                if loader is not None and hasattr(loader, "grow"):
+                                    new_count = loader.grow()
+                                vtk_widget.update_available_slice_count(new_count)
+                                if slider is not None:
+                                    try:
+                                        slider.blockSignals(True)
+                                        slider.setMaximum(max(0, vtk_widget.get_count_of_slices() - 1))
+                                        slider.blockSignals(False)
+                                    except Exception:
+                                        pass
+                                self._refresh_stored_metadata_instances(series_number, new_count)
+                                _grew_ok = True
+                                print(
+                                    f"[PROFILE] change_series_on_viewer: in-place grow series={series_number} "
+                                    f"slices={new_count} total={(time.perf_counter() - _t0)*1000:.1f}ms"
+                                )
+                        except Exception as _grow_exc:
+                            self.logger.debug("same-series in-place grow failed: %s", _grow_exc)
+                        if _grew_ok:
+                            self._hide_spinner_for_widget(target_widget_for_spinner)
+                            return
                     print(
                         f"[BACKEND_RELOAD_SAME_SERIES] series={series_number} current={getattr(vtk_widget, '_active_backend', BACKEND_VTK)} "
                         f"requested={requested_backend} rebuild_needed={rebuild_needed}"
@@ -2467,6 +3109,39 @@ class ViewerController:
                 start_ms=t_change_ms,
                 cache_hit=str(cache_hit),
             )
+
+            # ── Stuck-slice guard: verify cached instance count matches disk ──
+            # If more files exist on disk than the cached metadata knows about,
+            # the cache is stale (series was opened during partial download).
+            # Invalidate everything and force a fresh load directly from disk.
+            # IMPORTANT: skip the lst_thumbnails_data linear scan — it would
+            # return the same stale entry.  Go straight to async disk load.
+            if metadata is not None:
+                try:
+                    cached_instance_count = len(metadata.get("instances", []) or [])
+                    disk_count = self._count_series_files_on_disk(series_number)
+                    if disk_count > 0 and disk_count > cached_instance_count:
+                        print(
+                            f"🔄 [STALE_GUARD] series={series_number} "
+                            f"cached_instances={cached_instance_count} disk_files={disk_count} → forcing disk reload"
+                        )
+                        self._invalidate_series_caches(series_number)
+                        study_path = self._get_correct_study_path()
+                        self._schedule_async_load_and_switch(
+                            series_number=series_number,
+                            study_path=study_path,
+                            vtk_widget=vtk_widget,
+                            slider=slider,
+                            allow_paired=allow_paired,
+                            expected_token=expected_token,
+                            target_widget_for_spinner=target_widget_for_spinner,
+                            total_start=_t0,
+                            viewer_backend=requested_backend,
+                            force_reload=True,
+                        )
+                        return
+                except Exception:
+                    pass
 
             # Canonicalize index before switching to avoid stale-index false no-op.
             if metadata is not None:
@@ -2893,6 +3568,26 @@ class ViewerController:
                     self.parent_widget.reset_slider(vtk_widget, slider)
                     self.parent_widget.toolbar_manager.turn_off_all_tools()
 
+                    # Activate progressive mode if this series is still downloading
+                    if series_number in self._progressive_series:
+                        _prog_info = self._progressive_series[series_number]
+                        _prog_total = _prog_info.get("total", 0)
+                        if _prog_total > 0:
+                            avail = vtk_widget.get_count_of_slices()
+                            vtk_widget.enter_progressive_mode(_prog_total, series_number)
+                            vtk_widget.update_available_slice_count(avail)
+                            if slider is not None:
+                                try:
+                                    slider.blockSignals(True)
+                                    slider.setMaximum(max(0, _prog_total - 1))
+                                    slider.blockSignals(False)
+                                except Exception:
+                                    pass
+                            self.logger.info(
+                                "progressive: activated on user switch series=%s avail=%d total=%d",
+                                series_number, avail, _prog_total,
+                            )
+
                     # --- DEBUG: verify viewer count after switch ---
                     try:
                         viewer = getattr(vtk_widget, 'image_viewer', None)
@@ -2920,28 +3615,26 @@ class ViewerController:
                     except Exception:
                         pass
 
-                    # Mode B â€” Image Slice Booster: activate \u00b120 slice window
-                    # for the newly displayed series.  Only fires while a download
-                    # is in progress; no-op in Mode A (post-download).
+                    # Image Slice Booster: activate ±20 slice window for the
+                    # newly displayed active series (Mode A + Mode B).
                     try:
-                        if self.pipeline.is_download_active:
-                            _instances = metadata.get('instances') or []
-                            _inst_paths = [
-                                str(inst.get('instance_path', ''))
-                                for inst in _instances
-                                if inst.get('instance_path')
-                            ]
-                            _center = 0
-                            try:
-                                _viewer = getattr(vtk_widget, 'image_viewer', None)
-                                if _viewer is not None:
-                                    _center = max(0, int(_viewer.GetSlice()))
-                            except Exception:
-                                pass
-                            if _inst_paths:
-                                self._image_slice_booster.set_active(
-                                    series_number, _inst_paths, _center
-                                )
+                        _instances = metadata.get('instances') or []
+                        _inst_paths = [
+                            str(inst.get('instance_path', ''))
+                            for inst in _instances
+                            if inst.get('instance_path')
+                        ]
+                        _center = 0
+                        try:
+                            _viewer = getattr(vtk_widget, 'image_viewer', None)
+                            if _viewer is not None:
+                                _center = max(0, int(_viewer.GetSlice()))
+                        except Exception:
+                            pass
+                        if _inst_paths:
+                            self._image_slice_booster.set_active(
+                                series_number, _inst_paths, _center
+                            )
                     except Exception:
                         pass
 
@@ -3167,7 +3860,12 @@ class ViewerController:
     def _start_background_prefetch(self):
         """Start low-priority full-series prefetch for likely next interactions."""
         try:
+            if self._zeta_slice_focus_mode:
+                return
             if not self._boostviewer_enabled:
+                return
+            # Fast mode uses only local ±20 ImageSliceBooster — skip series prefetch
+            if self._is_fast_viewer_mode():
                 return
             if not self._tab_active:
                 return
@@ -3255,7 +3953,12 @@ class ViewerController:
     def _start_open_tab_warmup(self):
         """On tab activation, immediately queue already-downloaded series for ZetaBoost caching."""
         try:
+            if self._zeta_slice_focus_mode:
+                return
             if not self._boostviewer_enabled:
+                return
+            # Fast mode uses only local ±20 ImageSliceBooster — skip series warmup
+            if self._is_fast_viewer_mode():
                 return
             if not self._tab_active:
                 return
@@ -3568,6 +4271,8 @@ class ViewerController:
         so interactive requests always preempt background work.
         """
         try:
+            if self._zeta_slice_focus_mode:
+                return
             if not self._boostviewer_enabled:
                 return
             if not self._tab_active or not self.zeta_boost.is_active():
@@ -3761,7 +4466,7 @@ class ViewerController:
         except Exception:
             pass
 
-    def _display_first_series_in_all_viewers(self, series_number: str) -> bool:
+    def _display_first_series_in_all_viewers(self, series_number: str, progressive_total: int = 0) -> bool:
         """Display the first downloaded series in all viewers."""
         try:
             series_number = self.parent_widget.resolve_series_key(series_number)
@@ -3797,7 +4502,8 @@ class ViewerController:
                     metadata=metadata,
                     flag_change_selected_widget=False,
                     vtk_widget=vtk_widget,
-                    slider=slider
+                    slider=slider,
+                    progressive_total=progressive_total,
                 )
 
             self._mark_first_series_displayed()
@@ -3818,7 +4524,8 @@ class ViewerController:
             return False
 
     def _display_loaded_series(self, series_number, series_idx, vtk_image_data, metadata,
-                               flag_change_selected_widget, vtk_widget, slider):
+                               flag_change_selected_widget, vtk_widget, slider,
+                               progressive_total: int = 0):
         """
         âڑ، OPTIMIZED: Display series with O(1) paired series lookup.
         
@@ -3873,7 +4580,8 @@ class ViewerController:
                 flag_switch = target_widget.switch_series(
                     vtk_image_data, metadata, series_idx,
                     vtk_widget_data_2, metadata_2,
-                    self.parent_widget.metadata_fixed
+                    self.parent_widget.metadata_fixed,
+                    progressive_total=int(progressive_total),
                 )
                 
                 if flag_switch:
@@ -4430,6 +5138,19 @@ class ViewerController:
             dims = vtk_image_data.GetDimensions() if vtk_image_data else (0, 0, 0)
             print(f"ًں”„ [APPLY] series={series_number} refresh={refresh_viewer} dims={dims}")
 
+            # Stale-request guard: if this apply was tied to a specific viewer request
+            # token and that token is no longer current, skip list/index mutation.
+            if refresh_viewer and (target_viewer_id is not None) and (expected_token is not None):
+                target_widget = None
+                for node in self.lst_nodes_viewer or []:
+                    vtk_w = getattr(node, 'vtk_widget', None)
+                    if vtk_w is not None and getattr(vtk_w, 'id_vtk_widget', None) == target_viewer_id:
+                        target_widget = vtk_w
+                        break
+                if target_widget is not None and (not self._is_request_current(target_widget, expected_token)):
+                    print(f"âڈ­ï¸ڈ [APPLY STALE] series={series_number} token no longer current, skipping mutation")
+                    return
+
             # Populate metadata_fixed if needed
             if not self.parent_widget.metadata_fixed or len(self.parent_widget.metadata_fixed) < 3:
                 if metadata and 'instances' in metadata and metadata['instances']:
@@ -4447,7 +5168,8 @@ class ViewerController:
                 series_number=series_number,
                 vtk_image_data=vtk_image_data,
                 metadata=metadata,
-                file_path=file_path
+                file_path=file_path,
+                allow_append_if_missing=bool(refresh_viewer),
             )
             print(f"ًں”„ [APPLY] series={series_number} â†’ replace_series_data returned idx={series_idx}")
 
@@ -4600,7 +5322,12 @@ class ViewerController:
         - Skips already-cached series.
         """
         try:
+            if self._zeta_slice_focus_mode:
+                return
             if not self._tab_active or not self._boostviewer_enabled:
+                return
+            # Fast mode uses only local ±20 ImageSliceBooster — skip series warmup
+            if self._is_fast_viewer_mode():
                 return
             sn = str(series_number)
             with self._dl_warmup_lock:
@@ -5034,7 +5761,8 @@ class ViewerController:
                 self.zeta_boost.set_download_active(False)
                 # 2. Exit Mode B: re-enable series-level RAM caching.
                 self.zeta_boost.set_image_boost_mode(False)
-                self._image_slice_booster.clear()
+                if not self._zeta_slice_focus_mode:
+                    self._image_slice_booster.clear()
                 # 3. Discard lightweight previews (full volumes coming soon).
                 self._preview_engine.clear()
                 # 4. Schedule warmup ONLY if this tab is currently visible.
@@ -5182,6 +5910,9 @@ class ViewerController:
             if _pipeline_state not in (PipelineState.POST_DOWNLOAD, PipelineState.READY):
                 self.pipeline.on_series_download_completed(series_number_str)
                 self._mark_download_active()
+
+            # Exit progressive mode for this series (fully downloaded now)
+            self.on_series_download_fully_complete(series_number_str)
 
             # â”€â”€ Dedup guard: prevent multiple concurrent loads of same series â”€â”€
             if series_number_str in getattr(self, '_first_series_loading', set()):
@@ -5383,7 +6114,7 @@ class ViewerController:
             if hasattr(self.parent_widget, '_pending_series_loads'):
                 self.parent_widget._pending_series_loads.discard(series_number_str)
 
-    async def _async_load_and_display_series(self, series_number: str):
+    async def _async_load_and_display_series(self, series_number: str, progressive_total: int = 0):
         """
         âڑ، OPTIMIZED: Async series loading without unnecessary sleeps.
         
@@ -5431,7 +6162,10 @@ class ViewerController:
 
             if success:
                 # Mark as ready immediately
-                self._display_series_after_load(str(series_number))
+                self._display_series_after_load(str(series_number), progressive_total=progressive_total)
+                # If this was a progressive load, activate progressive mode on viewers
+                if progressive_total > 0:
+                    self._activate_progressive_mode_on_viewers(str(series_number), progressive_total)
         
         except asyncio.CancelledError:
             self.logger.debug(f"Load cancelled for series {series_number}")
@@ -5439,7 +6173,7 @@ class ViewerController:
         except Exception as e:
             self.logger.error(f"Error loading series {series_number}: {e}", exc_info=True)
 
-    def _display_series_after_load(self, series_number: str):
+    def _display_series_after_load(self, series_number: str, progressive_total: int = 0):
         """
         Mark series ready; for the first downloaded series, display it in all viewers
         and hide loading.
@@ -5450,7 +6184,7 @@ class ViewerController:
                 return
 
             if (not self._first_series_displayed) or self._any_viewer_empty():
-                if self._display_first_series_in_all_viewers(series_number):
+                if self._display_first_series_in_all_viewers(series_number, progressive_total=progressive_total):
                     self._mark_first_series_displayed()
                     return
 
