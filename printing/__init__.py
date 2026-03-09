@@ -2,6 +2,7 @@
 
 __all__ = [
     "core",
+    "data",
     "layout",
     "printers",
     "render",

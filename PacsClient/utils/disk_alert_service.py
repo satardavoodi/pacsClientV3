@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Set
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QTimer, Qt
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from PacsClient.utils.local_storage_cleanup_manager import LocalStorageCleanupManager
@@ -33,6 +33,40 @@ class DiskUsageAlertService(QObject):
     def stop(self):
         self._timer.stop()
 
+    def _show_disk_alert(self, title: str, message: str):
+        parent_pos = None
+        parent_size = None
+        if self.parent_widget is not None:
+            parent_pos = self.parent_widget.pos()
+            parent_size = self.parent_widget.size()
+
+        msg_box = QMessageBox(None)
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.setWindowModality(Qt.ApplicationModal)
+
+        if self.parent_widget is not None and self.parent_widget.isVisible():
+            parent_frame = self.parent_widget.frameGeometry()
+            msg_box.adjustSize()
+            msg_frame = msg_box.frameGeometry()
+            msg_frame.moveCenter(parent_frame.center())
+            msg_box.move(msg_frame.topLeft())
+
+        msg_box.exec()
+
+        if (
+            self.parent_widget is not None
+            and self.parent_widget.isVisible()
+            and parent_pos is not None
+            and parent_size is not None
+        ):
+            if self.parent_widget.pos() != parent_pos:
+                self.parent_widget.move(parent_pos)
+            if self.parent_widget.size() != parent_size:
+                self.parent_widget.resize(parent_size)
+
     def check_now(self):
         try:
             high_rows = LocalStorageCleanupManager.get_high_usage_drives(self.threshold_percent)
@@ -62,7 +96,7 @@ class DiskUsageAlertService(QObject):
                 + "\n\nPlease go to Settings → Viewer Configuration and clear local data "
                   "using the Storage Cleanup tools."
             )
-            QMessageBox.warning(self.parent_widget, "Disk Space Alert", message)
+            self._show_disk_alert("Disk Space Alert", message)
         except Exception:
             # keep runtime lightweight and resilient
             return

@@ -7,6 +7,7 @@ from PySide6.QtCore import QTimer
 from vtkmodules.util import numpy_support as vtknp
 import enum
 from PacsClient.pacs.patient_tab.utils import make_corner_actor, DicomTagsActors, read_segment_nifti, BoxManager
+from PacsClient.pacs.patient_tab.utils.dicom_windowing import auto_window_level_from_range, normalize_window_level
 import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider
 from PySide6.QtCore import Qt
@@ -1352,55 +1353,29 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.Render()
 
     def apply_default_window_level(self, slice_index):
-        # get window width and window center from lst_windows_levels
-        # belongs to the slice[index]
-        # slice_index = 20
-        # print('slice_index:', slice_index,'len:', len(self.metadata['windows_levels']) ,'self.metadata:', self.metadata['windows_levels'])
-
-        # window_level = self.metadata['windows_levels'][slice_index]
-        # # window_width = window_level['window_width'] * 1.25  # width
-        # window_width = window_level['window_width']  # width
-        # window_center = window_level['window_center']  # level
-
         instance_metadata = self.metadata['instances'][slice_index]
-        window_width = instance_metadata['window_width']  # width
-        window_center = instance_metadata['window_center']  # level
+        window_width, window_center = normalize_window_level(
+            instance_metadata.get('window_width'),
+            instance_metadata.get('window_center'),
+            treat_legacy_placeholder_as_missing=True,
+        )
 
-        # âœ… FIX: Auto-detect and fix bad/missing window/level values
-        needs_auto_calc = False
-        
         if window_width is None or window_center is None:
-            needs_auto_calc = True
-        elif window_width < 300 and window_center < 300:
-            # Check if values look like 8-bit defaults but data is 16-bit medical
             scalar_range = self.vtk_image_data.GetScalarRange()
-            data_range = scalar_range[1] - scalar_range[0]
-            if data_range > 500:
-                needs_auto_calc = True
-        
-        if needs_auto_calc:
-            scalar_range = self.vtk_image_data.GetScalarRange()
-            # Check if CT data (Hounsfield units)
-            if scalar_range[0] < -500 and scalar_range[1] > 1000:
-                window_width = 400
-                window_center = 40
-            else:
-                window_width = scalar_range[1] - scalar_range[0]
-                window_center = (scalar_range[0] + scalar_range[1]) / 2
+            window_width, window_center = auto_window_level_from_range(
+                scalar_range[0],
+                scalar_range[1],
+            )
 
-        # â”€â”€ v2.2.3.0.7: WL scroll-cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # VTK vtkSetMacro unconditionally calls Modified() even when the value
-        # is identical to the current value.  On WARP/software-OpenGL this
-        # dirtied the color_mapper pipeline on EVERY slice scroll, forcing a
-        # full pipeline re-execution + duplicate update_corners_actors() call
-        # in set_window_level.  Guard: skip if WL is unchanged.
-        # Cache is reset to None on series switch (ImageViewer2D is recreated).
+        # is identical to the current value. On WARP/software-OpenGL this
+        # dirtied the color_mapper pipeline on every slice scroll, forcing a
+        # full pipeline re-execution + duplicate update_corners_actors() call.
         if (getattr(self, '_wl_scroll_cache_ww', None) == window_width and
                 getattr(self, '_wl_scroll_cache_wc', None) == window_center):
             return
         self._wl_scroll_cache_ww = window_width
         self._wl_scroll_cache_wc = window_center
-        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         self.set_window_level(window_width, window_center, flag_default=True)
 
@@ -2591,3 +2566,5 @@ def bbox_corners_ijk(ijk_list_3d):
     # return bottom_left, top_right
 
     return [i_min, j_min, i_max, j_max]
+
+

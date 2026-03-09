@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aipacs"
+version = "2.2.4.1"
+description = "Modular DICOM workstation with viewer, download, printing, education, and AI assistant modules."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dynamic = ["dependencies", "optional-dependencies"]
+
+[tool.setuptools.packages.find]
+include = ["PacsClient*", "EchoMind*", "printing*"]
+exclude = ["tests*", "builder*", "external*", "generated-files*"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements-core.txt"] }
+
+[tool.setuptools.dynamic.optional-dependencies]
+dev = { file = ["requirements-dev.txt"] }
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = [
+    "tests",
+    "EchoMind/secretary/tests",
+]
+python_files = [
+    "test_*.py",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "generated-files",
+    "external",
+    "education_assets",
+    "Fonts",
+    "Qss",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

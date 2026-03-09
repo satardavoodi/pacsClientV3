@@ -69,6 +69,12 @@ class PyDicomLazyVolume(QObject):
         self.slice_count = backend.get_slice_count()
         if self.slice_count <= 0:
             raise ValueError("PyDicomLazyVolume requires a non-empty series")
+        self._series_modality = ""
+        try:
+            if hasattr(self.backend, "get_modality"):
+                self._series_modality = str(self.backend.get_modality() or "").upper()
+        except Exception:
+            self._series_modality = ""
 
         g0 = backend.get_geometry(0)
         frame0 = backend.get_pixel_array(0)
@@ -96,10 +102,34 @@ class PyDicomLazyVolume(QObject):
         self._load_lock = threading.Lock()
         self._pending_lock = threading.Lock()
         self._pending: Dict[int, int] = {}
+        self._guaranteed_band_lock = threading.Lock()
+        self._guaranteed_band_indices: set[int] = set()
         self._closing = threading.Event()
         self._decoder_failed = False
         self._decode_failed_emitted = False
+        self._pooyan_opencv_enabled = True
+        try:
+            from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import (
+                DEFAULT_PARAMS,
+                load_pooyan_filter_params_from_json,
+            )
+            self._pooyan_opencv_params = load_pooyan_filter_params_from_json()
+            if self._pooyan_opencv_params is None:
+                self._pooyan_opencv_params = DEFAULT_PARAMS
+        except Exception:
+            self._pooyan_opencv_enabled = False
+            self._pooyan_opencv_params = None
         self._cache_radius = max(2, int(os.getenv("AIPACS_PYDICOM_CACHE_RADIUS", "20") or "20"))
+        self._guaranteed_band_radius = max(
+            1,
+            int(
+                os.getenv(
+                    "AIPACS_PYDICOM_GUARANTEED_BAND_RADIUS",
+                    str(max(20, int(self._cache_radius))),
+                )
+                or str(max(20, int(self._cache_radius)))
+            ),
+        )
         self._cache_radius_idle = int(self._cache_radius)
         self._cache_radius_fast = max(
             2,
@@ -176,25 +206,28 @@ class PyDicomLazyVolume(QObject):
             int(os.getenv("AIPACS_HEAVY_SERIES_SLICE_THRESHOLD", "300") or "300"),
         )
         if int(self.slice_count) >= int(self._heavy_series_slice_threshold):
-            # Heavy stacks (300+ slices): keep decode focused on near-target slices
-            # to reduce dropped frames and GIL pressure during rapid drag.
-            self._cache_radius_fast = max(2, min(int(self._cache_radius_fast), 6))
-            self._prefetch_radius_idle = max(2, min(int(self._prefetch_radius_idle), 10))
-            self._prefetch_radius_fast = max(1, min(int(self._prefetch_radius_fast), 2))
+            # Heavy stacks still need a meaningful warm band so filtered MR
+            # slices are prepared before the cursor reaches them.
+            self._cache_radius_fast = max(8, min(int(self._cache_radius_fast), 20))
+            self._prefetch_radius_idle = max(12, min(int(self._prefetch_radius_idle), 20))
+            self._prefetch_radius_fast = max(8, min(int(self._prefetch_radius_fast), 12))
             self._prefetch_radius_high_velocity = max(
-                1,
-                min(int(self._prefetch_radius_high_velocity), 1),
+                3,
+                min(int(self._prefetch_radius_high_velocity), 6),
             )
-            self._prefetch_radius_very_high_velocity = 1
-            self._relevance_radius_high_velocity = max(
+            self._prefetch_radius_very_high_velocity = max(
                 2,
-                min(int(self._relevance_radius_high_velocity), 3),
+                min(int(self._prefetch_radius_very_high_velocity), 4),
+            )
+            self._relevance_radius_high_velocity = max(
+                6,
+                min(int(self._relevance_radius_high_velocity), 10),
             )
             self._relevance_radius_very_high_velocity = max(
-                2,
-                min(int(self._relevance_radius_very_high_velocity), 2),
+                4,
+                min(int(self._relevance_radius_very_high_velocity), 8),
             )
-            self._directional_ratio = min(float(self._directional_ratio), 0.22)
+            self._directional_ratio = min(float(self._directional_ratio), 0.35)
         self._interactive_until_ms = 0.0
         self._last_hint_ts_ms = 0.0
         self._last_hint_idx = 0
@@ -202,6 +235,10 @@ class PyDicomLazyVolume(QObject):
         self._request_seq = itertools.count()
         self._request_queue: "queue.PriorityQueue[Tuple[int, int, Optional[int]]]" = queue.PriorityQueue(
             maxsize=max(512, self.slice_count * 4)
+        )
+        self._worker_count = max(
+            2,
+            int(os.getenv("AIPACS_PYDICOM_LAZY_WORKERS", str(min(4, max(2, (os.cpu_count() or 4) // 2)))) or "4"),
         )
 
         self._requests = 0
@@ -253,8 +290,20 @@ class PyDicomLazyVolume(QObject):
         # Prime only the first slice for fast first-frame without expensive startup work.
         self._load_slice_blocking(0, emit_signal=False)
 
-        self._worker = threading.Thread(target=self._worker_loop, daemon=True, name="PyDicomLazyVolumeWorker")
-        self._worker.start()
+        self._workers: list[threading.Thread] = []
+        for worker_idx in range(self._worker_count):
+            worker = threading.Thread(
+                target=self._worker_loop,
+                daemon=True,
+                name=f"PyDicomLazyVolumeWorker-{worker_idx + 1}",
+            )
+            worker.start()
+            self._workers.append(worker)
+
+        self._set_guaranteed_warm_band(
+            0,
+            radius=min(self._guaranteed_band_radius, max(0, self.slice_count - 1)),
+        )
 
     @classmethod
     def from_series(
@@ -414,13 +463,16 @@ class PyDicomLazyVolume(QObject):
         except Exception:
             pass
         try:
-            if hasattr(self, "_worker") and self._worker is not None and self._worker.is_alive():
-                self._worker.join(timeout=1.0)
+            for worker in getattr(self, "_workers", []):
+                if worker is not None and worker.is_alive():
+                    worker.join(timeout=1.0)
         except Exception:
             pass
 
         with self._pending_lock:
             self._pending.clear()
+        with self._guaranteed_band_lock:
+            self._guaranteed_band_indices.clear()
 
         try:
             while True:
@@ -539,6 +591,7 @@ class PyDicomLazyVolume(QObject):
             velocity_sps=float(velocity_sps),
             source="request",
         )
+        self._set_guaranteed_warm_band(i)
         self._requests += 1
         if bool(self._loaded[i]):
             self._cache_hits += 1
@@ -631,7 +684,7 @@ class PyDicomLazyVolume(QObject):
         read_ms = float(decode_breakdown.get("read_ms", 0.0) or 0.0)
         pixel_ms = float(decode_breakdown.get("pixel_decode_ms", 0.0) or 0.0)
         post_ms = float(decode_breakdown.get("post_ms", 0.0) or 0.0)
-        arr = self._prepare_slice_for_volume(arr)
+        arr = self._prepare_slice_for_volume(arr, i)
         with self._load_lock:
             if bool(self._loaded[i]):
                 if emit_signal:
@@ -671,7 +724,7 @@ class PyDicomLazyVolume(QObject):
             self.slice_ready.emit(i, float(decode_ms), False)
         return True
 
-    def _prepare_slice_for_volume(self, arr: np.ndarray) -> np.ndarray:
+    def _prepare_slice_for_volume(self, arr: np.ndarray, idx: int) -> np.ndarray:
         # Match historical ITK->VTK path: flip Y axis.
         arr2 = np.asarray(arr)
         if arr2.ndim >= 2:
@@ -681,15 +734,24 @@ class PyDicomLazyVolume(QObject):
 
         # v2.2.3.4.1: Apply PooyanPacs-exact OpenCV filter (same as C# FilterCenter).
         # This gives the lazy backend the same image quality as the ITK path.
-        if getattr(self, '_pooyan_opencv_enabled', True):
+        modality = str(getattr(self, "_series_modality", "") or "").upper()
+        if getattr(self, '_pooyan_opencv_enabled', True) and modality != "CT":
             try:
                 from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import (
-                    PooyanFilterParams,
                     apply_pooyan_opencv_to_slice_int16,
                 )
-                if not hasattr(self, '_pooyan_opencv_params'):
-                    self._pooyan_opencv_params = PooyanFilterParams()
-                arr2 = apply_pooyan_opencv_to_slice_int16(arr2, self._pooyan_opencv_params)
+                ww = wc = None
+                try:
+                    if hasattr(self.backend, "get_default_window_level"):
+                        ww, wc = self.backend.get_default_window_level(idx)
+                except Exception:
+                    ww = wc = None
+                arr2 = apply_pooyan_opencv_to_slice_int16(
+                    arr2,
+                    self._pooyan_opencv_params,
+                    window_center=wc,
+                    window_width=ww,
+                )
             except ImportError:
                 self._pooyan_opencv_enabled = False
             except Exception:
@@ -702,6 +764,40 @@ class PyDicomLazyVolume(QObject):
             else:
                 arr2 = arr2.astype(self.dtype)
         return np.ascontiguousarray(arr2)
+
+    def _set_guaranteed_warm_band(self, center: int, radius: Optional[int] = None) -> None:
+        if self._closing.is_set() or self.slice_count <= 0:
+            return
+        if radius is None:
+            radius = int(self._guaranteed_band_radius)
+        center_i = max(0, min(int(center), self.slice_count - 1))
+        radius_i = max(0, int(radius))
+        lo = max(0, int(center_i) - int(radius_i))
+        hi = min(self.slice_count - 1, int(center_i) + int(radius_i))
+        indices = set(range(lo, hi + 1))
+        with self._guaranteed_band_lock:
+            self._guaranteed_band_indices = indices
+
+        self._enqueue_slice(center_i, high_priority=True)
+        direction = int(self._scroll_direction)
+        forward = list(range(center_i + 1, hi + 1))
+        backward = list(range(center_i - 1, lo - 1, -1))
+        if direction < 0:
+            ordered = backward + forward
+        elif direction > 0:
+            ordered = forward + backward
+        else:
+            ordered = []
+            max_len = max(len(forward), len(backward))
+            for off in range(max_len):
+                if off < len(forward):
+                    ordered.append(forward[off])
+                if off < len(backward):
+                    ordered.append(backward[off])
+        for idx in ordered:
+            if idx < 0 or idx >= self.slice_count or bool(self._loaded[idx]):
+                continue
+            self._enqueue_slice(int(idx), high_priority=False)
 
     def _prefetch_around(self, center: int, radius: Optional[int] = None) -> None:
         if self._closing.is_set():
@@ -742,6 +838,9 @@ class PyDicomLazyVolume(QObject):
             self._enqueue_slice(idx, high_priority=False)
 
     def _is_relevant_request(self, idx: int) -> bool:
+        with self._guaranteed_band_lock:
+            if int(idx) in self._guaranteed_band_indices:
+                return True
         target = int(self._requested_slice_idx)
         if idx == target:
             return True

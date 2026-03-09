@@ -146,6 +146,9 @@ def _nt_resume_download_subprocesses() -> None:
 _RENDER_THROTTLE_MS = 16  # ~60fps max render rate
 _SPINNER_HIDE_DELAY_MS = 50  # Delay before hiding spinner to allow final render
 _SYNC_MOVE_THROTTLE_MS = 16  # min interval between sync mouse move processing (~60fps)
+_DROP_HOVER_ARM_MS = max(0, int(os.getenv("AIPACS_DROP_HOVER_ARM_MS", "120") or "120"))
+_DROP_DWELL_MOVE_TOLERANCE_PX = max(1, int(os.getenv("AIPACS_DROP_DWELL_MOVE_TOLERANCE_PX", "8") or "8"))
+_SERIES_DROP_MIME = "application/x-aipacs-series-number"
 
 
 def grow_vtk_inplace(old_input, new_vtk_image_data):
@@ -199,6 +202,13 @@ class VTKWidget(QVTKRenderWindowInteractor):
     def __init__(self, parent=None, height_viewer=480, patient_widget=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
+        self._drop_hover_started_ms = 0.0
+        self._drop_hover_armed = False
+        self._drop_hover_inside = False
+        self._drop_hover_anchor_pos = None
+        self._drop_hover_timer = QTimer(self)
+        self._drop_hover_timer.setSingleShot(True)
+        self._drop_hover_timer.timeout.connect(self._arm_drop_target)
         self.last_series_show = None
         self.id_vtk_widget = None
         self.current_style: AbstractInteractorStyle = None
@@ -451,6 +461,127 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._download_overlay_label = None
         self._progressive_grow_pending = False
 
+    def _get_active_style(self):
+        """Return the currently active interactor style if available."""
+        style = getattr(self, "current_style", None)
+        if style is None:
+            try:
+                style = self.interactor.GetInteractorStyle()
+            except Exception:
+                style = None
+        return style
+
+    def _force_release_pointer_states(
+        self,
+        clear_left: bool = False,
+        clear_right: bool = False,
+        clear_middle: bool = False,
+        reason: str = "",
+    ) -> None:
+        """Qt-level fail-safe to keep style button flags consistent."""
+        style = self._get_active_style()
+        if style is None:
+            return
+
+        changed = False
+        try:
+            if clear_left and getattr(style, "left_button_down", False):
+                style.left_button_down = False
+                changed = True
+            if clear_right and getattr(style, "right_button_down", False):
+                style.right_button_down = False
+                changed = True
+            if clear_middle and getattr(style, "middle_button_down", False):
+                style.middle_button_down = False
+                changed = True
+        except Exception:
+            return
+
+        if not changed:
+            return
+
+        try:
+            any_down = bool(
+                getattr(style, "left_button_down", False)
+                or getattr(style, "right_button_down", False)
+                or getattr(style, "middle_button_down", False)
+            )
+            if not any_down:
+                try:
+                    style.last_pos = None
+                except Exception:
+                    pass
+                try:
+                    if getattr(style, "pan_active", False):
+                        style.turn_off_pan()
+                except Exception:
+                    try:
+                        style.pan_active = False
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # If stack interaction was pending, ensure it cannot remain armed forever.
+        try:
+            if (
+                getattr(self, "_pending_scroll_source", None) == "stack_drag"
+                and self._pending_wheel_slice is None
+            ):
+                self._in_stack_scroll = False
+                self._in_fast_slice_interaction = bool(self._in_wheel_scroll or self._in_stack_scroll)
+        except Exception:
+            pass
+
+        logger.debug(
+            "[pointer-failsafe] released states reason=%s left=%s right=%s middle=%s",
+            str(reason),
+            bool(getattr(style, "left_button_down", False)),
+            bool(getattr(style, "right_button_down", False)),
+            bool(getattr(style, "middle_button_down", False)),
+        )
+
+    def mouseMoveEvent(self, event):
+        # If Qt reports no button pressed but style still thinks a button is down,
+        # force-release stale states (can happen after UI stalls).
+        try:
+            if int(event.buttons()) == int(Qt.MouseButton.NoButton):
+                self._force_release_pointer_states(
+                    clear_left=True,
+                    clear_right=True,
+                    clear_middle=True,
+                    reason="mouse_move_no_buttons",
+                )
+        except Exception:
+            pass
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        try:
+            btn = int(event.button())
+            no_buttons = int(event.buttons()) == int(Qt.MouseButton.NoButton)
+            self._force_release_pointer_states(
+                clear_left=bool(btn == int(Qt.MouseButton.LeftButton) or no_buttons),
+                clear_right=bool(btn == int(Qt.MouseButton.RightButton) or no_buttons),
+                clear_middle=bool(btn == int(Qt.MouseButton.MiddleButton) or no_buttons),
+                reason="mouse_release",
+            )
+        except Exception:
+            pass
+
+    def leaveEvent(self, event):
+        try:
+            self._force_release_pointer_states(
+                clear_left=True,
+                clear_right=True,
+                clear_middle=True,
+                reason="leave_event",
+            )
+        except Exception:
+            pass
+        super().leaveEvent(event)
+
     def _reenable_gc(self):
         """Re-enable garbage collection after scroll burst ends.
 
@@ -489,6 +620,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
             pass
 
     def _restore_reslice_quality(self) -> None:
+        # v2.2.3.4.2: Pydicom lazy backend never degrades interpolation
+        # quality during scroll, so skip the restore + unnecessary Render().
+        if self._active_backend in (BACKEND_PYDICOM, BACKEND_PYDICOM_QT):
+            return
         try:
             reslice = getattr(getattr(self, 'image_viewer', None), 'image_reslice', None)
             if reslice is None:
@@ -2824,10 +2959,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
         lazy_cache_hit = False
         lazy_render_immediate = True
         if _is_lazy_active:
-            # Request decode first.  On cache miss during fast interaction, defer
-            # render to lazy callback so we avoid rendering stale intermediate slices.
+            # Request decode first. On cache miss, always defer render to the
+            # lazy callback so the displayed slice arrives already decoded and
+            # filtered instead of flashing an intermediate/unprepared state.
             lazy_cache_hit = bool(self._ensure_lazy_slice_loaded(slice_index, mark_current=False))
-            lazy_render_immediate = bool(lazy_cache_hit or not _fast_scroll)
+            lazy_render_immediate = bool(lazy_cache_hit)
         if lazy_render_immediate and self._should_defer_fast_slice_render(
             velocity_sps=float(_active_velocity_sps),
             now_ms_value=now_ms(),
@@ -2960,33 +3096,31 @@ class VTKWidget(QVTKRenderWindowInteractor):
             except Exception:
                 pass
 
-        # v2.2.3.1.8: Notify ImageSliceBooster so the prefetch window follows scroll.
-        # v2.2.3.2.9: Throttle to once per 200ms instead of every set_slice.
-        # Each call re-centers the prefetch window and may start background I/O.
-        # During rapid scroll (10-15 renders/sec), calling on every slice wastes
-        # CPU scheduling prefetch that will be immediately invalidated by the
-        # next scroll.  200ms spacing lets the booster keep up without waste.
+        # Notify ImageSliceBooster only in Fast backend mode.
+        # Advanced backend does not consume this cache and would only add
+        # background I/O contention during scroll.
         try:
-            _t_now = now_ms()
-            if _t_now - self._last_booster_notify_ms >= 200.0:
-                self._last_booster_notify_ms = _t_now
-                _vc = getattr(getattr(self, 'patient_widget', None), 'viewer_controller', None)
-                if _vc is not None:
-                    _booster = getattr(_vc, '_image_slice_booster', None)
-                    if _booster is not None and _booster.is_active:
-                        _sn = _booster.active_series
-                        if _sn is not None:
-                            _viewer_sn = ''
-                            try:
-                                _viewer_sn = str(
-                                    getattr(self.image_viewer, 'metadata', {})
-                                    .get('series', {})
-                                    .get('series_number', '')
-                                )
-                            except Exception:
+            if self._active_backend in (BACKEND_PYDICOM, BACKEND_PYDICOM_QT):
+                _t_now = now_ms()
+                if _t_now - self._last_booster_notify_ms >= 200.0:
+                    self._last_booster_notify_ms = _t_now
+                    _vc = getattr(getattr(self, 'patient_widget', None), 'viewer_controller', None)
+                    if _vc is not None:
+                        _booster = getattr(_vc, '_image_slice_booster', None)
+                        if _booster is not None and _booster.is_active:
+                            _sn = _booster.active_series
+                            if _sn is not None:
                                 _viewer_sn = ''
-                            if _viewer_sn and str(_viewer_sn) == str(_sn):
-                                _booster.on_slice_changed(_sn, slice_index)
+                                try:
+                                    _viewer_sn = str(
+                                        getattr(self.image_viewer, 'metadata', {})
+                                        .get('series', {})
+                                        .get('series_number', '')
+                                    )
+                                except Exception:
+                                    _viewer_sn = ''
+                                if _viewer_sn and str(_viewer_sn) == str(_sn):
+                                    _booster.on_slice_changed(_sn, slice_index)
         except Exception:
             pass
 
@@ -3067,23 +3201,32 @@ class VTKWidget(QVTKRenderWindowInteractor):
             except Exception:
                 pass
             _throttle_background_threads(True)
-            try:
-                reslice = getattr(getattr(self, 'image_viewer', None), 'image_reslice', None)
-                if reslice is not None:
-                    reslice.SetInterpolationModeToNearestNeighbor()
-                    reslice.Modified()
-            except Exception:
-                pass
-            try:
-                if self.image_viewer is not None:
-                    actor = self.image_viewer.GetImageActor()
-                    if actor is not None:
-                        actor.InterpolateOff()
-                        prop = actor.GetProperty()
-                        if prop is not None:
-                            prop.SetInterpolationType(0)
-            except Exception:
-                pass
+            # v2.2.3.4.2: Skip NN interpolation degradation for the pydicom
+            # lazy backend.  The ImageReslice is a pass-through (identity
+            # transform, same dimensions) so NearestNeighbor gives zero
+            # performance benefit.  For small images (e.g. 176×176 diffusion
+            # MRI), InterpolateOff causes visible pixelation that looks like
+            # "filter not applied" until _restore_reslice_quality fires
+            # 2000 ms later.
+            _skip_nn_degrade = self._active_backend in (BACKEND_PYDICOM, BACKEND_PYDICOM_QT)
+            if not _skip_nn_degrade:
+                try:
+                    reslice = getattr(getattr(self, 'image_viewer', None), 'image_reslice', None)
+                    if reslice is not None:
+                        reslice.SetInterpolationModeToNearestNeighbor()
+                        reslice.Modified()
+                except Exception:
+                    pass
+                try:
+                    if self.image_viewer is not None:
+                        actor = self.image_viewer.GetImageActor()
+                        if actor is not None:
+                            actor.InterpolateOff()
+                            prop = actor.GetProperty()
+                            if prop is not None:
+                                prop.SetInterpolationType(0)
+                except Exception:
+                    pass
             _nt_suspend_download_subprocesses()
         # v2.2.3.3.9: Tighten throttle from 500ms├تظبظآ250ms so the busy flag
         # stays True continuously during scroll (with 350ms release delay,
@@ -3201,21 +3344,108 @@ class VTKWidget(QVTKRenderWindowInteractor):
             logger.warning(f"[WHEEL] Exception (consuming to prevent zoom): {e}")
             event.accept()
 
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
+    def _is_supported_drop_payload(self, mime_data) -> bool:
+        if mime_data is None:
+            return False
+
+        if mime_data.hasFormat(_SERIES_DROP_MIME):
+            return True
+
+        if mime_data.hasText():
+            text = str(mime_data.text() or "").strip()
+            if text and text.lstrip("-").isdigit():
+                return True
+
+        # Keep URL support for external segmentation files.
+        return bool(mime_data.hasUrls())
+
+    def _extract_dropped_series_number(self, mime_data):
+        if mime_data is None:
+            return None
+        try:
+            if mime_data.hasFormat(_SERIES_DROP_MIME):
+                raw = bytes(mime_data.data(_SERIES_DROP_MIME)).decode("utf-8", errors="ignore").strip()
+                if raw and raw.lstrip("-").isdigit():
+                    return int(raw)
+            if mime_data.hasText():
+                text = str(mime_data.text() or "").strip()
+                if text and text.lstrip("-").isdigit():
+                    return int(text)
+        except Exception:
+            return None
+        return None
+
+    def _arm_drop_target(self):
+        if not self._drop_hover_inside:
+            return
+        self._drop_hover_armed = True
+        self._show_drop_highlight(True)
+
+    def _drag_event_point(self, event):
+        try:
+            return event.position().toPoint()
+        except Exception:
+            return event.pos()
+
+    def _restart_drop_dwell(self, anchor_point=None):
+        self._drop_hover_started_ms = now_ms()
+        self._drop_hover_armed = (_DROP_HOVER_ARM_MS <= 0)
+        if anchor_point is not None:
+            self._drop_hover_anchor_pos = anchor_point
+        if self._drop_hover_armed:
             self._show_drop_highlight(True)
+            try:
+                self._drop_hover_timer.stop()
+            except Exception:
+                pass
         else:
+            self._show_drop_highlight(False)
+            self._drop_hover_timer.start(_DROP_HOVER_ARM_MS)
+
+    def _reset_drop_hover_state(self, hide_overlay: bool = True):
+        self._drop_hover_inside = False
+        self._drop_hover_armed = False
+        self._drop_hover_started_ms = 0.0
+        self._drop_hover_anchor_pos = None
+        try:
+            self._drop_hover_timer.stop()
+        except Exception:
+            pass
+        if hide_overlay:
+            self._show_drop_highlight(False)
+
+    def dragEnterEvent(self, event):
+        if not self._is_supported_drop_payload(event.mimeData()):
+            self._reset_drop_hover_state()
             event.ignore()
+            return
+
+        self._drop_hover_inside = True
+        self._restart_drop_dwell(anchor_point=self._drag_event_point(event))
+        event.acceptProposedAction()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
-        else:
+        if not self._is_supported_drop_payload(event.mimeData()):
             event.ignore()
+            return
+
+        point = self._drag_event_point(event)
+        anchor = self._drop_hover_anchor_pos
+        if anchor is None:
+            self._restart_drop_dwell(anchor_point=point)
+        else:
+            moved = (point - anchor).manhattanLength()
+            if moved > _DROP_DWELL_MOVE_TOLERANCE_PX:
+                self._restart_drop_dwell(anchor_point=point)
+
+        if not self._drop_hover_armed and _DROP_HOVER_ARM_MS > 0:
+            elapsed_ms = now_ms() - float(self._drop_hover_started_ms or 0.0)
+            if elapsed_ms >= _DROP_HOVER_ARM_MS:
+                self._arm_drop_target()
+        event.acceptProposedAction()
 
     def dragLeaveEvent(self, event):
-        self._show_drop_highlight(False)
+        self._reset_drop_hover_state()
         super().dragLeaveEvent(event)
 
     def _show_drop_highlight(self, show: bool):
@@ -3294,10 +3524,30 @@ class VTKWidget(QVTKRenderWindowInteractor):
         super().keyPressEvent(event)
     
     def dropEvent(self, event):
+        mime_data = event.mimeData()
         self._show_drop_highlight(False)
-        data = event.mimeData().text()
-        print("Dropped data:", data)
-        event.acceptProposedAction()
+        if not self._is_supported_drop_payload(mime_data):
+            self._reset_drop_hover_state(hide_overlay=False)
+            event.ignore()
+            return
+
+        elapsed_ms = now_ms() - float(self._drop_hover_started_ms or 0.0)
+        if _DROP_HOVER_ARM_MS > 0 and (not self._drop_hover_armed or elapsed_ms < _DROP_HOVER_ARM_MS):
+            logger.debug(
+                "drop ignored before arm viewer=%s elapsed_ms=%.1f required_ms=%d",
+                str(getattr(self, "id_vtk_widget", None)),
+                float(elapsed_ms),
+                int(_DROP_HOVER_ARM_MS),
+            )
+            self._reset_drop_hover_state(hide_overlay=False)
+            event.ignore()
+            return
+
+        data = self._extract_dropped_series_number(mime_data)
+        if data is not None:
+            event.setDropAction(Qt.CopyAction)
+            event.accept()
+            self._reset_drop_hover_state(hide_overlay=False)
 
         try:
             data = int(data)
@@ -3311,22 +3561,28 @@ class VTKWidget(QVTKRenderWindowInteractor):
             
             # Use QTimer to defer the call and avoid blocking during drop
             # This allows the spinner to display before the expensive series switch
-            from PySide6.QtCore import QTimer
             QTimer.singleShot(0, lambda: self.method_change_series_on_viewer(
                 series_index=int(data), 
                 flag_change_selected_widget=False,
                 vtk_widget=self, 
                 slider=self.slider
             ))
-            
-        except Exception as e:
+            return
+
+        except Exception:
             # Dropped segmentation out of app
-            if event.mimeData().hasUrls():
-                data = event.mimeData().urls()[0].toLocalFile()
+            if mime_data.hasUrls():
+                event.setDropAction(Qt.CopyAction)
+                event.accept()
+                self._reset_drop_hover_state(hide_overlay=False)
+                data = mime_data.urls()[0].toLocalFile()
                 print(f'dropped file url: {data}\n')
                 vtk_segmentation_img = read_segment_nifti(data)
                 self.overlay(vtk_segmentation_img, color=(0.0, 1.0, 0.0), opacity=0.35, is_label=True)
                 print('add segmentation successful.')
+                return
+            self._reset_drop_hover_state(hide_overlay=False)
+            event.ignore()
 
     def overlay(self, vtk_image_data: vtk.vtkImageData, color=(1.0, 0.0, 0.0), opacity=0.4, is_label=True):
         """

@@ -253,6 +253,9 @@ class ViewerController:
         self._loading_series_numbers = set()  # protects duplicate interactive loads
         self._series_load_events = {}  # series_number -> threading.Event
         self._series_load_lock = threading.Lock()
+        self._interactive_full_load_semaphore = threading.Semaphore(
+            max(1, int(os.getenv("AIPACS_INTERACTIVE_FULL_LOADS_MAX", "1") or "1"))
+        )
         self._prefetch_max_series = 24
 
         self._prefetch_delay_ms = 120
@@ -1504,15 +1507,15 @@ class ViewerController:
         order the doctor sees in the sidebar).
         """
         try:
-            if self._zeta_slice_focus_mode:
-                return
             if not self.zeta_boost.is_active():
                 return
             if not self._tab_active:
                 return
-            # Don't do look-ahead when ZetaBoost is not allowed to warm
-            if not self.pipeline.is_warmup_allowed:
+            # Fast mode uses local slice boosting (±20) instead of series warmup.
+            if self._is_fast_viewer_mode():
                 return
+            warmup_allowed = bool(self.pipeline.is_warmup_allowed)
+            download_mode = not warmup_allowed
 
             sn = str(series_number)
             thumb_data = getattr(self.parent_widget, 'lst_thumbnails_data', None) or []
@@ -1521,6 +1524,15 @@ class ViewerController:
 
             # Find the current series position in the thumbnail list
             current_idx = self._series_number_to_index.get(sn)
+            if current_idx is None:
+                for idx, item in enumerate(thumb_data):
+                    try:
+                        _sn = str(item.get('metadata', {}).get('series', {}).get('series_number', '') or '')
+                        if _sn == sn:
+                            current_idx = idx
+                            break
+                    except Exception:
+                        continue
             if current_idx is None:
                 return
             current_idx = int(current_idx)
@@ -1576,17 +1588,33 @@ class ViewerController:
                         continue
                     # Skip oversized series (respect warmup_max_slices)
                     exp_slices = self._get_series_expected_slices(cand_sn)
-                    if exp_slices > 0 and exp_slices > int(self._warmup_max_slices):
-                        continue
+                    if download_mode:
+                        # During active download, use controlled per-series warmup
+                        # limits and only queue series with local files available.
+                        if exp_slices > 0 and exp_slices > int(self._DL_WARMUP_MAX_SLICES):
+                            continue
+                        if self._count_series_files_on_disk(cand_sn) <= 0:
+                            continue
+                    else:
+                        if exp_slices > 0 and exp_slices > int(self._warmup_max_slices):
+                            continue
                     queue.append(cand_sn)
                 except Exception:
                     continue
 
             if queue:
-                self.zeta_boost.enqueue_many_warmup(queue)
-                print(
-                    f"ًں”® [ZetaBoost][LOOKAHEAD] series={sn} â†’ pre-warming {len(queue)} adjacent: {queue}"
-                )
+                queue = queue[: self._LOOKAHEAD_COUNT]
+                if download_mode:
+                    for cand_sn in queue:
+                        self._enqueue_download_warmup(cand_sn, force=True)
+                    print(
+                        f"[ZetaBoost][LOOKAHEAD][DL] series={sn} -> queued {len(queue)} adjacent: {queue}"
+                    )
+                else:
+                    self.zeta_boost.enqueue_many_warmup(queue)
+                    print(
+                        f"[ZetaBoost][LOOKAHEAD] series={sn} -> pre-warming {len(queue)} adjacent: {queue}"
+                    )
         except Exception as e:
             try:
                 self.logger.debug(f"Look-ahead warmup error: {e}")
@@ -3615,26 +3643,31 @@ class ViewerController:
                     except Exception:
                         pass
 
-                    # Image Slice Booster: activate ±20 slice window for the
-                    # newly displayed active series (Mode A + Mode B).
+                    # Image Slice Booster is only needed in Fast mode.
+                    # In Advanced (VTK + SimpleITK) it adds background I/O
+                    # without helping render path, and can contend with UI.
                     try:
-                        _instances = metadata.get('instances') or []
-                        _inst_paths = [
-                            str(inst.get('instance_path', ''))
-                            for inst in _instances
-                            if inst.get('instance_path')
-                        ]
-                        _center = 0
-                        try:
-                            _viewer = getattr(vtk_widget, 'image_viewer', None)
-                            if _viewer is not None:
-                                _center = max(0, int(_viewer.GetSlice()))
-                        except Exception:
-                            pass
-                        if _inst_paths:
-                            self._image_slice_booster.set_active(
-                                series_number, _inst_paths, _center
-                            )
+                        if self._is_fast_viewer_mode():
+                            _instances = metadata.get('instances') or []
+                            _inst_paths = [
+                                str(inst.get('instance_path', ''))
+                                for inst in _instances
+                                if inst.get('instance_path')
+                            ]
+                            _center = 0
+                            try:
+                                _viewer = getattr(vtk_widget, 'image_viewer', None)
+                                if _viewer is not None:
+                                    _center = max(0, int(_viewer.GetSlice()))
+                            except Exception:
+                                pass
+                            if _inst_paths:
+                                self._image_slice_booster.set_active(
+                                    series_number, _inst_paths, _center
+                                )
+                        else:
+                            if self._image_slice_booster.is_active:
+                                self._image_slice_booster.clear()
                     except Exception:
                         pass
 
@@ -4776,9 +4809,9 @@ class ViewerController:
             if current_idx is None:
                 return
             
-            # Prefetch 3 ط³ط±غŒط² ط¨ط¹ط¯غŒ + 1 ط³ط±غŒط² ظ‚ط¨ظ„غŒ (ط§ع¯ط± ظ…ظˆط¬ظˆط¯ ط¨ط§ط´ظ†ط¯)
+            # Prefetch immediate neighbors (next two series).
             prefetch_indices = []
-            for offset in [-1, 1, 2, 3]:
+            for offset in [1, 2]:
                 candidate_idx = current_idx + offset
                 if 0 <= candidate_idx < len(thumbs):
                     prefetch_indices.append(candidate_idx)
@@ -4796,7 +4829,7 @@ class ViewerController:
                 
                 # Queue ط¨ط±ط§غŒ warmup lane (ط¨ط¯ظˆظ† blocking interactive)
                 try:
-                    self.zeta_boost.queue_load(sn, lane="warmup")
+                    self.zeta_boost.enqueue(sn, lane="warmup")
                     queued_count += 1
                 except Exception:
                     pass
@@ -5028,33 +5061,41 @@ class ViewerController:
             except Exception:
                 estimated_file_count = 0
 
-            # Load full series with correct path (preview path disabled by design)
-            # v2.2.3.2.4: Cap ITK threads to 2 for in-process first-series loads.
-            # Without this cap SimpleITK spawns N (= cpu_count) internal threads
-            # during apply_filters(), each periodically acquiring the GIL.
-            # With 8-16 ITK threads + 8 pydicom workers all in the viewer
-            # process, the UI/render thread starves for GIL access, producing
-            # the 50â€“60 ms scroll stalls seen in Mode B.  Capping to 2 threads
-            # keeps filter throughput high while reducing GIL contention to a
-            # level the Qt event loop can absorb without perceptible lag.
-            _dicom_t = time.perf_counter()
-            result = load_single_series_by_number(
-                study_path=study_path,  # Pass correct study path, not series path
-                series_number=series_number,
-                patient_pk=self.parent_widget.metadata_fixed.get('patient_pk', None),
-                study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
-                ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
-                max_itk_threads=2,
-                max_pydicom_workers=2,
-                viewer_backend=viewer_backend,
-                allow_lazy_backend=(viewer_backend != BACKEND_VTK),
-            )
+            max_itk_threads, max_pydicom_workers = self._get_interactive_load_limits(viewer_backend)
+            _gate_wait_start = time.perf_counter()
+            self._interactive_full_load_semaphore.acquire()
+            _gate_wait_ms = (time.perf_counter() - _gate_wait_start) * 1000.0
+            try:
+                if target_vtk_widget is not None and not self._is_request_current(target_vtk_widget, expected_token):
+                    return False
+
+                # Load full series with correct path (preview path disabled by design).
+                # A global gate prevents multiple full ITK pipelines from
+                # overlapping, which otherwise causes severe VTK scroll
+                # contention on software GL.
+                _dicom_t = time.perf_counter()
+                result = load_single_series_by_number(
+                    study_path=study_path,  # Pass correct study path, not series path
+                    series_number=series_number,
+                    patient_pk=self.parent_widget.metadata_fixed.get('patient_pk', None),
+                    study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
+                    ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
+                    max_itk_threads=max_itk_threads,
+                    max_pydicom_workers=max_pydicom_workers,
+                    viewer_backend=viewer_backend,
+                    allow_lazy_backend=(viewer_backend != BACKEND_VTK),
+                )
+            finally:
+                self._interactive_full_load_semaphore.release()
             _dicom_ms = (time.perf_counter() - _dicom_t) * 1000
             print(f"ًں“ٹ [LOAD] DICOM+ITK for series={series_number} took {_dicom_ms:.0f}ms files~={estimated_file_count} (thread={threading.current_thread().name})")
             self.logger.info(
-                "viewer-data stage=itk_pipeline_total duration_ms=%.2f files=%d",
+                "viewer-data stage=itk_pipeline_total duration_ms=%.2f files=%d gate_wait_ms=%.2f itk_threads=%d pydicom_workers=%d",
                 _dicom_ms,
                 estimated_file_count,
+                _gate_wait_ms,
+                int(max_itk_threads),
+                int(max_pydicom_workers),
                 extra={"component": "viewer", "function": "ViewerController._load_single_series_on_demand", "stage": "itk_pipeline"},
             )
 
@@ -5308,9 +5349,24 @@ class ViewerController:
         except Exception:
             return False
 
+    def _get_interactive_load_limits(self, viewer_backend: str) -> tuple[int, int]:
+        """
+        Choose conservative loader limits while the user is actively interacting.
+
+        For the Advanced VTK/SimpleITK path, background MR/CT series loads can
+        still starve software VTK rendering if they overlap scrolling. During
+        hot interaction we cut both ITK and pydicom worker counts to 1.
+        """
+        backend = str(viewer_backend or BACKEND_VTK)
+        if backend != BACKEND_VTK:
+            return 2, 2
+        if self._is_user_interaction_hot():
+            return 1, 1
+        return 2, 2
+
     # â”€â”€ Per-series download warmup (controlled Mode B caching) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    def _enqueue_download_warmup(self, series_number: str):
+    def _enqueue_download_warmup(self, series_number: str, force: bool = False):
         """Queue a completed series for background warmup during active download.
 
         v2.2.3.2.3: Routes to subprocess (GIL-free) by default.
@@ -5322,7 +5378,9 @@ class ViewerController:
         - Skips already-cached series.
         """
         try:
-            if self._zeta_slice_focus_mode:
+            # Keep slice-focus default behavior unless explicitly forced by
+            # look-ahead logic for adjacent series.
+            if self._zeta_slice_focus_mode and not bool(force):
                 return
             if not self._tab_active or not self._boostviewer_enabled:
                 return

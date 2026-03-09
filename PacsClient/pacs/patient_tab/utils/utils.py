@@ -514,6 +514,27 @@ def get_or_create_instance(files, itk_image: sitk.Image, series_pk, group_id, ma
             window_width = float(window_width)
 
         is_rgb = (meta_dicom.get("PhotometricInterpretation", "MONOCHROME2") == "RGB")
+        rescale_slope = meta_dicom.get("RescaleSlope", None)
+        rescale_intercept = meta_dicom.get("RescaleIntercept", None)
+        slice_thickness = meta_dicom.get("SliceThickness", None)
+        spacing_between_slices = meta_dicom.get("SpacingBetweenSlices", None)
+
+        try:
+            rescale_slope = float(rescale_slope) if rescale_slope is not None else 1.0
+        except Exception:
+            rescale_slope = 1.0
+        try:
+            rescale_intercept = float(rescale_intercept) if rescale_intercept is not None else 0.0
+        except Exception:
+            rescale_intercept = 0.0
+        try:
+            slice_thickness = float(slice_thickness) if slice_thickness is not None else None
+        except Exception:
+            slice_thickness = None
+        try:
+            spacing_between_slices = float(spacing_between_slices) if spacing_between_slices is not None else None
+        except Exception:
+            spacing_between_slices = None
 
         image_position_patient = _to_json(meta_dicom.get('ImagePositionPatient', None))
         image_orientation_patient = _to_json(meta_dicom.get('ImageOrientationPatient', None))
@@ -551,6 +572,12 @@ def get_or_create_instance(files, itk_image: sitk.Image, series_pk, group_id, ma
             'image_position_patient': image_position_patient,
             'image_orientation_patient': image_orientation_patient,
             'pixel_spacing': pixel_spacing,
+            'slice_thickness': slice_thickness,
+            'spacing_between_slices': spacing_between_slices,
+            'rescale_slope': rescale_slope,
+            'rescale_intercept': rescale_intercept,
+            'bits_allocated': int(meta_dicom.get("BitsAllocated", 16) or 16),
+            'pixel_representation': int(meta_dicom.get("PixelRepresentation", 1) or 1),
             'direction': direction_json
         }
 

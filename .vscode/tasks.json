@@ -1,10 +1,57 @@
 {
-	"version": "2.0.0",
-	"tasks": [
-		{
-			"label": "temp edit",
-			"type": "shell",
-			"command": "python tools/_temp_edit2.py"
-		}
-	]
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "temp edit",
+            "type": "shell",
+            "command": "python tools/_temp_edit2.py"
+        },
+        {
+            "label": "GitHub: Check connection (auto)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\tools\\git\\Push-GitHub.ps1",
+                "-Mode",
+                "Auto",
+                "-CheckOnly"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "GitHub: Push current branch (dry-run)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\tools\\git\\Push-GitHub.ps1",
+                "-Mode",
+                "Auto",
+                "-DryRun"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "GitHub: Push current branch",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\tools\\git\\Push-GitHub.ps1",
+                "-Mode",
+                "Auto"
+            ],
+            "problemMatcher": []
+        }
+    ]
 }

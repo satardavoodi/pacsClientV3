@@ -42,6 +42,8 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
 
         # moving mouse
         self.AddObserver("MouseMoveEvent", self.on_mouse_move)
+        # safety: release states if cursor leaves viewport while a button is held
+        self.AddObserver("LeaveEvent", self.on_leave_event)
 
         # mouse wheel - disable default zoom behavior to allow Qt wheelEvent to handle slice navigation
         self.AddObserver("MouseWheelForwardEvent", self.on_mouse_wheel_forward)
@@ -220,12 +222,34 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
     def on_middle_button_press(self, obj, event):
         self.middle_button_down = True
         self.last_pos = self.GetInteractor().GetEventPosition()
+        try:
+            # Prevent default VTK middle-button behavior from interfering
+            # with custom zoom/stack interaction state.
+            obj.AbortFlagOn()
+        except Exception:
+            pass
         self.emit_interaction()  # send signal for interaction
 
     def on_middle_button_release(self, obj, event):
         self.middle_button_down = False
         self.last_pos = None
+        try:
+            # Keep VTK style state deterministic even if middle press/release
+            # overlaps with custom interaction handlers.
+            obj.AbortFlagOn()
+        except Exception:
+            pass
         # self.emit_interaction()  # send signal for interaction
+
+    def on_leave_event(self, obj, event):
+        """Fail-safe reset for missed button-release events outside viewport."""
+        try:
+            if self.middle_button_down:
+                self.middle_button_down = False
+                if not self.left_button_down and not self.right_button_down:
+                    self.last_pos = None
+        except Exception:
+            pass
 
     ####################################################################
     def on_mouse_move(self, obj, event):

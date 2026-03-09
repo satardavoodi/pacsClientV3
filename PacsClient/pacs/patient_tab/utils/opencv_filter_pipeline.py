@@ -43,6 +43,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
+from PacsClient.pacs.patient_tab.utils.dicom_windowing import normalize_window_level, window_to_uint8
 
 logger = logging.getLogger(__name__)
 
@@ -307,8 +308,13 @@ def apply_pooyan_opencv_to_volume_int16(
     for z in range(nz):
         sl = volume[z]
         filtered_u8 = _filter_slice_int16_to_u8(sl, params, window_center, window_width)
-        # Map filtered uint8 back to original int16 range
-        out[z] = _map_u8_back_to_original(filtered_u8, sl, orig_dtype)
+        out[z] = _map_u8_back_to_original(
+            filtered_u8,
+            sl,
+            orig_dtype,
+            window_center=window_center,
+            window_width=window_width,
+        )
 
     return out
 
@@ -341,7 +347,13 @@ def apply_pooyan_opencv_to_slice_int16(
 
     orig_dtype = slice_2d.dtype
     filtered_u8 = _filter_slice_int16_to_u8(slice_2d, params, window_center, window_width)
-    return _map_u8_back_to_original(filtered_u8, slice_2d, orig_dtype)
+    return _map_u8_back_to_original(
+        filtered_u8,
+        slice_2d,
+        orig_dtype,
+        window_center=window_center,
+        window_width=window_width,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -360,14 +372,13 @@ def _filter_slice_int16_to_u8(
     Returns the filtered uint8 image.
     """
     # Window/Level → uint8
-    if window_center is not None and window_width is not None:
-        wl_min = window_center - window_width / 2.0
-        wl_max = window_center + window_width / 2.0
-        clipped = np.clip(sl.astype(np.float32), wl_min, wl_max)
-        if wl_max > wl_min:
-            u8 = ((clipped - wl_min) / (wl_max - wl_min) * 255.0).astype(np.uint8)
-        else:
-            u8 = np.zeros_like(sl, dtype=np.uint8)
+    ww, wc = normalize_window_level(
+        window_width,
+        window_center,
+        treat_legacy_placeholder_as_missing=True,
+    )
+    if ww is not None and wc is not None:
+        u8 = window_to_uint8(sl.astype(np.float32), ww, wc)
     else:
         # Auto-window: per-slice min/max (matches PooyanPacs default-window behavior)
         mn, mx = float(sl.min()), float(sl.max())
@@ -400,14 +411,19 @@ def _map_u8_back_to_original(
     filtered_u8: np.ndarray,
     original_slice: np.ndarray,
     orig_dtype: np.dtype,
+    *,
+    window_center: Optional[float] = None,
+    window_width: Optional[float] = None,
 ) -> np.ndarray:
     """
-    Map a filtered uint8 image back to the original int16 (or other) range.
+    Map a filtered uint8 image back to the original intensity domain.
 
-    Uses a linear mapping from [0,255] → [original_min, original_max].
-    This preserves the VTK window/level pipeline: the filtered data has
-    the same intensity range as the original but with enhanced contrast
-    from the unsharp mask.
+    If a DICOM window/level is known, map [0,255] back into that exact
+    window interval. This preserves the semantics of later VTK windowing
+    much better than stretching the filtered result across the full raw
+    slice min/max range.
+
+    Without a known window/level, fall back to [original_min, original_max].
     """
     if orig_dtype == np.uint8:
         return filtered_u8
@@ -418,8 +434,17 @@ def _map_u8_back_to_original(
     if (fh, fw) != (oh, ow):
         filtered_u8 = cv2.resize(filtered_u8, (ow, oh))
 
-    mn = float(original_slice.min())
-    mx = float(original_slice.max())
+    ww, wc = normalize_window_level(
+        window_width,
+        window_center,
+        treat_legacy_placeholder_as_missing=True,
+    )
+    if ww is not None and wc is not None:
+        mn = float(wc) - 0.5 - (float(ww) - 1.0) / 2.0
+        mx = float(wc) - 0.5 + (float(ww) - 1.0) / 2.0
+    else:
+        mn = float(original_slice.min())
+        mx = float(original_slice.max())
     if mx > mn:
         # Linear map: uint8 [0,255] → [min, max] of original
         result = (filtered_u8.astype(np.float32) / 255.0 * (mx - mn) + mn)

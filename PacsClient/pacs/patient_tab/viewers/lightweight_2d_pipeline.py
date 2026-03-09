@@ -27,11 +27,16 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import cv2
 import numpy as np
 import pydicom
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QImage
+from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
+    auto_window_level_from_array,
+    normalize_window_level,
+    window_to_uint8,
+)
+from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import PooyanFilterParams, pooyan_filter_center
 
 logger = logging.getLogger(__name__)
 
@@ -99,16 +104,19 @@ class RenderedFrame:
 class PipelineConfig:
     """Configuration for the lightweight 2D pipeline."""
     # Cache sizes
-    pixel_cache_size: int = 48       # raw decoded slices
-    frame_cache_size: int = 32       # rendered QImages
+    pixel_cache_size: int = 96       # raw decoded slices
+    frame_cache_size: int = 96       # rendered QImages
     # Prefetch
-    prefetch_radius: int = 3         # slices ahead/behind to decode
-    prefetch_workers: int = 2        # background decode threads
+    prefetch_radius: int = 20        # slices ahead/behind to warm
+    prefetch_workers: int = 4        # background decode/render threads
     # OpenCV filter (PooyanPacs unsharp mask)
     opencv_filter_enabled: bool = True
     opencv_sigma_x: float = 1.0
     opencv_alpha: float = 1.4
     opencv_beta: float = -0.5
+    opencv_invert: bool = False
+    opencv_small_threshold: int = 280
+    opencv_preserve_dimensions: bool = True
     # Performance
     decode_timeout_ms: float = 500.0  # max decode time before marking slow
 
@@ -155,12 +163,7 @@ def _normal_from_iop(iop: Sequence[float]) -> np.ndarray:
 
 def _window_level_to_uint8(arr: np.ndarray, window: float, level: float) -> np.ndarray:
     """Apply DICOM window/level and convert to uint8."""
-    ww = max(float(window), 1.0)
-    wl = float(level)
-    lower = wl - ww / 2.0
-    upper = wl + ww / 2.0
-    clipped = np.clip(arr, lower, upper)
-    return ((clipped - lower) / (upper - lower) * 255.0).astype(np.uint8, copy=False)
+    return window_to_uint8(arr, window, level)
 
 
 def _apply_opencv_filter_uint8(
@@ -168,15 +171,20 @@ def _apply_opencv_filter_uint8(
     sigma_x: float = 1.0,
     alpha: float = 1.4,
     beta: float = -0.5,
+    invert: bool = False,
+    small_threshold: int = 280,
+    preserve_dimensions: bool = True,
 ) -> np.ndarray:
-    """
-    PooyanPacs FilterCenter unsharp mask on uint8 image.
-    Operates in-place on BGR (matching C# pipeline) then returns grayscale.
-    """
-    bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    blurred = cv2.GaussianBlur(bgr, (0, 0), sigma_x)
-    dst = cv2.addWeighted(bgr, alpha, blurred, beta, 0.0)
-    return cv2.cvtColor(dst, cv2.COLOR_BGR2GRAY)
+    params = PooyanFilterParams(
+        sigma_x=float(sigma_x),
+        alpha=float(alpha),
+        beta=float(beta),
+        enabled=True,
+        invert=bool(invert),
+        small_threshold=int(small_threshold),
+        preserve_dimensions=bool(preserve_dimensions),
+    )
+    return pooyan_filter_center(gray, params)
 
 
 def _numpy_to_qimage_gray(arr: np.ndarray, width: int, height: int) -> QImage:
@@ -240,10 +248,15 @@ class Lightweight2DPipeline(QObject):
 
         # Prefetch
         self._prefetch_pending: set = set()
+        self._frame_prefetch_pending: set = set()
         self._prefetch_lock = threading.Lock()
-        self._executor = ThreadPoolExecutor(
+        self._decode_executor = ThreadPoolExecutor(
             max_workers=self._config.prefetch_workers,
-            thread_name_prefix="LW2D-Prefetch",
+            thread_name_prefix="LW2D-Decode",
+        )
+        self._frame_executor = ThreadPoolExecutor(
+            max_workers=max(2, min(4, int(self._config.prefetch_workers))),
+            thread_name_prefix="LW2D-Frame",
         )
 
         # Metrics
@@ -296,8 +309,12 @@ class Lightweight2DPipeline(QObject):
 
         # Set initial window/level from first slice
         if self._slices:
-            self._window = self._slices[0].window_width
-            self._level = self._slices[0].window_center
+            self._window, self._level = normalize_window_level(
+                self._slices[0].window_width,
+                self._slices[0].window_center,
+                treat_legacy_placeholder_as_missing=True,
+            )
+            self._prefetch_around(0)
 
         logger.info(
             "lw2d-pipeline open_series slices=%d path=%s",
@@ -310,6 +327,7 @@ class Lightweight2DPipeline(QObject):
         self._frame_cache.clear()
         with self._prefetch_lock:
             self._prefetch_pending.clear()
+            self._frame_prefetch_pending.clear()
         self._slices.clear()
         self._current_index = 0
         self._window = None
@@ -325,6 +343,8 @@ class Lightweight2DPipeline(QObject):
         self._level = float(level) if level is not None else None
         # Invalidate rendered frame cache (pixel cache stays valid)
         self._frame_cache.clear()
+        if self._is_open and self._slices:
+            self._prefetch_around(self._current_index)
 
     def get_window_level(self) -> Tuple[Optional[float], Optional[float]]:
         return self._window, self._level
@@ -334,22 +354,16 @@ class Lightweight2DPipeline(QObject):
         idx = self._clamp(slice_index)
         sm = self._slices[idx]
 
-        ww = sm.window_width
-        wc = sm.window_center
+        ww, wc = normalize_window_level(
+            sm.window_width,
+            sm.window_center,
+            treat_legacy_placeholder_as_missing=True,
+        )
 
-        if ww is None or wc is None or (ww < 300 and wc < 300):
-            # Try to auto-calculate from pixel data
+        if ww is None or wc is None:
             arr = self._get_pixel_array(idx)
             if arr is not None:
-                lo = float(np.percentile(arr, 1))
-                hi = float(np.percentile(arr, 99))
-                # Check if CT data (Hounsfield units)
-                if lo < -500 and hi > 1000:
-                    ww = 400.0
-                    wc = 40.0
-                else:
-                    ww = max(1.0, hi - lo)
-                    wc = (hi + lo) / 2.0
+                ww, wc = auto_window_level_from_array(arr, 1.0, 99.0)
             else:
                 ww = ww or 256.0
                 wc = wc or 128.0
@@ -400,35 +414,46 @@ class Lightweight2DPipeline(QObject):
         Get a fully-rendered frame for display (decode + filter + W/L + QImage).
         Uses cache when available.
         """
-        t_start = time.perf_counter()
         idx = self._clamp(slice_index)
         sm = self._slices[idx]
-
-        # Resolve window/level
         ww, wc = self._resolve_window_level(idx)
         filter_enabled = self._config.opencv_filter_enabled
-
-        # Check frame cache
-        cache_key = (idx, ww, wc, filter_enabled)
+        cache_key = self._frame_cache_key(idx, ww, wc, filter_enabled)
         if cache_key in self._frame_cache:
             qimg = self._frame_cache.pop(cache_key)
             self._frame_cache[cache_key] = qimg
-            total_ms = (time.perf_counter() - t_start) * 1000.0
             self._record_cache_hit()
             return RenderedFrame(
                 qimage=qimg, width=qimg.width(), height=qimg.height(),
                 slice_index=idx, window_width=ww, window_center=wc,
                 photometric=sm.photometric, decode_ms=0.0, filter_ms=0.0,
-                wl_ms=0.0, total_ms=total_ms,
+                wl_ms=0.0, total_ms=0.0,
             )
+        frame = self._render_frame_uncached(idx, ww, wc, filter_enabled, record_metrics=True)
+        self._prefetch_around(idx)
+        return frame
 
-        # Get raw pixel data
+    def _frame_cache_key(self, idx: int, ww: float, wc: float, filter_enabled: bool) -> Tuple[int, float, float, bool]:
+        return int(idx), float(ww), float(wc), bool(filter_enabled)
+
+    def _render_frame_uncached(
+        self,
+        idx: int,
+        ww: float,
+        wc: float,
+        filter_enabled: bool,
+        *,
+        record_metrics: bool,
+    ) -> RenderedFrame:
+        t_start = time.perf_counter()
+        sm = self._slices[idx]
+        cache_key = self._frame_cache_key(idx, ww, wc, filter_enabled)
+
         t_decode = time.perf_counter()
         arr = self._get_pixel_array(idx)
         decode_ms = (time.perf_counter() - t_decode) * 1000.0
 
         if arr is None:
-            # Fallback: black frame
             qimg = QImage(sm.cols or 512, sm.rows or 512, QImage.Format.Format_Grayscale8)
             qimg.fill(0)
             return RenderedFrame(
@@ -438,24 +463,20 @@ class Lightweight2DPipeline(QObject):
                 wl_ms=0.0, total_ms=(time.perf_counter() - t_start) * 1000.0,
             )
 
-        # RGB path: no W/L, no filter
         if sm.samples_per_pixel >= 3 or sm.is_rgb:
             qimg = _numpy_to_qimage_rgb(arr, sm.cols, sm.rows)
-            total_ms = (time.perf_counter() - t_start) * 1000.0
             self._put_frame_cache(cache_key, qimg)
             return RenderedFrame(
                 qimage=qimg, width=qimg.width(), height=qimg.height(),
                 slice_index=idx, window_width=ww, window_center=wc,
                 photometric=sm.photometric, decode_ms=decode_ms, filter_ms=0.0,
-                wl_ms=0.0, total_ms=total_ms,
+                wl_ms=0.0, total_ms=(time.perf_counter() - t_start) * 1000.0,
             )
 
-        # Grayscale path: W/L → uint8 → filter → QImage
         t_wl = time.perf_counter()
         disp = _window_level_to_uint8(arr.astype(np.float32, copy=False), ww, wc)
         wl_ms = (time.perf_counter() - t_wl) * 1000.0
 
-        # OpenCV PooyanPacs filter
         t_filter = time.perf_counter()
         if filter_enabled:
             disp = _apply_opencv_filter_uint8(
@@ -463,23 +484,21 @@ class Lightweight2DPipeline(QObject):
                 sigma_x=self._config.opencv_sigma_x,
                 alpha=self._config.opencv_alpha,
                 beta=self._config.opencv_beta,
+                invert=self._config.opencv_invert,
+                small_threshold=self._config.opencv_small_threshold,
+                preserve_dimensions=self._config.opencv_preserve_dimensions,
             )
         filter_ms = (time.perf_counter() - t_filter) * 1000.0
 
         qimg = _numpy_to_qimage_gray(disp, sm.cols, sm.rows)
-        total_ms = (time.perf_counter() - t_start) * 1000.0
-
         self._put_frame_cache(cache_key, qimg)
-        self._record_decode(decode_ms, filter_ms, wl_ms)
-
-        # Prefetch neighbors
-        self._prefetch_around(idx)
-
+        if record_metrics:
+            self._record_decode(decode_ms, filter_ms, wl_ms)
         return RenderedFrame(
             qimage=qimg, width=qimg.width(), height=qimg.height(),
             slice_index=idx, window_width=ww, window_center=wc,
             photometric=sm.photometric, decode_ms=decode_ms, filter_ms=filter_ms,
-            wl_ms=wl_ms, total_ms=total_ms,
+            wl_ms=wl_ms, total_ms=(time.perf_counter() - t_start) * 1000.0,
         )
 
     def set_slice_index(self, index: int) -> bool:
@@ -605,15 +624,25 @@ class Lightweight2DPipeline(QObject):
             else:
                 candidates = (center + offset, center - offset)
             for idx in candidates:
-                if 0 <= idx < len(self._slices) and idx not in self._pixel_cache:
-                    self._submit_prefetch(idx)
+                if 0 <= idx < len(self._slices):
+                    if idx not in self._pixel_cache:
+                        self._submit_prefetch(idx)
+                    else:
+                        self._submit_frame_prefetch(idx)
 
     def _submit_prefetch(self, idx: int) -> None:
         with self._prefetch_lock:
             if idx in self._pixel_cache or idx in self._prefetch_pending:
                 return
             self._prefetch_pending.add(idx)
-        self._executor.submit(self._decode_into_cache, idx)
+        self._decode_executor.submit(self._decode_into_cache, idx)
+
+    def _submit_frame_prefetch(self, idx: int) -> None:
+        with self._prefetch_lock:
+            if idx in self._frame_prefetch_pending:
+                return
+            self._frame_prefetch_pending.add(idx)
+        self._frame_executor.submit(self._render_into_cache, idx)
 
     def _decode_into_cache(self, idx: int) -> None:
         if idx in self._pixel_cache:
@@ -623,34 +652,45 @@ class Lightweight2DPipeline(QObject):
         try:
             arr = self._decode_slice(idx)
             self._put_pixel_cache(idx, arr)
+            self._submit_frame_prefetch(idx)
         except Exception:
             pass
         finally:
             with self._prefetch_lock:
                 self._prefetch_pending.discard(idx)
 
+    def _render_into_cache(self, idx: int) -> None:
+        try:
+            ww, wc = self._resolve_window_level(idx)
+            filter_enabled = self._config.opencv_filter_enabled
+            cache_key = self._frame_cache_key(idx, ww, wc, filter_enabled)
+            if cache_key in self._frame_cache:
+                return
+            self._render_frame_uncached(idx, ww, wc, filter_enabled, record_metrics=False)
+        except Exception:
+            pass
+        finally:
+            with self._prefetch_lock:
+                self._frame_prefetch_pending.discard(idx)
+
     # ── Private: window/level ─────────────────────────────────────────
 
     def _resolve_window_level(self, idx: int) -> Tuple[float, float]:
         """Get effective W/L for a slice."""
-        ww = self._window
-        wc = self._level
+        ww, wc = normalize_window_level(self._window, self._level)
         sm = self._slices[idx]
 
         if ww is None or wc is None:
-            ww = sm.window_width
-            wc = sm.window_center
+            ww, wc = normalize_window_level(
+                sm.window_width,
+                sm.window_center,
+                treat_legacy_placeholder_as_missing=True,
+            )
 
         if ww is None or wc is None:
             arr = self._get_pixel_array(idx)
             if arr is not None:
-                lo = float(np.percentile(arr, 1))
-                hi = float(np.percentile(arr, 99))
-                if lo < -500 and hi > 1000:
-                    ww, wc = 400.0, 40.0
-                else:
-                    ww = max(1.0, hi - lo)
-                    wc = (hi + lo) / 2.0
+                ww, wc = auto_window_level_from_array(arr, 1.0, 99.0)
             else:
                 ww, wc = 256.0, 128.0
 

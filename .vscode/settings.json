@@ -1,5 +1,6 @@
 {
     "github.copilot.advanced": {},
+    "github.gitProtocol": "https",
     "chat.tools.terminal.autoApprove": {
         "/^python(\\.exe)? .*main\\.py\"?$/": {
             "approve": true,

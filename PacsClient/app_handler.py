@@ -13,9 +13,10 @@ from PySide6.QtWidgets import (
     QWidget,
     QProgressBar,
     QGraphicsDropShadowEffect,
+    QLayout,
 )
 from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QIcon
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QSize
 import json
 import os
 import qtawesome as qta
@@ -39,8 +40,13 @@ class AppHandler(QDialog):
         icon_path = fr"{IMAGES_LOGIN_PATH}/'favicon.ico'"
 
         self.setWindowIcon(QIcon(icon_path))
-        self.resize(1000, 640)
-        self.setMinimumSize(900, 580)
+        self._default_dialog_size = QSize(1000, 700)
+        self._minimum_dialog_size = QSize(900, 660)
+        self._error_banner_min_height = 60
+        self._error_label_target_height = self._error_banner_min_height
+        self._hide_error_pending = False
+        self.resize(self._default_dialog_size)
+        self.setMinimumSize(self._minimum_dialog_size)
         
         # Set window properties for better taskbar integration
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
@@ -198,6 +204,7 @@ class AppHandler(QDialog):
         # Root layout
         root_layout = QHBoxLayout(self)
         root_layout.setContentsMargins(20, 20, 20, 20)
+        root_layout.setSizeConstraint(QLayout.SetMinimumSize)
         root_layout.addWidget(main_container)
         
         # Container layout: two panels
@@ -280,6 +287,7 @@ class AppHandler(QDialog):
         # Error display with animation support
         self.error_label = QLabel("", form_panel)
         self.error_label.setObjectName("ErrorLabel")
+        self.error_label.setWordWrap(True)
         self.error_label.setVisible(False)
         self.error_label.setMaximumHeight(0)
         form_layout.addWidget(self.error_label)
@@ -469,6 +477,7 @@ class AppHandler(QDialog):
         # Fade in animation on startup
         self.setWindowOpacity(0)
         self.fade_in_animation.start()
+        QTimer.singleShot(0, self._ensure_welcome_page_height)
 
     def _setup_animations(self):
         """Setup smooth animations for UI interactions"""
@@ -483,6 +492,7 @@ class AppHandler(QDialog):
         self.error_height_animation = QPropertyAnimation(self.error_label, b"maximumHeight")
         self.error_height_animation.setDuration(300)
         self.error_height_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self.error_height_animation.finished.connect(self._on_error_animation_finished)
         
         # Error fade animation
         self.error_fade_animation = QPropertyAnimation(self.error_label, b"windowOpacity")
@@ -493,34 +503,58 @@ class AppHandler(QDialog):
 
     def _show_error(self, message):
         """Show error with smooth animation"""
+        self.error_height_animation.stop()
+        self._hide_error_pending = False
         self.error_label.setText(message)
         self.error_label.setVisible(True)
+
+        # Measure the alert at its natural size before animating it open.
+        self.error_label.setMaximumHeight(16777215)
+        self._error_label_target_height = max(
+            self._error_banner_min_height,
+            self.error_label.sizeHint().height(),
+        )
+        self.error_label.setMaximumHeight(0)
+        self._ensure_welcome_page_height(extra_height=self._error_label_target_height)
         
         # Animate height from 0 to content height
-        self.error_height_animation.setStartValue(0)
-        self.error_height_animation.setEndValue(60)
-        self.error_height_animation.finished.connect(lambda: self._shake_form())
+        self.error_height_animation.setStartValue(self.error_label.maximumHeight())
+        self.error_height_animation.setEndValue(self._error_label_target_height)
         self.error_height_animation.start()
 
     def _hide_error(self):
         """Hide error with smooth animation"""
-        self.error_height_animation.setStartValue(60)
+        self.error_height_animation.stop()
+        self._hide_error_pending = True
+        self.error_height_animation.setStartValue(self.error_label.maximumHeight())
         self.error_height_animation.setEndValue(0)
-        self.error_height_animation.finished.connect(lambda: self.error_label.setVisible(False))
         self.error_height_animation.start()
 
-    def _shake_form(self):
-        """Subtle shake animation for form on error"""
-        original_pos = self.pos()
-        shake_animation = QPropertyAnimation(self, b"pos")
-        shake_animation.setDuration(400)
-        shake_animation.setKeyValueAt(0, original_pos)
-        shake_animation.setKeyValueAt(0.1, original_pos + QRect(5, 0, 0, 0).topLeft())
-        shake_animation.setKeyValueAt(0.2, original_pos + QRect(-5, 0, 0, 0).topLeft())
-        shake_animation.setKeyValueAt(0.3, original_pos + QRect(3, 0, 0, 0).topLeft())
-        shake_animation.setKeyValueAt(0.4, original_pos + QRect(-3, 0, 0, 0).topLeft())
-        shake_animation.setKeyValueAt(1, original_pos)
-        shake_animation.start()
+    def _on_error_animation_finished(self):
+        if self._hide_error_pending and self.error_height_animation.endValue() == 0:
+            self.error_label.setVisible(False)
+            self._hide_error_pending = False
+
+    def _ensure_welcome_page_height(self, extra_height=0):
+        """Grow the dialog enough to fit the full login form in all states."""
+        layout = self.layout()
+        if layout is None:
+            return
+
+        layout_minimum = layout.totalMinimumSize()
+        target_width = max(self._minimum_dialog_size.width(), layout_minimum.width())
+        target_height = max(
+            self._minimum_dialog_size.height(),
+            layout_minimum.height() + extra_height,
+        )
+
+        if self.minimumWidth() != target_width or self.minimumHeight() != target_height:
+            self.setMinimumSize(target_width, target_height)
+
+        new_width = max(self.width(), target_width, self._default_dialog_size.width())
+        new_height = max(self.height(), target_height, self._default_dialog_size.height())
+        if new_width != self.width() or new_height != self.height():
+            self.resize(new_width, new_height)
 
     def _set_loading_state(self, loading=True):
         """Set UI to loading state with progress animation"""

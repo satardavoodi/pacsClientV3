@@ -37,10 +37,14 @@ def insert_series(series_uid: str, study_fk: int, series_name: str = None, serie
 def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_number: int = None, rows: int = None,
                     columns: int = None, window_width: float = None, window_center: float = None,
                     is_rgb: bool = False, group_id=0, image_position_patient=None, image_orientation_patient=None,
-                    pixel_spacing=None, direction=None) -> int:
+                    pixel_spacing=None, direction=None, slice_thickness: float = None,
+                    spacing_between_slices: float = None, rescale_slope: float = None,
+                    rescale_intercept: float = None, bits_allocated: int = None,
+                    pixel_representation: int = None) -> int:
     return database.insert_instance(sop_uid, series_fk, instance_path, instance_number, rows, columns, window_width,
                                     window_center, is_rgb, group_id, image_position_patient, image_orientation_patient,
-                                    pixel_spacing, direction)
+                                    pixel_spacing, direction, slice_thickness, spacing_between_slices,
+                                    rescale_slope, rescale_intercept, bits_allocated, pixel_representation)
 
 
 ###############################################################################################
@@ -397,8 +401,20 @@ def get_instances_by_series_pk(series_pk: int, group_id: int) -> list[dict]:
     conn = get_connection_database()
     cur = conn.cursor()
 
-    cur.execute("SELECT * FROM instances WHERE series_fk = ? AND group_id = ? ORDER BY instance_number",
-                (series_pk, group_id))
+    cur.execute(
+        """
+        SELECT
+            instance_pk, sop_uid, series_fk, instance_path, instance_number,
+            rows, columns, window_width, window_center, is_rgb, group_id,
+            image_position_patient, image_orientation_patient, pixel_spacing, direction,
+            slice_thickness, spacing_between_slices, rescale_slope, rescale_intercept,
+            bits_allocated, pixel_representation
+        FROM instances
+        WHERE series_fk = ? AND group_id = ?
+        ORDER BY instance_number
+        """,
+        (series_pk, group_id),
+    )
     rows = cur.fetchall()
 
     keys = [
@@ -416,7 +432,13 @@ def get_instances_by_series_pk(series_pk: int, group_id: int) -> list[dict]:
         'image_position_patient',
         'image_orientation_patient',
         'pixel_spacing',
-        'direction'
+        'direction',
+        'slice_thickness',
+        'spacing_between_slices',
+        'rescale_slope',
+        'rescale_intercept',
+        'bits_allocated',
+        'pixel_representation'
     ]
 
     # print('rows:', rows)

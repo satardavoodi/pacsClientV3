@@ -377,14 +377,20 @@ def init_database():
                 instance_number INTEGER DEFAULT NULL,
                 rows            INTEGER DEFAULT NULL,
                 columns         INTEGER DEFAULT NULL,
-                window_width    REAL DEFAULT 127.5,
-                window_center   REAL DEFAULT 255,
+                window_width    REAL DEFAULT NULL,
+                window_center   REAL DEFAULT NULL,
                 is_rgb          BOOLEAN DEFAULT 0,
                 group_id        INTEGER,
                 image_position_patient  TEXT DEFAULT NULL,
                 image_orientation_patient  TEXT DEFAULT NULL,
                 pixel_spacing  TEXT DEFAULT NULL,
                 direction  TEXT DEFAULT NULL,
+                slice_thickness REAL DEFAULT NULL,
+                spacing_between_slices REAL DEFAULT NULL,
+                rescale_slope REAL DEFAULT 1.0,
+                rescale_intercept REAL DEFAULT 0.0,
+                bits_allocated INTEGER DEFAULT 16,
+                pixel_representation INTEGER DEFAULT 1,
                 FOREIGN KEY(series_fk) REFERENCES series(series_pk) ON DELETE CASCADE
             )
             """
@@ -503,6 +509,24 @@ def init_database():
                 cur.execute("ALTER TABLE courses ADD COLUMN import_manifest_path TEXT DEFAULT ''")
         except Exception as e:
             print(f"Migration warning: {e}")
+
+        try:
+            cur.execute("PRAGMA table_info(instances)")
+            instance_columns = [col[1] for col in cur.fetchall()]
+            if 'slice_thickness' not in instance_columns:
+                cur.execute("ALTER TABLE instances ADD COLUMN slice_thickness REAL DEFAULT NULL")
+            if 'spacing_between_slices' not in instance_columns:
+                cur.execute("ALTER TABLE instances ADD COLUMN spacing_between_slices REAL DEFAULT NULL")
+            if 'rescale_slope' not in instance_columns:
+                cur.execute("ALTER TABLE instances ADD COLUMN rescale_slope REAL DEFAULT 1.0")
+            if 'rescale_intercept' not in instance_columns:
+                cur.execute("ALTER TABLE instances ADD COLUMN rescale_intercept REAL DEFAULT 0.0")
+            if 'bits_allocated' not in instance_columns:
+                cur.execute("ALTER TABLE instances ADD COLUMN bits_allocated INTEGER DEFAULT 16")
+            if 'pixel_representation' not in instance_columns:
+                cur.execute("ALTER TABLE instances ADD COLUMN pixel_representation INTEGER DEFAULT 1")
+        except Exception as e:
+            print(f"Instance migration warning: {e}")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS slides (
@@ -1350,7 +1374,13 @@ def insert_instances_batch(instances: list) -> int:
                 inst.get('image_position_patient'),
                 inst.get('image_orientation_patient'),
                 inst.get('pixel_spacing'),
-                inst.get('direction')
+                inst.get('direction'),
+                inst.get('slice_thickness'),
+                inst.get('spacing_between_slices'),
+                inst.get('rescale_slope', 1.0),
+                inst.get('rescale_intercept', 0.0),
+                inst.get('bits_allocated', 16),
+                inst.get('pixel_representation', 1)
             ))
         
         cur.executemany(
@@ -1358,8 +1388,10 @@ def insert_instances_batch(instances: list) -> int:
             INSERT OR REPLACE INTO instances
                 (sop_uid, series_fk, instance_path, instance_number, rows, columns,
                  window_width, window_center, is_rgb, group_id, 
-                 image_position_patient, image_orientation_patient, pixel_spacing, direction)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 image_position_patient, image_orientation_patient, pixel_spacing, direction,
+                 slice_thickness, spacing_between_slices, rescale_slope, rescale_intercept,
+                 bits_allocated, pixel_representation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             insert_data
         )
@@ -1379,7 +1411,10 @@ def insert_instances_batch(instances: list) -> int:
 def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_number: int = None, rows: int = None,
                     columns: int = None, window_width: float = None, window_center: float = None,
                     is_rgb: bool = False, group_id=0, image_position_patient=None,
-                    image_orientation_patient=None, pixel_spacing=None, direction=None) -> int:
+                    image_orientation_patient=None, pixel_spacing=None, direction=None,
+                    slice_thickness: float = None, spacing_between_slices: float = None,
+                    rescale_slope: float = None, rescale_intercept: float = None,
+                    bits_allocated: int = None, pixel_representation: int = None) -> int:
 
     """Insert an instance row and return its PK. Updates metadata if instance already exists.
     
@@ -1418,8 +1453,10 @@ def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_n
             INSERT INTO instances
                 (sop_uid, series_fk, instance_path, instance_number, rows, columns,
                  window_width, window_center, is_rgb, group_id, image_position_patient,
-                  image_orientation_patient, pixel_spacing, direction)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  image_orientation_patient, pixel_spacing, direction, slice_thickness,
+                  spacing_between_slices, rescale_slope, rescale_intercept, bits_allocated,
+                  pixel_representation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sop_uid,
@@ -1435,7 +1472,13 @@ def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_n
                 image_position_json,
                 image_orientation_json,
                 pixel_spacing_json,
-                direction_json
+                direction_json,
+                slice_thickness,
+                spacing_between_slices,
+                rescale_slope,
+                rescale_intercept,
+                bits_allocated,
+                pixel_representation
             ),
         )
         # If insert succeeded, get the new instance_pk
@@ -1451,7 +1494,13 @@ def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_n
                 image_position_patient = COALESCE(?, image_position_patient),
                 image_orientation_patient = COALESCE(?, image_orientation_patient),
                 pixel_spacing = COALESCE(?, pixel_spacing),
-                direction = COALESCE(?, direction)
+                direction = COALESCE(?, direction),
+                slice_thickness = COALESCE(?, slice_thickness),
+                spacing_between_slices = COALESCE(?, spacing_between_slices),
+                rescale_slope = COALESCE(?, rescale_slope),
+                rescale_intercept = COALESCE(?, rescale_intercept),
+                bits_allocated = COALESCE(?, bits_allocated),
+                pixel_representation = COALESCE(?, pixel_representation)
             WHERE sop_uid = ?
             """,
             (
@@ -1460,6 +1509,9 @@ def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_n
                 window_width, window_center, int(is_rgb), int(group_id),
                 image_position_json, image_orientation_json,
                 pixel_spacing_json, direction_json,
+                slice_thickness, spacing_between_slices,
+                rescale_slope, rescale_intercept,
+                bits_allocated, pixel_representation,
                 sop_uid
             )
         )
@@ -3155,8 +3207,10 @@ def bulk_insert_instances(instances_data: list):
         INSERT OR REPLACE INTO instances (
             sop_uid, series_fk, instance_path, instance_number,
             rows, columns, window_width, window_center, is_rgb, group_id,
-            image_position_patient, image_orientation_patient, pixel_spacing, direction
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            image_position_patient, image_orientation_patient, pixel_spacing, direction,
+            slice_thickness, spacing_between_slices, rescale_slope, rescale_intercept,
+            bits_allocated, pixel_representation
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     
     # Prepare values for executemany
@@ -3182,7 +3236,13 @@ def bulk_insert_instances(instances_data: list):
             inst['image_position_patient'],
             inst['image_orientation_patient'],
             inst['pixel_spacing'],
-            inst['direction']
+            inst['direction'],
+            inst.get('slice_thickness'),
+            inst.get('spacing_between_slices'),
+            inst.get('rescale_slope', 1.0),
+            inst.get('rescale_intercept', 0.0),
+            inst.get('bits_allocated', 16),
+            inst.get('pixel_representation', 1)
         ))
     
     try:
@@ -3217,7 +3277,13 @@ def bulk_update_instances(instances_data: list):
             image_position_patient = COALESCE(?, image_position_patient),
             image_orientation_patient = COALESCE(?, image_orientation_patient),
             pixel_spacing = COALESCE(?, pixel_spacing),
-            direction = COALESCE(?, direction)
+            direction = COALESCE(?, direction),
+            slice_thickness = COALESCE(?, slice_thickness),
+            spacing_between_slices = COALESCE(?, spacing_between_slices),
+            rescale_slope = COALESCE(?, rescale_slope),
+            rescale_intercept = COALESCE(?, rescale_intercept),
+            bits_allocated = COALESCE(?, bits_allocated),
+            pixel_representation = COALESCE(?, pixel_representation)
         WHERE sop_uid = ?
     """
     
@@ -3244,6 +3310,12 @@ def bulk_update_instances(instances_data: list):
             inst['image_orientation_patient'],
             inst['pixel_spacing'],
             inst['direction'],
+            inst.get('slice_thickness'),
+            inst.get('spacing_between_slices'),
+            inst.get('rescale_slope', 1.0),
+            inst.get('rescale_intercept', 0.0),
+            inst.get('bits_allocated', 16),
+            inst.get('pixel_representation', 1),
             inst['sop_uid']  # WHERE clause
         ))
     

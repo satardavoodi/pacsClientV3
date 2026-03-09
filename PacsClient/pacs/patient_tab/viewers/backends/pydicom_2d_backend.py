@@ -15,6 +15,11 @@ import numpy as np
 import pydicom
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QImage
+from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
+    auto_window_level_from_array,
+    normalize_window_level,
+    window_to_uint8,
+)
 
 from .contracts import FrameData, GeometryData
 
@@ -61,13 +66,7 @@ def _normal_from_iop(iop: Sequence[float]) -> np.ndarray:
 
 
 def _window_level_to_uint8(arr: np.ndarray, window: float, level: float) -> np.ndarray:
-    ww = max(float(window), 1.0)
-    wl = float(level)
-    lower = wl - ww / 2.0
-    upper = wl + ww / 2.0
-    clipped = np.clip(arr, lower, upper)
-    scaled = ((clipped - lower) / (upper - lower) * 255.0).astype(np.uint8, copy=False)
-    return scaled
+    return window_to_uint8(arr, window, level)
 
 
 @dataclass
@@ -114,6 +113,7 @@ class PyDicom2DBackend(QObject):
         max_workers = max(1, int(os.getenv("AIPACS_PYDICOM_DECODE_WORKERS", "2") or "2"))
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="PyDicom2D")
         self._series_path: Optional[str] = None
+        self._series_modality: str = ""
 
     @property
     def capabilities(self) -> Dict[str, Any]:
@@ -127,13 +127,22 @@ class PyDicom2DBackend(QObject):
     def open_series(self, series_path: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         self.close_series()
         self._series_path = str(series_path)
+        self._series_modality = ""
         series_number = "-"
         if isinstance(metadata, dict):
-            series_number = str((metadata.get("series", {}) or {}).get("series_number", "-"))
+            series_meta = metadata.get("series", {}) or {}
+            series_number = str(series_meta.get("series_number", "-"))
+            self._series_modality = str(series_meta.get("modality", "") or "").upper()
         if metadata and metadata.get("instances"):
             self._slices = self._from_metadata_instances(metadata["instances"])
         else:
             self._slices = self._scan_series_headers(Path(series_path))
+        if not self._series_modality and self._slices:
+            try:
+                ds0 = pydicom.dcmread(self._slices[0].path, stop_before_pixels=True, force=True)
+                self._series_modality = str(getattr(ds0, "Modality", "") or "").upper()
+            except Exception:
+                self._series_modality = ""
         self._slices = self._sort_slices(self._slices)
         self._attach_spacing_between_slices()
         self._slice_index = 0
@@ -141,8 +150,11 @@ class PyDicom2DBackend(QObject):
         last_path = self._slices[-1].path if self._slices else ""
 
         if self._slices:
-            ww = self._slices[0].window_width
-            wc = self._slices[0].window_center
+            ww, wc = normalize_window_level(
+                self._slices[0].window_width,
+                self._slices[0].window_center,
+                treat_legacy_placeholder_as_missing=True,
+            )
             self._window = ww
             self._level = wc
         logger.info(
@@ -174,6 +186,7 @@ class PyDicom2DBackend(QObject):
         self._window = None
         self._level = None
         self._series_path = None
+        self._series_modality = ""
 
     def get_slice_count(self) -> int:
         return len(self._slices)
@@ -192,6 +205,22 @@ class PyDicom2DBackend(QObject):
 
     def get_window_level(self) -> Tuple[Optional[float], Optional[float]]:
         return self._window, self._level
+
+    def get_default_window_level(self, slice_index: int) -> Tuple[float, float]:
+        idx = self._clamp_index(slice_index)
+        sm = self._slices[idx]
+        ww, wc = normalize_window_level(
+            sm.window_width,
+            sm.window_center,
+            treat_legacy_placeholder_as_missing=True,
+        )
+        if ww is None or wc is None:
+            arr = self.get_pixel_array(idx)
+            ww, wc = auto_window_level_from_array(arr, 5.0, 95.0)
+        return float(ww), float(wc)
+
+    def get_modality(self) -> str:
+        return str(self._series_modality or "")
 
     def set_slice_index(self, index: int) -> None:
         if not self._slices:
@@ -261,13 +290,15 @@ class PyDicom2DBackend(QObject):
         if sm.samples_per_pixel >= 3:
             qimg = self._rgb_to_qimage(arr, sm.cols, sm.rows)
         else:
-            ww = self._window if self._window is not None else sm.window_width
-            wc = self._level if self._level is not None else sm.window_center
+            ww, wc = normalize_window_level(self._window, self._level)
             if ww is None or wc is None:
-                lo = float(np.percentile(arr, 5))
-                hi = float(np.percentile(arr, 95))
-                ww = max(1.0, hi - lo)
-                wc = (hi + lo) / 2.0
+                ww, wc = normalize_window_level(
+                    sm.window_width,
+                    sm.window_center,
+                    treat_legacy_placeholder_as_missing=True,
+                )
+            if ww is None or wc is None:
+                ww, wc = auto_window_level_from_array(arr, 5.0, 95.0)
             disp = _window_level_to_uint8(arr.astype(np.float32, copy=False), float(ww), float(wc))
             qimg = QImage(disp.data, sm.cols, sm.rows, sm.cols, QImage.Format_Grayscale8).copy()
 

@@ -545,10 +545,14 @@ class DraggableButton(QPushButton):
                     drag = QDrag(self)
                     mime_data = QMimeData()
                     # ✅ CRITICAL FIX: Send series_number instead of index to avoid confusion
-                    mime_data.setText(str(self.series_number))  # send series number for correct lookup
+                    series_number_text = str(self.series_number)
+                    mime_data.setText(series_number_text)  # legacy fallback
+                    mime_data.setData("application/x-aipacs-series-number", series_number_text.encode("utf-8"))
                     drag.setMimeData(mime_data)
-                    drag.setPixmap(self.icon().pixmap(self.iconSize()))
-                    drag.exec(Qt.MoveAction)
+                    drag_pixmap = self.icon().pixmap(self.iconSize())
+                    drag.setPixmap(drag_pixmap)
+                    drag.setHotSpot(drag_pixmap.rect().center())
+                    drag.exec(Qt.CopyAction)
                     self._drag_start_pos = None
         super().mouseMoveEvent(event)
 

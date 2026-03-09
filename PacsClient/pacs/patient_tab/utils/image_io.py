@@ -1033,6 +1033,12 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
                     'image_orientation_patient': _iop,
                     'image_position_patient': _ipp,
                     'pixel_spacing': _ps,
+                    'slice_thickness': _safe_float(dcm.get('SliceThickness', None)),
+                    'spacing_between_slices': _safe_float(dcm.get('SpacingBetweenSlices', None)),
+                    'rescale_slope': _safe_float(dcm.get('RescaleSlope', None), 1.0),
+                    'rescale_intercept': _safe_float(dcm.get('RescaleIntercept', None), 0.0),
+                    'bits_allocated': int(dcm.get('BitsAllocated', 16) or 16),
+                    'pixel_representation': int(dcm.get('PixelRepresentation', 1) or 1),
                 }
                 instances.append(instance)
             except Exception as e:
@@ -1409,7 +1415,20 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     # Apply ITK filters before conversion
                     _filter_start = time.time()
                     from PacsClient.pacs.patient_tab.utils.image_filters import apply_filters
-                    itk_image = apply_filters(itk_image, metadata, max_itk_threads=max_itk_threads)
+                    try:
+                        itk_image = apply_filters(itk_image, metadata, max_itk_threads=max_itk_threads)
+                    except Exception as filter_exc:
+                        logger.warning(
+                            "viewer-data stage=itk_filter_chain_fallback reason=%s modality=%s series=%s",
+                            filter_exc,
+                            str((metadata.get("series", {}) or {}).get("modality", "") or ""),
+                            str((metadata.get("series", {}) or {}).get("series_number", "") or ""),
+                            extra={
+                                "component": "viewer",
+                                "function": "image_io.load_single_series_by_number",
+                                "stage": "itk_filter_chain_fallback",
+                            },
+                        )
                     _filter_time = time.time() - _filter_start
                     print(f"      ITK filters: {_filter_time:.3f}s")
                     logger.info(
@@ -1733,7 +1752,20 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             # Apply ITK filters before conversion
             _filter_start = time.time()
             from PacsClient.pacs.patient_tab.utils.image_filters import apply_filters
-            itk_image = apply_filters(itk_image, metadata, max_itk_threads=max_itk_threads)
+            try:
+                itk_image = apply_filters(itk_image, metadata, max_itk_threads=max_itk_threads)
+            except Exception as filter_exc:
+                logger.warning(
+                    "viewer-data stage=itk_filter_chain_fallback reason=%s modality=%s series=%s",
+                    filter_exc,
+                    str((metadata.get("series", {}) or {}).get("modality", "") or ""),
+                    str((metadata.get("series", {}) or {}).get("series_number", "") or ""),
+                    extra={
+                        "component": "viewer",
+                        "function": "image_io.load_images",
+                        "stage": "itk_filter_chain_fallback",
+                    },
+                )
             _filter_time = time.time() - _filter_start
             print(f"            ITK filters: {_filter_time:.3f}s")
 

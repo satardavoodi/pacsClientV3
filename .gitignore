@@ -43,3 +43,9 @@ config/patient_table_columns.json
 generated-files/zeta_boost_cache/
 generated-files/zeta_boost.log
 generated-files/zeta_boost_*.log
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+tools/git/github-network.local.json

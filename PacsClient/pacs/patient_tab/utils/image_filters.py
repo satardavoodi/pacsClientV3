@@ -85,6 +85,23 @@ def _smooth_xy_recursive(img: sitk.Image, sigma_xy: float = 0.8, sigma_z: float 
     return sitk.Cast(out, _input_pixel_id)
 
 
+def _clip_to_reference_range(
+    sharpened_arr: np.ndarray,
+    reference_arr: np.ndarray,
+) -> np.ndarray:
+    """
+    Clamp sharpened data back to the original intensity range.
+
+    This prevents bright/dark overshoot halos at strong tissue/background
+    edges, which is especially visible on MR after repeated sharpening stages.
+    """
+    ref_min = float(np.min(reference_arr))
+    ref_max = float(np.max(reference_arr))
+    if ref_max <= ref_min:
+        return np.asarray(reference_arr, dtype=np.float32)
+    return np.clip(np.asarray(sharpened_arr, dtype=np.float32), ref_min, ref_max)
+
+
 def _radius_from_mm(mm: float, spacing: tuple[float, ...], dim: int) -> list[int]:
     """
     تبدیل پهنای ساختاری از میلی‌متر به شعاع پیکسلی برای هر بعد.
@@ -437,7 +454,10 @@ def apply_laplacian_sharpening(img: sitk.Image, alpha: float = 0.3, _pre_cast: b
     laplacian_arr = sitk.GetArrayFromImage(
         sitk.LaplacianRecursiveGaussian(img, sigma=0.5)
     ).astype(np.float32)
-    sharpened_arr = orig_arr - laplacian_arr * float(alpha)
+    sharpened_arr = _clip_to_reference_range(
+        orig_arr - laplacian_arr * float(alpha),
+        orig_arr,
+    )
 
     result = sitk.GetImageFromArray(sharpened_arr)
     result.CopyInformation(img)
@@ -515,7 +535,10 @@ def apply_adaptive_sharpening(
 
     edge_weight = float(base_amount) + gradient_norm * float(edge_boost)
     details = orig_arr - blurred_arr
-    sharpened_arr = orig_arr + details * edge_weight
+    sharpened_arr = _clip_to_reference_range(
+        orig_arr + details * edge_weight,
+        orig_arr,
+    )
 
     result = sitk.GetImageFromArray(sharpened_arr.astype(np.float32))
     result.CopyInformation(img)
@@ -574,7 +597,8 @@ def apply_multiscale_sharpening(
     # v2.2.3.0.8: Use numpy for arithmetic; ITK only for the Gaussian kernel.
     # sitk.Add/Subtract/Multiply each trigger a full ITK pipeline rebuild
     # (~1-3ms each); replacing them with numpy ops drops that overhead to ~0.
-    sharpened_arr = sitk.GetArrayFromImage(img).astype(np.float32)
+    reference_arr = sitk.GetArrayFromImage(img).astype(np.float32)
+    sharpened_arr = reference_arr.copy()
 
     # اعمال تیز کردن در هر مقیاس - sigmas are already in mm, so we can use them directly
     for sigma, amount in zip(sigmas, amounts):
@@ -588,7 +612,10 @@ def apply_multiscale_sharpening(
         )
         # numpy arithmetic — near-zero cost
         details_arr = sharpened_arr - blurred_arr
-        sharpened_arr = sharpened_arr + details_arr * float(amount)
+        sharpened_arr = _clip_to_reference_range(
+            sharpened_arr + details_arr * float(amount),
+            reference_arr,
+        )
 
     result = sitk.GetImageFromArray(sharpened_arr)
     result.CopyInformation(img)
@@ -604,9 +631,10 @@ def apply_filters(
     max_itk_threads: "int | None" = None,
 ) -> sitk.Image:
     """
-    PooyanPacs-inspired fast filtering pipeline (v2.2.3.1.5).
+    Advanced SimpleITK filtering pipeline.
 
-    - MR: XY-only noise reduction + single XY-only unsharp mask (clamped)
+    Reference behavior:
+    - MR: noise reduction + multiscale sharpening + laplacian sharpening + adaptive sharpening
     - CT: noise reduction only
 
     v2.2.3.1.5 fixes (over v2.2.3.1.4)
@@ -650,13 +678,8 @@ def apply_filters(
         return base
 
     # ------------------------------------------------------------------
-    # Default filter configuration (v2.2.3.4.1 — PooyanPacs OpenCV mode)
+    # Default filter configuration (reference SimpleITK path)
     # ------------------------------------------------------------------
-    # v2.2.3.4.1: Added "pooyan_opencv" stage — exact port of PooyanPacs C#
-    # ``ImageFilter.FilterCenter`` (GaussianBlur + AddWeighted unsharp mask).
-    # When enabled, replaces the ITK-based unsharp mask with an OpenCV
-    # pipeline that is mathematically identical to the C# version.
-    # This ensures image quality is consistent with PooyanPacs.
     DEFAULT_FILTERS = {
         "MR": {
             "enabled": True,
@@ -666,29 +689,27 @@ def apply_filters(
                 "sigma": 0.25,
                 "mild_sigma": 0.30,
             },
-            # v2.2.3.1.5: ITK unsharp mask — NOW DISABLED by default in
-            # favour of "pooyan_opencv" which gives exact C# parity.
-            "unsharp_mask": {
-                "enabled": False,
-                "sigma": 1.0,
-                "amount": 0.25,
-                "mild_sigma": 1.0,
-                "mild_amount": 0.20,
-            },
-            # v2.2.3.4.1: PooyanPacs-exact OpenCV filter stage.
-            # Params match C# DisplayRenderOptions defaults:
-            #   sigmaX=1.0, alpha=1.4, beta=-0.5
-            "pooyan_opencv": {
+            "multiscale_sharpening": {
                 "enabled": True,
-                "sigma_x": 1.0,
-                "alpha": 1.4,
-                "beta": -0.5,
-                "invert": False,
+                "sigmas": [0.5, 1.0, 2.0],
+                "amounts": [0.25, 0.12, 0.06],
+                "mild_sigmas": [0.5, 1.0, 2.0, 4.0],
+                "mild_amounts": [0.20, 0.10, 0.05, 0.025],
             },
-            # Legacy keys retained for JSON backward compatibility — disabled by default.
-            "multiscale_sharpening": {"enabled": False},
-            "laplacian_sharpening": {"enabled": False},
-            "adaptive_sharpening": {"enabled": False},
+            "laplacian_sharpening": {
+                "enabled": True,
+                "alpha": 0.12,
+                "mild_alpha": 0.10,
+            },
+            "adaptive_sharpening": {
+                "enabled": True,
+                "base_amount": 0.12,
+                "edge_boost": 0.90,
+                "sigma": 0.70,
+                "mild_base_amount": 0.10,
+                "mild_edge_boost": 0.80,
+                "mild_sigma": 0.80,
+            },
         },
         "CT": {
             "enabled": True,
@@ -698,14 +719,6 @@ def apply_filters(
                 "sigma": 0.25,
                 "mild_sigma": 0.30,
             },
-            # v2.2.3.4.1: PooyanPacs-exact OpenCV filter for CT too.
-            "pooyan_opencv": {
-                "enabled": True,
-                "sigma_x": 1.0,
-                "alpha": 1.4,
-                "beta": -0.5,
-                "invert": False,
-            },
         },
     }
 
@@ -714,8 +727,9 @@ def apply_filters(
     # ------------------------------------------------------------------
     t0 = time.time()
 
-    modality = metadata["series"]["modality"].upper()
-    series_name = metadata["series"].get("series_name", "Unknown")
+    series_meta = metadata.get("series", {}) if isinstance(metadata, dict) else {}
+    modality = str(series_meta.get("modality", "") or "").upper()
+    series_name = str(series_meta.get("series_name", "Unknown") or "Unknown")
 
     # logger.info(
     #     f"Applying filters to series: {series_name} | modality: {modality} | spacing: {itk_image.GetSpacing()}"
@@ -739,7 +753,8 @@ def apply_filters(
 
     modality_settings = DEFAULT_FILTERS.get(modality)
     if modality_settings is None:
-        #logger.info(f"No filters defined for modality '{modality}'")
+        if modality:
+            logger.info("No SimpleITK filters configured for modality '%s'", modality)
         return itk_image
 
     # merge external overrides (supported keys only)
@@ -809,22 +824,26 @@ def apply_filters(
     # Cast-back to original pixel type happens once at the very end.
     # ------------------------------------------------------------------
     _orig_pixel_type = itk_image.GetPixelID()
+    _orig_min = None
+    _orig_max = None
+    try:
+        _mm = sitk.MinimumMaximumImageFilter()
+        _mm.Execute(itk_image)
+        _orig_min = float(_mm.GetMinimum())
+        _orig_max = float(_mm.GetMaximum())
+    except Exception:
+        pass
     if _orig_pixel_type != sitk.sitkFloat32:
         itk_image = sitk.Cast(itk_image, sitk.sitkFloat32)
 
     # ------------------------------------------------------------------
-    # Noise reduction (XY-only for MR — PooyanPacs 2D approach)
-    # Now operates on float32 directly — no internal ITK pixel conversion.
+    # Noise reduction
     # ------------------------------------------------------------------
     noise_cfg = modality_settings.get("noise_reduction", {})
     if noise_cfg.get("enabled", True):
         sigma = noise_cfg.get("mild_sigma", noise_cfg.get("sigma", 0.25)) if mild_mode else noise_cfg.get("sigma", 0.25)
         ct_high_slice_threshold = int(noise_cfg.get("ct_high_slice_threshold", 320))
-        # v2.2.3.1.4: MR always uses XY-only noise reduction (matches PooyanPacs
-        # 2D-per-slice philosophy).  CT uses XY-only for deep stacks, full 3D
-        # for moderate stacks where Z-smoothing still helps.
-        use_xy_only = (modality == "MR") or (modality == "CT" and int(nz) >= ct_high_slice_threshold)
-        if use_xy_only:
+        if modality == "CT" and int(nz) >= ct_high_slice_threshold:
             itk_image = _smooth_xy_recursive(itk_image, sigma_xy=float(sigma), sigma_z=0.0)
         else:
             itk_image = sitk.SmoothingRecursiveGaussian(itk_image, sigma=float(sigma))
@@ -836,119 +855,52 @@ def apply_filters(
     time.sleep(0.002)
 
     # ------------------------------------------------------------------
-    # PooyanPacs-style single XY-only unsharp mask (v2.2.3.1.5, clamped)
-    # Already in float32 (Phase 1 cast-once) — redundant inner cast removed.
+    # Multiscale sharpening
     # ------------------------------------------------------------------
-    # Replaces the previous 3-stage sharpening chain with a single XY-only
-    # unsharp mask.  v2.2.3.1.5: output is clamped to the original data range
-    # to prevent white line overshoot at tissue/background edges.
     if modality == "MR":
-        usm_cfg = modality_settings.get("unsharp_mask", {})
-        if usm_cfg.get("enabled", True):
-            usm_sigma = (
-                usm_cfg.get("mild_sigma", usm_cfg.get("sigma", 1.0))
-                if mild_mode
-                else usm_cfg.get("sigma", 1.0)
+        ms_cfg = modality_settings.get("multiscale_sharpening", {})
+        if ms_cfg.get("enabled", True):
+            sigmas = ms_cfg.get("mild_sigmas", ms_cfg.get("sigmas", [0.5, 1.0, 2.0])) if mild_mode else ms_cfg.get("sigmas", [0.5, 1.0, 2.0])
+            amounts = ms_cfg.get("mild_amounts", ms_cfg.get("amounts", [0.25, 0.12, 0.06])) if mild_mode else ms_cfg.get("amounts", [0.25, 0.12, 0.06])
+            itk_image = apply_multiscale_sharpening(itk_image, sigmas=sigmas, amounts=amounts)
+
+        time.sleep(0.002)
+
+        lap_cfg = modality_settings.get("laplacian_sharpening", {})
+        if lap_cfg.get("enabled", True):
+            alpha = lap_cfg.get("mild_alpha", lap_cfg.get("alpha", 0.12)) if mild_mode else lap_cfg.get("alpha", 0.12)
+            itk_image = apply_laplacian_sharpening(itk_image, alpha=float(alpha))
+
+        time.sleep(0.002)
+
+        ad_cfg = modality_settings.get("adaptive_sharpening", {})
+        if ad_cfg.get("enabled", True):
+            base_amount = ad_cfg.get("mild_base_amount", ad_cfg.get("base_amount", 0.12)) if mild_mode else ad_cfg.get("base_amount", 0.12)
+            edge_boost = ad_cfg.get("mild_edge_boost", ad_cfg.get("edge_boost", 0.90)) if mild_mode else ad_cfg.get("edge_boost", 0.90)
+            sigma_val = ad_cfg.get("mild_sigma", ad_cfg.get("sigma", 0.70)) if mild_mode else ad_cfg.get("sigma", 0.70)
+            itk_image = apply_adaptive_sharpening(
+                itk_image,
+                base_amount=float(base_amount),
+                edge_boost=float(edge_boost),
+                sigma=float(sigma_val),
             )
-            usm_amount = (
-                usm_cfg.get("mild_amount", usm_cfg.get("amount", 0.25))
-                if mild_mode
-                else usm_cfg.get("amount", 0.25)
-            )
-
-            # XY-only Gaussian blur — skip Z to match PooyanPacs 2D behavior
-            blurred = _smooth_xy_recursive(itk_image, sigma_xy=float(usm_sigma), sigma_z=0.0)
-
-            # v2.2.3.2.3: GIL yield between Gaussian blur and numpy sharpening
-            time.sleep(0.002)
-
-            # Unsharp mask: sharpened = original + amount * (original - blurred)
-            # v2.2.3.2.3: Use GetArrayViewFromImage to avoid a copy where possible
-            orig_arr = sitk.GetArrayFromImage(itk_image)
-            blur_arr = sitk.GetArrayFromImage(blurred)
-            # Free the SimpleITK blurred image immediately
-            del blurred
-
-            # numpy operations release GIL during computation
-            sharpened_arr = orig_arr + (float(usm_amount) * (orig_arr - blur_arr))
-            del blur_arr  # Free memory early
-
-            # v2.2.3.1.5: Clamp to original data range to prevent white line
-            # artifacts at tissue/background edges.  PooyanPacs avoids this
-            # naturally via 8-bit [0,255] BitmapSource clamping; for 16-bit
-            # DICOM data we need explicit bounds.
-            np.clip(sharpened_arr, orig_arr.min(), orig_arr.max(), out=sharpened_arr)
-            del orig_arr  # Free memory early
-
-            result = sitk.GetImageFromArray(sharpened_arr)
-            result.CopyInformation(itk_image)
-            itk_image = result
-            del sharpened_arr  # Free memory early
-
-    # ------------------------------------------------------------------
-    # PooyanPacs-exact OpenCV filter (v2.2.3.4.1)
-    # Applies the identical GaussianBlur + AddWeighted unsharp mask that
-    # PooyanPacs C# uses (ImageFilter.FilterCenter / OpenCvSharp).
-    # Works slice-by-slice on uint8 (matching C# 8-bit BitmapSource path).
-    # ------------------------------------------------------------------
-    opencv_cfg = modality_settings.get("pooyan_opencv", {})
-    if opencv_cfg.get("enabled", False):
-        try:
-            from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import (
-                PooyanFilterParams,
-                apply_pooyan_opencv_to_sitk,
-            )
-
-            _ocv_params = PooyanFilterParams(
-                sigma_x=float(opencv_cfg.get("sigma_x", 1.0)),
-                alpha=float(opencv_cfg.get("alpha", 1.4)),
-                beta=float(opencv_cfg.get("beta", -0.5)),
-                enabled=True,
-                preserve_dimensions=True,  # never change volume geometry
-                invert=bool(opencv_cfg.get("invert", False)),
-            )
-
-            # Extract window/level from first instance metadata for normalisation
-            _wc, _ww = None, None
-            try:
-                instances = metadata.get("instances", [])
-                if instances:
-                    _wc = instances[0].get("window_center")
-                    _ww = instances[0].get("window_width")
-                    if _wc is not None:
-                        _wc = float(_wc)
-                    if _ww is not None:
-                        _ww = float(_ww)
-            except Exception:
-                pass
-
-            _ocv_t0 = time.time()
-            itk_image = apply_pooyan_opencv_to_sitk(
-                itk_image, _ocv_params, window_center=_wc, window_width=_ww,
-            )
-            _ocv_dt = (time.time() - _ocv_t0) * 1000.0
-            logger.info(
-                "viewer-data stage=pooyan_opencv mod=%s slices=%d duration_ms=%.0f",
-                modality, nz, _ocv_dt,
-                extra={
-                    "component": "viewer",
-                    "function": "image_filters.apply_filters",
-                    "stage": "pooyan_opencv",
-                },
-            )
-        except ImportError:
-            logger.warning(
-                "PooyanPacs OpenCV filter requested but opencv_filter_pipeline module "
-                "not available (is opencv-python-headless installed?)"
-            )
-        except Exception as _ocv_err:
-            logger.error("PooyanPacs OpenCV filter failed: %s", _ocv_err, exc_info=True)
 
     # ------------------------------------------------------------------
     # Cast back to original pixel type once — covers BOTH CT and MR paths.
     # (Previously only inside "if modality == 'MR'" — CT returned float32.)
     # ------------------------------------------------------------------
     if _orig_pixel_type != sitk.sitkFloat32:
+        if (
+            _orig_min is not None
+            and _orig_max is not None
+            and float(_orig_max) >= float(_orig_min)
+        ):
+            itk_image = sitk.Clamp(
+                itk_image,
+                sitk.sitkFloat32,
+                lowerBound=float(_orig_min),
+                upperBound=float(_orig_max),
+            )
         itk_image = sitk.Cast(itk_image, _orig_pixel_type)
 
     # Timing end
