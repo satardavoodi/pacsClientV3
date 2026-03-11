@@ -8,11 +8,11 @@ from PySide6.QtWidgets import (
     QToolButton, QFrame, QSizePolicy, QCheckBox, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal
-from PacsClient.utils.boost_viewer_config import (
+from modules.viewer.boost_viewer_config import (
     load_boost_viewer_enabled,
     save_boost_viewer_enabled,
 )
-from PacsClient.utils.viewer_backend_config import (
+from modules.viewer.viewer_backend_config import (
     BACKEND_PYDICOM,
     BACKEND_VTK,
     load_viewer_backend,

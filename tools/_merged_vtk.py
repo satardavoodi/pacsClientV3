@@ -10,9 +10,9 @@ import sys
 
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
-from PacsClient.pacs.patient_tab.interactor_styles import AbstractInteractorStyle
-from PacsClient.pacs.patient_tab.viewers.viewer_2d import ImageViewer2D, CustomCombineImageViewers
-from PacsClient.pacs.patient_tab.ui.widgets import ViewportSpinner
+from modules.viewer.interactor_styles import AbstractInteractorStyle
+from modules.viewer.advanced.viewer_2d import ImageViewer2D, CustomCombineImageViewers
+from modules.viewer.widgets import ViewportSpinner
 from PacsClient.pacs.patient_tab.ui.patient_ui.viewer_isolation_guard import ViewerIsolationGuard
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QCursor, QPainter, QPixmap, QColor
@@ -20,14 +20,14 @@ import gc  # For manual garbage collection
 from PacsClient.pacs.patient_tab.utils import read_segment_nifti
 import vtkmodules.all as vtk
 from PySide6.QtWidgets import QApplication, QLabel
-from PacsClient.pacs.patient_tab.viewers.backends.lazy_volume_registry import (
+from modules.viewer.fast.lazy_volume_registry import (
     acquire_loader,
     release_loader,
 )
-from PacsClient.pacs.patient_tab.viewers.backends.stale_frame_guard import (
+from modules.viewer.fast.stale_frame_guard import (
     should_render_ready_slice,
 )
-from PacsClient.utils.viewer_backend_config import (
+from modules.viewer.viewer_backend_config import (
     BACKEND_PYDICOM,
     BACKEND_PYDICOM_QT,
     BACKEND_VTK,
@@ -39,12 +39,12 @@ from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 # ظ¤ظ¤ Qt-based 2D viewer (lazy import to avoid circular/startup overhead) ظ¤ظ¤
 def _create_qt_viewer_bridge(vtk_widget, metadata, metadata_fixed):
     """Factory: create QtViewerBridge + pipeline + viewer for Qt backend."""
-    from PacsClient.pacs.patient_tab.viewers.lightweight_2d_pipeline import (
+    from modules.viewer.fast.lightweight_2d_pipeline import (
         Lightweight2DPipeline,
         PipelineConfig,
     )
-    from PacsClient.pacs.patient_tab.viewers.qt_slice_viewer import QtSliceViewer
-    from PacsClient.pacs.patient_tab.viewers.qt_viewer_bridge import QtViewerBridge
+    from modules.viewer.fast.qt_slice_viewer import QtSliceViewer
+    from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
 
     config = PipelineConfig()
     pipeline = Lightweight2DPipeline(config=config)
@@ -875,7 +875,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
             pass
 
         try:
-            from PacsClient.pacs.patient_tab.zeta_boost.engine import ZetaBoostEngine
+            from modules.zeta_boost.engine import ZetaBoostEngine
             return int(getattr(ZetaBoostEngine, '_global_active_download_count', 0) or 0) > 0
         except Exception:
             return False

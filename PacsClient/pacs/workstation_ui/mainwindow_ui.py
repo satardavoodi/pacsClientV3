@@ -88,6 +88,9 @@ class MainWindowWidget(QWidget):
         # Now add AIPacs tab (which will connect to shortcut manager)
         self.add_AIPacs_tab()
 
+        # Register all long-lived resources with the lifecycle manager
+        self._register_lifecycle_resources()
+
     def _arm_titlebar_move(self, global_pos, local_pos):
         """Arm a possible titlebar drag; we only start system move after real drag."""
         self._pending_titlebar_move = True
@@ -939,13 +942,75 @@ class MainWindowWidget(QWidget):
             self._normal_geometry = self.geometry()
 
     def closeEvent(self, event):
-        # Perform cleanup when the main window is closed
-        try:
-            # Close any active socket connections
-            from PacsClient.components.socket_service import get_socket_service
+        # Drain all registered resources in reverse order via lifecycle manager.
+        from PacsClient.components.lifecycle_manager import lifecycle_manager
+        results = lifecycle_manager.shutdown_all()
+        for name, err in results.items():
+            if err is not None:
+                print(f"Warning: shutdown({name}): {err}")
+        event.accept()
+
+    # ------------------------------------------------------------------
+    # Lifecycle resource registration
+    # ------------------------------------------------------------------
+    def _register_lifecycle_resources(self):
+        """Register long-lived subsystem shutdown callbacks.
+
+        Called once at the end of __init__, after all widgets are created.
+        The lifecycle manager drains resources in LIFO order, so
+        register dependencies (DB, cache infra) first and consumers
+        (thread pools, socket) last.
+        """
+        from PacsClient.components.lifecycle_manager import lifecycle_manager
+
+        # 1. Database connection pool (lowest-level dependency)
+        def _shutdown_db():
+            from database.core import cleanup_connection_pools
+            cleanup_connection_pools()
+
+        lifecycle_manager.register("database.connection_pools", _shutdown_db, timeout=5.0)
+
+        # 2. Cache cleanup threads
+        def _shutdown_caches():
+            from PacsClient.pacs.patient_tab.utils.cache import (
+                _thumbnail_cache, _metadata_cache, _image_cache,
+            )
+            for cache in (_thumbnail_cache, _metadata_cache, _image_cache):
+                if cache is not None and hasattr(cache, 'stop_auto_cleanup'):
+                    cache.stop_auto_cleanup()
+
+        lifecycle_manager.register("cache.auto_cleanup_threads", _shutdown_caches, timeout=3.0)
+
+        # 3. HomePanelWidget thread pool + background tasks
+        def _shutdown_home():
+            if hasattr(self, 'control_panel') and hasattr(self.control_panel, 'home_widget'):
+                hw = self.control_panel.home_widget
+                if hasattr(hw, 'cleanup'):
+                    hw.cleanup()
+
+        lifecycle_manager.register("HomePanelWidget.cleanup", _shutdown_home, timeout=5.0)
+
+        # 4. Close all open patient tabs (ZetaBoost engines, VTK resources)
+        def _shutdown_patient_tabs():
+            if not hasattr(self, 'tab_widget'):
+                return
+            home_i = self._find_home_tab_index()
+            for i in range(self.tab_widget.count() - 1, -1, -1):
+                if i == home_i:
+                    continue
+                w = self.tab_widget.widget(i)
+                if w and hasattr(w, 'exit_patient_widget'):
+                    try:
+                        w.exit_patient_widget()
+                    except Exception as exc:
+                        print(f"Warning: exit_patient_widget tab {i}: {exc}")
+
+        lifecycle_manager.register("patient_tabs.exit_all", _shutdown_patient_tabs, timeout=10.0)
+
+        # 5. Socket service (highest-level – shuts down last)
+        def _shutdown_socket():
+            from modules.network.socket_service import get_socket_service
             socket_service = get_socket_service()
             socket_service.cleanup()
-        except Exception as e:
-            print(f"Warning: Error during main window cleanup: {e}")
-        
-        event.accept()
+
+        lifecycle_manager.register("socket_service", _shutdown_socket, timeout=5.0)

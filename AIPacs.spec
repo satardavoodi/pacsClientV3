@@ -80,6 +80,15 @@ binaries = []
 
 # Essential hidden imports
 hiddenimports = [
+    # Project root resolver (used by config.py, font_manager.py, etc.)
+    '_project_root',
+    # User-data path registry
+    'PacsClient.utils.data_paths',
+    # Database package (canonical home of all DB code)
+    'database',
+    'database.core',
+    'database.manager',
+    
     # PySide6 essentials
     'PySide6.QtCore',
     'PySide6.QtGui',
@@ -188,21 +197,19 @@ hiddenimports = [
     'dotenv',
     'python_dotenv',
     
-    # MprViewer modules - Required for MPR functionality
-    'PacsClient.pacs.patient_tab.MprViewer',
-    'PacsClient.pacs.patient_tab.MprViewer.VtkBase',
-    'PacsClient.pacs.patient_tab.MprViewer.OrthoViewer',
-    'PacsClient.pacs.patient_tab.MprViewer.CommandSliceSelect',
-    'PacsClient.pacs.patient_tab.MprViewer.ViewersConnection',
-    'PacsClient.pacs.patient_tab.MprViewer.VtkViewer',
-    'PacsClient.pacs.patient_tab.MprViewer.SegmentationViewer',
-    'PacsClient.pacs.patient_tab.MprViewer.MprViewerWrapper',
-    'PacsClient.pacs.patient_tab.MprViewer.QtOrthoViewer',
-    'PacsClient.pacs.patient_tab.MprViewer.QtSegmentationViewer',
-    'PacsClient.pacs.patient_tab.MprViewer.QtViewer',
-    'PacsClient.pacs.patient_tab.MprViewer.Worker',
-    'PacsClient.pacs.patient_tab.MprViewer.VtkBaseDirect',
-    'PacsClient.pacs.patient_tab.MprViewer.VtkViewerDirect',
+    # Zeta MPR modules - Required for MPR functionality
+    'modules.mpr.zeta_mpr',
+    'modules.mpr.zeta_mpr.standard_mpr_viewer',
+    'modules.mpr.zeta_mpr.preset_manager',
+    'modules.mpr.zeta_mpr.advanced_rendering',
+    'modules.mpr.zeta_mpr.curved_mpr',
+    'modules.mpr.zeta_mpr.CurveMPR',
+    'modules.mpr.zeta_mpr.segmentation_tools',
+    'modules.mpr.zeta_mpr.surface_reconstruction',
+    'modules.mpr.zeta_mpr.mpr_measurement_tools',
+    'modules.mpr.zeta_mpr.toolbar_integration',
+    'modules.mpr.orthogonal',
+    'modules.mpr.advanced_3d_slicer',
 ]
 
 # Add all Custom_Widgets submodules
@@ -212,13 +219,13 @@ try:
 except:
     pass
 
-# Add all MprViewer submodules - CRITICAL for MPR functionality
+# Add all Zeta MPR submodules - CRITICAL for MPR functionality
 try:
-    mpr_modules = collect_submodules('PacsClient.pacs.patient_tab.MprViewer')
+    mpr_modules = collect_submodules('modules.mpr.zeta_mpr')
     hiddenimports += mpr_modules
-    print(f"Added {len(mpr_modules)} MprViewer submodules to hiddenimports")
+    print(f"Added {len(mpr_modules)} Zeta MPR submodules to hiddenimports")
 except Exception as e:
-    print(f"Warning: Could not collect MprViewer submodules: {e}")
+    print(f"Warning: Could not collect Zeta MPR submodules: {e}")
 
 # Add all VTK submodules - CRITICAL for VTK functionality
 try:

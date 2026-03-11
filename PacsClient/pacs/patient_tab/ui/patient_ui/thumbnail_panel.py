@@ -15,7 +15,7 @@ from PySide6.QtGui import QPixmap, QImage
 
 from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachment_folder, open_folder, \
     check_and_get_thumbnails, get_name_file_from_path
-from PacsClient.utils.thumbnail_store import ThumbnailStore, make_pixmap_from_bytes  # type: ignore
+from modules.storage.thumbnail_store import ThumbnailStore, make_pixmap_from_bytes  # type: ignore
 
 
 class ThumbnailPanel(QWidget):

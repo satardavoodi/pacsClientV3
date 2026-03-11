@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                 QComboBox, QPushButton, QTextEdit, QMessageBox)
 from PySide6.QtCore import Qt, Signal, QTimer
 import qtawesome as qta
-from PacsClient.components.socket_report_status_service import REPORT_STATUSES, STATUS_COLORS
+from modules.network.socket_report_status_service import REPORT_STATUSES, STATUS_COLORS
 
 
 # Import from service (will be defined there)

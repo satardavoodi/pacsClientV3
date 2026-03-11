@@ -648,9 +648,9 @@ def summarize_resource_inventory(repo_root: Path) -> dict[str, Any]:
         ("education_assets", "Bundled educational thumbnails/assets (non-runtime static assets)"),
         ("json-styles", "JSON stylesheet resources"),
         ("config", "Configuration templates/defaults (filter secrets/local overrides)"),
-        ("PacsClient/components/cd_burner/assets", "CD burner assets"),
-        ("PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/branding", "Slicer launcher branding assets"),
-        ("PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/docs", "Slicer launcher docs/contract"),
+        ("modules/cd_burner/assets", "CD burner assets"),
+        ("modules/mpr/advanced_3d_slicer/slicer_custom_app/branding", "Slicer launcher branding assets"),
+        ("modules/mpr/advanced_3d_slicer/slicer_custom_app/docs", "Slicer launcher docs/contract"),
     ]
     for rel in sorted(ui_dirs | qss_dirs | qrc_dirs):
         candidates.append((rel, "Detected UI/QSS/QRC directory"))

@@ -32,9 +32,9 @@ from PacsClient.pacs.patient_tab.utils import load_images, save_image_as_png, de
     get_count_dicom_files_exist, load_images_from_server, VerticalButton
 from PacsClient.pacs.patient_tab.utils.button_safeguard import ButtonSafeguard, safeguard_action
 from PacsClient.pacs.workstation_ui.settings_ui.filter_config import FilterConfigWidget
-# from PacsClient.pacs.patient_tab.viewers.advanced_tools_panel import AdvancedToolsPanel  # REMOVED: File deleted during merge
+# from modules.viewer.advanced_tools_panel import AdvancedToolsPanel  # REMOVED: File deleted during merge
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import ToolbarManager, reference_line
-from PacsClient.pacs.patient_tab.zeta_sync import (
+from modules.zeta_sync import (
     SyncManager,
     SyncContext,
     SyncMode,
@@ -51,7 +51,7 @@ from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_p
 from PacsClient.utils.scroll_style import get_scroll_area_style
 import threading
 from PySide6.QtWidgets import QProgressDialog, QApplication
-from PacsClient.pacs.patient_tab.ui.widgets import ViewportSpinner
+from modules.viewer.widgets import ViewportSpinner
 from PacsClient.pacs.patient_tab.utils.image_io import load_single_series_by_number
 from PySide6.QtCore import QTimer
 import threading
@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 # Priority management is now handled by Zeta Download Manager
 # Zeta uses its own internal priority system via DownloadPriority enum
-from PacsClient.zeta_download_manager.core.enums import DownloadPriority
+from modules.download_manager.core.enums import DownloadPriority
 PRIORITY_MANAGER_AVAILABLE = False  # Legacy priority manager removed
 
 
@@ -705,8 +705,8 @@ class PatientWidget(QWidget):
                 QTimer.singleShot(0, lambda: self._render_thumbnails_from_files(thumbnails))
                 return
 
-            from PacsClient.components.grpc_client import DicomGrpcClient
-            from PacsClient.utils.socket_config import get_socket_server_settings
+            from modules.network.grpc_client import DicomGrpcClient
+            from modules.network.socket_config import get_socket_server_settings
             from PacsClient.pacs.patient_tab.utils import save_thumbnail_with_bytes
 
             server = get_socket_server_settings() or {}
@@ -3226,7 +3226,7 @@ class PatientWidget(QWidget):
             if self.reception_data_tab is None:
                 print("[PatientWidget] Creating ReceptionDataTab for the first time...")
                 try:
-                    from PacsClient.pacs.patient_tab.ui.ai_module_ui.service_tab import ReceptionDataTab
+                    from modules.ai_imaging.ai_module_ui.service_tab import ReceptionDataTab
                     
                     # Create ReceptionDataTab with patient_id
                     self.reception_data_tab = ReceptionDataTab(patient_id=self._patient_id_for_lazy)
@@ -4078,7 +4078,7 @@ class PatientWidget(QWidget):
         """Start the 3-D Slicer worker thread.  Called from a QTimer so the
         loading overlay is guaranteed to be painted first."""
         try:
-            from PacsClient.pacs.patient_tab.advance_mpr_3d_slicer.slicer_launcher import get_slicer_launcher
+            from modules.mpr.advanced_3d_slicer.slicer_launcher import get_slicer_launcher
 
             launcher = get_slicer_launcher(parent_widget=self)
 
@@ -4282,7 +4282,7 @@ class PatientWidget(QWidget):
         """Open the Stitching window.  Called from QTimer so the
         loading overlay is guaranteed to be painted first."""
         try:
-            from PacsClient.pacs.patient_tab.stitching.stitching_widget import get_stitching_widget
+            from modules.stitching.stitching_widget import get_stitching_widget
 
             widget = get_stitching_widget(parent_widget=self)
 
@@ -4356,7 +4356,7 @@ class PatientWidget(QWidget):
         window_width: float | None = None,
         window_level: float | None = None
     ) -> bool:
-        from PacsClient.pacs.patient_tab.advance_mpr_3d_slicer.slicer_launcher import get_slicer_launcher
+        from modules.mpr.advanced_3d_slicer.slicer_launcher import get_slicer_launcher
 
         launcher = get_slicer_launcher(parent_widget=self)
         return bool(launcher.launch_with_dicom(
@@ -4696,7 +4696,7 @@ class PatientWidget(QWidget):
     def _get_report_status_service(self):
         """Get report status service (lazy initialization to avoid circular import)"""
         if self._report_status_service is None:
-            from PacsClient.components.socket_report_status_service import get_report_status_service
+            from modules.network.socket_report_status_service import get_report_status_service
             self._report_status_service = get_report_status_service()
         return self._report_status_service
     
@@ -4836,7 +4836,7 @@ class PatientWidget(QWidget):
                 print(f"[PatientWidget] ⚠️ Could not update home table: {e}")
             
             # Show result message
-            from PacsClient.components.socket_report_status_service import REPORT_STATUSES
+            from modules.network.socket_report_status_service import REPORT_STATUSES
             status_label = REPORT_STATUSES.get(final_status, final_status.replace('_', ' ').title())
             
             if is_local_only:
@@ -4918,7 +4918,7 @@ class PatientWidget(QWidget):
             return self.ai_chat_window
 
         # parent=None یعنی پنجرهٔ top-level (مستقل)
-        from PacsClient.pacs.patient_tab.viewers.ai_chat_viewer import AIChatViewer
+        from modules.EchoMind.viewer_chat.ai_chat_viewer import AIChatViewer
         study_uid = None
         if self.study_uid:
             study_uid = self.study_uid

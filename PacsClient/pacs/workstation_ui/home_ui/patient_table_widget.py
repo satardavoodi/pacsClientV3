@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from PacsClient.utils import find_patient_pk
 from PacsClient.utils.custom_checkbox import CustomCheckbox
-from PacsClient.components.socket_report_status_service import get_report_status_service, REPORT_STATUSES, STATUS_COLORS
+from modules.network.socket_report_status_service import get_report_status_service, REPORT_STATUSES, STATUS_COLORS
 from .report_status_dialog import ReportStatusDialog
 
 logger = logging.getLogger(__name__)
@@ -1003,7 +1003,8 @@ class PatientTableWidget(QWidget):
         self.delete_btn.setEnabled(False)
         
         # CD Burn button for writing downloaded studies to CD/DVD - ONLY ICON
-        cd_icon_path = Path(__file__).parent.parent.parent.parent / "components" / "cd_burner" / "assets" / "cd_icon.png"
+        from PacsClient.utils.config import BASE_PATH
+        cd_icon_path = BASE_PATH / "modules" / "cd_burner" / "assets" / "cd_icon.png"
         if cd_icon_path.exists():
             self.cd_burn_btn = QPushButton(QIcon(str(cd_icon_path)), "")
         else:

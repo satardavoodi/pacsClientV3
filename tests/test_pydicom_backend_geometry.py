@@ -45,23 +45,23 @@ for pkg_name in [
     "PacsClient",
     "PacsClient.pacs",
     "PacsClient.pacs.patient_tab",
-    "PacsClient.pacs.patient_tab.viewers",
-    "PacsClient.pacs.patient_tab.viewers.backends",
+    "modules.viewer",
+    "modules.viewer.backends",
 ]:
     if pkg_name not in sys.modules:
         pkg_mod = types.ModuleType(pkg_name)
         pkg_mod.__path__ = []  # mark as package
         sys.modules[pkg_name] = pkg_mod
 
-contracts_name = "PacsClient.pacs.patient_tab.viewers.backends.contracts"
-contracts_path = ROOT_DIR / "PacsClient" / "pacs" / "patient_tab" / "viewers" / "backends" / "contracts.py"
+contracts_name = "modules.viewer.backends.contracts"
+contracts_path = ROOT_DIR / "modules" / "viewer" / "backends" / "contracts.py"
 contracts_spec = importlib.util.spec_from_file_location(contracts_name, contracts_path)
 contracts_mod = importlib.util.module_from_spec(contracts_spec)
 sys.modules[contracts_name] = contracts_mod
 contracts_spec.loader.exec_module(contracts_mod)
 
-backend_name = "PacsClient.pacs.patient_tab.viewers.backends.pydicom_2d_backend"
-backend_path = ROOT_DIR / "PacsClient" / "pacs" / "patient_tab" / "viewers" / "backends" / "pydicom_2d_backend.py"
+backend_name = "modules.viewer.backends.pydicom_2d_backend"
+backend_path = ROOT_DIR / "modules" / "viewer" / "backends" / "pydicom_2d_backend.py"
 backend_spec = importlib.util.spec_from_file_location(backend_name, backend_path)
 backend_mod = importlib.util.module_from_spec(backend_spec)
 sys.modules[backend_name] = backend_mod
@@ -71,8 +71,8 @@ PyDicom2DBackend = backend_mod.PyDicom2DBackend
 _SliceMeta = backend_mod._SliceMeta
 _window_level_to_uint8 = backend_mod._window_level_to_uint8
 
-stale_guard_name = "PacsClient.pacs.patient_tab.viewers.backends.stale_frame_guard"
-stale_guard_path = ROOT_DIR / "PacsClient" / "pacs" / "patient_tab" / "viewers" / "backends" / "stale_frame_guard.py"
+stale_guard_name = "modules.viewer.backends.stale_frame_guard"
+stale_guard_path = ROOT_DIR / "modules" / "viewer" / "backends" / "stale_frame_guard.py"
 stale_guard_spec = importlib.util.spec_from_file_location(stale_guard_name, stale_guard_path)
 stale_guard_mod = importlib.util.module_from_spec(stale_guard_spec)
 sys.modules[stale_guard_name] = stale_guard_mod

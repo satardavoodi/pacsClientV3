@@ -193,6 +193,13 @@ def _build_formatter() -> logging.Formatter:
 
 
 def _ensure_logs_dir() -> Path:
+    try:
+        from PacsClient.utils.data_paths import LOGS_DIR
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        return LOGS_DIR
+    except Exception:
+        pass
+
     base_path: Path
     try:
         from PacsClient.utils.config import BASE_PATH as _BASE_PATH

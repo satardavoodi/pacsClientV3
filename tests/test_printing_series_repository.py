@@ -3,8 +3,8 @@
 import sqlite3
 from pathlib import Path
 
-import printing.data.dicom_enrichment as enrichment
-import printing.data.series_repository as repo
+import modules.printing.data.dicom_enrichment as enrichment
+import modules.printing.data.series_repository as repo
 
 
 def _create_schema(db_path: Path) -> None:

@@ -60,14 +60,14 @@ def _resolve_logo_path() -> Path:
             return p
     except Exception:
         pass
-    # Fallback: walk up from this file
-    candidates = [
-        Path(__file__).resolve().parents[2] / "Qss" / "images" / "aiLogo.png",
-        Path(__file__).resolve().parents[3] / "Qss" / "images" / "aiLogo.png",
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
+    # Fallback: use _project_root
+    try:
+        from _project_root import PROJECT_ROOT
+        p = PROJECT_ROOT / "Qss" / "images" / "aiLogo.png"
+        if p.exists():
+            return p
+    except Exception:
+        pass
     return Path("Qss/images/aiLogo.png")  # last-resort relative
 
 

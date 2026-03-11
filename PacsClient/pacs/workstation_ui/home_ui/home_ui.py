@@ -31,18 +31,18 @@ from pynetdicom.sop_class import (
 )
 # # واردکردن کلاینت gRPC
 from PacsClient.components import DicomGrpcClient
-from PacsClient.components import dicom_service_pb2, dicom_service_pb2_grpc
+from modules.network import dicom_service_pb2, dicom_service_pb2_grpc
 # Zeta Download Manager - Primary download system
-from PacsClient.components.zeta_adapter import (
+from modules.network.zeta_adapter import (
     get_zeta_download_manager_widget, get_zeta_executor, get_zeta_worker_pool,
     start_zeta_download, create_download_task_from_study
 )
 # Zeta provides all download functionality
-from PacsClient.zeta_download_manager.download.executor import DownloadExecutor
-from PacsClient.zeta_download_manager.core.models import DownloadTask
-from PacsClient.zeta_download_manager.core.enums import DownloadPriority
+from modules.download_manager.download.executor import DownloadExecutor
+from modules.download_manager.core.models import DownloadTask
+from modules.download_manager.core.enums import DownloadPriority
 # Import Socket service for patient list retrieval
-from PacsClient.components.socket_patient_service import get_socket_patient_service
+from modules.network.socket_patient_service import get_socket_patient_service
 from concurrent.futures import ThreadPoolExecutor
 from .data_access_panel import DataAccessPanelWidget
 from .patient_search_widget import PatientSearchWidget
@@ -50,19 +50,20 @@ from .patient_table_widget import PatientTableWidget
 from .right_panel_widget import RightPanelWidget
 from .secretary_button_widget import SecretaryButtonWidget
 # UPDATED: Now using Zeta Download Manager with v1.0.6 UI design
-from PacsClient.zeta_download_manager.ui.main_widget import DownloadManagerWidget
+from modules.download_manager.ui.main_widget import DownloadManagerWidget
 from PacsClient.utils import get_connection_database, get_all_patients, search_patients_local, find_patient_pk, \
     find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 
-from PacsClient.pacs.patient_tab import PatientWidget, AiMainWindow
+from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget import PatientWidget
+from modules.ai_imaging.ai_module_ui import AiMainWindow
 
 # Zeta Download Manager handles priority internally
 PRIORITY_MANAGER_AVAILABLE = False  # Legacy priority manager removed
 from PacsClient.pacs.patient_tab.ui.patient_ui.custom_tab_manager import CustomTabManager
 import warnings
 from PacsClient.utils.config import SOURCE_PATH
-from PacsClient.utils.socket_config import update_socket_server_settings, get_socket_server_settings
-from PacsClient.utils import download_attachments_for_study, download_attachments_for_study_async
+from modules.network.socket_config import update_socket_server_settings, get_socket_server_settings
+from modules.network.upload_download_attchments import download_attachments_for_study, download_attachments_for_study_async
 from PacsClient.utils.scroll_style import get_scroll_area_style
 
 warnings.simplefilter("error")
@@ -560,7 +561,7 @@ class HomePanelWidget(QWidget):
     def check_socket_connection_status(self):
         """Check and display Socket connection status"""
         try:
-            from PacsClient.components.socket_patient_service import get_socket_patient_service
+            from modules.network.socket_patient_service import get_socket_patient_service
 
             socket_service = get_socket_patient_service()
             is_connected = socket_service.test_connection()
@@ -1207,6 +1208,24 @@ class HomePanelWidget(QWidget):
         except Exception as e:
             print(f"⚠️ Error closing tab: {e}")
 
+    def cleanup(self):
+        """Release resources owned by HomePanelWidget.
+
+        Called from MainWindowWidget.closeEvent before the widget is destroyed.
+        Shuts down the thread pool and cancels outstanding background tasks.
+        """
+        # Shutdown thread pool
+        if hasattr(self, 'thread_pool') and self.thread_pool is not None:
+            self.thread_pool.shutdown(wait=False)
+            self.thread_pool = None
+
+        # Cancel outstanding async tasks
+        if hasattr(self, '_background_tasks'):
+            for task in list(self._background_tasks):
+                if not task.done():
+                    task.cancel()
+            self._background_tasks.clear()
+
     def _safe_emit_series_downloaded(self, widget_ref_weak, series_number):
         """Safely emit series_downloaded signal, checking if widget exists"""
         try:
@@ -1414,7 +1433,7 @@ class HomePanelWidget(QWidget):
             zeta_manager.add_downloads(selected_studies, start_immediately=True)
             # Throttle all ZetaBoost warmup workers globally while any download runs.
             try:
-                from PacsClient.pacs.patient_tab.zeta_boost.engine import set_global_download_active
+                from modules.zeta_boost.engine import set_global_download_active
                 set_global_download_active(True)
                 print("[GlobalDL] set_global_download_active=True")
             except Exception:
@@ -1479,7 +1498,7 @@ class HomePanelWidget(QWidget):
             print(f"[Zeta NPR] Studies added and downloads started automatically")
             # Throttle all ZetaBoost warmup workers globally while any download runs.
             try:
-                from PacsClient.pacs.patient_tab.zeta_boost.engine import set_global_download_active
+                from modules.zeta_boost.engine import set_global_download_active
                 set_global_download_active(True)
                 print("[GlobalDL] set_global_download_active=True")
             except Exception:
@@ -1507,7 +1526,7 @@ class HomePanelWidget(QWidget):
                 return
             
             # Import CD burn dialog
-            from PacsClient.components.cd_burner.cd_burn_dialog import CDBurnDialog
+            from modules.cd_burner.cd_burn_dialog import CDBurnDialog
             
             dialog = CDBurnDialog(selected_studies, self)
             dialog.exec()
@@ -1879,8 +1898,8 @@ class HomePanelWidget(QWidget):
         Called after each study completes or fails.
         """
         try:
-            from PacsClient.zeta_download_manager.state.state_store import get_state_store
-            from PacsClient.pacs.patient_tab.zeta_boost.engine import set_global_download_active
+            from modules.download_manager.state.state_store import get_state_store
+            from modules.zeta_boost.engine import set_global_download_active
             active_list = get_state_store().get_active_downloads()
             active = bool(active_list)
             set_global_download_active(active)
@@ -2035,7 +2054,7 @@ class HomePanelWidget(QWidget):
         """Handle resumable download manager button click - Uses Zeta Download Manager"""
         try:
             # Import Zeta download manager widget (replaces resumable_download_widget)
-            from PacsClient.zeta_download_manager.ui.main_widget import DownloadManagerWidget as ResumableDownloadManagerWidget
+            from modules.download_manager.ui.main_widget import DownloadManagerWidget as ResumableDownloadManagerWidget
             from PacsClient.utils.config import SOURCE_PATH
 
             # Check if resumable download manager tab already exists
@@ -2408,8 +2427,18 @@ class HomePanelWidget(QWidget):
                     # Log details
                     print(f"[LOCAL_SEARCH] [{i}/{total}] Processing: {patient.get('patient_name')} - study_uid={study_uid}, study_path={study_path}")
 
-                    # Fallback: infer study_path from SOURCE_PATH if missing
-                    if not study_path and study_uid:
+                    # Fallback: try SOURCE_PATH if study_path is missing OR stale
+                    _need_fallback = False
+                    if not study_path:
+                        _need_fallback = True
+                    elif study_uid:
+                        try:
+                            if not Path(study_path).exists():
+                                _need_fallback = True
+                        except Exception:
+                            _need_fallback = True
+
+                    if _need_fallback and study_uid:
                         try:
                             fallback_path = SOURCE_PATH / study_uid
                             print(f"[LOCAL_SEARCH]   🔍 Checking fallback path: {fallback_path}")
@@ -2417,35 +2446,38 @@ class HomePanelWidget(QWidget):
                                 study_path = str(fallback_path)
                                 patient['study_path'] = study_path
                                 print(f"[LOCAL_SEARCH]   ✅ Using fallback path")
-                                # Persist missing study_path for future local searches
+                                # Persist corrected study_path for future local searches
                                 study_pk = find_study_pk_with_study_uid(study_uid)
                                 if study_pk:
-                                    update_study_missing_fields(study_pk, study_path=study_path)
+                                    from database.manager import force_update_study_path
+                                    force_update_study_path(study_pk, study_path)
                             else:
                                 print(f"[LOCAL_SEARCH]   ⚠️ Fallback path doesn't exist or has no subfolders")
                         except Exception as update_error:
                             print(f"[LOCAL_SEARCH]   ⚠️ Error checking fallback: {update_error}")
 
                     if not study_path:
-                        try:
-                            study_uid = patient.get('study_uid')
-                            if study_uid:
-                                study_path = str(SOURCE_PATH / study_uid)
-                        except Exception:
-                            study_path = None
+                        if study_uid:
+                            study_path = str(SOURCE_PATH / study_uid)
                     if not study_path:
                         print(f"[LOCAL_SEARCH]   ❌ Skipping - no study_path")
                         skipped += 1
                         continue
+                    _has_dicom = False
                     try:
-                        if not has_subfolders(study_path):
-                            print(f"[LOCAL_SEARCH]   ❌ Skipping - no subfolders in {study_path}")
+                        _has_dicom = has_subfolders(study_path)
+                    except Exception:
+                        pass
+                    if not _has_dicom:
+                        # No DICOM on disk — still show if thumbnails exist
+                        from PacsClient.pacs.patient_tab.utils.utils import THUMBNAIL_PATH
+                        _thumb_dir = THUMBNAIL_PATH / study_uid if study_uid else None
+                        if _thumb_dir and _thumb_dir.exists() and any(_thumb_dir.iterdir()):
+                            print(f"[LOCAL_SEARCH]   ⚠️ No DICOM on disk but thumbnails exist — showing anyway")
+                        else:
+                            print(f"[LOCAL_SEARCH]   ❌ Skipping - no subfolders and no thumbnails for {study_path}")
                             skipped += 1
                             continue
-                    except Exception as err:
-                        print(f"[LOCAL_SEARCH]   ❌ Error checking subfolders: {err}")
-                        skipped += 1
-                        continue
 
                     # مقادیر لازم
                     # Backfill missing modality / study_date from first DICOM on disk
@@ -2574,7 +2606,7 @@ class HomePanelWidget(QWidget):
             self.search_progress.setRange(0, 0)
 
             loop = asyncio.get_running_loop()
-            from PacsClient.components.socket_patient_service import get_socket_patient_service
+            from modules.network.socket_patient_service import get_socket_patient_service
             socket_service = get_socket_patient_service()
 
             # تست اتصال
@@ -3565,7 +3597,7 @@ class HomePanelWidget(QWidget):
                     return
             
             # Use simple SeriesDownloader for fastest download
-            from PacsClient.components.series_downloader import SeriesDownloader
+            from modules.download_manager.download.series_downloader import SeriesDownloader
             
             downloader = SeriesDownloader(host=server['host'], port=50052)
             if downloader.connect():
@@ -3674,7 +3706,7 @@ class HomePanelWidget(QWidget):
                 
             # Cancel any Zeta downloads for this series
             try:
-                from PacsClient.components.zeta_adapter import cancel_zeta_download
+                from modules.network.zeta_adapter import cancel_zeta_download
                 cancel_zeta_download(study_uid)
                 print(f"   Cancelled Zeta download")
             except:
@@ -3832,7 +3864,7 @@ class HomePanelWidget(QWidget):
             study_uid = patient_data['study_uid']
 
             # Use Zeta download adapter
-            from PacsClient.components.zeta_adapter import start_zeta_download, create_download_task_from_study
+            from modules.network.zeta_adapter import start_zeta_download, create_download_task_from_study
 
             # Get service instance
             service = get_resumable_dicom_service()
@@ -4128,7 +4160,7 @@ Study UID: {study_uid}
                         return
             
             # Import EducationModuleRedesigned
-            from PacsClient.pacs.education.education_module_redesigned import EducationModuleRedesigned
+            from modules.education.education_module_redesigned import EducationModuleRedesigned
 
             # Create education module widget
             education_widget = EducationModuleRedesigned(
@@ -4177,7 +4209,7 @@ Study UID: {study_uid}
                         print(f"[HomePanelWidget] Switched to existing Printing tab at index {i}")
                         return
 
-            from printing.ui.printing_widget import PrintingWidget
+            from modules.printing.ui.printing_widget import PrintingWidget
 
             printing_widget = PrintingWidget(
                 parent=self,
@@ -4210,7 +4242,7 @@ Study UID: {study_uid}
         print("[HomePanelWidget] open_reception_data_tab called")
         try:
             # Import ReceptionDataTab
-            from PacsClient.pacs.patient_tab.ui.ai_module_ui.service_tab import ReceptionDataTab
+            from modules.ai_imaging.ai_module_ui.service_tab import ReceptionDataTab
             
             # Create Reception Data widget
             print("[HomePanelWidget] Creating ReceptionDataTab...")
@@ -4816,7 +4848,7 @@ Study UID: {study_uid}
                 print(f"❌ No server selected for fetching series")
                 return None
                 
-            from PacsClient.components.grpc_client import DicomGrpcClient
+            from modules.network.grpc_client import DicomGrpcClient
             grpc_client = DicomGrpcClient(host=server['host'], port=50051)
             
             # دریافت اطلاعات study با metadata

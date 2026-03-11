@@ -22,10 +22,10 @@ import os
 import qtawesome as qta
 from .pacs.workstation_ui.mainwindow_ui import MainWindowWidget
 from PacsClient.utils import IMAGES_LOGIN_PATH
-from PacsClient.components.socket_service import SocketService
-from PacsClient.utils.socket_config import get_socket_config
-from PacsClient.utils.socket_token_manager import get_socket_token_manager
-from PacsClient.utils.license_manager import LicenseManager
+from modules.network.socket_service import SocketService
+from modules.network.socket_config import get_socket_config
+from modules.network.socket_token_manager import get_socket_token_manager
+from modules.LicenseGenerator.license_manager import LicenseManager
 
 
 class AppHandler(QDialog):
@@ -712,7 +712,7 @@ class AppHandler(QDialog):
     
     def _show_server_settings(self):
         """Show server settings dialog"""
-        from PacsClient.utils.server_settings_dialog import ServerSettingsDialog
+        from modules.network.server_settings_dialog import ServerSettingsDialog
         dialog = ServerSettingsDialog(self)
         if dialog.exec() == QDialog.Accepted:
             # Server settings updated, could show notification

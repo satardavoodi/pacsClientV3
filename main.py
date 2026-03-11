@@ -143,9 +143,10 @@ if sys.platform == 'win32':
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 from PySide6.QtGui import QIcon
-from PacsClient import AppHandler
+from PacsClient.app_handler import AppHandler
 from PacsClient.utils.font_manager import load_fonts, setup_font_rendering
-from PacsClient.utils import LicenseManager, LicenseDialog
+from modules.LicenseGenerator.license_manager import LicenseManager
+from modules.LicenseGenerator.license_dialog import LicenseDialog
 from PacsClient.utils.scroll_style import get_scroll_area_style
 import vtkmodules.vtkCommonCore as vtkCommonCore
 
@@ -160,7 +161,7 @@ import asyncio
 #     window.show()
 #     sys.exit(app.exec())
 from PacsClient.utils import IMAGES_LOGIN_PATH
-from PacsClient.utils.disk_alert_service import DiskUsageAlertService
+from modules.storage.disk_alert_service import DiskUsageAlertService
 from PacsClient.utils.diagnostic_logging import configure_diagnostic_logging
 
 # Graphics configuration has been moved to configure_graphics_fallback() function
@@ -192,6 +193,13 @@ if __name__ == "__main__":
 
     configure_diagnostic_logging(process_role="main", force=True)
     logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
+
+    # Migrate data from old flat layout to user_data/ (safe to call multiple times)
+    try:
+        from PacsClient.utils.data_paths import migrate_legacy_data
+        migrate_legacy_data()
+    except Exception as _mig_exc:
+        logging.getLogger(__name__).warning("Legacy data migration skipped: %s", _mig_exc)
     
     # Set Qt attributes BEFORE creating QApplication
     QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)  # Compatible with software rendering
@@ -210,7 +218,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("2.2.4.1")
+    app.setApplicationVersion("2.2.5")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

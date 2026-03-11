@@ -9,14 +9,15 @@ import json
 import logging
 import os
 import random
-from PacsClient.pacs.patient_tab.interactor_styles import (
+from modules.viewer.interactor_styles import (
     RulerInteractorStyle, EraserInteractorStyle, AngleInteractorStyle, TwoLineAngleInteractorStyle, ArrowInteractorStyle,
     TextInteractorStyle, DefaultInteractionInteractorStyle, RotateInteractorStyle, RoiInteractorStyle,
     CircleRoiInteractorStyle, ToolAccess)
-from PacsClient.pacs.patient_tab.interactor_styles.ai_chat_interactorstyle import AIChatInteractorStyle
+from modules.viewer.interactor_styles.ai_chat_interactorstyle import AIChatInteractorStyle
 
 from PacsClient.pacs.patient_tab.utils import NodeViewer, MatrixSelector
-from PacsClient.utils import ICON_PATH, upload_attachments_for_study
+from PacsClient.utils import ICON_PATH
+from modules.network.upload_download_attchments import upload_attachments_for_study
 from PacsClient.utils.config import ATTACHMENT_PATH
 from PacsClient.utils import list_files_in_folder
 from PacsClient.utils import get_attachments_uploaded
@@ -24,7 +25,7 @@ from PacsClient.utils import get_attachments_uploaded
 from .voice_tool_ui import VoiceWidget
 from .attachments_dropdown import AttachmentsDropdownWidget
 from threading import Thread
-from PacsClient.pacs.patient_tab.zeta_sync.sync_types import SyncMode
+from modules.zeta_sync.sync_types import SyncMode
 
 
 def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa'):
@@ -583,7 +584,7 @@ class ToolbarManager:
                 return
             
             # Import the Orthogonal MPR Widget
-            from PacsClient.pacs.patient_tab.orthogonal_mpr import OrthogonalMPRWidget
+            from modules.mpr.orthogonal import OrthogonalMPRWidget
             
             # Create dialog to host the MPR viewer
             dialog = QDialog(self.patient_widget)
@@ -645,20 +646,7 @@ class ToolbarManager:
         from PySide6.QtWidgets import QMessageBox, QApplication
         from PySide6.QtCore import Qt
         # Import from zeta mpr (primary MPR implementation)
-        import sys
-        import os
-        import importlib.util
-        
-        # Get path to zeta mpr directory
-        patient_tab_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-        zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta mpr")
-        curved_mpr_path = os.path.join(zeta_mpr_dir, "curved_mpr.py")
-        
-        # Import CurvedMPRGenerator from zeta mpr
-        spec = importlib.util.spec_from_file_location("zeta_curved_mpr", curved_mpr_path)
-        zeta_curved_mpr = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(zeta_curved_mpr)
-        CurvedMPRGenerator = zeta_curved_mpr.CurvedMPRGenerator
+        from modules.mpr.zeta_mpr.curved_mpr import CurvedMPRGenerator
         
         print(f"[CURVED MPR] Starting generation with {len(points)} points...")
         
@@ -712,7 +700,7 @@ class ToolbarManager:
     def _show_curved_mpr_result(self, curved_image, num_points, generator=None):
         """Show curved MPR result in main viewer grid"""
         try:
-            from PacsClient.pacs.patient_tab.curved_mpr_panoramic_view import CurvedMPRPanoramicView
+            from modules.mpr.curved_mpr.curved_mpr_panoramic_view import CurvedMPRPanoramicView
             from PySide6.QtWidgets import QApplication
             
             dims = curved_image.GetDimensions()
@@ -951,7 +939,7 @@ class ToolbarManager:
     def is_vtk_widget(self, widget):
         """Check if widget is a VTKWidget (not MPR or other custom widgets)"""
         from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
-        from PacsClient.pacs.patient_tab.curved_mpr_panoramic_view import CurvedMPRViewport
+        from modules.mpr.curved_mpr.curved_mpr_panoramic_view import CurvedMPRViewport
         
         # Accept VTKWidget or CurvedMPRViewport
         return isinstance(widget, (VTKWidget, CurvedMPRViewport))
@@ -1187,7 +1175,7 @@ class ToolbarManager:
             
             # Check what type it actually is
             from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
-            from PacsClient.pacs.patient_tab.curved_mpr_panoramic_view import CurvedMPRViewport
+            from modules.mpr.curved_mpr.curved_mpr_panoramic_view import CurvedMPRViewport
             print(f"      isinstance(VTKWidget): {isinstance(selected_widget, VTKWidget)}", file=sys.stderr, flush=True)
             try:
                 print(f"      isinstance(CurvedMPRViewport): {isinstance(selected_widget, CurvedMPRViewport)}", file=sys.stderr, flush=True)
@@ -3466,7 +3454,7 @@ class ToolbarManager:
             logger.info(f"Launching Advanced MPR Slicer with DICOM directory: {dicom_directory}")
             
             # Import and use the SlicerLauncher
-            from PacsClient.pacs.patient_tab.advance_mpr_3d_slicer.slicer_launcher import get_slicer_launcher
+            from modules.mpr.advanced_3d_slicer.slicer_launcher import get_slicer_launcher
             
             launcher = get_slicer_launcher(parent_widget=self.patient_widget)
             
@@ -3784,54 +3772,11 @@ class ToolbarManager:
             # Hide the original widget
             selected_widget.setVisible(False)
             
-            # ✅ NOTE: If "zeta mpr" folder has space in name, consider renaming to "zeta_mpr"
-            # The following import logic is preserved but path handling improved
+            # ✅ "zeta mpr" folder renamed to "zeta_mpr" — normal import works now
             print("Creating Zeta MPR viewer...", file=sys.stderr, flush=True)
             
-            import os
-            import shutil
-            import importlib.util
-            
-            patient_tab_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-            zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta mpr")
-            
-            # Fallback if folder doesn't exist with space, try with underscore
-            if not os.path.exists(zeta_mpr_dir):
-                zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta_mpr")
-            
-            if not os.path.exists(zeta_mpr_dir):
-                logger.error(f"Zeta MPR directory not found: {zeta_mpr_dir}")
-                QMessageBox.critical(
-                    self.patient_widget,
-                    "Error",
-                    "Zeta MPR module not found.\n\nPlease ensure 'zeta_mpr' folder exists in patient_tab directory."
-                )
-                selected_widget.setVisible(True)
-                return
-            
-            viewers_dir = os.path.join(patient_tab_dir, "viewers")
-            
-            # Temporarily copy vtk_3d_presets.py if needed
-            vtk_presets_src = os.path.join(viewers_dir, "vtk_3d_presets.py")
-            vtk_presets_dst = os.path.join(zeta_mpr_dir, "vtk_3d_presets.py")
-            copied_file = False
-            
             try:
-                if os.path.exists(vtk_presets_src) and not os.path.exists(vtk_presets_dst):
-                    shutil.copy2(vtk_presets_src, vtk_presets_dst)
-                    copied_file = True
-                
-                # Import using importlib to handle spaces in path
-                init_path = os.path.join(zeta_mpr_dir, "__init__.py")
-                if not os.path.exists(init_path):
-                    logger.error(f"__init__.py not found in {zeta_mpr_dir}")
-                    QMessageBox.critical(self.patient_widget, "Error", "Zeta MPR module is missing __init__.py")
-                    return
-                    
-                spec = importlib.util.spec_from_file_location("zeta_mpr_pkg", init_path)
-                zeta_mpr_pkg = importlib.util.module_from_spec(spec)
-                sys.modules["zeta_mpr_pkg"] = zeta_mpr_pkg
-                spec.loader.exec_module(zeta_mpr_pkg)
+                from modules.mpr.zeta_mpr import StandardMPRViewer
                 
                 window_width = None
                 window_center = None
@@ -3849,7 +3794,7 @@ class ToolbarManager:
                 except Exception as wl_err:
                     logger.warning(f"Could not read window/level from main viewer: {wl_err}")
 
-                zeta_widget = zeta_mpr_pkg.StandardMPRViewer(
+                zeta_widget = StandardMPRViewer(
                     vtk_image_data=vtk_image_data,
                     parent=parent_widget,
                     window_width=window_width,
@@ -3878,14 +3823,7 @@ class ToolbarManager:
                 logger.info("✓ Zeta MPR viewer replaced viewport successfully")
                 logger.info("✓ MPR button is now active (green)")
             finally:
-                # Cleanup
-                if "zeta_mpr_pkg" in sys.modules:
-                    del sys.modules["zeta_mpr_pkg"]
-                if copied_file and os.path.exists(vtk_presets_dst):
-                    try:
-                        os.remove(vtk_presets_dst)
-                    except:
-                        pass
+                pass
                         
         except Exception as e:
             logger.error(f"ERROR launching Zeta MPR: {e}", exc_info=True)
@@ -4016,48 +3954,8 @@ class ToolbarManager:
             
             selected_widget.setVisible(False)
             
-            import os
-            import importlib.util
-            import shutil
-            
-            patient_tab_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-            zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta mpr")
-            if not os.path.exists(zeta_mpr_dir):
-                zeta_mpr_dir = os.path.join(patient_tab_dir, "zeta_mpr")
-            
-            # --- Copy vtk_3d_presets.py into zeta mpr dir (same fix used by toggle_zeta_mpr) ---
-            viewers_dir = os.path.join(patient_tab_dir, "viewers")
-            vtk_presets_src = os.path.join(viewers_dir, "vtk_3d_presets.py")
-            vtk_presets_dst = os.path.join(zeta_mpr_dir, "vtk_3d_presets.py")
-            copied_vtk_presets = False
-            if os.path.exists(vtk_presets_src) and not os.path.exists(vtk_presets_dst):
-                shutil.copy2(vtk_presets_src, vtk_presets_dst)
-                copied_vtk_presets = True
-            
-            # Load the main zeta_mpr_pkg (StandardMPRViewer)
-            zeta_init_path = os.path.join(zeta_mpr_dir, "__init__.py")
-            if not os.path.exists(zeta_init_path):
-                QMessageBox.critical(self.patient_widget, "Error", "Zeta MPR module is missing __init__.py")
-                selected_widget.setVisible(True)
-                return
-            
-            zeta_spec = importlib.util.spec_from_file_location("zeta_mpr_pkg", zeta_init_path)
-            zeta_mpr_pkg_mod = importlib.util.module_from_spec(zeta_spec)
-            sys.modules["zeta_mpr_pkg"] = zeta_mpr_pkg_mod
-            zeta_spec.loader.exec_module(zeta_mpr_pkg_mod)
-            zeta_mpr_pkg = zeta_mpr_pkg_mod
-            
-            # Load the CurveMPR sub-package
-            init_path = os.path.join(zeta_mpr_dir, "CurveMPR", "__init__.py")
-            if not os.path.exists(init_path):
-                QMessageBox.critical(self.patient_widget, "Error", "Curve MPR module is missing __init__.py")
-                selected_widget.setVisible(True)
-                return
-                
-            spec = importlib.util.spec_from_file_location("curve_mpr_pkg", init_path)
-            curve_mpr_pkg = importlib.util.module_from_spec(spec)
-            sys.modules["curve_mpr_pkg"] = curve_mpr_pkg
-            spec.loader.exec_module(curve_mpr_pkg)
+            from modules.mpr.zeta_mpr import StandardMPRViewer
+            from modules.mpr.zeta_mpr.CurveMPR import CurveMPRWidget, CurveMPRInteractorStyle
             
             window_width = None
             window_center = None
@@ -4075,7 +3973,7 @@ class ToolbarManager:
             except Exception as wl_err:
                 logger.warning(f"Could not read window/level from main viewer: {wl_err}")
 
-            zeta_widget = zeta_mpr_pkg.StandardMPRViewer(
+            zeta_widget = StandardMPRViewer(
                 vtk_image_data=vtk_image_data,
                 parent=parent_widget,
                 window_width=window_width,
@@ -4083,7 +3981,7 @@ class ToolbarManager:
             )
             
             # Now inject Curve MPR into the 3D view pane (bottom right)
-            curve_widget = curve_mpr_pkg.CurveMPRWidget(vtk_image_data, main_viewer=zeta_widget, parent=zeta_widget)
+            curve_widget = CurveMPRWidget(vtk_image_data, main_viewer=zeta_widget, parent=zeta_widget)
             
             # Replace the 3D view with our Curve MPR widget
             # StandardMPRViewer has a grid layout in _views_layout.
@@ -4133,7 +4031,7 @@ class ToolbarManager:
                 
             # Set up the interactor style on the axial view
             if hasattr(zeta_widget, 'viewers') and 'axial' in zeta_widget.viewers:
-                interactor_style = curve_mpr_pkg.CurveMPRInteractorStyle(zeta_widget, curve_widget)
+                interactor_style = CurveMPRInteractorStyle(zeta_widget, curve_widget)
                 existing_style = zeta_widget.viewers['axial']['widget'].GetInteractorStyle()
                 if existing_style:
                     interactor_style.attach(existing_style)
@@ -4155,24 +4053,11 @@ class ToolbarManager:
             self.tool_selected = self.tool_access.CURVED_MPR
             self.handle_buttons_checked()
             
-            # Cleanup copied vtk_3d_presets.py (no longer needed after import)
-            if copied_vtk_presets and os.path.exists(vtk_presets_dst):
-                try:
-                    os.remove(vtk_presets_dst)
-                except Exception:
-                    pass
-            
         except Exception as e:
             logger.error(f"ERROR launching Curve MPR: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self.patient_widget, "Error", f"Error launching Curve MPR:\n{str(e)}")
-            # Cleanup copied file on error too
-            try:
-                if 'copied_vtk_presets' in dir() and copied_vtk_presets and 'vtk_presets_dst' in dir() and os.path.exists(vtk_presets_dst):
-                    os.remove(vtk_presets_dst)
-            except Exception:
-                pass
             if selected_widget:
                 selected_widget.setVisible(True)
 
@@ -6359,8 +6244,8 @@ class ToolbarManager:
             from PySide6.QtWidgets import QApplication
             from PacsClient.pacs.patient_tab.utils.utils import get_quickly_series_info
             from PacsClient.pacs.patient_tab.utils.utils import get_study_source_path
-            from PacsClient.pacs.education.case_of_day_database import copy_dicom_folder_to_case_storage
-            from PacsClient.pacs.education.case_of_day_widget import CaseOfDayEntryDialog
+            from modules.education.case_of_day_database import copy_dicom_folder_to_case_storage
+            from modules.education.case_of_day_widget import CaseOfDayEntryDialog
 
             source_folder = getattr(self.patient_widget, "import_folder_path", None)
             study_uid = getattr(self.patient_widget, "study_uid", None)
@@ -6633,7 +6518,7 @@ class ToolbarManager:
             
             # Current status display
             current_status = getattr(self.patient_widget, 'report_status', 'pending')
-            from PacsClient.components.socket_report_status_service import REPORT_STATUSES
+            from modules.network.socket_report_status_service import REPORT_STATUSES
             
             current_label = QLabel(f"Current Status: {REPORT_STATUSES.get(current_status, current_status)}")
             current_label.setStyleSheet("""
@@ -6847,7 +6732,7 @@ class ToolbarManager:
             current_status = getattr(self.patient_widget, 'report_status', 'pending')
             
             # Import status labels and colors
-            from PacsClient.components.socket_report_status_service import REPORT_STATUSES, STATUS_COLORS
+            from modules.network.socket_report_status_service import REPORT_STATUSES, STATUS_COLORS
             
             # Get status label and color
             status_label = REPORT_STATUSES.get(current_status, current_status.title())
@@ -7158,7 +7043,7 @@ class ToolbarManager:
             current_status = getattr(self.patient_widget, 'report_status', 'pending')
             
             # Import status labels and colors
-            from PacsClient.components.socket_report_status_service import REPORT_STATUSES, STATUS_COLORS
+            from modules.network.socket_report_status_service import REPORT_STATUSES, STATUS_COLORS
             
             # Get status label and color
             status_label = REPORT_STATUSES.get(current_status, current_status.title())

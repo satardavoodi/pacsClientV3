@@ -7,7 +7,8 @@ from pathlib import Path
 from . import database
 
 json_file = 'servers.json'
-CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+from _project_root import PROJECT_ROOT as _ROOT
+CONFIG_DIR = _ROOT / "config"
 SERVERS_FILE = CONFIG_DIR / "servers_address.json"
 _SERVERS_FILE_MISSING_WARNED = False
 

@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QTextEdit,
 )
 
-from EchoMind.api_manager import APIKeyManager, Manage
-from EchoMind.settings_store import (
+from modules.EchoMind.api_manager import APIKeyManager, Manage
+from modules.EchoMind.settings_store import (
     get_echomind_api_key,
     set_echomind_api_key,
     get_secretary_stt_route,

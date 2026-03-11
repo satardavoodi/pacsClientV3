@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, List
 import threading
 from PySide6.QtCore import QObject, Signal
 
-from PacsClient.utils.upload_download_attchments import upload_attachments_for_study
+from modules.network.upload_download_attchments import upload_attachments_for_study
 from PacsClient.utils.db_manager import get_attachments_uploaded
 
 
@@ -120,7 +120,7 @@ class PatientSyncService(QObject):
             
             # Update report status
             try:
-                from PacsClient.components.socket_report_status_service import get_report_status_service
+                from modules.network.socket_report_status_service import get_report_status_service
                 report_service = get_report_status_service()
                 status_response = report_service.update_report_status(
                     study_uid=study_uid,
@@ -139,7 +139,7 @@ class PatientSyncService(QObject):
             if result['attachments_uploaded'] > 0:
                 try:
                     from PacsClient.utils.config import ATTACHMENT_PATH
-                    from PacsClient.utils import download_attachments_for_study
+                    from modules.network.upload_download_attchments import download_attachments_for_study
                     import shutil
                     
                     local_attachment_path = ATTACHMENT_PATH / study_uid

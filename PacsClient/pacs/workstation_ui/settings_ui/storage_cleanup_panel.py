@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from PacsClient.utils.config import BASE_PATH
-from PacsClient.utils.local_storage_cleanup_manager import LocalStorageCleanupManager
+from modules.storage.local_storage_cleanup_manager import LocalStorageCleanupManager
 
 
 class StorageCleanupPanelWidget(QWidget):

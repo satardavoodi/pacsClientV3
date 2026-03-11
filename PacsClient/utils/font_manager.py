@@ -20,11 +20,8 @@ class FontManager:
             return True
             
         try:
-            # Get the path to the Fonts folder
-            if getattr(sys, 'frozen', False):
-                base_path = Path(sys._MEIPASS)
-            else:
-                base_path = Path(__file__).parent.parent.parent
+            from _project_root import PROJECT_ROOT
+            base_path = PROJECT_ROOT
             
             iranyekan_dir = base_path / "Fonts" / "iranyekan"
             
@@ -76,14 +73,8 @@ class FontManager:
             return True
             
         try:
-            # Get the path to the Fonts folder
-            # Use PyInstaller's temp folder if running as executable
-            if getattr(sys, 'frozen', False):
-                # Running as PyInstaller executable
-                base_path = Path(sys._MEIPASS)
-            else:
-                # Running as script
-                base_path = Path(__file__).parent.parent.parent
+            from _project_root import PROJECT_ROOT
+            base_path = PROJECT_ROOT
             fonts_dir = base_path / "Fonts"
             
             if not fonts_dir.exists():

@@ -9,7 +9,7 @@
 ; - Ensures Viewer widget works before installation completes
 
 #define MyAppName "AIPacs"
-#define MyAppVersion "2.2.3.0"
+#define MyAppVersion "2.2.5"
 #define MyAppPublisher "AI-PACS Medical Imaging Systems"
 #define MyAppURL "https://www.example.com/"
 #define MyAppExeName "AIPacs.exe"

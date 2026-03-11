@@ -1357,7 +1357,7 @@ def get_expected_series_count_from_server(study_uid):
         int: Expected series count, or None if failed
     """
     try:
-        from PacsClient.components.socket_client import PatientListSocketClient
+        from modules.network.socket_client import PatientListSocketClient
         
         client = PatientListSocketClient()
         client.connect()

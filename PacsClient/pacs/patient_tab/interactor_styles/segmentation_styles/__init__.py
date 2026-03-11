@@ -1,3 +1,0 @@
-from PacsClient.pacs.patient_tab.interactor_styles import AbstractInteractorStyle
-from .polygon_interactorstyle import PolygonSegmentationInteractorStyle
-from .rectangle_interactorstyle import RectangleSegmentationInteractorStyle

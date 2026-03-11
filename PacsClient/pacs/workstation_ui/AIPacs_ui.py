@@ -623,7 +623,7 @@ class ControlPanelWindow(object):
         try:
             # Lazy load the education module on first access
             if not self.educationPage_loaded:
-                from PacsClient.pacs.education.education_main_widget import EducationMainWidget
+                from modules.education.education_main_widget import EducationMainWidget
                 
                 # Remove placeholder widget
                 self.mainPages.removeWidget(self.educationPage)

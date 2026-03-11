@@ -42,11 +42,11 @@ from PySide6.QtWidgets import (
 )
 
 from PacsClient.utils import IMAGES_LOGIN_PATH
-from PacsClient.pacs.patient_tab.viewers.secretary_bridge import create_secretary_orchestrator
-from EchoMind.api_manager import APIKeyManager, Manage
-from EchoMind.ai_chat_api import ApiWorker
-from EchoMind.secretary.stt.router import SttRouter
-from EchoMind.settings_store import get_secretary_stt_route, load_settings, get_echomind_api_key
+from modules.EchoMind.secretary_bridge import create_secretary_orchestrator
+from modules.EchoMind.api_manager import APIKeyManager, Manage
+from modules.EchoMind.viewer_chat.ai_chat_api import ApiWorker
+from modules.EchoMind.secretary.stt.router import SttRouter
+from modules.EchoMind.settings_store import get_secretary_stt_route, load_settings, get_echomind_api_key
 
 
 class SecretaryOrbButton(QToolButton):
@@ -1271,9 +1271,9 @@ class SecretaryButtonWidget(QWidget):
             return
 
         def work():
-            # LLM call goes through EchoMind.llm_client — key comes from Settings → EchoMind
+            # LLM call goes through modules.EchoMind.llm_client — key comes from Settings → EchoMind
             try:
-                from EchoMind.llm_client import gapgpt_chat, LLMError
+                from modules.EchoMind.llm_client import gapgpt_chat, LLMError
                 content = gapgpt_chat(
                     messages=[
                         {
@@ -1436,7 +1436,7 @@ class SecretaryButtonWidget(QWidget):
             QMessageBox.critical(
                 self,
                 "EchoMind Authentication",
-                (error or "Invalid key.") + " Update it in Settings -> EchoMind.",
+                (error or "Invalid key.") + " Update it in Settings -> modules.EchoMind.",
             )
             return False
 

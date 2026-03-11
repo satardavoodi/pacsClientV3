@@ -1,56 +1,38 @@
 import sys
 from pathlib import Path
 
-# ICON_PATH = './PacsClient/statics/Qss/icons/icons/feather/'
-# ICON_PATH = './PacsClient/statics/Qss/icons/fefefe/feather/'
-# ICON_PATH = './PacsClient/pacs/workstation_ui/Qss/icons/fefefe/feather/'
-# JSON_PATH = './json-styles'
-# ICON_PATH = './PacsClient/Qss/icons/fefefe/feather/'
-
-#def find_project_root(start):
-#     for p in [start, *start.parents]:
-#         if (p / ".git").exists() or (p / "pyproject.toml").exists() or (p / "requirements.txt").exists():
-#             return p
-#     return start
 from PacsClient.utils.utils import get_server_url
+from _project_root import PROJECT_ROOT as _ROOT
 
-# Get base path - use PyInstaller's temp folder if running as executable
-def get_base_path():
-    """Get the base path for resources, works both in development and PyInstaller executable"""
-    if getattr(sys, 'frozen', False):
-        # Running as PyInstaller executable
-        base_path = Path(sys._MEIPASS)
-    else:
-        # Running as script
-        base_path = Path(__file__).resolve().parents[2]
-    return base_path
-
-BASE_PATH = get_base_path()
-PROJECT_ROOT = BASE_PATH
+# ── Software-level paths (app code / resources) ───────────────────────────────
+BASE_PATH: Path = _ROOT
+PROJECT_ROOT: Path = _ROOT
 
 ICON_PATH = BASE_PATH / 'Qss/icons/fefefe/feather/'
 IMAGES_LOGIN_PATH = BASE_PATH / 'Qss/images/'
-
 JSON_PATH = BASE_PATH / 'json-styles'
-THUMBNAIL_PATH = BASE_PATH / 'thumbnails'
-ATTACHMENT_PATH = BASE_PATH / 'attachment'
-EDUCATION_ASSETS_PATH = BASE_PATH / 'education_assets'
-EDUCATION_STORAGE_PATH = BASE_PATH / 'Education'
-EDUCATION_MY_COURSE_PATH = EDUCATION_STORAGE_PATH / 'MyCourse'
-CASE_OF_DAY_STORAGE_PATH = EDUCATION_MY_COURSE_PATH / 'CaseOfTheDay'
-
-SOURCE_PATH = BASE_PATH / 'source'
 SOCKET_CONFIG_PATH = BASE_PATH / 'config'
 
-SEGMENTS_PATH = PROJECT_ROOT / "Segments"
-SEGMENTS_PATH.mkdir(parents=True, exist_ok=True)
-
-EDUCATION_ASSETS_PATH.mkdir(parents=True, exist_ok=True)
-EDUCATION_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
-EDUCATION_MY_COURSE_PATH.mkdir(parents=True, exist_ok=True)
-CASE_OF_DAY_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
-
-CLINICAL_CSV_PATH = PROJECT_ROOT / "data" / "clinical_notes.csv"
+# ── User data paths (downloaded / generated / cached) ─────────────────────────
+# Canonical definitions live in data_paths.py; re-exported here for convenience.
+from PacsClient.utils.data_paths import (                       # noqa: E402
+    USER_DATA_ROOT,
+    DICOM_IMAGES_DIR   as SOURCE_PATH,
+    ATTACHMENTS_DIR    as ATTACHMENT_PATH,
+    THUMBNAILS_DIR     as THUMBNAIL_PATH,
+    EDUCATION_COURSES_DIR   as EDUCATION_STORAGE_PATH,
+    EDUCATION_ASSETS_DIR    as EDUCATION_ASSETS_PATH,
+    EDUCATION_MY_COURSE_DIR as EDUCATION_MY_COURSE_PATH,
+    CASE_OF_DAY_DIR         as CASE_OF_DAY_STORAGE_PATH,
+    SEGMENTS_DIR       as SEGMENTS_PATH,
+    CLINICAL_CSV_FILE  as CLINICAL_CSV_PATH,
+    DATABASE_FILE      as DATABASE_PATH,
+    LOGS_DIR,
+    ECHOMIND_MEMORY_DIR,
+    ECHOMIND_LOGS_DIR,
+    ZETA_BOOST_CACHE_DIR,
+    RECEPTION_REPORTS_DIR,
+)
 server_ip=str(get_server_url('segmentation'))
 ip=server_ip
 import re

@@ -28,13 +28,13 @@ from concurrent.futures import ThreadPoolExecutor
 from PacsClient.pacs.patient_tab.utils import load_images, save_image_as_png, delete_widgets_in_layout, NodeViewer, \
     get_count_dicom_files_exist, load_images_from_server, VerticalButton
 from PacsClient.pacs.patient_tab.utils.image_io import load_single_series_by_number, load_series_preview
-from PacsClient.pacs.patient_tab.pipeline import (
+from modules.viewer.pipeline import (
     PipelineOrchestrator, PipelineState, LoadCoordinator, PreviewEngine,
 )
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, CallerTypes
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget, grow_vtk_inplace
-from PacsClient.pacs.patient_tab.ui.widgets import ViewportSpinner
-from PacsClient.pacs.patient_tab.zeta_sync import (
+from modules.viewer.widgets import ViewportSpinner
+from modules.zeta_sync import (
     SyncManager,
     SyncContext,
     SyncMode,
@@ -46,20 +46,20 @@ from PacsClient.pacs.patient_tab.zeta_sync import (
     is_ijk_in_bounds,
     log_image_orientation,
 )
-from PacsClient.zeta_download_manager.core.enums import DownloadPriority
+from modules.download_manager.core.enums import DownloadPriority
 from PacsClient.utils.config import SOCKET_CONFIG_PATH
-from PacsClient.pacs.patient_tab.zeta_boost import ZetaBoostEngine, ImageSliceBooster
-from PacsClient.pacs.patient_tab.zeta_boost.warmup_subprocess import (
+from modules.zeta_boost import ZetaBoostEngine, ImageSliceBooster
+from modules.zeta_boost.warmup_subprocess import (
     WarmupSubprocessManager, WarmupRequest, WarmupResult, result_to_vtk,
 )
-from PacsClient.utils.boost_viewer_config import load_boost_viewer_enabled
-from PacsClient.utils.viewer_backend_config import (
+from modules.viewer.boost_viewer_config import load_boost_viewer_enabled
+from modules.viewer.viewer_backend_config import (
     BACKEND_VTK,
     BACKEND_PYDICOM,
     load_viewer_backend,
     resolve_viewer_backend,
 )
-from PacsClient.pacs.patient_tab.viewers.backends.lazy_volume_registry import get_loader as get_lazy_loader
+from modules.viewer.fast.lazy_volume_registry import get_loader as get_lazy_loader
 from PacsClient.utils.diagnostic_logging import new_correlation_id, set_log_context, now_ms, log_stage_timing
 
 GRID_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "modality_grid.json"

@@ -1,11 +1,11 @@
-from .grpc_client import DicomGrpcClient
-from .dicom_downloader import DicomDownloader
-from .socket_service import get_socket_service, SocketService
-from .pipeline_orchestrator import PipelineOrchestrator
-from .module_manager import ModuleManager, BaseModule, ModuleContext, ModuleResult, ModuleStatus
+from modules.network.grpc_client import DicomGrpcClient
+from modules.network.dicom_downloader import DicomDownloader
+from modules.network.socket_service import get_socket_service, SocketService
+from modules.module_system.pipeline_orchestrator import PipelineOrchestrator
+from modules.module_system.module_manager import ModuleManager, BaseModule, ModuleContext, ModuleResult, ModuleStatus
 
 # Zeta Download Manager - Primary implementation
-from .zeta_adapter import (
+from modules.network.zeta_adapter import (
     get_zeta_download_manager_widget,
     get_zeta_executor,
     get_zeta_worker_pool,
@@ -20,7 +20,7 @@ from .zeta_adapter import (
 )
 
 # Backward compatibility: Export Zeta components with legacy names
-from PacsClient.zeta_download_manager.network.socket_client import SocketDicomClient as ResumableDicomSocketClient
+from modules.download_manager.network.socket_client import SocketDicomClient as ResumableDicomSocketClient
 
 # Export all
 __all__ = [

@@ -212,7 +212,7 @@ class SidebarWidget(QWidget):
         """
         if self.ai_chat_widget is None:
             try:
-                from PacsClient.pacs.patient_tab.viewers.ai_chat_viewer import AIChatViewer
+                from modules.EchoMind.viewer_chat.ai_chat_viewer import AIChatViewer
                 self.ai_chat_widget = AIChatViewer()
                 
                 # If parent has right_panel, add the widget

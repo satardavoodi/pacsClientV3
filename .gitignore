@@ -31,6 +31,9 @@ sample_files
 PacsClient/segments/
 *.spec
 
+# ── User data (downloaded / generated / cached) ──
+user_data/
+
 # Virtual environments
 venv/
 .venv/
@@ -49,3 +52,8 @@ generated-files/zeta_boost_*.log
 htmlcov/
 .coverage
 tools/git/github-network.local.json
+
+# Secrets / credentials — never commit
+**/.env
+**/keys.json
+**/secrets*.py

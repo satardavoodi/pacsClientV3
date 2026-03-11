@@ -165,14 +165,14 @@ def common_app_datas() -> list[tuple[str, str]]:
         "json-styles",
         "config",
         "education_assets",
-        "PacsClient/components/cd_burner/assets",
-        "EchoMind/secretary/catalog",
-        "EchoMind/secretary/prompts",
-        "EchoMind/secretary/module_map.yaml",
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/startup_script.py",
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/unified_logging.py",
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/branding",
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/docs",
+        "modules/cd_burner/assets",
+        "modules/EchoMind/secretary/catalog",
+        "modules/EchoMind/secretary/prompts",
+        "modules/EchoMind/secretary/module_map.yaml",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_script.py",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/unified_logging.py",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/branding",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/docs",
     ]
     for rel in curated:
         datas.extend(collect_tree_datas(rel))
@@ -187,12 +187,12 @@ def app_a_datas() -> list[tuple[str, str]]:
 def app_b_datas() -> list[tuple[str, str]]:
     datas: list[tuple[str, str]] = []
     curated = [
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/startup_script.py",
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/unified_logging.py",
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/branding",
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/docs",
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/NewMPR2Slicer/Applications/NewMPR2SlicerApp/Resources",
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/NewMPR2Slicer/Modules/Scripted/Home/Resources",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_script.py",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/unified_logging.py",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/branding",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/docs",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/NewMPR2Slicer/Applications/NewMPR2SlicerApp/Resources",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/NewMPR2Slicer/Modules/Scripted/Home/Resources",
         "config",  # for optional slicer_config.json lookup if user places it here
     ]
     for rel in curated:
@@ -208,7 +208,7 @@ def icon_path_app_a() -> str | None:
 
 def icon_path_app_b() -> str | None:
     candidates = [
-        "PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/slicer_custom_app/branding/icons/AIPacsAdvancedViewer.ico",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/branding/icons/AIPacsAdvancedViewer.ico",
         "Qss/images/favicon.ico",
     ]
     for rel in candidates:

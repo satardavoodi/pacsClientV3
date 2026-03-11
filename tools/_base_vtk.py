@@ -4,9 +4,9 @@ import os
 
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
-from PacsClient.pacs.patient_tab.interactor_styles import AbstractInteractorStyle
-from PacsClient.pacs.patient_tab.viewers.viewer_2d import ImageViewer2D, CustomCombineImageViewers
-from PacsClient.pacs.patient_tab.ui.widgets import ViewportSpinner
+from modules.viewer.interactor_styles import AbstractInteractorStyle
+from modules.viewer.advanced.viewer_2d import ImageViewer2D, CustomCombineImageViewers
+from modules.viewer.widgets import ViewportSpinner
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QCursor, QPainter, QPixmap, QColor
 import gc  # For manual garbage collection
@@ -259,7 +259,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
             pass
 
         try:
-            from PacsClient.pacs.patient_tab.zeta_boost.engine import ZetaBoostEngine
+            from modules.zeta_boost.engine import ZetaBoostEngine
             return int(getattr(ZetaBoostEngine, '_global_active_download_count', 0) or 0) > 0
         except Exception:
             return False

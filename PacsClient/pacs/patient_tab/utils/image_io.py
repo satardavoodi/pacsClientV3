@@ -21,13 +21,13 @@ from natsort import natsorted
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, get_series_by_study_pk, \
     get_instances_by_series_pk, get_series_by_series_pk, find_series_pk, get_study_by_study_uid, \
     update_study_counts_by_uid, get_connection_database, get_series_path_with_study_pk_and_series_number
-from PacsClient.utils.viewer_backend_config import (
+from modules.viewer.viewer_backend_config import (
     BACKEND_PYDICOM,
     BACKEND_VTK,
     resolve_viewer_backend,
 )
-from PacsClient.pacs.patient_tab.viewers.backends.pydicom_lazy_volume import PyDicomLazyVolume
-from PacsClient.pacs.patient_tab.viewers.backends.lazy_volume_registry import get_loader
+from modules.viewer.fast.pydicom_lazy_volume import PyDicomLazyVolume
+from modules.viewer.fast.lazy_volume_registry import get_loader
 import gc
 from .utils import find_series_folder_by_series_number
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
@@ -322,37 +322,16 @@ def _direction_from_iop(iop):
 
 
 def _normalize_instances_geometry_order(instances):
+    """Populate direction field on instances.  No longer re-sorts by IPP.
+
+    IPP-based re-sorting was removed because VTK / SimpleITK read slices in
+    the file-name order passed to ``SetFileNames()`` (Instance_NNNN.dcm =
+    InstanceNumber order).  DB metadata is already ``ORDER BY instance_number``.
+    Re-sorting by IPP broke reference lines (v1.09.5-v1.09.7) and caused CT
+    head-to-feet reversal and diffusion b-value interleaving.
+    """
     if not isinstance(instances, list) or len(instances) <= 1:
         return False
-
-    ref_iop = None
-    for inst in instances:
-        ref_iop = _safe_float_list(inst.get("image_orientation_patient"), 6)
-        if ref_iop is not None:
-            break
-    if ref_iop is None:
-        return False
-
-    row = np.asarray(ref_iop[0:3], dtype=float)
-    col = np.asarray(ref_iop[3:6], dtype=float)
-    normal = np.cross(row, col)
-    normal_n = float(np.linalg.norm(normal))
-    if normal_n <= 1e-9:
-        return False
-    normal = normal / normal_n
-
-    decorated = []
-    for original_idx, inst in enumerate(instances):
-        ipp = _safe_float_list(inst.get("image_position_patient"), 3)
-        if ipp is None:
-            return False
-        proj = float(np.dot(np.asarray(ipp, dtype=float), normal))
-        decorated.append((proj, original_idx, inst))
-
-    sorted_instances = [inst for _, _, inst in sorted(decorated, key=lambda item: (item[0], item[1]))]
-    changed = any(sorted_instances[i] is not instances[i] for i in range(len(instances)))
-    if changed:
-        instances[:] = sorted_instances
 
     # Keep DB-compatible direction payload populated for downstream consumers.
     for inst in instances:
@@ -362,7 +341,7 @@ def _normalize_instances_geometry_order(instances):
         if direction is not None:
             inst["direction"] = direction
 
-    return changed
+    return False
 
 
 def _normalize_metadata_instances(metadata):

@@ -6,8 +6,8 @@ from PySide6.QtGui import QAction, QKeyEvent, QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLineEdit, QPushButton, QLabel, \
     QStackedWidget, QMenuBar, QMenu, QMessageBox, QCheckBox
 from PacsClient.utils import IMAGES_LOGIN_PATH
-from PacsClient.components.socket_service import SocketService
-from PacsClient.utils.socket_token_manager import get_socket_token_manager
+from modules.network.socket_service import SocketService
+from modules.network.socket_token_manager import get_socket_token_manager
 
 def show_error_message(topic_error, detailed_message=None):
     if topic_error == 'user_password':  # it means username or password is not correct
