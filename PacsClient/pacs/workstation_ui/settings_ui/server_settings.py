@@ -57,74 +57,89 @@ class ServerSettingsWidget(QWidget):
                 font-size: 14px;
             }
             QWidget#ServerSettingsWidget QGroupBox {
-                background-color: #0f1217;
-                border: 1px solid #2b2f36;
-                border-radius: 10px;
-                padding: 14px;
-                margin-top: 10px;
-                font-weight: 600;
+                background-color: #10141a;
+                border: 1px solid #232a33;
+                border-radius: 12px;
+                padding: 18px 20px 18px 20px;
+                padding-top: 44px;
+                margin-top: 28px;
+                font-weight: 700;
                 color: #e5e7eb;
             }
             QWidget#ServerSettingsWidget QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 6px;
+                subcontrol-position: top left;
+                left: 18px;
+                top: 2px;
+                padding: 6px 16px;
+                font-size: 28px;
+                font-weight: 900;
+                color: #f3f4f6;
+                background-color: #0f1319;
+                border: 1px solid #232a33;
+                border-radius: 11px;
             }
             QWidget#ServerSettingsWidget QLineEdit {
-                background-color: #0f1217;
+                background-color: #1b2230;
                 color: #e5e7eb;
-                border: 1px solid #2b2f36;
+                border: 1px solid #2b313b;
                 border-radius: 8px;
                 padding: 6px 10px;
                 min-height: 34px;
                 font-size: 14px;
             }
             QWidget#ServerSettingsWidget QLineEdit:focus {
-                border: 1px solid #60a5fa;
+                border: 1px solid #3b82f6;
             }
             QWidget#ServerSettingsWidget QPushButton {
-                background-color: #1f2937;
+                background-color: #1b2230;
                 color: #e5e7eb;
-                border: 1px solid #2b2f36;
+                border: 1px solid #2b313b;
                 border-radius: 8px;
                 padding: 8px 14px;
                 min-height: 36px;
                 font-size: 14px;
-            }
-            QWidget#ServerSettingsWidget QPushButton:hover {
-                background-color: #243041;
-                border-color: #60a5fa;
-            }
-            QWidget#ServerSettingsWidget QPushButton:pressed {
-                background-color: #111827;
-            }
-            QWidget#ServerSettingsWidget QPushButton:disabled {
-                background-color: rgba(31, 41, 55, 0.5);
-                color: rgba(229, 231, 235, 0.4);
-                border-color: rgba(43, 47, 54, 0.5);
-            }
-
-            /* Success / Danger buttons */
-            QWidget#ServerSettingsWidget QPushButton#success {
-                background-color: #14532d;
-                border: 1px solid #166534;
-                color: #ecfdf5;
                 font-weight: 600;
             }
+            QWidget#ServerSettingsWidget QPushButton:hover {
+                background-color: #252d3d;
+                border-color: #3b82f6;
+            }
+            QWidget#ServerSettingsWidget QPushButton:pressed {
+                background-color: #162033;
+            }
+            QWidget#ServerSettingsWidget QPushButton:disabled {
+                background-color: rgba(27, 34, 48, 0.5);
+                color: rgba(229, 231, 235, 0.4);
+                border-color: rgba(43, 49, 59, 0.5);
+            }
+
+            QWidget#ServerSettingsWidget QPushButton#success {
+                background-color: #16a34a;
+                border: 1px solid #15803d;
+                color: #ecfdf5;
+                font-weight: 700;
+            }
             QWidget#ServerSettingsWidget QPushButton#success:hover {
-                background-color: #166534;
-                border-color: #22c55e;
+                background-color: #15803d;
+                border-color: #10b981;
             }
             QWidget#ServerSettingsWidget QPushButton#danger {
-                background-color: #1e3a8a;
-                border: 1px solid #1d4ed8;
-                color: #e0f2fe;
+                background-color: #f59e0b;
+                border: 1px solid #d97706;
+                color: #111827;
+                font-weight: 700;
+            }
+            QWidget#ServerSettingsWidget QPushButton#danger:hover {
+                background-color: #fbbf24;
             }
         """)
 
         # group servers list
         list_group = QGroupBox("Server List")
         list_layout = QVBoxLayout()
+        list_layout.setContentsMargins(16, 8, 16, 16)
+        list_layout.setSpacing(12)
 
         self.server_list = QTableWidget()
         self.server_list.setColumnCount(6)
@@ -135,22 +150,22 @@ class ServerSettingsWidget(QWidget):
         # Apply black theme to table
         self.server_list.setStyleSheet("""
             QTableWidget {
-                background-color: #0f1217;
+                background-color: #0f1319;
                 color: #e5e7eb;
-                border: 1px solid #2b2f36;
-                border-radius: 10px;
-                gridline-color: #2b2f36;
+                border: 1px solid #232a33;
+                border-radius: 12px;
+                gridline-color: #232a33;
                 selection-background-color: #2563eb;
                 selection-color: #ffffff;
             }
             QTableWidget::item { padding: 5px; }
-            QTableWidget::item:hover { background-color: #111827; }
+            QTableWidget::item:hover { background-color: #10141a; }
             QHeaderView::section {
-                background-color: #111827;
+                background-color: #10141a;
                 color: #e5e7eb;
                 padding: 7px;
-                border: 1px solid #2b2f36;
-                font-weight: 600;
+                border: 1px solid #232a33;
+                font-weight: 700;
                 font-size: 14px;
             }
         """)
@@ -160,6 +175,8 @@ class ServerSettingsWidget(QWidget):
 
         self.server_list.setSelectionBehavior(QTableWidget.SelectRows)
         self.server_list.setSelectionMode(QTableWidget.SingleSelection)
+        self.server_list.verticalHeader().setDefaultSectionSize(76)
+        self.server_list.verticalHeader().setMinimumSectionSize(70)
         self.server_list.itemSelectionChanged.connect(self.on_server_selected)
         list_layout.addWidget(self.server_list)
 
@@ -169,6 +186,9 @@ class ServerSettingsWidget(QWidget):
         # فرم جزئیات سرور
         form_group = QGroupBox("Server Details")
         form_layout = QGridLayout()
+        form_layout.setContentsMargins(16, 8, 16, 16)
+        form_layout.setHorizontalSpacing(14)
+        form_layout.setVerticalSpacing(12)
 
         self.name_edit = QLineEdit()
         self.host_edit = QLineEdit()
@@ -177,7 +197,7 @@ class ServerSettingsWidget(QWidget):
 
         # standard height inputs
         for w in (self.name_edit, self.host_edit, self.port_edit, self.ae_title_edit):
-            w.setFixedHeight(34)
+            w.setFixedHeight(38)
 
         form_layout.addWidget(QLabel("Server Name:"), 0, 0)
         form_layout.addWidget(self.name_edit, 0, 1)
@@ -187,29 +207,36 @@ class ServerSettingsWidget(QWidget):
         form_layout.addWidget(self.port_edit, 2, 1)
         form_layout.addWidget(QLabel("AE Title:"), 3, 0)
         form_layout.addWidget(self.ae_title_edit, 3, 1)
+        form_layout.setColumnStretch(1, 1)
         # دکمه‌های عملیات سرور
         btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 6, 0, 0)
+        btn_layout.setSpacing(10)
 
         self.save_btn = QPushButton("Save")
         self.save_btn.setObjectName("success")
+        self.save_btn.setFixedHeight(42)
         self.save_btn.clicked.connect(self.save_server)
 
         self.verify_btn = QPushButton("Verify Connection")
         self.verify_btn.setObjectName("success")
+        self.verify_btn.setFixedHeight(42)
         self.verify_btn.clicked.connect(lambda: asyncio.create_task(self.verify_connection()))
 
         self.delete_btn = QPushButton("Delete")
         self.delete_btn.setObjectName("danger")
+        self.delete_btn.setFixedHeight(42)
         self.delete_btn.clicked.connect(self.delete_server)
         self.delete_btn.setEnabled(False)
 
         self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setFixedHeight(42)
         self.clear_btn.clicked.connect(self.clear_form)
 
-        btn_layout.addWidget(self.save_btn)
-        btn_layout.addWidget(self.verify_btn)
-        btn_layout.addWidget(self.delete_btn)
-        btn_layout.addWidget(self.clear_btn)
+        btn_layout.addWidget(self.save_btn, 1)
+        btn_layout.addWidget(self.verify_btn, 1)
+        btn_layout.addWidget(self.delete_btn, 1)
+        btn_layout.addWidget(self.clear_btn, 1)
 
         form_layout.addLayout(btn_layout, 4, 0, 1, 2)
 
@@ -363,14 +390,19 @@ class ServerSettingsWidget(QWidget):
 
             action_widget = QWidget()
             action_widget.setStyleSheet("background-color: transparent;")
+            action_widget.setFixedHeight(60)
             action_layout = QHBoxLayout(action_widget)
-            action_layout.setContentsMargins(5, 2, 5, 2)
+            action_layout.setContentsMargins(10, 10, 10, 10)
+            action_layout.setSpacing(0)
+            action_layout.setAlignment(Qt.AlignCenter)
 
             verify_btn = QPushButton("Verify")
             verify_btn.setObjectName("success")
+            verify_btn.setFixedHeight(44)
             verify_btn.clicked.connect(lambda checked, row=i: asyncio.create_task(self.verify_server(row)))
             action_layout.addWidget(verify_btn)
 
+            self.server_list.setRowHeight(i, 76)
             self.server_list.setCellWidget(i, 5, action_widget)
 
         self.server_list.resizeColumnsToContents()
@@ -393,30 +425,35 @@ class ServerSettingsWidget(QWidget):
                 port = int(port_item.text().strip())
             except ValueError:
                 status_item.setText("Invalid Port")
-                status_item.setBackground(QColor("#60a5fa"))
+                status_item.setBackground(QColor("#f59e0b"))
+                status_item.setForeground(QColor("#111827"))
                 return
 
             # وضعیت موقت
             status_item.setText("Checking...")
-            status_item.setBackground(QColor("#9E9E9E"))
+            status_item.setBackground(QColor("#1b2230"))
+            status_item.setForeground(QColor("#e5e7eb"))
 
             # اجرای عملیات بلاک‌کننده در ترد جدا
             ok, err = await asyncio.to_thread(self._verify_dicom_blocking, host, port, ae_title)
 
             if ok:
                 status_item.setText("Online")
-                status_item.setBackground(QColor("#4CAF50"))
+                status_item.setBackground(QColor("#064e3b"))
+                status_item.setForeground(QColor("#10b981"))
                 status_item.setToolTip("")
             else:
                 status_item.setText("Offline")
-                status_item.setBackground(QColor("#60a5fa"))
+                status_item.setBackground(QColor("#f59e0b"))
+                status_item.setForeground(QColor("#111827"))
                 status_item.setToolTip(err or "Unknown error")
 
         except Exception:
             status_item = self.server_list.item(row, 4)
             if status_item:
                 status_item.setText("Error")
-                status_item.setBackground(QColor("#60a5fa"))
+                status_item.setBackground(QColor("#f59e0b"))
+                status_item.setForeground(QColor("#111827"))
 
     def on_server_selected(self):
         selected_items = self.server_list.selectedItems()

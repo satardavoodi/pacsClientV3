@@ -7,16 +7,16 @@ Stores a single toggle that controls automatic ZetaBoost warmup behavior.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
+
+from aipacs_runtime import roaming_config_root
 
 _CONFIG_KEY = "BoostViewer"
 _DEFAULT_ENABLED = True
 
 
 def _config_path() -> Path:
-    app_data = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    cfg_dir = app_data / "PacsClient" / "config"
+    cfg_dir = roaming_config_root()
     cfg_dir.mkdir(parents=True, exist_ok=True)
     return cfg_dir / "boostviewer_settings.json"
 

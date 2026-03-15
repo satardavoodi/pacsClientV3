@@ -102,7 +102,7 @@ class ServersConfigWidget(QWidget):
         self.layout.setSpacing(10)
 
         title = QLabel("AI Services URLs")
-        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        title.setStyleSheet("font-size: 20px; font-weight: 800; color: #f3f4f6; padding: 4px 0 8px 0;")
         self.layout.addWidget(title, alignment=Qt.AlignLeft)
 
         card = QFrame()
@@ -182,7 +182,7 @@ class ServersConfigWidget(QWidget):
             QFrame#Card {
                 background-color: #10141a;
                 border: 1px solid #232a33;
-                border-radius: 10px;
+                border-radius: 12px;
             }
             QLabel {
                 color: #e5e7eb;
@@ -198,7 +198,7 @@ class ServersConfigWidget(QWidget):
                 font-size: 14px;
             }
             QLineEdit:focus {
-                border: 1px solid #60a5fa;
+                border: 1px solid #3b82f6;
             }
 
             QPushButton[role="secondary"] {
@@ -211,7 +211,7 @@ class ServersConfigWidget(QWidget):
                 font-size: 14px;
             }
             QPushButton[role="secondary"]:hover {
-                background-color: #202a3a;
+                background-color: #252d3d;
             }
             QPushButton[role="secondary"]:pressed {
                 background-color: #162033;
@@ -228,7 +228,7 @@ class ServersConfigWidget(QWidget):
                 font-weight: 600;
             }
             QPushButton[role="success"]:hover {
-                background-color: #22c55e;
+                background-color: #15803d;
             }
             QPushButton[role="success"]:pressed {
                 background-color: #15803d;
@@ -332,10 +332,10 @@ class ServersConfigWidget(QWidget):
             ok, err = result
             if ok:
                 row["status"].setText("Online ✓")
-                row["status"].setStyleSheet("color: #22c55e;")
+                row["status"].setStyleSheet("color: #10b981; font-weight: 700;")
             else:
                 row["status"].setText("Offline")
-                row["status"].setStyleSheet("color: #60a5fa;")
+                row["status"].setStyleSheet("color: #f59e0b; font-weight: 700;")
                 row["status"].setToolTip(err or "")
             row["btn"].setEnabled(True)
 
@@ -472,9 +472,9 @@ class ServersConfigWidget(QWidget):
             return
         lbl.setText(text)
         if ok is True:
-            lbl.setStyleSheet("color: #22c55e; font-weight: 600;")
+            lbl.setStyleSheet("color: #10b981; font-weight: 700;")
         elif ok is False:
-            lbl.setStyleSheet("color: #60a5fa; font-weight: 600;")
+            lbl.setStyleSheet("color: #f59e0b; font-weight: 700;")
         else:
             lbl.setStyleSheet("color: #9ca3af;")
 

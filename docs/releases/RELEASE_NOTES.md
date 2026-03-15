@@ -1,8 +1,44 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.2.3.4.0  
-**Release Date:** 2026-02-27  
-**Branch:** DR.vahid  
+**Current Stable Version:** v2.2.6  
+**Release Date:** 2026-03-15  
+**Branch:** main  
+
+---
+
+## v2.2.6 — Stable Release (2026-03-15)
+
+### Critical Bug Fix: Wheel Scroll Freeze
+
+**Symptom:** After using stack drag (left mouse), switching to wheel scroll caused the image to freeze — scrollbar moved but image stayed fixed. Neither scroll method worked after that.
+
+**Root Cause:** The `wheelEvent` performance optimization (v2.2.3.4.0) called `reslice.SetInterpolationModeToNearestNeighbor()` + `reslice.Modified()` to degrade quality during fast scroll. However, the `vtkImageReslice` carries a non-identity direction-matrix transform (Y-flip from `convert_itk2vtk`). Dirtying the reslice caused VTK's `UpdateDisplayExtent()` to compute a wrong output extent, collapsing the slice range (e.g. `(0,24)` → `(14,14)`, `data_z` → 1). All subsequent `SetSlice()` calls were clamped to that single slice.
+
+**Fix:** Disabled NN interpolation degradation for ALL backends (`_skip_nn_degrade = True`). Made `_restore_reslice_quality()` a no-op. The performance gain from NN was negligible (<1ms) compared to the catastrophic freeze it caused.
+
+**Files Changed:**
+- `PacsClient/pacs/patient_tab/ui/patient_ui/widget_viewer.py` — `wheelEvent`, `_restore_reslice_quality`
+- `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` — study path exists() guard
+
+### Other Fixes
+- **Study path corruption:** Added `exists()` check before overwriting `import_folder_path` with stale legacy `source\` path from metadata
+- **Post-scroll sync render:** Added `_post_scroll_sync_render()` one-shot callback to force VTK + annotation sync after scroll settles
+
+### New Documentation
+- `docs/pipelines/VIEWER_BACKENDS_REFERENCE.md` — Complete Advanced vs Fast backend pipeline reference
+- Updated `docs/pipelines/viewer-pipeline.md` with reslice corruption warning
+
+### GPU / Software OpenGL
+- Verified: GPU detection (`resolve_graphics_profile`) and Software OpenGL fallback (`build_windows_graphics_environment`) remain fully functional
+- Both modes produce correct viewer rendering and scroll behavior
+
+### Rule Added
+> **CRITICAL:** Never call `reslice.SetInterpolationMode*()` or `reslice.Modified()` during interactive scroll. See `VIEWER_BACKENDS_REFERENCE.md §4.6`.
+
+---
+
+## v2.2.3.4.0 — Performance Sprint (2026-02-27)
+
 **Commit:** `5215a89`
 
 ## Summary

@@ -145,6 +145,7 @@ class QtSliceViewer(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        self.setAcceptDrops(True)
 
         # Current display state
         self._pixmap: Optional[QPixmap] = None
@@ -180,6 +181,10 @@ class QtSliceViewer(QWidget):
 
         # Background
         self._bg_color = QColor(0, 0, 0)
+
+        # Overlay lines (reference lines drawn via QPainter)
+        # Each entry: ((x1, y1), (x2, y2), (r, g, b), width)  in image coords
+        self._overlay_lines: list = []
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -301,6 +306,35 @@ class QtSliceViewer(QWidget):
         return self._last_paint_ms
 
     # ── Qt Event Handlers ─────────────────────────────────────────────
+
+    # ── Drag-and-drop forwarding to parent VTKWidget ────────────────
+    def dragEnterEvent(self, event):
+        p = self.parent()
+        if p is not None:
+            p.dragEnterEvent(event)
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        p = self.parent()
+        if p is not None:
+            p.dragMoveEvent(event)
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        p = self.parent()
+        if p is not None:
+            p.dragLeaveEvent(event)
+        else:
+            super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        p = self.parent()
+        if p is not None:
+            p.dropEvent(event)
+        else:
+            event.ignore()
 
     def paintEvent(self, event) -> None:
         """Render the medical image with QPainter."""

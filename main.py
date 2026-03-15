@@ -5,6 +5,14 @@ import logging
 import subprocess
 import importlib.util
 
+from aipacs_runtime import (
+    activate_optional_module_runtime,
+    build_graphics_runtime_patch,
+    build_windows_graphics_environment,
+    resolve_graphics_profile,
+    save_runtime_profile,
+)
+
 # Required for multiprocessing.Process with PyInstaller frozen executables
 # (spawn start-method on Windows): must be called before any other code.
 multiprocessing.freeze_support()
@@ -36,10 +44,12 @@ def _maybe_run_tests_and_exit() -> None:
 
 
 _maybe_run_tests_and_exit()
+activate_optional_module_runtime()
 
 # ============================================================================
 # CRITICAL: Graphics/OpenGL Configuration MUST happen before any Qt/VTK imports
 # ============================================================================
+GRAPHICS_DLL_DIR_HANDLES = []
 
 def configure_graphics_fallback():
     """
@@ -54,81 +64,72 @@ def configure_graphics_fallback():
     Exit codes for critical failures:
     - 1: Graphics subsystem initialization failed (fatal)
     """
+    profile = resolve_graphics_profile()
     if sys.platform != "win32":
-        return  # Only needed on Windows
-    
-    frozen = getattr(sys, 'frozen', False)
-    
-    # ========================================================================
-    # Qt Graphics Configuration
-    # ========================================================================
-    
-    # Force software OpenGL rendering (bypasses GPU/driver issues)
-    os.environ["QT_OPENGL"] = "software"
-    os.environ["QT_QUICK_BACKEND"] = "software"
-    
-    # Disable Qt's native OpenGL detection (prevents crashes on driver mismatch)
-    os.environ["QT_XCB_GL_INTEGRATION"] = "none"
-    
-    # Force ANGLE to use software WARP renderer (DirectX software fallback)
-    os.environ["ANGLE_DEFAULT_PLATFORM"] = "warp"
-    
-    # ========================================================================
-    # VTK Graphics Configuration
-    # ========================================================================
-    
-    # Force VTK to use Mesa software rendering if hardware OpenGL fails
-    os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
-    
-    # Disable VTK hardware detection (prevents GPU-specific crashes)
-    os.environ["VTK_USE_HARDWARE"] = "0"
-    
-    # ========================================================================
-    # Chromium/WebEngine Configuration (for embedded browser)
-    # ========================================================================
-    
-    chromium_flags = [
-        "--disable-gpu",                    # Disable GPU acceleration
-        "--in-process-gpu",                 # Run GPU in main process (safer)
-        "--disable-gpu-compositing",        # Disable GPU-based compositing
-        "--disable-features=VizDisplayCompositor,UseSkiaRenderer",
-        "--enable-media-stream",            # Required for camera/mic if needed
-        "--ignore-gpu-blocklist",           # Bypass GPU blocklist checks
-        "--disable-software-rasterizer"     # Use CPU rasterizer
-    ]
-    
-    if not frozen:
-        # Development mode: explicitly use SwiftShader software renderer
-        os.environ["QTWEBENGINE_DISABLE_GPU"] = "1"
-        chromium_flags.append("--use-angle=swiftshader")
-    else:
-        # Production (frozen): use WARP for best compatibility
-        chromium_flags.append("--use-angle=warp")
-    
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(chromium_flags)
-    
-    # ========================================================================
-    # Windows-Specific Graphics DLL Search
-    # ========================================================================
-    
-    if frozen:
-        # Ensure _internal directory is in DLL search path
-        internal_dir = os.path.join(os.path.dirname(sys.executable), "_internal")
-        if os.path.exists(internal_dir):
-            # Add _internal to PATH for DLL loading
-            os.environ["PATH"] = internal_dir + os.pathsep + os.environ.get("PATH", "")
-    
+        return profile
+
+    frozen = getattr(sys, "frozen", False)
+    use_gpu = bool(profile.get("use_gpu", False))
+    graphics_env = build_windows_graphics_environment(profile, frozen=frozen)
+
+    for key in graphics_env.get("clear_env", []):
+        os.environ.pop(key, None)
+    for key, value in (graphics_env.get("env") or {}).items():
+        os.environ[key] = value
+
+    path_prefixes = list(graphics_env.get("path_prefixes") or [])
+    if path_prefixes:
+        current_path = os.environ.get("PATH", "")
+        current_parts = [part for part in current_path.split(os.pathsep) if part]
+        seen_parts = {part.lower() for part in current_parts}
+        merged_parts = []
+        for prefix in path_prefixes:
+            if prefix.lower() in seen_parts:
+                continue
+            merged_parts.append(prefix)
+            seen_parts.add(prefix.lower())
+        merged_parts.extend(current_parts)
+        os.environ["PATH"] = os.pathsep.join(merged_parts)
+        if hasattr(os, "add_dll_directory"):
+            for prefix in path_prefixes:
+                try:
+                    GRAPHICS_DLL_DIR_HANDLES.append(os.add_dll_directory(prefix))
+                except Exception:
+                    pass
+
     # ========================================================================
     # Logging (minimal, before logging subsystem fully initialized)
     # ========================================================================
     
     print(f"[GRAPHICS] Mode: {'FROZEN' if frozen else 'DEVELOPMENT'}")
-    print(f"[GRAPHICS] QT_OPENGL: software")
-    print(f"[GRAPHICS] ANGLE_DEFAULT_PLATFORM: warp")
-    print(f"[GRAPHICS] VTK software fallback: enabled")
+    try:
+        save_runtime_profile(build_graphics_runtime_patch(profile))
+    except Exception:
+        pass
+
+    print(f"[GRAPHICS] Mode: {'GPU' if use_gpu else 'SOFTWARE_OPENGL'}")
+    print(f"[GRAPHICS] Execution mode: {profile.get('execution_mode', '')}")
+    print(f"[GRAPHICS] QT_OPENGL: {os.environ.get('QT_OPENGL', '')}")
+    print(f"[GRAPHICS] ANGLE_DEFAULT_PLATFORM: {os.environ.get('ANGLE_DEFAULT_PLATFORM', '')}")
+    print(f"[GRAPHICS] GPU requested: {profile.get('requested_gpu', False)}")
+    print(f"[GRAPHICS] GPU detected: {profile.get('detected_gpu', False)}")
+    if profile.get("device_name"):
+        print(f"[GRAPHICS] GPU device: {profile['device_name']}")
+    software = profile.get("software_rendering") or {}
+    if not use_gpu:
+        print(f"[GRAPHICS] Software renderer status: {software.get('status', '')}")
+        if software.get("qt_opengl_dll"):
+            print(f"[GRAPHICS] Qt software OpenGL DLL: {software['qt_opengl_dll']}")
+        if software.get("vtk_osmesa_dll"):
+            print(f"[GRAPHICS] VTK OSMesa DLL: {software['vtk_osmesa_dll']}")
+        if graphics_env.get("warning"):
+            print(f"[GRAPHICS] Warning: {graphics_env['warning']}")
+        if graphics_env.get("viewer_backend_override"):
+            print(f"[GRAPHICS] Safe viewer backend override: {graphics_env['viewer_backend_override']}")
+    return profile
 
 # Configure graphics BEFORE any Qt/VTK imports
-configure_graphics_fallback()
+GRAPHICS_PROFILE = configure_graphics_fallback()
 
 # Fix Windows console encoding for emoji support
 if sys.platform == 'win32':
@@ -148,6 +149,7 @@ from PacsClient.utils.font_manager import load_fonts, setup_font_rendering
 from modules.LicenseGenerator.license_manager import LicenseManager
 from modules.LicenseGenerator.license_dialog import LicenseDialog
 from PacsClient.utils.scroll_style import get_scroll_area_style
+from PacsClient.utils.theme_manager import get_theme_manager
 import vtkmodules.vtkCommonCore as vtkCommonCore
 
 vtkCommonCore.vtkObject.GlobalWarningDisplayOff()
@@ -202,7 +204,10 @@ if __name__ == "__main__":
         logging.getLogger(__name__).warning("Legacy data migration skipped: %s", _mig_exc)
     
     # Set Qt attributes BEFORE creating QApplication
-    QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)  # Compatible with software rendering
+    if GRAPHICS_PROFILE.get("use_gpu", False):
+        QApplication.setAttribute(Qt.AA_UseDesktopOpenGL, True)
+    else:
+        QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)
     QApplication.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings, True)  # Better performance for detached tabs
     
     app = QApplication(sys.argv)
@@ -226,252 +231,14 @@ if __name__ == "__main__":
 
     # Load Roboto fonts
     load_fonts()
-    
-    # Set global stylesheet for dialogs and message boxes (gray theme)
-    app.setStyleSheet("""
-        QMessageBox {
-            background-color: #2b2f33;
-        }
-        QMessageBox QLabel {
-            color: #f0f3f6;
-            font-size: 13px;
-        }
-        QMessageBox QPushButton {
-            background-color: #3a4148;
-            color: #f7f9fb;
-            border: 1px solid #1f2226;
-            border-radius: 6px;
-            padding: 6px 18px;
-            font-size: 13px;
-            min-width: 90px;
-        }
-        QMessageBox QPushButton:hover {
-            background-color: #485057;
-        }
-        QMessageBox QPushButton:pressed {
-            background-color: #343b41;
-        }
-        QInputDialog {
-            background-color: #2b2f33;
-        }
-        QInputDialog QLabel {
-            color: #f0f3f6;
-            font-size: 13px;
-        }
-        QInputDialog QLineEdit {
-            background-color: #3a4148;
-            color: #f7f9fb;
-            border: 1px solid #1f2226;
-            border-radius: 4px;
-            padding: 6px 8px;
-            font-size: 13px;
-        }
-        QInputDialog QPushButton {
-            background-color: #3a4148;
-            color: #f7f9fb;
-            border: 1px solid #1f2226;
-            border-radius: 6px;
-            padding: 6px 18px;
-            font-size: 13px;
-            min-width: 90px;
-        }
-        QInputDialog QPushButton:hover {
-            background-color: #485057;
-        }
-        QInputDialog QPushButton:pressed {
-            background-color: #343b41;
-        }
-        QInputDialog QPushButton:hover {
-            background-color: #2c5aa0;
-        }
-        QFileDialog {
-            background-color: #1a202c;
-        }
-        QFileDialog QLabel {
-            color: #e2e8f0;
-        }
-        QFileDialog QLineEdit {
-            background-color: #2d3748;
-            color: #e2e8f0;
-            border: 1px solid #4a5568;
-            border-radius: 4px;
-            padding: 6px;
-        }
-        QFileDialog QTreeView, QFileDialog QListView {
-            background-color: #2d3748;
-            color: #e2e8f0;
-            border: 1px solid #4a5568;
-        }
-        QFileDialog QTreeView::item:selected, QFileDialog QListView::item:selected {
-            background-color: #3182ce;
-        }
-        QFileDialog QPushButton {
-            background-color: #3182ce;
-            color: #ffffff;
-            border: none;
-            border-radius: 4px;
-            padding: 6px 16px;
-            min-width: 70px;
-        }
-        QFileDialog QPushButton:hover {
-            background-color: #2c5aa0;
-        }
-        QFileDialog QComboBox {
-            background-color: #2d3748;
-            color: #e2e8f0;
-            border: 1px solid #4a5568;
-            border-radius: 4px;
-            padding: 6px;
-        }
-        QFileDialog QComboBox QAbstractItemView {
-            background-color: #2d3748;
-            color: #e2e8f0;
-            selection-background-color: #3182ce;
-        }
-        QColorDialog {
-            background-color: #1a202c;
-        }
-        QColorDialog QLabel {
-            color: #e2e8f0;
-        }
-        QColorDialog QPushButton {
-            background-color: #3182ce;
-            color: #ffffff;
-            border: none;
-            border-radius: 4px;
-            padding: 6px 16px;
-        }
-        QColorDialog QLineEdit {
-            background-color: #2d3748;
-            color: #e2e8f0;
-            border: 1px solid #4a5568;
-            border-radius: 4px;
-            padding: 4px;
-        }
-        QFontDialog {
-            background-color: #1a202c;
-        }
-        QFontDialog QLabel {
-            color: #e2e8f0;
-        }
-        QFontDialog QLineEdit {
-            background-color: #2d3748;
-            color: #e2e8f0;
-            border: 1px solid #4a5568;
-            border-radius: 4px;
-            padding: 4px;
-        }
-        QFontDialog QListView {
-            background-color: #2d3748;
-            color: #e2e8f0;
-            border: 1px solid #4a5568;
-        }
-        QFontDialog QPushButton {
-            background-color: #3182ce;
-            color: #ffffff;
-            border: none;
-            border-radius: 4px;
-            padding: 6px 16px;
-        }
-        QProgressDialog {
-            background-color: #1a202c;
-        }
-        QProgressDialog QLabel {
-            color: #e2e8f0;
-            font-size: 13px;
-        }
-        QProgressDialog QProgressBar {
-            background-color: #2d3748;
-            border: none;
-            border-radius: 4px;
-            text-align: center;
-            color: #e2e8f0;
-        }
-        QProgressDialog QProgressBar::chunk {
-            background-color: #3182ce;
-            border-radius: 4px;
-        }
-        QProgressDialog QPushButton {
-            background-color: #4a5568;
-            color: #e2e8f0;
-            border: none;
-            border-radius: 4px;
-            padding: 6px 16px;
-        }
-        QProgressDialog QPushButton:hover {
-            background-color: #374151;
-        }
-        QToolTip {
-            background-color: #1a202c;
-            color: #e2e8f0;
-            border: 1px solid #4a5568;
-            border-radius: 4px;
-            padding: 4px 8px;
-        }
-        
-        /* Remove default focus outlines globally */
-        *:focus {
-            outline: none;
-        }
-        QWidget:focus {
-            outline: none;
-        }
-        QPushButton:focus {
-            outline: none;
-        }
-        QLineEdit:focus {
-            outline: none;
-        }
-        QComboBox:focus {
-            outline: none;
-        }
-        QCheckBox:focus {
-            outline: none;
-        }
-        QRadioButton:focus {
-            outline: none;
-        }
-        QSpinBox:focus {
-            outline: none;
-        }
-        QDoubleSpinBox:focus {
-            outline: none;
-        }
-        QTextEdit:focus {
-            outline: none;
-        }
-        QPlainTextEdit:focus {
-            outline: none;
-        }
-        QListView:focus {
-            outline: none;
-        }
-        QTreeView:focus {
-            outline: none;
-        }
-        QTableView:focus {
-            outline: none;
-        }
-        QTableWidget:focus {
-            outline: none;
-        }
-        QSlider:focus {
-            outline: none;
-        }
-        QScrollBar:focus {
-            outline: none;
-        }
-        QTabBar:focus {
-            outline: none;
-        }
-        QTabBar::tab:focus {
-            outline: none;
-        }
-        QGroupBox:focus {
-            outline: none;
-        }
-    """)
-    app.setStyleSheet(app.styleSheet() + get_scroll_area_style())
+    theme_manager = get_theme_manager()
+
+    def _apply_application_theme(theme=None):
+        themed_stylesheet = theme_manager.build_application_stylesheet(theme) + get_scroll_area_style()
+        app.setStyleSheet(themed_stylesheet)
+
+    _apply_application_theme(theme_manager.current_theme())
+    theme_manager.themeChanged.connect(_apply_application_theme)
     
     # Initialize qtawesome fonts (required for icons in PyInstaller builds)
     try:

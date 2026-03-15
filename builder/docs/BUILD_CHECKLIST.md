@@ -3,12 +3,9 @@
 - Activate/create `.venv_build`
 - Install `builder/requirements/build_requirements.txt`
 - Install project dependencies (pinned)
-- Run `builder/audit/scripts/run_audit.py`
-- Run `builder/audit/scripts/generate_build_docs.py`
-- Review `builder/audit/reports/AUDIT_SUMMARY.md`
-- Confirm privacy exclusions include `Education/`, `source/`, `attachment/`, `generated-files/`, `thumbnails/`, `database/`, logs, `.env`
-- Build App A with `builder/spec/appA_workstation.spec`
-- Build App B with `builder/spec/appB_slicer.spec`
-- Run diagnostics (`builder/scripts/diagnose_imports.ps1`)
-- Smoke test App A and App B exes from `builder/output/dist/`
-- Record issues/fixes in `builder/docs/BUILD_DOCUMENT.md` (Section F)
+- Assemble the optional Advanced MPR runtime if that payload should ship: `python tools/assemble_slicer_runtime.py`
+- Run `python build.py`
+- Verify `builder/output/stage/core/AIPacs.exe` exists
+- Verify `builder/output/stage/manifest/release_manifest.json` marks optional payloads correctly
+- If `ISCC.exe` is available, verify the installer is written to `builder/output/installer/`
+- Smoke test the installed app on a clean Windows profile

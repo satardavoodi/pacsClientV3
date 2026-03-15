@@ -88,9 +88,9 @@ Download orchestration, progress tracking, resumability, and warmup caching are 
 
 ### Web Viewing Module
 
-- `PacsClient/pacs/workstation_ui/web_browser_ui.py`
+- `modules/web_browser/`
 
-This module is part of the workstation shell rather than a separate package.
+The workstation shell imports this as a standalone module package.
 
 ### Printing Module
 

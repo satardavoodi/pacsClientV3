@@ -3,6 +3,7 @@ from PySide6.QtWidgets import QApplication, QWidget, QTabWidget, QVBoxLayout, QL
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PacsClient.utils import get_all_servers, get_server
+from PacsClient.utils.theme_manager import get_theme_manager
 import qtawesome as qta
 
 
@@ -12,12 +13,16 @@ class DataAccessPanelWidget(QWidget):
         self.tab_selected_name = None
         self.server_selected = None
         self.method_select_folder = method_select_folder
+        self.theme_manager = get_theme_manager()
+        self._active_theme = self.theme_manager.current_theme()
 
         self.setup_ui()
         self.setup_database_tab()
         self.setup_select_server_tab()
         self.setup_local_tab()
         self.load_servers()
+        self.theme_manager.themeChanged.connect(self.apply_theme)
+        self.apply_theme(self._active_theme)
 
         self.tabs.setCurrentIndex(1)  # set tab server as default tab.
 
@@ -112,6 +117,7 @@ class DataAccessPanelWidget(QWidget):
         
         # Local database info
         local_label = QLabel()
+        self.local_label = local_label
         local_label.setPixmap(qta.icon('fa5s.database', color='#3b82f6').pixmap(16, 16))
         local_label.setText(" Local Database")
         local_label.setStyleSheet("""
@@ -125,6 +131,7 @@ class DataAccessPanelWidget(QWidget):
         
         message = 'Shows downloaded studies from Download Manager and locally imported files. Click "Search" or "Refresh" to load.'
         message_label = QLabel(message)
+        self.local_message_label = message_label
         message_label.setWordWrap(True)
         message_label.setStyleSheet("""
             QLabel {
@@ -181,6 +188,7 @@ class DataAccessPanelWidget(QWidget):
         
         # Server label
         server_label = QLabel()
+        self.server_label = server_label
         server_label.setPixmap(qta.icon('fa5s.server', color='#10b981').pixmap(16, 16))
         server_label.setText(" Select PACS Server:")
         server_label.setStyleSheet("""
@@ -383,6 +391,7 @@ class DataAccessPanelWidget(QWidget):
         
         # Import label
         import_label = QLabel()
+        self.import_label = import_label
         import_label.setPixmap(qta.icon('fa5s.folder-open', color='#f59e0b').pixmap(16, 16))
         import_label.setText(" Import DICOM Files")
         import_label.setStyleSheet("""
@@ -468,4 +477,165 @@ class DataAccessPanelWidget(QWidget):
     #
     # def get_result_file_path(self):
     #     return self.file_path_label.text()
+
+    def apply_theme(self, theme=None):
+        self._active_theme = theme or self.theme_manager.current_theme()
+        t = self._active_theme
+        self.tabs.setStyleSheet(
+            f"""
+            QTabWidget {{
+                background: transparent;
+                border: none;
+            }}
+            QTabWidget::pane {{
+                border: none;
+                background: {t['panel_bg']};
+                margin-top: 0px;
+                padding: 8px;
+            }}
+            QTabBar {{
+                background: transparent;
+                border: none;
+                qproperty-drawBase: 0;
+                alignment: center;
+            }}
+            QTabBar::tab {{
+                background: {t['tab_bg']};
+                color: {t['text_muted']};
+                border: none;
+                border-radius: 6px 6px 0 0;
+                padding: 6px 10px;
+                margin-right: 2px;
+                font-size: 13px;
+                font-weight: 500;
+                min-width: 50px;
+                max-width: 65px;
+                height: 28px;
+            }}
+            QTabBar::tab:selected {{
+                background: {t['accent']};
+                color: {t['button_text']};
+                font-weight: 600;
+            }}
+            QTabBar::tab:hover:!selected {{
+                background: {t['tab_hover_bg']};
+                color: {t['text_primary']};
+            }}
+            """
+        )
+        if hasattr(self, "refresh_local_button"):
+            self.refresh_local_button.setStyleSheet(
+                f"""
+                QPushButton {{
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: #ffffff;
+                    background: {t['accent']};
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                }}
+                QPushButton:hover {{
+                    background: {t['accent_hover']};
+                }}
+                QPushButton:pressed {{
+                    background: {t['accent_pressed']};
+                }}
+                """
+            )
+        for attr in ("local_label", "server_label", "import_label"):
+            label = getattr(self, attr, None)
+            if label is not None:
+                label.setStyleSheet(
+                    f"""
+                    QLabel {{
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: {t['text_primary']};
+                        padding: 2px 0px;
+                    }}
+                    """
+                )
+        if hasattr(self, "local_message_label"):
+            self.local_message_label.setStyleSheet(
+                f"""
+                QLabel {{
+                    font-size: 12px;
+                    color: {t['text_secondary']};
+                    padding: 3px 5px;
+                    background: {t['card_bg']};
+                    border: 1px solid {t['border']};
+                    border-radius: 4px;
+                    line-height: 1.3;
+                }}
+                """
+            )
+        if hasattr(self, "server_combo"):
+            self.server_combo.setStyleSheet(
+                f"""
+                QComboBox {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {t['panel_alt_bg']}, stop:1 {t['card_bg']});
+                    border: 2px solid {t['border']};
+                    border-radius: 6px;
+                    padding: 6px 10px;
+                    font-size: 20px;
+                    color: {t['text_primary']};
+                    min-height: 20px;
+                    font-weight: 500;
+                }}
+                QComboBox:hover {{
+                    border-color: {t['accent']};
+                }}
+                QComboBox:focus {{
+                    border-color: {t['accent']};
+                }}
+                QComboBox::drop-down {{
+                    border: none;
+                    width: 24px;
+                    background: transparent;
+                }}
+                QComboBox QAbstractItemView {{
+                    background: {t['panel_bg']};
+                    border: 2px solid {t['accent']};
+                    border-radius: 6px;
+                    selection-background-color: {t['accent']};
+                    color: {t['text_primary']};
+                    padding: 6px;
+                    outline: none;
+                }}
+                """
+            )
+        if hasattr(self, "select_folder_btn"):
+            self.select_folder_btn.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {t['success']}, stop:1 {t['success_hover']});
+                    color: #ffffff;
+                    border: 1px solid {t['success']};
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    min-height: 20px;
+                }}
+                QPushButton:hover {{
+                    border-color: {t['success_hover']};
+                }}
+                """
+            )
+        if hasattr(self, "folder_path_label"):
+            self.folder_path_label.setStyleSheet(
+                f"""
+                QLabel {{
+                    font-size: 12px;
+                    color: {t['text_muted']};
+                    padding: 4px 6px;
+                    background: {t['card_bg']};
+                    border: 1px solid {t['border']};
+                    border-radius: 4px;
+                }}
+                """
+            )
 

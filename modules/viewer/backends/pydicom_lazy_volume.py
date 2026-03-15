@@ -15,7 +15,7 @@ from PySide6.QtCore import QObject, Signal
 import vtkmodules.all as vtk
 from vtkmodules.util import numpy_support
 
-from .lazy_volume_registry import register_loader
+from modules.viewer.fast.lazy_volume_registry import register_loader
 from .pydicom_2d_backend import PyDicom2DBackend
 
 logger = logging.getLogger(__name__)

@@ -1,6 +1,6 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v2.2.3.4.0 (2026-02-27)
+**Current Stable Version:** v2.2.6 (2026-03-15)
 
 ## Architecture map (start here)
 - App entry is `main.py` → `AppHandler` (login) → `MainWindowWidget` → `ControlPanelInterface` → `HomePanelWidget` for patient list and downloads.
@@ -16,7 +16,7 @@
 - **DL_WARMUP subprocess runs at IDLE priority** (v2.2.3.4.0). It has its own GIL. Do not bump priority above IDLE — it causes memory-bus contention that spikes the viewer's SetSlice from 8→45ms.
 - **GC is suppressed during scroll bursts** (`gc.disable()` in wheelEvent, re-enabled 2000ms after last render). Do not call `gc.collect()` during scroll. See v2.2.3.3.2.
 - **Reference line repaint during scroll uses round-robin** (v2.2.3.3.7): trailing-edge timer paints ONE target viewer per tick. Do not change to paint-all-targets per tick — it blocks the event loop N×20ms.
-- **Local backup of this stable version:** `backups/v2.2.2_2026-02-19/`
+- **Local backup of this stable version:** `backups/v2.2.6_2026-03-15/`
 
 ## Key flows to preserve
 - Opening a study: `HomePanelWidget._on_patient_double_clicked_async` opens tab immediately, then starts Zeta download with priority and wires progress signals.

@@ -26,6 +26,7 @@ from modules.network.socket_service import SocketService
 from modules.network.socket_config import get_socket_config
 from modules.network.socket_token_manager import get_socket_token_manager
 from modules.LicenseGenerator.license_manager import LicenseManager
+from PacsClient.utils.theme_manager import get_theme_manager
 
 
 class AppHandler(QDialog):
@@ -56,6 +57,8 @@ class AppHandler(QDialog):
         self.socket_service = SocketService()
         self.auth_token = None
         self.auth_user = None
+        self.theme_manager = get_theme_manager()
+        self._active_theme = self.theme_manager.current_theme()
 
         # Enhanced professional styling
         self.setStyleSheet("""
@@ -189,6 +192,7 @@ class AppHandler(QDialog):
                 border-radius: 3px;
             }
         """)
+        self.apply_theme(self._active_theme)
 
         # Main container with rounded corners and shadow
         main_container = QFrame(self)
@@ -478,6 +482,120 @@ class AppHandler(QDialog):
         self.setWindowOpacity(0)
         self.fade_in_animation.start()
         QTimer.singleShot(0, self._ensure_welcome_page_height)
+
+    def apply_theme(self, theme=None):
+        self._active_theme = theme or self.theme_manager.current_theme()
+        t = self._active_theme
+        self.setStyleSheet(
+            f"""
+            QDialog {{
+                background: transparent;
+            }}
+            QFrame#MainContainer {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {t['panel_deep_bg']}, stop:0.3 {t['panel_bg']}, stop:0.7 {t['window_bg']}, stop:1 {t['panel_deep_bg']});
+                border: 2px solid {t['border']};
+                border-radius: 16px;
+            }}
+            QLabel#BrandTitle {{
+                color: {t['text_primary']};
+                font-size: 28px;
+                font-weight: 800;
+                letter-spacing: 1px;
+                margin-bottom: 4px;
+            }}
+            QLabel#BrandSubtitle {{
+                color: {t['text_secondary']};
+                font-size: 14px;
+                font-weight: 400;
+                letter-spacing: 0.5px;
+            }}
+            QLabel#BrandDescription {{
+                color: {t['text_muted']};
+                font-size: 12px;
+                line-height: 1.5;
+                margin-top: 8px;
+            }}
+            QLabel#FormTitle {{
+                color: {t['text_primary']};
+                font-size: 24px;
+                font-weight: 700;
+                margin-bottom: 8px;
+            }}
+            QLabel#FormSubtitle {{
+                color: {t['text_secondary']};
+                font-size: 14px;
+                margin-bottom: 24px;
+            }}
+            QLabel#ErrorLabel {{
+                color: #fca5a5;
+                background: {t['card_bg']};
+                border: 1px solid {t['danger']};
+                border-radius: 8px;
+                padding: 12px 16px;
+                font-weight: 500;
+            }}
+            QFrame#BrandPanel {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {t['menu_bg']}, stop:0.5 {t['accent_soft']}, stop:1 {t['menu_bg']});
+                border: 1px solid {t['border']};
+                border-radius: 12px;
+            }}
+            QLineEdit {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {t['panel_alt_bg']}, stop:1 {t['panel_bg']});
+                color: {t['text_primary']};
+                border: 2px solid {t['border']};
+                border-radius: 10px;
+                padding: 14px 16px;
+                font-size: 14px;
+                font-weight: 500;
+            }}
+            QLineEdit:focus {{
+                border: 2px solid {t['accent']};
+                background: {t['card_bg']};
+            }}
+            QPushButton[variant="primary"] {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {t['accent_hover']}, stop:1 {t['accent']});
+                color: #ffffff;
+                border: none;
+                border-radius: 10px;
+                padding: 14px 20px;
+                font-weight: 700;
+                font-size: 15px;
+                letter-spacing: 0.5px;
+            }}
+            QPushButton[variant="primary"]:hover {{
+                background: {t['accent_hover']};
+            }}
+            QPushButton[variant="secondary"] {{
+                background: transparent;
+                color: {t['text_secondary']};
+                border: 2px solid {t['border']};
+                border-radius: 10px;
+                padding: 14px 20px;
+                font-weight: 600;
+                font-size: 14px;
+            }}
+            QPushButton[variant="secondary"]:hover {{
+                border-color: {t['accent']};
+                color: {t['text_primary']};
+                background: {t['card_bg']};
+            }}
+            QProgressBar {{
+                border: none;
+                background: {t['panel_alt_bg']};
+                border-radius: 3px;
+                text-align: center;
+            }}
+            QProgressBar::chunk {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {t['accent']}, stop:1 {t['accent_hover']});
+                border-radius: 3px;
+            }}
+            """
+        )
 
     def _setup_animations(self):
         """Setup smooth animations for UI interactions"""

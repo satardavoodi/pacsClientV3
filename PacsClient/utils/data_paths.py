@@ -7,7 +7,7 @@ or cached by the application.  Software/code folders (PacsClient, modules,
 Qss, Fonts, …) live *outside* this tree and are never mixed with user data.
 
 In **development** the tree lives under ``PROJECT_ROOT/user_data/``.
-In a **PyInstaller build** it lives next to the executable bundle.
+In a **PyInstaller build** it lives under ``%LOCALAPPDATA%\\AIPacs\\user_data``.
 
 Every module that writes or reads user data MUST import paths from here
 (or from ``PacsClient.utils.config`` which re-exports the most common ones).
@@ -19,6 +19,7 @@ import logging
 import shutil
 from pathlib import Path
 
+from aipacs_runtime import user_data_root
 from _project_root import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  Root of all user-accessible data
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-USER_DATA_ROOT: Path = PROJECT_ROOT / "user_data"
+USER_DATA_ROOT: Path = user_data_root()
 
 # ━━ Patients ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PATIENTS_DIR:    Path = USER_DATA_ROOT / "patients"
@@ -58,6 +59,12 @@ RECEPTION_REPORTS_DIR: Path = REPORTS_DIR / "reception"
 # ━━ Cache ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CACHE_DIR:            Path = USER_DATA_ROOT / "cache"
 ZETA_BOOST_CACHE_DIR: Path = CACHE_DIR / "zeta_boost"
+BROWSER_DIR:             Path = USER_DATA_ROOT / "web_browser"
+BROWSER_STATE_DIR:       Path = BROWSER_DIR / "state"
+BROWSER_PROFILE_DIR:     Path = BROWSER_DIR / "profile"
+BROWSER_DOWNLOADS_DIR:   Path = BROWSER_DIR / "downloads"
+BROWSER_SAVED_PAGES_DIR: Path = BROWSER_DIR / "saved_pages"
+BROWSER_SCREENSHOTS_DIR: Path = BROWSER_DIR / "screenshots"
 
 # ━━ Logs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 LOGS_DIR: Path = USER_DATA_ROOT / "logs"
@@ -78,6 +85,8 @@ _ALL_DIRS = [
     ECHOMIND_MEMORY_DIR, ECHOMIND_LOGS_DIR,
     RECEPTION_REPORTS_DIR,
     ZETA_BOOST_CACHE_DIR,
+    BROWSER_STATE_DIR, BROWSER_PROFILE_DIR, BROWSER_DOWNLOADS_DIR,
+    BROWSER_SAVED_PAGES_DIR, BROWSER_SCREENSHOTS_DIR,
     LOGS_DIR,
     DATABASE_DIR,
 ]

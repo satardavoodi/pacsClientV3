@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal, QThread
-from modules.EchoMind.viewer_chat.ai_chat_viewer import AIChatViewer
 import requests
 import json
 from PacsClient.pacs.patient_tab.utils import show_message
@@ -24,13 +23,13 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QSlider, QDialogButt
 from pathlib import Path
 from urllib.parse import urljoin
 from PacsClient.utils.config import SOURCE_PATH, ATTACHMENT_PATH, IMAGES_LOGIN_PATH
-from PacsClient.utils.utils import get_server_url
+from PacsClient.utils.utils import SERVERS_FILE, get_server_url
 from modules.viewer.advanced.viewer_2d import create_text_actor
 
 
 #base_url = 'http://81.16.117.196:5173'
-breast_url = get_server_url('breast')
-boneage_url = get_server_url('boneage')
+breast_url = get_server_url("breast") if SERVERS_FILE.exists() else None
+boneage_url = get_server_url("boneage") if SERVERS_FILE.exists() else None
 
 
 

@@ -10,6 +10,7 @@ Modular DICOM workstation for viewing, download orchestration, printing, educati
 - [Module Catalog](docs/modules/README.md)
 - [Development Setup](docs/development/setup-and-tooling.md)
 - [Current Release Notes](docs/releases/RELEASE_NOTES.md)
+- [Windows Release Flow](builder/docs/WINDOWS_RELEASE_FLOW.md)
 
 ## Runtime Areas
 
@@ -29,7 +30,7 @@ Modular DICOM workstation for viewing, download orchestration, printing, educati
 - Zeta MPR and orthogonal MPR: `PacsClient/pacs/patient_tab/zeta mpr/`, `PacsClient/pacs/patient_tab/orthogonal_mpr/`
 - Advanced imaging and AI tools: `PacsClient/pacs/patient_tab/ui/ai_module_ui/`
 - Education: `PacsClient/pacs/education/`, `Education/`
-- Web viewing: `PacsClient/pacs/workstation_ui/web_browser_ui.py`
+- Web viewing: `modules/web_browser/`
 - Printing: `printing/`
 - EchoMind assistant: `EchoMind/`
 

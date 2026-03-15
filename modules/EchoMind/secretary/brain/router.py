@@ -25,13 +25,19 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from modules.EchoMind.llm_client import gapgpt_chat, LLMError
+from modules.EchoMind.settings_store import get_llm_backend, get_prompt_settings
 from .catalog_loader import list_available_module_ids, load_catalog_text
 
 log = logging.getLogger(__name__)
 
 # ── LLM connection — all calls routed through modules.EchoMind.llm_client ─────────────
 # Key is resolved automatically from modules.EchoMind Settings (Settings → EchoMind).
-from ..config import SECRETARY_LLM_MODEL as _MODEL, SECRETARY_PHASE1_TIMEOUT, PHASE1_PROMPT_FILE
+from ..config import (
+    SECRETARY_PHASE1_TIMEOUT,
+    PHASE1_PROMPT_FILE,
+    get_secretary_llm_model,
+    get_secretary_reasoning_effort,
+)
 _TIMEOUT = SECRETARY_PHASE1_TIMEOUT
 
 def _load_phase1_prompt() -> str:
@@ -43,6 +49,15 @@ def _load_phase1_prompt() -> str:
 
 
 _SYSTEM_PROMPT: str = _load_phase1_prompt()
+
+
+def _system_prompt() -> str:
+    if get_llm_backend() != "openai":
+        return _SYSTEM_PROMPT
+    extra = str(get_prompt_settings().get("secretary_routing") or "").strip()
+    if not extra:
+        return _SYSTEM_PROMPT
+    return f"{extra}\n\n{_SYSTEM_PROMPT}"
 
 
 @dataclass
@@ -128,10 +143,11 @@ def route_request(
 
     user_message = _build_phase1_prompt(user_text, language, catalog_text)
 
+    resolved_model = get_secretary_llm_model()
     payload = {
-        "model": _MODEL,
+        "model": resolved_model,
         "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": _system_prompt()},
             {"role": "user",   "content": user_message},
         ],
         "temperature": 0.0,
@@ -147,17 +163,18 @@ def route_request(
         except Exception:
             pass
     _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — Phase 2 LLM REQUEST (module routing)")
-    _elog(f"  model      : {_MODEL}")
+    _elog(f"  model      : {resolved_model}")
     _elog(f"  user_text  : {user_text!r}")
     _elog(f"  prompt_len : {len(user_message)} chars")
 
     try:
         raw = gapgpt_chat(
             messages=payload["messages"],
-            model=_MODEL,
+            model=resolved_model,
             max_tokens=256,
             temperature=0.0,
             timeout=int(timeout),
+            reasoning_effort=get_secretary_reasoning_effort(),
         )
     except LLMError as exc:
         log.error("Phase 1 LLM call failed: %s", exc)

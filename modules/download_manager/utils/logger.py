@@ -8,6 +8,7 @@ import logging
 import sys
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
+from typing import Optional
 
 from ..core.constants import (
     LOG_FORMAT,

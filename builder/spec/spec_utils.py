@@ -5,6 +5,12 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+from aipacs_runtime import (
+    QT_SOFTWARE_OPENGL_DLL_ENV,
+    VTK_OSMESA_DLL_ENV,
+    find_runtime_binary,
+)
+
 
 THIS_DIR = Path(__file__).resolve().parent
 BUILDER_DIR = THIS_DIR.parent
@@ -150,11 +156,33 @@ def load_hiddenimports(extra: Iterable[str] | None = None) -> list[str]:
     for item in hidden:
         if not item or item in deny:
             continue
+        if not _keep_runtime_hiddenimport(item):
+            continue
         if item in seen:
             continue
         seen.add(item)
         out.append(item)
     return sorted(out)
+
+
+def _keep_runtime_hiddenimport(name: str) -> bool:
+    deny_fragments = (
+        ".tests",
+        ".tests.",
+        ".conftest",
+        ".example_usage",
+        ".test_",
+        ".seed_",
+    )
+    deny_suffixes = (
+        ".build",
+        ".build_nuitka",
+    )
+    if any(fragment in name for fragment in deny_fragments):
+        return False
+    if name.endswith(deny_suffixes):
+        return False
+    return True
 
 
 def common_app_datas() -> list[tuple[str, str]]:
@@ -199,6 +227,25 @@ def app_b_datas() -> list[tuple[str, str]]:
         datas.extend(collect_tree_datas(rel))
     # App B does not need full Qss/Fonts from App A unless launcher UI grows later.
     return dedupe_datas(datas)
+
+
+def graphics_runtime_binaries() -> list[tuple[str, str]]:
+    binaries: list[tuple[str, str]] = []
+    qt_opengl = find_runtime_binary("opengl32sw.dll", override_env=QT_SOFTWARE_OPENGL_DLL_ENV)
+    osmesa = find_runtime_binary("osmesa.dll", override_env=VTK_OSMESA_DLL_ENV)
+    pipe_swrast = None
+    if osmesa is not None:
+        sibling_pipe = Path(osmesa).resolve().parent / "pipe_swrast.dll"
+        if sibling_pipe.exists():
+            pipe_swrast = sibling_pipe
+    if pipe_swrast is None:
+        pipe_swrast = find_runtime_binary("pipe_swrast.dll")
+
+    for path in (qt_opengl, osmesa, pipe_swrast):
+        if path is None:
+            continue
+        binaries.append((str(path), "."))
+    return binaries
 
 
 def icon_path_app_a() -> str | None:

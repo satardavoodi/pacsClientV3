@@ -1119,6 +1119,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         
         if can_reuse_reslice:
             print(f"      âœ… Reusing cached reslice")
+            _reslice_data_updated = False  # v2.2.5.3: reslice was reused as-is
         else:
             # Need to rebuild or rebind reslice input
             if cached_preprocessed is not None:
@@ -1131,6 +1132,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                     self._cache_put_preprocessed(preprocess_cache_key, vtk_image_data)
 
             # Reuse existing ImageReslice instance when possible to reduce object churn
+            _reslice_data_updated = False  # v2.2.5.3: track in-place rebuild
             if hasattr(self, 'image_reslice') and self.image_reslice is not None:
                 self.image_reslice.vtk_image_data = vtk_image_data
                 self.image_reslice.metadata = metadata
@@ -1138,12 +1140,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 if hasattr(self.image_reslice, '_configure_output_from_input'):
                     self.image_reslice._configure_output_from_input()
                 self.image_reslice.Update()
+                _reslice_data_updated = True  # v2.2.5.3
             else:
                 self.image_reslice = ImageReslice(vtk_image_data, metadata)
 
             # Cache the series UID
             self._cached_series_uid = current_series_uid
-            
+
         _preprocess_time = time.time() - _preprocess_start
         print(f"      â€¢ Preprocess + Reslice: {_preprocess_time:.3f}s")
 
@@ -1161,6 +1164,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         _needs_reconnect = (
             getattr(self, '_connected_reslice_output', None) is not _current_reslice_output
         )
+        # v2.2.5.3: Force reconnect when reslice data was rebuilt in-place.
+        # When the existing ImageReslice instance has its input replaced,
+        # the Python output object identity stays the same, but the viewer's
+        # internal slice cursor range (from the previous SetInputData) is stale.
+        # Without reconnect, SetSlice() silently clamps to the old range.
+        if not _needs_reconnect and _reslice_data_updated:
+            _needs_reconnect = True
+            print(f"         \u26a0 Forcing reconnect: reslice data was rebuilt in-place")
         # PyDicom lazy backend updates scalar memory in-place. Force reconnect to
         # make vtkResliceImageViewer refresh its slice range/state on series switch.
         try:
@@ -1168,15 +1179,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 _needs_reconnect = True
         except Exception:
             pass
-        # Defensive fallback: if viewer still reports a single slice while the
-        # incoming output has multiple Z slices, reconnect once.
+        # Defensive fallback: if viewer reports a stale slice range that doesn't
+        # match the actual data Z extent, reconnect to fix the cursor range.
         if not _needs_reconnect:
             try:
                 _reported_max = int(self.GetSliceMax())
                 _out_dims = _current_reslice_output.GetDimensions()
                 _out_z = int(_out_dims[2]) if _out_dims and len(_out_dims) > 2 else 1
-                if _reported_max <= 0 and _out_z > 1:
+                if _out_z > 1 and _reported_max < (_out_z - 1):
                     _needs_reconnect = True
+                    print(f"         \u26a0 Forcing reconnect: range mismatch (max={_reported_max} vs data_z={_out_z})")
             except Exception:
                 pass
         if _needs_reconnect:

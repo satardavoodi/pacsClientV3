@@ -12,6 +12,12 @@ from modules.viewer.boost_viewer_config import (
     load_boost_viewer_enabled,
     save_boost_viewer_enabled,
 )
+from modules.viewer.gpu_boost import (
+    load_gpu_boost_enabled,
+    load_gpu_runtime_status,
+    resolve_gpu_boost_plan,
+    save_gpu_boost_enabled,
+)
 from modules.viewer.viewer_backend_config import (
     BACKEND_PYDICOM,
     BACKEND_VTK,
@@ -148,7 +154,8 @@ class ModalityGridConfigWidget(QWidget):
     # UI
     # --------------------------------------------------
     def _setup_ui(self):
-        self.setStyleSheet("""
+        arrow_icon = Path("Qss/icons/fefefe/material_design/keyboard_arrow_down.png").resolve().as_posix()
+        style = """
         QWidget {
             background-color: #0b0d10;
             color: #e5e7eb;
@@ -190,13 +197,26 @@ class ModalityGridConfigWidget(QWidget):
             border: 1px solid #2b313b;
             border-radius: 6px;
             padding: 7px 11px;
+            padding-right: 34px;
             min-height: 34px;
             font-size: 14px;
+        }
+        QComboBox::drop-down {
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 28px;
+            border-left: 1px solid #2b313b;
+        }
+        QComboBox::down-arrow {
+            image: url(__ARROW__);
+            width: 14px;
+            height: 14px;
         }
         QLabel {
             font-size: 14px;
         }
-        """)
+        """
+        self.setStyleSheet(style.replace("__ARROW__", arrow_icon))
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 16, 18, 16)  # Generous padding
@@ -313,6 +333,37 @@ class ModalityGridConfigWidget(QWidget):
 
         left_panel_layout.addLayout(viewer_mode_row)
 
+        # ---------- GPU Boost ----------
+        gpu_row = QVBoxLayout()
+        gpu_row.setSpacing(10)
+
+        gpu_title = QLabel("GPU Boost")
+        gpu_title.setStyleSheet("font-weight: 600; font-size: 14px; color: #f9fafb;")
+        gpu_row.addWidget(gpu_title)
+
+        self.gpu_boost_toggle = QCheckBox("Use GPU when available")
+        self.gpu_boost_toggle.setCursor(Qt.PointingHandCursor)
+        self.gpu_boost_toggle.setToolTip(
+            "When enabled, the viewer uses GPU-accelerated rendering if a compatible GPU is available.\n"
+            "When disabled, the workstation targets CPU + Software OpenGL on next launch.\n"
+            "If the software renderer is unavailable, the workstation automatically falls back to the safe PyDicom CPU backend.\n"
+            "Changes apply after restarting the application.\n"
+            "Fast mode remains the lightweight CPU-only 2D backend."
+        )
+        gpu_row.addWidget(self.gpu_boost_toggle)
+
+        self.gpu_status_label = QLabel()
+        self.gpu_status_label.setWordWrap(True)
+        self.gpu_status_label.setStyleSheet(
+            "color: #d1d5db; font-size: 13px; padding: 9px; "
+            "background-color: #1f2937; border-radius: 4px; line-height: 1.5;"
+        )
+        gpu_row.addWidget(self.gpu_status_label)
+
+        self.viewer_mode_combo.currentIndexChanged.connect(self._refresh_gpu_status)
+        self.gpu_boost_toggle.toggled.connect(self._refresh_gpu_status)
+        left_panel_layout.addLayout(gpu_row)
+
         # Hidden widgets kept for backward-compat persistence helpers
         self.boostviewer_toggle = QCheckBox()
         self.boostviewer_toggle.setVisible(False)
@@ -401,6 +452,42 @@ class ModalityGridConfigWidget(QWidget):
         except Exception as e:
             print(f"❌ Error creating default config: {e}")
 
+    def _selected_backend_from_mode(self) -> str:
+        if self.viewer_mode_combo.currentData() == "fast":
+            return BACKEND_PYDICOM
+        return BACKEND_VTK
+
+    def _refresh_gpu_status(self):
+        backend = self._selected_backend_from_mode()
+        cached_status = load_gpu_runtime_status()
+        plan = resolve_gpu_boost_plan(
+            viewer_backend=backend,
+            graphics_profile={
+                "requested_gpu": bool(self.gpu_boost_toggle.isChecked()),
+                "detected_gpu": bool(cached_status.get("last_detected_gpu", False)),
+                "use_gpu": bool(
+                    self.gpu_boost_toggle.isChecked()
+                    and cached_status.get("last_detected_gpu", False)
+                    and backend == BACKEND_VTK
+                ),
+                "device_name": str(cached_status.get("last_probe_device", "") or ""),
+            },
+        )
+        device_name = str(plan.get("device_name", "") or "No compatible GPU cached yet")
+        gpu_task_names = ", ".join(task["label"] for task in plan["gpu_tasks"][:2])
+        cpu_task_names = ", ".join(task["label"] for task in plan["cpu_tasks"][:3])
+        if plan["gpu_active"]:
+            mode_line = f"Active path: GPU rendering on {device_name}."
+        else:
+            mode_line = f"Active path: CPU fallback. {plan['fallback_reason']}"
+        self.gpu_status_label.setText(
+            f"Backend analysis: {'VTK/SimpleITK can offload viewer rendering to GPU' if plan['backend_gpu_capable'] else 'Current viewer mode remains CPU-oriented'}.\n"
+            f"{mode_line}\n"
+            f"GPU-eligible tasks: {gpu_task_names}.\n"
+            f"CPU-owned tasks: {cpu_task_names}.\n"
+            "GPU setting applies after restart. GPU off targets CPU + Software OpenGL; Fast mode is the lightweight CPU-only 2D path."
+        )
+
     def load_config(self):
         # ابتدا همه مودالیتی‌های پیش‌فرض را لود می‌کنیم
         self.config_data = {
@@ -414,8 +501,10 @@ class ModalityGridConfigWidget(QWidget):
         mode_idx = self.viewer_mode_combo.findData("fast" if is_fast else "advanced")
         self.viewer_mode_combo.setCurrentIndex(max(0, mode_idx))
         self.boostviewer_toggle.setChecked(load_boost_viewer_enabled(default=True))
+        self.gpu_boost_toggle.setChecked(load_gpu_boost_enabled(default=False))
         idx = self.viewer_backend_combo.findData(active_backend)
         self.viewer_backend_combo.setCurrentIndex(max(0, idx))
+        self._refresh_gpu_status()
         
         # اگر فایل کانفیگ وجود نداشت، آن را ایجاد می‌کنیم
         if not self.config_path.exists():
@@ -534,6 +623,12 @@ class ModalityGridConfigWidget(QWidget):
             save_viewer_backend(BACKEND_VTK)
             save_boost_viewer_enabled(True)   # boost always on in Advanced (series)
 
+        save_gpu_boost_enabled(self.gpu_boost_toggle.isChecked())
+        self._refresh_gpu_status()
         self.configChanged.emit()
-        QMessageBox.information(self, "Saved", "Grid configuration saved.")
+        QMessageBox.information(
+            self,
+            "Saved",
+            "Viewer configuration saved.\nGPU changes apply after restarting the application.",
+        )
         print(f"✅ Modality grid config saved: {self.config_path}")

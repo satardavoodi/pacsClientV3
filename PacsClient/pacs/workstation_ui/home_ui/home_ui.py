@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
 import qtawesome as qta
 import weakref  # Add at the top
 
+from aipacs_runtime import is_module_enabled
+
 # from PacsClient.utils import get_study_by_study_uid
 from PacsClient.utils.db_manager import get_study_by_study_uid
 
@@ -48,7 +50,6 @@ from .data_access_panel import DataAccessPanelWidget
 from .patient_search_widget import PatientSearchWidget
 from .patient_table_widget import PatientTableWidget
 from .right_panel_widget import RightPanelWidget
-from .secretary_button_widget import SecretaryButtonWidget
 # UPDATED: Now using Zeta Download Manager with v1.0.6 UI design
 from modules.download_manager.ui.main_widget import DownloadManagerWidget
 from PacsClient.utils import get_connection_database, get_all_patients, search_patients_local, find_patient_pk, \
@@ -65,6 +66,7 @@ from PacsClient.utils.config import SOURCE_PATH
 from modules.network.socket_config import update_socket_server_settings, get_socket_server_settings
 from modules.network.upload_download_attchments import download_attachments_for_study, download_attachments_for_study_async
 from PacsClient.utils.scroll_style import get_scroll_area_style
+from PacsClient.utils.theme_manager import get_theme_manager
 
 warnings.simplefilter("error")
 
@@ -106,6 +108,9 @@ class HomePanelWidget(QWidget):
         
         # Initialize loading message attribute
         self.loading_message = None
+        self.theme_manager = get_theme_manager()
+        self._active_theme = self.theme_manager.current_theme()
+        self._left_sidebar_width = 306
         
         # Initialize loading feed components
         self._loading_feed_overlay = None
@@ -136,6 +141,8 @@ class HomePanelWidget(QWidget):
         UpdaterDataFromServerToHome().set_combo_server(self.data_access_panel_widget.server_combo)
         # Apply anti-aliasing to all widgets after UI setup
         self.apply_anti_aliasing()
+        self.theme_manager.themeChanged.connect(self.apply_theme)
+        self.apply_theme(self._active_theme)
 
     def apply_anti_aliasing(self):
         """Apply anti-aliasing to all widgets in the home panel"""
@@ -204,12 +211,13 @@ class HomePanelWidget(QWidget):
                 self.add_new_tab_widget(folder_path=folder_path, caller=CallerTypes.IMPORT)
 
         left_panel = QWidget()
+        self.left_panel_widget = left_panel
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(4, 4, 4, 4)
         left_layout.setSpacing(6)
-        left_panel.setMinimumWidth(240)
-        left_panel.setMaximumWidth(380)
-        left_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        left_panel.setMinimumWidth(self._left_sidebar_width)
+        left_panel.setMaximumWidth(self._left_sidebar_width)
+        left_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         left_panel.setStyleSheet('''
             QWidget {
                 background: #0f1419;
@@ -288,6 +296,7 @@ class HomePanelWidget(QWidget):
         # Adaptive layout header wrapper (mirrors Study Information black container)
         adaptive_header_height = 54
         adaptive_header_widget = QWidget()
+        self.adaptive_header_widget = adaptive_header_widget
         adaptive_header_widget.setFixedHeight(adaptive_header_height)
         adaptive_header_widget.setStyleSheet("""
             QWidget {
@@ -330,6 +339,7 @@ class HomePanelWidget(QWidget):
 
         # server section
         server_group = QGroupBox("Server Selection")
+        self.server_group = server_group
         server_group.setAlignment(Qt.AlignHCenter)
         server_layout = QVBoxLayout()
         # server_layout.setContentsMargins(6, 12, 6, 6)
@@ -408,8 +418,12 @@ class HomePanelWidget(QWidget):
         left_layout.addWidget(self.patient_search_widget)
 
         # EchoMind Secretary button-only UI (main sidebar)
-        self.secretary_button_widget = SecretaryButtonWidget()
-        left_layout.addWidget(self.secretary_button_widget, 1)
+        self.secretary_button_widget = None
+        if is_module_enabled("echomind"):
+            from .secretary_button_widget import SecretaryButtonWidget
+
+            self.secretary_button_widget = SecretaryButtonWidget()
+            left_layout.addWidget(self.secretary_button_widget, 1)
 
         # Auto-search with today's date when page loads
         # from PySide6.QtCore import QTimer
@@ -524,12 +538,171 @@ class HomePanelWidget(QWidget):
         self.left_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.left_panel_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.left_panel_scroll.setStyleSheet(get_scroll_area_style())
+        self.left_panel_scroll.setMinimumWidth(self._left_sidebar_width + 8)
+        self.left_panel_scroll.setMaximumWidth(self._left_sidebar_width + 8)
+        self.left_panel_scroll.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.left_panel_scroll.setWidget(left_panel)
         self.main_layout.addWidget(self.left_panel_scroll)
 
         # panel_layout.addWidget(left_panel)
         # panel_box.setLayout(panel_layout)
         # self.main_layout.addWidget(panel_box)
+
+    def apply_theme(self, theme=None):
+        self._active_theme = theme or self.theme_manager.current_theme()
+        t = self._active_theme
+        if hasattr(self, "left_panel_widget"):
+            self.left_panel_widget.setStyleSheet(
+                f"""
+                QWidget {{
+                    background: {t['panel_bg']};
+                    border: none;
+                    border-radius: 8px;
+                    color: {t['text_secondary']};
+                    font-family: 'Roboto', sans-serif;
+                }}
+                QGroupBox {{
+                    font-size: 14px;
+                    font-family: 'Roboto', sans-serif;
+                    color: {t['text_primary']};
+                    border: none;
+                    border-radius: 8px;
+                    margin: 4px 0px;
+                    padding-top: 10px;
+                    background: {t['panel_bg']};
+                }}
+                QGroupBox::title {{
+                    subcontrol-origin: margin;
+                    left: 8px;
+                    padding: 0 8px 0 8px;
+                    background: {t['panel_bg']};
+                    border-radius: 8px;
+                    color: {t['text_primary']};
+                    font-family: 'Roboto', sans-serif;
+                    font-weight: 600;
+                }}
+                QLineEdit {{
+                    background: {t['panel_bg']};
+                    border: none;
+                    border-radius: 8px;
+                    padding: 4px 8px;
+                    font-size: 14px;
+                    font-family: 'Roboto', sans-serif;
+                    color: {t['text_primary']};
+                }}
+                QLineEdit:focus {{
+                    border-color: {t['accent']};
+                    background: {t['card_bg']};
+                }}
+                QCheckBox {{
+                    font-size: 14px;
+                    font-family: 'Roboto', sans-serif;
+                    color: {t['text_secondary']};
+                    spacing: 6px;
+                }}
+                QCheckBox::indicator {{
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 8px;
+                    border: none;
+                    background: {t['panel_bg']};
+                }}
+                QCheckBox::indicator:checked {{
+                    background: {t['accent']};
+                    border: none;
+                }}
+                """
+            )
+        if hasattr(self, "adaptive_header_widget"):
+            self.adaptive_header_widget.setStyleSheet(
+                f"QWidget {{ background: {t['panel_bg']}; border-radius: 8px; }}"
+            )
+        if hasattr(self, "adaptive_layout_btn"):
+            self.adaptive_layout_btn.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 {t['accent']}, stop:1 {t['accent_pressed']});
+                    color: {t['button_text']};
+                    border: 1px solid {t['accent']};
+                    border-radius: 8px;
+                    padding: 6px 0px;
+                    font-size: 13px;
+                    font-family: 'Roboto', sans-serif;
+                    margin: 0px;
+                    text-align: center;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 {t['accent_hover']}, stop:1 {t['accent']});
+                    border-color: {t['accent_hover']};
+                }}
+                """
+            )
+        if hasattr(self, "server_group"):
+            self.server_group.setStyleSheet(
+                f"""
+                QGroupBox {{
+                    font-size: 14px;
+                    font-family: 'Roboto', sans-serif;
+                    color: {t['text_primary']};
+                    border: 1px solid {t['border']};
+                    border-radius: 8px;
+                    margin: 4px 0px;
+                    padding-top: 10px;
+                    background: {t['panel_bg']};
+                }}
+                QGroupBox::title {{
+                    subcontrol-origin: margin;
+                    left: 8px;
+                    background: {t['panel_bg']};
+                    border-radius: 8px;
+                    color: {t['text_primary']};
+                    font-family: 'Roboto', sans-serif;
+                    font-weight: 600;
+                }}
+                """
+            )
+        if hasattr(self, "search_progress"):
+            self.search_progress.setStyleSheet(
+                f"""
+                QProgressBar {{
+                    border: 1px solid {t['border']};
+                    border-radius: 8px;
+                    background: {t['window_bg']};
+                    text-align: center;
+                    font-size: 14px;
+                    font-family: 'Roboto', sans-serif;
+                    color: {t['text_primary']};
+                    height: 16px;
+                }}
+                QProgressBar::chunk {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 {t['accent']}, stop:1 {t['accent_pressed']});
+                    border-radius: 8px;
+                }}
+                """
+            )
+        if hasattr(self, "socket_test_btn"):
+            self.socket_test_btn.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {t['accent_soft']}, stop:1 {t['accent']});
+                    color: {t['button_text']};
+                    border: 1px solid {t['accent']};
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-family: 'Roboto', sans-serif;
+                    margin: 4px 0px;
+                }}
+                """
+            )
+        if hasattr(self, "patient_search_widget") and hasattr(self.patient_search_widget, "apply_theme"):
+            self.patient_search_widget.apply_theme(t)
+        if hasattr(self, "data_access_panel_widget") and hasattr(self.data_access_panel_widget, "apply_theme"):
+            self.data_access_panel_widget.apply_theme(t)
 
     def apply_adaptive_layout(self):
         """Apply screen-adaptive layout tweaks for the home view."""
@@ -1520,6 +1693,14 @@ class HomePanelWidget(QWidget):
         """Handle CD burn request from patient table"""
         print('💿 CD burn requested')
         try:
+            if not is_module_enabled("run_cd"):
+                QMessageBox.information(
+                    self,
+                    "Run CD Module",
+                    "The Run CD module is not installed for this workstation.",
+                )
+                return
+
             if not selected_studies:
                 QMessageBox.warning(self, "No Studies Selected",
                                     "Please select at least one study for CD burning.")
@@ -3417,9 +3598,9 @@ class HomePanelWidget(QWidget):
         self.main_layout.addWidget(self.right_panel_widget)
 
         # Optimized proportions for panels with larger thumbnails
-        self.main_layout.setStretch(0, 1)  # Search panel (left)
-        self.main_layout.setStretch(1, 5)  # Results table (center - main content)
-        self.main_layout.setStretch(2, 1)  # Right panel (thumbnails - fixed width 216px)
+        self.main_layout.setStretch(0, 0)  # Search panel (left) stays fixed width
+        self.main_layout.setStretch(1, 1)  # Results table (center) absorbs width changes
+        self.main_layout.setStretch(2, 0)  # Right panel handles its own width
 
     def display_thumbnails(self, thumbnails):
         """Display received thumbnail images using the new right panel component"""
@@ -4122,8 +4303,15 @@ Study UID: {study_uid}
         """Open web browser in a new tab"""
         print("[HomePanelWidget] open_web_browser called")
         try:
-            # Import WebBrowserWidget
-            from PacsClient.pacs.workstation_ui.web_browser_ui import WebBrowserWidget
+            if not is_module_enabled("web_browser"):
+                QMessageBox.information(
+                    self,
+                    "Web Browser Module",
+                    "The Web Browser module is not installed for this workstation.",
+                )
+                return
+
+            from modules.web_browser import WebBrowserWidget
             
             # Create web browser widget
             web_browser = WebBrowserWidget()
@@ -4191,6 +4379,14 @@ Study UID: {study_uid}
         """Open printing module in a new tab"""
         print("[HomePanelWidget] open_printing_module called")
         try:
+            if not is_module_enabled("printing"):
+                QMessageBox.information(
+                    self,
+                    "Printing Module",
+                    "The Printing module is not installed for this workstation.",
+                )
+                return
+
             selected_patients = []
             if hasattr(self, 'patient_table_widget') and hasattr(self.patient_table_widget, 'get_selected_patient_data_list'):
                 selected_patients = self.patient_table_widget.get_selected_patient_data_list() or []

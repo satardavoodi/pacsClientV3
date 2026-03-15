@@ -2132,7 +2132,7 @@ class ViewerController:
                             vtk_data,
                             meta,
                             meta.get('series', {}).get('thumbnail_path', ''),
-                            allow_append_if_missing=False,
+                            allow_append_if_missing=True,
                         )
                         print(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ rehydrated to lst_thumbnails_data at idx={idx}")
                     except Exception as e:
@@ -2163,7 +2163,7 @@ class ViewerController:
                                 vd,
                                 md,
                                 md.get('series', {}).get('thumbnail_path', ''),
-                                allow_append_if_missing=False,
+                                allow_append_if_missing=True,
                             )
                         )
                     except Exception:
@@ -4896,10 +4896,15 @@ class ViewerController:
                     return False
 
             print(f"ًں“‚ [LOAD] Loading series {series_number} from {study_path} (thread={threading.current_thread().name})")
+            effective_viewer_backend = (
+                viewer_backend
+                or self._get_requested_viewer_backend()
+                or BACKEND_VTK
+            )
             self.logger.info(
                 "viewer-backend stage=load_request series=%s backend=%s force_reload=%s",
                 str(series_number),
-                str(viewer_backend or BACKEND_VTK),
+                str(effective_viewer_backend),
                 bool(force_reload),
                 extra={
                     "component": "viewer",
@@ -5061,7 +5066,7 @@ class ViewerController:
             except Exception:
                 estimated_file_count = 0
 
-            max_itk_threads, max_pydicom_workers = self._get_interactive_load_limits(viewer_backend)
+            max_itk_threads, max_pydicom_workers = self._get_interactive_load_limits(effective_viewer_backend)
             _gate_wait_start = time.perf_counter()
             self._interactive_full_load_semaphore.acquire()
             _gate_wait_ms = (time.perf_counter() - _gate_wait_start) * 1000.0
@@ -5082,8 +5087,8 @@ class ViewerController:
                     ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
                     max_itk_threads=max_itk_threads,
                     max_pydicom_workers=max_pydicom_workers,
-                    viewer_backend=viewer_backend,
-                    allow_lazy_backend=(viewer_backend != BACKEND_VTK),
+                    viewer_backend=effective_viewer_backend,
+                    allow_lazy_backend=(effective_viewer_backend != BACKEND_VTK),
                 )
             finally:
                 self._interactive_full_load_semaphore.release()
@@ -5110,6 +5115,8 @@ class ViewerController:
 
             # Process results; generator may be empty on path miss.
             loaded_any = False
+            _last_vtk_data = None   # v2.2.5.2: keep ref for immediate cache put
+            _last_meta = None       # v2.2.5.2: keep ref for immediate cache put
             for item in result:
                 if not self._tab_active:
                     print(f"âڈ­ï¸ڈ [LOAD SKIP] tab inactive during apply for series {series_number}")
@@ -5118,6 +5125,8 @@ class ViewerController:
                     print(f"âڈ­ï¸ڈ [LOAD STALE] full series={series_number} ignored")
                     return False
                 vtk_image_data, metadata, (patient_pk, study_pk) = item
+                _last_vtk_data = vtk_image_data
+                _last_meta = metadata
                 self._apply_loaded_series_data_threadsafe(
                     series_number, vtk_image_data, metadata, patient_pk, study_pk,
                     refresh_viewer=(target_vtk_widget is not None),
@@ -5147,11 +5156,18 @@ class ViewerController:
                 series=str(series_number),
             )
             self._prefetch_loaded.add(series_key)
-            # Keep full decoded series for repeat drag-drop.
+            # v2.2.5.2: Populate full-series cache DIRECTLY from the
+            # loaded data instead of reading back from the UI list
+            # (fire-and-forget _apply hasn't run on UI thread yet).
+            # This ensures the waiting thread finds the data immediately.
             try:
-                latest_vtk, latest_meta, _ = self._get_series_by_number_fast(series_key)
-                if latest_vtk is not None and isinstance(latest_meta, dict):
-                    self._full_cache_put(series_key, latest_vtk, latest_meta)
+                if _last_vtk_data is not None and isinstance(_last_meta, dict):
+                    self._full_cache_put(series_key, _last_vtk_data, _last_meta)
+                    print(f"\u2705 [CACHE PUT] series={series_key} cached directly from loader")
+                else:
+                    latest_vtk, latest_meta, _ = self._get_series_by_number_fast(series_key)
+                    if latest_vtk is not None and isinstance(latest_meta, dict):
+                        self._full_cache_put(series_key, latest_vtk, latest_meta)
             except Exception:
                 pass
             with self._series_load_lock:
@@ -5210,16 +5226,22 @@ class ViewerController:
                 vtk_image_data=vtk_image_data,
                 metadata=metadata,
                 file_path=file_path,
-                allow_append_if_missing=bool(refresh_viewer),
+                allow_append_if_missing=True,
             )
             print(f"ًں”„ [APPLY] series={series_number} â†’ replace_series_data returned idx={series_idx}")
 
-            # Update study path if needed
+            # Update study path if needed — but ONLY if the new path actually
+            # exists on disk.  Metadata may carry a stale legacy "source\"
+            # path from the DB which no longer exists after migration to
+            # user_data/patients/dicom/.  Overwriting import_folder_path with
+            # a non-existent path breaks all subsequent series loads.
             if metadata.get('series', {}).get('series_path'):
                 correct_path = Path(metadata['series']['series_path']).parent
-                if str(correct_path) != self.parent_widget.import_folder_path:
+                if correct_path.exists() and str(correct_path) != self.parent_widget.import_folder_path:
                     self.parent_widget.import_folder_path = str(correct_path)
-                    print(f"   ًں”„ Updated study path to: {correct_path}")
+                    print(f"   📄 Updated study path to: {correct_path}")
+                elif not correct_path.exists():
+                    print(f"   ❌ Ignored stale series_path from metadata: {correct_path}")
 
             if refresh_viewer and series_idx >= 0:
                 # Update ALL viewers currently showing this series (not just selected)

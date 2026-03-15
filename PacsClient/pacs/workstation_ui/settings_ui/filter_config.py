@@ -440,7 +440,7 @@ class FilterConfigWidget(QWidget):
         #FilterConfigWidget QLabel[role="title"] {
             font-size: 20px;
             font-weight: 800;
-            color: #eef6ff;
+            color: #f3f4f6;
             padding: 4px 0 10px 0;
         }
         #FilterConfigWidget QLabel[role="param"] {
@@ -450,7 +450,7 @@ class FilterConfigWidget(QWidget):
         }
         #FilterConfigWidget QLabel[role="desc"] {
             font-size: 14px;
-            color: #a9b7c6;
+            color: #94a3b8;
             padding-top: 2px;
             padding-bottom: 6px;
         }
@@ -459,73 +459,78 @@ class FilterConfigWidget(QWidget):
             color: #8ea0b2;
         }
         #FilterConfigWidget QLabel[role="guideHeading"] {
-            font-size: 16px;
+            font-size: 17px;
             font-weight: 800;
-            color: #f0f7ff;
+            color: #f3f4f6;
         }
         #FilterConfigWidget QLabel[role="guideBody"] {
             font-size: 14px;
-            color: #b3c1cf;
+            color: #94a3b8;
             line-height: 1.25;
         }
 
         #FilterConfigWidget QGroupBox {
-            border: 1px solid rgba(255,255,255,0.16);
-            border-radius: 10px;
-            margin-top: 14px;
-            background-color: rgba(255,255,255,0.03);
-            padding: 10px;
-            padding-top: 18px;
+            border: 1px solid #232a33;
+            border-radius: 12px;
+            margin-top: 28px;
+            background-color: #10141a;
+            padding: 18px 20px 18px 20px;
+            padding-top: 44px;
         }
         #FilterConfigWidget QGroupBox::title {
             subcontrol-origin: margin;
-            left: 12px;
-            padding: 0 8px;
-            color: #eef6ff;
-            font-size: 14px;
-            font-weight: 800;
+            subcontrol-position: top left;
+            left: 18px;
+            top: 2px;
+            padding: 6px 16px;
+            color: #f3f4f6;
+            font-size: 28px;
+            font-weight: 900;
+            background-color: #0f1319;
+            border: 1px solid #232a33;
+            border-radius: 11px;
         }
         #FilterConfigWidget QGroupBox[role="guideBox"] {
-            border: 1px solid rgba(74,144,226,0.45);
-            background-color: rgba(74,144,226,0.10);
+            border: 1px solid #1d4ed8;
+            background-color: #0f1728;
         }
 
         #FilterConfigWidget QFrame[role="collapsibleSection"] {
-            border: 1px solid rgba(255,255,255,0.14);
+            border: 1px solid #232a33;
             border-radius: 12px;
-            background-color: rgba(255,255,255,0.02);
+            background-color: #10141a;
             padding: 10px;
         }
         #FilterConfigWidget QToolButton[role="collapsibleHeader"] {
             text-align: left;
             font-size: 14px;
             font-weight: 900;
-            color: #eef6ff;
+            color: #f3f4f6;
             padding: 9px 10px;
             border-radius: 10px;
-            background-color: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.10);
+            background-color: #0f1319;
+            border: 1px solid #232a33;
         }
         #FilterConfigWidget QToolButton[role="collapsibleHeader"]:hover {
-            background-color: rgba(255,255,255,0.06);
+            background-color: #1b2230;
         }
 
         #FilterConfigWidget QFrame[role="filterCard"] {
-            border: 1px solid rgba(255,255,255,0.12);
+            border: 1px solid #232a33;
             border-radius: 12px;
-            background-color: rgba(0,0,0,0.10);
+            background-color: #0f1319;
         }
         #FilterConfigWidget QLabel[role="cardTitle"] {
             font-size: 14px;
             font-weight: 900;
-            color: #f0f7ff;
+            color: #f3f4f6;
         }
 
         #FilterConfigWidget QTabWidget::pane {
-            border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 10px;
+            border: 1px solid #232a33;
+            border-radius: 12px;
             top: -1px;
-            background: transparent;
+            background: #10141a;
         }
         #FilterConfigWidget QTabBar::tab {
             min-width: 130px;
@@ -533,21 +538,22 @@ class FilterConfigWidget(QWidget):
             padding: 7px 14px;
             margin-right: 6px;
             border-radius: 10px;
-            background-color: rgba(255,255,255,0.06);
-            color: #dbe6f2;
+            background-color: #1b2230;
+            color: #cbd5e1;
             font-size: 14px;
             font-weight: 800;
-            border: 1px solid rgba(255,255,255,0.10);
+            border: 1px solid #2b313b;
         }
         #FilterConfigWidget QTabBar::tab:selected {
-            background-color: rgba(74,144,226,0.30);
-            border: 1px solid rgba(74,144,226,0.65);
+            background-color: #3b82f6;
+            border: 1px solid #3b82f6;
+            color: #ffffff;
         }
 
         #FilterConfigWidget QCheckBox {
             spacing: 9px;
             font-size: 14px;
-            color: #eef5ff;
+            color: #e5e7eb;
         }
         #FilterConfigWidget QPushButton {
             min-height: 36px;
@@ -555,6 +561,38 @@ class FilterConfigWidget(QWidget):
             font-size: 14px;
             font-weight: 800;
             border-radius: 10px;
+            color: #e5e7eb;
+            background-color: #1b2230;
+            border: 1px solid #2b313b;
+        }
+        #FilterConfigWidget QPushButton:hover {
+            background-color: #252d3d;
+            border-color: #3b82f6;
+        }
+        #FilterConfigWidget QPushButton[role="primary"] {
+            background-color: #2563eb;
+            border: 1px solid #1d4ed8;
+            color: #ffffff;
+        }
+        #FilterConfigWidget QPushButton[role="primary"]:hover {
+            background-color: #1d4ed8;
+        }
+        #FilterConfigWidget QPushButton[role="success"] {
+            background-color: #16a34a;
+            border: 1px solid #15803d;
+            color: #ffffff;
+        }
+        #FilterConfigWidget QPushButton[role="success"]:hover {
+            background-color: #15803d;
+            border-color: #10b981;
+        }
+        #FilterConfigWidget QPushButton[role="warning"] {
+            background-color: #f59e0b;
+            border: 1px solid #d97706;
+            color: #111827;
+        }
+        #FilterConfigWidget QPushButton[role="warning"]:hover {
+            background-color: #fbbf24;
         }
 
         #FilterConfigWidget QSpinBox, #FilterConfigWidget QDoubleSpinBox {
@@ -582,20 +620,20 @@ class FilterConfigWidget(QWidget):
         }
 
         #FilterConfigWidget QSlider::groove:horizontal {
-            border: 1px solid rgba(255,255,255,0.14);
+            border: 1px solid #232a33;
             height: 7px;
-            background: rgba(255,255,255,0.06);
+            background: #1b2230;
             border-radius: 4px;
         }
         #FilterConfigWidget QSlider::handle:horizontal {
-            background: #4a90e2;
-            border: 1px solid rgba(255,255,255,0.25);
+            background: #3b82f6;
+            border: 1px solid #1d4ed8;
             width: 16px;
             margin: -5px 0;
             border-radius: 8px;
         }
         #FilterConfigWidget QSlider::sub-page:horizontal {
-            background: rgba(74,144,226,0.35);
+            background: #2563eb;
             border-radius: 3px;
         }
 
@@ -606,16 +644,16 @@ class FilterConfigWidget(QWidget):
         #FilterConfigWidget QScrollBar:vertical {
             width: 12px;
             margin: 2px;
-            background: rgba(255,255,255,0.03);
+            background: #0f1319;
             border-radius: 7px;
         }
         #FilterConfigWidget QScrollBar::handle:vertical {
-            background: rgba(255,255,255,0.18);
+            background: #2b313b;
             border-radius: 7px;
             min-height: 36px;
         }
         #FilterConfigWidget QScrollBar::handle:vertical:hover {
-            background: rgba(255,255,255,0.25);
+            background: #334155;
         }
         #FilterConfigWidget QScrollBar::add-line:vertical,
         #FilterConfigWidget QScrollBar::sub-line:vertical {
@@ -663,7 +701,7 @@ class FilterConfigWidget(QWidget):
         line1 = QFrame()
         line1.setFrameShape(QFrame.HLine)
         line1.setFixedHeight(1)
-        line1.setStyleSheet("background: rgba(255,255,255,0.18);")
+        line1.setStyleSheet("background: #232a33;")
         guide_layout.addWidget(line1)
 
         _guide_block(
@@ -674,7 +712,7 @@ class FilterConfigWidget(QWidget):
         line2 = QFrame()
         line2.setFrameShape(QFrame.HLine)
         line2.setFixedHeight(1)
-        line2.setStyleSheet("background: rgba(255,255,255,0.18);")
+        line2.setStyleSheet("background: #232a33;")
         guide_layout.addWidget(line2)
 
         _guide_block(
@@ -685,7 +723,7 @@ class FilterConfigWidget(QWidget):
         line3 = QFrame()
         line3.setFrameShape(QFrame.HLine)
         line3.setFixedHeight(1)
-        line3.setStyleSheet("background: rgba(255,255,255,0.18);")
+        line3.setStyleSheet("background: #232a33;")
         guide_layout.addWidget(line3)
 
         _guide_block(
@@ -731,6 +769,7 @@ class FilterConfigWidget(QWidget):
         preset_col.addSpacing(8)
 
         save_as = QPushButton("💾 Save As")
+        save_as.setProperty("role", "primary")
         save_as.clicked.connect(self.save_preset_as)
         # Make Save As visually larger and easier to hit.
         save_as.setMinimumWidth(160)
@@ -748,14 +787,17 @@ class FilterConfigWidget(QWidget):
         btns.addStretch()
 
         save = QPushButton("💾 Save")
+        save.setProperty("role", "success")
         save.clicked.connect(self.save_config)
         btns.addWidget(save)
 
         reload_btn = QPushButton("🔄 Reload")
+        reload_btn.setProperty("role", "primary")
         reload_btn.clicked.connect(self.load_config)
         btns.addWidget(reload_btn)
 
         reset = QPushButton("↩ Reset")
+        reset.setProperty("role", "warning")
         reset.clicked.connect(self.reset_to_default)
         btns.addWidget(reset)
 

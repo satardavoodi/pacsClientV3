@@ -51,6 +51,8 @@ class AIChatViewer(QWidget):
         """)
 
     def _open_mode_page(self, mode_name: str):
+        from modules.EchoMind.settings_store import get_llm_backend
+
         if getattr(self, "_page", None) is not None:
             idx = self.stack.indexOf(self._page)
             if idx >= 0:
@@ -60,6 +62,9 @@ class AIChatViewer(QWidget):
 
         if mode_name == "ChatGPT":
             self._page = ChatGPTPage(study_uid=self.study_uid)
+        elif get_llm_backend() == "openai" and mode_name in {"Chat", "Report"}:
+            initial_mode = "report" if mode_name == "Report" else "chat"
+            self._page = ChatGPTPage(study_uid=self.study_uid, initial_mode=initial_mode)
         else:
             self._page = OneChatPage(study_uid=self.study_uid, page_mode=mode_name)
 

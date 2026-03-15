@@ -9,9 +9,10 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout,
 
 from PacsClient.utils.config import JSON_PATH, ICON_PATH
 from PacsClient.utils.db_manager import init_database, migrate_fix_null_study_paths
+from PacsClient.utils.theme_manager import get_theme_manager
 from . import settings_ui
 from . import home_ui
-from .web_browser_ui import WebBrowserWidget
+from .theme_ui import ThemeCustomizationDialog
 
 
 def relayout_all(widget: QWidget):
@@ -33,9 +34,10 @@ class ControlPanelInterface(QMainWindow):
     orginazationName = "AIPacs"
     applicationName = ""
 
-    def __init__(self, parent=None, tab_widget: QTabWidget = None):
+    def __init__(self, parent=None, tab_widget: QTabWidget = None, host_window=None):
         QMainWindow.__init__(self)
         self.tab_widget = tab_widget
+        self.host_window = host_window
         self.__add_AIPacs_tab()
         self.ui = ControlPanelWindow(MainWindow=self)
         self.ui.setupUi()
@@ -46,9 +48,7 @@ class ControlPanelInterface(QMainWindow):
         if self.centralWidget() is not None:
             self.centralWidget().setContentsMargins(0, 0, 0, 0)
 
-        self.setStyleSheet("""
-            QMainWindow { background: #1a202c; border: none; }
-        """)
+        self.setStyleSheet("QMainWindow { border: none; }")
 
         init_database()
         # ✅ Migration: Fix studies with NULL study_path by checking disk
@@ -63,14 +63,19 @@ class ControlPanelWindow(object):
 
     def __init__(self, MainWindow):
         self.MainWindow: ControlPanelInterface = MainWindow
+        self.theme_manager = get_theme_manager()
+        self._active_theme = self.theme_manager.current_theme()
         # Sidebar sizing
         # User request: increase sidebar icons ~30% and show labels when expanded.
         self.size_button = QSize(29, 29)  # ~30% bigger than 22px
         self._menu_button_size = 54       # ~30% bigger than 42px
         self._menu_collapsed_width = 62   # fits 54px button + margins
         self._menu_expanded_width = 220   # comfortable for labels
+        self._center_panel_width = 400
+        self._right_panel_width = 400
         self._menu_expanded = False
         self._left_menu_buttons = []
+        self._theme_preview_buttons = {}
 
     def connect_buttons(self):
         self.menuBtn.clicked.connect(self._toggle_menu)
@@ -82,6 +87,87 @@ class ControlPanelWindow(object):
 
         self.closeCenterMenuBtn.clicked.connect(lambda: self.centerMenuContainer.hide())
         self.closeRightMenuBtn.clicked.connect(lambda: self.rightMenuContainer.hide())
+
+    def _left_menu_button_style(self) -> str:
+        theme = self._active_theme
+        if self._menu_expanded:
+            return f"""
+                QPushButton {{
+                    background-color: transparent;
+                    color: {theme['text_primary']};
+                    border: none;
+                    padding: 8px 12px;
+                    margin: 0px;
+                    text-align: left;
+                    border-radius: 10px;
+                }}
+                QPushButton:hover {{
+                    background-color: {theme['menu_hover_bg']};
+                }}
+            """
+        return f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {theme['text_primary']};
+                border: none;
+                padding: 0px;
+                margin: 0px;
+                border-radius: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {theme['menu_hover_bg']};
+            }}
+        """
+
+    def _build_theme_card_style(self, theme_name: str, selected: bool) -> str:
+        card_theme = self.theme_manager.theme_by_name(theme_name)
+        border_color = self._active_theme["accent"] if selected else card_theme["border"]
+        inset = card_theme["accent"] if selected else card_theme["menu_bg"]
+        return f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {card_theme['window_bg']},
+                    stop:0.55 {card_theme['menu_bg']},
+                    stop:1 {card_theme['panel_bg']});
+                color: {card_theme['text_primary']};
+                border: 2px solid {border_color};
+                border-radius: 12px;
+                padding: 10px;
+                text-align: left;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                border-color: {card_theme['accent_hover']};
+            }}
+        """
+
+    def _refresh_theme_selector(self) -> None:
+        current_name = self.theme_manager.current_theme_name()
+        self.themeList.blockSignals(True)
+        self.themeList.setCurrentText(current_name)
+        self.themeList.blockSignals(False)
+        for theme_name, button in self._theme_preview_buttons.items():
+            button.setChecked(theme_name == current_name)
+            button.setStyleSheet(self._build_theme_card_style(theme_name, theme_name == current_name))
+        if hasattr(self, "themeStatusLabel"):
+            self.themeStatusLabel.setText(f"Active theme: {current_name}")
+
+    def _apply_selected_theme(self, theme_name: str) -> None:
+        self.theme_manager.set_active_theme(theme_name)
+
+    def _open_theme_customizer(self) -> None:
+        active_name = self.theme_manager.current_theme_name()
+        base_palette = (
+            self.theme_manager.current_custom_theme()
+            if active_name == "Custom"
+            else self.theme_manager.theme_by_name(active_name)
+        )
+        dialog = ThemeCustomizationDialog(base_palette, parent=self.MainWindow)
+        if dialog.exec():
+            self.theme_manager.update_custom_theme(dialog.custom_palette())
+
+    def _reset_theme_defaults(self) -> None:
+        self.theme_manager.reset_custom_theme()
 
     def _on_modality_grid_config_changed(self):
         if hasattr(self, "home_widget") and self.home_widget:
@@ -139,37 +225,11 @@ class ControlPanelWindow(object):
                     btn.setMinimumWidth(0)
                     btn.setMaximumWidth(16777215)
                     btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-                    btn.setStyleSheet("""
-                        QPushButton {
-                            background-color: transparent;
-                            color: #ffffff;
-                            border: none;
-                            padding: 8px 12px;
-                            margin: 0px;
-                            text-align: left;
-                        }
-                        QPushButton:hover {
-                            background-color: rgba(255, 255, 255, 0.15);
-                            border-radius: 10px;
-                        }
-                    """)
                 else:
                     btn.setText("")
                     btn.setFixedSize(self._menu_button_size, self._menu_button_size)
                     btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-                    btn.setStyleSheet("""
-                        QPushButton {
-                            background-color: transparent;
-                            color: #ffffff;
-                            border: none;
-                            padding: 0px;
-                            margin: 0px;
-                        }
-                        QPushButton:hover {
-                            background-color: rgba(255, 255, 255, 0.15);
-                            border-radius: 10px;
-                        }
-                    """)
+                btn.setStyleSheet(self._left_menu_button_style())
             except Exception as e:
                 print(f"Error applying menu state: {e}")
 
@@ -195,19 +255,7 @@ class ControlPanelWindow(object):
         else:
             btn.setFixedSize(self._menu_button_size, self._menu_button_size)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #ffffff;
-                border: none;
-                padding: 0px;
-                margin: 0px;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.15);
-                border-radius: 8px;
-            }
-        """)
+        btn.setStyleSheet(self._left_menu_button_style())
 
         if register_left_menu:
             self._left_menu_buttons.append(btn)
@@ -314,7 +362,7 @@ class ControlPanelWindow(object):
         # Center slide menu (hidden by default)
         self.centerMenuContainer = QFrame(self.centralwidget)
         self.centerMenuContainer.setObjectName(u"centerMenuContainer")
-        self.centerMenuContainer.setFixedWidth(200)
+        self.centerMenuContainer.setFixedWidth(self._center_panel_width)
         self.centerMenuContainer.setStyleSheet("background-color: #2d3748; border-radius: 10px; margin: 5px;")
         self.centerMenuContainer.hide()
 
@@ -342,19 +390,55 @@ class ControlPanelWindow(object):
         # Page 3 - Settings
         self.page_3 = QWidget()
         self.verticalLayout_7 = QVBoxLayout(self.page_3)
-        self.label_2 = QLabel("Settings", self.page_3)
-        self.label_2.setStyleSheet("color: white;")
+        self.verticalLayout_7.setContentsMargins(6, 6, 6, 6)
+        self.verticalLayout_7.setSpacing(10)
+        self.label_2 = QLabel("Theme", self.page_3)
         self.label_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.verticalLayout_7.addWidget(self.label_2)
-        
+
+        self.themeDescription = QLabel(
+            "Select one of the built-in workstation themes or create a custom color profile."
+        )
+        self.themeDescription.setWordWrap(True)
+        self.verticalLayout_7.addWidget(self.themeDescription)
+
+        self.themePreviewGrid = QGridLayout()
+        self.themePreviewGrid.setSpacing(8)
+        for index, theme_name in enumerate(self.theme_manager.theme_names()):
+            button = QPushButton(theme_name, self.page_3)
+            button.setCheckable(True)
+            button.setMinimumHeight(68)
+            button.clicked.connect(lambda _checked=False, name=theme_name: self._apply_selected_theme(name))
+            self._theme_preview_buttons[theme_name] = button
+            self.themePreviewGrid.addWidget(button, index // 2, index % 2)
+        self.verticalLayout_7.addLayout(self.themePreviewGrid)
+
         self.frame_13 = QFrame(self.page_3)
         self.horizontalLayout_14 = QHBoxLayout(self.frame_13)
-        self.label_6 = QLabel("Theme", self.frame_13)
-        self.label_6.setStyleSheet("color: white;")
+        self.horizontalLayout_14.setContentsMargins(0, 0, 0, 0)
+        self.horizontalLayout_14.setSpacing(6)
+        self.label_6 = QLabel("Preset", self.frame_13)
         self.horizontalLayout_14.addWidget(self.label_6)
         self.themeList = QComboBox(self.frame_13)
-        self.horizontalLayout_14.addWidget(self.themeList)
+        self.themeList.addItems(self.theme_manager.theme_names())
+        self.themeList.currentTextChanged.connect(self._apply_selected_theme)
+        self.horizontalLayout_14.addWidget(self.themeList, 1)
         self.verticalLayout_7.addWidget(self.frame_13)
+
+        self.themeActionRow = QHBoxLayout()
+        self.themeActionRow.setSpacing(6)
+        self.customizeThemeBtn = QPushButton("Customize...", self.page_3)
+        self.customizeThemeBtn.clicked.connect(self._open_theme_customizer)
+        self.resetThemeBtn = QPushButton("Reset", self.page_3)
+        self.resetThemeBtn.clicked.connect(self._reset_theme_defaults)
+        self.themeActionRow.addWidget(self.customizeThemeBtn)
+        self.themeActionRow.addWidget(self.resetThemeBtn)
+        self.verticalLayout_7.addLayout(self.themeActionRow)
+
+        self.themeStatusLabel = QLabel("", self.page_3)
+        self.themeStatusLabel.setWordWrap(True)
+        self.verticalLayout_7.addWidget(self.themeStatusLabel)
+        self.verticalLayout_7.addStretch(1)
         self.centerMenuPages.addWidget(self.page_3)
 
         # Page 5 - Help
@@ -467,8 +551,12 @@ class ControlPanelWindow(object):
         self.webBrowserPage = QWidget()
         self.verticalLayout_31 = QVBoxLayout(self.webBrowserPage)
         self.verticalLayout_31.setContentsMargins(0, 0, 0, 0)
-        self.web_browser_widget = WebBrowserWidget()
-        self.verticalLayout_31.addWidget(self.web_browser_widget)
+        self.web_browser_placeholder = QLabel(
+            "Web Browser opens as a runtime module tab.\n"
+            "Install or enable it from Settings -> Installation Module if needed."
+        )
+        self.web_browser_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.verticalLayout_31.addWidget(self.web_browser_placeholder)
         self.mainPages.addWidget(self.webBrowserPage)
 
         self.verticalLayout_24.addWidget(self.mainPages)
@@ -477,7 +565,7 @@ class ControlPanelWindow(object):
         # Right menu (hidden by default)
         self.rightMenuContainer = QFrame(self.mainBodyContent)
         self.rightMenuContainer.setObjectName(u"rightMenuContainer")
-        self.rightMenuContainer.setFixedWidth(200)
+        self.rightMenuContainer.setFixedWidth(self._right_panel_width)
         self.rightMenuContainer.setStyleSheet("background-color: #2d3748; border-radius: 10px; margin: 5px;")
         self.rightMenuContainer.hide()
 
@@ -570,6 +658,84 @@ class ControlPanelWindow(object):
 
         # Apply initial (collapsed) style to left menu buttons
         self._apply_left_menu_state()
+        self.theme_manager.themeChanged.connect(self.apply_theme)
+        self.apply_theme(self._active_theme)
+
+    def apply_theme(self, theme=None):
+        self._active_theme = theme or self.theme_manager.current_theme()
+        t = self._active_theme
+
+        self.MainWindow.setStyleSheet(f"QMainWindow {{ background: {t['window_bg']}; border: none; }}")
+        self.leftMenuContainer.setStyleSheet(
+            f"background-color: {t['menu_bg']}; border-radius: 10px; margin: 3px;"
+        )
+        self.centerMenuContainer.setStyleSheet(
+            f"background-color: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 10px; margin: 5px;"
+        )
+        self.rightMenuContainer.setStyleSheet(
+            f"background-color: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 10px; margin: 5px;"
+        )
+        self.mainBodyContainer.setStyleSheet(f"background: {t['window_bg']};")
+        self.footerContainter.setStyleSheet(f"background: {t['window_alt_bg']}; border-top: 1px solid {t['border']};")
+        self.activityLabel.setStyleSheet(f"color: {t['text_muted']};")
+        self.label.setStyleSheet(f"color: {t['text_primary']}; font-weight: bold;")
+        self.label_2.setStyleSheet(f"color: {t['text_primary']}; font-size: 16px; font-weight: 700;")
+        self.themeDescription.setStyleSheet(f"color: {t['text_secondary']}; font-size: 12px;")
+        self.label_6.setStyleSheet(f"color: {t['text_secondary']}; font-weight: 600;")
+        self.themeList.setStyleSheet(
+            f"""
+            QComboBox {{
+                background: {t['panel_alt_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
+                border-radius: 8px;
+                padding: 6px 10px;
+            }}
+            QComboBox:hover {{
+                border-color: {t['accent']};
+            }}
+            QComboBox QAbstractItemView {{
+                background: {t['panel_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
+                selection-background-color: {t['accent']};
+                selection-color: {t['button_text']};
+            }}
+            """
+        )
+        button_style = f"""
+            QPushButton {{
+                background: {t['panel_alt_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                border-color: {t['accent']};
+                background: {t['menu_hover_bg']};
+            }}
+        """
+        self.customizeThemeBtn.setStyleSheet(button_style)
+        self.resetThemeBtn.setStyleSheet(button_style)
+        self.themeStatusLabel.setStyleSheet(f"color: {t['text_muted']}; font-size: 12px;")
+        self.label_3.setStyleSheet(f"color: {t['text_primary']};")
+        self.info_body.setStyleSheet(
+            f"color: {t['text_secondary']}; font-size: 12px; line-height: 1.3; padding: 6px;"
+        )
+        self.label_4.setStyleSheet(f"color: {t['text_primary']};")
+        self.label_10.setStyleSheet(f"color: {t['text_primary']}; font-weight: bold;")
+        self.label_17.setStyleSheet(f"color: {t['text_primary']};")
+        self.label_5.setStyleSheet(f"color: {t['text_primary']};")
+        self.label_13.setStyleSheet(f"color: {t['text_primary']};")
+        self.label_16.setStyleSheet(f"color: {t['text_primary']};")
+        self._apply_left_menu_state()
+        self._refresh_theme_selector()
+        if hasattr(self, "home_widget") and hasattr(self.home_widget, "apply_theme"):
+            self.home_widget.apply_theme(t)
+        if getattr(self.MainWindow, "host_window", None) is not None and hasattr(self.MainWindow.host_window, "apply_theme"):
+            self.MainWindow.host_window.apply_theme(t)
 
     def connect_left_navigation(self):
         """Connect left-side navigation buttons to stacked pages."""

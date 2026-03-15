@@ -7,7 +7,7 @@ echo ===========================================================================
 echo                     AIPacs Application Build Process
 echo ===============================================================================
 echo.
-echo This script will create a standalone executable for AIPacs
+echo This script will build the staged Windows release for AIPacs
 echo Please wait while the build process completes...
 echo.
 
@@ -41,12 +41,13 @@ echo ===========================================================================
 echo                           Build Completed Successfully!
 echo ===============================================================================
 echo.
-echo Your application is ready at: dist\AIPacs\AIPacs.exe
+echo Core bundle: builder\output\stage\core\AIPacs.exe
+echo Installer  : builder\output\installer\AIPacs_*.exe
 echo.
 echo You can now:
-echo   1. Run the executable directly from dist\AIPacs\AIPacs.exe
-echo   2. Copy the entire 'dist\AIPacs' folder to another location
-echo   3. Create a shortcut to AIPacs.exe on your desktop
+echo   1. Run the core bundle from builder\output\stage\core\AIPacs.exe
+echo   2. Review builder\output\stage\manifest\release_manifest.json
+echo   3. Use the installer from builder\output\installer if ISCC.exe was available
 echo.
 pause
 

@@ -4,11 +4,17 @@ import json
 import re
 import sys
 from pathlib import Path
+
+from aipacs_runtime import roaming_config_root, seed_user_config_defaults
 from . import database
 
 json_file = 'servers.json'
 from _project_root import PROJECT_ROOT as _ROOT
-CONFIG_DIR = _ROOT / "config"
+if getattr(sys, "frozen", False):
+    seed_user_config_defaults()
+    CONFIG_DIR = roaming_config_root()
+else:
+    CONFIG_DIR = _ROOT / "config"
 SERVERS_FILE = CONFIG_DIR / "servers_address.json"
 _SERVERS_FILE_MISSING_WARNED = False
 

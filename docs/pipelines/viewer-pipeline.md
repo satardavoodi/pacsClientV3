@@ -1,6 +1,9 @@
 # Viewer Pipeline
 
-> **Version:** v2.2.3.4.0 | **Updated:** 2026-03-10
+> **Version:** v2.2.6 | **Updated:** 2026-03-15
+>
+> See also: [VIEWER_BACKENDS_REFERENCE.md](VIEWER_BACKENDS_REFERENCE.md) for the
+> complete Advanced vs Fast backend pipeline documentation.
 
 ## Overview
 
@@ -111,6 +114,15 @@ wheelEvent (user scrolls)
 - GC suppression: prevents collection pauses during scroll
 - Round-robin reference lines: 1 target per tick (not all)
 - Lock Sync: throttled to 100ms during scroll
+
+### ⚠ Critical Rule: Never Modify Reslice During Scroll
+
+> **Do NOT** call `reslice.SetInterpolationMode*()` or `reslice.Modified()`
+> during interactive scroll. The reslice carries a non-identity direction-matrix
+> transform (Y-flip from `convert_itk2vtk`). Dirtying it causes VTK to recompute
+> the output extent, which can collapse the slice range to a single slice,
+> freezing the image permanently. This was the root cause of the v2.2.5 scroll
+> freeze bug. Fixed in v2.2.6 — see [VIEWER_BACKENDS_REFERENCE.md §4](VIEWER_BACKENDS_REFERENCE.md#4-known-bug-history--reslice-nn-interpolation-corruption).
 
 ## Backends
 

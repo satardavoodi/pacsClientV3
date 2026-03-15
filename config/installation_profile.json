@@ -1,0 +1,22 @@
+{
+  "app_name": "AIPacs",
+  "generated_at_utc": "",
+  "modules": {
+    "viewer": true,
+    "download_manager": true,
+    "zeta_boost": true,
+    "advanced_mpr": false,
+    "printing": false,
+    "run_cd": false,
+    "web_browser": false,
+    "echomind": false
+  },
+  "graphics": {
+    "user_declared_gpu": false,
+    "preferred_mode": "cpu_safe",
+    "last_detected_gpu": false,
+    "last_probe_backend": "",
+    "last_probe_device": "",
+    "last_probe_utc": ""
+  }
+}

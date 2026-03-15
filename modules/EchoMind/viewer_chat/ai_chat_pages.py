@@ -24,6 +24,7 @@ from PacsClient.utils.database import (
 )
 
 from .openai_reporter import reporter, translate_report, standardize, standard_assist_search, correction, translate_text_to_persian
+from . import openai_parallel_backend as openai_direct
 import re
 try:
     from PacsClient.utils import ICON_PATH
@@ -47,6 +48,77 @@ from .ai_chat_helpers import _set_icon, _safe_fa_connection_error, extract_plain
 from .ai_chat_api import ChatApiClient, ChatController, ApiWorker
 from .ai_chat_widgets import ChatHistory, UnifiedComposer, MessageBubble, PATIENT_SCROLLBAR_QSS
 from .ai_chat_config import CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT,URL_GEN_TRANSCRIPT,URL_GEN_REPORT,URL_CHAT,URL_GEN_ASSISTANT,URL_STATUS,URL_SESSIONS,URL_HEALTH,URL_EXPORT_ALL,URL_SEARCH,URL_SESSION_GET
+from modules.EchoMind.llm_client import get_active_backend_display_name, is_active_backend_configured
+from modules.EchoMind.secretary.stt.router import SttRouter
+from modules.EchoMind.settings_store import get_llm_backend, get_openai_model_for_feature, get_openai_settings
+
+
+def _resolve_active_ai_identity() -> tuple[str, str | None, str | None]:
+    if get_llm_backend() == "openai":
+        cfg = get_openai_settings()
+        api_key = str(cfg.get("api_key") or "").strip()
+        return "openai", "OpenAI", api_key or None
+
+    manager = APIKeyManager.instance()
+    if not manager.is_validated():
+        return "company", None, None
+    try:
+        info = Manage.instance().ensure_detected()
+        return "company", getattr(info, "center_display", None) or "EchoMind", getattr(info, "irannobat_key", None)
+    except Exception:
+        return "company", None, None
+
+
+def _log_usage_for_ui(api_key: str | None, usage: dict | None) -> None:
+    if not usage:
+        return
+    if str(usage.get("provider") or "").strip().lower() == "openai":
+        return
+
+    center = str(usage.get("center") or "Unknown").strip() or "Unknown"
+    model_name = str(usage.get("model") or "Unknown").strip() or "Unknown"
+    total = int(usage.get("total_tokens") or 0)
+    if total <= 0:
+        return
+
+    add_token_usage_delta(center, model_name, total)
+    if api_key:
+        add_api_token_usage_delta(
+            api_key=api_key,
+            center_name=center,
+            model_name=model_name,
+            tokens_delta=total,
+        )
+
+
+def _transcribe_with_active_backend(paths: list[str], quality_mode: str = "clear") -> dict:
+    if get_llm_backend() == "openai":
+        return SttRouter().transcribe_files(paths, route="openai", fallback=False, quality_mode=quality_mode)
+
+    files = []
+    try:
+        for p in paths:
+            if not (p and os.path.exists(p)):
+                continue
+            files.append(("audio_files", open(p, "rb")))
+        if not files:
+            raise Exception("No valid audio files to upload.")
+        m = Manage.instance()
+        if not m.is_validated():
+            raise RuntimeError("❌ API key is not set. Please enter it on the login page.")
+        info = m.ensure_detected()
+        gapgpt_key = (info.gapgpt_key or "").strip()
+        headers = {"Authorization": f"Bearer {gapgpt_key}"} if gapgpt_key else {}
+        data = {"quality_mode": quality_mode}
+        r = requests.post(URL_GEN_TRANSCRIPT, files=files, data=data, headers=headers, timeout=360)
+        r.raise_for_status()
+        return r.json()
+    finally:
+        for _, fh in files:
+            try:
+                fh.close()
+            except Exception:
+                pass
 
 
 class ModePickerPage(QWidget):
@@ -372,10 +444,7 @@ class ModePickerPage(QWidget):
         Sync the UI state based on whether the API key is validated.
         """
         try:
-            from .api_manager import APIKeyManager
-            m = APIKeyManager.instance()
-
-            if m.is_validated():
+            if is_active_backend_configured():
                 self._set_ai_enabled(True)
             else:
                 # If previously cancelled/locked, keep the existing lock message (if any)
@@ -392,10 +461,7 @@ class ModePickerPage(QWidget):
         Sync the UI access state based on whether the API key is validated.
         """
         try:
-            from .api_manager import APIKeyManager
-            m = APIKeyManager.instance()
-
-            if m.is_validated():
+            if is_active_backend_configured():
                 self._set_ai_enabled(True)
             else:
                 # If previously cancelled/locked, keep the existing lock message (if any)
@@ -421,6 +487,16 @@ class ModePickerPage(QWidget):
         self._api_prompt_inflight = True
 
         try:
+            backend, center_name, api_key = _resolve_active_ai_identity()
+            if backend == "openai":
+                if api_key:
+                    self._set_ai_enabled(True)
+                    self._show_welcome(center_name or "OpenAI", api_key=api_key)
+                    self._refresh_usage_panel(api_key=api_key)
+                else:
+                    self._set_ai_enabled(False, "Please set your OpenAI API key in Settings -> EchoMind.")
+                return
+
             manager = APIKeyManager.instance()
 
             # If already validated: unlock UI and show welcome
@@ -1845,12 +1921,11 @@ class OneChatPage(QWidget):
 
     def _send_report_correction(self, correction_note: str):
         """Correction tab: apply user's correction note to a selected report and display corrected report."""
-        from .api_manager import APIKeyManager
-
-        manager = APIKeyManager.instance()
-        if not manager.is_validated():
-            print("[Correction] blocked: API key not validated")
-            self.controller.bubble("AI ChatBot", "❌ API Key not validated. Access denied.")
+        backend_name = get_active_backend_display_name()
+        backend, _center_name, center_key = _resolve_active_ai_identity()
+        if not center_key:
+            print("[Correction] blocked: AI backend not configured")
+            self.controller.bubble("AI ChatBot", f"❌ {backend_name} is not configured. Access denied.")
             return
         
         note = (correction_note or "").strip()
@@ -1875,14 +1950,13 @@ class OneChatPage(QWidget):
         # Show user's correction note
         self.controller.bubble("You (✅ Correction)", note)
         
-        center_key = os.environ.get("CENTER_Key", "") or ""
-        
         def work():
-            return correction(
+            correction_fn = openai_direct.correction if backend == "openai" else correction
+            return correction_fn(
                 user_report=report_text,  # Full JSON report
                 correction_note=note,
                 CENTER_Key=center_key,
-                model="gpt-4.1-mini",
+                model=get_openai_model_for_feature("report", "gpt-5.4") if backend == "openai" else "gpt-4.1-mini",
             )
         
         def ok(res):
@@ -2771,19 +2845,18 @@ class OneChatPage(QWidget):
             return ""
 
         def work():
-            m = Manage.instance()
-            if not m.is_validated():
-                print("[Standardize] blocked: API key not validated")
-                raise RuntimeError("❌ API key is not set. Please enter it only on the login page.")
-
-            info = m.ensure_detected()
-            center_key = info.irannobat_key
+            backend, _center_name, center_key = _resolve_active_ai_identity()
+            if not center_key:
+                print("[Standardize] blocked: AI backend not configured")
+                raise RuntimeError("❌ AI backend is not configured. Please complete EchoMind Settings.")
 
             if self.page_mode in ("Assist", "Search") and callable(globals().get("standard_assist_search", None)):
                 print("[Standardize] using standard_assist_search")
-                return standard_assist_search(user_msg=to_send, CENTER_Key=center_key)
+                fn = openai_direct.standard_assist_search if backend == "openai" else standard_assist_search
+                return fn(user_msg=to_send, CENTER_Key=center_key)
             print("[Standardize] using standardize")
-            return standardize(user_msg=to_send, CENTER_Key=center_key)
+            fn = openai_direct.standardize if backend == "openai" else standardize
+            return fn(user_msg=to_send, CENTER_Key=center_key)
 
         def ok(resp: dict):
             print(f"\n{'='*80}")
@@ -3466,24 +3539,18 @@ class OneChatPage(QWidget):
         logger.info("→ Translating to Persian...")
         
         def work():
-            m = Manage.instance()
-            if not m.is_validated():
-                self.history.add_bubble("AI ChatBot", "❌ API Key not configured. Please enter it on the login page only.")
-                return
-
-            try:
-                info = m.ensure_detected()
-                center_key = info.irannobat_key
-            except Exception as e:
-                self.history.add_bubble("AI ChatBot", f"❌ No valid API Key: {e}")
-                QTimer.singleShot(100, self._prompt_for_api_key)
+            backend, _center_name, center_key = _resolve_active_ai_identity()
+            if not center_key:
+                self.history.add_bubble("AI ChatBot", "❌ AI backend is not configured. Please complete EchoMind Settings.")
                 return
 
             # ✅ Assistant => translate free text
             if is_assistant:
-                return translate_text_to_persian(user_msg=english_payload, CENTER_Key=center_key)
+                fn = openai_direct.translate_text_to_persian if backend == "openai" else translate_text_to_persian
+                return fn(user_msg=english_payload, CENTER_Key=center_key)
             # ✅ Report => translate structured report
-            return translate_report(user_msg=english_payload, CENTER_Key=center_key)
+            fn = openai_direct.translate_report if backend == "openai" else translate_report
+            return fn(user_msg=english_payload, CENTER_Key=center_key)
 
         # ─────────────────────────────────────────────
         # 3) Handle success
@@ -4421,9 +4488,8 @@ class OneChatPage(QWidget):
 
         # ✅ HARD GATE: do not allow ANY AI action without validated API key
         if mode in ("Chat", "Report", "Assistant", "Search", "ChatGPT"):
-            manager = APIKeyManager.instance()
-            if not manager.is_validated():
-                self.controller.bubble("AI ChatBot", "❌ API Key not validated. Access denied.")
+            if not is_active_backend_configured():
+                self.controller.bubble("AI ChatBot", "❌ AI backend is not configured. Access denied.")
                 return
         if not text and mode in ("Chat", "Search"):
             return
@@ -5671,32 +5737,27 @@ class OneChatPage(QWidget):
 class ChatGPTPage(OneChatPage):
     """ChatGPT mode — now fully uses global API from input page and never prompts for API."""
     GPT_MODELS = [
-        "gpt-4.1-mini",
-        "gpt-4.1",
-        "gpt-5.1-mini",
+        "gpt-5.4",
         "gpt-5.1",
-        "gpt-4o"
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-4o",
+        "gpt-4o-mini",
     ]
 
-    def __init__(self, study_uid: str = None):
+    def __init__(self, study_uid: str = None, initial_mode: str = "chat"):
         super().__init__(study_uid=study_uid, page_mode="ChatGPT")
         self.setWindowTitle("AI Chat – ChatGPT")
-        self._current_model = "gpt-4.1-mini"
-        self._chatgpt_mode = "chat"
+        self._chatgpt_mode = (initial_mode or "chat").strip().lower() or "chat"
+        self._current_model = self._default_model_for_mode(self._chatgpt_mode)
         print(
             f"[ChatGPT] init study_uid={study_uid!r} model={self._current_model} mode={self._chatgpt_mode}"
         )
 
         # --- Load global API ---
-        manager = APIKeyManager.instance()
-        if not manager.is_validated():
-            self.global_api_key = None
-            self.global_center = None
-        else:
-            self.global_api_key = manager.get_current_key()
-            self.global_center = manager.get_current_center()
+        _backend, self.global_center, self.global_api_key = _resolve_active_ai_identity()
         print(
-            f"[ChatGPT] init api_valid={manager.is_validated()} center={self.global_center!r}"
+            f"[ChatGPT] init api_valid={bool(self.global_api_key)} center={self.global_center!r}"
         )
 
         # --- Layout Setup ---
@@ -5834,6 +5895,16 @@ class ChatGPTPage(OneChatPage):
         except Exception:
             pass
 
+    def _default_model_for_mode(self, mode: str) -> str:
+        normalized = str(mode or "chat").strip().lower()
+        if normalized == "report":
+            return get_openai_model_for_feature("report", "gpt-5.4")
+        if normalized == "image":
+            return get_openai_model_for_feature("vision", "gpt-5.4")
+        if normalized == "breast":
+            return get_openai_model_for_feature("report", "gpt-5.4")
+        return get_openai_model_for_feature("text", "gpt-5-mini")
+
     def _norm_center_name(self, center: str | None) -> str:
         if not center:
             return "Unknown"
@@ -5845,17 +5916,12 @@ class ChatGPTPage(OneChatPage):
         return c
 
     def _load_global_api(self) -> tuple[str | None, str | None]:
-        m = Manage.instance()
-        if not m.is_validated():
-            return None, None
-        try:
-            info = m.ensure_detected()
-            return info.center_display, info.irannobat_key
-        except Exception:
-            return None, None
+        _backend, center, api_key = _resolve_active_ai_identity()
+        return center, api_key
 
     def _set_chatgpt_mode(self, mode):
         self._chatgpt_mode = mode
+        self._current_model = self._default_model_for_mode(mode)
         print(f"[ChatGPT] mode set -> {mode}")
 
         labels = {
@@ -5867,6 +5933,10 @@ class ChatGPTPage(OneChatPage):
 
         label_text = labels.get(mode, "Chat")
         self.btn_mode_toggle.setText(label_text)
+        try:
+            self.btn_model.setText(self._current_model)
+        except Exception:
+            pass
 
         # سپس آیکون (فقط برای breast)
         try:
@@ -5984,6 +6054,9 @@ class ChatGPTPage(OneChatPage):
         # ✅ robust center name resolver (no get_detected_center_display)
         center = getattr(self, "_global_center", None)
 
+        if not center and get_llm_backend() == "openai":
+            center = "OpenAI"
+
         if not center:
             try:
                 info = Manage.instance().ensure_detected()
@@ -6069,11 +6142,15 @@ class ChatGPTPage(OneChatPage):
 
         self.controller.bubble("You (✅ Correction)", note)
 
-        center_key = os.environ.get("CENTER_Key", "") or ""
-        model = getattr(self, "_current_model", None) or "gpt-4.1-mini"
+        backend, _center_name, center_key = _resolve_active_ai_identity()
+        if not center_key:
+            self.controller.bubble("AI ChatBot", "❌ AI backend is not configured. Please complete EchoMind Settings.")
+            return
+        model = getattr(self, "_current_model", None) or self._default_model_for_mode(self._chatgpt_mode)
 
         def work():
-            return correction(
+            correction_fn = openai_direct.correction if backend == "openai" else correction
+            return correction_fn(
                 user_report=report_text,
                 correction_note=note,
                 CENTER_Key=center_key,
@@ -6176,22 +6253,12 @@ class ChatGPTPage(OneChatPage):
             f"[ChatGPT] send mode={getattr(self, '_chatgpt_mode', None)} model={getattr(self, '_current_model', None)} text_len={len((text or '').strip())}"
         )
 
-        m = Manage.instance()
-        if not m.is_validated():
-            print("[ChatGPT] blocked: API key not validated")
-            self.history.add_bubble("AI ChatBot", "❌ API key is not set. Please enter it only on the login page.")
+        backend, center_name, center_key = _resolve_active_ai_identity()
+        if not center_key:
+            print("[ChatGPT] blocked: AI backend not configured")
+            self.history.add_bubble("AI ChatBot", "❌ AI backend is not configured. Please complete EchoMind Settings first.")
             return
-
-        try:
-            # ✅ single source of truth
-            info = m.ensure_detected()
-            center_key = info.irannobat_key
-            print(f"[ChatGPT] detected center={getattr(info, 'center_display', None)} key_valid=1")
-        except Exception as e:
-            print(f"[ChatGPT] detect failed: {e}")
-            self.history.add_bubble("AI ChatBot", f"❌ No valid API Key: {e}")
-            QTimer.singleShot(100, self._prompt_for_api_key)
-            return
+        print(f"[ChatGPT] detected backend={backend} center={center_name!r} key_valid=1")
 
         # 🔹 Breast Expert Assistant (TEXT-ONLY, NO IMAGE)
         if self._chatgpt_mode == "breast":
@@ -6208,10 +6275,13 @@ class ChatGPTPage(OneChatPage):
 
             def work():
                 try:
-                    from .openai_reporter import BreastExpertAssistant
-                    return BreastExpertAssistant(
+                    backend_api = openai_direct if backend == "openai" else __import__(
+                        "modules.EchoMind.viewer_chat.openai_reporter",
+                        fromlist=["BreastExpertAssistant"],
+                    )
+                    return backend_api.BreastExpertAssistant(
                         user_msg=user_text,
-                        CENTER_Key=center_key,   # هنوز پاس می‌دهیم ولی global است
+                        CENTER_Key=center_key,
                         model=model,
                     )
                 except Exception as e:
@@ -6225,20 +6295,7 @@ class ChatGPTPage(OneChatPage):
                 usage = result.get("usage")
 
                 if usage:
-                    center = usage["center"]
-                    model_name = usage["model"]
-                    total = usage["total_tokens"]
-
-                    # ✅ 1) Center+Model usage (DB)  +  ✅ 2) API-Key+Model usage (DB)
-                    add_token_usage_delta(center, model_name, total)
-                    add_api_token_usage_delta(
-                        api_key=center_key,
-                        center_name=center,
-                        model_name=model_name,
-                        tokens_delta=total,
-                    )
-
-                    # Refresh UI
+                    _log_usage_for_ui(center_key, usage)
                     self._token_usage = load_token_usage()
                     self._update_token_display()
 
@@ -6294,8 +6351,11 @@ class ChatGPTPage(OneChatPage):
 
             def work():
                 try:
-                    from .openai_reporter import ImageQualityAnalyzer
-                    return ImageQualityAnalyzer(
+                    backend_api = openai_direct if backend == "openai" else __import__(
+                        "modules.EchoMind.viewer_chat.openai_reporter",
+                        fromlist=["ImageQualityAnalyzer"],
+                    )
+                    return backend_api.ImageQualityAnalyzer(
                         user_msg=user_note,
                         CENTER_Key=center_key,
                         model=model,
@@ -6312,20 +6372,7 @@ class ChatGPTPage(OneChatPage):
                 usage = result.get("usage")
 
                 if usage:
-                    center = usage["center"]
-                    model_name = usage["model"]
-                    total = usage["total_tokens"]
-
-                    # ✅ 1) Center+Model usage (DB)  +  ✅ 2) API-Key+Model usage (DB)
-                    add_token_usage_delta(center, model_name, total)
-                    add_api_token_usage_delta(
-                        api_key=center_key,
-                        center_name=center,
-                        model_name=model_name,
-                        tokens_delta=total,
-                    )
-
-                    # Refresh UI
+                    _log_usage_for_ui(center_key, usage)
                     self._token_usage = load_token_usage()
                     self._update_token_display()
 
@@ -6409,12 +6456,18 @@ class ChatGPTPage(OneChatPage):
             try:
                 if mode == "chat":
                     print(f"[ChatGPT] call gapgpt chat model={model}")
-                    from .openai_reporter import chat
-                    return chat(user_msg=user_text, CENTER_Key=center_key, model=model)
+                    backend_api = openai_direct if backend == "openai" else __import__(
+                        "modules.EchoMind.viewer_chat.openai_reporter",
+                        fromlist=["chat"],
+                    )
+                    return backend_api.chat(user_msg=user_text, CENTER_Key=center_key, model=model)
                 else:
                     print(f"[ChatGPT] call gapgpt report model={model} modality={modality}")
-                    from .openai_reporter import reporter
-                    return reporter(
+                    backend_api = openai_direct if backend == "openai" else __import__(
+                        "modules.EchoMind.viewer_chat.openai_reporter",
+                        fromlist=["reporter"],
+                    )
+                    return backend_api.reporter(
                         user_msg=user_text,
                         modality=modality,
                         normal_template=normal_template,
@@ -6433,20 +6486,7 @@ class ChatGPTPage(OneChatPage):
             print(content)
             print(usage)
             if usage:
-                center = usage["center"]
-                model_name = usage["model"]
-                total = usage["total_tokens"]
-
-                # ✅ 1) Center+Model usage (DB)  +  ✅ 2) API-Key+Model usage (DB)
-                add_token_usage_delta(center, model_name, total)
-                add_api_token_usage_delta(
-                    api_key=center_key,
-                    center_name=center,
-                    model_name=model_name,
-                    tokens_delta=total,
-                )
-
-                # Refresh UI
+                _log_usage_for_ui(center_key, usage)
                 self._token_usage = load_token_usage()
                 self._update_token_display()
 

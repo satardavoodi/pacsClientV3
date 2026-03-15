@@ -5,6 +5,18 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 
+def _keep_runtime_vtk_submodule(name: str) -> bool:
+    deny_prefixes = (
+        "vtkmodules.generate_pyi",
+        "vtkmodules.gtk",
+        "vtkmodules.test",
+        "vtkmodules.tk",
+        "vtkmodules.web",
+        "vtkmodules.wx",
+    )
+    return not name.startswith(deny_prefixes)
+
+
 def _iter_file_tuples(root: Path, dest_root: str) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     if not root.exists():
@@ -82,7 +94,7 @@ def pyside6_hook_payload() -> tuple[list[str], list[tuple[str, str]], list[tuple
 
 
 def vtk_hook_payload() -> tuple[list[str], list[tuple[str, str]], list[tuple[str, str]]]:
-    hiddenimports = collect_submodules("vtkmodules")
+    hiddenimports = collect_submodules("vtkmodules", filter=_keep_runtime_vtk_submodule)
     for extra in [
         "vtkmodules.util",
         "vtkmodules.util.data_model",
@@ -95,11 +107,6 @@ def vtk_hook_payload() -> tuple[list[str], list[tuple[str, str]], list[tuple[str
     datas = collect_data_files("vtkmodules")
     binaries = []
     binaries.extend(collect_dynamic_libs("vtkmodules"))
-    # Some wheels place DLLs on the wrapper package side.
-    try:
-        binaries.extend(collect_dynamic_libs("vtk"))
-    except Exception:
-        pass
     return sorted(set(hiddenimports)), _dedupe_tuples(datas), _dedupe_tuples(binaries)
 
 

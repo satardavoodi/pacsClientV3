@@ -11,6 +11,8 @@ import os
 import json
 from pathlib import Path
 
+from aipacs_runtime import roaming_config_root
+
 class LightViewerSettingsWidget(QWidget):
     """Settings widget for Light Viewer configuration"""
     
@@ -25,9 +27,7 @@ class LightViewerSettingsWidget(QWidget):
     
     def _get_config_path(self) -> Path:
         """Get path to the config file"""
-        # Store config in user's app data directory
-        app_data = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
-        config_dir = app_data / 'PacsClient' / 'config'
+        config_dir = roaming_config_root()
         config_dir.mkdir(parents=True, exist_ok=True)
         return config_dir / 'lightviewer_settings.json'
     
@@ -36,58 +36,67 @@ class LightViewerSettingsWidget(QWidget):
         # Apply dark theme
         self.setStyleSheet("""
             QWidget {
-                background-color: #1a202c;
-                color: #e2e8f0;
+                background-color: #0b0d10;
+                color: #e5e7eb;
             }
             QGroupBox {
-                background-color: #2d3748;
-                border: 1px solid #4a5568;
-                border-radius: 8px;
-                padding: 15px;
-                margin-top: 10px;
-                font-weight: bold;
-                color: #e2e8f0;
+                background-color: #10141a;
+                border: 1px solid #232a33;
+                border-radius: 12px;
+                padding: 18px 20px 18px 20px;
+                padding-top: 44px;
+                margin-top: 28px;
+                font-weight: 700;
+                color: #e5e7eb;
                 font-size: 14px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-                font-size: 14px;
+                subcontrol-position: top left;
+                left: 18px;
+                top: 2px;
+                padding: 6px 16px;
+                font-size: 28px;
+                font-weight: 900;
+                color: #f3f4f6;
+                background-color: #0f1319;
+                border: 1px solid #232a33;
+                border-radius: 11px;
             }
             QLabel {
-                color: #e2e8f0;
+                color: #e5e7eb;
                 font-size: 14px;
             }
             QLineEdit {
-                background-color: #2d3748;
-                color: #e2e8f0;
-                border: 1px solid #4a5568;
-                border-radius: 4px;
+                background-color: #1b2230;
+                color: #e5e7eb;
+                border: 1px solid #2b313b;
+                border-radius: 8px;
                 padding: 7px 10px;
                 min-height: 34px;
                 font-size: 14px;
             }
             QLineEdit:focus {
-                border: 1px solid #3182ce;
+                border: 1px solid #3b82f6;
             }
             QLineEdit:read-only {
-                background-color: #374151;
+                background-color: #0f1319;
             }
             QPushButton {
-                background-color: #3182ce;
+                background-color: #2563eb;
                 color: #ffffff;
-                border: none;
-                border-radius: 6px;
+                border: 1px solid #1d4ed8;
+                border-radius: 8px;
                 padding: 8px 14px;
                 min-height: 36px;
                 font-size: 14px;
+                font-weight: 600;
             }
             QPushButton:hover {
-                background-color: #2c5aa0;
+                background-color: #1d4ed8;
             }
             QPushButton:pressed {
-                background-color: #1e4a8a;
+                background-color: #1e40af;
             }
         """)
         
@@ -98,7 +107,7 @@ class LightViewerSettingsWidget(QWidget):
         # Title
         title_label = QLabel("Light Viewer Settings")
         title_label.setStyleSheet(
-            "font-size: 20px; font-weight: 800; padding: 10px; color: #e2e8f0;"
+            "font-size: 20px; font-weight: 800; padding: 10px; color: #f3f4f6;"
         )
         main_layout.addWidget(title_label)
         
@@ -108,7 +117,7 @@ class LightViewerSettingsWidget(QWidget):
             "when burning CDs. The viewer allows patients to view their images\n"
             "on any Windows computer without installing additional software."
         )
-        desc_label.setStyleSheet("color: #a0aec0; padding: 5px 10px; font-size: 14px;")
+        desc_label.setStyleSheet("color: #94a3b8; padding: 5px 10px; font-size: 14px;")
         desc_label.setWordWrap(True)
         main_layout.addWidget(desc_label)
         
@@ -116,7 +125,7 @@ class LightViewerSettingsWidget(QWidget):
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
-        separator.setStyleSheet("color: #334155;")
+        separator.setStyleSheet("color: #232a33;")
         main_layout.addWidget(separator)
         
         # Light Viewer Path Group
@@ -142,7 +151,7 @@ class LightViewerSettingsWidget(QWidget):
         
         # Status label
         self.viewer_status_label = QLabel("")
-        self.viewer_status_label.setStyleSheet("color: #a0aec0; font-size: 14px; padding: 5px;")
+        self.viewer_status_label.setStyleSheet("color: #94a3b8; font-size: 14px; padding: 5px;")
         viewer_layout.addWidget(self.viewer_status_label)
         
         # Clear button
@@ -154,11 +163,13 @@ class LightViewerSettingsWidget(QWidget):
         self.clear_btn.setCursor(Qt.PointingHandCursor)
         self.clear_btn.setStyleSheet("""
             QPushButton {
-                background-color: #1d4ed8;
-                color: white;
+                background-color: #1b2230;
+                color: #e5e7eb;
+                border: 1px solid #2b313b;
             }
             QPushButton:hover {
-                background-color: #1e40af;
+                background-color: #252d3d;
+                border-color: #3b82f6;
             }
         """)
         clear_layout.addWidget(self.clear_btn)
@@ -195,7 +206,7 @@ class LightViewerSettingsWidget(QWidget):
             "• Horos - Full-featured viewer (macOS only)\n\n"
             "Make sure to use the portable/standalone version of the viewer."
         )
-        info_text.setStyleSheet("color: #a0aec0; font-size: 14px; padding: 10px;")
+        info_text.setStyleSheet("color: #94a3b8; font-size: 14px; padding: 10px;")
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
         
@@ -212,14 +223,16 @@ class LightViewerSettingsWidget(QWidget):
         save_btn.setFixedWidth(150)
         save_btn.setStyleSheet("""
             QPushButton {
-                background-color: #48bb78;
-                color: white;
-                font-weight: bold;
+                background-color: #16a34a;
+                color: #ffffff;
+                font-weight: 800;
                 padding: 10px;
-                border-radius: 6px;
+                border: 1px solid #15803d;
+                border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #38a169;
+                background-color: #15803d;
+                border-color: #10b981;
             }
         """)
         save_btn.setCursor(Qt.PointingHandCursor)
@@ -229,7 +242,7 @@ class LightViewerSettingsWidget(QWidget):
         
         # Status label for save operations
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #48bb78; padding: 5px 10px;")
+        self.status_label.setStyleSheet("color: #10b981; padding: 5px 10px; font-weight: 700;")
         main_layout.addWidget(self.status_label)
         
         main_layout.addStretch()
@@ -257,12 +270,12 @@ class LightViewerSettingsWidget(QWidget):
         
         if not os.path.exists(path):
             self.viewer_status_label.setText("⚠ File does not exist")
-            self.viewer_status_label.setStyleSheet("color: #f59e0b; font-size: 12px; padding: 5px;")
+            self.viewer_status_label.setStyleSheet("color: #f59e0b; font-size: 12px; padding: 5px; font-weight: 700;")
             return False
         
         if not path.lower().endswith('.exe'):
             self.viewer_status_label.setText("⚠ File is not an executable (.exe)")
-            self.viewer_status_label.setStyleSheet("color: #f59e0b; font-size: 12px; padding: 5px;")
+            self.viewer_status_label.setStyleSheet("color: #f59e0b; font-size: 12px; padding: 5px; font-weight: 700;")
             return False
         
         # Get file size
@@ -270,7 +283,7 @@ class LightViewerSettingsWidget(QWidget):
         size_mb = file_size / (1024 * 1024)
         
         self.viewer_status_label.setText(f"✓ Valid executable ({size_mb:.1f} MB)")
-        self.viewer_status_label.setStyleSheet("color: #48bb78; font-size: 12px; padding: 5px;")
+        self.viewer_status_label.setStyleSheet("color: #10b981; font-size: 12px; padding: 5px; font-weight: 700;")
         return True
     
     def clear_viewer_path(self):
@@ -290,7 +303,7 @@ class LightViewerSettingsWidget(QWidget):
                 json.dump(settings, f, indent=2, ensure_ascii=False)
             
             self.status_label.setText("✓ Settings saved successfully!")
-            self.status_label.setStyleSheet("color: #48bb78; padding: 5px 10px; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #10b981; padding: 5px 10px; font-weight: 800;")
             
             self.settingsSaved.emit()
             
@@ -298,7 +311,7 @@ class LightViewerSettingsWidget(QWidget):
             
         except Exception as e:
             self.status_label.setText(f"✗ Error saving settings: {str(e)}")
-            self.status_label.setStyleSheet("color: #60a5fa; padding: 5px 10px; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #f59e0b; padding: 5px 10px; font-weight: 800;")
             
             QMessageBox.critical(
                 self,
@@ -331,8 +344,7 @@ class LightViewerSettingsWidget(QWidget):
     def get_light_viewer_path() -> str:
         """Static method to get the configured light viewer path"""
         try:
-            app_data = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
-            config_file = app_data / 'PacsClient' / 'config' / 'lightviewer_settings.json'
+            config_file = roaming_config_root() / 'lightviewer_settings.json'
             
             if config_file.exists():
                 with open(config_file, 'r', encoding='utf-8') as f:
@@ -346,8 +358,7 @@ class LightViewerSettingsWidget(QWidget):
     def get_disc_label() -> str:
         """Static method to get the configured disc label"""
         try:
-            app_data = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
-            config_file = app_data / 'PacsClient' / 'config' / 'lightviewer_settings.json'
+            config_file = roaming_config_root() / 'lightviewer_settings.json'
             
             if config_file.exists():
                 with open(config_file, 'r', encoding='utf-8') as f:

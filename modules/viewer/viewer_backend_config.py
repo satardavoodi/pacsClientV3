@@ -6,9 +6,11 @@ Stores the preferred 2D backend for patient-tab viewers.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from PacsClient.utils.config import SOCKET_CONFIG_PATH
+from aipacs_runtime import SAFE_VIEWER_BACKEND_DEFAULT, SAFE_VIEWER_BACKEND_ENV
 
 
 BACKEND_VTK = "vtk_simpleitk"
@@ -61,13 +63,24 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
         settings_backend = settings.get("viewer_2d_backend")
     elif settings is not None:
         settings_backend = settings
-    requested_backend = _normalize_backend(settings_backend or load_viewer_backend(default=DEFAULT_BACKEND))
+    configured_backend = _normalize_backend(settings_backend or load_viewer_backend(default=DEFAULT_BACKEND))
+    forced_backend = _normalize_backend(
+        os.environ.get(SAFE_VIEWER_BACKEND_ENV, "").strip().lower(),
+        default="",
+    )
+    safe_backend_forced = bool(
+        forced_backend in {BACKEND_PYDICOM, BACKEND_PYDICOM_QT}
+        and configured_backend == BACKEND_VTK
+    )
+    requested_backend = forced_backend if safe_backend_forced else configured_backend
 
     series_meta = {}
+    instances = []
     if isinstance(metadata, dict):
         raw_series_meta = metadata.get("series")
         if isinstance(raw_series_meta, dict):
             series_meta = raw_series_meta
+        instances = metadata.get("instances", []) or []
 
     metadata_backend_raw = series_meta.get("viewer_backend")
     metadata_backend = _normalize_backend(metadata_backend_raw, default=requested_backend) if metadata_backend_raw else ""
@@ -90,20 +103,35 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
     # Lightweight2DPipeline from metadata instances directly.
     # No fallback needed if metadata has instances.
     if backend == BACKEND_PYDICOM_QT:
-        instances = []
-        if isinstance(metadata, dict):
-            instances = metadata.get("instances", []) or []
         if not instances:
             backend = BACKEND_VTK
             metadata_complete = False
 
+    if safe_backend_forced and backend == BACKEND_VTK and instances:
+        backend = BACKEND_PYDICOM_QT
+        metadata_complete = True
+
+    # NOTE: pydicom_2d renders through VTK.  With VTK_DEFAULT_OPENGL_WINDOW
+    # no longer forced to vtkOSOpenGLRenderWindow (see aipacs_runtime.py),
+    # VTK software rendering via Mesa works correctly.  The previous
+    # auto-promotion to pydicom_qt is removed so that VTK-based tooling
+    # (toolbar, zoom, reference lines, measurements) remains functional.
+
     return {
         "backend": backend,
+        "configured_backend": configured_backend,
         "requested_backend": requested_backend,
         "metadata_backend": metadata_backend,
         "lazy_loader_key": lazy_loader_key,
         "metadata_complete": metadata_complete,
         "force_vtk_fallback": force_vtk_fallback,
+        "safe_backend_forced": safe_backend_forced,
+        "safe_backend_reason": (
+            "Software OpenGL runtime is unavailable, so the workstation is forcing "
+            f"{forced_backend or SAFE_VIEWER_BACKEND_DEFAULT} as the safe CPU viewer backend."
+            if safe_backend_forced
+            else ""
+        ),
     }
 
 

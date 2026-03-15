@@ -31,6 +31,7 @@ from modules.viewer.viewer_backend_config import (
     load_viewer_backend,
     resolve_viewer_backend,
 )
+from modules.viewer.gpu_boost import resolve_gpu_boost_plan
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 
 # ظ¤ظ¤ Qt-based 2D viewer (lazy import to avoid circular/startup overhead) ظ¤ظ¤
@@ -260,6 +261,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._selected_backend = str(
             _initial_resolution.get("requested_backend", BACKEND_VTK) or BACKEND_VTK
         )
+        self._gpu_boost_plan = resolve_gpu_boost_plan(viewer_backend=self._selected_backend)
         self._active_backend = str(
             _initial_resolution.get("backend", self._selected_backend) or self._selected_backend
         )
@@ -451,6 +453,8 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._gc_reenable_timer.setInterval(2000)
         self._gc_reenable_timer.timeout.connect(self._reenable_gc)
         self._last_booster_notify_ms = 0.0  # throttle ImageSliceBooster
+        self._coalesce_flush_in_progress = False  # v2.2.5.1: prevents re-deferral from timer
+        self._last_flushed_target = None  # v2.2.5.2: last slice target that was actually flushed
         self.isolation_guard = ViewerIsolationGuard()
 
         # Progressive download display state
@@ -620,30 +624,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
             pass
 
     def _restore_reslice_quality(self) -> None:
-        # v2.2.3.4.2: Pydicom lazy backend never degrades interpolation
-        # quality during scroll, so skip the restore + unnecessary Render().
-        if self._active_backend in (BACKEND_PYDICOM, BACKEND_PYDICOM_QT):
-            return
-        try:
-            reslice = getattr(getattr(self, 'image_viewer', None), 'image_reslice', None)
-            if reslice is None:
-                return
-            reslice.SetInterpolationModeToCubic()
-            reslice.Modified()
-            try:
-                if self.image_viewer is not None:
-                    actor = self.image_viewer.GetImageActor()
-                    if actor is not None:
-                        actor.InterpolateOn()
-                        prop = actor.GetProperty()
-                        if prop is not None:
-                            prop.SetInterpolationType(2)
-            except Exception:
-                pass
-            if self.image_viewer is not None:
-                self.image_viewer.Render()
-        except Exception as e:
-            logger.debug('[vtk_widget] _restore_reslice_quality failed: %s', e)
+        # v2.2.5.5: NN degradation is now disabled for ALL backends (see
+        # wheelEvent comment).  Nothing to restore; skip the reslice
+        # Modified() + Render() that would needlessly dirty the pipeline.
+        return
 
     def _should_log_timing(self, duration_ms: float, stage: str) -> bool:
         """Rate-limit very high-frequency timing logs while keeping slow spikes.
@@ -1381,6 +1365,30 @@ class VTKWidget(QVTKRenderWindowInteractor):
         except Exception:
             pass
 
+    def _log_gpu_boost_plan(self, source: str, plan: dict, metadata=None):
+        try:
+            series_number = self._extract_series_number(metadata) or "-"
+            logger.info(
+                "viewer-gpu stage=plan source=%s viewer=%s backend=%s requested=%s detected=%s active=%s "
+                "device=%s fallback=%s series=%s",
+                str(source or "unknown"),
+                str(getattr(self, "id_vtk_widget", None)),
+                str(plan.get("viewer_backend", "")),
+                bool(plan.get("requested_gpu", False)),
+                bool(plan.get("detected_gpu", False)),
+                bool(plan.get("gpu_active", False)),
+                str(plan.get("device_name", "") or "-"),
+                str(plan.get("fallback_reason", "") or "-"),
+                series_number,
+                extra={
+                    "component": "viewer",
+                    "function": "VTKWidget._log_gpu_boost_plan",
+                    "stage": "gpu_plan",
+                },
+            )
+        except Exception:
+            pass
+
     def _log_slice_range(self, source: str = "unknown"):
         if self.image_viewer is None:
             return
@@ -1657,7 +1665,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
             _active_velocity_sps = float(
                 getattr(self, "_active_interaction_velocity_sps", 0.0) or 0.0
             )
-            if _fast_ready and self._should_defer_fast_slice_render(
+            # v2.2.5.1: Skip render deferral in the lazy-ready callback.
+            # The decode has already completed and this IS the currently requested
+            # slice.  Deferring it adds pointless latency (the user is waiting to
+            # see this exact frame).  Coalesce-level pacing is still handled by
+            # the wheel/coalesce path that queues the decode request.
+            if False and _fast_ready and self._should_defer_fast_slice_render(
                 velocity_sps=float(_active_velocity_sps),
                 now_ms_value=now_ms(),
             ):
@@ -1742,8 +1755,17 @@ class VTKWidget(QVTKRenderWindowInteractor):
 
         requested_backend = BACKEND_VTK if force_vtk else self._selected_backend
         resolution = resolve_viewer_backend(metadata=metadata, settings=requested_backend)
+        # TEMP DIAG: show backend resolution result
+        try:
+            import tempfile as _tf, os as _os
+            with open(_os.path.join(_tf.gettempdir(), 'aipacs_wheel_diag.log'), 'a') as _df:
+                _df.write(f"[BIND_DIAG] source={source} requested={requested_backend} resolved={resolution.get('backend')} safe_forced={resolution.get('safe_backend_forced')} force_vtk={force_vtk}\n")
+        except Exception:
+            pass
         self._log_backend_resolution(source=source, resolution=resolution, metadata=metadata)
         chosen_backend = str(resolution.get("backend", BACKEND_VTK) or BACKEND_VTK)
+        self._gpu_boost_plan = resolve_gpu_boost_plan(viewer_backend=chosen_backend)
+        self._log_gpu_boost_plan(source=source, plan=self._gpu_boost_plan, metadata=metadata)
         lazy_key = str(resolution.get("lazy_loader_key", "") or "").strip()
         metadata_complete = bool(resolution.get("metadata_complete", True))
 
@@ -1937,6 +1959,13 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # =====================================================
             self.setUpdatesEnabled(False)
 
+            # TEMP DIAG: log backend choice to file
+            try:
+                import tempfile as _tf, os as _os
+                with open(_os.path.join(_tf.gettempdir(), 'aipacs_wheel_diag.log'), 'a') as _df:
+                    _df.write(f"[INIT_DIAG] start_process_series backend={self._active_backend} qt_bridge={self._qt_bridge_active} viewer={id_vtk_widget}\n")
+            except Exception:
+                pass
             # ظ¤ظ¤ Qt Backend Path (VTK-free 2D) ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤
             if self._active_backend == BACKEND_PYDICOM_QT:
                 self._start_qt_viewer(metadata, metadata_fixed)
@@ -2007,6 +2036,10 @@ class VTKWidget(QVTKRenderWindowInteractor):
             qt_viewer.setGeometry(self.rect())
             qt_viewer.show()
             qt_viewer.raise_()
+
+            # Keep slider on top of Qt viewer
+            if self.slider is not None:
+                self.slider.raise_()
 
             # Render the first slice
             mid_slice = bridge.get_count_of_slices() // 2
@@ -2215,8 +2248,22 @@ class VTKWidget(QVTKRenderWindowInteractor):
         
         # Check this series has showed
         if self.last_series_show == series_index:
-            logger.info(f"[SERIES SWITCH] ├ت┌ê┬ص SKIP - Already showing series {series_index}")
-            return False
+            # v2.2.5.3: Don't skip if incoming data has different dimensions
+            # (e.g., preview → full data refresh).  The viewer's internal
+            # slice range is stale and needs SetInputData via reset_image_viewer.
+            _skip_switch = True
+            try:
+                if vtk_image_data is not None and self.image_viewer is not None:
+                    _new_dims = vtk_image_data.GetDimensions()
+                    _old_dims = self.image_viewer.vtk_image_data.GetDimensions()
+                    if tuple(_new_dims) != tuple(_old_dims):
+                        _skip_switch = False
+                        logger.info(f"[SERIES SWITCH] Same series but dims changed: {_old_dims} -> {_new_dims}, allowing refresh")
+            except Exception:
+                pass
+            if _skip_switch:
+                logger.info(f"[SERIES SWITCH] ├ت┌ê┬ص SKIP - Already showing series {series_index}")
+                return False
 
         self._camera_restore_generation = getattr(self, '_camera_restore_generation', 0) + 1
 
@@ -2235,6 +2282,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
             self._wheel_coalesce_timer.stop()
             self._gc_reenable_timer.stop()
             self._pending_wheel_slice = None
+            self._last_flushed_target = None
             self._last_scroll_event_ms = None
             self._stale_scroll_skip_count = 0
             self._last_render_end_ms = 0.0
@@ -2271,6 +2319,15 @@ class VTKWidget(QVTKRenderWindowInteractor):
             finally:
                 QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
             return True
+
+        # ── VTK path: ensure Qt bridge is deactivated ──────────────────
+        # When switching from a Qt backend series to a VTK backend series on
+        # the same viewer, _qt_bridge_active may still be True from the
+        # previous _start_qt_viewer call.  Clean up the Qt viewer so the fast
+        # path below does not mistakenly call reset_image_viewer on the
+        # QtViewerBridge instead of an ImageViewer2D.
+        if self._qt_bridge_active:
+            self.cleanup_image_viewer(preserve_bound_backend=True)
 
         # Save current camera scale before switch
         saved_scale = None
@@ -2636,6 +2693,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
         return max(0, min(int(max_slice - 1), int(snapped)))
 
     def _should_defer_fast_slice_render(self, velocity_sps: float, now_ms_value: float) -> bool:
+        # v2.2.5.1: Never re-defer when the coalesce timer callback is
+        # executing.  The timer already waited the minimum interval;
+        # deferring again would double the latency and cause scroll freeze.
+        if bool(getattr(self, "_coalesce_flush_in_progress", False)):
+            return False
         if not bool(getattr(self, "_in_fast_slice_interaction", False)):
             return False
         skip_velocity = float(self._effective_fast_skip_velocity_sps())
@@ -2758,12 +2820,53 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # non-essential overhead (camera save/restore, style.update_slice).
             self._in_wheel_scroll = source == "wheel"
             self._in_stack_scroll = source == "stack_drag"
+            # v2.2.5.1: Mark coalesce flush active so _should_defer_fast_slice_render
+            # never re-defers the render.  The timer already waited min_interval.
+            self._coalesce_flush_in_progress = True
             self._in_fast_slice_interaction = bool(self._in_wheel_scroll or self._in_stack_scroll)
             self._active_interaction_direction = int(direction)
             self._active_interaction_velocity_sps = float(velocity_sps)
+            # TEMP DIAG: deeper scroll trace
+            _diag_before = None
+            _diag_range_min = -1
+            _diag_range_max = -1
+            _diag_data_z = -1
+            try:
+                _diag_before = int(self.image_viewer.GetSlice()) if self.image_viewer else None
+                if self.image_viewer:
+                    _diag_range_min = int(self.image_viewer.GetSliceMin())
+                    _diag_range_max = int(self.image_viewer.GetSliceMax())
+                    try:
+                        _dd = self.image_viewer.vtk_image_data.GetDimensions()
+                        _diag_data_z = int(_dd[2]) if _dd and len(_dd) > 2 else -1
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             try:
                 self.set_slice(idx)
+                self._last_flushed_target = int(idx)
+            except Exception as _diag_exc:
+                try:
+                    import tempfile as _tf, os as _os
+                    with open(_os.path.join(_tf.gettempdir(), 'aipacs_wheel_diag.log'), 'a') as _df:
+                        _df.write(f"[FLUSH_ERR] viewer={getattr(self, 'id_vtk_widget', '?')} idx={idx} err={_diag_exc}\n")
+                except Exception:
+                    pass
             finally:
+                try:
+                    _diag_after = int(self.image_viewer.GetSlice()) if self.image_viewer else None
+                    _diag_range_max2 = -1
+                    try:
+                        _diag_range_max2 = int(self.image_viewer.GetSliceMax())
+                    except Exception:
+                        pass
+                    import tempfile as _tf2, os as _os2
+                    with open(_os2.path.join(_tf2.gettempdir(), 'aipacs_wheel_diag.log'), 'a') as _df2:
+                        _df2.write(f"[FLUSH_DIAG] viewer={getattr(self, 'id_vtk_widget', '?')} target={idx} before={_diag_before} after={_diag_after} changed={_diag_before != _diag_after} range=({_diag_range_min},{_diag_range_max}) range_after=({_diag_range_min},{_diag_range_max2}) data_z={_diag_data_z}\n")
+                except Exception:
+                    pass
+                self._coalesce_flush_in_progress = False
                 self._in_wheel_scroll = False
                 self._in_stack_scroll = False
                 self._in_fast_slice_interaction = False
@@ -2794,6 +2897,55 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if self._pending_wheel_slice is not None:
             self._wheel_coalesce_timer.setInterval(max(1, int(self._adaptive_frame_gap_ms)))
             self._wheel_coalesce_timer.start()
+        else:
+            # v2.2.5.4: Scroll settled — schedule a one-shot sync render.
+            # During fast-scroll, certain code paths skip VTK Render() (stale
+            # drain, lazy cache miss, _should_defer) and skip widget visibility
+            # updates (update_slice skipped when _fast_scroll=True).  After the
+            # last flush, force a full render at the final position to guarantee
+            # the displayed image matches the slider and annotation widgets
+            # are shown/hidden for the correct slice.
+            QTimer.singleShot(0, self._post_scroll_sync_render)
+
+    def _post_scroll_sync_render(self):
+        """Force image + annotation sync after scroll settles."""
+        try:
+            if self.image_viewer is None:
+                return
+            # Use the slider value as canonical position (it was updated
+            # in every code path, even those that skipped VTK render).
+            target = None
+            if self.slider is not None:
+                try:
+                    target = int(self.slider.value())
+                except Exception:
+                    pass
+            if target is None:
+                try:
+                    target = int(self.image_viewer.last_index_slice_saved)
+                except Exception:
+                    return
+
+            # Force a full render at the final position (non-fast path).
+            current_vtk = None
+            try:
+                current_vtk = int(self.image_viewer.GetSlice())
+            except Exception:
+                pass
+
+            if current_vtk is None or current_vtk != target:
+                # VTK is out of sync — force SetSlice + Render
+                self._call_image_viewer_set_slice(target, fast_interaction=False)
+
+            # Update annotation widget visibility for the current slice.
+            try:
+                style = self.interactor.GetInteractorStyle()
+                if hasattr(style, 'update_slice'):
+                    style.update_slice()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def set_slice(self, slice_index):
         if self.image_viewer is None:
@@ -2865,6 +3017,11 @@ class VTKWidget(QVTKRenderWindowInteractor):
         _stack_drag = bool(getattr(self, "_in_stack_scroll", False))
         _fast_scroll = bool(_wheel or _stack_drag)
         _active_velocity_sps = float(getattr(self, "_active_interaction_velocity_sps", 0.0) or 0.0)
+
+        # v2.2.5.2: Clear flushed-target on non-scroll set_slice so it doesn't
+        # pollute the next wheel session with a stale logical position.
+        if not _fast_scroll:
+            self._last_flushed_target = None
 
         # v2.2.3.2.1: Stale-event fast-drain guard.
         # -----------------------------------------
@@ -3175,6 +3332,20 @@ class VTKWidget(QVTKRenderWindowInteractor):
         Handle mouse wheel scrolling for slice navigation within current series.
         CRITICAL: Prevents VTK zoom by consuming the event and NOT calling super().wheelEvent()
         """
+        # TEMP DIAG: Write to file so we can see if wheelEvent is called
+        try:
+            import tempfile as _tf, os as _os
+            _pending = getattr(self, '_pending_wheel_slice', None)
+            _vtk_slice = '?'
+            try:
+                if self.image_viewer:
+                    _vtk_slice = int(self.image_viewer.GetSlice())
+            except Exception:
+                pass
+            with open(_os.path.join(_tf.gettempdir(), 'aipacs_wheel_diag.log'), 'a') as _df:
+                _df.write(f"[WHEEL_DIAG] viewer={getattr(self, 'id_vtk_widget', '?')} backend={getattr(self, '_active_backend', '?')} qt_bridge={getattr(self, '_qt_bridge_active', '?')} iv={'Y' if self.image_viewer else 'N'} slider={'Y' if self.slider else 'N'} delta={event.angleDelta().y()} vtk_slice={_vtk_slice} pending={_pending}\n")
+        except Exception:
+            pass
         # ├ت┼ôظخ ALWAYS log to confirm this method is being called
         t_event_receive = now_ms()
         self._last_scroll_event_ms = t_event_receive
@@ -3201,14 +3372,14 @@ class VTKWidget(QVTKRenderWindowInteractor):
             except Exception:
                 pass
             _throttle_background_threads(True)
-            # v2.2.3.4.2: Skip NN interpolation degradation for the pydicom
-            # lazy backend.  The ImageReslice is a pass-through (identity
-            # transform, same dimensions) so NearestNeighbor gives zero
-            # performance benefit.  For small images (e.g. 176×176 diffusion
-            # MRI), InterpolateOff causes visible pixelation that looks like
-            # "filter not applied" until _restore_reslice_quality fires
-            # 2000 ms later.
-            _skip_nn_degrade = self._active_backend in (BACKEND_PYDICOM, BACKEND_PYDICOM_QT)
+            # v2.2.5.5: Skip NN interpolation degradation for ALL backends.
+            # When the reslice has a non-identity direction-matrix transform
+            # (convert_itk2vtk Y-flip), switching to NearestNeighbor +
+            # Modified() causes VTK's UpdateDisplayExtent to compute a wrong
+            # output extent, collapsing the slice range (e.g. (0,24) → (14,14))
+            # and replacing vtk_image_data with a 1-slice image.  This caused
+            # the "scrollbar moves but image freezes" bug after stack drag.
+            _skip_nn_degrade = True
             if not _skip_nn_degrade:
                 try:
                     reslice = getattr(getattr(self, 'image_viewer', None), 'image_reslice', None)
@@ -3290,6 +3461,22 @@ class VTKWidget(QVTKRenderWindowInteractor):
                     current_slice = int(self._lazy_requested_slice)
                 except Exception:
                     pass
+            elif self._pending_wheel_slice is not None:
+                # v2.2.5.1: For VTK (and all) backends, use the pending
+                # (requested-but-not-yet-rendered) slice as logical position.
+                try:
+                    current_slice = int(self._pending_wheel_slice)
+                except Exception:
+                    pass
+            elif self._last_flushed_target is not None:
+                # v2.2.5.2: After flush completes, _pending is cleared but
+                # GetSlice() may still return the stale pre-flush value.
+                # Use the last successfully flushed target as logical position
+                # to keep the wheel advancing.
+                try:
+                    current_slice = int(self._last_flushed_target)
+                except Exception:
+                    pass
             skip_slices = getattr(self.image_viewer, 'skip_slices', 0)
             next_slice = current_slice + skip_slices + step
             
@@ -3299,17 +3486,30 @@ class VTKWidget(QVTKRenderWindowInteractor):
             logger.debug(f"[WHEEL] current={current_slice}, next={next_slice}, step={step}")
             self._wheel_event_count += 1
             if (
-                self._active_backend == BACKEND_PYDICOM
-                and (self._wheel_event_count <= 3 or self._wheel_event_count % 20 == 0)
+                self._wheel_event_count <= 3 or self._wheel_event_count % 20 == 0
             ):
+                _vtk_raw = -1
+                try:
+                    _vtk_raw = int(self.image_viewer.GetSlice()) if self.image_viewer else -1
+                except Exception:
+                    pass
+                _pos_src = "getslice"
+                if self._active_backend == BACKEND_PYDICOM and self._lazy_requested_slice is not None:
+                    _pos_src = "lazy"
+                elif self._pending_wheel_slice is not None:
+                    _pos_src = "pending"
+                elif self._last_flushed_target is not None:
+                    _pos_src = "flushed"
                 logger.info(
-                    "viewer-scroll stage=backend_route backend=%s viewer=%s current_slice=%d target_slice=%d delta=%d event=%d",
+                    "viewer-scroll stage=backend_route backend=%s viewer=%s current_slice=%d target_slice=%d delta=%d event=%d vtk_raw=%d pos_src=%s",
                     str(self._active_backend),
                     str(getattr(self, "id_vtk_widget", None)),
                     int(current_slice),
                     int(next_slice),
                     int(delta),
                     int(self._wheel_event_count),
+                    int(_vtk_raw),
+                    str(_pos_src),
                     extra={
                         "component": "viewer",
                         "function": "VTKWidget.wheelEvent",
@@ -3714,6 +3914,9 @@ class VTKWidget(QVTKRenderWindowInteractor):
         if self._qt_bridge_active and self._qt_viewer_widget is not None:
             try:
                 self._qt_viewer_widget.setGeometry(self.rect())
+                # Keep slider on top of Qt viewer
+                if self.slider is not None:
+                    self.slider.raise_()
             except Exception:
                 pass
 

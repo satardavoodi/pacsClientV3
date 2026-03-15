@@ -21,8 +21,13 @@ grpc_generated_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'g
 if grpc_generated_dir not in sys.path:
     sys.path.insert(0, grpc_generated_dir)
 
-import dicom_service_pb2
-import dicom_service_pb2_grpc
+if __package__:
+    from . import dicom_service_pb2, dicom_service_pb2_grpc
+else:
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from modules.network import dicom_service_pb2, dicom_service_pb2_grpc
 
 class DicomDownloader:
     def __init__(self, host='localhost', port=50051):

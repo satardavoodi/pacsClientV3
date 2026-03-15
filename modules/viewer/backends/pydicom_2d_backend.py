@@ -21,7 +21,7 @@ from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
     window_to_uint8,
 )
 
-from .contracts import FrameData, GeometryData
+from modules.viewer.fast.contracts import FrameData, GeometryData
 
 logger = logging.getLogger(__name__)
 

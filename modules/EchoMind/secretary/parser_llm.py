@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from modules.EchoMind.llm_client import gapgpt_chat, LLMError
+from modules.EchoMind.settings_store import get_llm_backend, get_prompt_settings
+from .config import get_secretary_llm_model, get_secretary_reasoning_effort
 from .contracts import SecretaryActionPlan
 from .prompt_context import build_prompt_context
 
@@ -89,8 +91,9 @@ def _post_chat(prompt: str, timeout: int = 45) -> Any:
     """
     return gapgpt_chat(
         messages=[{"role": "user", "content": prompt}],
-        model="gpt-4.1-mini",
+        model=get_secretary_llm_model(),
         timeout=timeout,
+        reasoning_effort=get_secretary_reasoning_effort(),
     )
     # Use the EchoMind Settings key only (no per-center override).
     api_key = (get_echomind_api_key() or "").strip()
@@ -156,5 +159,8 @@ def parse_command_llm(text: str, language: str = "auto", timeout: int = 45) -> S
         .replace("{{MODULE_MAP}}", dynamic_context)
         .replace("{{USER_TEXT}}", text or "")
     )
+    extra = str(get_prompt_settings().get("secretary_action") or "").strip() if get_llm_backend() == "openai" else ""
+    if extra:
+        prompt = f"{extra}\n\n{prompt}"
     return parse_command_llm_from_prompt(prompt=prompt, timeout=timeout)
 

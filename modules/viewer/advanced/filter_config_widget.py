@@ -1008,6 +1008,7 @@ def apply_filters(
     mild_mode = max_spacing > 1.5
 
     if mild_mode:
+        pass
         #print(f"   ⚠️ Large spacing detected ({max_spacing:.2f} mm) → mild mode")
 
     #print(f"   🔧 Applying filters to {modality} ({nx}×{ny}×{nz})")

@@ -1,7 +1,8 @@
 import sys
 from pathlib import Path
 
-from PacsClient.utils.utils import get_server_url
+from aipacs_runtime import roaming_config_root, seed_user_config_defaults
+from PacsClient.utils.utils import SERVERS_FILE, get_server_url
 from _project_root import PROJECT_ROOT as _ROOT
 
 # ── Software-level paths (app code / resources) ───────────────────────────────
@@ -11,7 +12,11 @@ PROJECT_ROOT: Path = _ROOT
 ICON_PATH = BASE_PATH / 'Qss/icons/fefefe/feather/'
 IMAGES_LOGIN_PATH = BASE_PATH / 'Qss/images/'
 JSON_PATH = BASE_PATH / 'json-styles'
-SOCKET_CONFIG_PATH = BASE_PATH / 'config'
+if getattr(sys, "frozen", False):
+    seed_user_config_defaults()
+    SOCKET_CONFIG_PATH = roaming_config_root()
+else:
+    SOCKET_CONFIG_PATH = BASE_PATH / 'config'
 
 # ── User data paths (downloaded / generated / cached) ─────────────────────────
 # Canonical definitions live in data_paths.py; re-exported here for convenience.
@@ -33,8 +38,9 @@ from PacsClient.utils.data_paths import (                       # noqa: E402
     ZETA_BOOST_CACHE_DIR,
     RECEPTION_REPORTS_DIR,
 )
-server_ip=str(get_server_url('segmentation'))
-ip=server_ip
+_segmentation_url = get_server_url("segmentation") if SERVERS_FILE.exists() else None
+server_ip = str(_segmentation_url or "")
+ip = server_ip
 import re
 
 match = re.search(r'http://(\d+\.\d+\.\d+\.\d+):\d+', server_ip)

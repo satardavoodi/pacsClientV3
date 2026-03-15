@@ -12,7 +12,7 @@
 | Orthogonal MPR | Focused orthogonal MPR widget and helpers | `PacsClient/pacs/patient_tab/orthogonal_mpr/` | Used alongside toolbar workflows |
 | Advanced imaging and AI | Imaging tabs, service tabs, analysis workflows | `PacsClient/pacs/patient_tab/ui/ai_module_ui/` | Includes service-driven imaging workflows |
 | Education | Course browsing and educational case workflows | `PacsClient/pacs/education/`, `Education/` | Static assets in `education_assets/` |
-| Web viewing | Embedded browser or web tab | `PacsClient/pacs/workstation_ui/web_browser_ui.py` | Integrated into workstation UI |
+| Web viewing | Embedded browser or web tab | `modules/web_browser/` | Integrated into workstation UI through a compatibility shim |
 | Printing | Film layout, DICOM rendering, print dispatch | `printing/` | Data layer restored under `printing/data/` |
 | EchoMind | AI chat, assistant orchestration, secretary routing | `EchoMind/` | Secretary docs under `EchoMind/secretary/` |
 | Advanced 3D Slicer | Custom 3D Slicer SuperBuild for advanced MPR/3D viewing | `modules/mpr/advanced_3d_slicer/` | Local docs: `slicer_custom_app/docs/DEPLOYMENT_GUIDE.md`. Runtime (842 MB) is git-ignored; deploy via shared storage or GitHub Releases. |

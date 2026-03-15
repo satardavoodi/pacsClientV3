@@ -1,43 +1,21 @@
+from pathlib import Path
+
+from aipacs_runtime import is_module_enabled
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QTabWidget, QWidget, QLabel, QVBoxLayout
 from .server_settings import ServerSettingsWidget
 from .tools_settings_ui import ToolsSettingsWidget
 from .servers_config import ServersConfigWidget
 from .viewerconfigsetting import ModalityGridConfigWidget
 from .filter_config import FilterConfigWidget
-from .lightviewer_settings import LightViewerSettingsWidget
-from .echomind_settings import EchoMindSettingsWidget
+from .installation_module_settings import InstallationModuleSettingsWidget
 class SettingsTabWidget(QTabWidget):
     def __init__(self, parent=None):
         super(SettingsTabWidget, self).__init__(parent)
-        # Apply dark theme to tab widget
-        self.setStyleSheet("""
-            QTabWidget::pane {
-                background-color: #1a202c;
-                border: 1px solid #4a5568;
-                border-radius: 4px;
-            }
-            QTabBar::tab {
-                background-color: #2d3748;
-                color: #e2e8f0;
-                padding: 10px 20px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background-color: #1a202c;
-                color: #ffffff;
-                border-bottom: 2px solid #3182ce;
-            }
-            QTabBar::tab:hover {
-                background-color: #374151;
-            }
-            QWidget {
-                background-color: #1a202c;
-                color: #e2e8f0;
-            }
-        """)
         self.setup_ui()
+        self.tabBar().setUsesScrollButtons(True)
+        self.tabBar().setElideMode(Qt.ElideRight)
+        self.tabBar().setExpanding(False)
         self.apply_dark_theme()  # ✅ NEW: dark theme only for Settings area
 
     def setup_ui(self):
@@ -46,8 +24,9 @@ class SettingsTabWidget(QTabWidget):
         self.servers_config = ServersConfigWidget()
         self.viewer_config=ModalityGridConfigWidget()
         self.image_filter=FilterConfigWidget()
-        self.lightviewer_settings = LightViewerSettingsWidget()
-        self.echomind_settings = EchoMindSettingsWidget()
+        self.lightviewer_settings = None
+        self.echomind_settings = None
+        self.installation_module_settings = InstallationModuleSettingsWidget()
         self.tab2 = QWidget()
 
         self.servers_config.saved.connect(self.on_ai_servers_saved)
@@ -58,8 +37,17 @@ class SettingsTabWidget(QTabWidget):
         #self.addTab(self.tab2, 'Tab 2')
         self.addTab(self.viewer_config,"Viewer Configuration")
         self.addTab(self.image_filter,"Image Filter")
-        self.addTab(self.lightviewer_settings, "Light Viewer")
-        self.addTab(self.echomind_settings, "EchoMind")
+        self.addTab(self.installation_module_settings, "Installation Module")
+        if is_module_enabled("run_cd"):
+            from .lightviewer_settings import LightViewerSettingsWidget
+
+            self.lightviewer_settings = LightViewerSettingsWidget()
+            self.addTab(self.lightviewer_settings, "Light Viewer")
+        if is_module_enabled("echomind"):
+            from .echomind_settings import EchoMindSettingsWidget
+
+            self.echomind_settings = EchoMindSettingsWidget()
+            self.addTab(self.echomind_settings, "EchoMind")
         # start ui
         self.tab2_ui()
 
@@ -68,72 +56,72 @@ class SettingsTabWidget(QTabWidget):
         Dark theme scoped to SettingsTabWidget only (does not affect the rest of app).
         """
         self.setObjectName("SettingsTabWidget")
-
-        self.setStyleSheet("""
-            /* ---------- Base ---------- */
+        arrow_icon = Path("Qss/icons/fefefe/material_design/keyboard_arrow_down.png").resolve().as_posix()
+        style = """
             QTabWidget#SettingsTabWidget {
-                background: #1a202c;
-                color: #e2e8f0;
+                background: #0b0d10;
+                color: #e5e7eb;
             }
             QTabWidget#SettingsTabWidget QWidget {
-                background: #1a202c;
-                color: #e2e8f0;
+                background: #0b0d10;
+                color: #e5e7eb;
             }
 
-            /* ---------- Tabs (Settings internal tabs) ---------- */
             QTabWidget#SettingsTabWidget::pane {
-                border: 1px solid #4a5568;
-                background: #1a202c;
+                border: 1px solid #232a33;
+                border-radius: 12px;
+                background: #0b0d10;
                 top: -1px;
             }
             QTabWidget#SettingsTabWidget QTabBar::tab {
-                background: #2d3748;
-                color: #a0aec0;
-                border: 1px solid #4a5568;
+                background: #243041;
+                color: #cbd5e1;
+                border: 1px solid #334155;
                 border-bottom: none;
-                border-radius: 6px 6px 0 0;
+                border-radius: 8px 8px 0 0;
                 padding: 11px 20px;
-                margin-right: 2px;
+                margin-right: 3px;
                 font-size: 14px;
-                min-width: 155px;
+                min-width: 120px;
             }
             QTabWidget#SettingsTabWidget QTabBar::tab:selected {
-                background: #3182ce;
+                background: #3b82f6;
                 color: #ffffff;
-                border-color: #3182ce;
+                border-color: #3b82f6;
             }
             QTabWidget#SettingsTabWidget QTabBar::tab:hover:!selected {
-                background: #4a5568;
-                color: #e2e8f0;
+                background: #2b3a4e;
+                color: #f3f4f6;
             }
 
-            /* ---------- Tables ---------- */
             QTabWidget#SettingsTabWidget QTableWidget,
             QTabWidget#SettingsTabWidget QTableView {
-                background: #0f172a;
+                background: #0f1319;
                 alternate-background-color: #111827;
-                gridline-color: #334155;
-                border: 1px solid #334155;
+                gridline-color: #232a33;
+                border: 1px solid #232a33;
+                border-radius: 10px;
                 selection-background-color: #2563eb;
                 selection-color: #ffffff;
             }
             QTabWidget#SettingsTabWidget QHeaderView::section {
-                background: #2d3748;
-                color: #e2e8f0;
+                background: #10141a;
+                color: #e5e7eb;
                 padding: 6px 8px;
-                border: 1px solid #334155;
+                border: 1px solid #232a33;
+                font-weight: 700;
             }
             QTabWidget#SettingsTabWidget QTableCornerButton::section {
-                background: #2d3748;
-                border: 1px solid #334155;
+                background: #10141a;
+                border: 1px solid #232a33;
             }
 
-            /* ---------- Inputs ---------- */
             QTabWidget#SettingsTabWidget QLabel {
                 font-size: 14px;
             }
             QTabWidget#SettingsTabWidget QGroupBox::title {
-                font-size: 14px;
+                font-size: 28px;
+                font-weight: 900;
             }
             QTabWidget#SettingsTabWidget QCheckBox {
                 spacing: 8px;
@@ -142,10 +130,10 @@ class SettingsTabWidget(QTabWidget):
             QTabWidget#SettingsTabWidget QLineEdit,
             QTabWidget#SettingsTabWidget QTextEdit,
             QTabWidget#SettingsTabWidget QPlainTextEdit {
-                background: #0f172a;
-                color: #e2e8f0;
-                border: 1px solid #334155;
-                border-radius: 6px;
+                background: #1b2230;
+                color: #e5e7eb;
+                border: 1px solid #2b313b;
+                border-radius: 8px;
                 padding: 6px 10px;
                 min-height: 34px;
                 font-size: 14px;
@@ -155,128 +143,141 @@ class SettingsTabWidget(QTabWidget):
             QTabWidget#SettingsTabWidget QLineEdit:focus,
             QTabWidget#SettingsTabWidget QTextEdit:focus,
             QTabWidget#SettingsTabWidget QPlainTextEdit:focus {
-                border: 1px solid #60a5fa;
+                border: 1px solid #3b82f6;
             }
 
             QTabWidget#SettingsTabWidget QComboBox,
             QTabWidget#SettingsTabWidget QSpinBox,
             QTabWidget#SettingsTabWidget QDoubleSpinBox {
-                background: #0f172a;
-                color: #e2e8f0;
-                border: 1px solid #334155;
-                border-radius: 6px;
+                background: #1b2230;
+                color: #e5e7eb;
+                border: 1px solid #2b313b;
+                border-radius: 8px;
                 padding: 5px 10px;
                 min-height: 34px;
                 font-size: 14px;
             }
+            QTabWidget#SettingsTabWidget QComboBox {
+                padding-right: 34px;
+            }
             QTabWidget#SettingsTabWidget QComboBox::drop-down {
-                border-left: 1px solid #334155;
-                width: 22px;
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                border-left: 1px solid #2b313b;
+                width: 28px;
+            }
+            QTabWidget#SettingsTabWidget QComboBox::down-arrow {
+                image: url(__ARROW__);
+                width: 14px;
+                height: 14px;
             }
             QTabWidget#SettingsTabWidget QComboBox QAbstractItemView {
-                background: #0f172a;
-                color: #e2e8f0;
-                border: 1px solid #334155;
+                background: #0f1319;
+                color: #e5e7eb;
+                border: 1px solid #232a33;
                 selection-background-color: #2563eb;
                 selection-color: #ffffff;
             }
 
-            /* ---------- GroupBox ---------- */
             QTabWidget#SettingsTabWidget QGroupBox {
-                border: 1px solid #334155;
-                border-radius: 8px;
-                margin-top: 10px;
-                padding: 10px;
-                background: #111827;
+                border: 1px solid #232a33;
+                border-radius: 12px;
+                margin-top: 28px;
+                padding: 18px 20px 18px 20px;
+                padding-top: 44px;
+                background: #10141a;
             }
             QTabWidget#SettingsTabWidget QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
-                padding: 0 6px;
-                color: #e2e8f0;
+                left: 18px;
+                top: 2px;
+                padding: 6px 16px;
+                color: #f3f4f6;
+                background: #0f1319;
+                border: 1px solid #232a33;
+                border-radius: 11px;
             }
 
-            /* ---------- Buttons ---------- */
             QTabWidget#SettingsTabWidget QPushButton {
-                background: #2d3748;
-                color: #e2e8f0;
-                border: 1px solid #4a5568;
-                border-radius: 6px;
+                background: #1b2230;
+                color: #e5e7eb;
+                border: 1px solid #2b313b;
+                border-radius: 8px;
                 padding: 8px 14px;
                 min-height: 36px;
                 font-size: 14px;
+                font-weight: 600;
             }
             QTabWidget#SettingsTabWidget QPushButton:hover {
-                background: #4a5568;
-                border-color: #60a5fa;
+                background: #252d3d;
+                border-color: #3b82f6;
             }
             QTabWidget#SettingsTabWidget QPushButton:pressed {
-                background: #1f2937;
+                background: #162033;
             }
             QTabWidget#SettingsTabWidget QPushButton:disabled {
-                background: rgba(45, 55, 72, 0.5);
-                color: rgba(226, 232, 240, 0.4);
-                border-color: rgba(74, 85, 104, 0.5);
+                background: rgba(27, 34, 48, 0.45);
+                color: rgba(229, 231, 235, 0.4);
+                border-color: rgba(43, 49, 59, 0.5);
             }
 
-            /* ---------- Sliders ---------- */
             QTabWidget#SettingsTabWidget QSlider::groove:horizontal {
-                background: #334155;
+                background: #2b313b;
                 height: 6px;
                 border-radius: 3px;
             }
             QTabWidget#SettingsTabWidget QSlider::handle:horizontal {
-                background: #60a5fa;
+                background: #3b82f6;
                 width: 16px;
                 margin: -6px 0;
                 border-radius: 8px;
             }
 
-            /* ---------- Separators / Frames ---------- */
             QTabWidget#SettingsTabWidget QFrame[frameShape="4"],
             QTabWidget#SettingsTabWidget QFrame[frameShape="5"] {
-                color: #334155;
+                color: #232a33;
                 border: none;
             }
 
-            /* ---------- Scrollbars ---------- */
             QTabWidget#SettingsTabWidget QScrollBar:vertical {
-                background: #0b1220;
+                background: #0f1319;
                 width: 12px;
                 margin: 0px;
-                border: 1px solid #334155;
+                border: 1px solid #232a33;
             }
             QTabWidget#SettingsTabWidget QScrollBar::handle:vertical {
-                background: #334155;
+                background: #2b313b;
                 min-height: 24px;
                 border-radius: 6px;
             }
             QTabWidget#SettingsTabWidget QScrollBar::handle:vertical:hover {
-                background: #475569;
+                background: #334155;
             }
             QTabWidget#SettingsTabWidget QScrollBar::add-line:vertical,
             QTabWidget#SettingsTabWidget QScrollBar::sub-line:vertical {
                 height: 0px;
             }
             QTabWidget#SettingsTabWidget QScrollBar:horizontal {
-                background: #0b1220;
+                background: #0f1319;
                 height: 12px;
                 margin: 0px;
-                border: 1px solid #334155;
+                border: 1px solid #232a33;
             }
             QTabWidget#SettingsTabWidget QScrollBar::handle:horizontal {
-                background: #334155;
+                background: #2b313b;
                 min-width: 24px;
                 border-radius: 6px;
             }
             QTabWidget#SettingsTabWidget QScrollBar::handle:horizontal:hover {
-                background: #475569;
+                background: #334155;
             }
             QTabWidget#SettingsTabWidget QScrollBar::add-line:horizontal,
             QTabWidget#SettingsTabWidget QScrollBar::sub-line:horizontal {
                 width: 0px;
             }
-        """)
+        """
+        self.setStyleSheet(style.replace("__ARROW__", arrow_icon))
 
     def on_ai_servers_saved(self, services: dict):
         print("AI servers updated:", services)

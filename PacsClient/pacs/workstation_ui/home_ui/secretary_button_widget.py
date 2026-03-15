@@ -1418,6 +1418,28 @@ class SecretaryButtonWidget(QWidget):
             return False
 
     def _ensure_echomind_login(self) -> bool:
+        try:
+            from modules.EchoMind.llm_client import get_active_backend_display_name, is_active_backend_configured
+            from modules.EchoMind.settings_store import get_llm_backend
+        except Exception:
+            get_llm_backend = None
+            is_active_backend_configured = None
+            get_active_backend_display_name = None
+
+        if callable(get_llm_backend) and get_llm_backend() == "openai":
+            if callable(is_active_backend_configured) and is_active_backend_configured():
+                self._post_log(
+                    "system",
+                    f"EchoMind login OK: {get_active_backend_display_name() if callable(get_active_backend_display_name) else 'OpenAI'}",
+                )
+                return True
+            QMessageBox.information(
+                self,
+                "EchoMind",
+                "No OpenAI key is saved. Open Settings -> EchoMind -> OpenAI and configure it.",
+            )
+            return False
+
         mgr = APIKeyManager.instance()
         if mgr.is_validated():
             return True

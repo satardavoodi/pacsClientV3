@@ -3,15 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 from .providers.native_irannobat import NativeIrannobatProvider
+from .providers.openai_transcribe import OpenAITranscribeProvider
 from .providers.v2t_google import V2tGoogleProvider
 
 
 class SttRouter:
     def __init__(self):
         self.native = NativeIrannobatProvider()
+        self.openai = OpenAITranscribeProvider()
         self.v2t = V2tGoogleProvider()
 
     def _get_provider(self, route: str):
+        if (route or "").lower() == "openai":
+            return self.openai
         if (route or "").lower() == "v2t":
             return self.v2t
         return self.native
@@ -36,7 +40,7 @@ class SttRouter:
             first["route_used"] = primary.name
             return first
 
-        secondary_route = "v2t" if primary_route != "v2t" else "native"
+        secondary_route = "v2t" if primary_route not in {"v2t", "openai"} else "native"
         secondary = self._get_provider(secondary_route)
         second = secondary.transcribe_files(paths, quality_mode=quality_mode)
         second["route_requested"] = primary_route

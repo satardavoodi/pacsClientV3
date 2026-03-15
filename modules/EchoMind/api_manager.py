@@ -294,8 +294,8 @@ class Manage:
 
     def _get_usage_file(self) -> Path:
         try:
-            from PacsClient.utils import DATA_DIR
-            base = Path(DATA_DIR)
+            from PacsClient.utils.data_paths import ECHOMIND_DIR
+            base = Path(ECHOMIND_DIR)
         except Exception:
             base = Path.cwd() / "data"
         base.mkdir(parents=True, exist_ok=True)

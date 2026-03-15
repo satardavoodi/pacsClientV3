@@ -57,3 +57,5 @@ tools/git/github-network.local.json
 **/.env
 **/keys.json
 **/secrets*.py
+
+builder/output/

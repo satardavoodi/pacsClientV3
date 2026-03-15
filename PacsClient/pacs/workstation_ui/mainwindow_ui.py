@@ -10,6 +10,7 @@ from PySide6.QtCore import QEvent, QTimer
 from .AIPacs_ui import ControlPanelInterface
 from PacsClient.utils import IMAGES_LOGIN_PATH
 from PacsClient.utils.db_manager import init_database, migrate_fix_null_study_paths
+from PacsClient.utils.theme_manager import get_theme_manager
 from .shortcut_manager import ShortcutManager
 import qtawesome as qta
 import sys
@@ -73,6 +74,8 @@ class MainWindowWidget(QWidget):
         # Store authentication info
         self.auth_user = auth_user
         self.auth_token = auth_token
+        self.theme_manager = get_theme_manager()
+        self._active_theme = self.theme_manager.current_theme()
 
         self.setup_ui()
         self.window_buttons()
@@ -87,6 +90,8 @@ class MainWindowWidget(QWidget):
 
         # Now add AIPacs tab (which will connect to shortcut manager)
         self.add_AIPacs_tab()
+        self.theme_manager.themeChanged.connect(self.apply_theme)
+        self.apply_theme(self._active_theme)
 
         # Register all long-lived resources with the lifecycle manager
         self._register_lifecycle_resources()
@@ -543,6 +548,7 @@ class MainWindowWidget(QWidget):
     def setup_user_info(self, title_layout):
         user_container = QFrame()
         user_container.setObjectName("UserInfoContainer")
+        self.user_info_container = user_container
         user_container.setFixedHeight(70)
         user_container.setMinimumWidth(170)
         user_container.setStyleSheet("""
@@ -616,60 +622,151 @@ class MainWindowWidget(QWidget):
         return self.right_tab_area
 
     def apply_modern_styling(self):
-        self.setStyleSheet("""
-            MainWindowWidget {
-                background: #1a202c;
-                border: 1px solid #4a5568;
+        theme = getattr(self, "_active_theme", None) or get_theme_manager().current_theme()
+        self.setStyleSheet(
+            f"""
+            MainWindowWidget {{
+                background: {theme['window_bg']};
+                border: 1px solid {theme['border']};
                 border-radius: 8px;
-            }
-            QFrame#TitleBar {
-                background: #2d3748;
+            }}
+            QFrame#TitleBar {{
+                background: {theme['menu_bg']};
                 border: none;
-                border-bottom: 1px solid #4a5568;
-            }
-            QFrame#TabArea { background: transparent; border: none; }
-            QFrame#RightTabArea { background: transparent; border: none; }
+                border-bottom: 1px solid {theme['border']};
+            }}
+            QFrame#TabArea {{ background: transparent; border: none; }}
+            QFrame#RightTabArea {{ background: transparent; border: none; }}
 
-            QTabWidget { background: transparent; border: none; }
-            QTabWidget::pane { border: none; background: #1a202c; }
+            QTabWidget {{ background: transparent; border: none; }}
+            QTabWidget::pane {{ border: none; background: {theme['window_bg']}; }}
 
-            QTabBar::tab {
-                background: #2d3748;
-                color: #a0aec0;
-                border: 1px solid #4a5568;
+            QTabBar::tab {{
+                background: {theme['tab_bg']};
+                color: {theme['text_muted']};
+                border: 1px solid {theme['border']};
                 border-bottom: none;
                 border-radius: 4px 4px 0px 0px;
                 padding: 6px 12px;
                 margin-right: 1px;
                 font-size: 11px;
                 min-width: 80px;
-            }
-            QTabBar::tab:selected {
-                background: #3182ce;
-                color: #ffffff;
-                border-color: #3182ce;
-            }
-            QTabBar::tab:hover:!selected {
-                background: #4a5568;
-                color: #e2e8f0;
-            }
-            QTabBar::close-button {
+            }}
+            QTabBar::tab:selected {{
+                background: {theme['tab_active_bg']};
+                color: {theme['button_text']};
+                border-color: {theme['tab_active_bg']};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background: {theme['tab_hover_bg']};
+                color: {theme['text_primary']};
+            }}
+            QTabBar::close-button {{
                 background: rgba(239, 68, 68, 0.7);
                 border-radius: 8px;
                 width: 14px;
                 height: 14px;
                 margin: 2px;
-            }
-            QTabBar::close-button:hover { background: rgba(239, 68, 68, 1.0); }
+            }}
+            QTabBar::close-button:hover {{ background: rgba(239, 68, 68, 1.0); }}
 
-            MainWindowWidget[maximized="true"] {
+            MainWindowWidget[maximized="true"] {{
                 border: none;
                 border-radius: 0px;
-            }
-            MainWindowWidget[maximized="true"] QFrame#TitleBar {
+            }}
+            MainWindowWidget[maximized="true"] QFrame#TitleBar {{
                 border-radius: 0px;
-            }
-        """)
+            }}
+            """
+        )
+
+    def _user_info_stylesheet(self) -> str:
+        theme = self._active_theme
+        return f"""
+            QFrame#UserInfoContainer {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {theme['accent_soft']},
+                    stop:1 {theme['menu_bg']});
+                border: 2px solid {theme['accent']};
+                border-radius: 10px;
+                padding: 6px 14px;
+                margin-right: 10px;
+            }}
+            QFrame#UserInfoContainer:hover {{
+                border-color: {theme['accent_hover']};
+            }}
+            QLabel#UserNameLabel {{
+                color: {theme['text_primary']};
+                font-size: 13px;
+                font-weight: 700;
+                letter-spacing: 0.3px;
+                background: transparent;
+                border: none;
+            }}
+            QLabel#UserRoleLabel {{
+                color: {theme['text_secondary']};
+                font-size: 10px;
+                font-weight: 600;
+                letter-spacing: 0.5px;
+                background: transparent;
+                border: none;
+            }}
+        """
+
+    def _window_button_styles(self) -> dict[str, str]:
+        theme = self._active_theme
+        neutral = f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {theme['menu_bg']}, stop:1 {theme['panel_bg']});
+                border: 1px solid {theme['border']};
+                border-radius: 5px;
+                color: {theme['text_primary']};
+                font-size: 16px;
+                font-weight: normal;
+            }}
+            QPushButton:hover {{
+                background: {theme['menu_hover_bg']};
+                border: 1px solid {theme['accent']};
+            }}
+            QPushButton:pressed {{
+                background: {theme['panel_deep_bg']};
+                border: 1px solid {theme['accent_pressed']};
+            }}
+        """
+        close = f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {theme['border']};
+                border-radius: 4px;
+                color: {theme['text_primary']};
+                font-size: 16px;
+                font-weight: normal;
+            }}
+            QPushButton:hover {{
+                background: {theme['danger']};
+                border: 1px solid {theme['danger']};
+                color: #ffffff;
+            }}
+            QPushButton:pressed {{
+                background: {theme['danger_hover']};
+                border: 1px solid {theme['danger_hover']};
+            }}
+        """
+        return {"neutral": neutral, "close": close}
+
+    def apply_theme(self, theme=None):
+        self._active_theme = theme or self.theme_manager.current_theme()
+        self.apply_modern_styling()
+        if hasattr(self, "user_info_container"):
+            self.user_info_container.setStyleSheet(self._user_info_stylesheet())
+        styles = self._window_button_styles()
+        if hasattr(self, "minimize_button"):
+            self.minimize_button.setStyleSheet(styles["neutral"])
+        if hasattr(self, "maximize_button"):
+            self.maximize_button.setStyleSheet(styles["neutral"])
+        if hasattr(self, "close_button"):
+            self.close_button.setStyleSheet(styles["close"])
 
     def _set_maximized_appearance(self, is_max: bool):
         self.setProperty("maximized", "true" if is_max else "false")
@@ -785,7 +882,7 @@ class MainWindowWidget(QWidget):
         if hasattr(self, "control_panel"):
             return  # دوباره ساخته نشود
 
-        self.control_panel = ControlPanelInterface(tab_widget=self.tab_widget)
+        self.control_panel = ControlPanelInterface(tab_widget=self.tab_widget, host_window=self)
 
         if hasattr(self, 'shortcut_manager'):
             self.shortcut_manager.set_control_panel(self.control_panel)

@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional
 import requests
 
 from .api_manager import APIKeyManager, Manage
+from modules.EchoMind.llm_client import chat_completion
+from modules.EchoMind.settings_store import get_llm_backend, get_openai_settings, get_prompt_settings
 
 # ------------------------------------------------------
 #  Safety helpers (never crash UI if analytics fails)
@@ -57,6 +59,55 @@ def ensure_usage_nodes(usage, center, model):
             "last_used": None,
             "history": []
         }
+
+
+def _is_openai_backend() -> bool:
+    return get_llm_backend() == "openai"
+
+
+def _feature_prompt(name: str) -> str:
+    if not _is_openai_backend():
+        return ""
+    try:
+        return str(get_prompt_settings().get(name) or "").strip()
+    except Exception:
+        return ""
+
+
+def _compose_prompt(base_prompt: str, feature_name: str) -> str:
+    extra = _feature_prompt(feature_name)
+    if not extra:
+        return base_prompt
+    return f"{extra}\n\n{base_prompt}"
+
+
+def _openai_result(
+    *,
+    system_prompt: str,
+    user_content: Any,
+    user_msg: str,
+    model: str,
+    api_key_override: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    cfg = get_openai_settings()
+    result = chat_completion(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        model=(_to_str(model).strip() or str(cfg.get("text_model") or "gpt-4o-mini")),
+        temperature=float(cfg.get("temperature", 0.2) if temperature is None else temperature),
+        max_tokens=int(max_tokens or cfg.get("max_output_tokens") or 4096),
+        timeout=int(cfg.get("timeout_seconds") or 60),
+        api_key_override=api_key_override,
+        reasoning_effort=str(cfg.get("reasoning_effort") or "").strip() or None,
+    )
+    return {
+        "content": result.get("content", ""),
+        "usage": result.get("usage", {}),
+    }
 
 
 

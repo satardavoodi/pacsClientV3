@@ -219,8 +219,10 @@ def find_slicer_executable(prefer_custom: bool = True) -> Optional[Path]:
     # Get the directory containing this script
     script_dir = Path(__file__).parent.resolve()
     # Project root via central resolver (works in dev and PyInstaller)
+    from aipacs_runtime import advanced_mpr_runtime_root
     from _project_root import PROJECT_ROOT
     project_root = PROJECT_ROOT
+    installed_runtime_root = advanced_mpr_runtime_root()
     
     print(f"[AIPACS_LAUNCH] Searching for AIPacsAdvancedViewer.exe...")
     print(f"[AIPACS_LAUNCH] Script directory: {script_dir}")
@@ -254,6 +256,7 @@ def find_slicer_executable(prefer_custom: bool = True) -> Optional[Path]:
     # PRIORITY 3: Portable / relative paths (no hardcoded drive letters)
     # ============================================================
     candidate_launchers.extend([
+        installed_runtime_root / "AIPacsAdvancedViewer.exe",
         script_dir / "NewMPR2Slicer" / "build" / "AIPacsAdvancedViewer.exe",
         script_dir / "Slicer-build" / "AIPacsAdvancedViewer.exe",
         script_dir.parent / "Slicer-build" / "AIPacsAdvancedViewer.exe",

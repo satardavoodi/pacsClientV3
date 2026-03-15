@@ -4,6 +4,7 @@ from PySide6.QtCore import Signal, QDate, Qt
 import qtawesome as qta
 from datetime import datetime, timedelta
 from PacsClient.utils.custom_checkbox import CustomCheckbox
+from PacsClient.utils.theme_manager import get_theme_manager
 
 class PatientSearchWidget(QWidget):
     """
@@ -19,7 +20,11 @@ class PatientSearchWidget(QWidget):
     def __init__(self, parent=None):
         super(PatientSearchWidget, self).__init__(parent)
         self._is_searching = False
+        self.theme_manager = get_theme_manager()
+        self._active_theme = self.theme_manager.current_theme()
         self.setup_ui()
+        self.theme_manager.themeChanged.connect(self.apply_theme)
+        self.apply_theme(self._active_theme)
 
     def setup_ui(self):
         """Setup the Patient Search UI"""
@@ -29,6 +34,7 @@ class PatientSearchWidget(QWidget):
 
         # Create search group
         search_group = QGroupBox("Patient Search")
+        self.search_group = search_group
         search_group.setStyleSheet("""
             QGroupBox {
                 font-size: 14pt;
@@ -316,8 +322,9 @@ class PatientSearchWidget(QWidget):
         self._apply_field_styling()
         self._apply_date_field_styling()
 
-    def _apply_field_styling(self):
+    def _apply_field_styling(self, theme=None):
         """Apply consistent styling to all input fields with scalable font in pt"""
+        t = theme or self._active_theme
         base_pt = 13
         combo_pt = 12
         date_pt = 12
@@ -340,29 +347,29 @@ class PatientSearchWidget(QWidget):
             if isinstance(field, QComboBox):
                 field.setStyleSheet(f"""
                     QComboBox {{
-                        background: #1a202c;
-                        border: 1px solid #4a5568;
+                        background: {t['panel_alt_bg']};
+                        border: 1px solid {t['border']};
                         border-radius: 5px;
                         padding: 6px 10px;
                         font-size: {combo_pt}pt;
                         font-family: 'Roboto', sans-serif;
-                        color: #f7fafc;
-                        selection-background-color: #3182ce;
+                        color: {t['text_primary']};
+                        selection-background-color: {t['accent']};
                     }}
                     QComboBox:hover {{
-                        border: 1px solid #718096;
-                        background: #2d3748;
+                        border: 1px solid {t['accent']};
+                        background: {t['card_bg']};
                     }}
                     QComboBox:focus {{
-                        border: 2px solid #3182ce;
-                        background: #2d3748;
+                        border: 2px solid {t['accent']};
+                        background: {t['card_bg']};
                         outline: none;
                     }}
                     QComboBox::drop-down {{
                         border: none;
                         width: 30px;
-                        background: #2d3748;
-                        border-left: 1px solid #4a5568;
+                        background: {t['card_bg']};
+                        border-left: 1px solid {t['border']};
                         border-top-right-radius: 5px;
                         border-bottom-right-radius: 5px;
                         subcontrol-origin: padding;
@@ -373,18 +380,18 @@ class PatientSearchWidget(QWidget):
                         height: 0;
                         border-left: 5px solid transparent;
                         border-right: 5px solid transparent;
-                        border-top: 6px solid #a0aec0;
+                        border-top: 6px solid {t['text_muted']};
                     }}
                     QComboBox::down-arrow:hover {{
-                        border-top-color: #e2e8f0;
+                        border-top-color: {t['text_primary']};
                     }}
                     QComboBox QAbstractItemView {{
-                        background: #1a202c;
-                        border: 1px solid #4a5568;
+                        background: {t['panel_bg']};
+                        border: 1px solid {t['border']};
                         border-radius: 5px;
-                        color: #f7fafc;
-                        selection-background-color: #3182ce;
-                        selection-color: #ffffff;
+                        color: {t['text_primary']};
+                        selection-background-color: {t['accent']};
+                        selection-color: {t['button_text']};
                         outline: none;
                         font-size: {combo_pt}pt;
                     }}
@@ -393,39 +400,39 @@ class PatientSearchWidget(QWidget):
                         border: none;
                     }}
                     QComboBox QAbstractItemView::item:hover {{
-                        background: #2d3748;
+                        background: {t['card_bg']};
                     }}
                     QComboBox QAbstractItemView::item:selected {{
-                        background: #3182ce;
-                        color: #ffffff;
+                        background: {t['accent']};
+                        color: {t['button_text']};
                     }}
                 """)
             elif isinstance(field, QDateEdit):
                 field.setStyleSheet(f"""
                     QDateEdit {{
-                        background: #1a202c;
-                        border: 1px solid #4a5568;
+                        background: {t['panel_alt_bg']};
+                        border: 1px solid {t['border']};
                         border-radius: 5px;
                         padding: 6px 10px;
                         font-size: {date_pt}pt;
                         font-family: 'Roboto', sans-serif;
-                        color: #f7fafc;
-                        selection-background-color: #3182ce;
+                        color: {t['text_primary']};
+                        selection-background-color: {t['accent']};
                     }}
                     QDateEdit:hover {{
-                        border: 1px solid #718096;
-                        background: #2d3748;
+                        border: 1px solid {t['accent']};
+                        background: {t['card_bg']};
                     }}
                     QDateEdit:focus {{
-                        border: 2px solid #3182ce;
-                        background: #2d3748;
+                        border: 2px solid {t['accent']};
+                        background: {t['card_bg']};
                         outline: none;
                     }}
                     QDateEdit::drop-down {{
                         border: none;
                         width: 30px;
-                        background: #2d3748;
-                        border-left: 1px solid #4a5568;
+                        background: {t['card_bg']};
+                        border-left: 1px solid {t['border']};
                         border-top-right-radius: 5px;
                         border-bottom-right-radius: 5px;
                         subcontrol-origin: padding;
@@ -436,75 +443,76 @@ class PatientSearchWidget(QWidget):
                         height: 0;
                         border-left: 5px solid transparent;
                         border-right: 5px solid transparent;
-                        border-top: 6px solid #a0aec0;
+                        border-top: 6px solid {t['text_muted']};
                     }}
                     QDateEdit::down-arrow:hover {{
-                        border-top-color: #e2e8f0;
+                        border-top-color: {t['text_primary']};
                     }}
                     QCalendarWidget {{
-                        background-color: #1a202c;
+                        background-color: {t['panel_bg']};
                     }}
                     QCalendarWidget QWidget {{
-                        color: #e2e8f0;
+                        color: {t['text_primary']};
                     }}
                     QCalendarWidget QAbstractItemView:enabled {{
-                        background-color: #2d3748;
-                        color: #e2e8f0;
-                        selection-background-color: #3182ce;
-                        selection-color: #ffffff;
+                        background-color: {t['card_bg']};
+                        color: {t['text_primary']};
+                        selection-background-color: {t['accent']};
+                        selection-color: {t['button_text']};
                     }}
                     QCalendarWidget QToolButton {{
-                        color: #e2e8f0;
-                        background-color: #2d3748;
+                        color: {t['text_primary']};
+                        background-color: {t['card_bg']};
                         border-radius: 4px;
                         padding: 4px;
                     }}
                     QCalendarWidget QToolButton:hover {{
-                        background-color: #4a5568;
+                        background-color: {t['menu_hover_bg']};
                     }}
                     QCalendarWidget QSpinBox {{
-                        background-color: #2d3748;
-                        color: #e2e8f0;
-                        border: 1px solid #4a5568;
+                        background-color: {t['card_bg']};
+                        color: {t['text_primary']};
+                        border: 1px solid {t['border']};
                     }}
                     QCalendarWidget QMenu {{
-                        background-color: #1a202c;
-                        color: #e2e8f0;
+                        background-color: {t['panel_bg']};
+                        color: {t['text_primary']};
                     }}
                 """)
                 field.setCalendarPopup(True)
             else:
                 field.setStyleSheet(f"""
                     QLineEdit {{
-                        background: #1a202c;
-                        border: 1px solid #4a5568;
+                        background: {t['panel_alt_bg']};
+                        border: 1px solid {t['border']};
                         border-radius: 5px;
                         padding: 6px 10px;
                         font-size: {base_pt}pt;
                         font-family: 'Roboto', sans-serif;
-                        color: #f7fafc;
-                        selection-background-color: #3182ce;
+                        color: {t['text_primary']};
+                        selection-background-color: {t['accent']};
                     }}
                     QLineEdit:hover {{
-                        border: 1px solid #718096;
-                        background: #2d3748;
+                        border: 1px solid {t['accent']};
+                        background: {t['card_bg']};
                     }}
                     QLineEdit:focus {{
-                        border: 2px solid #3182ce;
-                        background: #2d3748;
+                        border: 2px solid {t['accent']};
+                        background: {t['card_bg']};
                         outline: none;
                     }}
                     QLineEdit::placeholder {{
-                        color: #a0aec0;
+                        color: {t['text_muted']};
                         font-style: italic;
                     }}
                 """)
 
-    def _apply_date_field_styling(self):
+    def _apply_date_field_styling(self, theme=None):
         """Safer/lighter styling for date fields (QDateEdit + popup calendar)"""
         from PySide6.QtGui import QFont, QFontMetrics
         from PySide6.QtWidgets import QCalendarWidget
 
+        t = theme or self._active_theme
         date_fields = [self.date_from_edit, self.date_to_edit]
 
         date_pt = 12
@@ -523,18 +531,19 @@ class PatientSearchWidget(QWidget):
             min_h = max(22, int(fm.height() * 1.4))
             field.setStyleSheet(f"""
                 QDateEdit {{
-                    background: #1a202c;
-                    border: 1px solid #4a5568;
+                    background: {t['panel_alt_bg']};
+                    border: 1px solid {t['border']};
                     border-radius: 5px;
                     padding: {pad_y}px {pad_x}px;
                     font-size: {date_pt}pt;
-                    color: #f7fafc;
-                    selection-background-color: #3182ce;
+                    color: {t['text_primary']};
+                    selection-background-color: {t['accent']};
                 }}
-                QDateEdit:hover {{ border: 1px solid #718096; background: #2d3748; }}
-                QDateEdit:focus {{ border: 2px solid #3182ce; background: #2d3748; }}
+                QDateEdit:hover {{ border: 1px solid {t['accent']}; background: {t['card_bg']}; }}
+                QDateEdit:focus {{ border: 2px solid {t['accent']}; background: {t['card_bg']}; }}
                 QDateEdit::drop-down {{ border: none; width: 24px; background: transparent; }}
             """)
+            field.setMinimumHeight(min_h + pad_y * 2)
 
             cal = field.calendarWidget()
             if cal is None:
@@ -550,45 +559,140 @@ class PatientSearchWidget(QWidget):
 
             cal.setStyleSheet(f"""
                 QCalendarWidget {{
-                    background: #1a202c;
-                    border: 1px solid #3182ce;
+                    background: {t['panel_bg']};
+                    border: 1px solid {t['accent']};
                     border-radius: 6px;
                 }}
                 QCalendarWidget QWidget#qt_calendar_navigationbar {{
-                    background: #2d3748;
-                    border-bottom: 1px solid #4a5568;
+                    background: {t['card_bg']};
+                    border-bottom: 1px solid {t['border']};
                     min-height: {nav_h}px;
                 }}
                 QCalendarWidget QToolButton {{
-                    color: #e2e8f0;
+                    color: {t['text_primary']};
                     background: transparent;
                     font-size: {calendar_pt}pt;
                     padding: 2px 5px;
                 }}
-                QCalendarWidget QToolButton:hover {{ background: #4a5568; }}
+                QCalendarWidget QToolButton:hover {{ background: {t['menu_hover_bg']}; }}
                 QCalendarWidget QAbstractItemView {{
-                    selection-background-color: #3182ce;
-                    selection-color: #ffffff;
+                    selection-background-color: {t['accent']};
+                    selection-color: {t['button_text']};
                     outline: none;
                     font-size: {calendar_pt}pt;
-                    color: #f7fafc;
-                    background: #1a202c;
-                    gridline-color: #4a5568;
+                    color: {t['text_primary']};
+                    background: {t['panel_bg']};
+                    gridline-color: {t['border']};
                 }}
                 QCalendarWidget QAbstractItemView:item {{
                     min-height: {cell_h}px;
                     margin: 1px;
                     border-radius: 3px;
                 }}
-                QCalendarWidget QAbstractItemView:item:hover {{ background: #2d3748; }}
+                QCalendarWidget QAbstractItemView:item:hover {{ background: {t['card_bg']}; }}
                 QCalendarWidget QTableView QHeaderView::section {{
-                    background: #2d3748;
-                    color: #cbd5e0;
+                    background: {t['card_bg']};
+                    color: {t['text_secondary']};
                     font-size: {calendar_pt}pt;
                     padding: 2px 0px;
                     border: none;
                 }}
             """)
+
+    def apply_theme(self, theme=None):
+        self._active_theme = theme or self.theme_manager.current_theme()
+        t = self._active_theme
+        self.setStyleSheet(f"background: {t['panel_bg']};")
+        if hasattr(self, "search_group"):
+            self.search_group.setStyleSheet(
+                f"""
+                QGroupBox {{
+                    font-size: 14pt;
+                    font-family: 'Roboto', sans-serif;
+                    color: {t['text_primary']};
+                    border: 1px solid {t['border']};
+                    border-radius: 8px;
+                    margin: 4px 0px;
+                    padding-top: 10px;
+                    background: {t['panel_bg']};
+                }}
+                QGroupBox::title {{
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 8px 0 8px;
+                    background: {t['panel_bg']};
+                    border-radius: 5px;
+                    color: {t['text_primary']};
+                    font-family: 'Roboto', sans-serif;
+                    font-weight: 600;
+                    font-size: 13pt;
+                }}
+                """
+            )
+        if hasattr(self, "modality_group"):
+            self.modality_group.setStyleSheet(
+                f"""
+                QGroupBox {{
+                    font-size: 14pt;
+                    font-family: 'Roboto', sans-serif;
+                    color: {t['text_primary']};
+                    border: 0px solid {t['border']};
+                    margin: 4px 0px;
+                    padding-top: 8px;
+                    background: {t['panel_bg']};
+                }}
+                QGroupBox::title {{
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 8px 0 8px;
+                    background: {t['panel_bg']};
+                    border-radius: 5px;
+                    color: {t['text_primary']};
+                    font-family: 'Roboto', sans-serif;
+                    font-weight: 600;
+                    font-size: 13pt;
+                }}
+                """
+            )
+        if hasattr(self, "search_btn"):
+            self.search_btn.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {t['success']}, stop:1 {t['success_hover']});
+                    color: #ffffff;
+                    border: 1px solid {t['success']};
+                    border-radius: 7px;
+                    padding: 8px 14px;
+                    font-size: 13pt;
+                    font-family: 'Roboto', sans-serif;
+                    margin: 0px;
+                    letter-spacing: 0.5px;
+                }}
+                QPushButton:hover {{
+                    border-color: {t['success_hover']};
+                }}
+                """
+            )
+        if hasattr(self, "cancel_search_btn"):
+            self.cancel_search_btn.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {t['danger']}, stop:1 {t['danger_hover']});
+                    color: #ffffff;
+                    border: 1px solid {t['danger']};
+                    border-radius: 7px;
+                    padding: 8px 14px;
+                    font-size: 13pt;
+                    font-family: 'Roboto', sans-serif;
+                    margin: 0px;
+                    letter-spacing: 0.5px;
+                }}
+                """
+            )
+        self._apply_field_styling(t)
+        self._apply_date_field_styling(t)
 
     def _on_date_selector_changed(self, text):
         """Handle date selector combo box changes"""

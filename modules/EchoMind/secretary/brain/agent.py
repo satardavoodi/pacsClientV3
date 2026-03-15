@@ -30,6 +30,7 @@ import logging
 from typing import Any
 
 from modules.EchoMind.llm_client import gapgpt_chat, LLMError
+from modules.EchoMind.settings_store import get_llm_backend, get_prompt_settings
 from ..contracts import SecretaryActionPlan, SecretaryResult
 from ..validator import validate_plan
 from .catalog_loader import load_module_docs
@@ -39,7 +40,12 @@ log = logging.getLogger(__name__)
 
 # ── LLM connection — all calls routed through modules.EchoMind.llm_client ─────────────
 # Key is resolved automatically from modules.EchoMind Settings (Settings → EchoMind).
-from ..config import SECRETARY_LLM_MODEL as _MODEL, SECRETARY_PHASE2_TIMEOUT, PHASE2_PROMPT_FILE
+from ..config import (
+    SECRETARY_PHASE2_TIMEOUT,
+    PHASE2_PROMPT_FILE,
+    get_secretary_llm_model,
+    get_secretary_reasoning_effort,
+)
 _TIMEOUT = SECRETARY_PHASE2_TIMEOUT
 
 def _load_phase2_prompt() -> str:
@@ -51,6 +57,15 @@ def _load_phase2_prompt() -> str:
 
 
 _SYSTEM_PHASE2: str = _load_phase2_prompt()
+
+
+def _phase2_system_prompt() -> str:
+    if get_llm_backend() != "openai":
+        return _SYSTEM_PHASE2
+    extra = str(get_prompt_settings().get("secretary_action") or "").strip()
+    if not extra:
+        return _SYSTEM_PHASE2
+    return f"{extra}\n\n{_SYSTEM_PHASE2}"
 
 # ── Dispatcher map ────────────────────────────────────────────────────────────
 # Maps action name → the name of the executor method to call.
@@ -334,10 +349,11 @@ class AgentBrain:
             f"{user_text}\n\n"
             "Produce an executable JSON action plan following the output contract above."
         )
+        resolved_model = get_secretary_llm_model()
         payload = {
-            "model": _MODEL,
+            "model": resolved_model,
             "messages": [
-                {"role": "system", "content": _SYSTEM_PHASE2},
+                {"role": "system", "content": _phase2_system_prompt()},
                 {"role": "user",   "content": user_message},
             ],
             "temperature": 0.0,
@@ -352,16 +368,17 @@ class AgentBrain:
             except Exception:
                 pass
         _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM REQUEST (action planning)")
-        _elog(f"  model      : {_MODEL}")
+        _elog(f"  model      : {resolved_model}")
         _elog(f"  user_text  : {user_text!r}")
         _elog(f"  docs_len   : {len(module_docs)} chars")
         try:
             raw = gapgpt_chat(
                 messages=payload["messages"],
-                model=_MODEL,
+                model=resolved_model,
                 max_tokens=512,
                 temperature=0.0,
                 timeout=int(timeout),
+                reasoning_effort=get_secretary_reasoning_effort(),
             )
             log.debug("Phase 2 raw response: %r", raw[:400])
             _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM RESPONSE")

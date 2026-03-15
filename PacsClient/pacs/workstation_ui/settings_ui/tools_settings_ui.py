@@ -34,12 +34,12 @@ class ColorButton(QPushButton):
         self.setStyleSheet(f"""
             QPushButton {{
                 background-color: rgb({r}, {g}, {b});
-                border: 2px solid #4a5568;
-                border-radius: 4px;
+                border: 2px solid #2b313b;
+                border-radius: 8px;
                 min-width: 80px;
             }}
             QPushButton:hover {{
-                border: 2px solid #3182ce;
+                border: 2px solid #3b82f6;
             }}
         """)
     
@@ -157,88 +157,101 @@ class ToolsSettingsWidget(QWidget):
         # Apply dark theme
         self.setStyleSheet("""
             QWidget {
-                background-color: #1a202c;
-                color: #e2e8f0;
+                background-color: #0b0d10;
+                color: #e5e7eb;
             }
             QGroupBox {
-                background-color: #2d3748;
-                border: 1px solid #4a5568;
-                border-radius: 8px;
-                padding: 15px;
-                margin-top: 10px;
-                font-weight: bold;
-                color: #e2e8f0;
+                background-color: #10141a;
+                border: 1px solid #232a33;
+                border-radius: 12px;
+                padding: 18px 20px 18px 20px;
+                padding-top: 44px;
+                margin-top: 28px;
+                font-weight: 700;
+                color: #e5e7eb;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-                font-size: 14px;
+                subcontrol-position: top left;
+                left: 18px;
+                top: 2px;
+                padding: 6px 16px;
+                font-size: 28px;
+                font-weight: 900;
+                color: #f3f4f6;
+                background-color: #0f1319;
+                border: 1px solid #232a33;
+                border-radius: 11px;
             }
             QLabel {
-                color: #e2e8f0;
+                color: #e5e7eb;
                 font-size: 14px;
             }
             QDoubleSpinBox, QSpinBox {
-                background-color: #2d3748;
-                color: #e2e8f0;
-                border: 1px solid #4a5568;
-                border-radius: 4px;
+                background-color: #1b2230;
+                color: #e5e7eb;
+                border: 1px solid #2b313b;
+                border-radius: 8px;
                 padding: 5px 8px;
                 min-height: 34px;
                 font-size: 14px;
             }
             QDoubleSpinBox:focus, QSpinBox:focus {
-                border: 1px solid #3182ce;
+                border: 1px solid #3b82f6;
             }
             QSlider::groove:horizontal {
-                background-color: #4a5568;
+                background-color: #2b313b;
                 height: 6px;
                 border-radius: 3px;
             }
             QSlider::handle:horizontal {
-                background-color: #3182ce;
+                background-color: #3b82f6;
                 width: 18px;
                 margin: -6px 0;
                 border-radius: 9px;
             }
             QSlider::handle:horizontal:hover {
-                background-color: #2c5aa0;
+                background-color: #2563eb;
             }
             QTabWidget::pane {
-                background-color: #2d3748;
-                border: 1px solid #4a5568;
-                border-radius: 4px;
+                background-color: #10141a;
+                border: 1px solid #232a33;
+                border-radius: 12px;
             }
             QTabBar::tab {
-                background-color: #1a202c;
-                color: #e2e8f0;
-                padding: 7px 14px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
+                background-color: #1b2230;
+                color: #cbd5e1;
+                padding: 8px 14px;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
                 font-size: 14px;
+                font-weight: 700;
+                border: 1px solid #2b313b;
             }
             QTabBar::tab:selected {
-                background-color: #2d3748;
+                background-color: #3b82f6;
                 color: #ffffff;
+                border-color: #3b82f6;
             }
             QTabBar::tab:hover {
-                background-color: #374151;
+                background-color: #252d3d;
             }
             QPushButton {
-                background-color: #3182ce;
-                color: #ffffff;
-                border: none;
-                border-radius: 6px;
+                background-color: #1b2230;
+                color: #e5e7eb;
+                border: 1px solid #2b313b;
+                border-radius: 8px;
                 padding: 8px 14px;
                 min-height: 36px;
                 font-size: 14px;
+                font-weight: 600;
             }
             QPushButton:hover {
-                background-color: #2c5aa0;
+                background-color: #252d3d;
+                border-color: #3b82f6;
             }
             QPushButton:pressed {
-                background-color: #1e4a8a;
+                background-color: #162033;
             }
         """)
         
@@ -249,7 +262,7 @@ class ToolsSettingsWidget(QWidget):
         # Title
         title_label = QLabel("Tools & Reference Line Settings")
         title_label.setStyleSheet(
-            "font-size: 18px; font-weight: 800; padding: 10px; color: #e2e8f0;"
+            "font-size: 20px; font-weight: 800; padding: 10px; color: #f3f4f6;"
         )
         main_layout.addWidget(title_label)
 
@@ -261,7 +274,7 @@ class ToolsSettingsWidget(QWidget):
             "Customize the appearance of measurement tools and reference lines.\n"
             "Changes are saved automatically to the database."
         )
-        desc_label.setStyleSheet("color: #a0aec0; padding: 5px 10px;")
+        desc_label.setStyleSheet("color: #94a3b8; padding: 5px 10px;")
         desc_label.setWordWrap(True)
         main_layout.addWidget(desc_label)
                 
@@ -269,7 +282,7 @@ class ToolsSettingsWidget(QWidget):
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
-        separator.setStyleSheet("color: #334155;")
+        separator.setStyleSheet("color: #232a33;")
         main_layout.addWidget(separator)
                 
         # Tab widget for different tools
@@ -311,14 +324,16 @@ class ToolsSettingsWidget(QWidget):
         save_btn.setFixedWidth(140)
         save_btn.setStyleSheet("""
             QPushButton {
-                background-color: #48bb78;
-                color: white;
-                font-weight: bold;
+                background-color: #16a34a;
+                color: #ffffff;
+                font-weight: 800;
                 padding: 8px 12px;
-                border-radius: 4px;
+                border: 1px solid #15803d;
+                border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #38a169;
+                background-color: #15803d;
+                border-color: #10b981;
             }
         """)
         button_layout.addWidget(save_btn)
@@ -327,7 +342,7 @@ class ToolsSettingsWidget(QWidget):
         
         # Status label
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #48bb78; padding: 5px 10px;")
+        self.status_label.setStyleSheet("color: #10b981; padding: 5px 10px; font-weight: 700;")
         main_layout.addWidget(self.status_label)
         
         main_layout.addStretch()
@@ -355,7 +370,7 @@ class ToolsSettingsWidget(QWidget):
             print("💾 [SETTINGS UI] All settings saved successfully!")
             
             self.status_label.setText("✓ Settings saved successfully!")
-            self.status_label.setStyleSheet("color: #48bb78; padding: 5px 10px; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #10b981; padding: 5px 10px; font-weight: 800;")
             
             # Show success message
             QMessageBox.information(
@@ -368,7 +383,7 @@ class ToolsSettingsWidget(QWidget):
             
         except Exception as e:
             self.status_label.setText(f"✗ Error saving settings: {str(e)}")
-            self.status_label.setStyleSheet("color: #60a5fa; padding: 5px 10px; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #f59e0b; padding: 5px 10px; font-weight: 800;")
             
             print(f"❌ [SETTINGS ERROR] Failed to save: {e}")
             import traceback
@@ -407,7 +422,7 @@ class ToolsSettingsWidget(QWidget):
                     panel.font_size_spin.setValue(style.font_size)
                 
                 self.status_label.setText("✓ Settings reset to defaults!")
-                self.status_label.setStyleSheet("color: #48bb78; padding: 5px 10px; font-weight: bold;")
+                self.status_label.setStyleSheet("color: #10b981; padding: 5px 10px; font-weight: 800;")
                 
                 QMessageBox.information(
                     self,
