@@ -1,6 +1,6 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.2.6  
+**Current Stable Version:** v2.2.6.2  
 **Release Date:** 2026-03-15  
 **Branch:** main  
 

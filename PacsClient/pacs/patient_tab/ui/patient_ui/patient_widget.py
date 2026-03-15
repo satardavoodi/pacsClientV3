@@ -74,7 +74,7 @@ class PatientWidget(QWidget):
 
     def __init__(self, parent=None, import_folder_path: str = None, size_init_viewers=(1, 1),
                 caller: CallerTypes = None, study_uid=None, patient_id=None, enable_progressive_mode=False,
-                report_status='pending'):
+                report_status='pending', viewer_backend_override=None):
         super().__init__(parent)
         
         # Initialize logger
@@ -110,6 +110,7 @@ class PatientWidget(QWidget):
         self.study_uid = study_uid
         self.patient_id = patient_id
         self.report_status = report_status
+        self.viewer_backend_override = viewer_backend_override
         self.method_add_new_tab = None
         self.logo_patient = None
         self.ordering_by_instances_number = True
@@ -616,19 +617,12 @@ class PatientWidget(QWidget):
             if not study_path or not study_path.exists():
                 return
 
-            # Find first series folder with DICOM files
-            existing_series = sorted(
-                int(d.name) for d in study_path.iterdir()
-                if d.is_dir() and d.name.isdigit() and (
-                    next(d.glob("*.dcm"), None) or next(d.glob("*.DCM"), None)
-                )
-            )
-
-            if not existing_series:
+            local_series = self._discover_local_series_candidates()
+            if not local_series:
                 # No local data yet — download will fire series_downloaded later
                 return
 
-            first_series = str(existing_series[0])
+            first_series = str(local_series[0]["series_number"])
             print(f"📂 [LOCAL_CHECK] Found local series {first_series} — routing through signal path")
 
             # Use the same signal-driven path as download completions.
@@ -637,6 +631,78 @@ class PatientWidget(QWidget):
             self.series_downloaded.emit(first_series)
         except Exception as e:
             print(f"⚠️ [LOCAL_CHECK] Error: {e}")
+
+    @staticmethod
+    def _has_direct_dicom_files(path: Path) -> bool:
+        try:
+            if not path or not path.exists() or not path.is_dir():
+                return False
+            for pattern in ("*.dcm", "*.DCM", "*.dicom", "*.DICOM"):
+                if next(path.glob(pattern), None):
+                    return True
+        except Exception:
+            return False
+        return False
+
+    @classmethod
+    def _child_dicom_dirs(cls, path: Path) -> list[Path]:
+        try:
+            if not path or not path.exists() or not path.is_dir():
+                return []
+            return [
+                child for child in path.iterdir()
+                if child.is_dir() and cls._has_direct_dicom_files(child)
+            ]
+        except Exception:
+            return []
+
+    def _discover_local_series_candidates(self) -> list[dict]:
+        """Discover locally available series for cached imports.
+
+        Supports:
+        - flat study folders where the selected import folder contains DICOM files directly
+        - study folders with series subdirectories, including non-numeric names
+        """
+        study_path = Path(self.import_folder_path) if self.import_folder_path else None
+        if not study_path or not study_path.exists() or not study_path.is_dir():
+            return []
+
+        candidate_paths = []
+        if self._has_direct_dicom_files(study_path):
+            candidate_paths.append(study_path)
+        candidate_paths.extend(self._child_dicom_dirs(study_path))
+
+        series_candidates = []
+        seen_paths = set()
+        for path in candidate_paths:
+            key = str(path).lower()
+            if key in seen_paths:
+                continue
+            seen_paths.add(key)
+
+            info = get_quickly_series_info(path)
+            if not info:
+                continue
+
+            series_number = str(info.get("series_number", "")).strip()
+            if not series_number:
+                continue
+
+            if series_number.isdigit():
+                sort_key = (0, int(series_number), path.name.lower())
+            else:
+                sort_key = (1, series_number.lower(), path.name.lower())
+
+            series_candidates.append(
+                {
+                    "series_number": series_number,
+                    "path": path,
+                    "sort_key": sort_key,
+                }
+            )
+
+        series_candidates.sort(key=lambda item: item["sort_key"])
+        return series_candidates
             
 
     def _hide_init_overlay(self):
@@ -1265,14 +1331,6 @@ class PatientWidget(QWidget):
         except RuntimeError:
             return  # Widget was deleted
 
-        # Efficiently find existing series using generator expression
-        existing_series = sorted(
-            int(d.name) for d in study_path.iterdir()
-            if d.is_dir() and d.name.isdigit() and (
-                next(d.glob("*.dcm"), None) or next(d.glob("*.DCM"), None)
-            )
-        )
-
         # Check if widget is still valid (allow hidden tabs to load)
         try:
             _ = self.isVisible()
@@ -1281,8 +1339,11 @@ class PatientWidget(QWidget):
 
         # Determine series source: existing or download
         first_series_folder = None
-        if existing_series:
-            first_series_folder = study_path / str(existing_series[0])
+        first_series_number = None
+        local_series = self._discover_local_series_candidates()
+        if local_series:
+            first_series_number = str(local_series[0]["series_number"])
+            first_series_folder = Path(local_series[0]["path"])
         else:
             # Async wait for download with timeout
             first_series_number = await self._wait_for_series_download(timeout=60)
@@ -1299,7 +1360,9 @@ class PatientWidget(QWidget):
             return  # Widget was deleted
 
         try:
-            series_num = int(first_series_folder.name)
+            if first_series_number is None:
+                return
+            series_num = str(first_series_number)
 
             result = load_single_series_by_number(
                 study_path=self.import_folder_path,
@@ -1694,7 +1757,7 @@ class PatientWidget(QWidget):
 
                 _thumbnail_time = time.time() - _series_start
 
-                await self.check_logo_patient(file_path)
+                self.check_logo_patient(file_path)
 
                 thumb_index = self.add_thumbnail_to_thumbnail_layout(
                     thumb_index=thumb_index, file_path_thumbnail=file_path,
@@ -1943,7 +2006,7 @@ class PatientWidget(QWidget):
             )
             _thumb_time = time.time() - _thumb_start
 
-            await self.check_logo_patient(file_path)
+            self.check_logo_patient(file_path)
 
             thumb_index = self.add_thumbnail_to_thumbnail_layout(
                 thumb_index=thumb_index, file_path_thumbnail=file_path,
@@ -5358,13 +5421,17 @@ class PatientWidget(QWidget):
             
         path = Path(self.import_folder_path)
         
+        if self._has_direct_dicom_files(path):
+            sibling_series_dirs = self._child_dicom_dirs(path.parent) if path.parent.exists() else []
+            if path.name.isdigit() or len(sibling_series_dirs) > 1:
+                return str(path.parent)
+            return str(path)
+
         # If current path has numeric subfolders that are series, we're at study level
         # If current path is numeric and exists inside another folder, go up
         if path.name.isdigit() and path.parent.exists():
-            # Check if parent has other series folders
             parent = path.parent
-            series_folders = [d for d in parent.iterdir() if d.is_dir() and d.name.isdigit()]
-            if len(series_folders) > 1:
+            if len(self._child_dicom_dirs(parent)) > 1:
                 return str(parent)
         
         return str(path)
@@ -7232,7 +7299,7 @@ class PatientWidget(QWidget):
             )
             _thumb_time = time.time() - _thumb_start
 
-            await self.check_logo_patient(file_path)
+            self.check_logo_patient(file_path)
 
             thumb_index = self.add_thumbnail_to_thumbnail_layout(
                 thumb_index=thumb_index, file_path_thumbnail=file_path,

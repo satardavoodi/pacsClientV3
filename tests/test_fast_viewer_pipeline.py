@@ -129,3 +129,18 @@ def test_load_single_series_on_demand_uses_requested_fast_backend_when_backend_i
     assert result is False
     assert captured["viewer_backend"] == controller_mod.BACKEND_PYDICOM
     assert captured["allow_lazy_backend"] is True
+
+
+def test_get_requested_viewer_backend_prefers_parent_override(monkeypatch):
+    controller = _build_controller()
+    controller.parent_widget = SimpleNamespace(
+        viewer_backend_override=controller_mod.BACKEND_PYDICOM,
+    )
+
+    monkeypatch.setattr(
+        controller_mod,
+        "load_viewer_backend",
+        lambda default=controller_mod.BACKEND_VTK: controller_mod.BACKEND_VTK,
+    )
+
+    assert controller._get_requested_viewer_backend() == controller_mod.BACKEND_PYDICOM

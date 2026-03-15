@@ -1064,6 +1064,32 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
         return None
 
 
+def _has_direct_dicom_files(path: Path) -> bool:
+    """True when *path* contains DICOM files directly (not only in subfolders)."""
+    try:
+        if not path or not path.exists() or not path.is_dir():
+            return False
+        for pattern in ("*.dcm", "*.DCM", "*.dicom", "*.DICOM"):
+            if next(path.glob(pattern), None):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _study_root_matches_series_number(study_path: Path, series_number) -> bool:
+    """Support flat imported studies where the selected folder is the series folder."""
+    if not _has_direct_dicom_files(study_path):
+        return False
+    try:
+        info = utils.get_quickly_series_info(study_path)
+    except Exception:
+        return False
+    if not info:
+        return False
+    return str(info.get("series_number", "")).strip() == str(series_number).strip()
+
+
 def load_single_series_by_number(study_path, series_number, patient_pk=None, study_pk=None,
                                  ordering_by_instances_number=None, skip_fs_validation=False,
                                  max_itk_threads=None, max_pydicom_workers=None,
@@ -1086,45 +1112,48 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
     if not series_path.exists():
         # Try alternative naming patterns
         study_path_obj = Path(study_path)
-        
-        # Look for series folder with the series number in the name
-        potential_series_folders = []
-        for item in study_path_obj.iterdir():
-            if item.is_dir():
-                # Check if directory name contains the series number
-                if str(series_number) in item.name:
-                    # Check if it has DICOM files
-                    dicom_files = _list_unique_dicom_files(item)
-                    if dicom_files:
-                        potential_series_folders.append(item)
-        
-        if potential_series_folders:
-            # Sort by folder name and take the first one
-            potential_series_folders.sort()
-            series_path = potential_series_folders[0]
-            print(f"      Found series folder: {series_path.name} (looking for series {series_number})")
+
+        if _study_root_matches_series_number(study_path_obj, series_number):
+            series_path = study_path_obj
         else:
-            # Fallback: get series path from DB
-            series_path_from_db = None
-            if study_pk:
-                try:
-                    series_path_from_db = get_series_path_with_study_pk_and_series_number(study_pk, series_number)
-                except Exception as e:
-                    print(f"      WARN: Error getting series path from DB: {e}")
-            
-            if series_path_from_db and Path(series_path_from_db).exists():
-                series_path = Path(series_path_from_db)
-                print(f"      Using series path from DB: {series_path}")
+            # Look for series folder with the series number in the name
+            potential_series_folders = []
+            for item in study_path_obj.iterdir():
+                if item.is_dir():
+                    # Check if directory name contains the series number
+                    if str(series_number) in item.name:
+                        # Check if it has DICOM files
+                        dicom_files = _list_unique_dicom_files(item)
+                        if dicom_files:
+                            potential_series_folders.append(item)
+
+            if potential_series_folders:
+                # Sort by folder name and take the first one
+                potential_series_folders.sort()
+                series_path = potential_series_folders[0]
+                print(f"      Found series folder: {series_path.name} (looking for series {series_number})")
             else:
-                # Last fallback: try to find series folder by number pattern
-                series_name = find_series_folder_by_series_number(study_path, series_number)
-                if series_name:
-                    series_path = Path(f'{study_path}/{series_name}')
+                # Fallback: get series path from DB
+                series_path_from_db = None
+                if study_pk:
+                    try:
+                        series_path_from_db = get_series_path_with_study_pk_and_series_number(study_pk, series_number)
+                    except Exception as e:
+                        print(f"      WARN: Error getting series path from DB: {e}")
+
+                if series_path_from_db and Path(series_path_from_db).exists():
+                    series_path = Path(series_path_from_db)
+                    print(f"      Using series path from DB: {series_path}")
                 else:
-                    error_msg = f'Series {series_number} not found in study {study_path}'
-                    print(f'ERROR: {error_msg}')
-                    # Instead of raising error, return None
-                    return
+                    # Last fallback: try to find series folder by number pattern
+                    series_name = find_series_folder_by_series_number(study_path, series_number)
+                    if series_name:
+                        series_path = Path(f'{study_path}/{series_name}')
+                    else:
+                        error_msg = f'Series {series_number} not found in study {study_path}'
+                        print(f'ERROR: {error_msg}')
+                        # Instead of raising error, return None
+                        return
     
     _path_time = time.time() - _path_start
     print(f"      Path resolution: {_path_time:.3f}s")

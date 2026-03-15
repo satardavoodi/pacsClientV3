@@ -22,7 +22,8 @@ from PacsClient.utils.db_manager import get_study_by_study_uid
 from PacsClient.utils.utils import UpdaterDataFromServerToHome
 from PacsClient.pacs.patient_tab.utils import save_thumbnail_with_bytes, save_series_json, check_study_exists, \
     get_all_series_thumbnail_from_study_folder, load_json_as_dict, get_study_source_path, get_name_file_from_path, \
-    check_study_complete, validate_thumbnail_files, clear_study_cache, get_count_dicom_files_exist
+    check_study_complete, validate_thumbnail_files, clear_study_cache, get_count_dicom_files_exist, \
+    save_image_as_png
 
 from pydicom.dataset import Dataset
 from pynetdicom import AE, AllStoragePresentationContexts
@@ -47,6 +48,11 @@ from modules.download_manager.core.enums import DownloadPriority
 from modules.network.socket_patient_service import get_socket_patient_service
 from concurrent.futures import ThreadPoolExecutor
 from .data_access_panel import DataAccessPanelWidget
+from .import_preview_dialog import (
+    DicomImportPreviewDialog,
+    import_scanned_dicom_studies,
+    scan_dicom_import_folder,
+)
 from .patient_search_widget import PatientSearchWidget
 from .patient_table_widget import PatientTableWidget
 from .right_panel_widget import RightPanelWidget
@@ -63,10 +69,13 @@ PRIORITY_MANAGER_AVAILABLE = False  # Legacy priority manager removed
 from PacsClient.pacs.patient_tab.ui.patient_ui.custom_tab_manager import CustomTabManager
 import warnings
 from PacsClient.utils.config import SOURCE_PATH
+from PacsClient.utils.config import THUMBNAIL_PATH
 from modules.network.socket_config import update_socket_server_settings, get_socket_server_settings
 from modules.network.upload_download_attchments import download_attachments_for_study, download_attachments_for_study_async
 from PacsClient.utils.scroll_style import get_scroll_area_style
 from PacsClient.utils.theme_manager import get_theme_manager
+from modules.viewer.viewer_backend_config import BACKEND_PYDICOM
+from PacsClient.pacs.patient_tab.utils.image_io import load_series_preview
 
 warnings.simplefilter("error")
 
@@ -207,8 +216,7 @@ class HomePanelWidget(QWidget):
             folder_path = QFileDialog.getExistingDirectory(
                 self.data_access_panel_widget, "Select Folder", dir=str(default_dir))
             if folder_path:
-                self.data_access_panel_widget.folder_path_label.setText(folder_path)
-                self.add_new_tab_widget(folder_path=folder_path, caller=CallerTypes.IMPORT)
+                self._import_folder_with_preview(folder_path)
 
         left_panel = QWidget()
         self.left_panel_widget = left_panel
@@ -840,6 +848,241 @@ class HomePanelWidget(QWidget):
             pass
 
     ######################################################################################################
+
+    def _run_background_job_with_progress(self, title: str, label_text: str, task, *args, **kwargs):
+        progress = QProgressDialog(label_text, None, 0, 0, self)
+        progress.setWindowTitle(title)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
+        progress.show()
+        QApplication.processEvents()
+
+        future = self.thread_pool.submit(task, *args, **kwargs)
+        try:
+            while not future.done():
+                QApplication.processEvents()
+                time.sleep(0.05)
+            return future.result()
+        finally:
+            progress.close()
+            progress.deleteLater()
+            QApplication.processEvents()
+
+    def _refresh_local_patient_list_after_import(self):
+        self.source_of_patient_load = SourceOfPatientLoad.DB
+
+        tabs = getattr(self.data_access_panel_widget, "tabs", None)
+        if tabs is not None and tabs.currentIndex() != 0:
+            tabs.setCurrentIndex(0)
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        if loop.is_running():
+            loop.create_task(self.search_patients_from_local_async())
+
+    def _prepare_imported_study_for_fast_open(self, study_info: dict) -> int:
+        study_uid = str(study_info.get("study_uid") or "").strip()
+        patient_id = str(study_info.get("patient_id") or "").strip()
+        if not study_uid or not patient_id:
+            return 0
+
+        patient_pk = find_patient_pk(patient_id)
+        study_pk = find_study_pk_with_study_uid(study_uid)
+        study_path = SOURCE_PATH / study_uid
+        thumbnail_root = THUMBNAIL_PATH / study_uid
+        thumbnail_root.mkdir(parents=True, exist_ok=True)
+
+        metadata_fixed = {
+            "study_uid": study_uid,
+            "patient_pk": patient_pk,
+            "study_pk": study_pk,
+        }
+
+        generated_count = 0
+        for series in study_info.get("series", []) or []:
+            series_number = str(series.get("series_number") or "").strip()
+            series_uid = str(series.get("series_uid") or "").strip()
+            if not series_number or not series_uid:
+                continue
+
+            thumbnail_path = thumbnail_root / f"{series_number}.png"
+            if thumbnail_path.exists():
+                continue
+
+            preview = load_series_preview(
+                study_path=str(study_path),
+                series_number=series_number,
+                patient_pk=patient_pk,
+                study_pk=study_pk,
+            )
+            if not preview:
+                continue
+
+            vtk_image_data, metadata, _patient_info, _total_files = preview
+            series_pk = find_series_pk(series_uid)
+            if not series_pk:
+                continue
+
+            metadata.setdefault("series", {})
+            metadata["series"]["series_pk"] = series_pk
+            metadata["series"]["series_number"] = series_number
+
+            save_image_as_png(
+                vtk_image_data=vtk_image_data,
+                metadata=metadata,
+                metadata_fixed=metadata_fixed,
+                file=str(study_path),
+            )
+            generated_count += 1
+
+        clear_study_cache(study_uid)
+        return generated_count
+
+    def _open_imported_primary_study(self, study_info: dict):
+        study_uid = study_info.get("study_uid")
+        if not study_uid:
+            return
+
+        target_path = str(SOURCE_PATH / study_uid)
+        self.data_access_panel_widget.folder_path_label.setText(target_path)
+        self.add_new_tab_widget(
+            patient_id=study_info.get("patient_id") or None,
+            patient_name=study_info.get("patient_name") or "Imported Study",
+            folder_path=target_path,
+            caller=CallerTypes.IMPORT,
+            study_uid=study_uid,
+            enable_progressive_mode=True,
+            viewer_backend_override=BACKEND_PYDICOM,
+        )
+
+    def _import_folder_with_preview(self, folder_path: str):
+        try:
+            scan_result = self._run_background_job_with_progress(
+                "Scan DICOM Folder",
+                "Reading DICOM headers from the selected folder...",
+                scan_dicom_import_folder,
+                folder_path,
+            )
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Import Scan Failed",
+                f"AI-PACS could not read the selected folder.\n\n{exc}",
+            )
+            return
+
+        if not scan_result.get("dicom_file_count"):
+            QMessageBox.information(
+                self,
+                "No DICOM Files Found",
+                "No readable DICOM files were found in the selected folder.",
+            )
+            return
+
+        preview_dialog = DicomImportPreviewDialog(scan_result, self)
+        if preview_dialog.exec() != QDialog.Accepted:
+            return
+
+        selected_scan_result = preview_dialog.selected_scan_result()
+        if not selected_scan_result.get("series_count"):
+            QMessageBox.warning(
+                self,
+                "Nothing Selected",
+                "Select at least one study and one series before importing into AI-PACS.",
+            )
+            return
+
+        try:
+            import_result = self._run_background_job_with_progress(
+                "Import DICOM Folder",
+                "Copying DICOM files into AI-PACS storage...",
+                import_scanned_dicom_studies,
+                selected_scan_result,
+                SOURCE_PATH,
+            )
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Import Failed",
+                f"AI-PACS could not copy the selected DICOM files.\n\n{exc}",
+            )
+            return
+
+        imported_studies = import_result.get("studies", []) or []
+        if not imported_studies:
+            QMessageBox.warning(
+                self,
+                "Import Failed",
+                "The selected folder was scanned, but no studies were imported into AI-PACS.",
+            )
+            return
+
+        failed_studies = []
+        for study in imported_studies:
+            saved = self.save_complete_study_info(
+                study_uid=study.get("study_uid", ""),
+                patient_id=study.get("patient_id"),
+                study_info=study,
+            )
+            if not saved:
+                failed_studies.append(study.get("study_uid", "Unknown Study"))
+
+        primary_study = import_result.get("primary_study")
+        if primary_study and primary_study.get("study_uid") not in failed_studies:
+            try:
+                self._run_background_job_with_progress(
+                    "Prepare Fast Viewer",
+                    "Creating thumbnails and preparing the fast viewer...",
+                    self._prepare_imported_study_for_fast_open,
+                    primary_study,
+                )
+            except Exception as exc:
+                warning_messages = [
+                    "The study was imported, but fast-viewer preparation failed:",
+                    str(exc),
+                ]
+                QMessageBox.warning(
+                    self,
+                    "Fast Viewer Preparation Warning",
+                    "\n".join(warning_messages),
+                )
+
+        self._refresh_local_patient_list_after_import()
+
+        if primary_study and primary_study.get("study_uid") not in failed_studies:
+            self._open_imported_primary_study(primary_study)
+
+        warning_messages = []
+        if import_result.get("errors"):
+            preview_errors = import_result["errors"][:5]
+            warning_messages.append("Some files could not be copied:")
+            warning_messages.extend(preview_errors)
+            if len(import_result["errors"]) > 5:
+                warning_messages.append(
+                    f"... and {len(import_result['errors']) - 5} more file issues."
+                )
+
+        if failed_studies:
+            warning_messages.append("")
+            warning_messages.append("Some studies could not be saved to the local database:")
+            warning_messages.extend(failed_studies[:5])
+            if len(failed_studies) > 5:
+                warning_messages.append(f"... and {len(failed_studies) - 5} more studies.")
+
+        if warning_messages:
+            QMessageBox.warning(
+                self,
+                "Import Completed With Warnings",
+                "\n".join(message for message in warning_messages if message is not None),
+            )
 
     def setup_center_panel(self):
         """Setup the center panel with Patient Table Component"""
@@ -4463,7 +4706,8 @@ Study UID: {study_uid}
             traceback.print_exc()
 
     def add_new_tab_widget(self, patient_id=None, patient_name=None, folder_path=None, open_ai_client_tab=False,
-                        caller=None, study_uid=None, enable_progressive_mode=False, report_status='pending'):
+                        caller=None, study_uid=None, enable_progressive_mode=False, report_status='pending',
+                        viewer_backend_override=None):
 
         if open_ai_client_tab is True:
             try:
@@ -4618,7 +4862,8 @@ Study UID: {study_uid}
                 study_uid=study_uid, 
                 patient_id=patient_id,
                 enable_progressive_mode=enable_progressive_mode,
-                report_status=report_status
+                report_status=report_status,
+                viewer_backend_override=viewer_backend_override,
             )
             widget.set_method_open_ai_module_tab(self.add_new_tab_widget)
             
@@ -5369,7 +5614,8 @@ Study UID: {study_uid}
                         continue
 
                     # Build series path
-                    series_path = SOURCE_PATH / study_uid / str(series_number)
+                    series_path_name = str(series.get('series_path_name') or series_number)
+                    series_path = SOURCE_PATH / study_uid / series_path_name
                     series_path.mkdir(parents=True, exist_ok=True)
 
                     # Create series record with full information
@@ -5405,7 +5651,7 @@ Study UID: {study_uid}
                         print(f"[SAVE_INSTANCES] Series {series_number} has {instance_count} images in metadata")
                         
                         # Scan series directory for DICOM files
-                        series_path = SOURCE_PATH / study_uid / str(series_number)
+                        series_path = SOURCE_PATH / study_uid / series_path_name
                         dicom_files = sorted([
                             f for f in series_path.glob('*.dcm') if f.is_file()
                         ], key=lambda x: natsort.natsort_keygen()(x.name))

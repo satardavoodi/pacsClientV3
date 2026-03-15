@@ -1410,6 +1410,12 @@ class ViewerController:
 
     def _get_requested_viewer_backend(self) -> str:
         try:
+            override_backend = str(
+                getattr(self.parent_widget, "viewer_backend_override", "") or ""
+            ).strip()
+            if override_backend:
+                return override_backend
+
             resolution = resolve_viewer_backend(
                 metadata=None,
                 settings=load_viewer_backend(default=BACKEND_VTK),
@@ -3416,32 +3422,19 @@ class ViewerController:
 
     def _get_correct_study_path(self) -> str:
         """Get the correct study path, ensuring it's not pointing to a series subfolder"""
-        from pathlib import Path
+        try:
+            resolver = getattr(self.parent_widget, "_get_correct_study_path", None)
+            if callable(resolver):
+                resolved = resolver()
+                if resolved:
+                    return str(resolved)
+        except Exception:
+            pass
 
         if not self.parent_widget.import_folder_path:
             return None
 
-        path = Path(self.parent_widget.import_folder_path)
-
-        # If path itself is a series folder (numeric OR UID-named) and contains
-        # DICOM files, use parent study folder.
-        try:
-            has_dicom = bool(next(path.glob("*.dcm"), None) or next(path.glob("*.DCM"), None))
-        except Exception:
-            has_dicom = False
-        if has_dicom and path.parent.exists():
-            return str(path.parent)
-
-        # If current path has numeric subfolders that are series, we're at study level
-        # If current path is numeric and exists inside another folder, go up
-        if path.name.isdigit() and path.parent.exists():
-            # Check if parent has other series folders
-            parent = path.parent
-            series_folders = [d for d in parent.iterdir() if d.is_dir() and d.name.isdigit()]
-            if len(series_folders) > 1:
-                return str(parent)
-
-        return str(path)
+        return str(self.parent_widget.import_folder_path)
 
     def _perform_series_switch_optimized(self, vtk_widget, metadata, vtk_image_data, series_idx, slider,
                                          allow_paired: bool = True, expected_token=None):
