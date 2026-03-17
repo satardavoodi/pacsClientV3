@@ -1,0 +1,30 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "web_browser",
+  "title": "Web Browser Module",
+  "tier": "optional",
+  "package_kind": "bundled_unlock",
+  "build_strategy": "source_tree",
+  "source_paths": [
+    "modules/web_browser"
+  ],
+  "python_paths": [
+    "python"
+  ],
+  "healthcheck_import": "modules.web_browser",
+  "healthcheck_path": "",
+  "integration_points": [
+    "home.web_browser_tab",
+    "settings.installation_module"
+  ],
+  "install_channels": [
+    "installer",
+    "settings",
+    "store"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "web_browser",
+  "notes": "",
+  "definition_path": "C:\\AI-Pacs codes\\aipacs-pydicom2d\\builder\\plugin package\\definitions\\web_browser\\plugin_package.json"
+}

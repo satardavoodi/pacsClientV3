@@ -1583,8 +1583,15 @@ def load_series_preview(study_path, series_number, patient_pk=None, study_pk=Non
             itk_image = sitk.ReadImage(str(preview_files[0]))
         else:
             itk_image = get_itk_image_fast_first([str(p) for p in preview_files])
-    except Exception:
-        itk_image = get_itk_image([str(p) for p in preview_files])
+    except Exception as e_first:
+        try:
+            itk_image = get_itk_image([str(p) for p in preview_files])
+        except Exception as e_fallback:
+            print(
+                f"[PREVIEW] Failed to load series {series_number} preview from {series_path}: "
+                f"primary={e_first}; fallback={e_fallback}"
+            )
+            return None
 
     vtk_image_data = utils.convert_itk2vtk(itk_image)
 

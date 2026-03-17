@@ -13,7 +13,7 @@ from PacsClient.utils.data_paths import USER_DATA_ROOT
 THEME_STORAGE_DIR = USER_DATA_ROOT / "config"
 THEME_STORAGE_PATH = THEME_STORAGE_DIR / "theme_settings.json"
 
-DEFAULT_THEME_ORDER = ["Blue", "Gray", "Green", "Turquoise", "Custom"]
+DEFAULT_THEME_ORDER = ["Blue", "Gray", "Green", "Turquoise", "Dark Red", "Yellow", "Custom"]
 
 DEFAULT_THEMES = {
     "Blue": {
@@ -39,6 +39,18 @@ DEFAULT_THEMES = {
         "window_bg": "#14252b",
         "menu_bg": "#1f3942",
         "panel_bg": "#102027",
+    },
+    "Dark Red": {
+        "accent": "#b63c57",
+        "window_bg": "#191015",
+        "menu_bg": "#301a23",
+        "panel_bg": "#120a0f",
+    },
+    "Yellow": {
+        "accent": "#c99512",
+        "window_bg": "#1f1b10",
+        "menu_bg": "#3b3016",
+        "panel_bg": "#171106",
     },
 }
 
@@ -80,6 +92,23 @@ def _shift_lightness(color: str, delta: int) -> str:
     return qcolor.name(QColor.HexRgb)
 
 
+def _relative_luminance(color: str) -> float:
+    qcolor = QColor(color)
+    if not qcolor.isValid():
+        qcolor = QColor("#000000")
+
+    def _lin(channel: int) -> float:
+        c = channel / 255.0
+        if c <= 0.03928:
+            return c / 12.92
+        return ((c + 0.055) / 1.055) ** 2.4
+
+    r = _lin(qcolor.red())
+    g = _lin(qcolor.green())
+    b = _lin(qcolor.blue())
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
 def _theme_blueprint(name: str, palette: dict[str, str]) -> dict[str, str]:
     accent = _normalize_hex(palette.get("accent", "#3182ce"), "#3182ce")
     window_bg = _normalize_hex(palette.get("window_bg", "#18212f"), "#18212f")
@@ -93,6 +122,7 @@ def _theme_blueprint(name: str, palette: dict[str, str]) -> dict[str, str]:
 
     accent_hover = _shift_lightness(accent, 14)
     accent_pressed = _shift_lightness(accent, -18)
+    button_text = "#0f172a" if _relative_luminance(accent) > 0.32 else "#ffffff"
 
     return {
         "name": name,
@@ -116,7 +146,7 @@ def _theme_blueprint(name: str, palette: dict[str, str]) -> dict[str, str]:
         "tab_bg": _mix(menu_bg, panel_bg, 0.26),
         "tab_hover_bg": _mix(menu_bg, accent, 0.12),
         "tab_active_bg": accent,
-        "button_text": "#ffffff",
+        "button_text": button_text,
         "success": "#10b981",
         "success_hover": "#0e9f6e",
         "warning": "#f59e0b",

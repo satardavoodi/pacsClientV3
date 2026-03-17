@@ -1,0 +1,20 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "zeta_boost",
+  "title": "ZetaBoost",
+  "tier": "basic",
+  "package_kind": "core",
+  "build_strategy": "source_tree",
+  "source_paths": [
+    "modules/zeta_boost"
+  ],
+  "integration_points": [
+    "viewer.performance_pipeline"
+  ],
+  "install_channels": [
+    "core_bundle"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "zeta_boost"
+}

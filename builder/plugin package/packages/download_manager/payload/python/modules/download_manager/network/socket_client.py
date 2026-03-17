@@ -1,0 +1,1135 @@
+"""
+Socket DICOM Client - Socket-based DICOM image download (Port 50052)
+
+Handles DICOM file downloads via custom socket protocol with:
+- Batch processing (100 instances per batch)
+- GZIP compression support
+- Connection pooling
+- Retry with exponential backoff
+- JWT authentication support
+"""
+
+import socket
+import asyncio
+import json
+import gzip
+import base64
+import logging
+import threading
+import time
+import random
+import os
+from typing import Dict, List, Any, Optional, Callable, Tuple
+from pathlib import Path
+
+from ..core.models import SeriesInfo, SeriesDownloadResult
+from ..core.exceptions import NetworkError
+from ..core.constants import (
+    DEFAULT_SOCKET_HOST,
+    DEFAULT_SOCKET_PORT,
+    CONNECTION_TIMEOUT,
+    SOCKET_CHUNK_SIZE,
+    BATCH_SIZE,
+    MAX_RETRIES,
+    RETRY_DELAY,
+)
+from .health_monitor import ConnectionHealthMonitor
+from PacsClient.utils.diagnostic_logging import DownloadProgressAggregator, set_log_context, now_ms, log_stage_timing
+
+# Import token manager for authentication
+from modules.network.socket_token_manager import get_socket_token_manager
+
+logger = logging.getLogger(__name__)
+_download_progress_aggregator = DownloadProgressAggregator(logger, interval_seconds=2.0)
+
+# Singleton health monitor instance (shared across all socket clients)
+_health_monitor: Optional[ConnectionHealthMonitor] = None
+
+def get_health_monitor() -> ConnectionHealthMonitor:
+    """Get singleton health monitor instance"""
+    global _health_monitor
+    if _health_monitor is None:
+        _health_monitor = ConnectionHealthMonitor()
+    return _health_monitor
+
+
+class SocketDicomClient:
+    """
+    Socket-based DICOM image download client
+    
+    Protocol: Custom binary protocol with JSON envelope
+    - [4 bytes: Message Length (Big Endian)]
+    - [N bytes: JSON Payload]
+    
+    Features:
+    - Connection pooling
+    - Automatic retry with backoff
+    - GZIP compression
+    - Progress callbacks
+    - JWT authentication
+    """
+
+    # Global adaptive batch size to persist across client instances
+    _global_adaptive_batch_size: int = BATCH_SIZE
+    
+    def __init__(
+        self,
+        host: str = None,
+        port: int = None,
+        timeout: float = None,
+        token_manager = None,
+        auth_token: str = None,
+        health_monitor: ConnectionHealthMonitor = None,
+        cancel_check: Optional[Callable[[], bool]] = None
+    ):
+        """
+        Initialize socket client
+        
+        Args:
+            host: Server host
+            port: Server port
+            timeout: Connection timeout
+            token_manager: Token manager for authentication (uses global if not provided)
+            auth_token: Optional explicit auth token (overrides token_manager)
+            health_monitor: Connection health monitor (uses global if not provided)
+            cancel_check: Callable that returns True if download should be cancelled (R25 preemption)
+        """
+        self.host = host or DEFAULT_SOCKET_HOST
+        self.port = port or DEFAULT_SOCKET_PORT
+        self.timeout = timeout or CONNECTION_TIMEOUT
+        
+        # Use provided token_manager or fall back to global singleton
+        self.token_manager = token_manager or get_socket_token_manager()
+        
+        # Explicit auth token takes priority
+        self.auth_token = auth_token
+        
+        # R30: Connection health monitoring
+        self.health_monitor = health_monitor or get_health_monitor()
+        
+        self.socket = None
+        self.connected = False
+        self.lock = threading.Lock()
+        
+        # Cancellation for preemption checks (R25)
+        # Can use external cancel_check callback or internal flag
+        self._cancel_check = cancel_check  # External callback (from worker)
+        self._cancelled = False  # Internal flag
+        self._cancel_lock = threading.Lock()
+
+        # Adaptive batch size (persists across series to avoid repeated oversized requests)
+        self._adaptive_batch_size = SocketDicomClient._global_adaptive_batch_size
+        self._last_retry_count = 0
+
+        # Reversible load-shaping knobs (weak-hardware friendly).
+        # Set to 0 to disable pacing behavior immediately.
+        self._batch_size_cap = max(1, int(os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_CAP", "10") or "10"))
+        self._inter_batch_pause_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_INTER_BATCH_PAUSE_MS", "3") or "3") / 1000.0)
+        self._post_request_yield_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_POST_REQUEST_YIELD_MS", "5") or "5") / 1000.0)
+        
+        logger.info(
+            f"🔌 SocketDicomClient initialized ({self.host}:{self.port})",
+            extra={"component": "download"},
+        )
+    
+    def connect(self) -> bool:
+        """
+        Connect to socket server with TCP optimizations
+        
+        Returns:
+            True if connected, False otherwise
+        """
+        with self.lock:
+            try:
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket.settimeout(self.timeout)
+                
+                # TCP optimizations
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)  # 256KB
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 131072)  # 128KB
+                self.socket.connect((self.host, self.port))
+                self.connected = True
+                
+                logger.info(f"✅ Connected to {self.host}:{self.port}")
+                return True
+            
+            except Exception as e:
+                logger.error(f"❌ Connection failed: {e}")
+                self.connected = False
+                if self.socket:
+                    try:
+                        self.socket.close()
+                    except:
+                        pass
+                    self.socket = None
+                return False
+
+    def _normalize_login_error_message(self, message: str) -> str:
+        if not message:
+            return message
+
+        if "خطا در احراز هویت" in message:
+            parts = message.split(":", 1)
+            detail = parts[1].strip() if len(parts) > 1 else ""
+            return f"Authentication error: {detail}" if detail else "Authentication error"
+
+        if any(ord(ch) > 127 for ch in message):
+            ascii_only = "".join(ch for ch in message if ord(ch) < 128).strip(" :")
+            return f"Authentication error: {ascii_only}" if ascii_only else "Authentication error"
+
+        return message
+    
+    def disconnect(self) -> None:
+        """Disconnect from server"""
+        with self.lock:
+            if self.socket:
+                try:
+                    # Shutdown the socket to prevent further sends/receives
+                    try:
+                        self.socket.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        # Socket may already be closed, ignore error
+                        pass
+                    self.socket.close()
+                except Exception as e:
+                    logger.warning(f"⚠️ Error closing socket: {e}")
+                finally:
+                    self.socket = None
+                    self.connected = False
+                    logger.info("🔌 Disconnected from socket server")
+    
+    def is_connected(self) -> bool:
+        """Check if connected to server"""
+        return self.connected and self.socket is not None
+    
+    def request_cancel(self) -> None:
+        """Request cancellation of current operation (R25: Preemption support)"""
+        with self._cancel_lock:
+            self._cancelled = True
+            logger.info("⏸️ Cancellation requested for socket client")
+    
+    def is_cancelled(self) -> bool:
+        """
+        Check if cancellation has been requested (R25)
+        
+        Checks both:
+        1. External cancel_check callback (from worker/executor)
+        2. Internal _cancelled flag (from request_cancel())
+        """
+        # Check external callback first (worker preemption)
+        if self._cancel_check is not None:
+            try:
+                if self._cancel_check():
+                    logger.debug("⏸️ External cancel check returned True")
+                    return True
+            except Exception as e:
+                logger.warning(f"⚠️ Cancel check callback error: {e}")
+        
+        # Check internal flag
+        with self._cancel_lock:
+            return self._cancelled
+    
+    def reset_cancel(self) -> None:
+        """Reset cancellation flag"""
+        with self._cancel_lock:
+            self._cancelled = False
+    
+    def connect_with_retry(self, max_retries: int = 3, retry_delay: float = 1.0) -> bool:
+        """
+        Connect to socket server with retry logic
+        
+        Args:
+            max_retries: Maximum number of connection attempts
+            retry_delay: Delay between retries in seconds
+            
+        Returns:
+            True if connected, False otherwise
+        """
+        for attempt in range(max_retries):
+            if self.connect():
+                return True
+            
+            if attempt < max_retries - 1:
+                logger.warning(f"⚠️ Connection attempt {attempt + 1} failed, retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+        
+        logger.error(f"❌ Failed to connect after {max_retries} attempts")
+        return False
+    
+    def login(self, username: str, password: str) -> Tuple[bool, str, Optional[str], Optional[Dict[str, Any]]]:
+        """
+        Login to socket server and get JWT token
+        
+        Args:
+            username: Username for authentication
+            password: Password for authentication
+            
+        Returns:
+            Tuple of (success, message, token, user_info)
+        """
+        logger.info(f"🔐 Attempting login for user: {username}")
+        
+        try:
+            response = self.send_request('Login', {
+                'username': username,
+                'password': password
+            })
+            
+            if not response:
+                logger.error("❌ Login failed: No response from server")
+                return False, "No response from server", None, None
+            
+            status = response.get('status', '')
+            success = response.get('success', False)
+            message = response.get('message', response.get('error', 'Unknown error'))
+            
+            if status == 'success' or success:
+                # Token can be at root level OR in data.token
+                token = response.get('token')
+                if not token:
+                    data = response.get('data', {})
+                    token = data.get('token') if isinstance(data, dict) else None
+                
+                # User info can be at root level OR in data.user
+                user = response.get('user')
+                if not user:
+                    data = response.get('data', {})
+                    user = data.get('user') if isinstance(data, dict) else None
+                
+                # Try to extract user info from other fields if not in 'user'
+                if not user:
+                    # Build user dict from response fields
+                    user = {}
+                    if 'fullName' in response or 'full_name' in response:
+                        user['full_name'] = response.get('fullName') or response.get('full_name')
+                    if 'username' in response:
+                        user['username'] = response.get('username')
+                    if 'roles' in response:
+                        user['role'] = response.get('roles', {}).get('Name', 'user')
+                    if not user:
+                        user = None
+                
+                if token:
+                    # Store token in token manager
+                    self.token_manager.set_token(token, user)
+                    self.auth_token = token
+                    logger.info(f"✅ Login successful for {username}")
+                    return True, message, token, user
+                else:
+                    logger.error("❌ Login response missing token")
+                    return False, "Login response missing token", None, None
+            else:
+                message = self._normalize_login_error_message(message)
+                logger.error(f"❌ Login failed: {message}")
+                return False, message, None, None
+                
+        except Exception as e:
+            logger.error(f"❌ Login exception: {e}")
+            return False, str(e), None, None
+    
+    def verify_token(self, token: str = None) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """
+        Verify JWT token validity
+        
+        Args:
+            token: Token to verify (uses stored token if not provided)
+            
+        Returns:
+            Tuple of (valid, message, user_info)
+        """
+        token_to_verify = token or self.auth_token or self.token_manager.get_token()
+        
+        if not token_to_verify:
+            logger.warning("⚠️ No token to verify")
+            return False, "No token available", None
+        
+        logger.info("🔐 Verifying token...")
+        
+        try:
+            response = self.send_request('VerifyToken', {
+                'token': token_to_verify
+            })
+            
+            if not response:
+                logger.error("❌ Token verification failed: No response")
+                return False, "No response from server", None
+            
+            status = response.get('status', '')
+            message = response.get('message', response.get('error', 'Unknown error'))
+            
+            if status == 'success':
+                data = response.get('data', {})
+                user = data.get('user')
+                logger.info("✅ Token is valid")
+                return True, "Token is valid", user
+            else:
+                logger.warning(f"⚠️ Token invalid: {message}")
+                return False, message, None
+                
+        except Exception as e:
+            logger.error(f"❌ Token verification exception: {e}")
+            return False, str(e), None
+    
+    def ensure_authenticated(self) -> bool:
+        """
+        Ensure the client is authenticated (has valid token)
+        
+        Returns:
+            True if authenticated or token is available
+        """
+        # Check if we have a token from any source
+        token = self.auth_token or self.token_manager.get_token()
+        
+        if not token:
+            logger.warning("⚠️ No authentication token available")
+            return False
+        
+        logger.info("✅ Authentication token available")
+        return True
+    
+    def send_request(self, endpoint: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Send request to server with authentication
+
+        Args:
+            endpoint: Endpoint name
+            params: Request parameters
+
+        Returns:
+            Response dict or None on error
+        """
+        logger.debug(f"📤 send_request: {endpoint} - acquiring lock...")
+        t_req_total = now_ms()
+        t_lock_wait = now_ms()
+        self.lock.acquire()
+        log_stage_timing(
+            logger,
+            component="ipc",
+            function="SocketDicomClient.send_request",
+            stage="request_lock_wait",
+            start_ms=t_lock_wait,
+            endpoint=endpoint,
+        )
+
+        try:
+            logger.debug(f"📤 send_request: {endpoint} - lock acquired")
+
+            if not self.connected:
+                logger.debug(f"📤 send_request: Not connected, attempting connection...")
+                if not self.connect():
+                    logger.error(f"❌ send_request: Connection failed!")
+                    return None
+                logger.debug(f"📤 send_request: Connected successfully")
+
+            try:
+                # Build request
+                request = {
+                    "endpoint": endpoint,
+                    "params": params
+                }
+
+                # Add authentication token (priority: explicit > token_manager)
+                # Skip token for Login endpoint to avoid circular dependency
+                if endpoint != 'Login':
+                    if self.auth_token:
+                        request["token"] = self.auth_token
+                        logger.debug(f"🔐 Added explicit auth token to {endpoint} request")
+                    elif self.token_manager and self.token_manager.has_token():
+                        request = self.token_manager.add_token_to_request(request)
+                        logger.debug(f"🔐 Added token from manager to {endpoint} request")
+                    else:
+                        logger.warning(f"⚠️ No auth token available for {endpoint}")
+
+                # Serialize to JSON
+                t_serialize = now_ms()
+                request_json = json.dumps(request, ensure_ascii=False)
+                request_bytes = request_json.encode('utf-8')
+                log_stage_timing(
+                    logger,
+                    component="ipc",
+                    function="SocketDicomClient.send_request",
+                    stage="request_serialize",
+                    start_ms=t_serialize,
+                    endpoint=endpoint,
+                )
+
+                logger.info(
+                    f"📤 Sending {endpoint} request ({len(request_bytes)} bytes)",
+                    extra={"component": "ipc"},
+                )
+
+                # Send length prefix (4 bytes, big endian)
+                t_send = now_ms()
+                length_bytes = len(request_bytes).to_bytes(4, byteorder='big')
+                self.socket.sendall(length_bytes)
+
+                # Send request data
+                self.socket.sendall(request_bytes)
+                log_stage_timing(
+                    logger,
+                    component="ipc",
+                    function="SocketDicomClient.send_request",
+                    stage="request_send",
+                    start_ms=t_send,
+                    endpoint=endpoint,
+                    request_bytes=str(len(request_bytes)),
+                )
+                logger.debug(f"📤 Request sent, waiting for response...")
+
+                # Loop to handle broadcasts and wait for actual response
+                max_broadcast_retries = 10
+                broadcast_count = 0
+                
+                while broadcast_count < max_broadcast_retries:
+                    # Receive response length
+                    logger.debug(f"📥 Waiting for response header (4 bytes)...")
+                    t_recv_header = now_ms()
+                    response_length_bytes = self._safe_recv(4)
+                    if not response_length_bytes:
+                        raise NetworkError("Connection closed by server")
+                    log_stage_timing(
+                        logger,
+                        component="ipc",
+                        function="SocketDicomClient.send_request",
+                        stage="response_header_recv",
+                        start_ms=t_recv_header,
+                        endpoint=endpoint,
+                    )
+
+                    response_length = int.from_bytes(response_length_bytes, byteorder='big')
+                    
+                    # Validate response length to prevent extremely large allocations
+                    if response_length > 50 * 1024 * 1024:  # 50MB limit
+                        raise NetworkError(f"Response too large: {response_length} bytes")
+
+                    logger.info(
+                        f"📥 Receiving response body ({response_length} bytes)",
+                        extra={"component": "download"},
+                    )
+
+                    # Receive response data
+                    t_body_recv = now_ms()
+                    response_data = b''
+                    summary_key = (
+                        f"{endpoint}:{str(params.get('series_uid', 'na'))[:24]}:"
+                        f"{params.get('batch_index', 'na')}"
+                    )
+                    while len(response_data) < response_length:
+                        chunk_size = min(SOCKET_CHUNK_SIZE, response_length - len(response_data))
+                        chunk = self._safe_recv(chunk_size)
+                        if not chunk:
+                            raise NetworkError("Connection lost while receiving data")
+                        response_data += chunk
+                        if response_length > 100000:
+                            _download_progress_aggregator.update(
+                                key=summary_key,
+                                response_length=response_length,
+                                bytes_received=len(response_data),
+                                retries=0,
+                                study_uid="-",
+                                series_uid=str(params.get("series_uid", "-")),
+                            )
+
+                    logger.info(
+                        f"📥 Response received completely ({len(response_data)} bytes)",
+                        extra={"component": "download", "series_uid": str(params.get("series_uid", "-"))},
+                    )
+                    log_stage_timing(
+                        logger,
+                        component="download",
+                        function="SocketDicomClient.send_request",
+                        stage="response_body_recv",
+                        start_ms=t_body_recv,
+                        endpoint=endpoint,
+                        response_bytes=str(len(response_data)),
+                    )
+
+                    # Parse response
+                    t_parse = now_ms()
+                    response = json.loads(response_data.decode('utf-8'))
+                    log_stage_timing(
+                        logger,
+                        component="ipc",
+                        function="SocketDicomClient.send_request",
+                        stage="response_parse",
+                        start_ms=t_parse,
+                        endpoint=endpoint,
+                    )
+                    
+                    # Check if this is a broadcast message
+                    if response.get('type') == 'broadcast':
+                        broadcast_count += 1
+                        event_type = response.get('event_type', 'unknown')
+                        logger.debug(
+                            f"📡 Received broadcast message (type: {event_type}), continuing to wait for actual response... ({broadcast_count}/{max_broadcast_retries})"
+                        )
+                        continue  # Skip this broadcast and wait for the actual response
+                    
+                    # This is the actual response
+                    logger.info(
+                        f"📥 Response parsed: status={response.get('status', 'unknown')}",
+                        extra={"component": "ipc"},
+                    )
+                    log_stage_timing(
+                        logger,
+                        component="ipc",
+                        function="SocketDicomClient.send_request",
+                        stage="request_total",
+                        start_ms=t_req_total,
+                        endpoint=endpoint,
+                        result=str(response.get("status", "unknown")),
+                    )
+                    return response
+                
+                # If we exit the loop, we received too many broadcasts without a response
+                logger.error(f"❌ Received {broadcast_count} broadcasts without getting actual response")
+                raise NetworkError(f"Too many broadcast messages, no response received")
+
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as e:
+                logger.error(f"❌ Connection reset error for {endpoint}: {e}")
+                import traceback
+                logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                # Mark connection as broken and clean up
+                self.connected = False
+                if self.socket:
+                    try:
+                        self.socket.close()
+                    except:
+                        pass
+                    self.socket = None
+                # R30: Record failure for health monitoring
+                self.health_monitor.record_failure()
+                return None
+            except Exception as e:
+                logger.error(f"❌ Request error for {endpoint}: {e}")
+                import traceback
+                logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                # Handle other socket errors that indicate connection problems
+                if isinstance(e, (socket.error, OSError)) or "forcibly closed" in str(e):
+                    self.connected = False
+                    if self.socket:
+                        try:
+                            self.socket.close()
+                        except:
+                            pass
+                        self.socket = None
+                    # R30: Record failure for health monitoring
+                    self.health_monitor.record_failure()
+                return None
+        finally:
+            try:
+                self.lock.release()
+            except Exception:
+                pass
+
+    def _safe_recv(self, size: int) -> bytes:
+        """
+        Safely receive data with timeout handling and connection checking
+        
+        Args:
+            size: Number of bytes to receive
+            
+        Returns:
+            Bytes received or empty bytes if connection closed
+        """
+        try:
+            return self.socket.recv(size)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as e:
+            logger.warning(f"⚠️ Connection reset during recv: {e}")
+            self.connected = False
+            if self.socket:
+                try:
+                    self.socket.close()
+                except:
+                    pass
+                self.socket = None
+            return b""
+        except socket.timeout:
+            logger.warning(f"⚠️ Socket timeout during recv")
+            return b""
+        except OSError as e:
+            if e.errno == 10054:  # Connection reset by peer
+                logger.warning(f"⚠️ Connection forcibly closed during recv: {e}")
+                self.connected = False
+                if self.socket:
+                    try:
+                        self.socket.close()
+                    except:
+                        pass
+                    self.socket = None
+                return b""
+            else:
+                logger.error(f"❌ OSError during recv: {e}")
+                raise
+    
+    def download_batch(
+        self,
+        study_uid: str,
+        series_uid: str,
+        batch_start: int,
+        batch_size: int = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Download batch of DICOM instances using GetSeriesImages endpoint
+        
+        Args:
+            study_uid: Study UID
+            series_uid: Series UID
+            batch_start: Starting instance index (converted to batch_index)
+            batch_size: Number of instances to download
+            
+        Returns:
+            Response dict with instance data or None on error
+        """
+        batch_size = batch_size or BATCH_SIZE
+        
+        # Convert batch_start to batch_index (batch_start / batch_size)
+        batch_index = batch_start // batch_size if batch_size > 0 else 0
+        
+        set_log_context(study_uid=study_uid, series_uid=series_uid)
+        logger.info(
+            f"📥 download_batch: series={series_uid[:40]}..., batch_index={batch_index}, size={batch_size}",
+            extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+        )
+        
+        # Use correct endpoint: GetSeriesImages (not DownloadDicomBatch)
+        response = self.send_request('GetSeriesImages', {
+            'series_uid': series_uid,
+            'batch_size': batch_size,
+            'batch_index': batch_index,
+            'metadata_only': False
+        })
+        
+        if response:
+            logger.info(
+                f"📥 download_batch: status={response.get('status', 'unknown')}",
+                extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+            )
+        else:
+            logger.warning(f"📥 download_batch: No response received!")
+        
+        return response
+    
+    async def download_series(
+        self,
+        study_uid: str,
+        series_info: SeriesInfo,
+        output_dir: Path,
+        progress_callback: Optional[Callable] = None
+    ) -> SeriesDownloadResult:
+        """
+        Download complete series with batch processing
+        
+        Args:
+            study_uid: Study UID
+            series_info: Series metadata
+            output_dir: Output directory for series
+            progress_callback: Progress callback function
+            
+        Returns:
+            SeriesDownloadResult
+        """
+        series_uid = series_info.series_uid
+        series_number = series_info.series_number
+        expected_count = series_info.image_count
+        
+        set_log_context(study_uid=study_uid, series_uid=series_uid)
+        logger.info(
+            f"📥 Downloading series {series_number} ({expected_count} images)",
+            extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+        )
+        
+        # Create output directory
+        logger.info(f"📁 Creating output directory: {output_dir}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"✅ Output directory ready")
+        
+        # Check for existing files (R19: file-level resume)
+        logger.info(f"🔍 Scanning for existing files...")
+        existing_files = self._scan_existing_files(output_dir)
+        skipped_count = len(existing_files)
+        logger.info(f"📊 Found {skipped_count} existing files")
+        
+        # Calculate batches (adaptive + configurable cap)
+        batch_size = min(self._adaptive_batch_size, self._batch_size_cap)
+        min_batch_size = 1
+        total_batches = (expected_count + batch_size - 1) // batch_size
+        downloaded_count = 0
+        
+        logger.info(f"📦 Will download in {total_batches} batches (batch size: {batch_size})")
+        
+        start_time = time.time()
+        summary_last_t = time.monotonic()
+        summary_last_count = 0
+        total_disk_write_ms = 0.0
+        total_decode_ms = 0.0
+        total_decompress_ms = 0.0
+        
+        # Ensure we're connected before starting batches
+        logger.info(f"🔌 Ensuring socket connection...")
+        if not self.connected:
+            logger.info(f"🔌 Not connected, attempting connection...")
+            if not self.connect():
+                logger.error(f"❌ Failed to connect to server!")
+                return SeriesDownloadResult(
+                    success=False,
+                    series_uid=series_uid,
+                    series_number=series_number,
+                    downloaded=0,
+                    skipped=skipped_count,
+                    total=expected_count,
+                    elapsed_seconds=time.time() - start_time,
+                    error_message="Failed to connect to download server"
+                )
+        logger.info(f"✅ Socket connected")
+        
+        # Download in batches (adaptive batch size)
+        batch_start = 0
+        batch_idx = 0
+        while batch_start < expected_count:
+            # R25: Check for preemption between batches
+            if self.is_cancelled():
+                logger.info(f"⏸️ Download cancelled - stopping at batch {batch_idx + 1}/{total_batches}")
+                return SeriesDownloadResult(
+                    success=False,
+                    series_uid=series_uid,
+                    series_number=series_number,
+                    downloaded=downloaded_count,
+                    skipped=skipped_count,
+                    total=expected_count,
+                    elapsed_seconds=time.time() - start_time,
+                    error_message="Download cancelled (preemption)"
+                )
+            
+            logger.info(
+                f"📦 Starting batch {batch_idx + 1}/{total_batches} (start: {batch_start}, size: {batch_size})",
+                extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+            )
+            
+            # R33: Check connection health before operation
+            if self.health_monitor.should_test_connection():
+                logger.info(f"🔍 Testing connection health before batch...")
+                if not self.connected:
+                    if not self.connect():
+                        logger.error(f"❌ Health check failed - connection lost")
+                        self.health_monitor.record_failure()
+                        continue
+            
+            # Download batch with retry
+            response = await self._download_batch_with_retry(
+                study_uid,
+                series_uid,
+                batch_start,
+                batch_size
+            )
+            
+            logger.debug(f"📦 Batch {batch_idx + 1} response received: {response is not None}")
+            
+            if not response or response.get('status') != 'success':
+                # Better error extraction with full response logging
+                if response:
+                    error_msg = response.get('error') or response.get('message') or response.get('msg', 'Unknown error')
+                    logger.error(f"❌ Batch {batch_idx + 1} failed: {error_msg}")
+                    logger.error(f"❌ Full response for debugging: {response}")
+                else:
+                    error_msg = 'No response'
+                    logger.error(f"❌ Batch {batch_idx + 1} failed: {error_msg}")
+
+                if "Response too large" in str(error_msg) and batch_size > min_batch_size:
+                    batch_size = max(min_batch_size, batch_size // 2)
+                    self._adaptive_batch_size = batch_size
+                    SocketDicomClient._global_adaptive_batch_size = batch_size
+                    total_batches = (expected_count + batch_size - 1) // batch_size
+                    logger.warning(
+                        f"⚠️ Response too large - reducing batch size to {batch_size} and retrying batch"
+                    )
+                    continue
+
+                return SeriesDownloadResult(
+                    success=False,
+                    series_uid=series_uid,
+                    series_number=series_number,
+                    downloaded=downloaded_count,
+                    skipped=skipped_count,
+                    total=expected_count,
+                    elapsed_seconds=time.time() - start_time,
+                    error_message=error_msg
+                )
+            
+            # Process instances in batch (using GetSeriesImages response format)
+            data = response.get('data', {})
+            instances = data.get('instances', [])
+            
+            logger.info(
+                f"📦 Batch {batch_idx + 1}: Got {len(instances)} instances",
+                extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+            )
+            
+            for _inst_idx, instance_data in enumerate(instances):
+                dicom_data_b64 = instance_data.get('dicom_data', '')
+                is_compressed = instance_data.get('is_compressed', False)
+                instance_number = instance_data.get('instance_number', downloaded_count + 1)
+                
+                # Generate file name from instance number
+                try:
+                    instance_num_int = int(instance_number)
+                except (ValueError, TypeError):
+                    instance_num_int = downloaded_count + 1
+                
+                file_name = f"Instance_{instance_num_int:04d}.dcm"
+                file_path = output_dir / file_name
+                
+                # Skip if exists (R19: file-level resume)
+                if file_path.exists():
+                    skipped_count += 1
+                    continue
+                
+                if not dicom_data_b64:
+                    logger.warning(f"⚠️ Empty DICOM data for instance {instance_number}")
+                    continue
+                
+                try:
+                    t_write = time.monotonic()
+                    # Decode base64
+                    t_decode = now_ms()
+                    dicom_bytes = base64.b64decode(dicom_data_b64)
+                    total_decode_ms += max(0.0, now_ms() - t_decode)
+                    
+                    # Decompress if needed
+                    if is_compressed:
+                        t_decompress = now_ms()
+                        dicom_bytes = gzip.decompress(dicom_bytes)
+                        total_decompress_ms += max(0.0, now_ms() - t_decompress)
+                    
+                    # Ensure directory exists (defensive check for preemption recovery)
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    # Save file
+                    with open(file_path, 'wb') as f:
+                        f.write(dicom_bytes)
+                    
+                    downloaded_count += 1
+                    total_disk_write_ms += (time.monotonic() - t_write) * 1000.0
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error saving instance {instance_number}: {e}")
+                    # Log the full path for debugging
+                    logger.error(f"   File path: {file_path}")
+                    logger.error(f"   Directory exists: {file_path.parent.exists()}")
+                    continue
+                
+                # Progress callback
+                if progress_callback:
+                    progress_pct = ((downloaded_count + skipped_count) / expected_count) * 100
+                    progress_callback(
+                        'instance_downloaded',
+                        series_number,
+                        progress_pct,
+                        downloaded_count + skipped_count,
+                        expected_count
+                    )
+
+                    now = time.monotonic()
+                    if (downloaded_count + skipped_count == expected_count) or (now - summary_last_t >= 2.0):
+                        delta_items = (downloaded_count + skipped_count) - summary_last_count
+                        delta_t = max(now - summary_last_t, 1e-6)
+                        throughput_items = delta_items / delta_t
+                        logger.info(
+                            "series-summary series=%s downloaded=%d skipped=%d total=%d throughput_items=%.2f/s queue=%d active=%d disk_write_ms=%.2f decode_ms=%.2f decompress_ms=%.2f retries=%d",
+                            series_number,
+                            downloaded_count,
+                            skipped_count,
+                            expected_count,
+                            throughput_items,
+                            max(total_batches - (batch_idx + 1), 0),
+                            1,
+                            total_disk_write_ms,
+                            total_decode_ms,
+                            total_decompress_ms,
+                            int(getattr(self, "_last_retry_count", 0)),
+                            extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                        )
+                        summary_last_t = now
+                        summary_last_count = downloaded_count + skipped_count
+
+                # Yield GIL every 3 instances: a real 2 ms OS sleep releases
+                # the Python GIL so the Qt viewer thread can render between
+                # consecutive base64 decode calls without stalling ~50 ms.
+                if _inst_idx > 0 and _inst_idx % 3 == 0:
+                    await asyncio.sleep(0.002)
+            
+            # Check if more batches are needed (server pagination)
+            has_more = data.get('has_more', False)
+            if not has_more:
+                logger.info(f"📦 Server indicates no more batches")
+                break
+
+            # Small paced gap between batches to reduce burst CPU/network pressure
+            # on low-end systems while preserving steady download progress.
+            if self._inter_batch_pause_s > 0:
+                await asyncio.sleep(self._inter_batch_pause_s)
+
+            batch_idx += 1
+            batch_start += batch_size
+        
+        elapsed = time.time() - start_time
+        
+        logger.info(
+            f"✅ Series {series_number} complete: "
+            f"{downloaded_count} downloaded, {skipped_count} skipped ({elapsed:.1f}s)"
+        )
+        logger.info(
+            "download-pipeline-summary series=%s elapsed_s=%.2f disk_write_ms=%.2f decode_ms=%.2f decompress_ms=%.2f",
+            series_number,
+            elapsed,
+            total_disk_write_ms,
+            total_decode_ms,
+            total_decompress_ms,
+            extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+        )
+        
+        return SeriesDownloadResult(
+            success=True,
+            series_uid=series_uid,
+            series_number=series_number,
+            downloaded=downloaded_count,
+            skipped=skipped_count,
+            total=expected_count,
+            elapsed_seconds=elapsed
+        )
+    
+    def _scan_existing_files(self, output_dir: Path) -> List[str]:
+        """
+        Scan for existing DICOM files
+        
+        Args:
+            output_dir: Directory to scan
+            
+        Returns:
+            List of existing file names
+        """
+        if not output_dir.exists():
+            return []
+        
+        try:
+            return [f for f in os.listdir(output_dir) if f.endswith('.dcm')]
+        except Exception as e:
+            logger.warning(f"⚠️ Could not scan directory: {e}")
+            return []
+    
+    async def _download_batch_with_retry(
+        self,
+        study_uid: str,
+        series_uid: str,
+        batch_start: int,
+        batch_size: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Download batch with retry logic (R27, R28, R31)
+        
+        Implements:
+        - R27: Exponential backoff retry
+        - R28: Max 3 retry attempts
+        - R30: Connection health tracking
+        - R31: Retry with jitter
+        
+        Args:
+            study_uid: Study UID
+            series_uid: Series UID
+            batch_start: Batch starting index
+            batch_size: Batch size
+            
+        Returns:
+            Response dict or None on failure
+        """
+        logger.debug(f"🔄 _download_batch_with_retry called: series={series_uid[:30]}..., start={batch_start}, size={batch_size}")
+        self._last_retry_count = 0
+        
+        for attempt in range(MAX_RETRIES):
+            # R25: Check for cancellation before each attempt
+            if self.is_cancelled():
+                logger.info(f"⏸️ Batch download cancelled")
+                return None
+            
+            request_start = time.time()
+            
+            try:
+                logger.debug(f"🔄 Attempt {attempt + 1}/{MAX_RETRIES}: Calling download_batch...")
+                response = self.download_batch(study_uid, series_uid, batch_start, batch_size)
+                logger.debug(f"🔄 Attempt {attempt + 1}: Got response: {response is not None}")
+
+                # Yield GIL immediately after the blocking recv+json.loads call
+                # so the Qt main thread can advance its render loop before we
+                # start processing the batch payload.
+                # sleep(0.005) is a real OS sleep that releases the GIL to
+                # other threads (viewer, warmup); sleep(0) only yields within
+                # the same event-loop and does NOT reliably free the GIL.
+                if self._post_request_yield_s > 0:
+                    await asyncio.sleep(self._post_request_yield_s)
+
+                if response:
+                    status = response.get('status', 'unknown')
+                    logger.debug(f"🔄 Response status: {status}")
+                    
+                    # R30: Record success with latency
+                    latency_ms = (time.time() - request_start) * 1000
+                    self.health_monitor.record_success(latency_ms)
+                    
+                    return response
+                else:
+                    logger.warning(f"⚠️ Attempt {attempt + 1}: Empty response")
+                    # R30: Record failure
+                    self.health_monitor.record_failure()
+            
+            except Exception as e:
+                logger.warning(f"⚠️ Batch download attempt {attempt + 1} failed: {e}")
+                self._last_retry_count = attempt + 1
+                import traceback
+                logger.warning(f"⚠️ Traceback: {traceback.format_exc()}")
+                
+                # R30: Record failure
+                self.health_monitor.record_failure()
+                
+                if attempt < MAX_RETRIES - 1:
+                    # R27, R31: Exponential backoff with jitter
+                    jitter = random.uniform(0, 0.5)
+                    delay = RETRY_DELAY * (2 ** attempt) + jitter
+                    
+                    # R32: Adaptive throttling based on health
+                    if not self.health_monitor.is_healthy():
+                        delay *= 2  # Double delay if connection unhealthy
+                        logger.info(f"⚠️ Unhealthy connection - doubling retry delay", extra={"component": "download"})
+                    
+                    logger.info(f"⏳ Retrying in {delay:.1f}s...", extra={"component": "download"})
+                    await asyncio.sleep(delay)
+                    
+                    # Reconnect
+                    logger.info(f"🔌 Reconnecting...", extra={"component": "download"})
+                    self.disconnect()
+                    if not self.connect():
+                        logger.error(f"❌ Reconnection failed")
+                        continue
+                    logger.info(f"✅ Reconnected", extra={"component": "download"})
+        
+        # All retries failed
+        logger.error(f"❌ Batch download failed after {MAX_RETRIES} attempts")
+        return None
+    
+    def __enter__(self):
+        """Context manager entry"""
+        self.connect()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        self.disconnect()
+
+    def __del__(self):
+        """Destructor to ensure socket cleanup"""
+        try:
+            self.disconnect()
+        except:
+            # Don't raise exceptions in destructor
+            pass

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import importlib.util
 from pathlib import Path
 import re
 import shutil
 
 import pydicom
+from pydicom.misc import is_dicom
+from pydicom.uid import UID
 import qtawesome as qta
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -47,7 +50,237 @@ _DICOM_TAGS = [
     "StudyDescription",
     "InstanceNumber",
     "SOPInstanceUID",
+    "SOPClassUID",
 ]
+
+
+def _read_import_dicom_header(file_path: Path):
+    """Best-effort DICOM header reader for import scan.
+
+    Supports:
+    - standard Part-10 files (is_dicom=True)
+    - extensionless/vendor files readable via force=True
+    Skips files that don't expose core DICOM identity tags.
+    """
+    if not file_path.is_file():
+        return None
+
+    file_name = file_path.name.upper()
+    if file_name == "DICOMDIR":
+        return None
+
+    try:
+        looks_standard = is_dicom(str(file_path))
+    except Exception:
+        looks_standard = False
+
+    read_errors = []
+    for force in ((not looks_standard), True):
+        try:
+            ds = pydicom.dcmread(
+                str(file_path),
+                stop_before_pixels=True,
+                force=force,
+                specific_tags=_DICOM_TAGS,
+            )
+
+            # Validate this is likely a real DICOM object.
+            has_core_id = any(
+                _safe_text(getattr(ds, tag, None))
+                for tag in ("SOPClassUID", "SOPInstanceUID", "StudyInstanceUID", "SeriesInstanceUID")
+            )
+            if not has_core_id:
+                continue
+
+            return ds
+        except Exception as e:
+            read_errors.append(str(e))
+
+    return None
+
+
+def _extract_transfer_syntax_uid(dataset) -> str:
+    try:
+        file_meta = getattr(dataset, "file_meta", None)
+        if file_meta is None:
+            return ""
+        ts = getattr(file_meta, "TransferSyntaxUID", None)
+        return _safe_text(ts)
+    except Exception:
+        return ""
+
+
+def _module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:
+        return False
+
+
+def _detect_decoder_capabilities() -> dict:
+    return {
+        "pylibjpeg": _module_available("pylibjpeg"),
+        "pylibjpeg_libjpeg": _module_available("pylibjpeg_libjpeg"),
+        "pylibjpeg_openjpeg": _module_available("pylibjpeg_openjpeg"),
+        "pylibjpeg_rle": _module_available("pylibjpeg_rle"),
+        "gdcm": _module_available("gdcm"),
+        "PIL": _module_available("PIL"),
+        "pyjpegls": _module_available("pyjpegls"),
+    }
+
+
+def _is_transfer_syntax_supported(tsuid: str, caps: dict) -> tuple[bool, str]:
+    uid = _safe_text(tsuid)
+    if not uid:
+        return True, "Transfer syntax not present in file meta; cannot validate."
+
+    try:
+        ts = UID(uid)
+    except Exception:
+        return False, f"Unknown transfer syntax UID: {uid}"
+
+    if not bool(getattr(ts, "is_compressed", False)):
+        return True, "Uncompressed transfer syntax."
+
+    # Compression families
+    if uid in {"1.2.840.10008.1.2.4.50", "1.2.840.10008.1.2.4.51"}:  # JPEG Baseline/Extended
+        ok = bool(caps.get("pylibjpeg_libjpeg") or caps.get("PIL") or caps.get("gdcm"))
+        return ok, "Requires pylibjpeg-libjpeg or Pillow or GDCM."
+
+    if uid in {
+        "1.2.840.10008.1.2.4.57",  # JPEG Lossless, Non-hierarchical (Process 14)
+        "1.2.840.10008.1.2.4.70",  # JPEG Lossless, Non-hierarchical, First-Order Prediction
+    }:
+        ok = bool(caps.get("pylibjpeg_libjpeg") or caps.get("gdcm"))
+        return ok, "Requires pylibjpeg-libjpeg or GDCM."
+
+    if uid in {"1.2.840.10008.1.2.4.80", "1.2.840.10008.1.2.4.81"}:  # JPEG-LS
+        ok = bool(caps.get("pyjpegls") or caps.get("gdcm"))
+        return ok, "Requires pyjpegls or GDCM."
+
+    if uid in {"1.2.840.10008.1.2.4.90", "1.2.840.10008.1.2.4.91"}:  # JPEG 2000
+        ok = bool(caps.get("pylibjpeg_openjpeg") or caps.get("gdcm"))
+        return ok, "Requires pylibjpeg-openjpeg or GDCM."
+
+    if uid == "1.2.840.10008.1.2.5":  # RLE Lossless
+        ok = bool(caps.get("pylibjpeg_rle") or caps.get("gdcm"))
+        return ok, "Requires pylibjpeg-rle or GDCM."
+
+    # Video and other encapsulated codecs are typically unsupported for slice decoding here.
+    if uid.startswith("1.2.840.10008.1.2.4."):
+        return False, "Compressed syntax may need an additional codec not available in current runtime."
+
+    return True, "Transfer syntax not explicitly classified; runtime may still decode it."
+
+
+def _build_compatibility_report(studies: list[dict]) -> dict:
+    caps = _detect_decoder_capabilities()
+    syntax_stats: dict[str, dict] = {}
+    compressed_file_count = 0
+
+    for study in studies or []:
+        study_uid = _safe_text(study.get("study_uid"))
+        for series in study.get("series", []) or []:
+            series_uid = _safe_text(series.get("series_uid"))
+            for file_info in series.get("files", []) or []:
+                tsuid = _safe_text(file_info.get("transfer_syntax_uid"))
+                is_compressed = bool(file_info.get("is_compressed"))
+                if is_compressed:
+                    compressed_file_count += 1
+                if not tsuid:
+                    continue
+
+                stat = syntax_stats.setdefault(
+                    tsuid,
+                    {
+                        "uid": tsuid,
+                        "name": _safe_text(getattr(UID(tsuid), "name", "Unknown"), "Unknown"),
+                        "file_count": 0,
+                        "compressed_file_count": 0,
+                        "series_uids": set(),
+                        "study_uids": set(),
+                    },
+                )
+                stat["file_count"] += 1
+                if is_compressed:
+                    stat["compressed_file_count"] += 1
+                if series_uid:
+                    stat["series_uids"].add(series_uid)
+                if study_uid:
+                    stat["study_uids"].add(study_uid)
+
+    unsupported = []
+    supported = []
+
+    for tsuid, stat in syntax_stats.items():
+        ok, reason = _is_transfer_syntax_supported(tsuid, caps)
+        entry = {
+            "uid": tsuid,
+            "name": stat.get("name", "Unknown"),
+            "file_count": int(stat.get("file_count", 0)),
+            "compressed_file_count": int(stat.get("compressed_file_count", 0)),
+            "series_count": len(stat.get("series_uids", set())),
+            "study_count": len(stat.get("study_uids", set())),
+            "supported": bool(ok),
+            "note": reason,
+        }
+        if ok:
+            supported.append(entry)
+        else:
+            unsupported.append(entry)
+
+    supported.sort(key=lambda e: (e["name"], e["uid"]))
+    unsupported.sort(key=lambda e: (e["name"], e["uid"]))
+
+    installed_decoder_hints = [
+        name
+        for name, enabled in (
+            ("pylibjpeg", caps.get("pylibjpeg")),
+            ("pylibjpeg-libjpeg", caps.get("pylibjpeg_libjpeg")),
+            ("pylibjpeg-openjpeg", caps.get("pylibjpeg_openjpeg")),
+            ("pylibjpeg-rle", caps.get("pylibjpeg_rle")),
+            ("Pillow", caps.get("PIL")),
+            ("pyjpegls", caps.get("pyjpegls")),
+            ("GDCM", caps.get("gdcm")),
+        )
+        if enabled
+    ]
+
+    return {
+        "decoder_capabilities": caps,
+        "installed_decoders": installed_decoder_hints,
+        "compressed_dicom_file_count": compressed_file_count,
+        "transfer_syntax_count": len(syntax_stats),
+        "supported_transfer_syntaxes": supported,
+        "unsupported_transfer_syntaxes": unsupported,
+    }
+
+
+def _compatibility_warnings(report: dict) -> list[str]:
+    warnings = []
+    compressed_count = int(report.get("compressed_dicom_file_count", 0) or 0)
+    unsupported = list(report.get("unsupported_transfer_syntaxes", []) or [])
+    installed_decoders = report.get("installed_decoders", []) or []
+
+    if compressed_count > 0:
+        warnings.append(
+            f"Detected {compressed_count} compressed DICOM file(s). "
+            "AI-PACS imports originals as-is; decode support depends on runtime codecs."
+        )
+
+    if unsupported:
+        first = unsupported[0]
+        warnings.append(
+            f"Compatibility check: {len(unsupported)} transfer syntax(es) may be unsupported "
+            f"(e.g. {first.get('name', 'Unknown')} [{first.get('uid', '')}])."
+        )
+    elif compressed_count > 0:
+        warnings.append("Compatibility check: all detected compressed transfer syntaxes look supported.")
+
+    if installed_decoders:
+        warnings.append(f"Detected decoders: {', '.join(installed_decoders)}")
+
+    return warnings
 
 
 def _safe_text(value, default: str = "") -> str:
@@ -155,15 +388,16 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
     for file_path in root.rglob("*"):
         if not file_path.is_file():
             continue
-        try:
-            dataset = pydicom.dcmread(
-                str(file_path),
-                stop_before_pixels=True,
-                force=True,
-                specific_tags=_DICOM_TAGS,
-            )
-        except Exception:
+        dataset = _read_import_dicom_header(file_path)
+        if dataset is None:
             continue
+
+        tsuid = _extract_transfer_syntax_uid(dataset)
+        is_compressed = False
+        try:
+            is_compressed = bool(getattr(getattr(dataset, "file_meta", None), "TransferSyntaxUID", None).is_compressed)
+        except Exception:
+            is_compressed = False
 
         study_uid = _safe_text(getattr(dataset, "StudyInstanceUID", None))
         series_uid = _safe_text(getattr(dataset, "SeriesInstanceUID", None))
@@ -207,15 +441,25 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
                 "manufacturer": _safe_text(getattr(dataset, "Manufacturer", None)),
                 "institution_name": _safe_text(getattr(dataset, "InstitutionName", None)),
                 "files": [],
+                "transfer_syntax_uids": set(),
+                "contains_compressed_files": False,
             }
             series_map[series_uid] = series
             study["series"].append(series)
+
+        if tsuid:
+            series["transfer_syntax_uids"].add(tsuid)
+        if is_compressed:
+            series["contains_compressed_files"] = True
 
         series["files"].append(
             {
                 "source_path": str(file_path),
                 "instance_number": _safe_int(getattr(dataset, "InstanceNumber", None)),
                 "sop_uid": _safe_text(getattr(dataset, "SOPInstanceUID", None)),
+                "sop_class_uid": _safe_text(getattr(dataset, "SOPClassUID", None)),
+                "transfer_syntax_uid": tsuid,
+                "is_compressed": is_compressed,
             }
         )
         series["image_count"] += 1
@@ -228,6 +472,11 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
     for study in studies.values():
         study["series"].sort(key=_series_sort_key)
         study["count_of_series"] = len(study["series"])
+
+        for series in study["series"]:
+            tsuids = sorted(series.get("transfer_syntax_uids", set()))
+            series["transfer_syntax_uids"] = tsuids
+            series["transfer_syntax_count"] = len(tsuids)
 
         if len(study["_patient_ids"]) > 1 or len(study["_patient_names"]) > 1:
             warnings.append(
@@ -249,6 +498,8 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
         warnings.append(
             f"The selected folder contains {len(studies_list)} studies. All will be imported; the primary study will open first."
         )
+    compatibility_report = _build_compatibility_report(studies_list)
+    warnings.extend(_compatibility_warnings(compatibility_report))
 
     primary_study = None
     if studies_list:
@@ -266,6 +517,8 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
         "patient_count": len(patient_keys),
         "study_count": len(studies_list),
         "series_count": sum(len(study.get("series", [])) for study in studies_list),
+        "compressed_dicom_file_count": int(compatibility_report.get("compressed_dicom_file_count", 0) or 0),
+        "compatibility_report": compatibility_report,
         "studies": studies_list,
         "primary_study_uid": primary_study.get("study_uid") if primary_study else "",
         "warnings": warnings,
@@ -399,6 +652,9 @@ def filter_scan_result_for_selection(
             f"The selected import contains {len(filtered_studies)} studies. The largest selected study will open first."
         )
 
+    compatibility_report = _build_compatibility_report(filtered_studies)
+    warnings.extend(_compatibility_warnings(compatibility_report))
+
     primary_study = None
     if filtered_studies:
         primary_study = max(
@@ -415,6 +671,8 @@ def filter_scan_result_for_selection(
         "patient_count": len(patient_keys),
         "study_count": len(filtered_studies),
         "series_count": sum(len(study.get("series", [])) for study in filtered_studies),
+        "compressed_dicom_file_count": int(compatibility_report.get("compressed_dicom_file_count", 0) or 0),
+        "compatibility_report": compatibility_report,
         "studies": filtered_studies,
         "primary_study_uid": primary_study.get("study_uid") if primary_study else "",
         "warnings": warnings,
@@ -689,6 +947,11 @@ class DicomImportPreviewDialog(QDialog):
         self.primary_preview_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.primary_preview_label.setObjectName("studyDetails")
         summary_content_layout.addWidget(self.primary_preview_label)
+
+        self.compatibility_label = QLabel("")
+        self.compatibility_label.setWordWrap(True)
+        self.compatibility_label.setObjectName("studyDetails")
+        summary_content_layout.addWidget(self.compatibility_label)
 
         self.question_label = QLabel("")
         self.question_label.setWordWrap(True)
@@ -995,6 +1258,7 @@ class DicomImportPreviewDialog(QDialog):
             self.primary_preview_label.setText(
                 "Select at least one study and one series to continue."
             )
+            self.compatibility_label.setText("")
             self.question_label.setText(
                 f"When you confirm, AI-PACS will copy the selected DICOM files into {SOURCE_PATH} "
                 "and store the selected metadata in the local database."
@@ -1030,6 +1294,31 @@ class DicomImportPreviewDialog(QDialog):
             )
         else:
             self.primary_preview_label.setText("No primary study is available for the current selection.")
+
+        compatibility_report = selected_scan_result.get("compatibility_report", {}) or {}
+        unsupported = list(compatibility_report.get("unsupported_transfer_syntaxes", []) or [])
+        compressed_count = int(compatibility_report.get("compressed_dicom_file_count", 0) or 0)
+        if unsupported:
+            top = unsupported[:3]
+            top_text = "; ".join(
+                f"{item.get('name', 'Unknown')} [{item.get('uid', '')}]"
+                for item in top
+            )
+            more = len(unsupported) - len(top)
+            if more > 0:
+                top_text = f"{top_text}; +{more} more"
+            self.compatibility_label.setText(
+                f"Compatibility report: {len(unsupported)} transfer syntax(es) may be unsupported in this runtime. "
+                f"{top_text}"
+            )
+        elif compressed_count > 0:
+            self.compatibility_label.setText(
+                "Compatibility report: compressed transfer syntaxes detected and appear supported in current runtime."
+            )
+        else:
+            self.compatibility_label.setText(
+                "Compatibility report: no compressed transfer syntax detected in selected files."
+            )
 
         self.question_label.setText(
             f"Import the selected studies and series into AI-PACS now?\n"

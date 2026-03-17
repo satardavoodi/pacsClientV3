@@ -11,6 +11,7 @@ Modular DICOM workstation for viewing, download orchestration, printing, educati
 - [Development Setup](docs/development/setup-and-tooling.md)
 - [Current Release Notes](docs/releases/RELEASE_NOTES.md)
 - [Windows Release Flow](builder/docs/WINDOWS_RELEASE_FLOW.md)
+- [Plugin Package Workspace](builder/plugin%20package/README.md)
 
 ## Runtime Areas
 

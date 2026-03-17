@@ -38,6 +38,7 @@ class SettingsTabWidget(QTabWidget):
         self.addTab(self.viewer_config,"Viewer Configuration")
         self.addTab(self.image_filter,"Image Filter")
         self.addTab(self.installation_module_settings, "Installation Module")
+
         if is_module_enabled("run_cd"):
             from .lightviewer_settings import LightViewerSettingsWidget
 

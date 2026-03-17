@@ -55,6 +55,32 @@ def _create_package_archive(tmp_path: Path, module_id: str, *, payload_files: di
     return archive_path
 
 
+def _create_package_directory(root: Path, module_id: str, *, payload_files: dict[str, str] | None = None) -> Path:
+    package_dir = root / module_id
+    package_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "format_version": runtime.MODULE_PACKAGE_FORMAT_VERSION,
+        "app_name": runtime.APP_NAME,
+        "module_id": module_id,
+        "title": module_id,
+        "tier": "optional",
+        "version": "1.2.3",
+        "package_kind": "bundled_unlock",
+        "payload_dir": runtime.MODULE_PACKAGE_PAYLOAD_DIRNAME if payload_files else "",
+        "python_paths": ["python"] if payload_files else [],
+    }
+    (package_dir / runtime.MODULE_PACKAGE_MANIFEST_FILENAME).write_text(
+        json.dumps(manifest, indent=2),
+        encoding="utf-8",
+    )
+    if payload_files:
+        for relative, content in payload_files.items():
+            target = package_dir / runtime.MODULE_PACKAGE_PAYLOAD_DIRNAME / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+    return package_dir
+
+
 def test_modules_runtime_root_moves_to_local_appdata_for_frozen_installs(monkeypatch, tmp_path):
     _configure_frozen_runtime(monkeypatch, tmp_path)
 
@@ -112,3 +138,50 @@ def test_discover_module_packages_reads_archives_from_folder(monkeypatch, tmp_pa
     packages = runtime.discover_module_packages(tmp_path)
 
     assert [package["module_id"] for package in packages] == ["printing", "run_cd"]
+
+
+def test_bootstrap_installer_selected_module_packages_installs_bundled_packages(monkeypatch, tmp_path):
+    _configure_frozen_runtime(monkeypatch, tmp_path)
+
+    install_profile = runtime.default_installation_profile()
+    install_profile["modules"]["web_browser"] = True
+    install_profile["module_packages"]["web_browser"]["status"] = "selected_for_install"
+    install_profile["module_packages"]["web_browser"]["installed_from"] = "bundled_setup_selection"
+    (Path(runtime.sys._MEIPASS) / "config" / runtime.INSTALLATION_PROFILE_FILENAME).write_text(
+        json.dumps(install_profile, indent=2),
+        encoding="utf-8",
+    )
+
+    bundled_root = Path(runtime.sys.executable).resolve().parent / runtime.MODULE_PACKAGE_DOWNLOADS_DIRNAME
+    _create_package_directory(
+        bundled_root,
+        "web_browser",
+        payload_files={"python/modules/web_browser/custom_marker.txt": "ok"},
+    )
+
+    records = runtime.bootstrap_installer_selected_module_packages()
+
+    runtime_path = runtime.modules_runtime_root() / "web_browser"
+    assert [record["module_id"] for record in records] == ["web_browser"]
+    assert (runtime_path / "python" / "modules" / "web_browser" / "custom_marker.txt").exists()
+
+
+def test_bootstrap_installer_selected_module_packages_disables_missing_bundled_selection(monkeypatch, tmp_path):
+    _configure_frozen_runtime(monkeypatch, tmp_path)
+
+    install_profile = runtime.default_installation_profile()
+    install_profile["modules"]["advanced_mpr"] = True
+    install_profile["module_packages"]["advanced_mpr"]["status"] = "selected_for_install"
+    install_profile["module_packages"]["advanced_mpr"]["installed_from"] = "bundled_setup_selection"
+    (Path(runtime.sys._MEIPASS) / "config" / runtime.INSTALLATION_PROFILE_FILENAME).write_text(
+        json.dumps(install_profile, indent=2),
+        encoding="utf-8",
+    )
+
+    records = runtime.bootstrap_installer_selected_module_packages()
+    profile = runtime.load_runtime_profile()
+
+    assert records == []
+    assert profile["modules"]["advanced_mpr"] is False
+    assert profile["module_packages"]["advanced_mpr"]["status"] == "install_failed"
+    assert "no package files were found" in profile["module_packages"]["advanced_mpr"]["warning"].lower()

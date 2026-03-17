@@ -1,249 +1,461 @@
 import json
-import os
+import logging
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon
-from PySide6.QtWidgets import (QTabWidget, QWidget, QLabel, QVBoxLayout, QLineEdit, 
-                               QGroupBox, QTableWidget, QGridLayout, QHBoxLayout, QPushButton,
-                               QMessageBox, QTableWidgetItem, QHeaderView)
-
-from pynetdicom import AE, AllStoragePresentationContexts
-# from pydicom.uid import Verification
-
-from pynetdicom.sop_class import (
-    PatientRootQueryRetrieveInformationModelFind,
-    StudyRootQueryRetrieveInformationModelFind,
-    Verification
+from PySide6.QtWidgets import (
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
+    QPushButton, QMessageBox, QScrollArea, QSpinBox,
+    QAbstractItemView, QFrame, QSizePolicy,
 )
+
+from pynetdicom import AE
+from pynetdicom.sop_class import Verification
 
 from PacsClient.utils.utils import get_all_servers, UpdaterDataFromServerToHome
 import asyncio
 
+from .external_pacs_server_dialog import ExternalPacsServerDialog
+from .external_pacs_settings import _load_config, _save_config
+
+log = logging.getLogger(__name__)
+
+# Compact column set for the external-PACS table (details in edit dialog)
+_EXT_COLUMNS = ["AE Title", "Host / URL", "Port", "Protocol", "Status"]
+
+# ── Local styles – role-based button colours (matches Viewer Config pattern) ──
+_LOCAL_STYLE = """
+    /* ── Card containers ─────────────────────────────────── */
+    QFrame#LeftCard, QFrame#RightCard {
+        background-color: #10141a;
+        border: 1px solid #232a33;
+        border-radius: 12px;
+    }
+    QFrame#FormArea {
+        background-color: #0d1117;
+        border: 1px solid #1e2530;
+        border-radius: 8px;
+    }
+    /* ── Typography ──────────────────────────────────────── */
+    QLabel#PageTitle {
+        font-size: 18px; font-weight: 800; color: #f3f4f6;
+        padding: 0; background: transparent;
+    }
+    QLabel#PageSubtitle {
+        font-size: 12px; color: #64748b; background: transparent;
+    }
+    QLabel#SectionTitle {
+        font-size: 15px; font-weight: 800; color: #f3f4f6;
+        padding: 0; background: transparent;
+    }
+    QLabel#SectionSubtitle {
+        font-size: 11px; color: #94a3b8; background: transparent;
+    }
+    QLabel#FormLabel {
+        font-size: 12px; color: #94a3b8; background: transparent;
+    }
+    /* ── Buttons: neutral base ───────────────────────────── */
+    QPushButton {
+        background-color: #1b2230;
+        border: 1px solid #2b313b;
+        border-radius: 6px;
+        padding: 5px 12px;
+        min-height: 30px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #e5e7eb;
+    }
+    QPushButton:hover  { background-color: #252d3d; }
+    QPushButton:disabled { color: #64748b; }
+    /* Primary (blue) – save / create */
+    QPushButton[role="primary"] {
+        background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+            stop:0 #3b82f6, stop:1 #2563eb);
+        border: 1px solid #2563eb; color: #fff; font-weight: 700;
+    }
+    QPushButton[role="primary"]:hover {
+        background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+            stop:0 #60a5fa, stop:1 #3b82f6);
+    }
+    /* Success (green) – verify / echo */
+    QPushButton[role="success"] {
+        background-color: #16a34a; border: 1px solid #15803d;
+        color: #ecfdf5; font-weight: 700;
+    }
+    QPushButton[role="success"]:hover { background-color: #15803d; }
+    /* Danger (red) – delete only */
+    QPushButton[role="danger"] {
+        background-color: #dc2626; border: 1px solid #b91c1c;
+        color: #fef2f2; font-weight: 700;
+    }
+    QPushButton[role="danger"]:hover { background-color: #b91c1c; }
+"""
+
+_TABLE_STYLE = """
+    QTableWidget {
+        background-color: #0f1319;
+        color: #e5e7eb;
+        border: 1px solid #1e2530;
+        border-radius: 8px;
+        gridline-color: #1e2530;
+        selection-background-color: #2563eb;
+        selection-color: #ffffff;
+    }
+    QTableWidget::item { padding: 4px 6px; }
+    QTableWidget::item:hover { background-color: #141a24; }
+    QHeaderView::section {
+        background-color: #0d1117;
+        color: #94a3b8;
+        padding: 5px 8px;
+        border: 1px solid #1e2530;
+        font-weight: 600;
+        font-size: 12px;
+    }
+"""
+
 
 class ServerSettingsWidget(QWidget):
+    """Unified Server Settings – AI-PACS + External PACS side-by-side."""
+
     def __init__(self):
-        super(ServerSettingsWidget, self).__init__()
-        self.json_file = 'servers.json'  # servers.json path
-        self.setup_ui()
+        super().__init__()
+        self.json_file = 'servers.json'
+        self._setup_ui()
         self.load_servers()
+        self._ext_load_and_display()
 
-    def fix_size_server_list(self):
-        '''
-            # set size table base on rows
-        '''
-        self.server_list.resizeColumnsToContents()
-
-        header = self.server_list.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Stretch)
-
-        self.server_list.setColumnWidth(2, 80)  # Port کوچیکه
-        self.server_list.setColumnWidth(4, 100)  # Status کوچیکه
-        self.server_list.setColumnWidth(5, 120)  # Actions دکمه داره
-
-    def setup_ui(self):
-        layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-
-        # Black theme (neutral dark / not navy)
+    # ════════════════════════════════════════════════════════════════════════
+    #  UI SETUP
+    # ════════════════════════════════════════════════════════════════════════
+    def _setup_ui(self):
         self.setObjectName("ServerSettingsWidget")
-        self.setStyleSheet("""
-            QWidget#ServerSettingsWidget {
-                background-color: #0b0d10;
-                color: #e5e7eb;
-            }
-            QWidget#ServerSettingsWidget QLabel {
-                color: #e5e7eb;
-                font-size: 14px;
-            }
-            QWidget#ServerSettingsWidget QGroupBox {
-                background-color: #10141a;
-                border: 1px solid #232a33;
-                border-radius: 12px;
-                padding: 18px 20px 18px 20px;
-                padding-top: 44px;
-                margin-top: 28px;
-                font-weight: 700;
-                color: #e5e7eb;
-            }
-            QWidget#ServerSettingsWidget QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 18px;
-                top: 2px;
-                padding: 6px 16px;
-                font-size: 28px;
-                font-weight: 900;
-                color: #f3f4f6;
-                background-color: #0f1319;
-                border: 1px solid #232a33;
-                border-radius: 11px;
-            }
-            QWidget#ServerSettingsWidget QLineEdit {
-                background-color: #1b2230;
-                color: #e5e7eb;
-                border: 1px solid #2b313b;
-                border-radius: 8px;
-                padding: 6px 10px;
-                min-height: 34px;
-                font-size: 14px;
-            }
-            QWidget#ServerSettingsWidget QLineEdit:focus {
-                border: 1px solid #3b82f6;
-            }
-            QWidget#ServerSettingsWidget QPushButton {
-                background-color: #1b2230;
-                color: #e5e7eb;
-                border: 1px solid #2b313b;
-                border-radius: 8px;
-                padding: 8px 14px;
-                min-height: 36px;
-                font-size: 14px;
-                font-weight: 600;
-            }
-            QWidget#ServerSettingsWidget QPushButton:hover {
-                background-color: #252d3d;
-                border-color: #3b82f6;
-            }
-            QWidget#ServerSettingsWidget QPushButton:pressed {
-                background-color: #162033;
-            }
-            QWidget#ServerSettingsWidget QPushButton:disabled {
-                background-color: rgba(27, 34, 48, 0.5);
-                color: rgba(229, 231, 235, 0.4);
-                border-color: rgba(43, 49, 59, 0.5);
-            }
+        self.setStyleSheet(_LOCAL_STYLE)
 
-            QWidget#ServerSettingsWidget QPushButton#success {
-                background-color: #16a34a;
-                border: 1px solid #15803d;
-                color: #ecfdf5;
-                font-weight: 700;
-            }
-            QWidget#ServerSettingsWidget QPushButton#success:hover {
-                background-color: #15803d;
-                border-color: #10b981;
-            }
-            QWidget#ServerSettingsWidget QPushButton#danger {
-                background-color: #f59e0b;
-                border: 1px solid #d97706;
-                color: #111827;
-                font-weight: 700;
-            }
-            QWidget#ServerSettingsWidget QPushButton#danger:hover {
-                background-color: #fbbf24;
-            }
-        """)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
 
-        # group servers list
-        list_group = QGroupBox("Server List")
-        list_layout = QVBoxLayout()
-        list_layout.setContentsMargins(16, 8, 16, 16)
-        list_layout.setSpacing(12)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
 
+        container = QWidget()
+        root = QVBoxLayout(container)
+        root.setContentsMargins(16, 12, 16, 12)
+        root.setSpacing(10)
+
+        # ── Page header (compact) ──────────────────────────────────────
+        hdr_row = QHBoxLayout()
+        hdr_row.setSpacing(0)
+        title = QLabel("Server Management")
+        title.setObjectName("PageTitle")
+        hdr_row.addWidget(title)
+        hdr_row.addStretch()
+        root.addLayout(hdr_row)
+
+        subtitle = QLabel(
+            "Manage connections to AI-PACS company servers and "
+            "third-party PACS systems"
+        )
+        subtitle.setObjectName("PageSubtitle")
+        subtitle.setWordWrap(True)
+        root.addWidget(subtitle)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #1e2530;")
+        sep.setFixedHeight(1)
+        root.addWidget(sep)
+
+        # ── Two-column content area (equal 1:1 stretch) ───────────────
+        columns = QHBoxLayout()
+        columns.setSpacing(14)
+
+        self._build_left_card(columns)   # AI-PACS
+        self._build_right_card(columns)  # External PACS
+
+        root.addLayout(columns, 1)
+
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+
+    # ────────────────────────────────────────────────────────────────────────
+    #  LEFT CARD – AI-PACS Company Servers
+    # ────────────────────────────────────────────────────────────────────────
+    def _build_left_card(self, parent: QHBoxLayout):
+        card = QFrame()
+        card.setObjectName("LeftCard")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 10, 14, 14)
+        lay.setSpacing(4)
+
+        # Section header
+        hdr = QLabel("AI-PACS Servers")
+        hdr.setObjectName("SectionTitle")
+        lay.addWidget(hdr)
+
+        sub = QLabel("Company DICOM servers \u2013 configure and verify")
+        sub.setObjectName("SectionSubtitle")
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+
+        # Table
         self.server_list = QTableWidget()
         self.server_list.setColumnCount(6)
-        self.server_list.setHorizontalHeaderLabels([
-            "Name", "Host", "Port", "AE Title", "Status", "Actions"
-        ])
-
-        # Apply black theme to table
-        self.server_list.setStyleSheet("""
-            QTableWidget {
-                background-color: #0f1319;
-                color: #e5e7eb;
-                border: 1px solid #232a33;
-                border-radius: 12px;
-                gridline-color: #232a33;
-                selection-background-color: #2563eb;
-                selection-color: #ffffff;
-            }
-            QTableWidget::item { padding: 5px; }
-            QTableWidget::item:hover { background-color: #10141a; }
-            QHeaderView::section {
-                background-color: #10141a;
-                color: #e5e7eb;
-                padding: 7px;
-                border: 1px solid #232a33;
-                font-weight: 700;
-                font-size: 14px;
-            }
-        """)
-
-        # set size table base on rows
-        self.fix_size_server_list()
-
+        self.server_list.setHorizontalHeaderLabels(
+            ["Name", "Host", "Port", "AE Title", "Status", ""]
+        )
+        self.server_list.setStyleSheet(_TABLE_STYLE)
         self.server_list.setSelectionBehavior(QTableWidget.SelectRows)
         self.server_list.setSelectionMode(QTableWidget.SingleSelection)
-        self.server_list.verticalHeader().setDefaultSectionSize(76)
-        self.server_list.verticalHeader().setMinimumSectionSize(70)
+        self.server_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.server_list.verticalHeader().setVisible(False)
+        self.server_list.verticalHeader().setDefaultSectionSize(42)
+        self.server_list.horizontalHeader().setStretchLastSection(False)
+        self._fix_aipacs_columns()
         self.server_list.itemSelectionChanged.connect(self.on_server_selected)
-        list_layout.addWidget(self.server_list)
+        self.server_list.setMinimumHeight(120)
+        lay.addWidget(self.server_list, 1)
 
-        list_group.setLayout(list_layout)
-        layout.addWidget(list_group)
+        # ── Bottom panel: form + buttons (unified frame) ──────────────
+        panel = QFrame()
+        panel.setObjectName("FormArea")
+        pl = QVBoxLayout(panel)
+        pl.setContentsMargins(14, 10, 14, 10)
+        pl.setSpacing(6)
 
-        # فرم جزئیات سرور
-        form_group = QGroupBox("Server Details")
-        form_layout = QGridLayout()
-        form_layout.setContentsMargins(16, 8, 16, 16)
-        form_layout.setHorizontalSpacing(14)
-        form_layout.setVerticalSpacing(12)
+        # Form grid: labels align vertically
+        form = QGridLayout()
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(6)
 
+        lbl_name = QLabel("Name:"); lbl_name.setObjectName("FormLabel")
+        lbl_name.setFixedWidth(55)
         self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Server Name")
+        self.name_edit.setFixedHeight(28)
+        lbl_host = QLabel("Host:"); lbl_host.setObjectName("FormLabel")
+        lbl_host.setFixedWidth(55)
         self.host_edit = QLineEdit()
+        self.host_edit.setPlaceholderText("192.168.1.100")
+        self.host_edit.setFixedHeight(28)
+        form.addWidget(lbl_name, 0, 0)
+        form.addWidget(self.name_edit, 0, 1)
+        form.addWidget(lbl_host, 0, 2)
+        form.addWidget(self.host_edit, 0, 3)
+
+        lbl_port = QLabel("Port:"); lbl_port.setObjectName("FormLabel")
+        lbl_port.setFixedWidth(55)
         self.port_edit = QLineEdit()
+        self.port_edit.setPlaceholderText("104")
+        self.port_edit.setFixedHeight(28)
+        lbl_ae = QLabel("AE Title:"); lbl_ae.setObjectName("FormLabel")
+        lbl_ae.setFixedWidth(55)
         self.ae_title_edit = QLineEdit()
+        self.ae_title_edit.setPlaceholderText("AE_TITLE")
+        self.ae_title_edit.setMaxLength(16)
+        self.ae_title_edit.setFixedHeight(28)
+        form.addWidget(lbl_port, 1, 0)
+        form.addWidget(self.port_edit, 1, 1)
+        form.addWidget(lbl_ae, 1, 2)
+        form.addWidget(self.ae_title_edit, 1, 3)
 
-        # standard height inputs
-        for w in (self.name_edit, self.host_edit, self.port_edit, self.ae_title_edit):
-            w.setFixedHeight(38)
+        form.setColumnStretch(1, 1)
+        form.setColumnStretch(3, 1)
+        pl.addLayout(form)
 
-        form_layout.addWidget(QLabel("Server Name:"), 0, 0)
-        form_layout.addWidget(self.name_edit, 0, 1)
-        form_layout.addWidget(QLabel("Host:"), 1, 0)
-        form_layout.addWidget(self.host_edit, 1, 1)
-        form_layout.addWidget(QLabel("Port:"), 2, 0)
-        form_layout.addWidget(self.port_edit, 2, 1)
-        form_layout.addWidget(QLabel("AE Title:"), 3, 0)
-        form_layout.addWidget(self.ae_title_edit, 3, 1)
-        form_layout.setColumnStretch(1, 1)
-        # دکمه‌های عملیات سرور
-        btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(0, 6, 0, 0)
-        btn_layout.setSpacing(10)
+        # Button row 1: Save + Verify
+        btn_row1 = QHBoxLayout()
+        btn_row1.setSpacing(12)
 
         self.save_btn = QPushButton("Save")
-        self.save_btn.setObjectName("success")
-        self.save_btn.setFixedHeight(42)
+        self.save_btn.setProperty("role", "primary")
+        self.save_btn.setFixedHeight(30)
         self.save_btn.clicked.connect(self.save_server)
 
-        self.verify_btn = QPushButton("Verify Connection")
-        self.verify_btn.setObjectName("success")
-        self.verify_btn.setFixedHeight(42)
-        self.verify_btn.clicked.connect(lambda: asyncio.create_task(self.verify_connection()))
+        self.verify_btn = QPushButton("Verify")
+        self.verify_btn.setProperty("role", "success")
+        self.verify_btn.setFixedHeight(30)
+        self.verify_btn.clicked.connect(
+            lambda: asyncio.create_task(self.verify_connection())
+        )
+
+        btn_row1.addWidget(self.save_btn, 1)
+        btn_row1.addWidget(self.verify_btn, 1)
+        pl.addLayout(btn_row1)
+
+        # Button row 2: Delete + Clear
+        btn_row2 = QHBoxLayout()
+        btn_row2.setSpacing(12)
 
         self.delete_btn = QPushButton("Delete")
-        self.delete_btn.setObjectName("danger")
-        self.delete_btn.setFixedHeight(42)
+        self.delete_btn.setProperty("role", "danger")
+        self.delete_btn.setFixedHeight(30)
         self.delete_btn.clicked.connect(self.delete_server)
         self.delete_btn.setEnabled(False)
 
         self.clear_btn = QPushButton("Clear")
-        self.clear_btn.setFixedHeight(42)
+        self.clear_btn.setFixedHeight(30)
         self.clear_btn.clicked.connect(self.clear_form)
 
-        btn_layout.addWidget(self.save_btn, 1)
-        btn_layout.addWidget(self.verify_btn, 1)
-        btn_layout.addWidget(self.delete_btn, 1)
-        btn_layout.addWidget(self.clear_btn, 1)
+        btn_row2.addWidget(self.delete_btn, 1)
+        btn_row2.addWidget(self.clear_btn, 1)
+        pl.addLayout(btn_row2)
+        lay.addWidget(panel)
 
-        form_layout.addLayout(btn_layout, 4, 0, 1, 2)
 
-        form_group.setLayout(form_layout)
-        layout.addWidget(form_group)
+        # Equal stretch weight with right card
+        parent.addWidget(card, 1)
 
-        self.setLayout(layout)
+    # ────────────────────────────────────────────────────────────────────────
+    #  RIGHT CARD – External / Third-Party PACS
+    # ────────────────────────────────────────────────────────────────────────
+    def _build_right_card(self, parent: QHBoxLayout):
+        card = QFrame()
+        card.setObjectName("RightCard")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 10, 14, 14)
+        lay.setSpacing(4)
+
+        # Section header
+        hdr = QLabel("External PACS")
+        hdr.setObjectName("SectionTitle")
+        lay.addWidget(hdr)
+
+        sub = QLabel("Third-party PACS \u2013 DIMSE or DICOMWeb")
+        sub.setObjectName("SectionSubtitle")
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+
+        # Table (compact 5 columns)
+        self._ext_table = QTableWidget()
+        self._ext_table.setColumnCount(len(_EXT_COLUMNS))
+        self._ext_table.setHorizontalHeaderLabels(_EXT_COLUMNS)
+        self._ext_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._ext_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._ext_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._ext_table.verticalHeader().setVisible(False)
+        self._ext_table.verticalHeader().setDefaultSectionSize(36)
+        self._ext_table.horizontalHeader().setStretchLastSection(True)
+        self._ext_table.setStyleSheet(_TABLE_STYLE)
+        self._ext_table.doubleClicked.connect(self._ext_on_edit)
+        self._ext_table.setMinimumHeight(120)
+        lay.addWidget(self._ext_table, 1)
+
+        # ── Bottom panel: buttons + SCP (unified frame) ───────────────
+        panel = QFrame()
+        panel.setObjectName("FormArea")
+        pl = QVBoxLayout(panel)
+        pl.setContentsMargins(14, 10, 14, 10)
+        pl.setSpacing(6)
+
+        # Form grid: labels align vertically
+        form = QGridLayout()
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(6)
+
+        lbl_ae = QLabel("Local AE:"); lbl_ae.setObjectName("FormLabel")
+        lbl_ae.setFixedWidth(55)
+        self._local_ae_edit = QLineEdit()
+        self._local_ae_edit.setMaxLength(16)
+        self._local_ae_edit.setPlaceholderText("AIPACS_SCU")
+        self._local_ae_edit.setFixedHeight(28)
+        lbl_port = QLabel("Port:"); lbl_port.setObjectName("FormLabel")
+        lbl_port.setFixedWidth(55)
+        self._local_port_spin = QSpinBox()
+        self._local_port_spin.setRange(1, 65535)
+        self._local_port_spin.setValue(11112)
+        self._local_port_spin.setFixedHeight(28)
+        self._local_port_spin.setFixedWidth(120)
+        form.addWidget(lbl_ae, 0, 0)
+        form.addWidget(self._local_ae_edit, 0, 1, 1, 3)
+
+        form.addWidget(lbl_port, 1, 0)
+        form.addWidget(self._local_port_spin, 1, 1)
+        save_scp = QPushButton("Save SCP")
+        save_scp.setProperty("role", "primary")
+        save_scp.setFixedHeight(28)
+        save_scp.clicked.connect(self._ext_save_scp_settings)
+        form.addWidget(save_scp, 1, 3)
+
+        form.setColumnStretch(1, 1)
+        form.setColumnStretch(3, 1)
+        pl.addLayout(form)
+
+        # Button row 1: New + Echo + Verify All
+        bar1 = QHBoxLayout()
+        bar1.setSpacing(12)
+
+        self._ext_new_btn = QPushButton("New\u2026")
+        self._ext_new_btn.setProperty("role", "primary")
+        self._ext_new_btn.setFixedHeight(30)
+        self._ext_new_btn.clicked.connect(self._ext_on_new)
+
+        self._ext_echo_btn = QPushButton("Echo")
+        self._ext_echo_btn.setProperty("role", "success")
+        self._ext_echo_btn.setFixedHeight(30)
+        self._ext_echo_btn.setEnabled(False)
+        self._ext_echo_btn.clicked.connect(
+            lambda: asyncio.create_task(self._ext_on_echo())
+        )
+
+        self._ext_verify_all_btn = QPushButton("Verify All")
+        self._ext_verify_all_btn.setProperty("role", "success")
+        self._ext_verify_all_btn.setFixedHeight(30)
+        self._ext_verify_all_btn.clicked.connect(self._ext_verify_all)
+
+        bar1.addWidget(self._ext_new_btn, 1)
+        bar1.addWidget(self._ext_echo_btn, 1)
+        bar1.addWidget(self._ext_verify_all_btn, 1)
+        pl.addLayout(bar1)
+
+        # Button row 2: Delete + Edit + Refresh
+        bar2 = QHBoxLayout()
+        bar2.setSpacing(12)
+
+        self._ext_delete_btn = QPushButton("Delete")
+        self._ext_delete_btn.setProperty("role", "danger")
+        self._ext_delete_btn.setFixedHeight(30)
+        self._ext_delete_btn.setEnabled(False)
+        self._ext_delete_btn.clicked.connect(self._ext_on_delete)
+
+        self._ext_edit_btn = QPushButton("Edit\u2026")
+        self._ext_edit_btn.setFixedHeight(30)
+        self._ext_edit_btn.setEnabled(False)
+        self._ext_edit_btn.clicked.connect(self._ext_on_edit)
+
+        self._ext_refresh_btn = QPushButton("Refresh")
+        self._ext_refresh_btn.setFixedHeight(30)
+        self._ext_refresh_btn.clicked.connect(self._ext_load_and_display)
+
+        bar2.addWidget(self._ext_delete_btn, 1)
+        bar2.addWidget(self._ext_edit_btn, 1)
+        bar2.addWidget(self._ext_refresh_btn, 1)
+        pl.addLayout(bar2)
+
+        lay.addWidget(panel)
+
+
+        # Selection wiring
+        self._ext_table.itemSelectionChanged.connect(
+            self._ext_on_selection_changed
+        )
+
+        # Equal stretch weight with left card
+        parent.addWidget(card, 1)
+
+    # ════════════════════════════════════════════════════════════════════════
+    #  AI-PACS SERVER LOGIC  (reads/writes servers.json)
+    # ════════════════════════════════════════════════════════════════════════
+    def _fix_aipacs_columns(self):
+        header = self.server_list.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)           # Name
+        header.setSectionResizeMode(1, QHeaderView.Stretch)           # Host
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Port
+        header.setSectionResizeMode(3, QHeaderView.Stretch)           # AE Title
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Status
+        header.setSectionResizeMode(5, QHeaderView.Fixed)             # Verify
+        self.server_list.setColumnWidth(5, 70)
 
     def save_server(self):
         if not all([self.name_edit.text(), self.host_edit.text(),
@@ -254,7 +466,6 @@ class ServerSettingsWidget(QWidget):
             return
 
         servers = get_all_servers()
-
         new_server = {
             'name': self.name_edit.text(),
             'host': self.host_edit.text(),
@@ -272,47 +483,38 @@ class ServerSettingsWidget(QWidget):
         self.save_to_json(servers)
         self.load_servers()
         self.clear_form()
-        self.fix_size_server_list()
         UpdaterDataFromServerToHome().update()
 
-    def _verify_dicom_blocking(self, host: str, port: int, ae_title: str, timeouts=(5, 5, 5)):
-        """
-        اجرای بلاک‌شونده‌ی CEcho در تردِ جدا. خروجی: (ok: bool, err: Optional[str])
-        """
+    def _verify_dicom_blocking(self, host: str, port: int, ae_title: str,
+                               timeouts=(5, 5, 5)):
         try:
             ae = AE()
             ae.add_requested_context(Verification)
-
-            # جلوگیری از بلاک شدن طولانی
             ae.acse_timeout = timeouts[0]
             ae.dimse_timeout = timeouts[1]
             ae.network_timeout = timeouts[2]
-
             assoc = ae.associate(host, port, ae_title=ae_title)
             if assoc.is_established:
                 status = assoc.send_c_echo()
                 assoc.release()
-                return bool(status), None  # ok
+                return bool(status), None
             else:
                 return False, "Association not established"
         except Exception as e:
             return False, str(e)
 
     async def verify_connection(self):
-        # دکمه را موقتاً غیرفعال می‌کنیم تا کاربر چندبار نزند
         self.verify_btn.setEnabled(False)
         try:
             host = self.host_edit.text().strip()
             port_text = self.port_edit.text().strip()
             ae_title = self.ae_title_edit.text().strip()
 
-            # اعتبارسنجی اولیه
             if not host or not port_text or not ae_title:
                 msg = QMessageBox()
                 msg.setWindowIcon(QIcon("PacsClient/login/images/favicon.ico"))
                 msg.warning(self, "Error", "All fields are required")
                 return False
-
             try:
                 port = int(port_text)
             except ValueError:
@@ -321,22 +523,22 @@ class ServerSettingsWidget(QWidget):
                 msg.warning(self, "Error", "Port must be an integer")
                 return False
 
-            # اجرای عملیات بلاک‌کننده در یک ترد پس‌زمینه
-            ok, err = await asyncio.to_thread(self._verify_dicom_blocking, host, port, ae_title)
+            ok, err = await asyncio.to_thread(
+                self._verify_dicom_blocking, host, port, ae_title
+            )
 
             if ok:
                 msg = QMessageBox()
                 msg.setWindowIcon(QIcon("PacsClient/login/images/favicon.ico"))
-                msg.information(self, "Success", "Connection verified successfully!")
+                msg.information(self, "Success",
+                                "Connection verified successfully!")
                 return True
             else:
                 msg = QMessageBox()
                 msg.setWindowIcon(QIcon("PacsClient/login/images/favicon.ico"))
-                detail = f"\n\nDetail: {err}" if err else ""
-                # msg.warning(self, "Error", f"Could not verify connection.{detail}")
-                msg.warning(self, "Error", f"Could not verify connection.")
+                msg.warning(self, "Error",
+                            "Could not verify connection.")
                 return False
-
         except Exception as e:
             msg = QMessageBox()
             msg.setWindowIcon(QIcon("PacsClient/login/images/favicon.ico"))
@@ -344,7 +546,6 @@ class ServerSettingsWidget(QWidget):
             return False
         finally:
             self.verify_btn.setEnabled(True)
-
 
     def delete_server(self):
         selected_items = self.server_list.selectedItems()
@@ -361,7 +562,6 @@ class ServerSettingsWidget(QWidget):
                 self.save_to_json(servers)
                 self.load_servers()
                 self.clear_form()
-                self.fix_size_server_list()
                 UpdaterDataFromServerToHome().update()
 
     def clear_form(self):
@@ -371,7 +571,6 @@ class ServerSettingsWidget(QWidget):
         self.ae_title_edit.clear()
         self.server_list.clearSelection()
         self.delete_btn.setEnabled(False)
-        self.fix_size_server_list()
         UpdaterDataFromServerToHome().update()
 
     def load_servers(self):
@@ -379,36 +578,41 @@ class ServerSettingsWidget(QWidget):
         self.server_list.setRowCount(len(servers))
 
         for i, server in enumerate(servers):
-            self.server_list.setItem(i, 0, QTableWidgetItem(server['name']))
-            self.server_list.setItem(i, 1, QTableWidgetItem(server['host']))
-            self.server_list.setItem(i, 2, QTableWidgetItem(server['port']))
-            self.server_list.setItem(i, 3, QTableWidgetItem(server['ae_title']))
+            self.server_list.setItem(
+                i, 0, QTableWidgetItem(server['name']))
+            self.server_list.setItem(
+                i, 1, QTableWidgetItem(server['host']))
+            self.server_list.setItem(
+                i, 2, QTableWidgetItem(server['port']))
+            self.server_list.setItem(
+                i, 3, QTableWidgetItem(server['ae_title']))
 
             status_item = QTableWidgetItem("Unknown")
             status_item.setTextAlignment(Qt.AlignCenter)
             self.server_list.setItem(i, 4, status_item)
 
+            # Compact verify button
             action_widget = QWidget()
-            action_widget.setStyleSheet("background-color: transparent;")
-            action_widget.setFixedHeight(60)
+            action_widget.setStyleSheet("background: transparent;")
             action_layout = QHBoxLayout(action_widget)
-            action_layout.setContentsMargins(10, 10, 10, 10)
+            action_layout.setContentsMargins(4, 2, 4, 2)
             action_layout.setSpacing(0)
             action_layout.setAlignment(Qt.AlignCenter)
 
             verify_btn = QPushButton("Verify")
-            verify_btn.setObjectName("success")
-            verify_btn.setFixedHeight(44)
-            verify_btn.clicked.connect(lambda checked, row=i: asyncio.create_task(self.verify_server(row)))
+            verify_btn.setProperty("role", "success")
+            verify_btn.setFixedHeight(28)
+            verify_btn.setStyleSheet(
+                "font-size: 11px; padding: 2px 8px; min-height: 24px;"
+            )
+            verify_btn.clicked.connect(
+                lambda checked, row=i:
+                    asyncio.create_task(self.verify_server(row))
+            )
             action_layout.addWidget(verify_btn)
-
-            self.server_list.setRowHeight(i, 76)
             self.server_list.setCellWidget(i, 5, action_widget)
 
-        self.server_list.resizeColumnsToContents()
-
     async def verify_server(self, row):
-        # ایندکس‌ها را امن بخوانیم
         try:
             host_item = self.server_list.item(row, 1)
             port_item = self.server_list.item(row, 2)
@@ -417,10 +621,8 @@ class ServerSettingsWidget(QWidget):
 
             if not (host_item and port_item and ae_item and status_item):
                 return
-
             host = host_item.text().strip()
             ae_title = ae_item.text().strip()
-
             try:
                 port = int(port_item.text().strip())
             except ValueError:
@@ -429,13 +631,13 @@ class ServerSettingsWidget(QWidget):
                 status_item.setForeground(QColor("#111827"))
                 return
 
-            # وضعیت موقت
             status_item.setText("Checking...")
             status_item.setBackground(QColor("#1b2230"))
             status_item.setForeground(QColor("#e5e7eb"))
 
-            # اجرای عملیات بلاک‌کننده در ترد جدا
-            ok, err = await asyncio.to_thread(self._verify_dicom_blocking, host, port, ae_title)
+            ok, err = await asyncio.to_thread(
+                self._verify_dicom_blocking, host, port, ae_title
+            )
 
             if ok:
                 status_item.setText("Online")
@@ -447,7 +649,6 @@ class ServerSettingsWidget(QWidget):
                 status_item.setBackground(QColor("#f59e0b"))
                 status_item.setForeground(QColor("#111827"))
                 status_item.setToolTip(err or "Unknown error")
-
         except Exception:
             status_item = self.server_list.item(row, 4)
             if status_item:
@@ -464,23 +665,218 @@ class ServerSettingsWidget(QWidget):
             self.port_edit.setText(self.server_list.item(row, 2).text())
             self.ae_title_edit.setText(self.server_list.item(row, 3).text())
             self.delete_btn.setEnabled(True)
-            self.delete_btn.setFixedSize(self.clear_btn.size())
         else:
             self.delete_btn.setEnabled(False)
 
-    # # تابع کمکی برای بارگذاری از فایل json
-    # def get_all_servers(self):
-    #     if os.path.exists(self.json_file):
-    #         with open(self.json_file, 'r', encoding='utf-8') as f:
-    #             try:
-    #                 return json.load(f)
-    #             except json.JSONDecodeError:
-    #                 return []
-    #     return []
-
-    # تابع کمکی برای ذخیره در فایل json
     def save_to_json(self, servers):
         with open(self.json_file, 'w', encoding='utf-8') as f:
             json.dump(servers, f, indent=4)
 
+    # ════════════════════════════════════════════════════════════════════════
+    #  EXTERNAL PACS LOGIC  (reads/writes config/external_pacs_servers.json)
+    # ════════════════════════════════════════════════════════════════════════
+    def _ext_on_new(self):
+        dlg = ExternalPacsServerDialog(self)
+        if dlg.exec() == ExternalPacsServerDialog.Accepted:
+            data = dlg.get_server_data()
+            if data:
+                cfg = _load_config()
+                cfg["servers"].append(data)
+                _save_config(cfg)
+                self._ext_load_and_display()
 
+    def _ext_on_edit(self):
+        row = self._ext_selected_row()
+        if row < 0:
+            return
+        cfg = _load_config()
+        if row >= len(cfg["servers"]):
+            return
+        dlg = ExternalPacsServerDialog(
+            self, server_data=cfg["servers"][row]
+        )
+        if dlg.exec() == ExternalPacsServerDialog.Accepted:
+            data = dlg.get_server_data()
+            if data:
+                cfg["servers"][row] = data
+                _save_config(cfg)
+                self._ext_load_and_display()
+
+    def _ext_on_delete(self):
+        row = self._ext_selected_row()
+        if row < 0:
+            return
+        reply = QMessageBox.question(
+            self, "Confirm Delete",
+            "Are you sure you want to remove this server?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            cfg = _load_config()
+            if row < len(cfg["servers"]):
+                del cfg["servers"][row]
+                _save_config(cfg)
+                self._ext_load_and_display()
+
+    async def _ext_on_echo(self):
+        """C-ECHO for external DIMSE servers."""
+        row = self._ext_selected_row()
+        if row < 0:
+            return
+        cfg = _load_config()
+        if row >= len(cfg["servers"]):
+            return
+        srv = cfg["servers"][row]
+
+        if srv.get("protocol", "DIMSE") != "DIMSE":
+            QMessageBox.information(
+                self, "Echo",
+                "C-ECHO is only available for DIMSE servers.\n"
+                "For DICOMWeb, test the QIDO URL in a browser.")
+            return
+
+        self._ext_echo_btn.setEnabled(False)
+        self._ext_set_status(row, "Checking\u2026", "#94a3b8")
+
+        try:
+            ok, err = await asyncio.to_thread(
+                self._ext_cecho_blocking,
+                srv.get("ip_address", ""),
+                int(srv.get("port", 104)),
+                srv.get("ae_title", ""),
+            )
+            if ok:
+                self._ext_set_status(row, "Online", "#10b981")
+                QMessageBox.information(
+                    self, "Echo",
+                    "C-ECHO succeeded \u2013 server is reachable.")
+            else:
+                self._ext_set_status(row, "Offline", "#f59e0b")
+                QMessageBox.warning(
+                    self, "Echo",
+                    f"C-ECHO failed.\n"
+                    f"{err or 'Association not established.'}")
+        except Exception as exc:
+            self._ext_set_status(row, "Error", "#ef4444")
+            QMessageBox.critical(self, "Echo", f"C-ECHO error: {exc}")
+        finally:
+            self._ext_echo_btn.setEnabled(True)
+
+    def _ext_on_selection_changed(self):
+        has = self._ext_selected_row() >= 0
+        self._ext_delete_btn.setEnabled(has)
+        self._ext_edit_btn.setEnabled(has)
+        self._ext_echo_btn.setEnabled(has)
+
+    def _ext_verify_all(self):
+        """Trigger C-ECHO on every DIMSE external server."""
+        cfg = _load_config()
+        for i, srv in enumerate(cfg.get("servers", [])):
+            if srv.get("protocol", "DIMSE") == "DIMSE":
+                asyncio.create_task(self._ext_verify_one(i, srv))
+
+    async def _ext_verify_one(self, row: int, srv: dict):
+        self._ext_set_status(row, "Checking\u2026", "#94a3b8")
+        try:
+            ok, err = await asyncio.to_thread(
+                self._ext_cecho_blocking,
+                srv.get("ip_address", ""),
+                int(srv.get("port", 104)),
+                srv.get("ae_title", ""),
+            )
+            if ok:
+                self._ext_set_status(row, "Online", "#10b981")
+            else:
+                self._ext_set_status(row, "Offline", "#f59e0b")
+        except Exception:
+            self._ext_set_status(row, "Error", "#ef4444")
+
+    def _ext_selected_row(self) -> int:
+        items = self._ext_table.selectedItems()
+        return items[0].row() if items else -1
+
+    def _ext_load_and_display(self):
+        cfg = _load_config()
+        servers = cfg.get("servers", [])
+
+        self._ext_table.setRowCount(len(servers))
+        for i, srv in enumerate(servers):
+            proto = srv.get("protocol", "DIMSE")
+            ae    = srv.get("ae_title", "")
+            ip    = (srv.get("ip_address", "") if proto == "DIMSE"
+                     else srv.get("qido_url", ""))
+            port  = str(srv.get("port", "")) if proto == "DIMSE" else ""
+
+            self._ext_table.setItem(i, 0, QTableWidgetItem(ae))
+            self._ext_table.setItem(i, 1, QTableWidgetItem(ip))
+            self._ext_table.setItem(i, 2, QTableWidgetItem(port))
+            self._ext_table.setItem(i, 3, QTableWidgetItem(proto))
+
+            status_item = QTableWidgetItem("")
+            status_item.setTextAlignment(Qt.AlignCenter)
+            self._ext_table.setItem(i, 4, status_item)
+
+            # Tooltip with service/description details
+            tip_parts = []
+            if srv.get("service"):
+                tip_parts.append(f"Service: {srv['service']}")
+            if srv.get("description"):
+                tip_parts.append(f"Description: {srv['description']}")
+            if tip_parts:
+                tip = "\n".join(tip_parts)
+                for col in range(5):
+                    item = self._ext_table.item(i, col)
+                    if item:
+                        item.setToolTip(tip)
+
+        self._ext_resize_columns()
+
+        # Load SCP settings
+        scp = cfg.get("scp_settings", {})
+        self._local_ae_edit.setText(
+            scp.get("local_ae_title", "AIPACS_SCU"))
+        self._local_port_spin.setValue(
+            int(scp.get("local_port", 11112)))
+
+    def _ext_resize_columns(self):
+        header = self._ext_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)           # AE
+        header.setSectionResizeMode(1, QHeaderView.Stretch)           # Host
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Port
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Proto
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Status
+
+    def _ext_set_status(self, row: int, text: str, color: str):
+        item = self._ext_table.item(row, 4)
+        if item:
+            item.setText(text)
+            item.setForeground(QColor(color))
+
+    def _ext_save_scp_settings(self):
+        cfg = _load_config()
+        cfg["scp_settings"] = {
+            "local_ae_title": (self._local_ae_edit.text().strip()
+                               or "AIPACS_SCU"),
+            "local_port": self._local_port_spin.value(),
+        }
+        _save_config(cfg)
+        QMessageBox.information(self, "Saved", "Local SCP settings saved.")
+
+    @staticmethod
+    def _ext_cecho_blocking(host: str, port: int, remote_ae: str,
+                            local_ae: str = "AIPACS_SCU",
+                            timeouts: tuple = (5, 5, 5)
+                            ) -> tuple[bool, str | None]:
+        """C-ECHO verification (blocking). Returns (ok, error_msg)."""
+        try:
+            ae = AE(ae_title=local_ae)
+            ae.add_requested_context(Verification)
+            ae.acse_timeout, ae.dimse_timeout, ae.network_timeout = timeouts
+            assoc = ae.associate(host, port, ae_title=remote_ae)
+            if assoc.is_established:
+                status = assoc.send_c_echo()
+                assoc.release()
+                return bool(status), None
+            return False, "Association rejected or aborted by remote."
+        except Exception as e:
+            return False, str(e)

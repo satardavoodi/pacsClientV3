@@ -60,6 +60,28 @@ MODULE_CATALOG: list[dict[str, Any]] = [
         "component": "basic\\zeta_boost",
     },
     {
+        "id": "education",
+        "title": "Education Module",
+        "tier": "basic",
+        "default_enabled": True,
+        "component": "basic\\education",
+        "package_kind": "core",
+        "package_python_paths": ["python"],
+        "package_sources": ["modules/education"],
+        "healthcheck_import": "modules.education.education_main_widget",
+    },
+    {
+        "id": "stitching",
+        "title": "Stitching Module",
+        "tier": "basic",
+        "default_enabled": True,
+        "component": "basic\\stitching",
+        "package_kind": "core",
+        "package_python_paths": ["python"],
+        "package_sources": ["modules/stitching"],
+        "healthcheck_import": "modules.stitching",
+    },
+    {
         "id": "advanced_mpr",
         "title": "Advanced MPR",
         "tier": "optional",
@@ -166,6 +188,21 @@ def module_downloads_root() -> Path:
     if is_frozen() and sys.platform == "win32":
         return local_state_root() / MODULE_PACKAGE_DOWNLOADS_DIRNAME
     return bundle_root() / "generated-files" / MODULE_PACKAGE_DOWNLOADS_DIRNAME
+
+
+def bundled_module_packages_search_roots() -> list[Path]:
+    roots: list[Path] = []
+    for candidate in (
+        install_root() / MODULE_PACKAGE_DOWNLOADS_DIRNAME,
+        bundle_root() / MODULE_PACKAGE_DOWNLOADS_DIRNAME,
+    ):
+        if candidate not in roots:
+            roots.append(candidate)
+    return roots
+
+
+def bundled_module_packages_root() -> Path:
+    return bundled_module_packages_search_roots()[0]
 
 
 def _win_dir(env_name: str, fallback_suffix: tuple[str, ...]) -> Path:
@@ -622,6 +659,21 @@ def discover_module_packages(folder: str | Path) -> list[dict[str, Any]]:
     return packages
 
 
+def discover_bundled_module_packages() -> list[dict[str, Any]]:
+    packages: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for root in bundled_module_packages_search_roots():
+        if not root.exists():
+            continue
+        for manifest in discover_module_packages(root):
+            module_id = str(manifest.get("module_id") or "").strip()
+            if not module_id or module_id in seen:
+                continue
+            seen.add(module_id)
+            packages.append(manifest)
+    return packages
+
+
 def _download_module_package(url: str) -> Path:
     downloads_root = module_downloads_root()
     downloads_root.mkdir(parents=True, exist_ok=True)
@@ -736,6 +788,75 @@ def validate_module_installation(module_id: str) -> dict[str, Any]:
             return {"ok": False, "message": f"Missing runtime file: {candidate}"}
 
     return {"ok": True, "message": f"{record['title']} is ready."}
+
+
+def bootstrap_installer_selected_module_packages(
+    profile: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Install setup-selected bundled packages before optional modules are imported."""
+    if not is_frozen():
+        return []
+
+    configured = configured_module_map(profile)
+    package_state = module_package_map(profile)
+    available = {
+        str(package.get("module_id") or ""): package
+        for package in discover_bundled_module_packages()
+        if str(package.get("module_id") or "").strip()
+    }
+    installed_records: list[dict[str, Any]] = []
+
+    for module_id, enabled in configured.items():
+        if not enabled:
+            continue
+        state = package_state.get(module_id)
+        record = _package_record(module_id, state=state, enabled=True)
+        if record["tier"] == "basic" or record["installed"]:
+            continue
+
+        package = available.get(module_id)
+        if not package:
+            if str((state or {}).get("status") or "") == "selected_for_install" or str(
+                (state or {}).get("installed_from") or ""
+            ) == "bundled_setup_selection":
+                save_runtime_profile(
+                    {
+                        "modules": {module_id: False},
+                        "module_packages": {
+                            module_id: {
+                                "status": "install_failed",
+                                "installed_from": "bundled_setup_selection",
+                                "requires_restart": True,
+                                "warning": "Bundled package was selected during setup but no package files were found.",
+                            }
+                        },
+                    }
+                )
+            continue
+
+        try:
+            installed_records.append(
+                install_module_package(
+                    str(package.get("source_path") or ""),
+                    expected_module_id=module_id,
+                    enable_on_install=True,
+                )
+            )
+        except Exception as exc:
+            save_runtime_profile(
+                {
+                    "modules": {module_id: False},
+                    "module_packages": {
+                        module_id: {
+                            "status": "install_failed",
+                            "installed_from": str(package.get("source_path") or ""),
+                            "requires_restart": True,
+                            "warning": f"Bundled package install failed: {exc}",
+                        }
+                    },
+                }
+            )
+    return installed_records
 
 
 def build_graphics_runtime_patch(

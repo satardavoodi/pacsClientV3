@@ -969,13 +969,27 @@ def save_image_as_png(vtk_image_data, metadata, metadata_fixed, file):
     dims = vtk_image_data.GetDimensions()
     vtk_array = vtk_image_data.GetPointData().GetScalars()
     np_data = numpy_support.vtk_to_numpy(vtk_array)
+    scalar_components = int(vtk_array.GetNumberOfComponents() or 1)
 
-    is_rgb = metadata['instances'][-1]['is_rgb']
-    if is_rgb:
-        # Reshape RGB data to (z, y, x, 3)
-        np_data = np_data.reshape(dims[2], dims[1], dims[0], 3)
+    voxel_count = int(dims[0] * dims[1] * dims[2])
+    expected_size = int(voxel_count * scalar_components)
+    if voxel_count > 0 and int(np_data.size) != expected_size and int(np_data.size) % voxel_count == 0:
+        inferred_components = int(np_data.size // voxel_count)
+        if inferred_components > 0:
+            scalar_components = inferred_components
+            expected_size = int(voxel_count * scalar_components)
+    if int(np_data.size) != expected_size:
+        raise ValueError(
+            f"thumbnail scalar size mismatch: data_size={np_data.size}, "
+            f"dims={dims}, components={scalar_components}, expected={expected_size}"
+        )
+
+    if scalar_components >= 3:
+        # Reshape multi-component data to (z, y, x, c)
+        np_data = np_data.reshape(dims[2], dims[1], dims[0], scalar_components)
         slice_index = dims[2] // 2  # Select middle slice
-        slice_2d = np_data[slice_index, :, :, :].astype(np.uint8)
+        # Keep RGB channels for thumbnail (drop alpha/extra channels if present)
+        slice_2d = np_data[slice_index, :, :, :3].astype(np.uint8)
         wl_slice = slice_2d
     else:
 
@@ -1078,13 +1092,25 @@ def save_image_as_png_fast_first(vtk_image_data, metadata, metadata_fixed, file)
         vtk_array = vtk_image_data.GetPointData().GetScalars()
 
         np_data = numpy_support.vtk_to_numpy(vtk_array)
+        scalar_components = int(vtk_array.GetNumberOfComponents() or 1)
 
-        is_rgb = metadata['instances'][-1]['is_rgb']
+        voxel_count = int(dims[0] * dims[1] * dims[2])
+        expected_size = int(voxel_count * scalar_components)
+        if voxel_count > 0 and int(np_data.size) != expected_size and int(np_data.size) % voxel_count == 0:
+            inferred_components = int(np_data.size // voxel_count)
+            if inferred_components > 0:
+                scalar_components = inferred_components
+                expected_size = int(voxel_count * scalar_components)
+        if int(np_data.size) != expected_size:
+            raise ValueError(
+                f"thumbnail scalar size mismatch: data_size={np_data.size}, "
+                f"dims={dims}, components={scalar_components}, expected={expected_size}"
+            )
 
-        if is_rgb:
-            np_data = np_data.reshape(dims[2], dims[1], dims[0], 3)
+        if scalar_components >= 3:
+            np_data = np_data.reshape(dims[2], dims[1], dims[0], scalar_components)
             slice_index = dims[2] // 2
-            wl_slice = np_data[slice_index, :, :, :]
+            wl_slice = np_data[slice_index, :, :, :3].astype(np.uint8)
         else:
             np_data = np_data.reshape(dims[2], dims[1], dims[0])
             slice_index = dims[2] // 2

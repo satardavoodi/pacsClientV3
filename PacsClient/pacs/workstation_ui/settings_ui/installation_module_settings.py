@@ -72,7 +72,8 @@ class InstallationModuleSettingsWidget(QWidget):
 
         intro = QLabel(
             "Install optional workstation modules from a package file, a folder of packages, "
-            "or a direct URL. Module activation is stored per workstation and usually requires restart."
+            "or a direct URL. Packages selected during workstation setup are applied on first launch. "
+            "Module activation is stored per workstation and usually requires restart."
         )
         intro.setWordWrap(True)
         root.addWidget(intro)
@@ -195,7 +196,8 @@ class InstallationModuleSettingsWidget(QWidget):
             self.table.selectRow(0)
         self._sync_button_state()
         self.status_label.setText(
-            "Optional modules are enabled per workstation. Restart after install or enable/disable changes."
+            "Optional modules are enabled per workstation. Setup-selected packages are applied automatically on first start. "
+            "Restart after install or enable/disable changes."
         )
 
     def _start_install(self, source: str, expected_module_id: str | None = None) -> None:

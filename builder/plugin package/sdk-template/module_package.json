@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "example_plugin",
+  "title": "Example Plugin",
+  "tier": "optional",
+  "package_kind": "bundled_unlock",
+  "build_strategy": "source_tree",
+  "source_paths": [
+    "src/aipacs_example_plugin"
+  ],
+  "python_paths": [
+    "python"
+  ],
+  "healthcheck_import": "aipacs_example_plugin.plugin",
+  "integration_points": [
+    "settings.installation_module"
+  ],
+  "install_channels": [
+    "installer",
+    "settings",
+    "store"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "example_plugin"
+}

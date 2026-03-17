@@ -5,6 +5,8 @@
     "viewer": true,
     "download_manager": true,
     "zeta_boost": true,
+    "education": true,
+    "stitching": true,
     "advanced_mpr": false,
     "printing": false,
     "run_cd": false,

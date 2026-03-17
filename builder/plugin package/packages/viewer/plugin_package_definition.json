@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "viewer",
+  "title": "Viewer",
+  "tier": "basic",
+  "package_kind": "core",
+  "build_strategy": "source_tree",
+  "source_paths": [
+    "modules/viewer"
+  ],
+  "python_paths": [],
+  "healthcheck_import": "",
+  "healthcheck_path": "",
+  "integration_points": [
+    "patient.viewer_surface",
+    "viewer.backends"
+  ],
+  "install_channels": [
+    "core_bundle"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "viewer",
+  "notes": "",
+  "definition_path": "C:\\AI-Pacs codes\\aipacs-pydicom2d\\builder\\plugin package\\definitions\\viewer\\plugin_package.json"
+}

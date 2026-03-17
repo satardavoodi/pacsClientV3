@@ -1,0 +1,7 @@
+{
+    "servers": [],
+    "scp_settings": {
+        "local_ae_title": "AIPACS_SCU",
+        "local_port": 11112
+    }
+}

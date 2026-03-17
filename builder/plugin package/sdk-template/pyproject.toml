@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aipacs-example-plugin"
+version = "0.1.0"
+description = "Example third-party plugin package for AIPacs."
+requires-python = ">=3.11"
+
+[project.entry-points."aipacs.plugins"]
+example_plugin = "aipacs_example_plugin.plugin:PLUGIN_ID"

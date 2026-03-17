@@ -44,7 +44,7 @@ class _PinnedHomeTabBar(QTabBar):
         super().moveTab(from_index, to_index)
 
 class MainWindowWidget(QWidget):
-    def __init__(self, auth_user=None, auth_token=None):
+    def __init__(self, auth_user=None, auth_token=None, startup_import_folder: str | None = None):
         super().__init__()
         
         # ✅ Initialize database FIRST before any other initialization
@@ -74,6 +74,7 @@ class MainWindowWidget(QWidget):
         # Store authentication info
         self.auth_user = auth_user
         self.auth_token = auth_token
+        self.startup_import_folder = startup_import_folder
         self.theme_manager = get_theme_manager()
         self._active_theme = self.theme_manager.current_theme()
 
@@ -90,11 +91,33 @@ class MainWindowWidget(QWidget):
 
         # Now add AIPacs tab (which will connect to shortcut manager)
         self.add_AIPacs_tab()
+        self._schedule_startup_import_if_requested()
         self.theme_manager.themeChanged.connect(self.apply_theme)
         self.apply_theme(self._active_theme)
 
         # Register all long-lived resources with the lifecycle manager
         self._register_lifecycle_resources()
+
+    def _schedule_startup_import_if_requested(self):
+        """Schedule optional startup import if a folder was provided at launch."""
+        folder = (self.startup_import_folder or "").strip()
+        if not folder:
+            return
+
+        def _run_startup_import():
+            try:
+                home_widget = getattr(getattr(self, "control_panel", None), "home_widget", None)
+                if not home_widget or not hasattr(home_widget, "auto_import_folder_from_startup"):
+                    print("[STARTUP] Home widget import hook not available; skipping startup import")
+                    return
+
+                print(f"[STARTUP] Auto-importing folder: {folder}")
+                home_widget.auto_import_folder_from_startup(folder)
+            except Exception as exc:
+                print(f"[STARTUP] Startup auto-import failed: {exc}")
+
+        # Give Qt time to render the main UI and initialize home panel state.
+        QTimer.singleShot(900, _run_startup_import)
 
     def _arm_titlebar_move(self, global_pos, local_pos):
         """Arm a possible titlebar drag; we only start system move after real drag."""

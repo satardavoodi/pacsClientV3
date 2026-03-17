@@ -917,12 +917,19 @@ class HomePanelWidget(QWidget):
             if thumbnail_path.exists():
                 continue
 
-            preview = load_series_preview(
-                study_path=str(study_path),
-                series_number=series_number,
-                patient_pk=patient_pk,
-                study_pk=study_pk,
-            )
+            try:
+                preview = load_series_preview(
+                    study_path=str(study_path),
+                    series_number=series_number,
+                    patient_pk=patient_pk,
+                    study_pk=study_pk,
+                )
+            except Exception as e:
+                print(
+                    f"[FAST_PREP] Skipping preview for series {series_number} "
+                    f"(study={study_uid}) due to load error: {e}"
+                )
+                continue
             if not preview:
                 continue
 
@@ -935,13 +942,20 @@ class HomePanelWidget(QWidget):
             metadata["series"]["series_pk"] = series_pk
             metadata["series"]["series_number"] = series_number
 
-            save_image_as_png(
-                vtk_image_data=vtk_image_data,
-                metadata=metadata,
-                metadata_fixed=metadata_fixed,
-                file=str(study_path),
-            )
-            generated_count += 1
+            try:
+                save_image_as_png(
+                    vtk_image_data=vtk_image_data,
+                    metadata=metadata,
+                    metadata_fixed=metadata_fixed,
+                    file=str(study_path),
+                )
+                generated_count += 1
+            except Exception as e:
+                print(
+                    f"[FAST_PREP] Skipping thumbnail for series {series_number} "
+                    f"(study={study_uid}) due to save error: {e}"
+                )
+                continue
 
         clear_study_cache(study_uid)
         return generated_count
@@ -1083,6 +1097,105 @@ class HomePanelWidget(QWidget):
                 "Import Completed With Warnings",
                 "\n".join(message for message in warning_messages if message is not None),
             )
+
+    def auto_import_folder_from_startup(self, folder_path: str) -> bool:
+        """Import a DICOM folder non-interactively and open the primary study.
+
+        Used for portable CD media where viewer launch should auto-show images.
+        """
+        startup_folder = Path(str(folder_path or "")).expanduser()
+        if not startup_folder.exists() or not startup_folder.is_dir():
+            QMessageBox.warning(
+                self,
+                "Startup Import",
+                f"Startup import folder does not exist:\n{startup_folder}",
+            )
+            return False
+
+        try:
+            scan_result = self._run_background_job_with_progress(
+                "Startup DICOM Scan",
+                "Scanning media for DICOM files...",
+                scan_dicom_import_folder,
+                str(startup_folder),
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Startup Import",
+                f"Could not scan startup folder:\n{exc}",
+            )
+            return False
+
+        if not scan_result.get("dicom_file_count"):
+            QMessageBox.information(
+                self,
+                "Startup Import",
+                "No readable DICOM files were found in the startup folder.",
+            )
+            return False
+
+        try:
+            import_result = self._run_background_job_with_progress(
+                "Startup DICOM Import",
+                "Importing DICOM files into local storage...",
+                import_scanned_dicom_studies,
+                scan_result,
+                SOURCE_PATH,
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Startup Import",
+                f"Could not import startup DICOM files:\n{exc}",
+            )
+            return False
+
+        imported_studies = import_result.get("studies", []) or []
+        if not imported_studies:
+            QMessageBox.warning(
+                self,
+                "Startup Import",
+                "DICOM files were detected but no studies were imported.",
+            )
+            return False
+
+        failed_studies = []
+        for study in imported_studies:
+            saved = self.save_complete_study_info(
+                study_uid=study.get("study_uid", ""),
+                patient_id=study.get("patient_id"),
+                study_info=study,
+            )
+            if not saved:
+                failed_studies.append(study.get("study_uid", "Unknown Study"))
+
+        primary_study = import_result.get("primary_study")
+        if primary_study and primary_study.get("study_uid") not in failed_studies:
+            try:
+                self._run_background_job_with_progress(
+                    "Startup Fast Viewer Prep",
+                    "Preparing thumbnails for fast opening...",
+                    self._prepare_imported_study_for_fast_open,
+                    primary_study,
+                )
+            except Exception as exc:
+                print(f"[STARTUP_IMPORT] Fast viewer preparation warning: {exc}")
+
+        self._refresh_local_patient_list_after_import()
+
+        if primary_study and primary_study.get("study_uid") not in failed_studies:
+            self._open_imported_primary_study(primary_study)
+
+        if failed_studies:
+            QMessageBox.warning(
+                self,
+                "Startup Import",
+                "Some studies were imported but could not be saved to the local database:\n"
+                + "\n".join(failed_studies[:5]),
+            )
+
+        return True
 
     def setup_center_panel(self):
         """Setup the center panel with Patient Table Component"""

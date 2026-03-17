@@ -1,8 +1,27 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.2.6.2  
-**Release Date:** 2026-03-15  
+**Current Stable Version:** v2.2.6.3  
+**Release Date:** 2026-03-17  
 **Branch:** main  
+
+---
+
+## v2.2.6.3 — GitHub Push / Package Metadata Alignment (2026-03-17)
+
+### Summary
+
+This release packages the current working changes for GitHub publication under **v2.2.6.3** and aligns the visible application/build/package metadata to the same version.
+
+### Version Alignment
+- Updated application version in `main.py`
+- Updated package version in `pyproject.toml`
+- Updated Nuitka product version in `build_nuitka.py`
+- Updated plugin package manifest versions under `builder/plugin package/packages/**`
+- Updated consolidated release notes to reflect `v2.2.6.3`
+
+### Release Intent
+- Publish current `main` branch state to GitHub as **`v2.2.6.3`**
+- Keep package feed and module manifests synchronized with the tagged application version
 
 ---
 

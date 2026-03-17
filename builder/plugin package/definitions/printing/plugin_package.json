@@ -1,0 +1,27 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "printing",
+  "title": "Printing Module",
+  "tier": "optional",
+  "package_kind": "bundled_unlock",
+  "build_strategy": "source_tree",
+  "source_paths": [
+    "modules/printing"
+  ],
+  "python_paths": [
+    "python"
+  ],
+  "healthcheck_import": "modules.printing.ui.printing_widget",
+  "integration_points": [
+    "home.printing_tab",
+    "settings.installation_module"
+  ],
+  "install_channels": [
+    "installer",
+    "settings",
+    "store"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "printing"
+}

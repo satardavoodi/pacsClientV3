@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "advanced_mpr",
+  "title": "Advanced MPR",
+  "tier": "optional",
+  "package_kind": "runtime_payload",
+  "build_strategy": "runtime_payload",
+  "healthcheck_path": "AIPacsAdvancedViewer.exe",
+  "integration_points": [
+    "patient.advanced_mpr_launcher",
+    "external.runtime"
+  ],
+  "install_channels": [
+    "installer",
+    "settings",
+    "store"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "advanced_mpr",
+  "notes": "External runtime payload produced from the Slicer-based Advanced MPR build."
+}

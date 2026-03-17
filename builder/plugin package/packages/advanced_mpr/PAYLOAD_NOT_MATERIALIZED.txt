@@ -1,0 +1,10 @@
+Module: advanced_mpr
+Payload materialization skipped.
+
+This package is prepared for an external runtime payload and keeps a pointer
+to the live runtime source instead of copying it into builder/plugin package/packages.
+
+Run:
+  python builder/materialize_plugin_packages.py --include-runtime-payloads
+
+Expected source: C:\AI-Pacs codes\aipacs-pydicom2d\modules\mpr\advanced_3d_slicer\slicer_custom_app\NewMPR2Slicer\build

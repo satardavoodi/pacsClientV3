@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from aipacs_runtime import roaming_config_root
+from modules.cd_burner.cd_burn_manager import inspect_viewer_portability
 
 class LightViewerSettingsWidget(QWidget):
     """Settings widget for Light Viewer configuration"""
@@ -153,6 +154,11 @@ class LightViewerSettingsWidget(QWidget):
         self.viewer_status_label = QLabel("")
         self.viewer_status_label.setStyleSheet("color: #94a3b8; font-size: 14px; padding: 5px;")
         viewer_layout.addWidget(self.viewer_status_label)
+
+        self.viewer_details_label = QLabel("")
+        self.viewer_details_label.setWordWrap(True)
+        self.viewer_details_label.setStyleSheet("color: #94a3b8; font-size: 12px; padding: 0 5px 5px 5px;")
+        viewer_layout.addWidget(self.viewer_details_label)
         
         # Clear button
         clear_layout = QHBoxLayout()
@@ -266,30 +272,47 @@ class LightViewerSettingsWidget(QWidget):
         """Validate the selected viewer path"""
         if not path:
             self.viewer_status_label.setText("")
+            self.viewer_details_label.setText("")
             return False
         
         if not os.path.exists(path):
             self.viewer_status_label.setText("⚠ File does not exist")
             self.viewer_status_label.setStyleSheet("color: #f59e0b; font-size: 12px; padding: 5px; font-weight: 700;")
+            self.viewer_details_label.setText("")
             return False
         
         if not path.lower().endswith('.exe'):
             self.viewer_status_label.setText("⚠ File is not an executable (.exe)")
             self.viewer_status_label.setStyleSheet("color: #f59e0b; font-size: 12px; padding: 5px; font-weight: 700;")
+            self.viewer_details_label.setText("")
             return False
         
         # Get file size
         file_size = os.path.getsize(path)
         size_mb = file_size / (1024 * 1024)
         
-        self.viewer_status_label.setText(f"✓ Valid executable ({size_mb:.1f} MB)")
-        self.viewer_status_label.setStyleSheet("color: #10b981; font-size: 12px; padding: 5px; font-weight: 700;")
-        return True
+        analysis = inspect_viewer_portability(path)
+        if not analysis["ok"]:
+            self.viewer_status_label.setText("✗ Viewer is not portable-ready")
+            self.viewer_status_label.setStyleSheet("color: #ef4444; font-size: 12px; padding: 5px; font-weight: 700;")
+        elif analysis["warnings"]:
+            self.viewer_status_label.setText(f"⚠ Viewer selected ({size_mb:.1f} MB) — portability warnings")
+            self.viewer_status_label.setStyleSheet("color: #f59e0b; font-size: 12px; padding: 5px; font-weight: 700;")
+        else:
+            self.viewer_status_label.setText(f"✓ Portable viewer looks usable ({size_mb:.1f} MB)")
+            self.viewer_status_label.setStyleSheet("color: #10b981; font-size: 12px; padding: 5px; font-weight: 700;")
+
+        detail_lines = list(analysis.get("details", []))
+        if analysis["warnings"]:
+            detail_lines.extend([f"Warning: {warning}" for warning in analysis["warnings"]])
+        self.viewer_details_label.setText("\n".join(detail_lines))
+        return analysis["ok"]
     
     def clear_viewer_path(self):
         """Clear the viewer path"""
         self.path_edit.clear()
         self.viewer_status_label.setText("")
+        self.viewer_details_label.setText("")
     
     def save_settings(self):
         """Save settings to config file"""

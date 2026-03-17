@@ -8,6 +8,8 @@ def test_module_enabled_map_keeps_all_modules_visible_in_source_runs(monkeypatch
     enabled = runtime.module_enabled_map()
 
     assert enabled["viewer"] is True
+    assert enabled["education"] is True
+    assert enabled["stitching"] is True
     assert enabled["printing"] is True
     assert enabled["run_cd"] is True
     assert enabled["web_browser"] is True
@@ -22,6 +24,8 @@ def test_module_enabled_map_respects_profile_in_frozen_mode(monkeypatch):
         {
             "modules": {
                 "viewer": True,
+                "education": True,
+                "stitching": True,
                 "printing": False,
                 "run_cd": True,
                 "web_browser": False,
@@ -31,6 +35,8 @@ def test_module_enabled_map_respects_profile_in_frozen_mode(monkeypatch):
     )
 
     assert enabled["viewer"] is True
+    assert enabled["education"] is True
+    assert enabled["stitching"] is True
     assert enabled["printing"] is False
     assert enabled["run_cd"] is True
     assert enabled["web_browser"] is False
@@ -45,6 +51,8 @@ def test_module_enabled_map_can_simulate_installer_profile_in_source_runs(monkey
         {
             "modules": {
                 "viewer": True,
+                "education": True,
+                "stitching": True,
                 "printing": False,
                 "run_cd": False,
                 "web_browser": False,
@@ -54,6 +62,8 @@ def test_module_enabled_map_can_simulate_installer_profile_in_source_runs(monkey
     )
 
     assert enabled["viewer"] is True
+    assert enabled["education"] is True
+    assert enabled["stitching"] is True
     assert enabled["printing"] is False
     assert enabled["run_cd"] is False
     assert enabled["web_browser"] is False

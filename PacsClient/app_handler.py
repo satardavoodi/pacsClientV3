@@ -30,8 +30,9 @@ from PacsClient.utils.theme_manager import get_theme_manager
 
 
 class AppHandler(QDialog):
-    def __init__(self):
+    def __init__(self, startup_import_folder: str | None = None):
         super(AppHandler, self).__init__()
+        self.startup_import_folder = startup_import_folder
 
         # self.setWindowTitle("AIPacs - Professional Medical Imaging Suite")
         self.setWindowTitle("")
@@ -981,7 +982,8 @@ class AppHandler(QDialog):
                 return
             self.main_page = MainWindowWidget(
                 auth_user=self.auth_user,
-                auth_token=self.auth_token
+                auth_token=self.auth_token,
+                startup_import_folder=self.startup_import_folder,
             )
             self.main_page.showMaximized()
             self.close()

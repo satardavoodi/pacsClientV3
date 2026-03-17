@@ -1,0 +1,24 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "stitching",
+  "title": "Stitching Module",
+  "tier": "basic",
+  "package_kind": "core",
+  "build_strategy": "source_tree",
+  "source_paths": [
+    "modules/stitching"
+  ],
+  "python_paths": [
+    "python"
+  ],
+  "healthcheck_import": "modules.stitching",
+  "integration_points": [
+    "patient.stitching_launcher"
+  ],
+  "install_channels": [
+    "core_bundle"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "stitching"
+}

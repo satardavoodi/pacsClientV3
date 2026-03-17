@@ -1,0 +1,606 @@
+"""
+Qt Viewer Bridge — ImageViewer2D-Compatible Adapter
+=====================================================
+Provides a drop-in adapter that implements the same interface
+that ``vtk_widget.py`` expects from ``ImageViewer2D``, but routes
+all rendering through the Qt-based ``QtSliceViewer`` and the
+``Lightweight2DPipeline``.
+
+This bridge allows ``vtk_widget.py`` to work with either VTK or Qt
+rendering without major refactoring.  VTK-specific calls (renderer,
+camera, actors) are either mocked or gracefully no-oped.
+
+Usage::
+
+    bridge = QtViewerBridge(
+        qt_viewer=QtSliceViewer(parent=vtk_widget),
+        pipeline=Lightweight2DPipeline(config=PipelineConfig()),
+        metadata=metadata,
+        metadata_fixed=metadata_fixed,
+    )
+    # bridge is used as vtk_widget.image_viewer
+
+Version: v1.0.0 (2026-03-02)
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+from PySide6.QtCore import QObject
+
+from modules.viewer.fast.lightweight_2d_pipeline import (
+    Lightweight2DPipeline,
+    PipelineConfig,
+    RenderedFrame,
+)
+from modules.viewer.fast.qt_slice_viewer import (
+    QtSliceViewer,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Mock VTK objects — provide expected attributes without VTK dependency
+# ═══════════════════════════════════════════════════════════════════════════
+
+class _MockCamera:
+    """
+    Mock VTK camera for code that accesses self.image_viewer.renderer.GetActiveCamera().
+
+    Provides the critical attributes: ParallelScale, ViewUp, Position, FocalPoint.
+    These are used by vtk_widget.py for zoom preservation and camera state.
+    """
+
+    def __init__(self):
+        self._parallel_scale: float = 256.0
+        self._view_up: Tuple[float, float, float] = (0.0, -1.0, 0.0)
+        self._position: Tuple[float, float, float] = (0.0, 0.0, 1.0)
+        self._focal_point: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    def GetParallelScale(self) -> float:
+        return self._parallel_scale
+
+    def SetParallelScale(self, scale: float) -> None:
+        self._parallel_scale = float(scale)
+
+    def GetViewUp(self) -> Tuple[float, float, float]:
+        return self._view_up
+
+    def SetViewUp(self, *args) -> None:
+        if len(args) == 1 and hasattr(args[0], '__len__'):
+            v = args[0]
+            self._view_up = (float(v[0]), float(v[1]), float(v[2]))
+        elif len(args) == 3:
+            self._view_up = (float(args[0]), float(args[1]), float(args[2]))
+
+    def GetPosition(self) -> Tuple[float, float, float]:
+        return self._position
+
+    def SetPosition(self, *args) -> None:
+        if len(args) == 1 and hasattr(args[0], '__len__'):
+            v = args[0]
+            self._position = (float(v[0]), float(v[1]), float(v[2]))
+        elif len(args) == 3:
+            self._position = (float(args[0]), float(args[1]), float(args[2]))
+
+    def GetFocalPoint(self) -> Tuple[float, float, float]:
+        return self._focal_point
+
+    def SetFocalPoint(self, *args) -> None:
+        if len(args) == 1 and hasattr(args[0], '__len__'):
+            v = args[0]
+            self._focal_point = (float(v[0]), float(v[1]), float(v[2]))
+        elif len(args) == 3:
+            self._focal_point = (float(args[0]), float(args[1]), float(args[2]))
+
+    def GetParallelProjection(self) -> int:
+        return 1
+
+    def ParallelProjectionOn(self) -> None:
+        pass
+
+
+class _MockRenderer:
+    """
+    Mock VTK renderer for camera and actor management code paths.
+
+    vtk_widget.py accesses:
+        self.image_viewer.renderer.GetActiveCamera()
+        self.image_viewer.renderer.ResetCamera()
+        self.image_viewer.renderer.ResetCameraClippingRange()
+        self.image_viewer.renderer.AddActor(actor)
+        self.image_viewer.renderer.RemoveActor(actor)
+    """
+
+    def __init__(self):
+        self._camera = _MockCamera()
+        self._actors: list = []
+
+    def GetActiveCamera(self) -> _MockCamera:
+        return self._camera
+
+    def ResetCamera(self) -> None:
+        """Reset camera — in Qt mode, zoom-to-fit handles this."""
+        pass
+
+    def ResetCameraClippingRange(self) -> None:
+        pass
+
+    def AddActor(self, actor) -> None:
+        # VTK actors are not rendered in Qt mode; track for compatibility
+        if actor not in self._actors:
+            self._actors.append(actor)
+
+    def RemoveActor(self, actor) -> None:
+        try:
+            self._actors.remove(actor)
+        except (ValueError, AttributeError):
+            pass
+
+    def AddActor2D(self, actor) -> None:
+        self.AddActor(actor)
+
+    def RemoveActor2D(self, actor) -> None:
+        self.RemoveActor(actor)
+
+
+class _MockReslice:
+    """
+    Mock for self.image_viewer.image_reslice (vtkImageReslice).
+
+    vtk_widget.py calls:
+        self.image_viewer.image_reslice.Modified()
+        self.image_viewer.image_reslice.Update()
+    These are no-ops in Qt mode since there is no VTK pipeline.
+    """
+
+    def Modified(self) -> None:
+        pass
+
+    def Update(self) -> None:
+        pass
+
+    def GetOutput(self):
+        return None
+
+
+class _MockVTKImageData:
+    """
+    Mock vtkImageData providing the interface that vtk_widget.py uses:
+        GetDimensions(), GetScalarRange(), GetSpacing(), GetOrigin()
+    """
+
+    def __init__(self, cols: int = 512, rows: int = 512, slices: int = 1,
+                 spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0),
+                 origin: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+                 scalar_range: Tuple[float, float] = (0.0, 4095.0)):
+        self._dims = (int(cols), int(rows), int(slices))
+        self._spacing = (float(spacing[0]), float(spacing[1]), float(spacing[2]))
+        self._origin = (float(origin[0]), float(origin[1]), float(origin[2]))
+        self._scalar_range = (float(scalar_range[0]), float(scalar_range[1]))
+
+    def GetDimensions(self) -> Tuple[int, int, int]:
+        return self._dims
+
+    def GetSpacing(self) -> Tuple[float, float, float]:
+        return self._spacing
+
+    def GetOrigin(self) -> Tuple[float, float, float]:
+        return self._origin
+
+    def GetScalarRange(self) -> Tuple[float, float]:
+        return self._scalar_range
+
+    def GetNumberOfPoints(self) -> int:
+        return self._dims[0] * self._dims[1] * self._dims[2]
+
+    def GetFieldData(self):
+        return None
+
+
+class _MockDicomTagsActors:
+    """
+    Minimal DicomTagsActors mock for Qt mode.
+
+    The real DicomTagsActors uses VTK text actors.  In Qt mode,
+    annotations are painted directly by QtSliceViewer.
+    """
+
+    def __init__(self):
+        self.im_slice_actor = None
+        self.im_study_date_actor = None
+        self.im_series_time_actor = None
+        self.im_series_name_actor = None
+        self.im_series_desc_actor = None
+        self.p_name_actor = None
+        self.p_id_actor = None
+        self.p_age_actor = None
+        self.p_sex_actor = None
+        self.im_series_thk_actor = None
+        self.im_series_size_actor = None
+        self.im_series_window_level = None
+        self.im_scale_zoom_actor = None
+        self.im_hospital_name_actor = None
+
+    def change_actor_text(self, actor, text):
+        pass
+
+    def all_actors(self):
+        return []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Qt Viewer Bridge
+# ═══════════════════════════════════════════════════════════════════════════
+
+class QtViewerBridge:
+    """
+    Drop-in bridge that replaces ``ImageViewer2D`` for Qt-based 2D viewing.
+
+    Provides the same public interface that ``vtk_widget.py`` calls on
+    ``self.image_viewer``, but routes rendering through ``QtSliceViewer``
+    and data through ``Lightweight2DPipeline``.
+
+    VTK-specific calls are handled by mock objects or graceful no-ops.
+    """
+
+    # Class-level flag to identify this as a Qt bridge (not VTK viewer)
+    IS_QT_BRIDGE = True
+
+    def __init__(
+        self,
+        qt_viewer: QtSliceViewer,
+        pipeline: Lightweight2DPipeline,
+        metadata: Optional[Dict[str, Any]] = None,
+        metadata_fixed: Optional[Dict[str, Any]] = None,
+        vtk_widget: Optional[Any] = None,
+    ):
+        self.qt_viewer = qt_viewer
+        self.pipeline = pipeline
+        self.vtk_widget = vtk_widget
+        self.metadata = metadata or {}
+        self.metadata_fixed = metadata_fixed or {}
+
+        # Mock VTK objects
+        self.renderer = _MockRenderer()
+        self.image_reslice = _MockReslice()
+        self.image_render_window = None
+        self.image_interactor = None
+        self.dicom_tags_actors = _MockDicomTagsActors()
+        self.color_mapper = None
+
+        # State
+        self._current_slice: int = 0
+        self._slice_count: int = 0
+        self._window: float = 400.0
+        self._level: float = 40.0
+        self.last_index_slice_saved: Optional[int] = None
+        self.last_wl_convert_ms: float = 0.0
+        self.skip_slices: int = 0
+        self.viewer_type: Optional[str] = None
+        self.apply_default_filter = True
+        self.viewer_height: int = 512
+        self.flag_set_custom_window_level: bool = False
+        self._suppress_render: bool = False
+        self._wl_scroll_cache_ww: Optional[float] = None
+        self._wl_scroll_cache_wc: Optional[float] = None
+
+        # Curved MPR (not supported in Qt mode — stubs only)
+        self.curved_mpr_mode: bool = False
+        self.curved_mpr_points: list = []
+        self.curved_mpr_sphere_actors: list = []
+        self.curved_mpr_line_actors: list = []
+        self.curved_mpr_observer_id = None
+        self.curved_mpr_module = _CurvedMPRStub()
+        self.curved_mpr_overlay_actor = None
+        self.curved_mpr_centerline_actor = None
+
+        # Build mock vtk_image_data from pipeline metadata
+        self._build_mock_vtk_data()
+
+        # Connect Qt viewer signals
+        self.qt_viewer.window_level_changed.connect(self._on_qt_wl_changed)
+        self.qt_viewer.slice_scroll_requested.connect(self._on_qt_scroll)
+
+        logger.info(
+            "qt-viewer-bridge created slices=%d",
+            self._slice_count,
+        )
+
+    def _build_mock_vtk_data(self) -> None:
+        """Build a mock vtkImageData from pipeline state."""
+        n_slices = self.pipeline.slice_count
+        self._slice_count = n_slices
+
+        if n_slices > 0:
+            sm = self.pipeline.get_slice_meta(0)
+            cols = sm.cols or 512
+            rows = sm.rows or 512
+            ps = sm.pixel_spacing or (1.0, 1.0)
+            ipp = sm.ipp or (0.0, 0.0, 0.0)
+            thk = sm.slice_thickness or 1.0
+
+            # Estimate scalar range from first slice
+            scalar_range = self.pipeline.get_scalar_range(0)
+
+            self.vtk_image_data = _MockVTKImageData(
+                cols=cols, rows=rows, slices=n_slices,
+                spacing=(float(ps[1]), float(ps[0]), float(thk)),
+                origin=(float(ipp[0]), float(ipp[1]), float(ipp[2])),
+                scalar_range=scalar_range,
+            )
+
+            # Set initial W/L
+            ww, wc = self.pipeline.get_default_window_level(0)
+            self._window = ww
+            self._level = wc
+            self.pipeline.set_window_level(ww, wc)
+
+            # Set initial camera scale based on image size
+            self.renderer._camera._parallel_scale = float(rows) / 2.0
+        else:
+            self.vtk_image_data = _MockVTKImageData()
+
+        # Store properties for compatibility
+        try:
+            self.origin = self.vtk_image_data.GetOrigin()
+            self.spacing = self.vtk_image_data.GetSpacing()
+        except Exception:
+            self.origin = (0.0, 0.0, 0.0)
+            self.spacing = (1.0, 1.0, 1.0)
+
+    # ── VTK-Compatible API ────────────────────────────────────────────
+    # These methods match what vtk_widget.py calls on image_viewer.
+
+    def GetSlice(self) -> int:
+        return self._current_slice
+
+    def SetSlice(self, slice_index: int) -> None:
+        self._current_slice = max(0, min(int(slice_index), self._slice_count - 1))
+
+    def GetSliceMin(self) -> int:
+        return 0
+
+    def GetSliceMax(self) -> int:
+        return max(0, self._slice_count - 1)
+
+    def GetSliceOrientation(self) -> int:
+        return 2  # Axial (Z-axis)
+
+    def GetRenderer(self):
+        return self.renderer
+
+    def get_count_of_slices(self) -> int:
+        return self._slice_count
+
+    def set_slice(self, slice_index: int, fast_interaction: bool = False) -> None:
+        """
+        Main set_slice called from vtk_widget._call_image_viewer_set_slice.
+
+        Renders the specified slice via the Qt pipeline and updates the viewer.
+        """
+        t_start = time.perf_counter()
+        idx = max(0, min(int(slice_index), self._slice_count - 1))
+        self._current_slice = idx
+        self.pipeline.set_slice_index(idx)
+
+        if self._suppress_render:
+            return
+
+        # Get rendered frame
+        frame = self.pipeline.get_rendered_frame(idx)
+
+        # Display
+        self.qt_viewer.set_image(frame.qimage)
+        self.qt_viewer.set_window_level_values(frame.window_width, frame.window_center)
+
+        # Update annotations
+        self._update_annotations(idx, frame.window_width, frame.window_center)
+
+        total_ms = (time.perf_counter() - t_start) * 1000.0
+        self.last_wl_convert_ms = frame.wl_ms
+
+        if total_ms > 20.0:
+            logger.info(
+                "qt-viewer-bridge set_slice idx=%d total_ms=%.1f decode=%.1f filter=%.1f wl=%.1f",
+                idx, total_ms, frame.decode_ms, frame.filter_ms, frame.wl_ms,
+            )
+
+    def apply_default_window_level(self, slice_index: int = 0) -> None:
+        """Apply default W/L for the given slice."""
+        idx = max(0, min(int(slice_index), self._slice_count - 1))
+        ww, wc = self.pipeline.get_default_window_level(idx)
+
+        # WL scroll cache guard (matching VTK viewer optimization)
+        if (self._wl_scroll_cache_ww == ww and self._wl_scroll_cache_wc == wc):
+            return
+        self._wl_scroll_cache_ww = ww
+        self._wl_scroll_cache_wc = wc
+
+        self.set_window_level(ww, wc, flag_default=True)
+
+    def set_window_level(self, window_width: float, window_center: float, flag_default: bool = False) -> None:
+        """Set window/level and re-render."""
+        # Check if RGB
+        if self.metadata and self.metadata.get("instances"):
+            instances = self.metadata["instances"]
+            idx = min(self._current_slice, len(instances) - 1) if instances else 0
+            if idx >= 0 and idx < len(instances) and instances[idx].get("is_rgb", False):
+                return
+
+        if not flag_default:
+            self._wl_scroll_cache_ww = None
+            self._wl_scroll_cache_wc = None
+
+        self._window = float(window_width)
+        self._level = float(window_center)
+        self.pipeline.set_window_level(self._window, self._level)
+
+        # Re-render current slice
+        if not flag_default:
+            frame = self.pipeline.get_rendered_frame(self._current_slice)
+            self.qt_viewer.set_image(frame.qimage)
+            self._update_annotations(self._current_slice, self._window, self._level)
+
+    def get_window_level(self) -> Tuple[float, float]:
+        return self._window, self._level
+
+    def Render(self) -> None:
+        """Trigger re-render. In Qt mode, this repaints the widget."""
+        if self._suppress_render:
+            return
+        self.qt_viewer.update()
+
+    def UpdateDisplayExtent(self) -> None:
+        """No-op in Qt mode — display extent is handled automatically."""
+        pass
+
+    def update_corners_actors(self, update_just_zoom: bool = False, window_height: int = 0) -> None:
+        """Update corner annotation texts."""
+        zoom_pct = self.qt_viewer.get_zoom() * 100.0
+        if update_just_zoom:
+            self.qt_viewer.annotations.zoom_info = f"Zoom: {zoom_pct:.0f}%"
+            self.qt_viewer.update()
+            return
+        self._update_annotations(self._current_slice, self._window, self._level)
+        self.qt_viewer.update()
+
+    def update_corners_actors_pos(self, height: int) -> None:
+        """No-op in Qt mode — annotation positions are automatic."""
+        pass
+
+    def zoom_to_fit(self) -> float:
+        """Zoom to fit and return the zoom factor as parallel scale equivalent."""
+        zoom = self.qt_viewer.zoom_to_fit()
+        # Convert zoom factor to VTK parallel scale equivalent
+        if self.vtk_image_data:
+            dims = self.vtk_image_data.GetDimensions()
+            return float(dims[1]) / (2.0 * zoom) if zoom > 0 else float(dims[1]) / 2.0
+        return 256.0
+
+    def reset_image_viewer(self, vtk_image_data, metadata) -> None:
+        """
+        Reset with new image data.  In Qt bridge mode, vtk_image_data
+        may be a mock or real VTK data — we only use metadata.
+        """
+        self.metadata = metadata or {}
+        self._build_mock_vtk_data()
+        self._current_slice = 0
+        self._wl_scroll_cache_ww = None
+        self._wl_scroll_cache_wc = None
+
+    def pick_world_point(self, display_x: float, display_y: float) -> Optional[Tuple[float, float, float]]:
+        """Convert display coordinates to world (patient) coordinates."""
+        img_x, img_y = self.qt_viewer.widget_to_image_coords(display_x, display_y)
+        try:
+            return self.pipeline.image_xy_to_patient_xyz(img_x, img_y, self._current_slice)
+        except Exception:
+            return None
+
+    def cleanup(self) -> None:
+        """Clean up resources."""
+        try:
+            self.pipeline.shutdown()
+        except Exception:
+            pass
+        self.qt_viewer.clear()
+
+    # ── Sync point stubs (not supported in Qt mode) ────────────────────
+
+    def set_sync_point(self, world_pos, adjust_slice: bool = False) -> None:
+        """Sync point display is not supported in Qt mode."""
+        pass
+
+    def hide_sync_point(self) -> None:
+        pass
+
+    # ── Camera state stubs ─────────────────────────────────────────────
+
+    def lock_camera_state(self, state, duration_ms: int = 350) -> None:
+        pass
+
+    def save_camera_state(self) -> Dict:
+        return {
+            "parallel_scale": self.renderer._camera._parallel_scale,
+            "view_up": self.renderer._camera._view_up,
+            "zoom": self.qt_viewer.get_zoom(),
+            "pan": (self.qt_viewer.get_pan_offset().x(), self.qt_viewer.get_pan_offset().y()),
+        }
+
+    # ── Grow image inplace stub ────────────────────────────────────────
+
+    def grow_input_image_inplace(self, new_vtk_image_data, new_metadata) -> bool:
+        """
+        Used for progressive download growing.
+        In Qt bridge mode, just update metadata and rebuild.
+        """
+        self.metadata = new_metadata or self.metadata
+        self._build_mock_vtk_data()
+        return True
+
+    # ── Curved MPR stubs ───────────────────────────────────────────────
+
+    def enable_curved_mpr_mode(self, enable: bool) -> None:
+        self.curved_mpr_mode = False  # Not supported in Qt mode
+
+    def generate_and_show_curved_mpr(self) -> None:
+        pass
+
+    def _clear_curved_mpr_visuals(self) -> None:
+        pass
+
+    # ── Private ────────────────────────────────────────────────────────
+
+    def _update_annotations(self, slice_index: int, ww: float, wc: float) -> None:
+        """Update corner annotations from metadata."""
+        zoom_pct = self.qt_viewer.get_zoom() * 100.0
+        self.qt_viewer.annotations.update_from_metadata(
+            metadata=self.metadata,
+            slice_index=slice_index,
+            total_slices=self._slice_count,
+            window_width=ww,
+            window_center=wc,
+            zoom_pct=zoom_pct,
+        )
+
+    def _on_qt_wl_changed(self, window: float, level: float) -> None:
+        """Handle W/L changes from Qt viewer mouse interaction."""
+        self._window = window
+        self._level = level
+        self.pipeline.set_window_level(window, level)
+        self.flag_set_custom_window_level = True
+
+        # Re-render with new W/L
+        frame = self.pipeline.get_rendered_frame(self._current_slice)
+        self.qt_viewer.set_image(frame.qimage)
+        self._update_annotations(self._current_slice, window, level)
+
+    def _on_qt_scroll(self, delta: int) -> None:
+        """Handle scroll from Qt viewer — forward to vtk_widget."""
+        if self.vtk_widget is not None and hasattr(self.vtk_widget, 'slider'):
+            try:
+                slider = self.vtk_widget.slider
+                if slider is not None:
+                    new_val = slider.value() + delta
+                    new_val = max(slider.minimum(), min(slider.maximum(), new_val))
+                    slider.setValue(new_val)
+            except Exception:
+                pass
+
+
+class _CurvedMPRStub:
+    """Minimal stub for CurvedMPRModule (not supported in Qt mode)."""
+
+    def get_point_count(self) -> int:
+        return 0
+
+    def reset(self) -> None:
+        pass
+
+    def add_point(self, *args, **kwargs) -> None:
+        pass

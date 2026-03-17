@@ -4,9 +4,11 @@ import multiprocessing
 import logging
 import subprocess
 import importlib.util
+from pathlib import Path
 
 from aipacs_runtime import (
     activate_optional_module_runtime,
+    bootstrap_installer_selected_module_packages,
     build_graphics_runtime_patch,
     build_windows_graphics_environment,
     resolve_graphics_profile,
@@ -16,6 +18,70 @@ from aipacs_runtime import (
 # Required for multiprocessing.Process with PyInstaller frozen executables
 # (spawn start-method on Windows): must be called before any other code.
 multiprocessing.freeze_support()
+
+
+def _extract_startup_import_folder() -> str | None:
+    """Extract optional startup import folder from argv/env.
+
+    Supported sources (priority order):
+      1) --import-folder <path>
+      2) AIPACS_IMPORT_FOLDER environment variable
+    """
+    folder_path = None
+
+    if "--import-folder" in sys.argv:
+        try:
+            idx = sys.argv.index("--import-folder")
+            if idx + 1 < len(sys.argv):
+                folder_path = sys.argv[idx + 1]
+                # Remove custom args so Qt/app internals don't see unknown switches.
+                del sys.argv[idx:idx + 2]
+            else:
+                print("[STARTUP] '--import-folder' provided without a path; ignoring.")
+        except Exception:
+            pass
+
+    if not folder_path:
+        env_folder = os.environ.get("AIPACS_IMPORT_FOLDER", "").strip()
+        if env_folder:
+            folder_path = env_folder
+
+    def _looks_like_media_root(candidate: str | None) -> bool:
+        if not candidate:
+            return False
+        try:
+            root = Path(candidate).expanduser()
+            if not root.exists() or not root.is_dir():
+                return False
+            return any((root / marker).exists() for marker in ("DICOMDIR", "AIPACS_MEDIA_INFO.json", "START_HERE.txt"))
+        except Exception:
+            return False
+
+    # Fallback 1: if launched from packaged viewer under MEDIA_ROOT\VIEWER\AiPacs.exe,
+    # infer media root from executable path.
+    if not folder_path and getattr(sys, "frozen", False):
+        try:
+            exe_parent = Path(sys.executable).resolve().parent
+            if exe_parent.name.upper() == "VIEWER":
+                parent_root = exe_parent.parent
+                if _looks_like_media_root(str(parent_root)):
+                    folder_path = str(parent_root)
+        except Exception:
+            pass
+
+    # Fallback 2: use current working directory if it already looks like exported media root.
+    if not folder_path:
+        try:
+            cwd = str(Path.cwd())
+            if _looks_like_media_root(cwd):
+                folder_path = cwd
+        except Exception:
+            pass
+
+    if folder_path:
+        print(f"[STARTUP] Requested import folder: {folder_path}")
+
+    return folder_path
 
 
 def _maybe_run_tests_and_exit() -> None:
@@ -44,6 +110,7 @@ def _maybe_run_tests_and_exit() -> None:
 
 
 _maybe_run_tests_and_exit()
+bootstrap_installer_selected_module_packages()
 activate_optional_module_runtime()
 
 # ============================================================================
@@ -210,6 +277,8 @@ if __name__ == "__main__":
         QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)
     QApplication.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings, True)  # Better performance for detached tabs
     
+    startup_import_folder = _extract_startup_import_folder()
+
     app = QApplication(sys.argv)
 
     # Get the absolute path to the icon
@@ -223,7 +292,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("2.2.6.2")
+    app.setApplicationVersion("2.2.6.3")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -277,7 +346,7 @@ if __name__ == "__main__":
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-    window = AppHandler()
+    window = AppHandler(startup_import_folder=startup_import_folder)
     window.show()
 
     # Global disk usage alert checks (modular service)

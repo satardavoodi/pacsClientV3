@@ -25,6 +25,7 @@ from aipacs_runtime import (
     detect_software_graphics_support,
     default_installation_profile,
 )
+from builder.plugin_package_registry import load_plugin_package_definitions
 BUILDER_DIR = PROJECT_ROOT / "builder"
 OUTPUT_DIR = BUILDER_DIR / "output"
 DIST_DIR = OUTPUT_DIR / "dist"
@@ -33,9 +34,29 @@ STAGE_DIR = OUTPUT_DIR / "stage"
 MANIFEST_DIR = STAGE_DIR / "manifest"
 INSTALLER_OUTPUT_DIR = OUTPUT_DIR / "installer"
 PACKAGE_OUTPUT_DIR = OUTPUT_DIR / "packages"
+STAGED_PLUGIN_PACKAGE_DIR = STAGE_DIR / "plugin_packages"
 SPEC_FILE = BUILDER_DIR / "spec" / "appA_workstation.spec"
 INSTALLER_SCRIPT = BUILDER_DIR / "installer" / "AIPacs_Setup.iss"
 REQUIRED_RELEASE_GRAPHICS_BINARIES = ("opengl32sw.dll", "osmesa.dll", "pipe_swrast.dll")
+PRIMARY_INSTALLER_BASENAME = "ai-pacs installer"
+PACKAGE_IGNORE_PATTERNS = (
+    "__pycache__",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd.orig",
+    "*.pdb",
+    "*.lib",
+    "tests",
+    "test",
+    "testing",
+    "docs",
+    "doc",
+    "examples",
+    "example",
+    "*.pyi",
+    ".pytest_cache",
+    ".mypy_cache",
+)
 
 
 def print_step(message: str) -> None:
@@ -167,6 +188,26 @@ def stage_advanced_mpr_payload() -> dict[str, object]:
     return payload_info
 
 
+def _package_ignore_filter(_directory: str, names: list[str]) -> set[str]:
+    ignored = set(shutil.ignore_patterns(*PACKAGE_IGNORE_PATTERNS)(_directory, names))
+    lower_name_map = {name.lower(): name for name in names}
+    for candidate in (
+        "tests",
+        "test",
+        "testing",
+        "docs",
+        "doc",
+        "examples",
+        "example",
+        ".pytest_cache",
+        ".mypy_cache",
+    ):
+        actual = lower_name_map.get(candidate)
+        if actual:
+            ignored.add(actual)
+    return ignored
+
+
 def _copy_package_source_tree(package_dir: Path, source_dirs: list[str]) -> bool:
     payload_root = package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME / "python"
     copied = False
@@ -181,7 +222,7 @@ def _copy_package_source_tree(package_dir: Path, source_dirs: list[str]) -> bool
                 source,
                 destination,
                 dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "tests", "docs"),
+                ignore=_package_ignore_filter,
             )
         else:
             shutil.copy2(source, destination)
@@ -199,54 +240,80 @@ def _write_package_archive(source_dir: Path, archive_path: Path) -> str:
     return digest.hexdigest()
 
 
+def _project_relative_path(path: str | Path) -> str:
+    candidate = Path(path)
+    try:
+        relative = candidate.resolve().relative_to(PROJECT_ROOT.resolve())
+    except Exception:
+        relative = candidate
+    return str(relative).replace("\\", "/")
+
+
+def _write_package_feed(target_dir: Path, version: str, package_index: list[dict[str, object]]) -> None:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / MODULE_PACKAGE_FEED_FILENAME).write_text(
+        json.dumps(
+            {
+                "app_name": APP_NAME,
+                "version": version,
+                "packages": package_index,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def build_module_packages(version: str, advanced_payload: dict[str, object]) -> list[dict[str, object]]:
     print_step("Building module packages")
     PACKAGE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    STAGED_PLUGIN_PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
 
     package_index: list[dict[str, object]] = []
-    for item in MODULE_CATALOG:
-        if str(item.get("tier") or "") != "optional":
-            continue
-
-        module_id = str(item["id"])
-        if module_id == "advanced_mpr":
-            package_dir = PACKAGE_OUTPUT_DIR / f"{module_id}-{version}"
-        else:
-            package_dir = STAGE_DIR / "package_build" / module_id
+    for definition in load_plugin_package_definitions(optional_only=True):
+        module_id = str(definition["module_id"])
+        package_dir = STAGED_PLUGIN_PACKAGE_DIR / module_id
         if package_dir.exists():
             shutil.rmtree(package_dir, ignore_errors=True)
-        package_dir.mkdir(parents=True, exist_ok=True)
 
         has_payload = False
-        if module_id == "advanced_mpr":
+        if str(definition.get("build_strategy") or "") == "runtime_payload":
             source_root = Path(str(advanced_payload.get("source") or ""))
             if bool(advanced_payload.get("staged")) and source_root.exists():
-                shutil.copytree(source_root, package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME, dirs_exist_ok=True)
+                package_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(
+                    source_root,
+                    package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
+                    dirs_exist_ok=True,
+                    ignore=_package_ignore_filter,
+                )
                 has_payload = True
         else:
-            source_dirs = list(item.get("package_sources") or [])
-            has_payload = _copy_package_source_tree(package_dir, source_dirs)
+            package_dir.mkdir(parents=True, exist_ok=True)
+            has_payload = _copy_package_source_tree(package_dir, list(definition.get("source_paths") or []))
 
         manifest = {
             "format_version": MODULE_PACKAGE_FORMAT_VERSION,
             "app_name": APP_NAME,
             "module_id": module_id,
-            "title": str(item.get("title") or module_id),
-            "tier": str(item.get("tier") or "optional"),
+            "title": str(definition.get("title") or module_id),
+            "tier": str(definition.get("tier") or "optional"),
             "version": version,
-            "package_kind": str(item.get("package_kind") or "bundled_unlock"),
+            "package_kind": str(definition.get("package_kind") or "bundled_unlock"),
             "payload_dir": MODULE_PACKAGE_PAYLOAD_DIRNAME if has_payload else "",
-            "python_paths": list(item.get("package_python_paths") or []) if has_payload else [],
+            "python_paths": list(definition.get("python_paths") or []) if has_payload else [],
             "requires_restart": True,
-            "healthcheck_import": str(item.get("healthcheck_import") or ""),
-            "healthcheck_path": str(item.get("healthcheck_path") or ""),
+            "healthcheck_import": str(definition.get("healthcheck_import") or ""),
+            "healthcheck_path": str(definition.get("healthcheck_path") or ""),
+            "integration_points": list(definition.get("integration_points") or []),
+            "install_channels": list(definition.get("install_channels") or []),
+            "sdk_entrypoint_group": str(definition.get("sdk_entrypoint_group") or ""),
+            "sdk_entrypoint_name": str(definition.get("sdk_entrypoint_name") or ""),
         }
-        (package_dir / MODULE_PACKAGE_MANIFEST_FILENAME).write_text(
-            json.dumps(manifest, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-
-        if manifest["package_kind"] == "runtime_payload" and not has_payload:
+        if not has_payload:
+            if package_dir.exists():
+                shutil.rmtree(package_dir, ignore_errors=True)
             package_index.append(
                 {
                     "module_id": module_id,
@@ -258,10 +325,19 @@ def build_module_packages(version: str, advanced_payload: dict[str, object]) -> 
                     "sha256": "",
                     "has_payload": False,
                     "available": False,
-                    "package_format": "directory",
+                    "package_format": "directory" if manifest["package_kind"] == "runtime_payload" else "zip",
+                    "staged_package_path": "",
+                    "definition_path": _project_relative_path(str(definition.get("definition_path") or "")),
+                    "install_channels": list(definition.get("install_channels") or []),
                 }
             )
             continue
+
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / MODULE_PACKAGE_MANIFEST_FILENAME).write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
         if module_id == "advanced_mpr":
             package_index.append(
@@ -271,11 +347,14 @@ def build_module_packages(version: str, advanced_payload: dict[str, object]) -> 
                     "version": version,
                     "package_kind": manifest["package_kind"],
                     "archive_name": package_dir.name,
-                    "archive_path": str(package_dir),
+                    "archive_path": package_dir.name,
                     "sha256": "",
                     "has_payload": has_payload,
                     "available": True,
                     "package_format": "directory",
+                    "staged_package_path": package_dir.name,
+                    "definition_path": _project_relative_path(str(definition.get("definition_path") or "")),
+                    "install_channels": list(definition.get("install_channels") or []),
                 }
             )
             continue
@@ -289,26 +368,19 @@ def build_module_packages(version: str, advanced_payload: dict[str, object]) -> 
                 "version": version,
                 "package_kind": manifest["package_kind"],
                 "archive_name": archive_path.name,
-                "archive_path": str(archive_path),
+                "archive_path": archive_path.name,
                 "sha256": sha256,
                 "has_payload": has_payload,
-                "available": has_payload or manifest["package_kind"] == "bundled_unlock",
+                "available": has_payload,
                 "package_format": "zip",
+                "staged_package_path": package_dir.name,
+                "definition_path": _project_relative_path(str(definition.get("definition_path") or "")),
+                "install_channels": list(definition.get("install_channels") or []),
             }
         )
 
-    (PACKAGE_OUTPUT_DIR / MODULE_PACKAGE_FEED_FILENAME).write_text(
-        json.dumps(
-            {
-                "app_name": APP_NAME,
-                "version": version,
-                "packages": package_index,
-            },
-            indent=2,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
+    _write_package_feed(PACKAGE_OUTPUT_DIR, version, package_index)
+    _write_package_feed(STAGED_PLUGIN_PACKAGE_DIR, version, package_index)
     return package_index
 
 
@@ -344,11 +416,14 @@ def write_manifest(
 
 
 def find_iscc() -> Path | None:
+    local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
     candidates = [
         shutil.which("iscc"),
         r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
         r"C:\Program Files\Inno Setup 6\ISCC.exe",
     ]
+    if local_appdata:
+        candidates.append(str(Path(local_appdata) / "Programs" / "Inno Setup 6" / "ISCC.exe"))
     for candidate in candidates:
         if not candidate:
             continue
@@ -358,12 +433,12 @@ def find_iscc() -> Path | None:
     return None
 
 
-def compile_installer(version: str) -> None:
+def compile_installer(version: str) -> Path | None:
     print_step("Compiling Inno Setup installer")
     iscc = find_iscc()
     if iscc is None:
         print("[WARN] Inno Setup compiler (ISCC.exe) was not found. Installer script was prepared but not compiled.")
-        return
+        return None
 
     INSTALLER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     run_command(
@@ -372,10 +447,43 @@ def compile_installer(version: str) -> None:
             f"/DMyAppVersion={version}",
             f"/DStageDir={STAGE_DIR}",
             f"/DInstallerOutputDir={INSTALLER_OUTPUT_DIR}",
+            f"/DInstallerBaseName={PRIMARY_INSTALLER_BASENAME}",
             str(INSTALLER_SCRIPT),
         ],
         cwd=BUILDER_DIR / "installer",
     )
+
+    expected = INSTALLER_OUTPUT_DIR / f"{PRIMARY_INSTALLER_BASENAME}.exe"
+    if expected.exists():
+        return expected
+
+    fallback_candidates = sorted(
+        INSTALLER_OUTPUT_DIR.glob("*.exe"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not fallback_candidates:
+        raise SystemExit(
+            "Installer compile finished but no .exe output was found in builder/output/installer/."
+        )
+    return fallback_candidates[0]
+
+
+def normalize_installer_artifacts(compiled_installer: Path, version: str) -> dict[str, str]:
+    INSTALLER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    primary = INSTALLER_OUTPUT_DIR / f"{PRIMARY_INSTALLER_BASENAME}.exe"
+    versioned = INSTALLER_OUTPUT_DIR / f"{PRIMARY_INSTALLER_BASENAME} v{version}.exe"
+
+    if compiled_installer.resolve() != primary.resolve():
+        shutil.copy2(compiled_installer, primary)
+    shutil.copy2(primary, versioned)
+
+    return {
+        "compiled": str(compiled_installer),
+        "primary": str(primary),
+        "versioned": str(versioned),
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -408,14 +516,20 @@ def main() -> int:
     module_packages = build_module_packages(version, advanced_payload)
     write_manifest(version, core_dir, advanced_payload, module_packages)
 
+    installer_artifacts: dict[str, str] = {}
     if not args.skip_installer_compile:
-        compile_installer(version)
+        compiled_installer = compile_installer(version)
+        if compiled_installer is not None:
+            installer_artifacts = normalize_installer_artifacts(compiled_installer, version)
 
     print_step("Release staging complete")
     print(f"Core bundle: {core_dir}")
     print(f"Packages:    {PACKAGE_OUTPUT_DIR}")
     print(f"Stage root:  {STAGE_DIR}")
     print(f"Version:     {version}")
+    if installer_artifacts:
+        print(f"Installer:   {installer_artifacts['primary']}")
+        print(f"Installer v: {installer_artifacts['versioned']}")
     return 0
 
 

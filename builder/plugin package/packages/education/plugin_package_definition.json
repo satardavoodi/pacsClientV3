@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "education",
+  "title": "Education Module",
+  "tier": "basic",
+  "package_kind": "core",
+  "build_strategy": "source_tree",
+  "source_paths": [
+    "modules/education"
+  ],
+  "python_paths": [
+    "python"
+  ],
+  "healthcheck_import": "modules.education.education_main_widget",
+  "healthcheck_path": "",
+  "integration_points": [
+    "home.education_tab",
+    "education.course_viewer"
+  ],
+  "install_channels": [
+    "core_bundle"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "education",
+  "notes": "",
+  "definition_path": "C:\\AI-Pacs codes\\aipacs-pydicom2d\\builder\\plugin package\\definitions\\education\\plugin_package.json"
+}

@@ -1,0 +1,30 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "run_cd",
+  "title": "Run CD Module",
+  "tier": "optional",
+  "package_kind": "bundled_unlock",
+  "build_strategy": "source_tree",
+  "source_paths": [
+    "modules/cd_burner"
+  ],
+  "python_paths": [
+    "python"
+  ],
+  "healthcheck_import": "modules.cd_burner.cd_burn_dialog",
+  "healthcheck_path": "",
+  "integration_points": [
+    "home.cd_burn_action",
+    "settings.lightviewer_tab"
+  ],
+  "install_channels": [
+    "installer",
+    "settings",
+    "store"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "run_cd",
+  "notes": "",
+  "definition_path": "C:\\AI-Pacs codes\\aipacs-pydicom2d\\builder\\plugin package\\definitions\\run_cd\\plugin_package.json"
+}
