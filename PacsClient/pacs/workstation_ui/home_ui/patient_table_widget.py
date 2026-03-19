@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from PacsClient.utils import find_patient_pk
 from PacsClient.utils.custom_checkbox import CustomCheckbox
+from PacsClient.utils.theme_manager import get_theme_manager
 from modules.network.socket_report_status_service import get_report_status_service, REPORT_STATUSES, STATUS_COLORS
 from .report_status_dialog import ReportStatusDialog
 
@@ -73,6 +74,14 @@ class SortableItem(QTableWidgetItem):
 
 class PatientNameDelegate(QStyledItemDelegate):
     """Custom delegate to draw underline for patient names based on status"""
+    
+    def __init__(self, parent=None, theme_manager=None):
+        super().__init__(parent)
+        self.theme_manager = theme_manager or get_theme_manager()
+        self._status_to_theme_color = {
+            'synced': 'success',      # Green for synced/downloaded
+            'opened': 'warning',      # Orange for opened
+        }
 
     def paint(self, painter, option, index):
         # First, let parent paint the default content
@@ -81,12 +90,15 @@ class PatientNameDelegate(QStyledItemDelegate):
         # Check status to determine underline color
         status = index.data(Qt.UserRole + 1)
 
-        # Determine the underline color based on status
+        # Get current theme
+        theme = self.theme_manager.current_theme()
+
+        # Map status to theme color key
+        color_key = self._status_to_theme_color.get(status)
         underline_color = None
-        if status == 'synced':
-            underline_color = QColor('#10b981')  # Green
-        elif status == 'opened':
-            underline_color = QColor('#f59e0b')  # Orange
+        
+        if color_key and color_key in theme:
+            underline_color = QColor(theme[color_key])
 
         if underline_color:
             # Draw underline
@@ -107,9 +119,14 @@ class PatientNameDelegate(QStyledItemDelegate):
 class CombinedDelegate(QStyledItemDelegate):
     """Custom delegate that combines neon highlight effect and patient name underline"""
 
-    def __init__(self, parent=None, is_patient_name_column=False):
+    def __init__(self, parent=None, is_patient_name_column=False, theme_manager=None):
         super().__init__(parent)
         self.is_patient_name_column = is_patient_name_column
+        self.theme_manager = theme_manager or get_theme_manager()
+        self._status_to_theme_color = {
+            'synced': 'success',      # Green for synced/downloaded
+            'opened': 'warning',      # Orange for opened
+        }
 
     def paint(self, painter, option, index):
         # Use default painting for all items (removed neon-glow effect)
@@ -120,12 +137,15 @@ class CombinedDelegate(QStyledItemDelegate):
             # Check status to determine underline color
             status = index.data(Qt.UserRole + 1)
 
-            # Determine the underline color based on status
+            # Get current theme
+            theme = self.theme_manager.current_theme()
+
+            # Map status to theme color key
+            color_key = self._status_to_theme_color.get(status)
             underline_color = None
-            if status == 'synced':
-                underline_color = QColor('#10b981')  # Green
-            elif status == 'opened':
-                underline_color = QColor('#f59e0b')  # Orange
+            
+            if color_key and color_key in theme:
+                underline_color = QColor(theme[color_key])
 
             if underline_color:
                 # Draw underline
@@ -559,6 +579,11 @@ class PatientTableWidget(QWidget):
         # Connect our own signal for status update result
         self.statusUpdateResult.connect(self._handle_status_update_result)
         
+        # Theme support
+        self.theme_manager = get_theme_manager()
+        self._active_theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
+        
         # Cache for download status to avoid repeated file system checks
         self._download_status_cache = {}  # study_uid -> {'status': str, 'timestamp': float}
         self._cache_validity_seconds = 5  # Cache is valid for 5 seconds
@@ -769,7 +794,7 @@ class PatientTableWidget(QWidget):
         
     def _setup_patient_name_delegate(self):
         """Setup custom delegate for patient name column"""
-        delegate = CombinedDelegate(self.results_table, is_patient_name_column=True)
+        delegate = CombinedDelegate(self.results_table, is_patient_name_column=True, theme_manager=self.theme_manager)
         self.results_table.setItemDelegateForColumn(COL['patient_name'], delegate)
 
     def _setup_neon_highlight_delegate(self):
@@ -778,7 +803,7 @@ class PatientTableWidget(QWidget):
         # For the patient name column, we already set it with is_patient_name_column=True
         for col in range(self.results_table.columnCount()):
             if col != COL['select'] and col != COL['patient_name']:  # Don't apply to checkbox column or patient name column
-                delegate = CombinedDelegate(self.results_table, is_patient_name_column=False)
+                delegate = CombinedDelegate(self.results_table, is_patient_name_column=False, theme_manager=self.theme_manager)
                 self.results_table.setItemDelegateForColumn(col, delegate)
 
     def _on_header_clicked(self, logical_index):
@@ -1160,8 +1185,201 @@ class PatientTableWidget(QWidget):
         # Add table to layout
         layout.addWidget(self.results_table)
         
+        # Apply theme styling
+        self._apply_theme()
+        
         # Apply anti-aliasing
         self.apply_anti_aliasing()
+    
+    def _on_theme_changed(self, theme):
+        """Handle theme changes by reapplying stylesheets"""
+        self._active_theme = theme
+        self._apply_theme()
+    
+    def _apply_theme(self):
+        """Apply current theme colors to all UI elements"""
+        try:
+            theme = self._active_theme
+            
+            # Get button configuration with theme colors
+            button_config = {
+                'download': {
+                    'accent': theme.get('accent', '#3b82f6'),
+                    'button': self.download_btn,
+                },
+                'delete': {
+                    'accent': theme.get('danger', '#dc2626'),
+                    'button': self.delete_btn,
+                },
+                'cd_burn': {
+                    'accent': theme.get('info', '#6366f1'),
+                    'button': self.cd_burn_btn,
+                },
+                'print': {
+                    'accent': theme.get('success', '#14b8a6'),
+                    'button': self.print_btn,
+                },
+            }
+            
+            # Apply button gradients based on theme
+            for btn_name, btn_config in button_config.items():
+                accent = btn_config['accent']
+                button = btn_config['button']
+                
+                # Compute lighter and darker shades (simple approach)
+                # For a more robust solution, use QColor and manipulate HSV
+                self._update_button_stylesheet(button, accent)
+            
+            # Utility buttons (neutral/slate theme colors)
+            utility_accent = theme.get('panel_alt_bg', '#64748b')
+            for btn in [self.settings_btn, self.refresh_btn, self.font_increase_btn, self.font_decrease_btn]:
+                self._update_utility_button_stylesheet(btn, utility_accent)
+            
+            # Update header widget styling
+            header_bg = theme.get('panel_bg', '#0f1419')
+            self.layout().itemAt(0).widget().setStyleSheet(f"""
+                QWidget {{
+                    background: {header_bg};
+                    border-radius: 8px;
+                    padding: 8px;
+                }}
+            """)
+            
+            # Update title and stats label colors
+            text_primary = theme.get('text_primary', '#f7fafc')
+            text_secondary = theme.get('text_secondary', '#a0aec0')
+            
+            # Update results table stylesheet with theme colors
+            panel_bg = theme.get('panel_bg', '#0f1419')
+            border_color = theme.get('border', '#374151')
+            accent = theme.get('accent', '#3182ce')
+            
+            table_stylesheet = f"""
+                QTableWidget {{
+                    background: {panel_bg};
+                    alternate-background-color: {theme.get('panel_alt_bg', '#1a202c')};
+                    gridline-color: {border_color};
+                    border: 1px solid {border_color};
+                    selection-background-color: {accent};
+                }}
+                QTableWidget::item {{
+                    padding: 2px;
+                    border: none;
+                    color: {text_primary};
+                }}
+                QTableWidget::item:selected {{
+                    background: {accent};
+                    color: white;
+                }}
+                QHeaderView::section {{
+                    background: {theme.get('menu_bg', '#0f1419')};
+                    color: {text_primary};
+                    padding: 5px;
+                    border: none;
+                    border-right: 1px solid {border_color};
+                    border-bottom: 1px solid {border_color};
+                }}
+            """
+            self.results_table.setStyleSheet(table_stylesheet)
+            
+            # Update delegates to use theme colors
+            # The delegates will read theme colors when painting
+            self.results_table.viewport().update()
+            
+        except Exception as e:
+            print(f"Error applying theme to patient table: {e}")
+    
+    def _update_button_stylesheet(self, button, accent_color):
+        """Update button stylesheet with theme accent color"""
+        try:
+            from PySide6.QtGui import QColor
+            
+            # Parse the accent color
+            color = QColor(accent_color)
+            if not color.isValid():
+                color = QColor('#3b82f6')  # Fallback
+            
+            # Compute lighter and darker shades
+            lighter = color.lighter(120).name()
+            darker = color.darker(120).name()
+            
+            stylesheet = f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {accent_color}, stop:1 {darker});
+                    color: white;
+                    border: 1px solid {accent_color};
+                    border-radius: 8px;
+                    padding: 8px;
+                    font-size: 12px;
+                    font-family: 'Roboto', sans-serif;
+                    font-weight: 600;
+                    margin: 4px 0px;
+                    qproperty-iconSize: 16px;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {darker}, stop:1 {darker.darker(120) if hasattr(darker, 'darker') else darker});
+                    border-color: {darker};
+                }}
+                QPushButton:pressed {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {darker}, stop:1 {color.darker(150).name()});
+                }}
+                QPushButton:disabled {{
+                    background: #374151;
+                    border-color: #4b5563;
+                    color: #6b7280;
+                }}
+            """
+            button.setStyleSheet(stylesheet)
+        except Exception as e:
+            print(f"Error updating button stylesheet: {e}")
+    
+    def _update_utility_button_stylesheet(self, button, accent_color):
+        """Update utility button (neutral) stylesheet with theme color"""
+        try:
+            from PySide6.QtGui import QColor
+            
+            color = QColor(accent_color)
+            if not color.isValid():
+                color = QColor('#64748b')  # Fallback
+            
+            lighter = color.lighter(120).name()
+            darker = color.darker(120).name()
+            
+            stylesheet = f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {accent_color}, stop:1 {darker});
+                    color: white;
+                    border: 1px solid {accent_color};
+                    border-radius: 8px;
+                    padding: 8px;
+                    font-size: 12px;
+                    font-family: 'Roboto', sans-serif;
+                    font-weight: 600;
+                    margin: 4px 0px;
+                    qproperty-iconSize: 16px;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {darker}, stop:1 {color.darker(130).name()});
+                    border-color: {darker};
+                }}
+                QPushButton:pressed {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {color.darker(130).name()}, stop:1 {color.darker(150).name()});
+                }}
+                QPushButton:disabled {{
+                    background: #374151;
+                    border-color: #4b5563;
+                    color: #6b7280;
+                }}
+            """
+            button.setStyleSheet(stylesheet)
+        except Exception as e:
+            print(f"Error updating utility button stylesheet: {e}")
     
     def apply_anti_aliasing(self):
         """Apply anti-aliasing to the table"""

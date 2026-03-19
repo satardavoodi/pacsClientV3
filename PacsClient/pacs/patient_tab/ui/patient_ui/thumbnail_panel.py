@@ -16,6 +16,7 @@ from PySide6.QtGui import QPixmap, QImage
 from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachment_folder, open_folder, \
     check_and_get_thumbnails, get_name_file_from_path
 from modules.storage.thumbnail_store import ThumbnailStore, make_pixmap_from_bytes  # type: ignore
+from PacsClient.utils.theme_manager import get_theme_manager
 
 
 class ThumbnailPanel(QWidget):
@@ -44,6 +45,11 @@ class ThumbnailPanel(QWidget):
         self.current_thumbnail_index = 0
         self.thumbnails_to_display = []
         
+        # Theme support
+        self.theme_manager = get_theme_manager()
+        self._active_theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
+        
         # Initialize UI
         self.setup_ui()
         
@@ -63,32 +69,11 @@ class ThumbnailPanel(QWidget):
         
         # Title
         title_label = QLabel("Series Thumbnails")
-        title_label.setStyleSheet("""
-            QLabel {
-                font-size: 10px;
-                font-family: 'Roboto', sans-serif;
-                color: #f7fafc;
-                padding: 6px 10px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #7c3aed, stop:1 #5b21b6);
-                border: 1px solid #7c3aed;
-                border-radius: 8px;
-            }
-        """)
+        title_label.setStyleSheet(self._get_header_title_stylesheet())
         
         # Count indicator
         self.thumb_count_label = QLabel("0 series")
-        self.thumb_count_label.setStyleSheet("""
-            QLabel {
-                font-size: 10px;
-                font-family: 'Roboto', sans-serif;
-                color: #a0aec0;
-                padding: 4px 6px;
-                background: rgba(160, 174, 192, 0.1);
-                border: 1px solid rgba(160, 174, 192, 0.2);
-                border-radius: 8px;
-            }
-        """)
+        self.thumb_count_label.setStyleSheet(self._get_header_count_stylesheet())
         
         header_layout.addWidget(title_label)
         header_layout.addStretch()
@@ -101,31 +86,7 @@ class ThumbnailPanel(QWidget):
         thumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         thumb_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
-        thumb_scroll.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                border-radius: 8px;
-                background: #0f1419;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: #0f1419;
-                width: 14px;
-                border-radius: 8px;
-                margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #4a5568, stop:1 #718096);
-                border-radius: 8px;
-                min-height: 30px;
-                margin: 2px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #718096, stop:1 #a0aec0);
-            }
-        """)
+        thumb_scroll.setStyleSheet(self._get_scrollarea_stylesheet())
 
         # Content container
         thumb_container = QWidget()
@@ -147,14 +108,15 @@ class ThumbnailPanel(QWidget):
         self.thumbnail_manager = ThumbnailManager(self.change_series_on_viewer)
         
         # Set panel styling
-        self.setStyleSheet("""
-            QWidget {
-                background: #0f1419;
+        theme = self._active_theme
+        self.setStyleSheet(f"""
+            QWidget {{
+                background: {theme.get('panel_bg', '#0f1419')};
                 border: none;
                 border-radius: 8px;
                 margin: 0px;
                 padding: 0px;
-            }
+            }}
         """)
     
     def set_parent_widget(self, parent_widget):

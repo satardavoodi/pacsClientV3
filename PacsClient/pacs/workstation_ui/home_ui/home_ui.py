@@ -712,6 +712,65 @@ class HomePanelWidget(QWidget):
         if hasattr(self, "data_access_panel_widget") and hasattr(self.data_access_panel_widget, "apply_theme"):
             self.data_access_panel_widget.apply_theme(t)
 
+    def _update_connection_indicator_by_status(self, status, status_text, config_info=""):
+        """
+        Update connection indicator icon and label using theme colors
+        
+        Args:
+            status: 'online', 'busy', or 'offline'
+            status_text: friendly status message
+            config_info: optional config details to append
+        """
+        try:
+            theme = self._active_theme
+            
+            # Map status to theme colors
+            status_color_map = {
+                'online': theme.get('status_online', '#10b981'),    # Green
+                'busy': theme.get('status_busy', '#f59e0b'),        # Orange/Warning
+                'offline': theme.get('status_offline', '#ef4444'),  # Red/Danger
+            }
+            
+            color = status_color_map.get(status, '#ef4444')
+            
+            # Build the display text with optional config info
+            display_text = f" {status_text}"
+            if config_info:
+                display_text += f" ({config_info})"
+            
+            # Update indicator icon with theme color
+            from PacsClient.utils.theme_manager import get_icon
+            icon = qta.icon('fa5s.circle', color=color)
+            self.connection_indicator.setPixmap(icon.pixmap(12, 12))
+            
+            # Update label text
+            self.connection_indicator.setText(display_text)
+            
+            # Update stylesheet using theme colors with semi-transparent background
+            from PySide6.QtGui import QColor
+            bg_color = QColor(color)
+            bg_color.setAlpha(25)  # 10% opacity
+            border_color = QColor(color)
+            border_color.setAlpha(77)  # 30% opacity
+            
+            stylesheet = f"""
+                QLabel {{
+                    font-size: 14px;
+                    font-family: 'Roboto', sans-serif;
+                    color: {color};
+                    padding: 4px 8px;
+                    background: rgba({bg_color.red()}, {bg_color.green()}, {bg_color.blue()}, {bg_color.alpha()});
+                    border: 1px solid rgba({border_color.red()}, {border_color.green()}, {border_color.blue()}, {border_color.alpha()});
+                    border-radius: 8px;
+                    text-align: center;
+                }}
+            """
+            
+            self.connection_indicator.setStyleSheet(stylesheet)
+        
+        except Exception as e:
+            print(f"Error updating connection indicator: {e}")
+    
     def apply_adaptive_layout(self):
         """Apply screen-adaptive layout tweaks for the home view."""
         if hasattr(self, 'patient_table_widget') and self.patient_table_widget:
@@ -749,56 +808,17 @@ class HomePanelWidget(QWidget):
 
             if is_connected:
                 config = socket_service.config
-                self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#10b981').pixmap(12, 12))
-                self.connection_indicator.setText(
-                    f" Socket Connected ({config.get_socket_host()}:{config.get_socket_port()})")
-                self.connection_indicator.setStyleSheet("""
-                    QLabel {
-                        font-size: 14px;
-                        font-family: 'Roboto', sans-serif;
-                        color: #10b981;
-                        padding: 4px 8px;
-                        background: rgba(16, 185, 129, 0.1);
-                        border: 1px solid rgba(16, 185, 129, 0.3);
-                        border-radius: 8px;
-                        text-align: center;
-                    }
-                """)
+                config_info = f"{config.get_socket_host()}:{config.get_socket_port()}"
+                self._update_connection_indicator_by_status('online', 'Socket Connected', config_info)
             else:
-                self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#ef4444').pixmap(12, 12))
-                self.connection_indicator.setText(" Socket Disconnected")
-                self.connection_indicator.setStyleSheet("""
-                    QLabel {
-                        font-size: 14px;
-                        font-family: 'Roboto', sans-serif;
-                        color: #ef4444;
-                        padding: 4px 8px;
-                        background: rgba(239, 68, 68, 0.1);
-                        border: 1px solid rgba(239, 68, 68, 0.3);
-                        border-radius: 8px;
-                        text-align: center;
-                    }
-                """)
+                self._update_connection_indicator_by_status('offline', 'Socket Disconnected')
 
             socket_service.cleanup()
             return is_connected
 
         except Exception as e:
             print(f"Error checking Socket connection: {e}")
-            self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#ef4444').pixmap(12, 12))
-            self.connection_indicator.setText(" Socket Error")
-            self.connection_indicator.setStyleSheet("""
-                QLabel {
-                    font-size: 14px;
-                    font-family: 'Roboto', sans-serif;
-                    color: #ef4444;
-                    padding: 4px 8px;
-                    background: rgba(239, 68, 68, 0.1);
-                    border: 1px solid rgba(239, 68, 68, 0.3);
-                    border-radius: 8px;
-                    text-align: center;
-                }
-            """)
+            self._update_connection_indicator_by_status('offline', 'Socket Error')
             return False
 
     def perform_default_search(self):
@@ -2907,13 +2927,8 @@ class HomePanelWidget(QWidget):
             self.show_loading("Local Search", "Searching local database...", cancellable=True)
             self.search_progress.setVisible(True)
             self.search_progress.setRange(0, 0)  # نامعین تا وقتی لیست را گرفتیم
-            # رنگ/متن وضعیت
-            self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#f59e0b').pixmap(12, 12))
-            self.connection_indicator.setText(" Searching local database...")
-            self.connection_indicator.setStyleSheet("""
-                QLabel { font-size: 14px; color: #f59e0b; padding: 4px 8px;
-                         background: rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.3); border-radius:8px; }
-            """)
+            # Update status using theme colors
+            self._update_connection_indicator_by_status('busy', 'Searching local database...')
 
             # جدول را خالی کن و یک ذره به UI نفس بده
             self.patient_table_widget.clear_table()
@@ -3081,27 +3096,17 @@ class HomePanelWidget(QWidget):
                         QApplication.processEvents()
                         await asyncio.sleep(0)
 
-            # وضعیت نهایی
+            # Final status
             print(f"[LOCAL_SEARCH] ✅ COMPLETED: {added} studies loaded, {skipped} skipped\n")
-            self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#10b981').pixmap(12, 12))
-            self.connection_indicator.setText(f" Local DB - Found {added} studies")
-            self.connection_indicator.setStyleSheet("""
-                QLabel { font-size: 14px; color: #10b981; padding: 4px 8px;
-                         background: rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.3); border-radius:8px; }
-            """)
+            self._update_connection_indicator_by_status('online', f'Local DB - Found {added} studies')
             print(f"[LOCAL] ✅ Loaded {added} studies from local database")
 
         except asyncio.CancelledError:
-            # کنسل توسط کاربر
+            # User cancelled
             print("[LOCAL_SEARCH] ⚠️ Local patient search cancelled by user.\n")
             try:
                 self.search_progress.setVisible(False)
-                self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#f59e0b').pixmap(12, 12))
-                self.connection_indicator.setText(" Local Search Cancelled")
-                self.connection_indicator.setStyleSheet("""
-                    QLabel { font-size: 14px; color: #f59e0b; padding: 4px 8px;
-                             background: rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.3); border-radius:8px; }
-                """)
+                self._update_connection_indicator_by_status('busy', 'Local Search Cancelled')
             except Exception:
                 pass
         except Exception as e:
@@ -3153,15 +3158,10 @@ class HomePanelWidget(QWidget):
 
             if not is_connected:
                 cfg = socket_service.config
-                self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#ef4444').pixmap(12, 12))
-                self.connection_indicator.setText(
-                    f" Socket Connection Failed ({cfg.get_socket_host()}:{cfg.get_socket_port()})")
-                self.connection_indicator.setStyleSheet("""
-                    QLabel { font-size: 14px; color: #ef4444; padding: 4px 8px;
-                             background: rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.3); border-radius:8px; }
-                """)
+                config_info = f"{cfg.get_socket_host()}:{cfg.get_socket_port()}"
+                self._update_connection_indicator_by_status('offline', 'Socket Connection Failed', config_info)
                 QMessageBox.critical(self, "Connection Failed",
-                                     f"Failed to connect to Socket server at {cfg.get_socket_host()}:{cfg.get_socket_port()}")
+                                     f"Failed to connect to Socket server at {config_info}")
                 return
 
             search_data = self.patient_search_widget.get_search_data()
@@ -3188,19 +3188,9 @@ class HomePanelWidget(QWidget):
                         QApplication.processEvents()
                         await asyncio.sleep(0)
 
-                self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#10b981').pixmap(12, 12))
-                self.connection_indicator.setText(f" Socket Connected - Found {total} patients")
-                self.connection_indicator.setStyleSheet("""
-                    QLabel { font-size: 14px; color: #10b981; padding: 4px 8px;
-                             background: rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.3); border-radius:8px; }
-                """)
+                self._update_connection_indicator_by_status('online', f'Socket Connected - Found {total} patients')
             else:
-                self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#f59e0b').pixmap(12, 12))
-                self.connection_indicator.setText(" Socket Connected - No patients found")
-                self.connection_indicator.setStyleSheet("""
-                    QLabel { font-size: 14px; color: #f59e0b; padding: 4px 8px;
-                             background: rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.3); border-radius:8px; }
-                """)
+                self._update_connection_indicator_by_status('busy', 'Socket Connected - No patients found')
 
             # پاکسازی سرویس
             try:

@@ -18,39 +18,123 @@ DEFAULT_THEME_ORDER = ["Blue", "Gray", "Green", "Turquoise", "Dark Red", "Yellow
 DEFAULT_THEMES = {
     "Blue": {
         "accent": "#3182ce",
+        "accent_secondary": "#0284c7",
         "window_bg": "#18212f",
         "menu_bg": "#223246",
         "panel_bg": "#111927",
+        "info": "#06b6d4",
+        "info_subtle": "#164e63",
+        "success": "#10b981",
+        "success_subtle": "#064e3b",
+        "warning": "#f59e0b",
+        "warning_subtle": "#78350f",
+        "danger": "#ef4444",
+        "danger_subtle": "#7f1d1d",
+        "badge_blue": "#1e40af",
+        "badge_cyan": "#0369a1",
+        "status_online": "#10b981",
+        "status_offline": "#6b7280",
+        "status_busy": "#ef4444",
     },
     "Gray": {
         "accent": "#8b95a7",
+        "accent_secondary": "#71717a",
         "window_bg": "#1d2026",
         "menu_bg": "#30353d",
         "panel_bg": "#171b20",
+        "info": "#64748b",
+        "info_subtle": "#1e293b",
+        "success": "#6b7280",
+        "success_subtle": "#1f2937",
+        "warning": "#9ca3af",
+        "warning_subtle": "#374151",
+        "danger": "#9f1239",
+        "danger_subtle": "#1f2937",
+        "badge_blue": "#475569",
+        "badge_cyan": "#64748b",
+        "status_online": "#6b7280",
+        "status_offline": "#4b5563",
+        "status_busy": "#9f1239",
     },
     "Green": {
         "accent": "#2f9e70",
+        "accent_secondary": "#059669",
         "window_bg": "#15241e",
         "menu_bg": "#203b31",
         "panel_bg": "#12201b",
+        "info": "#14b8a6",
+        "info_subtle": "#134e4a",
+        "success": "#2f9e70",
+        "success_subtle": "#064e3b",
+        "warning": "#84cc16",
+        "warning_subtle": "#365314",
+        "danger": "#f87171",
+        "danger_subtle": "#7c2d12",
+        "badge_blue": "#047857",
+        "badge_cyan": "#0d9488",
+        "status_online": "#2f9e70",
+        "status_offline": "#6b7280",
+        "status_busy": "#f87171",
     },
     "Turquoise": {
         "accent": "#20a4a5",
+        "accent_secondary": "#0891b2",
         "window_bg": "#14252b",
         "menu_bg": "#1f3942",
         "panel_bg": "#102027",
+        "info": "#06b6d4",
+        "info_subtle": "#164e63",
+        "success": "#14b8a6",
+        "success_subtle": "#134e4a",
+        "warning": "#fbbf24",
+        "warning_subtle": "#78350f",
+        "danger": "#f87171",
+        "danger_subtle": "#7c2d12",
+        "badge_blue": "#0891b2",
+        "badge_cyan": "#20a4a5",
+        "status_online": "#14b8a6",
+        "status_offline": "#6b7280",
+        "status_busy": "#f87171",
     },
     "Dark Red": {
         "accent": "#b63c57",
+        "accent_secondary": "#a4151c",
         "window_bg": "#191015",
         "menu_bg": "#301a23",
         "panel_bg": "#120a0f",
+        "info": "#d946a6",
+        "info_subtle": "#500724",
+        "success": "#ec4899",
+        "success_subtle": "#500724",
+        "warning": "#f97316",
+        "warning_subtle": "#7c2d12",
+        "danger": "#b63c57",
+        "danger_subtle": "#6b1b28",
+        "badge_blue": "#881337",
+        "badge_cyan": "#b63c57",
+        "status_online": "#ec4899",
+        "status_offline": "#6b7280",
+        "status_busy": "#b63c57",
     },
     "Yellow": {
         "accent": "#c99512",
+        "accent_secondary": "#d97706",
         "window_bg": "#1f1b10",
         "menu_bg": "#3b3016",
         "panel_bg": "#171106",
+        "info": "#f59e0b",
+        "info_subtle": "#78350f",
+        "success": "#eab308",
+        "success_subtle": "#713f12",
+        "warning": "#c99512",
+        "warning_subtle": "#78350f",
+        "danger": "#ea580c",
+        "danger_subtle": "#7c2d12",
+        "badge_blue": "#b45309",
+        "badge_cyan": "#c99512",
+        "status_online": "#eab308",
+        "status_offline": "#6b7280",
+        "status_busy": "#ea580c",
     },
 }
 
@@ -111,9 +195,25 @@ def _relative_luminance(color: str) -> float:
 
 def _theme_blueprint(name: str, palette: dict[str, str]) -> dict[str, str]:
     accent = _normalize_hex(palette.get("accent", "#3182ce"), "#3182ce")
+    accent_secondary = _normalize_hex(palette.get("accent_secondary", accent), accent)
     window_bg = _normalize_hex(palette.get("window_bg", "#18212f"), "#18212f")
     menu_bg = _normalize_hex(palette.get("menu_bg", "#223246"), "#223246")
     panel_bg = _normalize_hex(palette.get("panel_bg", "#111927"), "#111927")
+    
+    # Semantic colors from palette
+    info = _normalize_hex(palette.get("info", "#06b6d4"), "#06b6d4")
+    info_subtle = _normalize_hex(palette.get("info_subtle", "#164e63"), "#164e63")
+    success = _normalize_hex(palette.get("success", "#10b981"), "#10b981")
+    success_subtle = _normalize_hex(palette.get("success_subtle", "#064e3b"), "#064e3b")
+    warning = _normalize_hex(palette.get("warning", "#f59e0b"), "#f59e0b")
+    warning_subtle = _normalize_hex(palette.get("warning_subtle", "#78350f"), "#78350f")
+    danger = _normalize_hex(palette.get("danger", "#ef4444"), "#ef4444")
+    danger_subtle = _normalize_hex(palette.get("danger_subtle", "#7f1d1d"), "#7f1d1d")
+    badge_blue = _normalize_hex(palette.get("badge_blue", "#1e40af"), "#1e40af")
+    badge_cyan = _normalize_hex(palette.get("badge_cyan", "#0369a1"), "#0369a1")
+    status_online = _normalize_hex(palette.get("status_online", "#10b981"), "#10b981")
+    status_offline = _normalize_hex(palette.get("status_offline", "#6b7280"), "#6b7280")
+    status_busy = _normalize_hex(palette.get("status_busy", "#ef4444"), "#ef4444")
 
     text_primary = "#f8fafc"
     text_secondary = "#dbe7f3"
@@ -127,6 +227,7 @@ def _theme_blueprint(name: str, palette: dict[str, str]) -> dict[str, str]:
     return {
         "name": name,
         "accent": accent,
+        "accent_secondary": accent_secondary,
         "accent_hover": accent_hover,
         "accent_pressed": accent_pressed,
         "accent_soft": _mix(panel_bg, accent, 0.28),
@@ -147,12 +248,24 @@ def _theme_blueprint(name: str, palette: dict[str, str]) -> dict[str, str]:
         "tab_hover_bg": _mix(menu_bg, accent, 0.12),
         "tab_active_bg": accent,
         "button_text": button_text,
-        "success": "#10b981",
-        "success_hover": "#0e9f6e",
-        "warning": "#f59e0b",
-        "danger": "#ef4444",
-        "danger_hover": "#dc2626",
-        "neutral": "#64748b",
+        "info": info,
+        "info_subtle": info_subtle,
+        "success": success,
+        "success_subtle": success_subtle,
+        "warning": warning,
+        "warning_subtle": warning_subtle,
+        "danger": danger,
+        "danger_subtle": danger_subtle,
+        "badge_blue": badge_blue,
+        "badge_cyan": badge_cyan,
+        "status_online": status_online,
+        "status_offline": status_offline,
+        "status_busy": status_busy,
+        "success_hover": _shift_lightness(success, 12),
+        "warning_hover": _shift_lightness(warning, 12),
+        "danger_hover": _shift_lightness(danger, 12),
+        "info_hover": _shift_lightness(info, 12),
+        "neutral": _mix(text_muted, panel_bg, 0.5),
         "shadow": "rgba(0, 0, 0, 0.35)",
     }
 
@@ -198,7 +311,10 @@ class ThemeManager(QObject):
 
     def update_custom_theme(self, palette: dict[str, str]) -> dict[str, str]:
         current = self.current_custom_theme()
-        for key in ("accent", "window_bg", "menu_bg", "panel_bg"):
+        # Allow customization of all semantic colors, not just the base four
+        for key in ("accent", "accent_secondary", "window_bg", "menu_bg", "panel_bg",
+                    "info", "success", "warning", "danger", "badge_blue", "badge_cyan",
+                    "status_online", "status_offline", "status_busy"):
             if key in palette:
                 current[key] = _normalize_hex(palette[key], current[key])
         self._settings["custom_theme"] = current
@@ -341,11 +457,28 @@ class ThemeManager(QObject):
                 active = "Blue"
             custom = payload.get("custom_theme") or deepcopy(DEFAULT_THEMES["Blue"])
             self._settings["active_theme"] = active
+            
+            # Load all theme colors with proper fallbacks
+            blue_defaults = DEFAULT_THEMES["Blue"]
             self._settings["custom_theme"] = {
-                "accent": _normalize_hex(custom.get("accent", "#3182ce"), "#3182ce"),
-                "window_bg": _normalize_hex(custom.get("window_bg", "#18212f"), "#18212f"),
-                "menu_bg": _normalize_hex(custom.get("menu_bg", "#223246"), "#223246"),
-                "panel_bg": _normalize_hex(custom.get("panel_bg", "#111927"), "#111927"),
+                "accent": _normalize_hex(custom.get("accent", blue_defaults.get("accent", "#3182ce")), "#3182ce"),
+                "accent_secondary": _normalize_hex(custom.get("accent_secondary", blue_defaults.get("accent_secondary", "#0284c7")), "#0284c7"),
+                "window_bg": _normalize_hex(custom.get("window_bg", blue_defaults.get("window_bg", "#18212f")), "#18212f"),
+                "menu_bg": _normalize_hex(custom.get("menu_bg", blue_defaults.get("menu_bg", "#223246")), "#223246"),
+                "panel_bg": _normalize_hex(custom.get("panel_bg", blue_defaults.get("panel_bg", "#111927")), "#111927"),
+                "info": _normalize_hex(custom.get("info", blue_defaults.get("info", "#06b6d4")), "#06b6d4"),
+                "info_subtle": _normalize_hex(custom.get("info_subtle", blue_defaults.get("info_subtle", "#164e63")), "#164e63"),
+                "success": _normalize_hex(custom.get("success", blue_defaults.get("success", "#10b981")), "#10b981"),
+                "success_subtle": _normalize_hex(custom.get("success_subtle", blue_defaults.get("success_subtle", "#064e3b")), "#064e3b"),
+                "warning": _normalize_hex(custom.get("warning", blue_defaults.get("warning", "#f59e0b")), "#f59e0b"),
+                "warning_subtle": _normalize_hex(custom.get("warning_subtle", blue_defaults.get("warning_subtle", "#78350f")), "#78350f"),
+                "danger": _normalize_hex(custom.get("danger", blue_defaults.get("danger", "#ef4444")), "#ef4444"),
+                "danger_subtle": _normalize_hex(custom.get("danger_subtle", blue_defaults.get("danger_subtle", "#7f1d1d")), "#7f1d1d"),
+                "badge_blue": _normalize_hex(custom.get("badge_blue", blue_defaults.get("badge_blue", "#1e40af")), "#1e40af"),
+                "badge_cyan": _normalize_hex(custom.get("badge_cyan", blue_defaults.get("badge_cyan", "#0369a1")), "#0369a1"),
+                "status_online": _normalize_hex(custom.get("status_online", blue_defaults.get("status_online", "#10b981")), "#10b981"),
+                "status_offline": _normalize_hex(custom.get("status_offline", blue_defaults.get("status_offline", "#6b7280")), "#6b7280"),
+                "status_busy": _normalize_hex(custom.get("status_busy", blue_defaults.get("status_busy", "#ef4444")), "#ef4444"),
             }
         except Exception:
             self._settings = {
