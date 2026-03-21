@@ -213,6 +213,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 from PySide6.QtGui import QIcon
 from PacsClient.app_handler import AppHandler
 from PacsClient.utils.font_manager import load_fonts, setup_font_rendering
+from PacsClient.utils.single_instance_lock import SingleInstanceLock
 from modules.LicenseGenerator.license_manager import LicenseManager
 from modules.LicenseGenerator.license_dialog import LicenseDialog
 from PacsClient.utils.scroll_style import get_scroll_area_style
@@ -281,6 +282,16 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
 
+    # ========================================================================
+    # SINGLE-INSTANCE LOCK: Ensure only one AIPacs instance can run at a time
+    # ========================================================================
+    instance_lock = SingleInstanceLock()
+    if not instance_lock.try_acquire(show_dialog=True):
+        # Another instance is running, user was prompted with dialog
+        # Lock.try_acquire() handles the user interaction and graceful exit
+        logging.getLogger(__name__).info("Application initialization canceled - another instance running")
+        sys.exit(0)
+
     # Get the absolute path to the icon
     # icon_path = os.path.join(os.path.dirname(__file__), "PacsClient", "login", "images", "favicon.ico")
     icon_path = str(IMAGES_LOGIN_PATH / "favicon.ico")
@@ -292,7 +303,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("2.2.6.3")
+    app.setApplicationVersion("2.2.7")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -357,6 +368,14 @@ if __name__ == "__main__":
     )
     app._disk_alert_service.start(initial_delay_ms=2000)
 
+    # Store lock on app for cleanup on exit
+    app._instance_lock = instance_lock
+
     # sys.exit(app.exec())
-    with loop:
-        loop.run_forever()
+    try:
+        with loop:
+            loop.run_forever()
+    finally:
+        # Clean up single-instance lock on shutdown
+        instance_lock.release()
+        logging.getLogger(__name__).info("Application shutdown: instance lock released")

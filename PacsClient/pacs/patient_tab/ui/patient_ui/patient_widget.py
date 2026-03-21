@@ -56,12 +56,61 @@ from PacsClient.pacs.patient_tab.utils.image_io import load_single_series_by_num
 from PySide6.QtCore import QTimer
 import threading
 import logging
+import re
+from PacsClient.utils.theme_manager import get_theme_manager
 logger = logging.getLogger(__name__)
 
 # Priority management is now handled by Zeta Download Manager
 # Zeta uses its own internal priority system via DownloadPriority enum
 from modules.download_manager.core.enums import DownloadPriority
 PRIORITY_MANAGER_AVAILABLE = False  # Legacy priority manager removed
+
+
+# ========== THEME RETINTING HELPERS ==========
+def _pw_theme_color_map(theme: dict) -> dict:
+    """Map hardcoded Advanced Analysis panel colors to theme-aware values."""
+    return {
+        "#0f1419": theme.get("panel_deep_bg", "#0f1419"),  # Main panel
+        "#1a1a2e": theme.get("panel_deep_bg", "#1a1a2e"),  # Alternate variant
+        "#1a202c": theme.get("panel_bg", "#1a202c"),       # Panels
+        "#f7fafc": theme.get("text_primary", "#f7fafc"),   # Primary text
+        "#a0aec0": theme.get("text_secondary", "#a0aec0"), # Secondary text
+        "#7c3aed": theme.get("accent", "#7c3aed"),         # Purple accent
+        "#5b21b6": theme.get("accent", "#5b21b6"),         # Purple accent (darker)
+        "#2563eb": theme.get("accent", "#2563eb"),         # Blue accent (buttons)
+        "#1e40af": theme.get("accent", "#1e40af"),         # Blue accent (darker)
+        "#1d4ed8": theme.get("accent_hover", "#1d4ed8"),   # Blue hover
+        "#1e3a8a": theme.get("accent_pressed", "#1e3a8a"), # Blue pressed
+        "#2d3748": theme.get("border", "#2d3748"),         # Border/divider
+    }
+
+
+def _pw_retint_stylesheet(css: str, theme: dict) -> str:
+    """Replace hardcoded colors in CSS with theme-aware values."""
+    out = css
+    for old_color, new_color in _pw_theme_color_map(theme).items():
+        out = re.sub(re.escape(old_color), new_color, out, flags=re.IGNORECASE)
+    return out
+
+
+def _pw_retint_widget_tree(root, theme: dict) -> None:
+    """Recursively retint all widgets in the tree with theme colors."""
+    if root is None:
+        return
+    
+    # Retint this widget's own stylesheet
+    own_sheet = root.styleSheet()
+    if own_sheet:
+        root.setStyleSheet(_pw_retint_stylesheet(own_sheet, theme))
+    
+    # Retint all child widgets
+    try:
+        for child in root.findChildren(type(root).__bases__[0]):
+            child_sheet = child.styleSheet()
+            if child_sheet:
+                child.setStyleSheet(_pw_retint_stylesheet(child_sheet, theme))
+    except Exception:
+        pass
 
 
 class PatientWidget(QWidget):
@@ -279,6 +328,13 @@ class PatientWidget(QWidget):
         self._block_reception_autoswitch = True
         # Prevent thumbnail scroll reset on retry downloads
         self._suppress_thumb_scroll_reset = False
+
+        # ========== THEME RETINTING INITIALIZATION ==========
+        self._app_theme_manager = get_theme_manager()
+        self._app_theme = self._app_theme_manager.current_theme() if self._app_theme_manager else {}
+        _pw_retint_widget_tree(self, self._app_theme)
+        if self._app_theme_manager:
+            self._app_theme_manager.themeChanged.connect(self._on_app_theme_changed)
 
         # Defer VTK initialization to let the window paint first
         # Use longer delay to ensure window is fully painted
@@ -7081,6 +7137,14 @@ class PatientWidget(QWidget):
             print(f"❌ Error in _on_retry_series_download: {e}")
             import traceback
             traceback.print_exc()
+
+    def _on_app_theme_changed(self, theme: dict) -> None:
+        """Handle application theme changes and retint all UI elements."""
+        try:
+            self._app_theme = theme or self._app_theme_manager.current_theme() if self._app_theme_manager else {}
+            _pw_retint_widget_tree(self, self._app_theme)
+        except Exception as e:
+            logger.warning(f"Error retinting PatientWidget on theme change: {e}")
 
     def apply_filters_to_all_series_of_modality(self, modality: str, filter_params: dict):
         """

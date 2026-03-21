@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QRect
 from PySide6.QtGui import QPixmap, QPainter, QPen
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QGridLayout
 from PacsClient.utils.scroll_style import get_scroll_area_style
+from PacsClient.utils.theme_manager import get_theme_manager
 try:
     import qtawesome as qta
     QTAWESOME_AVAILABLE = True
@@ -23,6 +24,10 @@ class LoadingSpinner(QWidget):
         self.timer = QTimer()
         self.timer.timeout.connect(self.rotate)
         
+        # Get theme color
+        self.theme_manager = get_theme_manager()
+        self._accent_color = self.theme_manager.current_theme().get('accent', '#7c3aed')
+        
         # Style with semi-transparent background
         self.setStyleSheet("""
             QWidget {
@@ -30,6 +35,11 @@ class LoadingSpinner(QWidget):
                 border-radius: 30px;
             }
         """)
+    
+    def update_theme(self, theme):
+        """Update spinner accent color when theme changes"""
+        self._accent_color = theme.get('accent', '#7c3aed')
+        self.update()
     
     def start(self):
         """Start the spinner animation"""
@@ -64,9 +74,9 @@ class LoadingSpinner(QWidget):
         painter.setPen(pen)
         painter.drawArc(rect, 0, 360 * 16)
         
-        # Active arc (colored) - use purple theme color
+        # Active arc (colored) - use theme accent color
         from PySide6.QtGui import QColor
-        pen.setColor(QColor(124, 58, 237))  # #7c3aed - purple theme color
+        pen.setColor(QColor(self._accent_color))
         painter.setPen(pen)
         painter.drawArc(rect, self.angle * 16, 90 * 16)  # 90 degree arc
 
@@ -80,6 +90,19 @@ class RightPanelWidget(QWidget):
     
     def __init__(self, parent=None):
         super(RightPanelWidget, self).__init__(parent)
+        
+        # Theme support
+        self.theme_manager = get_theme_manager()
+        self._active_theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
+
+        # Guard against stale progressive rendering when user switches patients rapidly
+        self.thumbnail_timer = None
+        self.current_thumbnail_index = 0
+        self.thumbnails_to_display = []
+        self._display_generation = 0
+        self._active_progressive_generation = 0
+        
         self.setup_ui()
         
     def setup_ui(self):
@@ -94,11 +117,14 @@ class RightPanelWidget(QWidget):
         header_widget = QWidget()
         header_widget.setFixedHeight(header_height)
         header_layout = QHBoxLayout(header_widget)
-        header_widget.setStyleSheet("""
-            QWidget {
-                background: #0f1419;
+        
+        theme = self._active_theme
+        header_bg = theme.get('panel_bg', '#0f1419')
+        header_widget.setStyleSheet(f"""
+            QWidget {{
+                background: {header_bg};
                 border-radius: 8px;
-            }
+            }}
         """)
         header_layout.setContentsMargins(12, 8, 12, 8)
         header_layout.setSpacing(10)
@@ -107,35 +133,12 @@ class RightPanelWidget(QWidget):
         # Title
         self.title_label = QLabel("Study Information")
         self.title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        self.title_label.setStyleSheet("""
-            QLabel {
-                font-size: 13px;
-                font-family: 'Roboto', sans-serif;
-                color: #f7fafc;
-                padding: 6px 0px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #7c3aed, stop:1 #5b21b6);
-                border: 1px solid #7c3aed;
-                border-radius: 8px;
-                margin: 0px;
-            }
-        """)
+        self.title_label.setStyleSheet(self._get_header_title_stylesheet())
         
         # Count indicator
         self.count_label = QLabel("0 series")
         self.count_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
-        self.count_label.setStyleSheet("""
-            QLabel {
-                font-size: 9px;
-                font-family: 'Roboto', sans-serif;
-                color: #a0aec0;
-                padding: 4px 6px;
-                background: rgba(160, 174, 192, 0.1);
-                border: 1px solid rgba(160, 174, 192, 0.2);
-                border-radius: 8px;
-                margin: 0px;
-            }
-        """)
+        self.count_label.setStyleSheet(self._get_header_count_stylesheet())
         
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
@@ -147,7 +150,7 @@ class RightPanelWidget(QWidget):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setStyleSheet(get_scroll_area_style())
+        self.scroll_area.setStyleSheet(self._get_scrollarea_stylesheet())
         
         # Content container
         self.content_widget = QWidget()
@@ -175,13 +178,119 @@ class RightPanelWidget(QWidget):
         # Set fixed width - calculated for 180px thumbnails + margins + scrollbar
         # Calculation: 180px (thumbnail) + 10px (left margin) + 10px (right margin) + 16px (scrollbar) = 216px
         self.setFixedWidth(216)
+    
+    def _get_header_title_stylesheet(self):
+        """Get themed header title stylesheet"""
+        theme = self._active_theme
+        accent = theme.get('accent', '#7c3aed')
+        accent_pressed = theme.get('accent_pressed', '#5b21b6')
         
+        return f"""
+            QLabel {{
+                font-size: 13px;
+                font-family: 'Roboto', sans-serif;
+                color: #f7fafc;
+                padding: 6px 0px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {accent}, stop:1 {accent_pressed});
+                border: 1px solid {accent};
+                border-radius: 8px;
+                margin: 0px;
+            }}
+        """
+    
+    def _get_header_count_stylesheet(self):
+        """Get themed count label stylesheet"""
+        theme = self._active_theme
+        text_secondary = theme.get('text_secondary', '#a0aec0')
+        
+        return f"""
+            QLabel {{
+                font-size: 9px;
+                font-family: 'Roboto', sans-serif;
+                color: {text_secondary};
+                padding: 4px 6px;
+                background: rgba(160, 174, 192, 0.1);
+                border: 1px solid rgba(160, 174, 192, 0.2);
+                border-radius: 8px;
+                margin: 0px;
+            }}
+        """
+    
+    def _get_scrollarea_stylesheet(self):
+        """Get themed scrollarea stylesheet"""
+        theme = self._active_theme
+        panel_bg = theme.get('panel_bg', '#0f1419')
+        
+        return f"""
+            QScrollArea, QWidget {{
+                background: {panel_bg};
+            }}
+            QScrollBar:vertical {{
+                border: none;
+                background: {panel_bg};
+                width: 14px;
+                border-radius: 8px;
+                margin: 0px;
+            }}
+            QScrollBar::sub-line:vertical, QScrollBar::add-line:vertical {{
+                height: 0px;
+            }}
+        """.strip()
+    
+    def _on_theme_changed(self, theme):
+        """Handle theme changes"""
+        self._active_theme = theme
+        self._apply_theme()
+    
+    def _apply_theme(self):
+        """Apply theme colors to all UI elements"""
+        try:
+            # Update title and count labels
+            self.title_label.setStyleSheet(self._get_header_title_stylesheet())
+            self.count_label.setStyleSheet(self._get_header_count_stylesheet())
+            
+            # Update scroll area
+            self.scroll_area.setStyleSheet(self._get_scrollarea_stylesheet())
+            
+            # Update loading spinner
+            if hasattr(self, 'loading_spinner'):
+                self.loading_spinner.update_theme(self._active_theme)
+        except Exception as e:
+            print(f"Error applying theme to right panel: {e}")
+
+    def _cancel_thumbnail_timer(self):
+        """Stop and dispose any running progressive thumbnail timer."""
+        timer = getattr(self, 'thumbnail_timer', None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:
+                pass
+            try:
+                timer.deleteLater()
+            except Exception:
+                pass
+        self.thumbnail_timer = None
+    
     def clear_content(self):
         """Clear all content from the panel"""
-        for i in reversed(range(self.content_grid.count())):
-            widget = self.content_grid.itemAt(i).widget()
-            if widget:
-                widget.setParent(None)
+        self._cancel_thumbnail_timer()
+        self.current_thumbnail_index = 0
+        self.thumbnails_to_display = []
+
+        while self.content_grid.count():
+            item = self.content_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                try:
+                    widget.hide()
+                except Exception:
+                    pass
+                try:
+                    widget.deleteLater()
+                except Exception:
+                    pass
     
     def display_series_info(self, study_info):
         """Display series information in the panel - prepare for progressive thumbnail display"""
@@ -196,11 +305,17 @@ class RightPanelWidget(QWidget):
     def display_thumbnails(self, thumbnails, progressive: bool = True):
         """Display thumbnail images with series info in single boxes."""
         try:
+            # Invalidate any previous render pipeline and cleanup old widgets.
+            self._display_generation += 1
+            generation = self._display_generation
+            self._cancel_thumbnail_timer()
+            self.clear_content()
+
             self.count_label.setText(f"Loading {len(thumbnails)} series...")
             if progressive:
-                QTimer.singleShot(50, lambda: self.display_thumbnails_progressively(thumbnails))
+                QTimer.singleShot(50, lambda g=generation: self.display_thumbnails_progressively(thumbnails, g))
             else:
-                QTimer.singleShot(0, lambda: self.display_thumbnails_immediately(thumbnails))
+                QTimer.singleShot(0, lambda g=generation: self.display_thumbnails_immediately(thumbnails, g))
         except Exception as e:
             print(f"Error in display_thumbnails: {str(e)}")
     
@@ -232,14 +347,17 @@ class RightPanelWidget(QWidget):
         if hasattr(self, 'loading_spinner') and self.loading_spinner.isVisible():
             self.position_spinner()
     
-    def display_thumbnails_progressively(self, thumbnails):
+    def display_thumbnails_progressively(self, thumbnails, generation=None):
         """Display thumbnails one by one with a small delay for better UX"""
         try:
+            if generation is not None and generation != self._display_generation:
+                return
 
             self.hide_loading()
             
             self.current_thumbnail_index = 0
             self.thumbnails_to_display = thumbnails
+            self._active_progressive_generation = generation if generation is not None else self._display_generation
 
             self.count_label.setText(f"0/{len(thumbnails)} series")
 
@@ -251,11 +369,13 @@ class RightPanelWidget(QWidget):
             print(f"Error in display_thumbnails_progressively: {str(e)}")
             self.hide_loading()  # Make sure to hide loading on error
 
-    def display_thumbnails_immediately(self, thumbnails):
+    def display_thumbnails_immediately(self, thumbnails, generation=None):
         """Display thumbnails immediately (no progressive delay)."""
         try:
+            if generation is not None and generation != self._display_generation:
+                return
+
             self.hide_loading()
-            self.clear_content()
             total = len(thumbnails)
             self.count_label.setText(f"0/{total} series")
 
@@ -294,9 +414,14 @@ class RightPanelWidget(QWidget):
     def display_next_thumbnail(self):
         """Display the next thumbnail in the queue"""
         try:
+            # Stop stale timers from previous patient selections.
+            if self._active_progressive_generation != self._display_generation:
+                self._cancel_thumbnail_timer()
+                return
+
             if self.current_thumbnail_index >= len(self.thumbnails_to_display):
                 # All thumbnails displayed, stop the timer
-                self.thumbnail_timer.stop()
+                self._cancel_thumbnail_timer()
                 # Update final count
                 self.count_label.setText(f"{len(self.thumbnails_to_display)} series")
                 return
@@ -331,7 +456,6 @@ class RightPanelWidget(QWidget):
                         self.content_grid.addWidget(combined_widget, self.current_thumbnail_index, 0, 1, 1)
                         
                         # Force layout update to prevent overlapping
-                        combined_widget.show()
                         combined_widget.updateGeometry()
                         self.content_grid.update()
 
@@ -345,8 +469,7 @@ class RightPanelWidget(QWidget):
             
         except Exception as e:
             # Stop timer on error
-            if hasattr(self, 'thumbnail_timer'):
-                self.thumbnail_timer.stop()
+            self._cancel_thumbnail_timer()
             self.hide_loading()  # Make sure to hide loading on error
     
     def extract_series_info_from_thumbnail(self, thumb):

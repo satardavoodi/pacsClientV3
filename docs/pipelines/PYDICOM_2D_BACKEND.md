@@ -35,7 +35,7 @@ Optional fallback:
 
 ## Dependency Installation
 Runtime:
-- `python -m pip install -r requirements.txt`
+- `python -m pip install -r requirements-core.txt`
 
 Dev/test:
 - `python -m pip install -r requirements-dev.txt`

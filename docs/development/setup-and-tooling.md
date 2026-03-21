@@ -1,6 +1,20 @@
-﻿# Development Setup and Tooling
+# Development Setup and Tooling
 
 ## Python Environment
+
+Recommended PowerShell setup:
+
+```powershell
+.\setup_env.ps1
+```
+
+To include test and developer extras:
+
+```powershell
+.\setup_env.ps1 -IncludeDev
+```
+
+Manual setup:
 
 ```powershell
 python -m venv .venv
@@ -18,12 +32,18 @@ For development and tests:
 
 - `requirements-core.txt`: runtime dependencies
 - `requirements-dev.txt`: developer extras layered on top of core
-- `requirements.txt`: legacy combined dependency list kept for compatibility
+- `requirements.txt`: legacy combined list kept only for compatibility with older tooling
 - `pyproject.toml`: project metadata plus tool configuration
 
 ## Common Commands
 
 Run the desktop app:
+
+```powershell
+.\run_app.ps1
+```
+
+Or run the entrypoint directly:
 
 ```powershell
 .venv\Scripts\python main.py
@@ -39,6 +59,15 @@ Run the built-in test shortcut:
 
 ```powershell
 .venv\Scripts\python main.py --run-tests
+```
+
+Run a Windows release build:
+
+```powershell
+python -m venv .venv_build
+.venv_build\Scripts\python -m pip install -r builder\requirements\build_requirements.txt
+.venv_build\Scripts\python -m pip install -r requirements-core.txt
+.venv_build\Scripts\python build.py
 ```
 
 ## GitHub Push Workflow

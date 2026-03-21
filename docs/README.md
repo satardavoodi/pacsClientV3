@@ -1,6 +1,6 @@
 ﻿# AIPacs Documentation
 
-> **Current Stable Version:** v2.2.3.4.0 (2026-02-27)
+> **Current Stable Version:** v2.2.7 (2026-03-21)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -45,6 +45,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 
 ### Releases
 - [Release Notes](releases/RELEASE_NOTES.md) — Current consolidated release history
+- [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) — Stable release notes for the current published version
 
 ### Archive
 - [Archive Index](archive/README.md) — Historical documents (not current truth)

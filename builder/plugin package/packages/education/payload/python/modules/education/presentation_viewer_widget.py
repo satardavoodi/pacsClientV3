@@ -9,6 +9,7 @@ from PySide6.QtGui import QFont, QPixmap, QKeyEvent
 from pathlib import Path
 
 from modules.education.video_slide_widget import SimpleVideoWidget
+from PacsClient.utils.theme_manager import get_theme_manager
 
 
 class SlideContentWidget(QWidget):
@@ -288,6 +289,9 @@ class PresentationViewerWidget(QWidget):
         self.slides = course_data.get('slides', [])
         self.current_slide_index = 0
         self.slide_widgets = []
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         
         if not self.slides:
             QMessageBox.warning(self, "No Slides", "This course has no slides.")
@@ -297,6 +301,19 @@ class PresentationViewerWidget(QWidget):
         self.setup_ui()
         self.load_all_slides()
         self.show_slide(0)
+    
+    def _on_theme_changed(self, theme):
+        """Handle theme changes."""
+        self._theme = theme or self.theme_manager.current_theme()
+        self._apply_theme_styles()
+        # Clean up and reload slides to reapply theme
+        while self.slides_stack.count() > 0:
+            widget = self.slides_stack.widget(0)
+            self.slides_stack.removeWidget(widget)
+            widget.deleteLater()
+        self.slide_widgets = []
+        self.load_all_slides()
+        self.show_slide(self.current_slide_index)
     
     def setup_ui(self):
         """Setup the presentation viewer UI."""
@@ -413,6 +430,62 @@ class PresentationViewerWidget(QWidget):
         
         # Set focus to enable keyboard navigation
         self.setFocusPolicy(Qt.StrongFocus)
+        
+        self._apply_theme_styles()
+    
+    def _apply_theme_styles(self):
+        """Apply theme-based styling to all UI elements."""
+        t = self._theme
+        
+        # Slides stack background
+        self.slides_stack.setStyleSheet(f"""
+            QStackedWidget {{
+                background-color: {t['panel_deep_bg']};
+            }}
+        """)
+        
+        # Controls widget
+        if hasattr(self, 'controls_widget'):
+            self.controls_widget.setStyleSheet(f"""
+                QWidget {{
+                    background-color: {t['panel_alt_bg']};
+                    border-top: 2px solid {t['border']};
+                }}
+            """)
+        
+        # Navigation buttons
+        nav_button_style = f"""
+            QPushButton {{
+                background-color: {t['border']};
+                color: {t['text_secondary']};
+                border: none;
+                border-radius: 5px;
+                padding: 8px 15px;
+            }}
+            QPushButton:hover {{
+                background-color: {t['accent_hover']};
+                color: {t['button_text']};
+            }}
+        """
+        
+        # Next/Previous buttons
+        for button in self.findChildren(QPushButton):
+            if button.text() in ["Previous", "Next"]:
+                if button.text() == "Next":
+                    button.setStyleSheet(f"""
+                        QPushButton {{
+                            background-color: {t['accent']};
+                            color: {t['button_text']};
+                            border: none;
+                            border-radius: 5px;
+                            padding: 8px 15px;
+                        }}
+                        QPushButton:hover {{
+                            background-color: {t['accent_hover']};
+                        }}
+                    """)
+                else:
+                    button.setStyleSheet(nav_button_style)
     
     def load_all_slides(self):
         """Load all slide widgets."""

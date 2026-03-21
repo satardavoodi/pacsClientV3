@@ -21,6 +21,7 @@ from modules.network.upload_download_attchments import upload_attachments_for_st
 from PacsClient.utils.config import ATTACHMENT_PATH
 from PacsClient.utils import list_files_in_folder
 from PacsClient.utils import get_attachments_uploaded
+from PacsClient.utils.theme_manager import get_theme_manager
 
 from .voice_tool_ui import VoiceWidget
 from .attachments_dropdown import AttachmentsDropdownWidget
@@ -28,7 +29,422 @@ from threading import Thread
 from modules.zeta_sync.sync_types import SyncMode
 
 
-def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa'):
+def _resolve_theme(theme=None):
+    return theme if theme else get_theme_manager().current_theme()
+
+
+def _lighten(hex_color: str, amount: int = 20) -> str:
+    """Return a lighter version of a hex color by adding `amount` to each RGB channel."""
+    h = hex_color.lstrip('#')
+    r = min(255, int(h[0:2], 16) + amount)
+    g = min(255, int(h[2:4], 16) + amount)
+    b = min(255, int(h[4:6], 16) + amount)
+    return f'#{r:02x}{g:02x}{b:02x}'
+
+
+def _darken(hex_color: str, amount: int = 20) -> str:
+    """Return a darker version of a hex color by subtracting `amount` from each RGB channel."""
+    h = hex_color.lstrip('#')
+    r = max(0, int(h[0:2], 16) - amount)
+    g = max(0, int(h[2:4], 16) - amount)
+    b = max(0, int(h[4:6], 16) - amount)
+    return f'#{r:02x}{g:02x}{b:02x}'
+
+
+def _apply_dropdown_button_style(btn, theme, icon_color='#60a5fa'):
+    accent = theme.get('accent', '#2d3748')
+    accent_hover = theme.get('accent_hover', '#374151')
+    accent_pressed = theme.get('accent_pressed', '#1f2937')
+    button_text = theme.get('button_text', '#ffffff')
+    success = theme.get('success', '#059669')
+    success_darker = theme.get('success_darker', '#047857')
+
+    face_top    = _lighten(accent, 16)
+    face_bot    = _darken(accent, 10)
+    hi_top      = _lighten(accent, 38)      # top highlight edge
+    hi_left     = _lighten(accent, 20)      # left highlight edge  
+    shadow_bot  = _darken(accent, 32)       # bottom shadow edge
+    shadow_rt   = _darken(accent, 22)       # right shadow edge
+    hover_face  = _lighten(accent_hover, 14)
+    hover_top   = _lighten(accent_hover, 44)
+    hover_shd   = _darken(accent_hover, 28)
+    suc_face    = _lighten(success, 18)
+    suc_top     = _lighten(success, 46)
+    suc_shd     = _darken(success, 28)
+    press_face  = _darken(accent_pressed, 6)
+
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {face_top}, stop:1 {face_bot});
+            color: {button_text};
+            border-top:    1px solid {hi_top};
+            border-left:   1px solid {hi_left};
+            border-right:  2px solid {shadow_rt};
+            border-bottom: 3px solid {shadow_bot};
+            border-radius: 8px;
+            padding: 10px 14px;
+            text-align: left;
+            font-size: 13px;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 500;
+        }}
+        QPushButton:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {hover_face}, stop:1 {accent_hover});
+            border-top:    1px solid {hover_top};
+            border-left:   1px solid {_lighten(accent_hover, 26)};
+            border-right:  2px solid {hover_shd};
+            border-bottom: 3px solid {_darken(accent_hover, 36)};
+            color: {button_text};
+        }}
+        QPushButton:pressed {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {press_face}, stop:1 {_darken(press_face, 8)});
+            border-top:    1px solid {shadow_bot};
+            border-left:   1px solid {shadow_rt};
+            border-right:  1px solid {hi_left};
+            border-bottom: 1px solid {shadow_bot};
+            padding-top: 12px;
+            padding-bottom: 8px;
+        }}
+        QPushButton:checked {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {suc_face}, stop:1 {success_darker});
+            border-top:    1px solid {suc_top};
+            border-left:   1px solid {_lighten(success, 28)};
+            border-right:  2px solid {suc_shd};
+            border-bottom: 3px solid {_darken(success, 36)};
+            color: #ffffff;
+        }}
+    """)
+
+
+def _apply_tool_button_style(btn, theme, w, h):
+    accent = theme.get('accent', '#374151')
+    accent_hover = theme.get('accent_hover', '#4b5563')
+    accent_pressed = theme.get('accent_pressed', '#1f2937')
+    button_text = theme.get('button_text', '#e5e7eb')
+    success = theme.get('success', '#059669')
+    success_darker = theme.get('success_darker', '#047857')
+
+    # 3D bevel colors derived from theme accent
+    face_top   = _lighten(accent, 16)       # face gradient top (lighter)
+    face_bot   = _darken(accent, 10)        # face gradient bottom (darker)
+    hi_top     = _lighten(accent, 42)       # top highlight — brightest edge
+    hi_left    = _lighten(accent, 22)       # left highlight — secondary
+    shd_bot    = _darken(accent, 34)        # bottom shadow — deepest
+    shd_rt     = _darken(accent, 22)        # right shadow — secondary
+    # hover
+    hov_face   = _lighten(accent_hover, 16)
+    hov_top    = _lighten(accent_hover, 46)
+    hov_left   = _lighten(accent_hover, 26)
+    hov_shd_b  = _darken(accent_hover, 32)
+    hov_shd_r  = _darken(accent_hover, 20)
+    # checked (success)
+    suc_face   = _lighten(success, 18)
+    suc_top    = _lighten(success, 48)
+    suc_shd    = _darken(success, 32)
+    # pressed
+    press_face = _darken(accent_pressed, 4)
+
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            qproperty-iconSize: {w}px {h}px;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {face_top}, stop:1 {face_bot});
+            color: {button_text};
+            border-top:    1px solid {hi_top};
+            border-left:   1px solid {hi_left};
+            border-right:  2px solid {shd_rt};
+            border-bottom: 3px solid {shd_bot};
+            border-radius: 8px;
+            padding: 4px 6px;
+            margin: 2px 2px 0px 1px;
+            min-width: 40px;
+            min-height: 40px;
+            font-size: 13px;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 500;
+        }}
+        QPushButton:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {hov_face}, stop:1 {accent_hover});
+            border-top:    1px solid {hov_top};
+            border-left:   1px solid {hov_left};
+            border-right:  2px solid {hov_shd_r};
+            border-bottom: 3px solid {hov_shd_b};
+        }}
+        QPushButton:pressed {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {press_face}, stop:1 {_darken(press_face, 6)});
+            border-top:    1px solid {shd_bot};
+            border-left:   1px solid {shd_rt};
+            border-right:  1px solid {hi_left};
+            border-bottom: 1px solid {shd_bot};
+            padding-top: 7px;
+            padding-bottom: 3px;
+            margin-top: 3px;
+            margin-bottom: -1px;
+        }}
+        QPushButton:checked {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {suc_face}, stop:1 {success_darker});
+            border-top:    1px solid {suc_top};
+            border-left:   1px solid {_lighten(success, 28)};
+            border-right:  2px solid {suc_shd};
+            border-bottom: 3px solid {_darken(success, 40)};
+            color: #ffffff;
+        }}
+        QPushButton:disabled {{
+            background: {accent_pressed};
+            border-top:    1px solid {_lighten(accent_pressed, 10)};
+            border-left:   1px solid {_lighten(accent_pressed, 6)};
+            border-right:  1px solid {_darken(accent_pressed, 8)};
+            border-bottom: 1px solid {_darken(accent_pressed, 12)};
+            color: {_darken(button_text, 80)};
+        }}
+    """)
+
+
+def _apply_split_left_style(btn, theme):
+    """Left-side hamburger button in a split-button pair — matches tool-button accent."""
+    accent = theme.get('accent', '#374151')
+    accent_hover = theme.get('accent_hover', '#4b5563')
+    accent_pressed = theme.get('accent_pressed', '#1f2937')
+    success = theme.get('success', '#059669')
+    success_darker = theme.get('success_darker', '#047857')
+    button_text = theme.get('button_text', '#e5e7eb')
+
+    # Hamburger half: slightly darker face than the main button
+    # The separator (border-right) is bold enough to read as a zone boundary
+    face_top   = _lighten(accent, 8)
+    face_bot   = _darken(accent, 16)
+    hi_top     = _lighten(accent, 30)
+    shd_bot    = _darken(accent, 36)
+    shd_rt_dim = _darken(accent, 20)        # outer right shadow (shared edge)
+    sep        = _lighten(accent_hover, 42) # separator: clearly visible divider
+    hov_face   = _lighten(accent_hover, 10)
+    hov_top    = _lighten(accent_hover, 40)
+    hov_sep    = _lighten(accent_hover, 58) # separator brightens strongly on hover
+    suc_top    = _lighten(success, 46)
+    press_face = _darken(accent_pressed, 4)
+
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {face_top}, stop:1 {face_bot});
+            color: {button_text};
+            border-top:    1px solid {hi_top};
+            border-left:   1px solid {_lighten(accent, 14)};
+            border-right:  2px solid {sep};
+            border-bottom: 3px solid {shd_bot};
+            border-top-left-radius: 8px;
+            border-bottom-left-radius: 8px;
+            border-top-right-radius: 0px;
+            border-bottom-right-radius: 0px;
+            padding: 4px 2px;
+            margin: 2px 0px 0px 1px;
+            min-width: 13px;
+            min-height: 40px;
+            max-width: 13px;
+            font-size: 13px;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 500;
+        }}
+        QPushButton:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {hov_face}, stop:1 {accent_hover});
+            border-top:    1px solid {hov_top};
+            border-left:   1px solid {_lighten(accent_hover, 22)};
+            border-right:  2px solid {hov_sep};
+            border-bottom: 3px solid {_darken(accent_hover, 34)};
+        }}
+        QPushButton:pressed {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {press_face}, stop:1 {_darken(press_face, 6)});
+            border-top:    1px solid {shd_bot};
+            border-left:   1px solid {shd_rt_dim};
+            border-right:  2px solid {sep};
+            border-bottom: 1px solid {shd_bot};
+            padding-top: 7px;
+            padding-bottom: 3px;
+            margin-top: 3px;
+            margin-bottom: -1px;
+        }}
+        QPushButton:checked {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {_lighten(success, 14)}, stop:1 {success_darker});
+            border-top:    1px solid {suc_top};
+            border-left:   1px solid {_lighten(success, 24)};
+            border-right:  2px solid {_lighten(success, 36)};
+            border-bottom: 3px solid {_darken(success, 36)};
+            color: #ffffff;
+        }}
+        QPushButton:disabled {{
+            background: {accent_pressed};
+            border-top:    1px solid {_lighten(accent_pressed, 10)};
+            border-left:   1px solid {_lighten(accent_pressed, 6)};
+            border-right:  1px solid {_lighten(accent_pressed, 16)};
+            border-bottom: 1px solid {_darken(accent_pressed, 10)};
+            color: {_darken(button_text, 80)};
+        }}
+    """)
+
+
+def _apply_split_right_style(btn, theme, use_danger=False):
+    """Right-side companion button in a split-button pair."""
+    accent = theme.get('accent', '#374151')
+    accent_hover = theme.get('accent_hover', '#4b5563')
+    accent_pressed = theme.get('accent_pressed', '#1f2937')
+    success = theme.get('success', '#059669')
+    success_darker = theme.get('success_darker', '#047857')
+    danger = theme.get('danger', '#ef4444')
+    danger_darker = theme.get('danger_darker', '#dc2626')
+    button_text = theme.get('button_text', '#e5e7eb')
+    border = theme.get('border', '#4b5563')
+    checked_bg1 = danger_darker if use_danger else success
+    checked_bg2 = theme.get('danger_darker', '#b91c1c') if use_danger else success_darker
+    checked_border = danger if use_danger else success
+
+    # Mirror _apply_tool_button_style 3D bevel, no left border (shared with hamburger)
+    face_top   = _lighten(accent, 16)
+    face_bot   = _darken(accent, 10)
+    hi_top     = _lighten(accent, 42)
+    shd_bot    = _darken(accent, 34)
+    shd_rt     = _darken(accent, 22)
+    hov_face   = _lighten(accent_hover, 16)
+    hov_top    = _lighten(accent_hover, 46)
+    hov_shd_b  = _darken(accent_hover, 32)
+    hov_shd_r  = _darken(accent_hover, 20)
+    chk_face   = _lighten(checked_bg1, 22)
+    chk_top    = _lighten(checked_border, 46)
+    chk_shd    = _darken(checked_bg1, 30)
+    press_face = _darken(accent_pressed, 4)
+
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {face_top}, stop:1 {face_bot});
+            color: {button_text};
+            border-top:    1px solid {hi_top};
+            border-left:   none;
+            border-right:  2px solid {shd_rt};
+            border-bottom: 3px solid {shd_bot};
+            border-top-left-radius: 0px;
+            border-bottom-left-radius: 0px;
+            border-top-right-radius: 8px;
+            border-bottom-right-radius: 8px;
+            padding: 4px 6px;
+            margin: 2px 2px 0px 0px;
+            min-width: 40px;
+            min-height: 40px;
+            font-size: 13px;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 500;
+        }}
+        QPushButton:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {hov_face}, stop:1 {accent_hover});
+            border-top:    1px solid {hov_top};
+            border-left:   none;
+            border-right:  2px solid {hov_shd_r};
+            border-bottom: 3px solid {hov_shd_b};
+        }}
+        QPushButton:pressed {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {press_face}, stop:1 {_darken(press_face, 6)});
+            border-top:    1px solid {shd_bot};
+            border-left:   none;
+            border-right:  1px solid {_lighten(accent, 16)};
+            border-bottom: 1px solid {shd_bot};
+            padding-top: 7px;
+            padding-bottom: 3px;
+            margin-top: 3px;
+            margin-bottom: -1px;
+        }}
+        QPushButton:checked {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {chk_face}, stop:1 {checked_bg2});
+            border-top:    1px solid {chk_top};
+            border-left:   none;
+            border-right:  2px solid {chk_shd};
+            border-bottom: 3px solid {_darken(checked_bg1, 40)};
+            color: #ffffff;
+        }}
+        QPushButton:disabled {{
+            background: {accent_pressed};
+            border-top:    1px solid {_lighten(accent_pressed, 10)};
+            border-left:   none;
+            border-right:  1px solid {_darken(accent_pressed, 8)};
+            border-bottom: 1px solid {_darken(accent_pressed, 12)};
+            color: {_darken(button_text, 80)};
+        }}
+    """)
+
+
+def _apply_qtoolbutton_style(btn, theme):
+    """QToolButton (e.g. series layout) in the toolbar."""
+    accent = theme.get('accent', '#374151')
+    accent_hover = theme.get('accent_hover', '#4b5563')
+    accent_pressed = theme.get('accent_pressed', '#1f2937')
+    button_text = theme.get('button_text', '#e5e7eb')
+
+    face_top   = _lighten(accent, 16)
+    face_bot   = _darken(accent, 10)
+    hi_top     = _lighten(accent, 42)
+    hi_left    = _lighten(accent, 22)
+    shd_bot    = _darken(accent, 34)
+    shd_rt     = _darken(accent, 22)
+    hov_face   = _lighten(accent_hover, 16)
+    hov_top    = _lighten(accent_hover, 46)
+    hov_left   = _lighten(accent_hover, 26)
+    hov_shd_b  = _darken(accent_hover, 32)
+    hov_shd_r  = _darken(accent_hover, 20)
+    press_face = _darken(accent_pressed, 4)
+
+    btn.setStyleSheet(f"""
+        QToolButton {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {face_top}, stop:1 {face_bot});
+            color: {button_text};
+            border-top:    1px solid {hi_top};
+            border-left:   1px solid {hi_left};
+            border-right:  2px solid {shd_rt};
+            border-bottom: 3px solid {shd_bot};
+            border-radius: 8px;
+            padding: 4px 6px;
+            margin: 2px 2px 0px 1px;
+            min-width: 40px;
+            min-height: 40px;
+            font-size: 11px;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 500;
+        }}
+        QToolButton:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {hov_face}, stop:1 {accent_hover});
+            border-top:    1px solid {hov_top};
+            border-left:   1px solid {hov_left};
+            border-right:  2px solid {hov_shd_r};
+            border-bottom: 3px solid {hov_shd_b};
+        }}
+        QToolButton:pressed {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {press_face}, stop:1 {_darken(press_face, 6)});
+            border-top:    1px solid {shd_bot};
+            border-left:   1px solid {shd_rt};
+            border-right:  1px solid {hi_left};
+            border-bottom: 1px solid {shd_bot};
+            padding-top: 7px;
+            padding-bottom: 3px;
+            margin-top: 3px;
+            margin-bottom: -1px;
+        }}
+    """)
+
+
+def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa', theme=None):
     """
     ساخت دکمه dropdown با UI مدرن و یکپارچه
     
@@ -36,6 +452,7 @@ def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa'):
         text: متن دکمه
         icon_name: نام فایل آیکون (اختیاری)
         icon_color: رنگ آیکون fontawesome (پیش‌فرض: آبی)
+        theme: theme dict for styling (optional)
     """
     btn = QPushButton(f"  {text}")  # فاصله برای آیکون
     btn.setCheckable(True)
@@ -47,50 +464,31 @@ def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa'):
             icon = QIcon(f"{ICON_PATH}/{icon_name}")
             btn.setIcon(icon)
         # Toolbar scale: +25%
-        btn.setIconSize(QSize(34, 34))
+        btn.setIconSize(QSize(31, 31))
     
     btn.setCursor(Qt.PointingHandCursor)
-    btn.setStyleSheet("""
-        QPushButton {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #2d3748, stop:1 #1f2937);
-            color: #f3f4f6;
-            border: 1px solid #4b5563;
-            border-radius: 6px;
-            padding: 10px 14px;
-            text-align: left;
-            font-size: 13px;
-            font-family: 'Roboto', sans-serif;
-            font-weight: 500;
-        }
-        QPushButton:hover {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #374151, stop:1 #2d3748);
-            border-color: #60a5fa;
-            color: #ffffff;
-        }
-        QPushButton:pressed {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #1f2937, stop:1 #111827);
-            border-color: #3b82f6;
-        }
-        QPushButton:checked {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #059669, stop:1 #047857);
-            border-color: #10b981;
-            color: #ffffff;
-        }
-    """)
+    
+    resolved_theme = _resolve_theme(theme)
+    _apply_dropdown_button_style(btn, resolved_theme, icon_color)
+
+    # Mark for live theme refresh
+    btn.setProperty('_theme_style_type', 'dropdown')
+    btn.setProperty('_theme_icon_color', icon_color)
     
     return btn
 
 
-def create_tool_btn(parent, name, icon_name=None, text_icon=None, icon_size: QSize | tuple[int, int] | int = 25):
+def create_tool_btn(parent, name, icon_name=None, text_icon=None, icon_size: QSize | tuple[int, int] | int = 25, theme=None):
     """
-    icon_size:
-      - عدد (مثلاً 28) → 28x28
-      - tuple (w, h)  → wxh
-      - QSize(...)    → همان
+    ساخت دکمه ابزار با تم‌پذیری
+    
+    Args:
+        parent: parent widget
+        name: button tooltip/name
+        icon_name: icon file name
+        text_icon: text to display if no icon
+        icon_size: size of icon (int, tuple, or QSize)
+        theme: theme dict for styling (optional)
     """
     # نرمال‌سازی اندازه برای QSS
     if isinstance(icon_size, int):
@@ -115,43 +513,13 @@ def create_tool_btn(parent, name, icon_name=None, text_icon=None, icon_size: QSi
         # Keep this consistent with qproperty-iconSize.
         btn.setIconSize(QSize(w, h))
 
-    btn.setStyleSheet(f"""
-        QPushButton {{
-            qproperty-iconSize: {w}px {h}px;   /* ← اندازه‌ی داینامیک از پارامتر تابع */
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #374151, stop:1 #1f2937);
-            color: #e5e7eb;
-            border: 1px solid #4b5563;
-            border-radius: 6px;
-            padding: 4px 6px;
-            margin: 1px;
-            min-width: 45px;
-            min-height: 45px;
-            font-size: 13px;
-            font-family: 'Roboto', sans-serif;
-            font-weight: 500;
-        }}
-        QPushButton:hover {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #4b5563, stop:1 #374151);
-            border-color: #6b7280;
-        }}
-        QPushButton:pressed {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #1f2937, stop:1 #111827);
-        }}
-        QPushButton:checked {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #059669, stop:1 #047857);
-            border-color: #10b981;
-            color: #ffffff;
-        }}
-        QPushButton:disabled {{
-            background: #1f2937;
-            border-color: #374151;
-            color: #6b7280;
-        }}
-    """)
+    resolved_theme = _resolve_theme(theme)
+    _apply_tool_button_style(btn, resolved_theme, w, h)
+
+    # Mark for live theme refresh
+    btn.setProperty('_theme_style_type', 'tool')
+    btn.setProperty('_theme_icon_w', w)
+    btn.setProperty('_theme_icon_h', h)
 
     return btn
 
@@ -160,31 +528,44 @@ class BadgeButton(QPushButton):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        # Get theme manager
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+
         # برچسبِ نشان (badge)
         self._badge = QLabel(self)
         self._badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # استایل: gradient مدرن با طرح toolbar
-        self._badge.setStyleSheet("""
-            QLabel {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #dc2626, stop:1 #b91c1c);  /* red gradient */
-                color: #ffffff;
-                border: 1px solid rgba(220, 38, 38, 0.4);  /* خط دور ملایم‌تر */
-                border-radius: 8px;          /* همخوانی با border-radius toolbar */
-                padding: 1px 4px;            /* padding بهتر */
-                font-weight: 600;
-                font-family: 'Roboto', sans-serif;
-            }
-        """)
+        
+        # Update badge styling based on theme
+        self._update_badge_stylesheet()
+        
         f = QFont()
         f.setPointSize(7)   # کوچک‌تر برای سازگاری بهتر
         f.setFamily('Roboto')
         self._badge.setFont(f)
         self._badge.setFixedHeight(16)  # کمی کوچک‌تر برای ظاهر بهتر
-        # self._badge.hide()
 
         self._count = 0
+
+    def _update_badge_stylesheet(self):
+        """Update badge stylesheet with theme colors"""
+        theme = self._theme
+        danger = theme.get('danger', '#dc2626')
+        danger_dark = theme.get('danger_darker', '#b91c1c')
+        
+        self._badge.setStyleSheet(f"""
+            QLabel {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {danger}, stop:1 {danger_dark});
+                color: #ffffff;
+                border: 1px solid rgba(220, 38, 38, 0.4);
+                border-radius: 8px;
+                padding: 1px 4px;
+                font-weight: 600;
+                font-family: 'Roboto', sans-serif;
+            }}
+        """)
 
     def setCount(self, n: int):
         """تنظیم عدد badge؛ اگر <=0 باشد مخفی می‌شود."""
@@ -221,8 +602,6 @@ class BadgeButton(QPushButton):
         self._repositionBadge()
 
     def _repositionBadge(self):
-        # if not self._badge.isVisible():
-        #     return
         # موقعیت بهتر: گوشه بالا-راست با فاصله کمتر
         margin_x = 1  # فاصله از راست
         margin_y = 0  # فاصله از بالا (به خط حاشیه نزدیک‌تر)
@@ -259,6 +638,12 @@ class ToolbarManager:
         self.last_mpr_window_width = None
         self.last_mpr_window_center = None
 
+        # Theme support
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
+        self.toolbar_buttons = []  # Track buttons for theme updates
+
         # ✅ Initialize soundbox here
         # Pass the correct parent and methods
         self.__soundbox = VoiceWidget(
@@ -288,6 +673,36 @@ class ToolbarManager:
 
         # Target debug (first-run tracing)
         self._target_debug_count = 0
+
+    def _on_theme_changed(self, theme):
+        """Handle theme changes for toolbar buttons"""
+        self._theme = theme
+        self._update_toolbar_theme()
+    
+    def _update_toolbar_theme(self):
+        """Update toolbar button themes when theme changes"""
+        try:
+            from PySide6.QtWidgets import QToolButton
+            for button in self.patient_widget.findChildren(QPushButton):
+                style_type = button.property('_theme_style_type')
+                if style_type == 'tool':
+                    w = int(button.property('_theme_icon_w') or 25)
+                    h = int(button.property('_theme_icon_h') or 25)
+                    _apply_tool_button_style(button, self._theme, w, h)
+                elif style_type == 'dropdown':
+                    icon_color = button.property('_theme_icon_color') or '#60a5fa'
+                    _apply_dropdown_button_style(button, self._theme, icon_color)
+                elif style_type == 'split_left':
+                    _apply_split_left_style(button, self._theme)
+                elif style_type == 'split_right':
+                    _apply_split_right_style(button, self._theme)
+                elif style_type == 'split_right_danger':
+                    _apply_split_right_style(button, self._theme, use_danger=True)
+            for button in self.patient_widget.findChildren(QToolButton):
+                if button.property('_theme_style_type') == 'tool_button':
+                    _apply_qtoolbutton_style(button, self._theme)
+        except Exception as e:
+            print(f"Error updating toolbar theme: {e}")
 
     def _debug_target(self, message: str):
         if self._target_debug_count < 20:
@@ -1844,7 +2259,7 @@ class ToolbarManager:
 
             lock_sync_btn = QPushButton()
             lock_sync_btn.setIcon(qta.icon(lock_icon_name, color=lock_color))
-            lock_sync_btn.setIconSize(QSize(22, 22))
+            lock_sync_btn.setIconSize(QSize(20, 20))
             lock_sync_btn.setText(lock_label)
             lock_sync_btn.setCursor(Qt.PointingHandCursor)
             lock_sync_btn.setStyleSheet(f"""
@@ -2514,7 +2929,7 @@ class ToolbarManager:
                 if not flip_pixmap.isNull():
                     rotated = flip_pixmap.transformed(QTransform().rotate(-90))
                     flip_lr_btn.setIcon(QIcon(rotated))
-                    flip_lr_btn.setIconSize(QSize(22, 22))
+                    flip_lr_btn.setIconSize(QSize(20, 20))
             except Exception:
                 pass
             flip_lr_btn.clicked.connect(lambda: [
@@ -5225,7 +5640,7 @@ class ToolbarManager:
         series_layout_btn.setToolTip('Series Layout')
         icon = QIcon(f"{ICON_PATH}/series-layout.png")
         series_layout_btn.setIcon(icon)
-        series_layout_btn.setIconSize(QSize(25, 25))
+        series_layout_btn.setIconSize(QSize(23, 23))
         series_layout_btn.setPopupMode(QToolButton.InstantPopup)
 
         menu_matrix = QMenu(toolbar)
@@ -5262,6 +5677,8 @@ class ToolbarManager:
                     stop:0 #1f2937, stop:1 #111827);
             }
         """)
+        series_layout_btn.setProperty('_theme_style_type', 'tool_button')
+        _apply_qtoolbutton_style(series_layout_btn, self._theme)
         toolbar_layout.addWidget(series_layout_btn)
         toolbar_layout.addWidget(self._create_separator())
 
@@ -5277,7 +5694,7 @@ class ToolbarManager:
         measurements_menu_btn = QPushButton()
         measurements_menu_btn.setCheckable(True)
         measurements_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        measurements_menu_btn.setIconSize(QSize(18, 18))
+        measurements_menu_btn.setIconSize(QSize(16, 16))
         measurements_menu_btn.setToolTip('View Angle/Arrow/Text/ROI')
         measurements_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5316,6 +5733,8 @@ class ToolbarManager:
             }
         """)
         measurements_menu_btn.setCursor(Qt.PointingHandCursor)
+        measurements_menu_btn.setProperty('_theme_style_type', 'split_left')
+        _apply_split_left_style(measurements_menu_btn, self._theme)
         measurements_menu_btn.clicked.connect(lambda: self._show_measurements_dropdown(measurements_menu_btn))
         self._measurement_menu_btn = measurements_menu_btn
 
@@ -5357,6 +5776,8 @@ class ToolbarManager:
                 color: #ffffff;
             }
         """)
+        ruler_btn.setProperty('_theme_style_type', 'split_right')
+        _apply_split_right_style(ruler_btn, self._theme)
 
         measurements_layout.addWidget(measurements_menu_btn)
         measurements_layout.addWidget(ruler_btn)
@@ -5414,7 +5835,7 @@ class ToolbarManager:
 
         rotate_menu_btn = QPushButton()
         rotate_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        rotate_menu_btn.setIconSize(QSize(18, 18))
+        rotate_menu_btn.setIconSize(QSize(16, 16))
         rotate_menu_btn.setToolTip('Rotate / Flip')
         rotate_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5447,6 +5868,8 @@ class ToolbarManager:
             }
         """)
         rotate_menu_btn.setCursor(Qt.PointingHandCursor)
+        rotate_menu_btn.setProperty('_theme_style_type', 'split_left')
+        _apply_split_left_style(rotate_menu_btn, self._theme)
         rotate_menu_btn.clicked.connect(lambda: self._show_rotation_dropdown(rotate_menu_btn))
 
         rotation_right_btn = create_tool_btn(self.patient_widget, 'Rotate Right', 'rotate-cw.png')
@@ -5486,6 +5909,8 @@ class ToolbarManager:
                 color: #ffffff;
             }
         """)
+        rotation_right_btn.setProperty('_theme_style_type', 'split_right')
+        _apply_split_right_style(rotation_right_btn, self._theme)
 
         rotate_layout.addWidget(rotate_menu_btn)
         rotate_layout.addWidget(rotation_right_btn)
@@ -5501,7 +5926,7 @@ class ToolbarManager:
 
         sync_menu_btn = QPushButton()
         sync_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        sync_menu_btn.setIconSize(QSize(18, 18))
+        sync_menu_btn.setIconSize(QSize(16, 16))
         sync_menu_btn.setToolTip('Sync Options (Lock Sync)')
         sync_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5534,6 +5959,8 @@ class ToolbarManager:
             }
         """)
         sync_menu_btn.setCursor(Qt.PointingHandCursor)
+        sync_menu_btn.setProperty('_theme_style_type', 'split_left')
+        _apply_split_left_style(sync_menu_btn, self._theme)
         sync_menu_btn.clicked.connect(lambda: self._show_sync_dropdown(sync_menu_btn))
         self._sync_menu_btn = sync_menu_btn  # store for Lock Sync icon updates
 
@@ -5542,7 +5969,7 @@ class ToolbarManager:
         sync_btn.setToolTip('Sync Images')
         sync_btn.setCursor(Qt.PointingHandCursor)
         sync_btn.setIcon(qta.icon('fa5s.crosshairs', color='#e5e7eb'))
-        sync_btn.setIconSize(QSize(25, 25))
+        sync_btn.setIconSize(QSize(23, 23))
         sync_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -5578,6 +6005,8 @@ class ToolbarManager:
                 color: #ffffff;
             }
         """)
+        sync_btn.setProperty('_theme_style_type', 'split_right_danger')
+        _apply_split_right_style(sync_btn, self._theme, use_danger=True)
         sync_btn.clicked.connect(lambda checked=False: self.toggle_sync_point(checked))
         self.sync_point_button = sync_btn
         self.tools_button[self.tool_access.TARGET] = sync_btn
@@ -5600,7 +6029,7 @@ class ToolbarManager:
 
         capture_menu_btn = QPushButton()
         capture_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        capture_menu_btn.setIconSize(QSize(18, 18))
+        capture_menu_btn.setIconSize(QSize(16, 16))
         capture_menu_btn.setToolTip('View Captured Images')
         capture_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5633,6 +6062,8 @@ class ToolbarManager:
             }
         """)
         capture_menu_btn.setCursor(Qt.PointingHandCursor)
+        capture_menu_btn.setProperty('_theme_style_type', 'split_left')
+        _apply_split_left_style(capture_menu_btn, self._theme)
         capture_menu_btn.clicked.connect(lambda: self._show_capture_dropdown(capture_menu_btn))
 
         capture_btn = BadgeButton(self.patient_widget)
@@ -5640,7 +6071,7 @@ class ToolbarManager:
         capture_btn.setToolTip('Capture Screenshot')
         icon = QIcon(f"{ICON_PATH}/camera.png")
         capture_btn.setIcon(icon)
-        capture_btn.setIconSize(QSize(25, 25))
+        capture_btn.setIconSize(QSize(23, 23))
         capture_btn.setCursor(Qt.PointingHandCursor)
         capture_btn.setStyleSheet("""
             QPushButton {
@@ -5677,6 +6108,8 @@ class ToolbarManager:
                 color: #ffffff;
             }
         """)
+        capture_btn.setProperty('_theme_style_type', 'split_right')
+        _apply_split_right_style(capture_btn, self._theme)
         capture_btn.clicked.connect(lambda: self._show_capture_mode_dropdown(capture_btn))
 
         capture_layout.addWidget(capture_menu_btn)
@@ -5696,7 +6129,7 @@ class ToolbarManager:
 
         mic_menu_btn = QPushButton()
         mic_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        mic_menu_btn.setIconSize(QSize(18, 18))
+        mic_menu_btn.setIconSize(QSize(16, 16))
         mic_menu_btn.setToolTip('View Audio Recordings')
         mic_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5729,6 +6162,8 @@ class ToolbarManager:
             }
         """)
         mic_menu_btn.setCursor(Qt.PointingHandCursor)
+        mic_menu_btn.setProperty('_theme_style_type', 'split_left')
+        _apply_split_left_style(mic_menu_btn, self._theme)
         mic_menu_btn.clicked.connect(lambda: self._show_audio_dropdown(mic_menu_btn))
 
         mic_btn = BadgeButton(self.patient_widget)
@@ -5736,7 +6171,7 @@ class ToolbarManager:
         mic_btn.setToolTip('Record Audio')
         icon = QIcon(f"{ICON_PATH}/mic.png")
         mic_btn.setIcon(icon)
-        mic_btn.setIconSize(QSize(25, 25))
+        mic_btn.setIconSize(QSize(23, 23))
         mic_btn.setCursor(Qt.PointingHandCursor)
         mic_btn.setStyleSheet("""
             QPushButton {
@@ -5774,6 +6209,8 @@ class ToolbarManager:
                 color: #ffffff;
             }
         """)
+        mic_btn.setProperty('_theme_style_type', 'split_right_danger')
+        _apply_split_right_style(mic_btn, self._theme, use_danger=True)
 
         mic_btn.clicked.connect(lambda: self._on_mic_clicked(mic_btn))
 
@@ -5878,7 +6315,7 @@ class ToolbarManager:
         mpr_menu_btn = QPushButton()
         mpr_menu_btn.setCheckable(True)
         mpr_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        mpr_menu_btn.setIconSize(QSize(18, 18))
+        mpr_menu_btn.setIconSize(QSize(16, 16))
         mpr_menu_btn.setToolTip('View MIP/MinIP/Thick Slab')
         mpr_menu_btn.setStyleSheet("""
             QPushButton {
@@ -5917,6 +6354,8 @@ class ToolbarManager:
             }
         """)
         mpr_menu_btn.setCursor(Qt.PointingHandCursor)
+        mpr_menu_btn.setProperty('_theme_style_type', 'split_left')
+        _apply_split_left_style(mpr_menu_btn, self._theme)
         mpr_menu_btn.clicked.connect(lambda: self._show_mpr_dropdown(mpr_menu_btn))
         self._mpr_menu_btn = mpr_menu_btn
 
@@ -5956,6 +6395,8 @@ class ToolbarManager:
                 color: #ffffff;
             }
         """)
+        mpr_btn.setProperty('_theme_style_type', 'split_right')
+        _apply_split_right_style(mpr_btn, self._theme)
         
         mpr_btn.clicked.connect(lambda: self.toggle_zeta_mpr())
         
@@ -5977,7 +6418,7 @@ class ToolbarManager:
 
         upload_menu_btn = QPushButton()
         upload_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
-        upload_menu_btn.setIconSize(QSize(18, 18))
+        upload_menu_btn.setIconSize(QSize(16, 16))
         upload_menu_btn.setToolTip('Select status')
         upload_menu_btn.setStyleSheet("""
             QPushButton {
@@ -6010,6 +6451,8 @@ class ToolbarManager:
             }
         """)
         upload_menu_btn.setCursor(Qt.PointingHandCursor)
+        upload_menu_btn.setProperty('_theme_style_type', 'split_left')
+        _apply_split_left_style(upload_menu_btn, self._theme)
         upload_menu_btn.clicked.connect(lambda: self._show_status_upload_dropdown(upload_menu_btn))
 
         upload_layout.addWidget(upload_menu_btn)
@@ -6022,7 +6465,7 @@ class ToolbarManager:
         try:
             icon = qta.icon('fa5s.cloud-upload-alt', color='#60a5fa')
             sync_btn.setIcon(icon)
-            sync_btn.setIconSize(QSize(25, 25))
+            sync_btn.setIconSize(QSize(23, 23))
         except Exception:
             sync_btn.setText("🔄")
         
@@ -6062,6 +6505,8 @@ class ToolbarManager:
                 border-color: #374151;
             }}
         """)
+        sync_btn.setProperty('_theme_style_type', 'split_right')
+        _apply_split_right_style(sync_btn, self._theme)
         
         sync_btn.clicked.connect(self._start_patient_sync)
         self.sync_button = sync_btn

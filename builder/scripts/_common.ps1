@@ -83,7 +83,8 @@ function Install-BuildDependencies {
     )
     $repo = Get-RepoRoot
     $buildReq = Join-Path $repo "builder\requirements\build_requirements.txt"
-    $projReq = Join-Path $repo "requirements.txt"
+    $coreReq = Join-Path $repo "requirements-core.txt"
+    $legacyReq = Join-Path $repo "requirements.txt"
 
     Invoke-Logged -LogFile $LogFile -Description "Upgrade pip/setuptools/wheel" -ScriptBlock {
         & $PythonExe -m pip install --upgrade pip setuptools wheel
@@ -91,9 +92,13 @@ function Install-BuildDependencies {
     Invoke-Logged -LogFile $LogFile -Description "Install build requirements" -ScriptBlock {
         & $PythonExe -m pip install -r $buildReq
     }
-    if (Test-Path $projReq) {
-        Invoke-Logged -LogFile $LogFile -Description "Install project requirements" -ScriptBlock {
-            & $PythonExe -m pip install -r $projReq
+    if (Test-Path $coreReq) {
+        Invoke-Logged -LogFile $LogFile -Description "Install project runtime requirements" -ScriptBlock {
+            & $PythonExe -m pip install -r $coreReq
+        }
+    } elseif (Test-Path $legacyReq) {
+        Invoke-Logged -LogFile $LogFile -Description "Install legacy project requirements" -ScriptBlock {
+            & $PythonExe -m pip install -r $legacyReq
         }
     }
 }
@@ -141,4 +146,26 @@ function Invoke-PyInstallerBuild {
             --distpath $distPath `
             $SpecPath
     }
+}
+
+function Sync-ThemeQss {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet("appA", "appB")] [string]$AppKey
+    )
+    $repo = Get-RepoRoot
+    $source = Join-Path $repo "generated-files\css\main.css"
+    if (-not (Test-Path $source)) {
+        Write-Host "[builder] Theme stylesheet not found: $source"
+        return
+    }
+
+    $distPath = Get-AppDistPath -AppKey $AppKey
+    $bundleRoot = switch ($AppKey) {
+        "appA" { Join-Path $distPath "AIPacs" }
+        "appB" { Join-Path $distPath "AIPacsAdvancedViewerLauncher" }
+    }
+    $dest = Join-Path $bundleRoot "Qss\main.qss"
+    Ensure-Directory -Path (Split-Path $dest)
+    Copy-Item -Path $source -Destination $dest -Force
+    Write-Host "[builder] Synced theme stylesheet to $dest"
 }

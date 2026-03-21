@@ -1,6 +1,13 @@
 {
     "github.copilot.advanced": {},
     "github.gitProtocol": "https",
+    "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+    "python.terminal.activateEnvironment": true,
+    "terminal.integrated.defaultProfile.windows": "Command Prompt",
+    "code-runner.runInTerminal": true,
+    "code-runner.executorMap": {
+        "python": "\"${workspaceFolder}\\.venv\\Scripts\\python.exe\" -u"
+    },
     "chat.tools.terminal.autoApprove": {
         "/^python(\\.exe)? .*main\\.py\"?$/": {
             "approve": true,

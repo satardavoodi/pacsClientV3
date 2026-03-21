@@ -57,6 +57,8 @@ PACKAGE_IGNORE_PATTERNS = (
     ".pytest_cache",
     ".mypy_cache",
 )
+THEME_QSS_SOURCE = PROJECT_ROOT / "generated-files" / "css" / "main.css"
+THEME_QSS_RELATIVE_PATH = Path("Qss") / "main.qss"
 
 
 def print_step(message: str) -> None:
@@ -97,6 +99,18 @@ def clean_outputs(preserve_dist: bool = False) -> None:
     for path in targets:
         if path.exists():
             shutil.rmtree(path, ignore_errors=True)
+
+
+def sync_theme_qss(bundle_root: Path) -> None:
+    print_step("Syncing theme stylesheet")
+    if not THEME_QSS_SOURCE.exists():
+        print(f"[WARN] Theme stylesheet not found: {THEME_QSS_SOURCE}")
+        return
+
+    destination = bundle_root / THEME_QSS_RELATIVE_PATH
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(THEME_QSS_SOURCE, destination)
+    print(f"[OK] Theme stylesheet synced to: {destination}")
 
 
 def build_pyinstaller() -> Path:
@@ -509,6 +523,7 @@ def main() -> int:
     elif not (source_dir / "AIPacs.exe").exists():
         raise SystemExit("--skip-pyinstaller was used but builder/output/dist/AIPacs/AIPacs.exe is missing.")
 
+    sync_theme_qss(source_dir)
     validate_release_bundle_graphics_runtime(source_dir)
 
     core_dir = stage_core_bundle(source_dir)

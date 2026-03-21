@@ -13,6 +13,8 @@ from PacsClient.utils.theme_manager import get_theme_manager
 from . import settings_ui
 from . import home_ui
 from .theme_ui import ThemeCustomizationDialog
+from modules.data_analysis import DataAnalysisDashboard
+from .user_manual_widget import UserManualWidget
 
 
 def relayout_all(widget: QWidget):
@@ -441,13 +443,13 @@ class ControlPanelWindow(object):
         self.verticalLayout_7.addStretch(1)
         self.centerMenuPages.addWidget(self.page_3)
 
-        # Page 5 - Help
+        # Page 5 - Help (User Manual)
         self.page_5 = QWidget()
         self.verticalLayout_9 = QVBoxLayout(self.page_5)
-        self.label_4 = QLabel("Help", self.page_5)
-        self.label_4.setStyleSheet("color: white;")
-        self.label_4.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.verticalLayout_9.addWidget(self.label_4)
+        self.verticalLayout_9.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout_9.setSpacing(0)
+        self.user_manual = UserManualWidget(self.page_5)
+        self.verticalLayout_9.addWidget(self.user_manual)
         self.centerMenuPages.addWidget(self.page_5)
 
         # Page 4 - Information
@@ -532,10 +534,11 @@ class ControlPanelWindow(object):
         # Data page
         self.dataPage = QWidget()
         self.verticalLayout_29 = QVBoxLayout(self.dataPage)
-        self.label_13 = QLabel("Data Analysis", self.dataPage)
-        self.label_13.setStyleSheet("color: white;")
-        self.label_13.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.verticalLayout_29.addWidget(self.label_13)
+        auth_user = None
+        if getattr(self.MainWindow, "host_window", None) is not None:
+            auth_user = getattr(self.MainWindow.host_window, "auth_user", None)
+        self.data_analysis_widget = DataAnalysisDashboard(self.dataPage, auth_user=auth_user)
+        self.verticalLayout_29.addWidget(self.data_analysis_widget)
         self.mainPages.addWidget(self.dataPage)
 
         # Reports page
@@ -724,11 +727,11 @@ class ControlPanelWindow(object):
         self.info_body.setStyleSheet(
             f"color: {t['text_secondary']}; font-size: 12px; line-height: 1.3; padding: 6px;"
         )
-        self.label_4.setStyleSheet(f"color: {t['text_primary']};")
         self.label_10.setStyleSheet(f"color: {t['text_primary']}; font-weight: bold;")
         self.label_17.setStyleSheet(f"color: {t['text_primary']};")
         self.label_5.setStyleSheet(f"color: {t['text_primary']};")
-        self.label_13.setStyleSheet(f"color: {t['text_primary']};")
+        if hasattr(self, "data_analysis_widget") and hasattr(self.data_analysis_widget, "apply_theme"):
+            self.data_analysis_widget.apply_theme(t)
         self.label_16.setStyleSheet(f"color: {t['text_primary']};")
         self._apply_left_menu_state()
         self._refresh_theme_selector()
@@ -741,12 +744,21 @@ class ControlPanelWindow(object):
         """Connect left-side navigation buttons to stacked pages."""
         self.home_btn.clicked.connect(lambda: self.mainPages.setCurrentIndex(0))
         self.settings_server_btn.clicked.connect(lambda: self.mainPages.setCurrentIndex(1))
-        self.dataBtn.clicked.connect(lambda: self.mainPages.setCurrentIndex(2))
+        self.dataBtn.clicked.connect(self.open_data_analysis)
         self.reportBtn.clicked.connect(self.open_printing_module)
         self.education_btn.clicked.connect(self.open_education_module)
         
         self.download_manager_btn.clicked.connect(self.open_download_manager)
         self.web_browser_btn.clicked.connect(self.open_web_browser)
+
+    def open_data_analysis(self):
+        """Open data analysis dashboard and refresh metrics."""
+        self.mainPages.setCurrentIndex(2)
+        try:
+            if hasattr(self, "data_analysis_widget") and hasattr(self.data_analysis_widget, "refresh_data"):
+                self.data_analysis_widget.refresh_data()
+        except Exception as e:
+            print(f"Error opening data analysis dashboard: {e}")
         
     def open_download_manager(self):
         """Open download manager tab"""

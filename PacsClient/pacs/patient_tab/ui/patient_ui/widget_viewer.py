@@ -1329,7 +1329,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
         self._backend_badge.setText(text)
         self._backend_badge.adjustSize()
         margin = 8
-        x = max(4, self.width() - self._backend_badge.width() - margin)
+        x = max(0, (self.width() - self._backend_badge.width()) // 2)
         self._backend_badge.move(x, margin)
         self._backend_badge.raise_()
 
@@ -3559,6 +3559,13 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # Keep URL support for external segmentation files.
         return bool(mime_data.hasUrls())
 
+    def _is_internal_series_drop_payload(self, mime_data) -> bool:
+        """True when payload is from in-app thumbnail drag source."""
+        try:
+            return bool(mime_data is not None and mime_data.hasFormat(_SERIES_DROP_MIME))
+        except Exception:
+            return False
+
     def _extract_dropped_series_number(self, mime_data):
         if mime_data is None:
             return None
@@ -3621,7 +3628,18 @@ class VTKWidget(QVTKRenderWindowInteractor):
             return
 
         self._drop_hover_inside = True
-        self._restart_drop_dwell(anchor_point=self._drag_event_point(event))
+        if self._is_internal_series_drop_payload(event.mimeData()):
+            # Internal thumbnail drag should be immediately droppable.
+            self._drop_hover_started_ms = now_ms()
+            self._drop_hover_armed = True
+            self._drop_hover_anchor_pos = self._drag_event_point(event)
+            try:
+                self._drop_hover_timer.stop()
+            except Exception:
+                pass
+            self._show_drop_highlight(True)
+        else:
+            self._restart_drop_dwell(anchor_point=self._drag_event_point(event))
         event.acceptProposedAction()
 
     def dragMoveEvent(self, event):
@@ -3630,6 +3648,19 @@ class VTKWidget(QVTKRenderWindowInteractor):
             return
 
         point = self._drag_event_point(event)
+        if self._is_internal_series_drop_payload(event.mimeData()):
+            self._drop_hover_inside = True
+            self._drop_hover_armed = True
+            self._drop_hover_anchor_pos = point
+            self._drop_hover_started_ms = now_ms()
+            try:
+                self._drop_hover_timer.stop()
+            except Exception:
+                pass
+            self._show_drop_highlight(True)
+            event.acceptProposedAction()
+            return
+
         anchor = self._drop_hover_anchor_pos
         if anchor is None:
             self._restart_drop_dwell(anchor_point=point)
@@ -3732,7 +3763,12 @@ class VTKWidget(QVTKRenderWindowInteractor):
             return
 
         elapsed_ms = now_ms() - float(self._drop_hover_started_ms or 0.0)
-        if _DROP_HOVER_ARM_MS > 0 and (not self._drop_hover_armed or elapsed_ms < _DROP_HOVER_ARM_MS):
+        is_internal_series_drop = self._is_internal_series_drop_payload(mime_data)
+        if (
+            _DROP_HOVER_ARM_MS > 0
+            and (not is_internal_series_drop)
+            and (not self._drop_hover_armed or elapsed_ms < _DROP_HOVER_ARM_MS)
+        ):
             logger.debug(
                 "drop ignored before arm viewer=%s elapsed_ms=%.1f required_ms=%d",
                 str(getattr(self, "id_vtk_widget", None)),
@@ -3754,6 +3790,14 @@ class VTKWidget(QVTKRenderWindowInteractor):
             # Dropped from thumbnails series
             # Change series with drag and drop - async for smooth UI
             self.change_container_border()
+
+            try:
+                if self.patient_widget is not None:
+                    action_id = f"drag_drop-{data}-{int(time.time() * 1000)}-viewer-{getattr(self, 'id_vtk_widget', 'na')}"
+                    self.patient_widget._pending_action_id = action_id
+                    self.patient_widget._pending_action_series = str(data)
+            except Exception:
+                pass
             
             # ┘ï┌║┌ء┬ش Show loading spinner immediately when series is dropped
             # This provides instant visual feedback to the user

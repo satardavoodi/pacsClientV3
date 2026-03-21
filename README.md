@@ -1,4 +1,6 @@
-﻿# AIPacs
+# AIPacs
+
+Stable release: `v2.2.7` (`2026-03-21`)
 
 Modular DICOM workstation for viewing, download orchestration, printing, education, and AI-assisted workflows.
 
@@ -10,6 +12,7 @@ Modular DICOM workstation for viewing, download orchestration, printing, educati
 - [Module Catalog](docs/modules/README.md)
 - [Development Setup](docs/development/setup-and-tooling.md)
 - [Current Release Notes](docs/releases/RELEASE_NOTES.md)
+- [Version 2.2.7 Release Notes](docs/releases/VERSION_2.2.7_RELEASE.md)
 - [Windows Release Flow](builder/docs/WINDOWS_RELEASE_FLOW.md)
 - [Plugin Package Workspace](builder/plugin%20package/README.md)
 
@@ -39,20 +42,44 @@ Modular DICOM workstation for viewing, download orchestration, printing, educati
 
 - Authoritative project documentation lives under `docs/`.
 - Historical and version-specific notes live under `docs/archive/`.
-- Dependencies remain split across `requirements-core.txt` and `requirements-dev.txt`, with `pyproject.toml` acting as the tool and metadata entrypoint.
+- Primary dependency files are `requirements-core.txt` and `requirements-dev.txt`.
+- `pyproject.toml` is the metadata and tooling entrypoint.
 - Generated runtime output belongs in `generated-files/`, `logs/`, or ignored local storage paths, not the source tree.
 
-## Quick Start
+## Install
+
+Recommended PowerShell setup:
+
+```powershell
+.\setup_env.ps1
+.\run_app.ps1
+```
+
+Manual runtime setup:
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements-core.txt
-.venv\Scripts\python main.py
+.\.venv\Scripts\python -m pip install --upgrade pip
+.\.venv\Scripts\python -m pip install -r requirements-core.txt
+.\.venv\Scripts\python main.py
 ```
 
-For tests and tooling:
+For development and tests:
 
 ```powershell
-.venv\Scripts\python -m pip install -r requirements-dev.txt
-.venv\Scripts\python -m pytest
+.\setup_env.ps1 -IncludeDev
+.\.venv\Scripts\python -m pytest
 ```
+
+## Build
+
+Windows release build:
+
+```powershell
+python -m venv .venv_build
+.\.venv_build\Scripts\python -m pip install -r builder\requirements\build_requirements.txt
+.\.venv_build\Scripts\python -m pip install -r requirements-core.txt
+.\.venv_build\Scripts\python build.py
+```
+
+Primary build outputs land under `builder/output/`, including staged bundles and the installer when Inno Setup is available.

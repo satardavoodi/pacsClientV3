@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QIcon, QPixmap
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
@@ -29,6 +30,7 @@ from modules.education.course_database import (
 )
 from modules.education.study_picker_dialog import StudyPickerDialog
 from PacsClient.utils.config import EDUCATION_STORAGE_PATH
+from PacsClient.utils.theme_manager import get_theme_manager
 
 
 # ==================== CONSTANTS ====================
@@ -47,6 +49,73 @@ RESOURCE_FILTER_OPTIONS = [
     ("Book", "Book"),
     ("Video", "Video"),
 ]
+
+
+def _theme_color_map(theme: Dict[str, str]) -> Dict[str, str]:
+    """Map legacy hardcoded education colors to semantic theme colors."""
+    return {
+        "#0f1419": theme.get("panel_deep_bg", "#0f1419"),
+        "#0d1117": theme.get("panel_bg", "#0d1117"),
+        "#111722": theme.get("panel_alt_bg", "#111722"),
+        "#111a26": theme.get("panel_alt_bg", "#111a26"),
+        "#161b22": theme.get("panel_bg", "#161b22"),
+        "#1a202c": theme.get("panel_deep_bg", "#1a202c"),
+        "#1e2530": theme.get("border", "#1e2530"),
+        "#2a3442": theme.get("border", "#2a3442"),
+        "#2e4156": theme.get("border", "#2e4156"),
+        "#3d5a80": theme.get("border", "#3d5a80"),
+        "#4a5568": theme.get("border", "#4a5568"),
+        "#4d7aa0": theme.get("accent_hover", "#4d7aa0"),
+        "#4d8aaf": theme.get("accent_hover", "#4d8aaf"),
+        "#5d9abf": theme.get("accent_hover", "#5d9abf"),
+        "#3d7a9f": theme.get("accent_secondary", "#3d7a9f"),
+        "#2d5a7b": theme.get("accent", "#2d5a7b"),
+        "#2d5f82": theme.get("accent_hover", "#2d5f82"),
+        "#1f4a67": theme.get("accent", "#1f4a67"),
+        "#3182ce": theme.get("accent", "#3182ce"),
+        "#2c5aa0": theme.get("accent_hover", "#2c5aa0"),
+        "#f7fafc": theme.get("text_primary", "#f7fafc"),
+        "#f0f4f8": theme.get("text_primary", "#f0f4f8"),
+        "#e2e8f0": theme.get("text_primary", "#e2e8f0"),
+        "#d8e3ee": theme.get("text_secondary", "#d8e3ee"),
+        "#cbd5e0": theme.get("text_secondary", "#cbd5e0"),
+        "#a8b2c0": theme.get("text_secondary", "#a8b2c0"),
+        "#95a7bb": theme.get("text_muted", "#95a7bb"),
+        "#8892a0": theme.get("text_muted", "#8892a0"),
+        "#9fb1c5": theme.get("text_muted", "#9fb1c5"),
+        "#6b7280": theme.get("text_muted", "#6b7280"),
+        "#718096": theme.get("text_muted", "#718096"),
+        "#f5c97f": theme.get("warning", "#f5c97f"),
+        "#3b2b16": theme.get("warning_subtle", "#3b2b16"),
+        "#70572a": theme.get("warning", "#70572a"),
+        "#1b3f2f": theme.get("success", "#1b3f2f"),
+        "#255a43": theme.get("success_hover", "#255a43"),
+        "#2f6c55": theme.get("success", "#2f6c55"),
+        "#8a4d4d": theme.get("danger", "#8a4d4d"),
+        "#e0b0b0": theme.get("danger", "#e0b0b0"),
+    }
+
+
+def _retint_stylesheet(css: str, theme: Dict[str, str]) -> str:
+    if not css:
+        return css
+    out = css
+    for old, new in _theme_color_map(theme).items():
+        out = re.sub(re.escape(old), new, out, flags=re.IGNORECASE)
+    return out
+
+
+def _retint_widget_tree(root: QWidget, theme: Dict[str, str]):
+    """Replace legacy hardcoded colors in already-assigned stylesheets."""
+    if root is None:
+        return
+    own = root.styleSheet()
+    if own:
+        root.setStyleSheet(_retint_stylesheet(own, theme))
+    for widget in root.findChildren(QWidget):
+        ss = widget.styleSheet()
+        if ss:
+            widget.setStyleSheet(_retint_stylesheet(ss, theme))
 
 
 # ==================== FILTER PANEL ====================
@@ -537,6 +606,7 @@ class ModernCourseCard(QFrame):
             content_layout.addWidget(view_btn)
 
         layout.addWidget(content)
+        _retint_widget_tree(self, get_theme_manager().current_theme())
     
     def get_modality_color(self, modality):
         """Get subtle, professional color based on modality."""
@@ -637,6 +707,7 @@ class CourseDetailsPanel(QFrame):
         self.main_layout.addStretch()
         self.main_layout.addWidget(empty_label)
         self.main_layout.addStretch()
+        _retint_widget_tree(self, get_theme_manager().current_theme())
     
     def show_course(self, course_data):
         """Show course details."""
@@ -866,6 +937,7 @@ class CourseDetailsPanel(QFrame):
         
         scroll.setWidget(content)
         self.main_layout.addWidget(scroll)
+        _retint_widget_tree(self, get_theme_manager().current_theme())
     
     def clear_layout(self):
         """Clear all widgets from layout."""
@@ -1562,6 +1634,7 @@ class MyCoursesPage(QWidget):
         self.created_btn.setStyleSheet(active_style if view == 'created' else inactive_style)
         self.imported_btn.setStyleSheet(active_style if view == 'imported' else inactive_style)
         self.case_of_day_btn.setStyleSheet(active_style if view == 'case_of_day' else inactive_style)
+        _retint_widget_tree(self, get_theme_manager().current_theme())
 
         if view == 'case_of_day':
             self.left_stack.hide()
@@ -1756,6 +1829,7 @@ class MyCoursesPage(QWidget):
             self.grid_layout.addWidget(card, row, col)
         
         self._update_cards_scroll_height()
+        _retint_widget_tree(self.grid_container, get_theme_manager().current_theme())
     
     def on_card_action(self, action, course_data):
         """Handle card actions."""
@@ -2146,6 +2220,7 @@ class ItemMetaDialog(QDialog):
         actions.addWidget(save_btn)
         layout.addLayout(actions)
         self._on_type_changed()
+        _retint_widget_tree(self, get_theme_manager().current_theme())
 
     def _on_type_changed(self):
         if self.type_combo.currentData() == "dicom":
@@ -2316,6 +2391,7 @@ class BuildCoursePage(QWidget):
         )
         self.step_one_badge.setStyleSheet(active_style if step_number == 1 else inactive_style)
         self.step_two_badge.setStyleSheet(active_style if step_number == 2 else inactive_style)
+        _retint_widget_tree(self, get_theme_manager().current_theme())
 
     def _build_step_one(self):
         page = QWidget()
@@ -3260,7 +3336,14 @@ class EducationModuleRedesigned(QWidget):
         self.host_tab_widget = host_tab_widget
         self.host_custom_tab_manager = host_custom_tab_manager
         self.host_parent = host_parent
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self.setup_ui()
+
+    def _on_theme_changed(self, theme):
+        self._theme = theme or self.theme_manager.current_theme()
+        _retint_widget_tree(self, self._theme)
 
     def set_tab_host(self, tab_widget=None, custom_tab_manager=None, host_parent=None):
         """Allow caller to inject the outer top-tab host explicitly."""
@@ -3391,6 +3474,7 @@ class EducationModuleRedesigned(QWidget):
         self.mycourses_page.course_edited.connect(self.on_course_edited)
         self.mycourses_page.case_of_day_opened.connect(self.on_case_of_day_opened)
         self.build_page.course_created.connect(self.on_course_created)
+        _retint_widget_tree(self, self._theme)
     
     def on_course_opened(self, course_data):
         """Handle course open request."""

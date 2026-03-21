@@ -29,6 +29,7 @@ from modules.education.course_database import (
 )
 from modules.education.study_picker_dialog import StudyPickerDialog
 from PacsClient.utils.config import EDUCATION_STORAGE_PATH
+from PacsClient.utils.theme_manager import get_theme_manager
 
 
 # ==================== CONSTANTS ====================
@@ -3260,6 +3261,9 @@ class EducationModuleRedesigned(QWidget):
         self.host_tab_widget = host_tab_widget
         self.host_custom_tab_manager = host_custom_tab_manager
         self.host_parent = host_parent
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self.setup_ui()
 
     def set_tab_host(self, tab_widget=None, custom_tab_manager=None, host_parent=None):
@@ -3267,6 +3271,10 @@ class EducationModuleRedesigned(QWidget):
         self.host_tab_widget = tab_widget
         self.host_custom_tab_manager = custom_tab_manager
         self.host_parent = host_parent
+
+    def _on_theme_changed(self, theme):
+        """Handle theme changes."""
+        self._theme = theme or self.theme_manager.current_theme()
 
     def _resolve_tab_host(self):
         """

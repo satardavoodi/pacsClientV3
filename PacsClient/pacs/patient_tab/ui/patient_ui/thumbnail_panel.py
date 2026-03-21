@@ -119,6 +119,112 @@ class ThumbnailPanel(QWidget):
             }}
         """)
     
+    def _get_header_title_stylesheet(self):
+        """Get themed header title stylesheet"""
+        theme = self._active_theme
+        accent = theme.get('accent', '#7c3aed')
+        accent_pressed = theme.get('accent_pressed', '#5b21b6')
+        
+        return f"""
+            QLabel {{
+                font-size: 10px;
+                font-family: 'Roboto', sans-serif;
+                color: #f7fafc;
+                padding: 6px 10px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {accent}, stop:1 {accent_pressed});
+                border: 1px solid {accent};
+                border-radius: 8px;
+            }}
+        """
+    
+    def _get_header_count_stylesheet(self):
+        """Get themed count label stylesheet"""
+        theme = self._active_theme
+        text_secondary = theme.get('text_secondary', '#a0aec0')
+        
+        return f"""
+            QLabel {{
+                font-size: 10px;
+                font-family: 'Roboto', sans-serif;
+                color: {text_secondary};
+                padding: 4px 6px;
+                background: rgba(160, 174, 192, 0.1);
+                border: 1px solid rgba(160, 174, 192, 0.2);
+                border-radius: 8px;
+            }}
+        """
+    
+    def _get_scrollarea_stylesheet(self):
+        """Get themed scrollarea stylesheet"""
+        theme = self._active_theme
+        panel_bg = theme.get('panel_bg', '#0f1419')
+        accent = theme.get('accent', '#4a5568')
+        accent_hover = theme.get('accent_hover', '#718096')
+        
+        return f"""
+            QScrollArea {{
+                border: none;
+                border-radius: 8px;
+                background: {panel_bg};
+            }}
+            QScrollBar:vertical {{
+                border: none;
+                background: {panel_bg};
+                width: 14px;
+                border-radius: 8px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {accent}, stop:1 {accent_hover});
+                border-radius: 8px;
+                min-height: 30px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {accent_hover}, stop:1 #a0aec0);
+            }}
+        """
+    
+    def _on_theme_changed(self, theme):
+        """Handle theme changes"""
+        self._active_theme = theme
+        self._apply_theme()
+    
+    def _apply_theme(self):
+        """Apply theme colors to all UI elements"""
+        try:
+            theme = self._active_theme
+            
+            # Update all header stylesheets
+            header_widgets = self.findChildren(QLabel)
+            for widget in header_widgets:
+                if "Series Thumbnails" in widget.text():
+                    widget.setStyleSheet(self._get_header_title_stylesheet())
+                elif "series" in widget.text().lower():
+                    widget.setStyleSheet(self._get_header_count_stylesheet())
+            
+            # Update scroll area
+            scroll_area = self.findChildren(QScrollArea)
+            if scroll_area:
+                scroll_area[0].setStyleSheet(self._get_scrollarea_stylesheet())
+            
+            # Update panel background
+            panel_bg = theme.get('panel_bg', '#0f1419')
+            self.setStyleSheet(f"""
+                QWidget {{
+                    background: {panel_bg};
+                    border: none;
+                    border-radius: 8px;
+                    margin: 0px;
+                    padding: 0px;
+                }}
+            """)
+        except Exception as e:
+            print(f"Error applying theme to thumbnail panel: {e}")
+    
     def set_parent_widget(self, parent_widget):
         """Set the parent widget for callbacks"""
         self.parent_widget = parent_widget
@@ -174,10 +280,14 @@ class ThumbnailPanel(QWidget):
                             'protocol_name': '',
                             'body_part_examined': ''
                         }
-                        
-                        self.lst_thumbnails_data.append(series_info)
-                        
-                        # Add to layout
+                                    self.thumbnail_manager = ThumbnailManager(self.change_series_on_viewer, theme=self._active_theme)
+                                    theme = self._active_theme
+            
+                                    # Update thumbnail manager with new theme for live color updates
+                                    if self.thumbnail_manager:
+                                        self.thumbnail_manager._on_theme_changed(theme)
+            
+                                    # Update all header stylesheets
                         self.add_thumbnail_to_thumbnail_layout(
                             thumb_index=len(self.lst_thumbnails_data) - 1,
                             file_path_thumbnail=thumbnail_file

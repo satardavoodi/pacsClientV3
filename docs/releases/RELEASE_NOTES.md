@@ -1,8 +1,30 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.2.6.3  
-**Release Date:** 2026-03-17  
+**Current Stable Version:** v2.2.7
+**Release Date:** 2026-03-21
 **Branch:** main  
+
+---
+
+## v2.2.7 — Stable Release / Install and Build Alignment (2026-03-21)
+
+### Summary
+
+This release publishes the current stable workspace as **v2.2.7** and aligns the runtime version, package metadata, install flow, build flow, and release documentation around the same release number.
+
+### Highlights
+- Updated application version in `main.py`
+- Updated package version in `pyproject.toml`
+- Updated Nuitka product version in `build_nuitka.py`
+- Updated plugin package feed and package manifests under `builder/plugin package/packages/`
+- Updated `setup_env.ps1` to prefer `requirements-core.txt`, support `-IncludeDev`, and retain a legacy fallback to `requirements.txt`
+- Updated builder dependency installation in `builder/scripts/_common.ps1`
+- Refreshed install/build/release documentation in `README.md`, `docs/README.md`, `docs/development/setup-and-tooling.md`, `docs/pipelines/PYDICOM_2D_BACKEND.md`, `builder/docs/BUILD_CHECKLIST.md`, and `builder/docs/WINDOWS_RELEASE_FLOW.md`
+
+### Release Intent
+- Publish the current `main` branch state as stable version **`2.2.7`**
+- Keep runtime, build, and plugin package metadata synchronized
+- Make setup and release instructions match the repository's current split dependency model
 
 ---
 

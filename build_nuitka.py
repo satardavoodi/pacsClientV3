@@ -30,6 +30,7 @@ if sys.platform == "win32":
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+THEME_QSS_SOURCE = PROJECT_ROOT / "generated-files" / "css" / "main.css"
 
 # ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -171,7 +172,7 @@ def build_command(spec: ModuleType) -> list[str]:
 
     # Company / product info (optional, nice-to-have in exe properties)
     cmd.append(f"--product-name={app_name}")
-    cmd.append(f"--product-version=2.2.6.3")
+    cmd.append(f"--product-version=2.2.7")
     cmd.append(f"--company-name=AIPacs")
     cmd.append(f"--file-description={app_name} - Professional Medical Imaging Suite")
 
@@ -277,6 +278,16 @@ def stage_resources(dist_dir: Path) -> None:
             print(f"✅ Staged: {name} → {dst}")
         elif dst.exists():
             print(f"✅ {name} already present in dist")
+
+
+    if THEME_QSS_SOURCE.exists():
+        qss_dir = dist_dir / "Qss"
+        qss_dir.mkdir(parents=True, exist_ok=True)
+        dest = qss_dir / "main.qss"
+        shutil.copy2(THEME_QSS_SOURCE, dest)
+        print(f"âœ… Theme stylesheet synced: {dest}")
+    else:
+        print(f"âڑ ï¸ڈ  Theme stylesheet missing: {THEME_QSS_SOURCE}")
 
 
 def rename_exe(dist_dir: Path, spec: ModuleType) -> Path | None:

@@ -19,10 +19,15 @@ from PacsClient.utils.data_paths import (
     BROWSER_SAVED_PAGES_DIR,
     BROWSER_SCREENSHOTS_DIR,
 )
+from PacsClient.utils.theme_manager import get_theme_manager
 from .state_store import BrowserStateStore
 
 
 HOME_URL = "https://www.google.com"
+
+
+def _current_theme():
+    return get_theme_manager().current_theme()
 
 
 def apply_shadow(widget, blur=24, y_offset=6, alpha=70):
@@ -39,28 +44,26 @@ class BookmarkDialog(QDialog):
     
     def __init__(self, parent=None, bookmark_data=None):
         super().__init__(parent)
+        self._theme = _current_theme()
         self.bookmark_data = bookmark_data
         self.setWindowTitle("Add Favorite" if not bookmark_data else "Edit Favorite")
         self.setMinimumWidth(500)
         self.setMinimumHeight(450)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #2d2d2d;
-            }
-        """)
         self.setup_ui()
         
         if bookmark_data:
             self.load_bookmark_data()
     
     def setup_ui(self):
+        t = self._theme
+        self.setStyleSheet(f"QDialog {{ background-color: {t['panel_bg']}; }}")
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
         
         # Title
         title = QLabel("Favorite Details")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #ffffff;")
+        title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {t['text_primary']};")
         layout.addWidget(title)
         
         # Form layout
@@ -69,7 +72,7 @@ class BookmarkDialog(QDialog):
         form_layout.setLabelAlignment(Qt.AlignLeft)
         
         # Style for labels
-        label_style = "color: #ffffff; font-size: 13px; font-weight: bold;"
+        label_style = f"color: {t['text_primary']}; font-size: 13px; font-weight: bold;"
         
         # Name field
         name_label = QLabel("Name:")
@@ -77,18 +80,18 @@ class BookmarkDialog(QDialog):
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("e.g., STATdx")
         self.name_edit.setMinimumHeight(40)
-        self.name_edit.setStyleSheet("""
+        self.name_edit.setStyleSheet(f"""
             QLineEdit {
                 padding: 10px;
-                border: 1px solid #555;
+                border: 1px solid {t['border']};
                 border-radius: 6px;
                 font-size: 14px;
-                color: #ffffff;
-                background-color: #3d3d3d;
+                color: {t['text_primary']};
+                background-color: {t['panel_alt_bg']};
             }
             QLineEdit:focus {
-                border: 2px solid #4285f4;
-                background-color: #4d4d4d;
+                border: 2px solid {t['accent']};
+                background-color: {t['menu_hover_bg']};
             }
         """)
         
@@ -98,18 +101,18 @@ class BookmarkDialog(QDialog):
         self.url_edit = QLineEdit()
         self.url_edit.setPlaceholderText("https://example.com")
         self.url_edit.setMinimumHeight(40)
-        self.url_edit.setStyleSheet("""
+        self.url_edit.setStyleSheet(f"""
             QLineEdit {
                 padding: 10px;
-                border: 1px solid #555;
+                border: 1px solid {t['border']};
                 border-radius: 6px;
                 font-size: 14px;
-                color: #ffffff;
-                background-color: #3d3d3d;
+                color: {t['text_primary']};
+                background-color: {t['panel_alt_bg']};
             }
             QLineEdit:focus {
-                border: 2px solid #4285f4;
-                background-color: #4d4d4d;
+                border: 2px solid {t['accent']};
+                background-color: {t['menu_hover_bg']};
             }
         """)
         
@@ -119,18 +122,18 @@ class BookmarkDialog(QDialog):
         self.username_edit = QLineEdit()
         self.username_edit.setPlaceholderText("Username (optional)")
         self.username_edit.setMinimumHeight(40)
-        self.username_edit.setStyleSheet("""
+        self.username_edit.setStyleSheet(f"""
             QLineEdit {
                 padding: 10px;
-                border: 1px solid #555;
+                border: 1px solid {t['border']};
                 border-radius: 6px;
                 font-size: 14px;
-                color: #ffffff;
-                background-color: #3d3d3d;
+                color: {t['text_primary']};
+                background-color: {t['panel_alt_bg']};
             }
             QLineEdit:focus {
-                border: 2px solid #4285f4;
-                background-color: #4d4d4d;
+                border: 2px solid {t['accent']};
+                background-color: {t['menu_hover_bg']};
             }
         """)
         
@@ -141,25 +144,25 @@ class BookmarkDialog(QDialog):
         self.password_edit.setPlaceholderText("Password (optional)")
         self.password_edit.setEchoMode(QLineEdit.Password)
         self.password_edit.setMinimumHeight(40)
-        self.password_edit.setStyleSheet("""
+        self.password_edit.setStyleSheet(f"""
             QLineEdit {
                 padding: 10px;
-                border: 1px solid #555;
+                border: 1px solid {t['border']};
                 border-radius: 6px;
                 font-size: 14px;
-                color: #ffffff;
-                background-color: #3d3d3d;
+                color: {t['text_primary']};
+                background-color: {t['panel_alt_bg']};
             }
             QLineEdit:focus {
-                border: 2px solid #4285f4;
-                background-color: #4d4d4d;
+                border: 2px solid {t['accent']};
+                background-color: {t['menu_hover_bg']};
             }
         """)
         
         # Show password checkbox
         self.show_password_cb = QCheckBox("Show Password")
         self.show_password_cb.stateChanged.connect(self.toggle_password_visibility)
-        self.show_password_cb.setStyleSheet("color: #cccccc; font-size: 13px;")
+        self.show_password_cb.setStyleSheet(f"color: {t['text_secondary']}; font-size: 13px;")
         
         form_layout.addRow(name_label, self.name_edit)
         form_layout.addRow(url_label, self.url_edit)
@@ -171,7 +174,7 @@ class BookmarkDialog(QDialog):
         
         # Note
         note = QLabel("Note: Credentials are stored locally and encoded.")
-        note.setStyleSheet("color: #aaaaaa; font-size: 12px; font-style: italic;")
+        note.setStyleSheet(f"color: {t['text_muted']}; font-size: 12px; font-style: italic;")
         layout.addWidget(note)
         
         # Buttons
@@ -183,10 +186,10 @@ class BookmarkDialog(QDialog):
         cancel_btn.setMinimumWidth(120)
         cancel_btn.setMinimumHeight(45)
         cancel_btn.clicked.connect(self.reject)
-        cancel_btn.setStyleSheet("""
+        cancel_btn.setStyleSheet(f"""
             QPushButton {
-                background-color: #6c757d;
-                color: white;
+                background-color: {t['panel_alt_bg']};
+                color: {t['text_primary']};
                 border: none;
                 border-radius: 6px;
                 padding: 12px 28px;
@@ -194,7 +197,7 @@ class BookmarkDialog(QDialog):
                 font-size: 14px;
             }
             QPushButton:hover {
-                background-color: #5a6268;
+                background-color: {t['menu_hover_bg']};
             }
         """)
         
@@ -202,10 +205,10 @@ class BookmarkDialog(QDialog):
         save_btn.setMinimumWidth(120)
         save_btn.setMinimumHeight(45)
         save_btn.clicked.connect(self.accept)
-        save_btn.setStyleSheet("""
+        save_btn.setStyleSheet(f"""
             QPushButton {
-                background-color: #4285f4;
-                color: white;
+                background-color: {t['accent']};
+                color: {t['button_text']};
                 border: none;
                 border-radius: 6px;
                 padding: 12px 28px;
@@ -213,7 +216,7 @@ class BookmarkDialog(QDialog):
                 font-size: 14px;
             }
             QPushButton:hover {
-                background-color: #357ae8;
+                background-color: {t['accent_hover']};
             }
         """)
         
@@ -261,25 +264,27 @@ class ScreenshotDialog(QDialog):
 
     def __init__(self, parent=None, default_name="web_capture"):
         super().__init__(parent)
+        self._theme = _current_theme()
         self.setWindowTitle("Capture Screenshot")
         self.setMinimumWidth(420)
-        self.setStyleSheet(
-            """
-            QDialog { background-color: #122033; }
-            QLabel { color: #e8eef7; }
-            QLineEdit, QComboBox {
-                padding: 8px 10px;
-                border: 1px solid #36506d;
-                border-radius: 6px;
-                color: #f8fafc;
-                background-color: #0d1727;
-            }
-            """
-        )
         self.default_name = default_name
         self.setup_ui()
 
     def setup_ui(self):
+        t = self._theme
+        self.setStyleSheet(
+            f"""
+            QDialog {{ background-color: {t['panel_bg']}; }}
+            QLabel {{ color: {t['text_primary']}; }}
+            QLineEdit, QComboBox {{
+                padding: 8px 10px;
+                border: 1px solid {t['border']};
+                border-radius: 6px;
+                color: {t['text_primary']};
+                background-color: {t['panel_deep_bg']};
+            }}
+            """
+        )
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
@@ -300,7 +305,7 @@ class ScreenshotDialog(QDialog):
         layout.addLayout(form)
 
         note = QLabel("Screenshots are stored inside user_data/web_browser/screenshots.")
-        note.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        note.setStyleSheet(f"color: {t['text_muted']}; font-size: 12px;")
         layout.addWidget(note)
 
         buttons = QHBoxLayout()
@@ -308,12 +313,12 @@ class ScreenshotDialog(QDialog):
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
         cancel_btn.setStyleSheet(
-            "QPushButton { background-color: #475569; color: white; border-radius: 6px; padding: 10px 18px; }"
+            f"QPushButton {{ background-color: {t['panel_alt_bg']}; color: {t['text_primary']}; border-radius: 6px; padding: 10px 18px; }}"
         )
         capture_btn = QPushButton("Capture")
         capture_btn.clicked.connect(self.accept)
         capture_btn.setStyleSheet(
-            "QPushButton { background-color: #0284c7; color: white; border-radius: 6px; padding: 10px 18px; }"
+            f"QPushButton {{ background-color: {t['accent']}; color: {t['button_text']}; border-radius: 6px; padding: 10px 18px; }}"
         )
         buttons.addWidget(cancel_btn)
         buttons.addWidget(capture_btn)
@@ -1551,6 +1556,9 @@ class WebBrowserWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self.state_store = BrowserStateStore()
         self.page_history = self.state_store.load_page_history()
         self.saved_pages = self.state_store.load_saved_pages()
@@ -1563,6 +1571,110 @@ class WebBrowserWidget(QWidget):
         
         self.setup_ui()
         self.setup_profile()
+        self._apply_theme_styles()
+
+    def _on_theme_changed(self, theme):
+        self._theme = theme or self.theme_manager.current_theme()
+        self._apply_theme_styles()
+
+    def _apply_theme_styles(self):
+        t = self._theme
+        if hasattr(self, "nav_bar"):
+            self.nav_bar.setStyleSheet(
+                f"""
+                QWidget {{
+                    background: {t['panel_bg']};
+                    border: 1px solid {t['border']};
+                    border-radius: 16px;
+                }}
+                """
+            )
+
+        button_style = f"""
+            QPushButton {{
+                background-color: {t['panel_alt_bg']};
+                border: 1px solid {t['border']};
+                border-radius: 12px;
+                color: {t['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {t['menu_hover_bg']};
+                border-color: {t['accent_hover']};
+            }}
+            QPushButton:pressed {{
+                background-color: {t['accent_pressed']};
+                color: {t['button_text']};
+            }}
+            QPushButton:disabled {{
+                background-color: {t['panel_bg']};
+                border-color: {t['border']};
+                color: {t['text_muted']};
+            }}
+        """
+
+        for btn in [
+            getattr(self, "back_btn", None), getattr(self, "forward_btn", None), getattr(self, "reload_btn", None),
+            getattr(self, "home_btn", None), getattr(self, "history_btn", None), getattr(self, "favorite_toggle_btn", None),
+            getattr(self, "bookmark_btn", None), getattr(self, "save_page_btn", None), getattr(self, "downloads_toggle", None),
+            getattr(self, "screenshot_btn", None),
+        ]:
+            if btn is not None:
+                btn.setStyleSheet(button_style)
+
+        if hasattr(self, "left_group"):
+            self.left_group.setStyleSheet(
+                f"QFrame {{ background-color: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 14px; }}"
+            )
+        if hasattr(self, "address_group"):
+            self.address_group.setStyleSheet(
+                f"QFrame {{ background-color: {t['panel_deep_bg']}; border: 1px solid {t['border']}; border-radius: 20px; }}"
+            )
+        if hasattr(self, "right_group"):
+            self.right_group.setStyleSheet(
+                f"QFrame {{ background-color: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 14px; }}"
+            )
+
+        if hasattr(self, "url_bar"):
+            self.url_bar.setStyleSheet(
+                f"""
+                QLineEdit {{
+                    padding: 12px 16px;
+                    border: 1px solid {t['border']};
+                    border-radius: 18px;
+                    background-color: {t['panel_deep_bg']};
+                    font-size: 13px;
+                    color: {t['text_primary']};
+                }}
+                QLineEdit:focus {{
+                    border: 1px solid {t['accent']};
+                    background-color: {t['panel_bg']};
+                    color: {t['text_primary']};
+                }}
+                """
+            )
+
+        if hasattr(self, "content_row"):
+            self.content_row.setStyleSheet(
+                f"QWidget {{ background: {t['window_alt_bg']}; border-radius: 18px; }}"
+            )
+
+        if hasattr(self, "page_frame"):
+            self.page_frame.setStyleSheet(
+                f"QFrame {{ background-color: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 18px; }}"
+            )
+
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setStyleSheet(
+                f"""
+                QProgressBar {{
+                    border: none;
+                    background-color: {t['panel_alt_bg']};
+                }}
+                QProgressBar::chunk {{
+                    background-color: {t['accent']};
+                }}
+                """
+            )
         
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1580,6 +1692,7 @@ class WebBrowserWidget(QWidget):
         
         # Navigation bar
         nav_bar = QWidget()
+        self.nav_bar = nav_bar
         nav_bar.setFixedHeight(72)
         nav_bar.setStyleSheet(
             """
@@ -1701,6 +1814,7 @@ class WebBrowserWidget(QWidget):
         self.downloads_toggle.setStyleSheet(button_style)
         
         left_group = QFrame()
+        self.left_group = left_group
         left_group.setStyleSheet(
             "QFrame { background-color: #f8fbfd; border: 1px solid #dbe4ee; border-radius: 14px; }"
         )
@@ -1711,6 +1825,7 @@ class WebBrowserWidget(QWidget):
             left_group_layout.addWidget(button)
 
         address_group = QFrame()
+        self.address_group = address_group
         address_group.setStyleSheet(
             "QFrame { background-color: #ffffff; border: 1px solid #dbe4ee; border-radius: 20px; }"
         )
@@ -1723,6 +1838,7 @@ class WebBrowserWidget(QWidget):
         address_layout.addWidget(self.url_bar, 1)
 
         right_group = QFrame()
+        self.right_group = right_group
         right_group.setStyleSheet(
             "QFrame { background-color: #f8fbfd; border: 1px solid #dbe4ee; border-radius: 14px; }"
         )

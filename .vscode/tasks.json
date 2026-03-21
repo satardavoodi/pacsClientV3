@@ -2,6 +2,24 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "Setup Python Environment",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\setup_env.ps1"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "showReuseMessage": false
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "temp edit",
             "type": "shell",
             "command": "python tools/_temp_edit2.py"

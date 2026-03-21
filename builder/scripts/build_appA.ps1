@@ -40,3 +40,5 @@ if (-not (Test-Path $exePath)) {
     throw "App A executable not found after build: $exePath"
 }
 
+Sync-ThemeQss -AppKey "appA"
+

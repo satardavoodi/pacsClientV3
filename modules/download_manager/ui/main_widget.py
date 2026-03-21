@@ -9,6 +9,7 @@ Modern, polished download manager interface with:
 """
 
 import logging
+import re
 from dataclasses import replace
 from types import SimpleNamespace
 from pathlib import Path
@@ -41,8 +42,55 @@ from .styles.colors import ColorPalette
 from .components.priority_group import PriorityGroupHeader
 from .components.status_badge import StatusBadge
 from PacsClient.utils.diagnostic_logging import now_ms
+from PacsClient.utils.theme_manager import get_theme_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _dm_theme_color_map(theme: Dict[str, str]) -> Dict[str, str]:
+    """Map legacy hardcoded Download Manager colors to semantic theme colors."""
+    return {
+        "#0f1419": theme.get("panel_deep_bg", "#0f1419"),
+        "#111827": theme.get("panel_deep_bg", "#111827"),
+        "#1a202c": theme.get("panel_deep_bg", "#1a202c"),
+        "#0f172a": theme.get("panel_deep_bg", "#0f172a"),
+        "#1e293b": theme.get("menu_bg", "#1e293b"),
+        "#1f2937": theme.get("panel_bg", "#1f2937"),
+        "#2d3748": theme.get("panel_alt_bg", "#2d3748"),
+        "#374151": theme.get("border", "#374151"),
+        "#4a5568": theme.get("border", "#4a5568"),
+        "#4b5563": theme.get("border", "#4b5563"),
+        "#f7fafc": theme.get("text_primary", "#f7fafc"),
+        "#e2e8f0": theme.get("text_primary", "#e2e8f0"),
+        "#cbd5e1": theme.get("text_secondary", "#cbd5e1"),
+        "#94a3b8": theme.get("text_secondary", "#94a3b8"),
+        "#a0aec0": theme.get("text_muted", "#a0aec0"),
+        "#64748b": theme.get("text_muted", "#64748b"),
+        "#06b6d4": theme.get("info", "#06b6d4"),
+        "#0891b2": theme.get("info_hover", "#0891b2"),
+        "#3182ce": theme.get("accent", "#3182ce"),
+    }
+
+
+def _dm_retint_stylesheet(css: str, theme: Dict[str, str]) -> str:
+    """Replace legacy hardcoded hex colors in a CSS string with theme values."""
+    out = css
+    for old, new in _dm_theme_color_map(theme).items():
+        out = re.sub(re.escape(old), new, out, flags=re.IGNORECASE)
+    return out
+
+
+def _dm_retint_widget_tree(root: QWidget, theme: Dict[str, str]) -> None:
+    """Walk a widget tree and replace legacy colors in all stylesheets."""
+    if root is None:
+        return
+    own = root.styleSheet()
+    if own:
+        root.setStyleSheet(_dm_retint_stylesheet(own, theme))
+    for widget in root.findChildren(QWidget):
+        ss = widget.styleSheet()
+        if ss:
+            widget.setStyleSheet(_dm_retint_stylesheet(ss, theme))
 
 
 class DownloadManagerWidget(QWidget):
@@ -172,6 +220,12 @@ class DownloadManagerWidget(QWidget):
         
         # Setup UI
         self._setup_ui()
+        
+        # Theme integration — retint after UI is built
+        self._app_theme_manager = get_theme_manager()
+        self._app_theme = self._app_theme_manager.current_theme()
+        _dm_retint_widget_tree(self, self._app_theme)
+        self._app_theme_manager.themeChanged.connect(self._on_app_theme_changed)
         
         # Initial table refresh to show empty priority groups
         QTimer.singleShot(100, self._refresh_table_order)
@@ -3246,6 +3300,11 @@ class DownloadManagerWidget(QWidget):
             import traceback
             traceback.print_exc()
     
+    def _on_app_theme_changed(self, theme: Dict) -> None:
+        """Handle app-wide theme changes and retint the entire widget tree."""
+        self._app_theme = theme or self._app_theme_manager.current_theme()
+        _dm_retint_widget_tree(self, self._app_theme)
+
     def _apply_v106_styling(self):
         """Apply comprehensive v1.0.6 styling to the widget"""
         self.setStyleSheet("""

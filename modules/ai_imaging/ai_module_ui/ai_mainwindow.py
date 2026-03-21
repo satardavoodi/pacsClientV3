@@ -8,6 +8,51 @@ from PySide6.QtWidgets import (
 from .service_tab import ImagingToolsTab, ModelTrainingTab, ReceptionDataTab, DataSetTab
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QApplication
+import re
+from PacsClient.utils.theme_manager import get_theme_manager
+
+
+# ========== THEME RETINTING HELPERS ==========
+def _ee_theme_color_map(theme: dict) -> dict:
+    """Map hardcoded Eagle Eye window colors to theme-aware values."""
+    return {
+        "#0f1419": theme.get("panel_deep_bg", "#0f1419"),  # Main background
+        "#f7fafc": theme.get("text_primary", "#f7fafc"),   # Primary text
+        "#1a202c": theme.get("panel_bg", "#1a202c"),       # Panels
+        "#2d3748": theme.get("border", "#2d3748"),         # Borders
+        "#0b1015": theme.get("panel_deep_bg", "#0b1015"),  # Deep panels/inputs
+        "#111827": theme.get("panel_deep_bg", "#111827"),  # Disabled/tab bg
+        "#3182ce": theme.get("accent", "#3182ce"),         # Selection color
+        "#6b7280": theme.get("text_muted", "#6b7280"),     # Disabled text
+    }
+
+
+def _ee_retint_stylesheet(css: str, theme: dict) -> str:
+    """Replace hardcoded colors in CSS with theme-aware values."""
+    out = css
+    for old_color, new_color in _ee_theme_color_map(theme).items():
+        out = re.sub(re.escape(old_color), new_color, out, flags=re.IGNORECASE)
+    return out
+
+
+def _ee_retint_widget_tree(root, theme: dict) -> None:
+    """Recursively retint all widgets in the tree with theme colors."""
+    if root is None:
+        return
+    
+    # Retint this widget's own stylesheet
+    own_sheet = root.styleSheet()
+    if own_sheet:
+        root.setStyleSheet(_ee_retint_stylesheet(own_sheet, theme))
+    
+    # Retint all child widgets
+    try:
+        for child in root.findChildren(type(root).__bases__[0]):
+            child_sheet = child.styleSheet()
+            if child_sheet:
+                child.setStyleSheet(_ee_retint_stylesheet(child_sheet, theme))
+    except Exception:
+        pass
 
 
 class AiMainWindow(QMainWindow):
@@ -21,6 +66,13 @@ class AiMainWindow(QMainWindow):
         super().__init__()
         
         self._apply_dark_theme()
+
+        # ========== THEME RETINTING INITIALIZATION ==========
+        self._app_theme_manager = get_theme_manager()
+        self._app_theme = self._app_theme_manager.current_theme() if self._app_theme_manager else {}
+        _ee_retint_widget_tree(self, self._app_theme)
+        if self._app_theme_manager:
+            self._app_theme_manager.themeChanged.connect(self._on_app_theme_changed)
 
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
@@ -171,3 +223,13 @@ class AiMainWindow(QMainWindow):
 
     def refresh_dataset(self):
         self.dataset_tab.refresh()
+
+    def _on_app_theme_changed(self, theme: dict) -> None:
+        """Handle application theme changes and retint all UI elements."""
+        try:
+            self._app_theme = theme or (
+                self._app_theme_manager.current_theme() if self._app_theme_manager else {}
+            )
+            _ee_retint_widget_tree(self, self._app_theme)
+        except Exception as e:
+            print(f"Error retinting AiMainWindow on theme change: {e}")

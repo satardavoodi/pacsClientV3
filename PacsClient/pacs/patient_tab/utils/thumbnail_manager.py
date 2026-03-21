@@ -6,13 +6,14 @@ from PySide6.QtCore import QObject, Signal, QTimer, QThread
 
 from PySide6.QtCore import QMimeData, QByteArray, Qt, Property, QRectF
 from PySide6.QtCore import Qt, QPoint
-from PySide6.QtGui import QDrag, QMouseEvent, QPixmap, QConicalGradient
+from PySide6.QtGui import QDrag, QMouseEvent, QPixmap, QConicalGradient, QIcon
 from PySide6.QtWidgets import QPushButton
 from PySide6.QtWidgets import QFrame
 from PySide6.QtWidgets import QWidget, QLabel, QProgressBar
 from PySide6.QtCore import Qt
 import math
 import time
+from PacsClient.utils.theme_manager import get_theme_manager
 
 
 class CircularProgressborder(QFrame):
@@ -21,13 +22,15 @@ class CircularProgressborder(QFrame):
     ویجت بوردر دایره‌ای که پیشرفت دانلود را به صورت یک بوردر رنگی دور تامب‌نیل نمایش می‌دهد
     """
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, theme=None):
         super().__init__(parent)
         self._progress = 0  # 0-100
         self._border_width = 4  # border thickness
         self._downloading = False
         self._is_ready = False
         self._is_selected = False
+        self._theme = theme if theme else get_theme_manager().current_theme()
+        self.theme_manager = get_theme_manager()
         
         # Animation for smooth progress updates
         self._animation = QPropertyAnimation(self, b"progress")
@@ -310,22 +313,27 @@ class CircularProgressborder(QFrame):
         radius = 8  # border radius
         
         # Determine border color and style based on state
+        # Use theme colors for all states
         if self._is_selected:
-            # Selected - Cyan border
-            border_color = QColor(34, 211, 238)  # Cyan
-            bg_color = QColor(34, 211, 238, 30)  # Light cyan background
+            # Selected - Use theme accent color
+            border_color = QColor(self._theme.get('accent', '#22d3ee'))
+            bg_color = QColor(self._theme.get('accent', '#22d3ee'))
+            bg_color.setAlpha(30)
         elif self._is_ready:
-            # Ready - Green border
-            border_color = QColor(16, 185, 129)  # Green
-            bg_color = QColor(16, 185, 129, 20)  # Light green background
+            # Ready - Use theme success color (green)
+            border_color = QColor(self._theme.get('success', '#10b981'))
+            bg_color = QColor(self._theme.get('success', '#10b981'))
+            bg_color.setAlpha(20)
         elif self._downloading and self._progress > 0:
-            # Downloading - Blue border with gradient based on progress
-            border_color = QColor(59, 130, 246)  # Blue
-            bg_color = QColor(59, 130, 246, 20)  # Light blue background
+            # Downloading - Use theme info color (blue)
+            border_color = QColor(self._theme.get('info', '#3b82f6'))
+            bg_color = QColor(self._theme.get('info', '#3b82f6'))
+            bg_color.setAlpha(20)
         else:
-            # Pending - Gray dashed border
-            border_color = QColor(113, 128, 150)  # Gray
-            bg_color = QColor(113, 128, 150, 10)  # Light gray background
+            # Pending - Use theme border color (gray)
+            border_color = QColor(self._theme.get('border', '#718096'))
+            bg_color = QColor(self._theme.get('border', '#718096'))
+            bg_color.setAlpha(10)
         
         # Draw background
         painter.setPen(Qt.NoPen)
@@ -512,7 +520,7 @@ class DraggableButton(QPushButton):
 
     def __init__(self, pixmap, parent=None, thumbnail_index=0, series_number=None):
         super().__init__(parent)
-        self.setIcon(pixmap)
+        self.setIcon(QIcon(pixmap))
         self.setIconSize(pixmap.size())
         self.setCheckable(True)
         self.setStyleSheet("""
@@ -549,9 +557,19 @@ class DraggableButton(QPushButton):
                     mime_data.setText(series_number_text)  # legacy fallback
                     mime_data.setData("application/x-aipacs-series-number", series_number_text.encode("utf-8"))
                     drag.setMimeData(mime_data)
-                    drag_pixmap = self.icon().pixmap(self.iconSize())
-                    drag.setPixmap(drag_pixmap)
-                    drag.setHotSpot(drag_pixmap.rect().center())
+                    drag_pixmap = self.grab()
+                    if drag_pixmap.isNull():
+                        drag_pixmap = self.icon().pixmap(self.iconSize())
+                    if not drag_pixmap.isNull():
+                        drag.setPixmap(drag_pixmap)
+                        hot_spot = self._drag_start_pos if self._drag_start_pos is not None else drag_pixmap.rect().center()
+                        max_x = max(0, drag_pixmap.width() - 1)
+                        max_y = max(0, drag_pixmap.height() - 1)
+                        hot_spot = QPoint(
+                            max(0, min(int(hot_spot.x()), max_x)),
+                            max(0, min(int(hot_spot.y()), max_y)),
+                        )
+                        drag.setHotSpot(hot_spot)
                     drag.exec(Qt.CopyAction)
                     self._drag_start_pos = None
         super().mouseMoveEvent(event)
@@ -618,7 +636,7 @@ class ThumbnailManager(QObject):
     retry_download_requested = Signal(str, str, str)  # series_number, study_uid, series_uid
     thumbnail_image_ready = Signal(str, QImage)  # series_number, QImage
 
-    def __init__(self, method_change_series):
+    def __init__(self, method_change_series, theme=None):
         super().__init__()  # فراخوانی سازنده QObject
         self.buttons = []
         self.lst_buttons_name = []
@@ -628,6 +646,9 @@ class ThumbnailManager(QObject):
         self.ready_series = set()
         self.current_study_uid = None  # برای ذخیره study_uid فعلی
         self._placeholder_cache = None
+        self.theme_manager = get_theme_manager()
+        self._theme = theme if theme else self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self._series_uid_to_number = {}
         # Coalesce frequent border refresh requests to avoid UI repaint storms.
         self._border_state_update_pending = False
@@ -641,6 +662,17 @@ class ThumbnailManager(QObject):
         self._scroll_active = bool(active)
         if not self._scroll_active and self._border_state_update_pending:
             QTimer.singleShot(0, lambda: self.apply_border_states_new(immediate=True))
+    def _on_theme_changed(self, theme):
+        """Handle theme changes - update all created thumbnails"""
+        self._theme = theme
+        # Update border colors for all existing thumbnails
+        for widget in self.series_widgets.values():
+            try:
+                if widget and hasattr(widget, 'progress_border'):
+                    widget.progress_border._theme = theme
+                    widget.progress_border.update()
+            except RuntimeError:
+                continue
 
     def create_placeholder_pixmap(self, size: QSize = None, text: str = "Loading...") -> QPixmap:
         """Create and cache a lightweight placeholder pixmap (GUI thread only)."""
@@ -1046,7 +1078,7 @@ class ThumbnailManager(QObject):
             main_layout.setSpacing(0)
             
             # Create circular progress border frame
-            progress_border = CircularProgressborder()
+            progress_border = CircularProgressborder(theme=self._theme)
             progress_border.setFixedSize(190, 190)
             border_layout = QVBoxLayout(progress_border)
             border_layout.setContentsMargins(8, 8, 8, 8)
@@ -1054,12 +1086,12 @@ class ThumbnailManager(QObject):
             
             # Inner content widget
             content_widget = QWidget()
-            content_widget.setStyleSheet("""
-                QWidget {
-                    background: #2d3748;
+            content_widget.setStyleSheet(f"""
+                QWidget {{
+                    background: {self._theme.get('panel_alt_bg', '#2d3748')};
                     border: none;
                     border-radius: 6px;
-                }
+                }}
             """)
             content_layout = QVBoxLayout(content_widget)
             content_layout.setContentsMargins(6, 6, 6, 6)
@@ -1069,15 +1101,15 @@ class ThumbnailManager(QObject):
             header_label = QLabel(f"Series {series_number}")
             header_label.setFixedHeight(18)
             header_label.setAlignment(Qt.AlignCenter)
-            header_label.setStyleSheet("""
-                QLabel {
+            header_label.setStyleSheet(f"""
+                QLabel {{
                     font-size: 12px;
                     font-weight: bold;
-                    color: #ffffff;
+                    color: {self._theme.get('text_primary', '#ffffff')};
                     background: transparent;
                     border: none;
                     padding: 2px;
-                }
+                }}
             """)
             content_layout.addWidget(header_label)
             
@@ -1088,12 +1120,12 @@ class ThumbnailManager(QObject):
             image_button.setFixedSize(160, 120)
             image_button.setIconSize(QSize(160, 120))
             image_button.setCheckable(True)
-            image_button.setStyleSheet("""
-                QPushButton {
+            image_button.setStyleSheet(f"""
+                QPushButton {{
                     border: none;
                     border-radius: 6px;
-                    background: #1a202c;
-                }
+                    background: {self._theme.get('panel_bg', '#1a202c')};
+                }}
             """)
             content_layout.addWidget(image_button)
             
@@ -1135,15 +1167,15 @@ class ThumbnailManager(QObject):
                     count_label = QLabel(f"{image_count} images")
                     count_label.setFixedHeight(20)
                     count_label.setAlignment(Qt.AlignCenter)
-                    count_label.setStyleSheet("""
-                        QLabel {
+                    count_label.setStyleSheet(f"""
+                        QLabel {{
                             font-size: 12px;
                             font-weight: bold;
-                            color: #3b82f6;
+                            color: {self._theme.get('accent', '#3b82f6')};
                             background: transparent;
                             border: none;
                             padding: 2px;
-                        }
+                        }}
                     """)
                     content_layout.addWidget(count_label)
                     widget.count_label = count_label

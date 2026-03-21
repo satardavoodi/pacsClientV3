@@ -9,9 +9,23 @@ python build.py --skip-installer-compile
 python build.py --clean-only
 ```
 
+## Environment Preparation
+
+Recommended release environment:
+
+```powershell
+python -m venv .venv_build
+.\.venv_build\Scripts\python -m pip install --upgrade pip
+.\.venv_build\Scripts\python -m pip install -r builder\requirements\build_requirements.txt
+.\.venv_build\Scripts\python -m pip install -r requirements-core.txt
+```
+
+If you already have a runtime `.venv`, you can still build from that environment, but `.venv_build` is the preferred isolated path for repeatable release packaging.
+
 ## Prerequisites
 
 - Python environment with release dependencies.
+- Project runtime dependencies installed from `requirements-core.txt`.
 - PyInstaller available in the active environment.
 - Inno Setup 6 installed to compile the final installer executable:
   - `C:\Program Files (x86)\Inno Setup 6\ISCC.exe` (or)
