@@ -1236,9 +1236,9 @@ class CustomTabManager:
         custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
 
         if self.title_bar_tab_area:
-            # Add to title bar
+            # Add to right side of title bar (next to user info, like other service modules)
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
-            self._add_title_bar_tab_widget(custom_tab)
+            self._add_title_bar_right_tab_widget(custom_tab)
             self.title_bar_tabs[tab_index] = custom_tab
         else:
             # Set custom tab widget as tab button

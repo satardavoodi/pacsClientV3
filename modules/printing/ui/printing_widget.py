@@ -443,6 +443,14 @@ class PrintingWidget(QWidget):
 
         self._apply_modern_styles()
 
+    def update_patients(self, selected_patients: list):
+        """Replace the patient list with new data and refresh the UI."""
+        print(f"[PRINTING] update_patients called with {len(selected_patients)} patients")
+        for p in selected_patients:
+            print(f"[PRINTING]   patient={p.get('patient_name')}, study_uid={p.get('study_uid')!r}")
+        self._selected_patients = selected_patients or []
+        self._load_selected_patients()
+
     def _load_selected_patients(self):
         self.patient_list.clear()
         if not self._selected_patients:
@@ -612,6 +620,8 @@ class PrintingWidget(QWidget):
         self._active_patient = patient
         self._selected_patient_info = patient
         self._selected_study_uid = patient.get("study_uid")
+        print(f"[PRINTING] Patient selected: name={patient.get('patient_name')}, "
+              f"study_uid={self._selected_study_uid!r} (len={len(self._selected_study_uid) if self._selected_study_uid else 0})")
         self._load_series()
         self._load_filming_pages()
 
@@ -629,32 +639,44 @@ class PrintingWidget(QWidget):
             series = get_series_with_enrichment(self._selected_study_uid)
         except Exception as e:
             print(f"[PRINTING] ⚠️ Enrichment failed, falling back: {e}")
-            series = get_series_for_study(self._selected_study_uid)
+            import traceback
+            traceback.print_exc()
+            try:
+                series = get_series_for_study(self._selected_study_uid)
+            except Exception as e2:
+                print(f"[PRINTING] ❌ Fallback also failed: {e2}")
+                series = []
         
         print(f"[PRINTING] Found {len(series)} series")
         
         for item in series:
-            series_num = item.get('series_number', 'unknown')
-            series_desc = item.get('series_description', '')
-            modality = item.get('modality', '')
-            img_count = item.get('image_count', 0)
+            try:
+                series_num = item.get('series_number', 'unknown')
+                series_desc = item.get('series_description', '')
+                modality = item.get('modality', '')
+                img_count = item.get('image_count', 0)
 
-            list_item = QListWidgetItem()
-            list_item.setSizeHint(QSize(0, self._scaled(96)))
-            list_item.setData(Qt.UserRole, item)
-            self.series_list.addItem(list_item)
-            thumb_pm = self._build_series_thumbnail_pixmap(item)
-            widget = self._build_series_thumbnail_widget(
-                series=item,
-                series_number=self._truncate_label(str(series_num), 20),
-                description=self._truncate_label(str(series_desc), 60),
-                modality=self._truncate_label(str(modality), 15),
-                image_count=int(img_count or 0),
-                thumbnail=thumb_pm,
-            )
-            self.series_list.setItemWidget(list_item, widget)
-            self._series_records.append(item)
-            print(f"[PRINTING]   series_pk={item.get('series_pk')}, series_number={series_num}, images={img_count}")
+                list_item = QListWidgetItem()
+                list_item.setSizeHint(QSize(0, self._scaled(96)))
+                list_item.setData(Qt.UserRole, item)
+                self.series_list.addItem(list_item)
+                thumb_pm = self._build_series_thumbnail_pixmap(item)
+                widget = self._build_series_thumbnail_widget(
+                    series=item,
+                    series_number=self._truncate_label(str(series_num), 20),
+                    description=self._truncate_label(str(series_desc), 60),
+                    modality=self._truncate_label(str(modality), 15),
+                    image_count=int(img_count or 0),
+                    thumbnail=thumb_pm,
+                )
+                self.series_list.setItemWidget(list_item, widget)
+                self._series_records.append(item)
+                src = item.get("_source", "db")
+                print(f"[PRINTING]   [{src}] series_pk={item.get('series_pk')}, series_number={series_num}, images={img_count}")
+            except Exception as exc:
+                import traceback
+                print(f"[PRINTING] ❌ Error building series item: {exc}")
+                traceback.print_exc()
         
         if self.series_list.count() > 0:
             first_item = self.series_list.item(0)
@@ -914,7 +936,11 @@ class PrintingWidget(QWidget):
             paths: List[str] = []
             series_pk = series.get("series_pk")
             if series_pk:
-                paths = get_dicom_paths_for_series(series_pk)
+                paths = get_dicom_paths_for_series(
+                    series_pk,
+                    study_uid=series.get("study_uid") or self._selected_study_uid,
+                    series_number=series.get("series_number"),
+                )
             elif series.get("series_path"):
                 series_dir = Path(str(series.get("series_path")))
                 if series_dir.exists():
@@ -939,7 +965,11 @@ class PrintingWidget(QWidget):
         series_pk = series.get("series_pk")
         paths: List[str] = []
         if series_pk:
-            paths = get_dicom_paths_for_series(series_pk)
+            paths = get_dicom_paths_for_series(
+                series_pk,
+                study_uid=series.get("study_uid") or self._selected_study_uid,
+                series_number=series.get("series_number"),
+            )
         elif series.get("series_path"):
             series_dir = Path(str(series.get("series_path")))
             if series_dir.exists():
@@ -1226,7 +1256,11 @@ class PrintingWidget(QWidget):
                 continue
             
             print(f"[PRINTING] Processing series_pk={series_pk}")
-            series_paths = get_dicom_paths_for_series(series_pk)
+            series_paths = get_dicom_paths_for_series(
+                series_pk,
+                study_uid=series.get("study_uid") or self._selected_study_uid,
+                series_number=series.get("series_number"),
+            )
             series_paths = [p for p in sorted(series_paths) if p and Path(p).exists()]
             print(f"[PRINTING]   Got {len(series_paths)} paths")
             paths.extend(series_paths)
@@ -1475,9 +1509,14 @@ class PrintingWidget(QWidget):
             elif self._selected_series:
                 try:
                     from modules.printing.data.series_repository import get_dicom_paths_for_series
-                    series_pk = self._selected_series[0].get("series_pk")
+                    s0 = self._selected_series[0]
+                    series_pk = s0.get("series_pk")
                     if series_pk:
-                        paths = get_dicom_paths_for_series(series_pk)
+                        paths = get_dicom_paths_for_series(
+                            series_pk,
+                            study_uid=s0.get("study_uid") or self._selected_study_uid,
+                            series_number=s0.get("series_number"),
+                        )
                         if paths:
                             sample_path = paths[0]
                 except Exception:

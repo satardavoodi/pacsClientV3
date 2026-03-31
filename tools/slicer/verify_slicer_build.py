@@ -9,8 +9,8 @@ Checks:
   - LauncherSettings.ini has expected sections
 
 Usage:
-    python tools/verify_slicer_build.py
-    python tools/verify_slicer_build.py --build-dir "path/to/build"
+    python tools/slicer/verify_slicer_build.py
+    python tools/slicer/verify_slicer_build.py --build-dir "path/to/build"
 """
 import argparse
 import sys
@@ -19,7 +19,7 @@ from pathlib import Path
 
 def _default_build_dir() -> Path:
     return (
-        Path(__file__).resolve().parent.parent
+        Path(__file__).resolve().parents[2]
         / "modules" / "mpr" / "advanced_3d_slicer"
         / "slicer_custom_app" / "NewMPR2Slicer" / "build"
     )

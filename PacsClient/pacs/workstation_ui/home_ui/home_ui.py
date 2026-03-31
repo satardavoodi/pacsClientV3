@@ -54,7 +54,7 @@ from .import_preview_dialog import (
     scan_dicom_import_folder,
 )
 from .patient_search_widget import PatientSearchWidget
-from .patient_table_widget import PatientTableWidget
+from .patient_table_widget import PatientTableWidget, COL
 from .right_panel_widget import RightPanelWidget
 # UPDATED: Now using Zeta Download Manager with v1.0.6 UI design
 from modules.download_manager.ui.main_widget import DownloadManagerWidget
@@ -1585,10 +1585,14 @@ class HomePanelWidget(QWidget):
                                 pass
 
                         # ⚡ IMMEDIATE START - pauses all, starts this one right away
+                        # Priority is HIGH (not CRITICAL) for the patient open.
+                        # CRITICAL is reserved for the specific series being viewed.
+                        # When the viewer loads a series, it will escalate that
+                        # series to CRITICAL via set_viewed_series().
                         download_manager.start_priority_download_immediately(
                             study_data=dm_study_data,
                             server_info=server,
-                            priority="Critical"  # Double-clicked patient = Critical priority
+                            priority="High"  # Double-clicked patient = High priority (all series)
                         )
 
                         # Connect Download Manager progress signals to this widget
@@ -4737,6 +4741,10 @@ Study UID: {study_uid}
             if hasattr(self, 'patient_table_widget') and hasattr(self.patient_table_widget, 'get_selected_patient_data_list'):
                 selected_patients = self.patient_table_widget.get_selected_patient_data_list() or []
 
+            print(f"[HomePanelWidget] Selected patients count: {len(selected_patients)}")
+            for p in selected_patients:
+                print(f"[HomePanelWidget]   patient={p.get('patient_name')}, study_uid={p.get('study_uid')!r}")
+
             if not selected_patients:
                 QMessageBox.warning(self, "Printing", "Please select at least one patient in the list.")
                 return
@@ -4746,9 +4754,12 @@ Study UID: {study_uid}
                 for i in range(self.tab_widget.count()):
                     tab_data = self.custom_tab_manager.patient_tabs.get(i, {})
                     if tab_data.get('is_printing_tab', False):
-                        # Tab exists, just switch to it
+                        # Tab exists — update its patient data and switch to it
                         self.tab_widget.setCurrentIndex(i)
-                        print(f"[HomePanelWidget] Switched to existing Printing tab at index {i}")
+                        printing_widget = tab_data.get('widget')
+                        if printing_widget and hasattr(printing_widget, 'update_patients'):
+                            printing_widget.update_patients(selected_patients)
+                        print(f"[HomePanelWidget] Updated existing Printing tab at index {i}")
                         return
 
             from modules.printing.ui.printing_widget import PrintingWidget
@@ -5090,9 +5101,13 @@ Study UID: {study_uid}
             study_being_downloaded = False
 
             if download_manager:
-                # Check if this study is in the Download Manager's queue
-                # Use hasattr to safely check if the attribute exists
-                if hasattr(download_manager, 'study_downloads'):
+                # Check via state_store (the single source of truth for download state)
+                if hasattr(download_manager, 'state_store'):
+                    state = download_manager.state_store.get(study_uid)
+                    if state and state.status.value in ("Downloading", "Pending", "Paused", "Validating"):
+                        study_being_downloaded = True
+                        print(f"📥 Study {study_uid[:50]} is already in Download Manager (status: {state.status.value})")
+                elif hasattr(download_manager, 'study_downloads'):
                     for study_download in download_manager.study_downloads:
                         if study_download.study_uid == study_uid:
                             if study_download.status in ["Downloading", "Pending", "Paused"]:
@@ -5100,23 +5115,24 @@ Study UID: {study_uid}
                                 print(f"📥 Study {study_uid} is already in Download Manager (status: {study_download.status})")
                                 break
                 else:
-                    # Alternative approach: check if download manager has a method to get active downloads
-                    # Since we don't know the exact interface, we'll assume the study is not being downloaded
-                    # This is a safer fallback to prevent the AttributeError
-                    print(f"⚠️ DownloadManagerWidget doesn't have 'study_downloads' attribute, proceeding with new download")
+                    print(f"⚠️ DownloadManagerWidget doesn't have 'state_store' or 'study_downloads', proceeding with new download")
             
             if study_being_downloaded:
-                # Study is being handled by Download Manager - just update priority
+                # Study is being handled by Download Manager — escalate this
+                # series to CRITICAL so it downloads before the other series.
                 print(f"🎯 Updating priority: series {series_number} to CRITICAL")
                 
-                # Notify priority manager that this series should be CRITICAL
-                if PRIORITY_MANAGER_AVAILABLE:
-                    try:
-                        priority_manager = get_download_priority_manager()
-                        priority_manager.on_series_loaded_in_viewer(study_uid, str(series_number))
-                        print(f"✅ Priority manager notified: series {series_number} is now CRITICAL")
-                    except Exception as e:
-                        print(f"⚠️ Error notifying priority manager: {e}")
+                # Use the Download Manager's set_viewed_series API to mark
+                # this series as the one being actively viewed.  This updates
+                # the state store and reorders series download priority.
+                try:
+                    if hasattr(download_manager, 'set_viewed_series'):
+                        download_manager.set_viewed_series(study_uid, str(series_number))
+                        print(f"✅ Download Manager notified: series {series_number} is now CRITICAL")
+                    else:
+                        print(f"⚠️ Download Manager does not have set_viewed_series method")
+                except Exception as e:
+                    print(f"⚠️ Error notifying download manager of viewed series: {e}")
                 
                 # Update UI to show this series is being prioritized
                 if widget is None:

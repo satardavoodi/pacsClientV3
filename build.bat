@@ -42,12 +42,13 @@ echo                           Build Completed Successfully!
 echo ===============================================================================
 echo.
 echo Core bundle: builder\output\stage\core\AIPacs.exe
-echo Installer  : builder\output\installer\AIPacs_*.exe
+echo Installer  : builder\output\installer\ai-pacs installer.exe
 echo.
 echo You can now:
 echo   1. Run the core bundle from builder\output\stage\core\AIPacs.exe
 echo   2. Review builder\output\stage\manifest\release_manifest.json
-echo   3. Use the installer from builder\output\installer if ISCC.exe was available
+echo   3. Review builder\output\installer\SHA256.txt if ISCC.exe was available
+echo   4. Use the installer from builder\output\installer if ISCC.exe was available
 echo.
 pause
 

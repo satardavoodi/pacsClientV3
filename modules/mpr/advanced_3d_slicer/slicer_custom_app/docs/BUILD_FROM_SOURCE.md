@@ -99,7 +99,7 @@ Once the SuperBuild completes, run the assembly script to extract only runtime f
 
 ```powershell
 cd "c:\AI-Pacs codes\aipacs-pydicom2d"
-python tools/assemble_slicer_runtime.py
+python tools/slicer/assemble_slicer_runtime.py
 ```
 
 This creates the portable 842 MB runtime at:

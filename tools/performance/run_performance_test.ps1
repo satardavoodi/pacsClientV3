@@ -13,7 +13,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Paths
-$rootDir = "E:\ai-pacs\ai-pacs codes\PacsClientV2"
+$toolsDir = Split-Path -Parent $PSScriptRoot
+$rootDir = Split-Path -Parent $toolsDir
 $perfLogDir = Join-Path $rootDir "perf_logs"
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 
@@ -93,8 +94,7 @@ Write-Host ""
 # Start performance monitoring in background
 Write-Host "[1/3] Starting performance monitoring..." -ForegroundColor Cyan
 
-$perfScriptPath = Join-Path $rootDir "tools\start_performance_monitoring.ps1"
-$perfLogFile = Join-Path $perfLogDir "perfmon_$($Scenario)_$timestamp.blg"
+$perfScriptPath = Join-Path $PSScriptRoot "start_performance_monitoring.ps1"
 
 # Start perfmon collector
 $perfJob = Start-Job -ScriptBlock {
@@ -219,7 +219,7 @@ finally {
     Write-Host ""
     Write-Host "Next steps:" -ForegroundColor Yellow
     Write-Host "  1. Analyze application log:" -ForegroundColor White
-    Write-Host "     python tools\performance_log_analyzer.py `"$appLogFile`"" -ForegroundColor Cyan
+    Write-Host "     python tools\performance\performance_log_analyzer.py `"$appLogFile`"" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  2. View performance data:" -ForegroundColor White
     Write-Host "     perfmon.exe  (then open .blg file)" -ForegroundColor Cyan

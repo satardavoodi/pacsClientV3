@@ -149,7 +149,9 @@ class RightPanelWidget(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # AlwaysOn reserves scrollbar space permanently so the viewport width
+        # never changes as thumbnails are added — prevents layout-feedback shaking.
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.scroll_area.setStyleSheet(self._get_scrollarea_stylesheet())
         
         # Content container
@@ -354,20 +356,24 @@ class RightPanelWidget(QWidget):
                 return
 
             self.hide_loading()
-            
+
             self.current_thumbnail_index = 0
             self.thumbnails_to_display = thumbnails
             self._active_progressive_generation = generation if generation is not None else self._display_generation
+
+            # Pre-create the manager once — avoids re-importing on every timer tick.
+            from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
+            self._progressive_manager = ThumbnailManager(lambda x: None)
 
             self.count_label.setText(f"0/{len(thumbnails)} series")
 
             self.thumbnail_timer = QTimer()
             self.thumbnail_timer.timeout.connect(self.display_next_thumbnail)
-            self.thumbnail_timer.start(120)  # 120ms delay between each thumbnail to prevent overlapping
-            
+            self.thumbnail_timer.start(120)  # 120ms delay between thumbnails
+
         except Exception as e:
             print(f"Error in display_thumbnails_progressively: {str(e)}")
-            self.hide_loading()  # Make sure to hide loading on error
+            self.hide_loading()
 
     def display_thumbnails_immediately(self, thumbnails, generation=None):
         """Display thumbnails immediately (no progressive delay)."""
@@ -382,29 +388,32 @@ class RightPanelWidget(QWidget):
             from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
             temp_manager = ThumbnailManager(lambda x: None)
 
-            for idx, thumb in enumerate(thumbnails):
-                thumb_path = thumb.get('file_path')
-                if not thumb_path:
-                    continue
-
-                try:
-                    pixmap = QPixmap(thumb_path)
-                    if pixmap.isNull():
+            # Suppress repaints while building all widgets — prevents per-addWidget flicker.
+            self.content_widget.setUpdatesEnabled(False)
+            try:
+                for idx, thumb in enumerate(thumbnails):
+                    thumb_path = thumb.get('file_path')
+                    if not thumb_path:
                         continue
 
-                    series_info = self.extract_series_info_from_thumbnail(thumb)
-                    combined_widget = temp_manager.create_thumbnail_widget(
-                        pixmap=pixmap,
-                        label_text=str(series_info.get('series_number', idx + 1)),
-                        thumbnail_index=idx,
-                        series_info=series_info,
-                        show_progress=False
-                    )
-                    self.content_grid.addWidget(combined_widget, idx, 0, 1, 1)
-                except Exception as e:
-                    print(f"Error displaying thumbnail {idx}: {str(e)}")
+                    try:
+                        pixmap = QPixmap(thumb_path)
+                        if pixmap.isNull():
+                            continue
 
-                self.count_label.setText(f"{idx + 1}/{total} series")
+                        series_info = self.extract_series_info_from_thumbnail(thumb)
+                        combined_widget = temp_manager.create_thumbnail_widget(
+                            pixmap=pixmap,
+                            label_text=str(series_info.get('series_number', idx + 1)),
+                            thumbnail_index=idx,
+                            series_info=series_info,
+                            show_progress=False
+                        )
+                        self.content_grid.addWidget(combined_widget, idx, 0, 1, 1)
+                    except Exception as e:
+                        print(f"Error displaying thumbnail {idx}: {str(e)}")
+            finally:
+                self.content_widget.setUpdatesEnabled(True)
 
             self.count_label.setText(f"{total} series")
         except Exception as e:
@@ -435,29 +444,24 @@ class RightPanelWidget(QWidget):
                 try:
                     pixmap = QPixmap(thumb_path)
                     if not pixmap.isNull():
-                        # Use unified thumbnail widget creation
                         series_info = self.extract_series_info_from_thumbnail(thumb)
 
-                        # print('series_info:', series_info)
-                        # Import ThumbnailManager for consistent widget creation
-                        from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
-                        temp_manager = ThumbnailManager(lambda x: None)  # Dummy callback
+                        # Use the manager that was pre-created in display_thumbnails_progressively
+                        mgr = getattr(self, '_progressive_manager', None)
+                        if mgr is None:
+                            from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
+                            mgr = ThumbnailManager(lambda x: None)
 
-                        # print('FIND FIND')
-                        combined_widget = temp_manager.create_thumbnail_widget(
+                        combined_widget = mgr.create_thumbnail_widget(
                             pixmap=pixmap,
                             label_text=str(series_info.get('series_number', self.current_thumbnail_index + 1)),
                             thumbnail_index=self.current_thumbnail_index,
                             series_info=series_info,
-                            show_progress=False  # Right panel doesn't show progress
+                            show_progress=False
                         )
-                        
-                        # Place widgets in a single column with proper positioning
+
                         self.content_grid.addWidget(combined_widget, self.current_thumbnail_index, 0, 1, 1)
-                        
-                        # Force layout update to prevent overlapping
-                        combined_widget.updateGeometry()
-                        self.content_grid.update()
+                        # No forced updateGeometry/update — Qt schedules the repaint itself.
 
                 except Exception as e:
                     print(f"Error displaying thumbnail {self.current_thumbnail_index}: {str(e)}")

@@ -23,10 +23,11 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtGui import QFont, QTextCursor
+import threading
 import qtawesome as qta
 
 from ..core.models import DownloadTask, DownloadState
-from ..core.enums import DownloadPriority, DownloadStatus
+from ..core.enums import DownloadPriority, DownloadStatus, PreemptionAction
 from ..state.state_store import DownloadStateStore, get_state_store
 from ..state.observers import UIObserver
 from ..rules.rule_engine import DownloadRuleEngine
@@ -2277,6 +2278,12 @@ class DownloadManagerWidget(QWidget):
                         logger.info(f"✅ [PROGRESS] Series {series_number} completed")
                         self.log_message(f"✅ [{study_uid[:10]}...] Series {series_number} completed")
                         self.seriesDownloadCompleted.emit(study_uid, series_uid)
+                        
+                        # If the completed series was the viewed (CRITICAL) series,
+                        # clear the flag so priority drops back to HIGH.
+                        state = self.state_store.get(study_uid)
+                        if state and state.viewed_series_number == str(series_number):
+                            self.clear_viewed_series(study_uid)
 
                 # CRITICAL FIX: Batch progress updates instead of immediate
                 # This reduces state store calls from 1000+ to ~10 per download
@@ -2404,7 +2411,8 @@ class DownloadManagerWidget(QWidget):
                 self.state_store.update(
                     study_uid,
                     status=DownloadStatus.COMPLETED,
-                    is_auto_paused=False
+                    is_auto_paused=False,
+                    viewed_series_number=None  # Clear viewed series on completion
                 )
                 logger.info(f"💾 [DATABASE] Updated study {study_uid[:40]}... to COMPLETED status")
                 
@@ -2959,7 +2967,10 @@ class DownloadManagerWidget(QWidget):
     
     def _on_series_retry(self, study_uid: str, series_number: str = None, series_uid: str = None) -> None:
         """
-        Per-series Retry - Retry download for a specific series only
+        Per-series Retry - Retry download for a specific series only.
+
+        Heavy I/O (file deletion, gRPC metadata fetch) is offloaded to a
+        background thread so the Qt event loop is never blocked.
 
         Args:
             study_uid: Study UID
@@ -2972,84 +2983,55 @@ class DownloadManagerWidget(QWidget):
         logger.info(f"   Series UID: {series_uid[:40] if series_uid else 'None'}")
 
         try:
+            # ──────────────────────────────────────────────────────────
+            # FAST PATH — runs on the main Qt thread (no blocking I/O)
+            # ──────────────────────────────────────────────────────────
+
             # Check state
             state = self.state_store.get(study_uid)
             if not state:
                 logger.warning(f"⚠️ [SERIES RETRY] State not found in store for study {study_uid[:40]}")
                 logger.info(f"ℹ️ [SERIES RETRY] Attempting to auto-create state from database...")
-                
-                # Try to fetch study metadata from database and create state
+
                 try:
                     from PacsClient.utils.db_manager import get_study_info_with_series
                     db_info = get_study_info_with_series(study_uid)
-                    
+
                     if db_info:
                         logger.info(f"✅ [SERIES RETRY] Found study in database, creating state...")
-                        logger.info(f"   Patient: {db_info.get('patient_name', 'Unknown')}")
-                        logger.info(f"   Series count: {len(db_info.get('series', []))}")
-                        
-                        # Create task and state from DB info
                         task = self._create_task_from_dict(db_info)
-                        
-                        # Create state in store
                         state = self.state_store.create(task)
-                        # Keep task available for retry mapping and worker start
                         self._tasks[study_uid] = task
                         logger.info(f"✅ [SERIES RETRY] Auto-created state for study {study_uid[:40]}")
                     else:
-                        logger.warning(f"⚠️ [SERIES RETRY] Study not found in database")
-                        logger.info(f"ℹ️ [SERIES RETRY] Performing simple cleanup (deleting cached files)")
-                        
-                        # Fallback: Just delete local files
-                        try:
-                            from PacsClient.utils.config import SOURCE_PATH
-                            from pathlib import Path
-                            import shutil
-                            
-                            series_path = Path(SOURCE_PATH) / study_uid / str(series_number)
-                            if series_path.exists():
-                                logger.info(f"🗑️ [SERIES RETRY] Deleting existing series files from disk: {series_path}")
-                                shutil.rmtree(series_path)
-                                logger.info(f"✅ [SERIES RETRY] Series files deleted successfully")
-                        except Exception as e:
-                            logger.error(f"❌ [SERIES RETRY] Error deleting series files: {e}")
-                        
+                        logger.warning(f"⚠️ [SERIES RETRY] Study not found in database — scheduling background cleanup")
+                        # Offload file deletion to background thread
+                        def _bg_cleanup():
+                            try:
+                                from PacsClient.utils.config import SOURCE_PATH
+                                from pathlib import Path
+                                import shutil
+                                series_path = Path(SOURCE_PATH) / study_uid / str(series_number)
+                                if series_path.exists():
+                                    logger.info(f"🗑️ [SERIES RETRY-BG] Deleting {series_path}")
+                                    shutil.rmtree(series_path)
+                                    logger.info(f"✅ [SERIES RETRY-BG] Deleted")
+                            except Exception as e:
+                                logger.error(f"❌ [SERIES RETRY-BG] Error: {e}")
+                        threading.Thread(target=_bg_cleanup, daemon=True, name="series-retry-cleanup").start()
                         return
-                
+
                 except Exception as e:
                     logger.error(f"❌ [SERIES RETRY] Error auto-creating state: {e}")
-                    logger.info(f"ℹ️ [SERIES RETRY] Performing simple cleanup (deleting cached files)")
-                    
-                    # Fallback: Just delete local files
-                    try:
-                        from PacsClient.utils.config import SOURCE_PATH
-                        from pathlib import Path
-                        import shutil
-                        
-                        series_path = Path(SOURCE_PATH) / study_uid / str(series_number)
-                        if series_path.exists():
-                            logger.info(f"🗑️ [SERIES RETRY] Deleting existing series files from disk: {series_path}")
-                            shutil.rmtree(series_path)
-                            logger.info(f"✅ [SERIES RETRY] Series files deleted successfully")
-                    except Exception as e2:
-                        logger.error(f"❌ [SERIES RETRY] Error deleting series files: {e2}")
-                    
                     return
-                
-                # If we still don't have state here, return
+
                 if not state:
                     return
 
             logger.info(f"📊 [SERIES RETRY] Current study state: {state.status.value}")
-            logger.info(f"📊 [SERIES RETRY] Completed series: {state.completed_series}")
-            logger.info(f"📊 [SERIES RETRY] Failed series: {state.failed_series}")
 
-            # Ensure the requested series is first in the task order
+            # Get or fast-resolve task (from memory only — no gRPC here)
             task = self._tasks.get(study_uid)
-            if not task:
-                task = self._reconstruct_task_from_database(study_uid)
-                if task:
-                    self._tasks[study_uid] = task
 
             target_uid = str(series_uid) if series_uid else None
             target_num = str(series_number) if series_number is not None else None
@@ -3079,147 +3061,148 @@ class DownloadManagerWidget(QWidget):
                     series_list.insert(0, series_list.pop(target_idx))
                     task = replace(task, series_list=series_list)
                     self._tasks[study_uid] = task
-                    logger.info(f"✅ [SERIES RETRY] Promoted series {target_num or series_number} to the front of the download order")
+                    logger.info(f"✅ [SERIES RETRY] Promoted series {target_num or series_number} to front")
 
-            # Remove series from completed/failed/skipped lists if present
+            # Remove series from completed/failed/skipped lists
             series_removed = False
-            
-            # Try to remove by series_number first
             if target_num:
-                if target_num in state.completed_series:
+                if target_num in (state.completed_series or []):
                     state.completed_series.remove(target_num)
-                    logger.info(f"✅ [SERIES RETRY] Removed series {target_num} from completed_series")
                     series_removed = True
-                if target_num in state.failed_series:
+                if target_num in (state.failed_series or []):
                     state.failed_series.remove(target_num)
-                    logger.info(f"✅ [SERIES RETRY] Removed series {target_num} from failed_series")
                     series_removed = True
-
-            # Try to remove by series_uid if provided or resolved
+                if target_num in (state.skipped_series or []):
+                    state.skipped_series.remove(target_num)
+                    series_removed = True
             if target_uid:
-                if target_uid in state.completed_series:
+                if target_uid in (state.completed_series or []):
                     state.completed_series.remove(target_uid)
-                    logger.info(f"✅ [SERIES RETRY] Removed series UID {target_uid[:40]} from completed_series")
                     series_removed = True
-                if target_uid in state.failed_series:
+                if target_uid in (state.failed_series or []):
                     state.failed_series.remove(target_uid)
-                    logger.info(f"✅ [SERIES RETRY] Removed series UID {target_uid[:40]} from failed_series")
+                    series_removed = True
+                if target_uid in (state.skipped_series or []):
+                    state.skipped_series.remove(target_uid)
                     series_removed = True
 
-            if target_num and target_num in state.skipped_series:
-                state.skipped_series.remove(target_num)
-                logger.info(f"✅ [SERIES RETRY] Removed series {target_num} from skipped_series")
-                series_removed = True
-            if target_uid and target_uid in state.skipped_series:
-                state.skipped_series.remove(target_uid)
-                logger.info(f"✅ [SERIES RETRY] Removed series UID {target_uid[:40]} from skipped_series")
-                series_removed = True
-            
             if not series_removed:
-                logger.warning(
-                    f"⚠️ [SERIES RETRY] Series {target_num or series_number} not found in completed/failed lists"
-                )
-                # Guard: if there is an active worker and the study is still DOWNLOADING,
-                # the series is currently in-progress.  Deleting its files or trying to
-                # start a second worker would corrupt the running download.  Bail out.
                 _active_count = self.worker_pool.get_active_count()
                 if _active_count > 0 and state.status == DownloadStatus.DOWNLOADING:
                     logger.info(
                         f"⏳ [SERIES RETRY] Series {target_num or series_number} is currently being "
-                        f"downloaded by active worker (pool={_active_count}, status=DOWNLOADING). "
-                        f"Skipping retry — download will complete normally."
+                        f"downloaded (pool={_active_count}). Skipping retry."
                     )
                     return
 
-            # CRITICAL: Delete series files from disk to force re-download
-            # Otherwise downloader will skip the series thinking it's already complete
-            try:
-                from PacsClient.utils.config import SOURCE_PATH
-                from pathlib import Path
-                import shutil
-                
-                series_path = Path(SOURCE_PATH) / study_uid / str(target_num or series_number)
-                if series_path.exists():
-                    logger.info(f"🗑️ [SERIES RETRY] Deleting existing series files from disk: {series_path}")
-                    shutil.rmtree(series_path)
-                    logger.info(f"✅ [SERIES RETRY] Series files deleted successfully")
-                else:
-                    logger.info(f"ℹ️ [SERIES RETRY] No existing files found at {series_path}")
-            except Exception as e:
-                logger.error(f"❌ [SERIES RETRY] Error deleting series files: {e}")
-                import traceback
-                traceback.print_exc()
-            
-            # Promote study to CRITICAL and preempt other downloads
+            # Non-blocking preemption of active downloads
+            if self.worker_pool.get_active_count() > 0:
+                logger.info(f"⏸️ [SERIES RETRY] Preempting active downloads (non-blocking)")
+                self._pause_all_active_downloads()
+
+            # Promote priority to CRITICAL
             if state.priority != DownloadPriority.CRITICAL:
                 self.state_store.update(study_uid, priority=DownloadPriority.CRITICAL)
                 if task and task.priority != DownloadPriority.CRITICAL:
                     task = replace(task, priority=DownloadPriority.CRITICAL)
                     self._tasks[study_uid] = task
-                logger.info(f"✅ [SERIES RETRY] Priority set to CRITICAL for series retry")
 
-            if self.worker_pool.get_active_count() > 0:
-                logger.info(f"⏸️ [SERIES RETRY] Preempting active downloads for priority series retry")
-                self._pause_all_active_downloads()
-
-            # FORCE change state - bypass terminal state protection
-            # We need to directly modify the state object for terminal states
-            logger.info(f"🔄 [SERIES RETRY] Current status: {state.status.value}")
-            
+            # Force state to PENDING (bypass terminal state protection)
             if state.status == DownloadStatus.COMPLETED:
-                logger.info(f"💪 [SERIES RETRY] FORCING status change from COMPLETED to DOWNLOADING (bypass protection)")
-                # Directly modify state object to bypass terminal state check
-                old_status = state.status
-                state.status = DownloadStatus.DOWNLOADING
-                state.error_message = None
-                # Notify observers about the change
-                self.state_store._notify_observers('updated', study_uid, state, 'status', old_status, DownloadStatus.DOWNLOADING)
-                logger.info(f"✅ [SERIES RETRY] Status forcefully changed to DOWNLOADING")
-
-            elif state.status == DownloadStatus.FAILED:
-                logger.info(f"🔄 [SERIES RETRY] Study was FAILED, changing to PENDING")
                 old_status = state.status
                 state.status = DownloadStatus.PENDING
                 state.error_message = None
                 self.state_store._notify_observers('updated', study_uid, state, 'status', old_status, DownloadStatus.PENDING)
-
-            elif state.status in [DownloadStatus.PAUSED, DownloadStatus.CANCELLED]:
-                logger.info(f"🔄 [SERIES RETRY] Study was {state.status.value}, changing to PENDING")
+            elif state.status in [DownloadStatus.FAILED, DownloadStatus.PAUSED, DownloadStatus.CANCELLED]:
                 old_status = state.status
                 state.status = DownloadStatus.PENDING
                 state.error_message = None
                 state.is_auto_paused = False
                 self.state_store._notify_observers('updated', study_uid, state, 'status', old_status, DownloadStatus.PENDING)
-            else:
-                logger.info(f"ℹ️ [SERIES RETRY] Study status is {state.status.value}, no status change needed")
-
             if state.status != DownloadStatus.PENDING:
                 self.state_store.update(study_uid, status=DownloadStatus.PENDING, error_message=None)
 
-            # Start/resume the download worker
-            logger.info(f"🚀 [SERIES RETRY] Starting download worker for series retry")
-            logger.info(f"🚀 [SERIES RETRY] Study UID: {study_uid}")
-            logger.info(f"🚀 [SERIES RETRY] Target series: {series_number}")
-            logger.info(f"🚀 [SERIES RETRY] Completed series before retry: {state.completed_series}")
-            logger.info(f"🚀 [SERIES RETRY] Failed series before retry: {state.failed_series}")
-            started = self._start_download_worker(study_uid)
-            if not started:
-                QTimer.singleShot(150, self._start_next_pending)
+            # ──────────────────────────────────────────────────────────
+            # SLOW PATH — offloaded to a background thread
+            # File I/O + gRPC task reconstruction, then marshal back
+            # to the main thread to start the download worker.
+            # ──────────────────────────────────────────────────────────
+            _series_key = target_num or series_number
+            _has_task = task is not None
 
-            # Refresh UI
-            logger.info(f"🔄 [SERIES RETRY] Refreshing UI after series retry")
+            def _bg_series_retry():
+                """Background thread: file I/O + task reconstruction."""
+                _task = task
+                try:
+                    from PacsClient.utils.config import SOURCE_PATH
+                    from pathlib import Path
+                    import shutil
+                    import os
+
+                    # --- Reconstruct task from gRPC if not in memory ---
+                    if not _task:
+                        logger.info(f"🔄 [SERIES RETRY-BG] Reconstructing task via gRPC...")
+                        _task = self._reconstruct_task_from_database(study_uid)
+                        if _task:
+                            self._tasks[study_uid] = _task
+                        else:
+                            logger.error(f"❌ [SERIES RETRY-BG] Task reconstruction failed")
+
+                    # --- File cleanup ---
+                    series_path = Path(SOURCE_PATH) / study_uid / str(_series_key)
+                    if series_path.exists():
+                        existing_dcm = [f for f in os.listdir(series_path) if f.endswith('.dcm')]
+                        existing_count = len(existing_dcm)
+
+                        expected_count = 0
+                        if _task and _task.series_list:
+                            for si in _task.series_list:
+                                if str(si.series_number) == str(_series_key):
+                                    expected_count = si.image_count
+                                    break
+
+                        if expected_count > 0 and existing_count < expected_count:
+                            logger.info(
+                                f"ℹ️ [SERIES RETRY-BG] Keeping {existing_count}/{expected_count} files "
+                                f"for series {_series_key} (incremental resume)"
+                            )
+                        else:
+                            logger.info(f"🗑️ [SERIES RETRY-BG] Deleting series {_series_key} ({existing_count} files)")
+                            shutil.rmtree(series_path)
+                            logger.info(f"✅ [SERIES RETRY-BG] Deleted")
+                    else:
+                        logger.info(f"ℹ️ [SERIES RETRY-BG] No files at {series_path}")
+
+                except Exception as e:
+                    logger.error(f"❌ [SERIES RETRY-BG] Error: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+                # --- Marshal back to the main Qt thread ---
+                def _main_thread_continue():
+                    try:
+                        logger.info(f"🚀 [SERIES RETRY] Starting download worker for series {_series_key}")
+                        started = self._start_download_worker(study_uid)
+                        if not started:
+                            QTimer.singleShot(150, self._start_next_pending)
+
+                        self._refresh_table_order()
+                        updated_state = self.state_store.get(study_uid)
+                        if updated_state and self._selected_study_uid == study_uid:
+                            self._update_button_states(updated_state)
+                        if self._selected_study_uid == study_uid:
+                            QTimer.singleShot(0, lambda: self._update_details_panel(study_uid))
+                        logger.info(f"✅✅ [SERIES RETRY] Completed for series {_series_key}")
+                    except Exception as e:
+                        logger.error(f"❌ [SERIES RETRY] Error in main-thread continuation: {e}")
+
+                QTimer.singleShot(0, _main_thread_continue)
+
+            threading.Thread(target=_bg_series_retry, daemon=True, name="series-retry-io").start()
+            logger.info(f"🔄 [SERIES RETRY] Background I/O thread started for series {_series_key}")
+
+            # Immediate UI feedback
             self._refresh_table_order()
-
-            # Update button states
-            updated_state = self.state_store.get(study_uid)
-            if updated_state and self._selected_study_uid == study_uid:
-                self._update_button_states(updated_state)
-
-            # Update details panel if selected
-            if self._selected_study_uid == study_uid:
-                QTimer.singleShot(0, lambda: self._update_details_panel(study_uid))
-
-            logger.info(f"✅✅ [SERIES RETRY] Series retry completed successfully for series {series_number}")
 
         except Exception as e:
             logger.error(f"❌ [SERIES RETRY] Error in series retry: {e}")
@@ -3228,7 +3211,10 @@ class DownloadManagerWidget(QWidget):
     
     def _on_per_patient_retry(self, study_uid: str) -> None:
         """
-        Per-patient Retry - Retry failed download (entire study)
+        Per-patient Retry - Retry failed download (entire study).
+
+        Heavy I/O (file deletion, gRPC metadata fetch) is offloaded to a
+        background thread so the Qt event loop is never blocked.
 
         Args:
             study_uid: Study UID to retry
@@ -3236,14 +3222,12 @@ class DownloadManagerWidget(QWidget):
         logger.info(f"🔄 Per-patient RETRY clicked for {study_uid[:40] if study_uid else 'None'}...")
 
         try:
-            # Check state
+            # ──────────────────────────────────────────────────────────
+            # FAST PATH — runs on the main Qt thread (no blocking I/O)
+            # ──────────────────────────────────────────────────────────
             state = self.state_store.get(study_uid)
             if not state:
                 logger.warning(f"⚠️ State not found for {study_uid[:40] if study_uid else 'None'}...")
-                logger.warning(f"⚠️ Study may not be in download queue - unable to retry from here")
-                logger.info(f"💡 Please add the study to download queue using the main Download Manager interface")
-                
-                # Fallback: Show user message
                 from PySide6.QtWidgets import QMessageBox
                 QMessageBox.information(
                     None,
@@ -3257,12 +3241,10 @@ class DownloadManagerWidget(QWidget):
 
             logger.info(f"📊 Current state before retry: {state.status.value}, Retry count: {state.retry_count}")
 
-            # Reset error and update to PENDING
-            # For COMPLETED (terminal state), use force reset
+            # Reset state to PENDING immediately (fast, no I/O)
             if state.status == DownloadStatus.COMPLETED:
                 logger.info(f"💾 Force resetting COMPLETED download for retry: {study_uid[:40] if study_uid else 'None'}...")
                 self.state_store.reset(study_uid)
-                logger.info(f"💾 Database update: {study_uid[:40] if study_uid else 'None'}... status reset to PENDING for retry")
             else:
                 self.state_store.update(
                     study_uid,
@@ -3270,29 +3252,86 @@ class DownloadManagerWidget(QWidget):
                     error_message=None,
                     is_auto_paused=False
                 )
-                logger.info(f"💾 Database update: {study_uid[:40] if study_uid else 'None'}... status changed to PENDING, error cleared")
 
-            # Start the download worker
-            logger.info(f"🚀 Starting download worker for retry: {study_uid[:40] if study_uid else 'None'}...")
-            self._start_download_worker(study_uid)
+            # Quick access: task from memory (may be None)
+            task_in_memory = self._tasks.get(study_uid)
 
-            # Refresh the table to reflect the status change
-            logger.info(f"🔄 Refreshing table after retry for {study_uid[:40] if study_uid else 'None'}...")
+            # ──────────────────────────────────────────────────────────
+            # SLOW PATH — offloaded to background thread
+            # File deletion + gRPC task reconstruction, then marshal
+            # back to main thread to start the download worker.
+            # ──────────────────────────────────────────────────────────
+            def _bg_patient_retry():
+                """Background thread: file I/O + task reconstruction."""
+                _task = task_in_memory
+                try:
+                    from PacsClient.utils.config import SOURCE_PATH
+                    from pathlib import Path
+                    import shutil
+                    import os
+
+                    study_path = Path(SOURCE_PATH) / study_uid
+
+                    # Reconstruct task from gRPC if not in memory
+                    if not _task:
+                        logger.info(f"🔄 [RETRY-BG] Reconstructing task via gRPC for {study_uid[:40]}...")
+                        _task = self._reconstruct_task_from_database(study_uid)
+                        if _task:
+                            self._tasks[study_uid] = _task
+
+                    # File cleanup: delete "complete" series, keep incomplete for resume
+                    if study_path.exists() and _task and _task.series_list:
+                        for si in _task.series_list:
+                            series_path = study_path / str(si.series_number)
+                            if not series_path.exists():
+                                continue
+                            existing_dcm = [f for f in os.listdir(series_path) if f.endswith('.dcm')]
+                            existing_count = len(existing_dcm)
+                            expected_count = si.image_count
+
+                            if expected_count > 0 and existing_count < expected_count:
+                                logger.info(
+                                    f"ℹ️ [RETRY-BG] Keeping {existing_count}/{expected_count} files "
+                                    f"for series {si.series_number} (incremental resume)"
+                                )
+                            else:
+                                logger.info(
+                                    f"🗑️ [RETRY-BG] Deleting {existing_count} files for series "
+                                    f"{si.series_number} (complete/unknown — force re-download)"
+                                )
+                                shutil.rmtree(series_path)
+                    elif study_path.exists():
+                        logger.info(f"🗑️ [RETRY-BG] No task info — deleting entire study dir")
+                        shutil.rmtree(study_path)
+
+                except Exception as e:
+                    logger.error(f"❌ [RETRY-BG] Error during file cleanup: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+                # Marshal back to main Qt thread
+                def _main_thread_continue():
+                    try:
+                        logger.info(f"🚀 Starting download worker for retry: {study_uid[:40] if study_uid else 'None'}...")
+                        self._start_download_worker(study_uid)
+
+                        self._refresh_table_order()
+                        updated_state = self.state_store.get(study_uid)
+                        if updated_state and self._selected_study_uid == study_uid:
+                            self._update_button_states(updated_state)
+                        if self._selected_study_uid == study_uid:
+                            QTimer.singleShot(0, lambda: self._update_details_panel(study_uid))
+                        logger.info(f"✅ [RETRY] Download worker started for {study_uid[:40] if study_uid else 'None'}...")
+                    except Exception as e:
+                        logger.error(f"❌ [RETRY] Error in main-thread continuation: {e}")
+
+                QTimer.singleShot(0, _main_thread_continue)
+
+            threading.Thread(target=_bg_patient_retry, daemon=True, name="patient-retry-io").start()
+            logger.info(f"🔄 [RETRY] Background I/O thread started for {study_uid[:40] if study_uid else 'None'}...")
+
+            # Immediate UI feedback
             self._refresh_table_order()
-
-            # Update button states after status change
-            updated_state = self.state_store.get(study_uid)
-            if updated_state and self._selected_study_uid == study_uid:
-                logger.info(f"🔄 Updating button states after retry {study_uid[:40] if study_uid else 'None'}...")
-                self._update_button_states(updated_state)
-
-            # Update details panel if this study is selected
-            if self._selected_study_uid == study_uid:
-                logger.info(f"🔄 Updating details panel after retry {study_uid[:40] if study_uid else 'None'}...")
-                QTimer.singleShot(0, lambda: self._update_details_panel(study_uid))
-
-            logger.info(f"✅ Retry initiated for {study_uid[:40] if study_uid else 'None'}...")
-            logger.info(f"🟢 [OPERATION SUCCESS] Per-patient retry completed for {study_uid[:40] if study_uid else 'None'}...")
 
         except Exception as e:
             logger.error(f"❌ Error in per-patient retry: {e}")
@@ -4046,7 +4085,7 @@ class DownloadManagerWidget(QWidget):
             raise
     
     def _on_start_selected(self):
-        """Start/Resume selected download - resumes PAUSED or restarts CANCELLED"""
+        """Start/Resume selected download (PAUSED, FAILED, CANCELLED)."""
         logger.info("🔵 [BUTTON CLICK] Start Selected button clicked")
         if self._selected_study_uid:
             logger.info(f"Starting download for selected study: {self._selected_study_uid[:40]}...")
@@ -4056,7 +4095,7 @@ class DownloadManagerWidget(QWidget):
             if state:
                 logger.info(f"📊 Current state: {state.status.value}, changing to PENDING")
                 
-                # Resume PAUSED downloads OR restart CANCELLED downloads
+                # Resume PAUSED/FAILED downloads OR restart CANCELLED downloads
                 if state.status == DownloadStatus.PAUSED:
                     # Update the state to PENDING and start the download
                     logger.info(f"📤 Resuming paused download (keeping current progress)")
@@ -4088,6 +4127,36 @@ class DownloadManagerWidget(QWidget):
                         logger.info(f"🔄 Updating button states for resumed study {self._selected_study_uid[:40]}...")
                         self._update_button_states(updated_state)
                         
+                elif state.status == DownloadStatus.FAILED:
+                    # Retry failed download from pending state
+                    logger.info(f"🔄 Resuming failed download")
+                    self.state_store.update(
+                        self._selected_study_uid,
+                        status=DownloadStatus.PENDING,
+                        error_message=None,
+                        is_auto_paused=False
+                    )
+                    logger.info(f"💾 Database update: {self._selected_study_uid[:40]}... status changed to PENDING")
+
+                    # Start the download worker
+                    logger.info(f"🚀 Starting download worker for resumed-failed study: {self._selected_study_uid[:40]}...")
+                    started = self._start_download_worker(self._selected_study_uid)
+
+                    if started:
+                        logger.info(f"✅ Download worker started successfully for {self._selected_study_uid[:40]}...")
+                    else:
+                        logger.warning(f"⚠️ Failed to start download worker for {self._selected_study_uid[:40]}...")
+
+                    # Refresh the table to reflect the status change
+                    logger.info(f"🔄 Refreshing table after failed->pending resume for {self._selected_study_uid[:40]}...")
+                    self._refresh_table_order()
+
+                    # Update button states after status change
+                    updated_state = self.state_store.get(self._selected_study_uid)
+                    if updated_state:
+                        logger.info(f"🔄 Updating button states for resumed-failed study {self._selected_study_uid[:40]}...")
+                        self._update_button_states(updated_state)
+
                 elif state.status == DownloadStatus.CANCELLED:
                     # Restart cancelled download from beginning
                     logger.info(f"🔄 Restarting cancelled download from 0%")
@@ -4115,8 +4184,11 @@ class DownloadManagerWidget(QWidget):
                         
                 else:
                     # Not paused or cancelled - cannot resume/restart with this button
-                    logger.warning(f"⚠️ Cannot resume: download status is {state.status.value}, not PAUSED or CANCELLED")
-                    self.log_message(f"ℹ️ Can only resume PAUSED or restart CANCELLED downloads. Use Retry to restart from beginning.")
+                    logger.warning(f"⚠️ Cannot resume: download status is {state.status.value}, not PAUSED/FAILED/CANCELLED")
+                    self.log_message(
+                        f"ℹ️ Can only Start for PAUSED/FAILED or restart CANCELLED downloads. "
+                        f"Use Retry to restart from beginning."
+                    )
             else:
                 logger.warning(f"⚠️ No state found for study {self._selected_study_uid[:40]}...")
             
@@ -4275,8 +4347,21 @@ class DownloadManagerWidget(QWidget):
                 }
                 priority = priority_map.get(new_priority, DownloadPriority.NORMAL)
 
+                can_change = self.rule_engine.can_change_priority(study_uid, priority)
+                if not can_change.allowed:
+                    logger.warning(
+                        f"⚠️ Priority change rejected for {study_uid[:40]}...: {can_change.reason}"
+                    )
+                    state = self.state_store.get(study_uid)
+                    if state:
+                        self.priority_combo.blockSignals(True)
+                        self.priority_combo.setCurrentText(state.priority.display_name)
+                        self.priority_combo.blockSignals(False)
+                    return
+
                 # Update state
                 self.state_store.update(study_uid, priority=priority)
+                self._negotiate_priority_change(study_uid, priority)
                 self._refresh_table_order()
                 
                 # Update button states after priority change
@@ -4940,17 +5025,25 @@ class DownloadManagerWidget(QWidget):
                 # R17 rejected - study already exists or completed
                 metadata = can_add.metadata or {}
 
-                if metadata.get('should_load_local'):
+                # ── RESUME PATH: incomplete download in StateStore ──
+                if metadata.get('should_resume'):
+                    logger.info(
+                        f"🔄 [VALIDATION] Incomplete download detected — resuming: {can_add.reason}"
+                    )
+                    # Fall through to STEP 3+ so the download is re-triggered.
+                    # The existing state will be reset to PENDING in STEP 4.
+
+                elif metadata.get('should_load_local'):
                     # Study is completed in database - signal caller to load from local files
                     logger.info(f"✅ [VALIDATION] {can_add.reason} - Viewer will load from local files")
+                    return False  # Don't proceed with download
                 else:
                     # Other rejection reason - suppress if already completed (expected)
                     if "already exists" not in can_add.reason.lower() or "completed" not in can_add.reason.lower():
                         logger.warning(f"⚠️ [VALIDATION] Cannot add download: {can_add.reason}")
                     else:
                         logger.debug(f"🔍 [VALIDATION] Download already complete: {study_uid[:40]}...")
-
-                return False  # Don't proceed with download
+                    return False  # Don't proceed with download
 
             # ========== STEP 3: PAUSE ALL ACTIVE DOWNLOADS ==========
             logger.info(f"⏸️ [PRIORITY-DOWNLOAD] Pausing all active downloads...")
@@ -4966,8 +5059,17 @@ class DownloadManagerWidget(QWidget):
                 self.state_store.update(
                     study_uid,
                     priority=priority_enum,
-                    status=DownloadStatus.PENDING
+                    status=DownloadStatus.PENDING,
+                    # Reset per-series state so the downloader re-evaluates all
+                    # series from scratch (files on disk are still checked via R20)
+                    completed_series=[],
+                    skipped_series=[],
+                    failed_series=[],
+                    downloaded_count=0,
+                    progress_percent=0.0,
                 )
+                # Ensure the latest task is available for the worker
+                self._tasks[study_uid] = task
                 logger.info(f"💾 [DATABASE] Updated study {study_uid[:40]}... priority to {priority}, status to PENDING")
             else:
                 # Create new download state
@@ -4992,6 +5094,12 @@ class DownloadManagerWidget(QWidget):
                 self.state_store.create(task)
                 logger.info(f"💾 [DATABASE] Created new study {study_uid[:40]}... with priority {priority}")
 
+            # ========== STEP 4b: SET VIEWED SERIES IF SPECIFIED ==========
+            # If a specific series was clicked (not just patient double-click),
+            # mark that series as viewed so it downloads first.
+            if clicked_series_number:
+                self.set_viewed_series(study_uid, str(clicked_series_number))
+
             # ========== STEP 5: REFRESH UI ==========
             logger.info(f"🔄 [UI] Refreshing UI after priority download setup...")
             self._refresh_table_order()
@@ -5014,6 +5122,173 @@ class DownloadManagerWidget(QWidget):
             import traceback
             logger.error(traceback.format_exc())
             return False
+
+    # ── Series-level priority management ────────────────────────────────
+    def set_viewed_series(self, study_uid: str, series_number: str) -> None:
+        """
+        Mark a specific series as the one being actively viewed.
+
+        Priority rules:
+        - The viewed series becomes CRITICAL (highest download priority).
+        - All other series of the same patient remain HIGH.
+        - The SeriesDownloader will reorder remaining series so the
+          viewed one downloads first (if not already complete).
+
+        Called from home_ui._handle_priority_download_from_thumbnail()
+        when the user clicks a series thumbnail in the viewer.
+
+        Args:
+            study_uid: Study Instance UID
+            series_number: The series number now being viewed
+        """
+        try:
+            state = self.state_store.get(study_uid)
+            if not state:
+                logger.warning(f"⚠️ [VIEWED-SERIES] No state for {study_uid[:40]} – ignoring")
+                return
+
+            old_viewed = state.viewed_series_number
+            if old_viewed == str(series_number):
+                logger.debug(f"[VIEWED-SERIES] Series {series_number} already marked as viewed")
+                return
+
+            # Update state: record viewed series and escalate to CRITICAL
+            updates = {'viewed_series_number': str(series_number)}
+            if state.priority != DownloadPriority.CRITICAL:
+                updates['priority'] = DownloadPriority.CRITICAL
+
+            self.state_store.update(study_uid, **updates)
+
+            logger.info(
+                f"⚡ [VIEWED-SERIES] Study {study_uid[:40]}… series {series_number} → CRITICAL "
+                f"(was viewing: {old_viewed or 'none'})"
+            )
+
+            # Refresh the UI table ordering so the CRITICAL badge shows up
+            self._refresh_table_order()
+
+        except Exception as e:
+            logger.error(f"❌ [VIEWED-SERIES] Error setting viewed series: {e}")
+
+    def clear_viewed_series(self, study_uid: str) -> None:
+        """
+        Clear the viewed-series flag (e.g. when the tab is closed or
+        the series download completes).  The study priority drops back
+        to HIGH unless no patient tab is open, in which case NORMAL.
+
+        Args:
+            study_uid: Study Instance UID
+        """
+        try:
+            state = self.state_store.get(study_uid)
+            if not state:
+                return
+
+            if state.viewed_series_number is None:
+                return  # Nothing to clear
+
+            self.state_store.update(
+                study_uid,
+                viewed_series_number=None,
+                priority=DownloadPriority.HIGH,
+            )
+            logger.info(
+                f"🔽 [VIEWED-SERIES] Cleared viewed series for {study_uid[:40]}… → HIGH"
+            )
+            self._refresh_table_order()
+
+        except Exception as e:
+            logger.error(f"❌ [VIEWED-SERIES] Error clearing viewed series: {e}")
+
+    def _pause_downloads_for_preemption(self, study_uids: List[str]) -> None:
+        """
+        Pause a targeted set of active downloads without blocking the UI thread.
+
+        Used for HIGH/NORMAL priority promotions where only lower-priority active
+        downloads should be interrupted.
+        """
+        try:
+            for paused_uid in dict.fromkeys(study_uids or []):
+                state = self.state_store.get(paused_uid)
+                if not state or state.status not in [DownloadStatus.DOWNLOADING, DownloadStatus.VALIDATING]:
+                    continue
+
+                worker = self.worker_pool.get_worker(paused_uid)
+                if worker:
+                    worker.request_cancel()
+                    logger.info(f"⏸️ [PREEMPT] Cancel requested for worker: {paused_uid[:40]}...")
+
+                self.state_store.update(
+                    paused_uid,
+                    status=DownloadStatus.PAUSED,
+                    is_auto_paused=True,
+                )
+                logger.info(
+                    f"💾 [PREEMPT] State updated to PAUSED (auto_paused=True) for {paused_uid[:40]}..."
+                )
+
+        except Exception as e:
+            logger.error(f"❌ [PREEMPT] Error pausing targeted downloads: {e}")
+
+    def _negotiate_priority_change(self, study_uid: str, new_priority: DownloadPriority) -> None:
+        """
+        Apply queue negotiation after a priority change.
+
+        A priority change must not remain cosmetic: if a viewer/user raises
+        priority and a lower-priority download is active, the scheduler should
+        non-blockingly preempt the lower-priority work and give the promoted study
+        a fair chance to run next.
+        """
+        state = self.state_store.get(study_uid)
+        if not state:
+            return
+
+        task = self._tasks.get(study_uid)
+        preemption_result = None
+        if task:
+            try:
+                task = replace(task, priority=new_priority)
+                self._tasks[study_uid] = task
+                preemption_result = self.rule_engine.evaluate_preemption(task)
+            except Exception as e:
+                logger.warning(f"⚠️ [PRIORITY] Could not evaluate preemption for {study_uid[:40]}...: {e}")
+
+        if preemption_result:
+            if preemption_result.action == PreemptionAction.PAUSE_ALL:
+                # Exclude the promoted study itself from being paused.
+                # When the promoted study is already DOWNLOADING, pausing it and
+                # immediately restarting it via _start_next_pending is wasteful
+                # (needless worker cancel + R19b re-scan).  Only yield for OTHER
+                # lower-priority active downloads.
+                others_to_pause = [
+                    uid for uid in preemption_result.affected_downloads
+                    if uid != study_uid
+                ]
+                if others_to_pause:
+                    self._pause_downloads_for_preemption(others_to_pause)
+            elif preemption_result.action == PreemptionAction.PREEMPT_LOWER and preemption_result.affected_downloads:
+                self._pause_downloads_for_preemption(preemption_result.affected_downloads)
+
+        refreshed_state = self.state_store.get(study_uid)
+        if refreshed_state and refreshed_state.status == DownloadStatus.PAUSED and refreshed_state.is_auto_paused:
+            self.state_store.update(
+                study_uid,
+                status=DownloadStatus.PENDING,
+                is_auto_paused=False,
+                error_message=None,
+            )
+
+        should_schedule = False
+        refreshed_state = self.state_store.get(study_uid)
+        if refreshed_state and refreshed_state.status == DownloadStatus.PENDING:
+            should_schedule = True
+
+        if preemption_result and preemption_result.affected_downloads:
+            should_schedule = True
+
+        if should_schedule:
+            logger.info(f"🚦 [PRIORITY] Scheduling queue re-evaluation after priority change for {study_uid[:40]}...")
+            QTimer.singleShot(150, self._start_next_pending)
     
     def _pause_all_active_downloads(self) -> None:
         """
@@ -5058,10 +5333,13 @@ class DownloadManagerWidget(QWidget):
                 )
                 logger.info(f"💾 [DATABASE] State updated to PAUSED (auto_paused=True) for {state.study_uid[:40]}...")
 
-            # Also stop all workers via worker pool for immediate effect
-            logger.info("🛑 [PAUSE-ALL] Stopping worker pool...")
-            self.worker_pool.stop_all()
-            logger.info("✅ [PAUSE-ALL] Worker pool stopped")
+            # Also signal all workers to cancel (non-blocking — workers clean
+            # themselves up via their ``finished`` signal).  Do NOT call
+            # stop_all() here — it blocks the main thread for up to 5s per
+            # worker, which freezes the UI.
+            logger.info("🛑 [PAUSE-ALL] Requesting non-blocking cancel on worker pool...")
+            self.worker_pool.cancel_all_non_blocking()
+            logger.info("✅ [PAUSE-ALL] Cancel requested (workers will stop asynchronously)")
 
         except Exception as e:
             logger.error(f"❌ [PAUSE-ALL] Error pausing downloads: {e}")

@@ -702,6 +702,9 @@ class ViewerController:
 
         Triggers progressive display: first batch opens the viewer, subsequent
         batches grow the volume in-place so the user sees progress live.
+
+        Throttled to max once per 250ms per series to avoid CPU spikes when
+        progress signals fire rapidly (one per downloaded file).
         """
         sn = str(series_number)
         if total <= 0 or downloaded <= 0:
@@ -709,9 +712,17 @@ class ViewerController:
 
         # Track this series for progressive updates
         if sn not in self._progressive_series:
-            self._progressive_series[sn] = {"total": total, "last_grow_count": 0}
+            self._progressive_series[sn] = {"total": total, "last_grow_count": 0, "last_signal_ms": 0}
         info = self._progressive_series[sn]
         info["total"] = max(info["total"], total)
+
+        # ── Throttle: skip if called less than 250ms ago for this series
+        #    (always process 'download complete' signals though) ──────────
+        import time as _time
+        now_ms_val = _time.monotonic() * 1000
+        if downloaded < total and (now_ms_val - info.get("last_signal_ms", 0)) < 250:
+            return
+        info["last_signal_ms"] = now_ms_val
 
         # Check if a viewer is already displaying this series in progressive mode
         viewers_showing = self._find_progressive_viewers(sn)
@@ -769,9 +780,17 @@ class ViewerController:
                     )
                     return  # Will grow on next progress signal
 
-        # No viewer showing this series yet — start first progressive display
-        if not self._first_series_displayed and downloaded >= self._progressive_grow_batch_size:
-            self._start_progressive_display(sn, downloaded, total)
+        # No viewer showing this series yet — start first progressive display.
+        # Guard: only trigger once per series to avoid spawning dozens of
+        # concurrent load tasks that spike CPU.
+        if downloaded >= self._progressive_grow_batch_size:
+            inflight = getattr(self, '_progressive_display_inflight', None)
+            if inflight is None:
+                self._progressive_display_inflight = set()
+                inflight = self._progressive_display_inflight
+            if sn not in inflight:
+                inflight.add(sn)
+                self._start_progressive_display(sn, downloaded, total)
 
     def _find_progressive_viewers(self, series_number: str):
         """Find all VTK widgets currently in progressive mode for a series."""
@@ -804,6 +823,11 @@ class ViewerController:
                 )
             except Exception as e:
                 self.logger.warning("progressive: first display failed: %s", e)
+            finally:
+                # Clear inflight guard so the series can be retried if needed
+                inflight = getattr(self, '_progressive_display_inflight', None)
+                if inflight is not None:
+                    inflight.discard(series_number)
 
         try:
             loop = asyncio.get_running_loop()
@@ -5983,6 +6007,9 @@ class ViewerController:
             if _pipeline_state not in (PipelineState.POST_DOWNLOAD, PipelineState.READY):
                 self.pipeline.on_series_download_completed(series_number_str)
                 self._mark_download_active()
+
+            # Exit progressive mode for this series (fully downloaded now)
+            self.on_series_download_fully_complete(series_number_str)
 
             # Exit progressive mode for this series (fully downloaded now)
             self.on_series_download_fully_complete(series_number_str)

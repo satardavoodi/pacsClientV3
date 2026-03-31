@@ -65,7 +65,7 @@
 | `launch_slicer.py` | Builds command, sets env vars, calls subprocess |
 | `startup_script.py` | Runs inside Slicer: loads DICOM, sets layout, brands UI |
 | CTK Launcher (.exe) | Sets DLL/Python paths from .ini, spawns real Slicer exe |
-| `assemble_slicer_runtime.py` | Build tool: creates portable runtime from SuperBuild |
+| `tools/slicer/assemble_slicer_runtime.py` | Build tool: creates portable runtime from SuperBuild |
 
 **Communication:**
 - PACS → Slicer: environment variables (`NEWMPR2_DICOM_DIR`, `NEWMPR2_SERIES_UID`, etc.)
@@ -217,7 +217,7 @@ The assembly script copies only runtime files from the SuperBuild tree into a po
 
 ```powershell
 cd "c:\AI-Pacs codes\aipacs-pydicom2d"
-python tools/assemble_slicer_runtime.py
+python tools/slicer/assemble_slicer_runtime.py
 ```
 
 This will:
@@ -254,7 +254,7 @@ Compress-Archive -Path "$build\*" -DestinationPath "slicer_runtime_v0.1.0.zip" -
 
 1. Create a GitHub Release tagged `slicer-runtime-v0.1.0`
 2. Attach `slicer_runtime_v0.1.0.zip` as a release asset
-3. On fresh machines, run the provided `tools/download_slicer_runtime.py` script
+3. On fresh machines, run the provided `tools/slicer/download_slicer_runtime.py` script
 
 ### Verification After Deploy
 
@@ -323,7 +323,7 @@ The main app tries this FIRST before spawning a new process.
 In the SuperBuild, `intDir="Release"` → finds DLLs in `qt-loadable-modules/Release/`.
 In the assembled build, `intDir=""` → looks in `qt-loadable-modules/` → finds nothing.
 
-**Fix:** `assemble_slicer_runtime.py` now runs `_flatten_release_subdirs()` which copies
+**Fix:** `tools/slicer/assemble_slicer_runtime.py` now runs `_flatten_release_subdirs()` which copies
 all files from `{subdir}/Release/` up to `{subdir}/`. Both paths now work.
 
 **Affected dirs:** `qt-loadable-modules/`, `cli-modules/`, `ITKFactories/`
@@ -356,7 +356,7 @@ which causes `SyntaxError: invalid non-printable character U+FEFF` in Slicer's P
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
-| "Slicer opens but shows no image" | C++ modules not loaded (intDir issue) | Run `tools/assemble_slicer_runtime.py` or manually copy DLLs from Release/ to parent |
+| "Slicer opens but shows no image" | C++ modules not loaded (intDir issue) | Run `tools/slicer/assemble_slicer_runtime.py` or manually copy DLLs from Release/ to parent |
 | "Specified python script doesn't exist" | Space in path | Check that `launch_slicer.py` copies to temp path; or move project to space-free path |
 | Only 20 modules load (should be 49) | DLLs only in Release/ subdirs | Run `_flatten_release_subdirs()` on the lib directory |
 | `slicer.util.loadVolume()` fails | Volumes module not loaded | Same as intDir issue above |

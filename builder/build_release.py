@@ -196,7 +196,7 @@ def stage_advanced_mpr_payload() -> dict[str, object]:
     else:
         payload_info["reason"] = (
             "Advanced MPR runtime was not found. "
-            "Run tools/assemble_slicer_runtime.py before building the installer payload."
+            "Run tools/slicer/assemble_slicer_runtime.py before building the installer payload."
         )
 
     return payload_info
@@ -252,6 +252,14 @@ def _write_package_archive(source_dir: Path, archive_path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest().upper()
 
 
 def _project_relative_path(path: str | Path) -> str:
@@ -500,6 +508,105 @@ def normalize_installer_artifacts(compiled_installer: Path, version: str) -> dic
     }
 
 
+def write_installer_release_metadata(installer_artifacts: dict[str, str], version: str) -> None:
+    primary = Path(installer_artifacts["primary"])
+    versioned = Path(installer_artifacts["versioned"])
+    primary_sha = _sha256_file(primary)
+    versioned_sha = _sha256_file(versioned)
+
+    install_notes_en = "\n".join(
+        [
+            "AIPacs Installation Notes (English)",
+            "==================================",
+            "",
+            "Files to share with installation staff:",
+            f"1) {primary.name}",
+            f"2) {versioned.name} (version-labeled copy, same build)",
+            "3) SHA256.txt (checksum verification)",
+            "",
+            "Recommended install steps:",
+            '- Right-click installer and choose "Run as administrator".',
+            "- Choose setup type:",
+            "  - Core: core platform only",
+            "  - Custom: core + selected optional modules",
+            "- Complete the wizard and launch AIPacs.",
+            "",
+            "Post-install quick check:",
+            "- App opens successfully.",
+            "- Optional modules selected during setup are available.",
+            "- Graphics mode works (GPU when available, software fallback otherwise).",
+            "",
+            "Note:",
+            "You only need one installer EXE for end users. Keep the versioned EXE for release tracking.",
+            "",
+        ]
+    )
+    install_notes_fa = "\n".join(
+        [
+            "راهنمای نصب AIPacs (فارسی)",
+            "===========================",
+            "",
+            "فایل هایی که باید به تیم نصب تحویل داده شود:",
+            f"1) {primary.name}",
+            f"2) {versioned.name} (نسخه دارای شماره ورژن، همان بیلد)",
+            "3) SHA256_FA.txt (برای بررسی صحت فایل)",
+            "",
+            "مراحل پیشنهادی نصب:",
+            '- روی فایل نصب راست کلیک کنید و گزینه "Run as administrator" را بزنید.',
+            "- نوع نصب را انتخاب کنید:",
+            "  - Core: فقط هسته اصلی نرم افزار",
+            "  - Custom: هسته + ماژول های اختیاری انتخاب شده",
+            "- مراحل Wizard را کامل کنید و AIPacs را اجرا کنید.",
+            "",
+            "بررسی سریع بعد از نصب:",
+            "- نرم افزار بدون خطا اجرا شود.",
+            "- ماژول های اختیاری انتخاب شده در دسترس باشند.",
+            "- حالت گرافیکی درست کار کند (GPU در صورت وجود، وگرنه Software OpenGL).",
+            "",
+            "نکته:",
+            "برای کاربر نهایی فقط یک فایل EXE کافی است. فایل نسخه دار را برای آرشیو و رهگیری انتشار نگه دارید.",
+            "",
+        ]
+    )
+    sha256_en = "\n".join(
+        [
+            "AIPacs Installer SHA256 Checksums (English)",
+            "==========================================",
+            "",
+            primary.name,
+            f"SHA256: {primary_sha}",
+            "",
+            versioned.name,
+            f"SHA256: {versioned_sha}",
+            "",
+            f"Version: {version}",
+            "Status: Both files should be identical builds.",
+            "",
+        ]
+    )
+    sha256_fa = "\n".join(
+        [
+            "هش های SHA256 نصب کننده AIPacs (فارسی)",
+            "======================================",
+            "",
+            primary.name,
+            f"SHA256: {primary_sha}",
+            "",
+            versioned.name,
+            f"SHA256: {versioned_sha}",
+            "",
+            f"Version: {version}",
+            "وضعیت: هر دو فایل باید بیلد یکسان باشند.",
+            "",
+        ]
+    )
+
+    (INSTALLER_OUTPUT_DIR / "INSTALL_NOTES.txt").write_text(install_notes_en, encoding="utf-8")
+    (INSTALLER_OUTPUT_DIR / "INSTALL_NOTES_FA.txt").write_text(install_notes_fa, encoding="utf-8")
+    (INSTALLER_OUTPUT_DIR / "SHA256.txt").write_text(sha256_en, encoding="utf-8")
+    (INSTALLER_OUTPUT_DIR / "SHA256_FA.txt").write_text(sha256_fa, encoding="utf-8")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and stage the AIPacs Windows release bundle.")
     parser.add_argument("--skip-pyinstaller", action="store_true", help="Reuse the existing builder/output/dist/AIPacs bundle.")
@@ -536,6 +643,7 @@ def main() -> int:
         compiled_installer = compile_installer(version)
         if compiled_installer is not None:
             installer_artifacts = normalize_installer_artifacts(compiled_installer, version)
+            write_installer_release_metadata(installer_artifacts, version)
 
     print_step("Release staging complete")
     print(f"Core bundle: {core_dir}")

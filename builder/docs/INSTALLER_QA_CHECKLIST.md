@@ -6,6 +6,7 @@ Use this checklist for every Windows installer release to validate functionality
 
 - Installer artifact: `builder/output/installer/ai-pacs installer.exe`
 - Versioned artifact: `builder/output/installer/ai-pacs installer v<version>.exe`
+- Release metadata: `builder/output/installer/INSTALL_NOTES.txt`, `builder/output/installer/SHA256.txt`
 - Installation modes: **Core** and **Custom**
 - Graphics path: **GPU-preferred** and **CPU-safe/software OpenGL fallback**
 
@@ -13,7 +14,8 @@ Use this checklist for every Windows installer release to validate functionality
 
 1. Confirm build completed without errors.
 2. Confirm both installer files exist and are non-zero size.
-3. Record:
+3. Confirm `INSTALL_NOTES.txt` and `SHA256.txt` were regenerated for the same version.
+4. Record:
    - app version
    - commit hash
    - installer file sizes

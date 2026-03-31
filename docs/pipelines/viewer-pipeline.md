@@ -139,7 +139,7 @@ Backend selection: `resolve_viewer_backend(metadata, settings)` — single autho
 |------|----------------|
 | `PacsClient/pacs/patient_tab/utils/image_io.py` | Series loading, file I/O |
 | `PacsClient/pacs/patient_tab/utils/image_filters.py` | ITK filter pipeline |
-| `tools/_base_vtk.py` | VTK widget base, scroll handling, GC management |
+| `tools/vtk/_base_vtk.py` | VTK widget base, scroll handling, GC management |
 | `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget.py` | Viewer container, series management |
 | `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` | Per-viewer logic |
 

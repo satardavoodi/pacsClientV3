@@ -15,6 +15,21 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2.0  # seconds (base delay for exponential backoff)
 MAX_CONSECUTIVE_FAILURES = 5
 
+# Reconnection Configuration (exponential backoff)
+RECONNECT_MAX_RETRIES = 5          # max reconnect attempts before giving up
+RECONNECT_BASE_DELAY = 1.0        # seconds, first retry delay
+RECONNECT_MAX_DELAY = 30.0        # seconds, cap on backoff delay
+RECONNECT_BACKOFF_FACTOR = 2.0    # exponential multiplier
+RECONNECT_JITTER_MAX = 1.0        # max random jitter added to delay (seconds)
+
+# Series-level retry (retry failed series within a study download)
+MAX_SERIES_RETRIES = 3             # max retry attempts per failed series
+SERIES_RETRY_BASE_DELAY = 3.0     # seconds, base delay between series retries
+
+# Request-level retry (for individual send_request calls)
+REQUEST_MAX_RETRIES = 3            # max retries for a single request
+REQUEST_RETRY_BASE_DELAY = 1.0    # seconds, base delay for request retry
+
 # Concurrency Configuration
 MAX_CONCURRENT_STUDIES = 1  # Only 1 study at a time (R11)
 MAX_PARALLEL_SERIES_CRITICAL = 1  # Critical priority: sequential

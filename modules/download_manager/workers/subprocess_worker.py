@@ -171,6 +171,16 @@ class SubprocessDownloadWorker(QThread):
             f"grpc={grpc_host}:{grpc_port}"
         )
 
+        # ── Read viewed-series hint from main-process state_store ──────────
+        viewed_series_number = None
+        try:
+            if self._executor_ref and hasattr(self._executor_ref, 'state_store'):
+                _st = self._executor_ref.state_store.get(self.task.study_uid)
+                if _st:
+                    viewed_series_number = getattr(_st, 'viewed_series_number', None)
+        except Exception:
+            pass
+
         # ── Spawn the download subprocess ────────────────────────────────────
         mp_ctx = multiprocessing.get_context("spawn")
         self._process = mp_ctx.Process(
@@ -186,6 +196,7 @@ class SubprocessDownloadWorker(QThread):
                 self._progress_queue,
                 self._cancel_event,
                 log_level,
+                viewed_series_number,
             ),
             name=f"DLProc-{self.task.study_uid[:12]}",
             daemon=True,   # auto-killed if main process exits

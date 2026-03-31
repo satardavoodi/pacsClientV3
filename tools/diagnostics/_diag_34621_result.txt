@@ -1,0 +1,124 @@
+DB: c:\AI-Pacs codes\aipacs-pydicom2d\user_data\database\dicom.db
+DB exists: True
+
+=== STEP 1: Find patient_id 34621 ===
+Found 1 patients
+  {'patient_pk': 44, 'patient_id': '34621', 'patient_name': 'ASGARI^NARGES', 'birth_date': '19820307', 'sex': 'F', 'age': '044Y', 'patient_weight': '70'}
+
+=== STEP 2: Studies for patient ===
+Found 1 studies
+  study_pk=13, uid=1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007, desc=LOWER EXTERIMITY^ANKEL_LT_K
+
+=== STEP 3: Series per study ===
+
+  Study pk=13, uid=1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007: 16 series
+    series_pk=88, num=1, desc=localizer_tra, mod=MR, img_count_db=5
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\1
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=89, num=2, desc=localizer_sag+cor+tra, mod=MR, img_count_db=11
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\2
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=90, num=3, desc=pd_tse_fs_tra_p2_256, mod=MR, img_count_db=25
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\3
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=91, num=4, desc=t1_tirm_sag_p2_320, mod=MR, img_count_db=20
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\4
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=92, num=5, desc=t1_tse_cor_448, mod=MR, img_count_db=30
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\5
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=93, num=6, desc=pd_tse_fs_cor_p2_320, mod=MR, img_count_db=28
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\6
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=94, num=7, desc=pd_tse_fs_sag_p2_256, mod=MR, img_count_db=18
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\7
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=95, num=8, desc=t1_tse_SAG_448, mod=MR, img_count_db=19
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\8
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=96, num=9, desc=I_haste_localizer, mod=MR, img_count_db=15
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\9
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=97, num=10, desc=I_haste_localizer, mod=MR, img_count_db=11
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\10
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=98, num=11, desc=t2_tse_tra_320_p2, mod=MR, img_count_db=40
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\11
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=99, num=12, desc=I_t2_tse_sag_FS, mod=MR, img_count_db=24
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\12
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=100, num=13, desc=I_t1_tirm_cor_320_p2, mod=MR, img_count_db=22
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\13
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=101, num=14, desc=t2_tse_tra_FS_320_p2, mod=MR, img_count_db=40
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\14
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=102, num=15, desc=t1_tse_tra_320_p2, mod=MR, img_count_db=30
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\15
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+    series_pk=103, num=16, desc=t1_tirm_tra, mod=MR, img_count_db=30
+      series_path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\16
+      series_path_exists=False, dcm_files_on_disk=0
+      thumbnail_path=None
+      thumbnail_exists=False
+
+=== STEP 4: Printing module SQL query test ===
+
+  Printing query for uid=1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007: 16 rows
+    spk=88, num=1, desc=localizer_tra, imgs=5, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\1
+    spk=89, num=2, desc=localizer_sag+cor+tra, imgs=11, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\2
+    spk=90, num=3, desc=pd_tse_fs_tra_p2_256, imgs=25, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\3
+    spk=91, num=4, desc=t1_tirm_sag_p2_320, imgs=20, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\4
+    spk=92, num=5, desc=t1_tse_cor_448, imgs=30, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\5
+    spk=93, num=6, desc=pd_tse_fs_cor_p2_320, imgs=28, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\6
+    spk=94, num=7, desc=pd_tse_fs_sag_p2_256, imgs=18, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\7
+    spk=95, num=8, desc=t1_tse_SAG_448, imgs=19, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\8
+    spk=96, num=9, desc=I_haste_localizer, imgs=15, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\9
+    spk=97, num=10, desc=I_haste_localizer, imgs=11, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\10
+    spk=98, num=11, desc=t2_tse_tra_320_p2, imgs=40, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\11
+    spk=99, num=12, desc=I_t2_tse_sag_FS, imgs=24, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\12
+    spk=100, num=13, desc=I_t1_tirm_cor_320_p2, imgs=22, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\13
+    spk=101, num=14, desc=t2_tse_tra_FS_320_p2, imgs=40, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\14
+    spk=102, num=15, desc=t1_tse_tra_320_p2, imgs=30, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\15
+    spk=103, num=16, desc=t1_tirm_tra, imgs=30, path=C:\AI-Pacs codes\aipacs-pydicom2d\source\1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007\16
+
+=== STEP 5: Check SOURCE_PATH ===
+SOURCE_PATH = C:\AI-Pacs codes\aipacs-pydicom2d\user_data\patients\dicom
+SOURCE_PATH exists = True
+Subdirs (first 10): ['1.2.840.1.99.1.47.1.1772867018192.85202', '1.2.840.1.99.1.47.1.1772880248242.85203', '1.2.840.1.99.1.47.1.1772883558396.85209', '1.2.840.113619.2.252.6945.1176926.7069.1752832737.149', '1.2.840.113696.528901.500.901036.20260209135731', '1.2.840.114202.4.2765222543.3535326359.2551488649.2674968283', '1.3.12.2.1107.5.2.40.150180.30000026012607194351400000910', '1.3.12.2.1107.5.2.46.174759.30000026030306154280300000010', '1.3.12.2.1107.5.2.46.174759.30000026030705563063400000004', '1.3.12.2.1107.5.2.46.174759.30000026030705563063400000007']
+
+=== STEP 6: Check thumbnail paths ===
+BASE_PATH = C:\AI-Pacs codes\aipacs-pydicom2d
+Thumbnails dir = C:\AI-Pacs codes\aipacs-pydicom2d\thumbnails
+Thumbnails dir exists = False

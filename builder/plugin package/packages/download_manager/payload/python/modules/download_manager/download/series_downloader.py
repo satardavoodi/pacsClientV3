@@ -243,6 +243,7 @@ class SeriesDownloader:
                 series_output_dir,
                 series_info.image_count
             )
+            logger.info(f"    📋 R20 check: is_complete={is_complete}, existing={existing_count}, expected={series_info.image_count}, dir={series_output_dir}")
             
             if is_complete:
                 # Series complete - skip download but ensure instances in database

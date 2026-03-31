@@ -1,8 +1,197 @@
 # AIPacs Release Notes (Consolidated)
 
 **Current Stable Version:** v2.2.7
-**Release Date:** 2026-03-21
+**Release Date:** 2026-03-31
 **Branch:** main  
+
+---
+
+## v2.2.7 Stable Snapshot Refresh (2026-03-31)
+
+### Summary
+
+Reaffirms **v2.2.7** as the stable published line for this workspace and refreshes the build, installer, backup, and documentation surfaces around that release number.
+
+### Highlights
+
+- Regenerated release-facing build metadata under `builder/output/` for the active `2.2.7` version
+- Added automatic installer notes and SHA256 generation in `builder/build_release.py`
+- Updated release documentation and helper scripts so the stable packaging flow matches the actual installer artifact names
+- Prepared the workspace for a fresh local backup snapshot and GitHub publication on `main`
+
+### Notes
+
+- Entries `v2.2.7.1` through `v2.2.7.4` remain valuable stabilization notes inside the `2.2.7` development line.
+- The published stable release number for this snapshot remains **`v2.2.7`**.
+
+---
+
+## v2.2.7.4 — Non-Blocking Retry & Freeze Elimination (2026-03-28)
+
+### Summary
+
+Eliminates all UI freeze paths in the download manager retry/refresh flow. All blocking I/O (file deletion, gRPC metadata fetch, worker stop) is now offloaded to background threads, keeping the Qt event loop responsive at all times.
+
+### Problem
+
+Pressing the series refresh button (🔄) or download manager retry button caused the entire application to freeze for 2–90+ seconds, blocking all other modules (viewer, thumbnails, etc.). Three specific bottlenecks were identified:
+
+- **F1 — `worker_pool.stop_all()`**: Called `worker.wait(5000)` per active worker on the main thread (5–15s freeze)
+- **F2 — `shutil.rmtree()`**: File deletion in retry methods on the main thread (2–30s freeze)
+- **F3 — `_reconstruct_task_from_database()`**: Synchronous gRPC call with 30s timeout × 3 retries (90s+ potential freeze)
+
+### Fixes
+
+**Non-blocking worker preemption (F1):**
+- Added `cancel_all_non_blocking()` to `WorkerPool` — sets cancel flags without waiting
+- `_pause_all_active_downloads()` now uses `cancel_all_non_blocking()` instead of `stop_all()`
+- Workers clean up asynchronously via their existing `finished` → `_remove_worker` signal chain
+
+**Non-blocking `_on_series_retry()` (F2 + F3):**
+- Fast path on main thread: state checks, series list reorder, priority promotion, state reset to PENDING
+- Slow path in `threading.Thread("series-retry-io")`: file I/O + gRPC task reconstruction
+- Marshals back to main thread via `QTimer.singleShot(0, callback)` for worker start + UI refresh
+
+**Non-blocking `_on_per_patient_retry()` (F2 + F3):**
+- Same pattern: fast state reset on main thread, background thread for file cleanup + gRPC, marshal back for worker start
+
+### Architecture Principle
+
+Each module in a DICOM Workstation must operate as an independent loop. Download manager operations must never block the Qt event loop, ensuring the viewer, thumbnails, and other modules remain responsive regardless of download state.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `modules/download_manager/workers/worker_pool.py` | Added `cancel_all_non_blocking()` method |
+| `modules/download_manager/ui/main_widget.py` | `_on_series_retry`, `_on_per_patient_retry`, `_pause_all_active_downloads` made non-blocking |
+
+### Documentation
+
+- Created `docs/architecture/FREEZE_BOTTLENECK_ANALYSIS.md` — comprehensive analysis of all freeze paths
+
+---
+
+## v2.2.7.3 — R19b Verified Batch-Skip & Skip Count Fix (2026-03-27)
+
+### Summary
+
+Hardens R19b batch-skip to verify actual sequential file existence instead of trusting a simple file count. Fixes `skipped_count` double-counting that inflated progress and result values.
+
+### Highlights
+
+**R19b Verified Batch-Skip:**
+- Previously, R19b computed `batch_start = (file_count // batch_size) * batch_size`, assuming the first N files filled leading batches sequentially
+- If files were non-sequential (e.g., gaps in batch 1 with files from batch 2 present), R19b would skip batches containing missing instances
+- Now R19b iterates leading batches and checks that every `Instance_{i:04d}.dcm` file exists before skipping. If any file is missing in a batch, the skip stops there
+- Falls back to file-level skip (R19) for any batch that isn’t fully verified
+
+**skipped_count Double-Counting Fix:**
+- `skipped_count` was initialized from `_scan_existing_files()` (e.g., 22 files → skipped=22)
+- During batch processing, per-instance `file_path.exists()` incremented `skipped_count` again for files already counted in the initial scan
+- This caused `downloaded + skipped > expected`, inflating progress and `SeriesDownloadResult.skipped`
+- Now uses an `existing_files_set` to track initial files; per-instance skip only increments for NEW files (created between scan and batch processing)
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `modules/download_manager/network/socket_client.py` | R19b verified batch-skip + skipped_count fix |
+| `modules/download_manager/ui/main_widget.py` | Per-patient retry now deletes "complete" series files before re-download |
+| `modules/download_manager/download/series_downloader.py` | R20 diagnostic logging (existing/expected/is_complete) |
+
+### Bug Fixed: Series 202 Missing Last 10 Images on Redownload
+
+**Symptom:** When retrying a partially-downloaded series (e.g., 22/32 images), the last 10 images were not downloaded correctly. Logs showed ZERO download activity — R20 skipped the series entirely.
+
+**Root Cause (1 — primary):** `_on_per_patient_retry()` reset download state (PENDING, cleared completed_series etc.) but **never deleted files from disk**. R20 `check_series_complete()` counts `.dcm` files and, finding `existing >= expected`, skipped the series. The download worker never called `download_series()` at all.
+
+**Root Cause (2):** R19b batch-skip used raw file count to skip leading batches. If existing files didn't fill exact sequential batch ranges, some batches with missing files were incorrectly skipped.
+
+**Root Cause (3):** `skipped_count` was double-counted — initial scan + per-instance skip for pre-existing files — causing inflated progress reports.
+
+**Fix:** `_on_per_patient_retry()` now iterates all series in the study before starting the download worker. For each series: if `existing_count < expected_count`, files are kept for incremental resume; if `existing_count >= expected_count` (or unknown), `shutil.rmtree()` deletes the directory to force a clean re-download. R19b also verifies sequential file existence per batch, and `skipped_count` uses a set to prevent double-counting.
+
+---
+
+## v2.2.7.2 — Resume Batch-Skip & Retry Button Fix (2026-03-27)
+
+### Summary
+
+Optimizes partial series resume to skip already-downloaded batches instead of re-transferring them, and fixes the retry button to preserve existing files for incremental resume.
+
+### Highlights
+
+**R19b — Batch-Skip on Resume:**
+- `download_series()` in `socket_client.py` now advances `batch_start` past leading complete batches when existing files are found on disk
+- With 10 existing files and batch_size=10, batch 0 is skipped entirely — previously wasted ~87 seconds re-transferring data that was discarded on arrival
+- Individual files within the first re-downloaded batch are still checked via R19 file-level skip
+
+**Retry Button Incremental Resume:**
+- `_on_series_retry()` in `main_widget.py` no longer calls `shutil.rmtree()` on incomplete series
+- Keeps existing `.dcm` files on disk so the downloader resumes from where it left off
+- Only deletes files when the series is already fully complete (to handle corruption/force re-download)
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `modules/download_manager/network/socket_client.py` | R19b: skip leading complete batches on resume |
+| `modules/download_manager/ui/main_widget.py` | Retry button: keep partial files for incremental resume |
+
+### Bug Fixed: Series 201 Resume Wasting ~87 Seconds
+
+**Symptom:** When resuming an incomplete series (10/32 images), the downloader started from batch 0 and re-downloaded all 10 existing images from the server (~87 seconds) only to skip every file on the `file_path.exists()` check.
+
+**Root Cause:** `batch_start` was always initialized to 0 regardless of how many files already existed on disk.
+
+**Fix:** R19b calculates `batch_start = (existing_count // batch_size) * batch_size`, skipping leading complete batches entirely.
+
+---
+
+## v2.2.7.1 — Download Resilience & Incomplete Resume (2026-03-26)
+
+### Summary
+
+This release adds robust retry/reconnection logic to the download manager, fixes incomplete download resume (previously blocked by validation rules), and resolves a progressive viewer CPU spike triggered by rapid download progress signals.
+
+### Highlights
+
+**Retry & Reconnection (3 layers):**
+- Added 10 configurable retry constants to `constants.py`
+- `connect_with_retry()` now uses exponential backoff with jitter, capped at 30s
+- `send_request()` refactored into retry wrapper (3 attempts, backoff + reconnect); Login is fail-fast (no retry)
+- Per-series retry loop in `series_downloader.py`: after main download loop, retries all failed series up to 3 rounds with backoff (3s→6s→12s) and socket reconnect between rounds
+
+**Incomplete Download Resume (R17 validation fix):**
+- R17a (StateStore check): Was unconditionally blocking ANY existing download → Now allows resume for non-terminal states (PENDING, DOWNLOADING, PAUSED, FAILED); only COMPLETED/CANCELLED are truly blocked
+- R17b (DB check): Was blindly trusting DB "Completed" status → Now verifies actual `.dcm` file counts on disk per series directory; allows re-download if files are incomplete
+- `start_priority_download_immediately()`: Added `should_resume` branch that falls through to STEP 3+ instead of returning False; resets progress counters for a fresh attempt
+
+**Progressive Viewer & COL NameError:**
+- `on_series_images_progress`: Added 250ms per-series throttle + `_progressive_display_inflight` dedup guard to prevent CPU spike
+- `_start_progressive_display`: Added `finally` block to always clear inflight guard
+- Fixed `COL` NameError in `home_ui.py` import that caused cascading failures in `_on_study_download_failed`
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `modules/download_manager/core/constants.py` | 10 new retry/reconnection constants |
+| `modules/download_manager/network/socket_client.py` | `connect_with_retry` backoff, `send_request` retry wrapper, batch reconnect |
+| `modules/download_manager/download/series_downloader.py` | Per-series retry loop (3 rounds, exponential backoff), `connect_with_retry` |
+| `modules/download_manager/rules/validation_rules.py` | R17a: resume for non-terminal states; R17b: filesystem `.dcm` count verification |
+| `modules/download_manager/ui/main_widget.py` | `should_resume` path, state reset on resume |
+| `PacsClient/pacs/workstation_ui/home_ui/home_ui.py` | `COL` import fix |
+| `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` | 250ms throttle, inflight dedup guard, finally cleanup |
+
+### Bug Fixed: Patient 35281 Series 201 — 35 images, only 10 downloaded
+
+**Symptom:** When reopening a patient whose download was incomplete, the system logged `"Cannot add download: Download already exists (Status: Pendding)"` and blocked all resume attempts. The viewer loaded only 10 of 35 images.
+
+**Root Cause:** R17a validation rule unconditionally returned `is_valid=False` for any existing download in StateStore, regardless of whether the download had actually finished. This meant PENDING/FAILED downloads could never be retried through the normal patient-open flow.
+
+**Fix:** R17a now distinguishes terminal vs non-terminal states. Non-terminal states return `should_resume=True`, which tells `start_priority_download_immediately()` to re-enter the download pipeline at STEP 3 (metadata fetch) with reset progress counters.
 
 ---
 

@@ -1,6 +1,6 @@
 # AIPacs
 
-Stable release: `v2.2.7` (`2026-03-21`)
+Stable release: `v2.2.7` (`2026-03-31`)
 
 Modular DICOM workstation for viewing, download orchestration, printing, education, and AI-assisted workflows.
 
@@ -82,4 +82,4 @@ python -m venv .venv_build
 .\.venv_build\Scripts\python build.py
 ```
 
-Primary build outputs land under `builder/output/`, including staged bundles and the installer when Inno Setup is available.
+Primary build outputs land under `builder/output/`, including staged bundles and the installer when Inno Setup is available. Successful installer builds also emit `INSTALL_NOTES*.txt` and `SHA256*.txt` under `builder/output/installer/`.

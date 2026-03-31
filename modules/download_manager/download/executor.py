@@ -69,6 +69,11 @@ class DownloadExecutor:
         self.database = database_manager
         self.base_output_dir = Path(base_output_dir)
         
+        # Series-level priority: when set, the viewed series downloads first.
+        # Populated by the main-process worker or subprocess entry before
+        # execute_download is called.
+        self.viewed_series_number: Optional[str] = None
+        
         logger.info("✅ DownloadExecutor initialized")
 
     def _is_study_complete_on_disk(self, study_uid: str, metadata) -> bool:
@@ -140,6 +145,12 @@ class DownloadExecutor:
                 # State already exists (created by UI) - skip validation
                 logger.info(f"✅ Using existing state for {study_uid[:40]}... (created by UI)")
                 logger.info(f"   Current status: {state.status.value}")
+            
+            # Propagate viewed_series_number so SeriesDownloader can
+            # prioritise the series the user is actively viewing.
+            if self.viewed_series_number:
+                self.state.update(study_uid, viewed_series_number=self.viewed_series_number)
+                logger.info(f"   ⚡ Viewed series {self.viewed_series_number} set on state")
             
             # Update to VALIDATING status
             self.state.update(study_uid, status=DownloadStatus.VALIDATING)

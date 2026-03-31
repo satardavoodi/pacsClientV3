@@ -6,9 +6,9 @@ the correct location within the project tree. It's the recommended
 way to set up the Advanced 3D Slicer module on a fresh machine.
 
 Usage:
-    python tools/download_slicer_runtime.py
-    python tools/download_slicer_runtime.py --tag slicer-runtime-v0.1.0
-    python tools/download_slicer_runtime.py --url "https://example.com/slicer_runtime.zip"
+    python tools/slicer/download_slicer_runtime.py
+    python tools/slicer/download_slicer_runtime.py --tag slicer-runtime-v0.1.0
+    python tools/slicer/download_slicer_runtime.py --url "https://example.com/slicer_runtime.zip"
 """
 import argparse
 import hashlib
@@ -25,7 +25,7 @@ DEFAULT_TAG = "slicer-runtime-v0.1.0"
 ASSET_NAME = "slicer_runtime_v0.1.0.zip"
 
 TARGET_DIR = (
-    Path(__file__).resolve().parent.parent
+    Path(__file__).resolve().parents[2]
     / "modules" / "mpr" / "advanced_3d_slicer"
     / "slicer_custom_app" / "NewMPR2Slicer" / "build"
 )
@@ -145,7 +145,7 @@ def main():
         print(f"\nSUCCESS: Runtime extracted to {target}")
         print(f"Launcher: {exe}")
         print("\nNext steps:")
-        print("  1. Run: python tools/verify_slicer_build.py")
+        print("  1. Run: python tools/slicer/verify_slicer_build.py")
         print("  2. Run the PACS app and test the Advanced MPR button")
     else:
         print(f"\nWARNING: AIPacsAdvancedViewer.exe not found at expected location.")

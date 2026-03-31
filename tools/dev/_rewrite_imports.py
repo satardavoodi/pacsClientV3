@@ -6,7 +6,7 @@ old locations to new modules/ locations.  Handles both ``from X import``
 and ``import X`` forms.
 
 Run from project root:
-    python tools/_rewrite_imports.py
+    python tools/dev/_rewrite_imports.py
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 # ─── Replacement rules ────────────────────────────────────────────────
 # Each tuple: (old_pattern_regex, new_string)

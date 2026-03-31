@@ -468,6 +468,14 @@ class PrintingWidget(QWidget):
 
         self._apply_modern_styles()
 
+    def update_patients(self, selected_patients: list):
+        """Replace the patient list with new data and refresh the UI."""
+        print(f"[PRINTING] update_patients called with {len(selected_patients)} patients")
+        for p in selected_patients:
+            print(f"[PRINTING]   patient={p.get('patient_name')}, study_uid={p.get('study_uid')!r}")
+        self._selected_patients = selected_patients or []
+        self._load_selected_patients()
+
     def _load_selected_patients(self):
         self.patient_list.clear()
         if not self._selected_patients:
@@ -636,6 +644,8 @@ class PrintingWidget(QWidget):
         self._active_patient = patient
         self._selected_patient_info = patient
         self._selected_study_uid = patient.get("study_uid")
+        print(f"[PRINTING] Patient selected: name={patient.get('patient_name')}, "
+              f"study_uid={self._selected_study_uid!r} (len={len(self._selected_study_uid) if self._selected_study_uid else 0})")
         self._load_series()
         self._load_filming_pages()
 

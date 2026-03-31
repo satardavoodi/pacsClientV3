@@ -50,6 +50,8 @@ If Inno Setup is not installed, release staging still succeeds but installer com
   - Final installer artifacts:
     - `ai-pacs installer.exe` (primary artifact)
     - `ai-pacs installer v<version>.exe` (version-stamped copy)
+    - `INSTALL_NOTES.txt` / `INSTALL_NOTES_FA.txt`
+    - `SHA256.txt` / `SHA256_FA.txt`
 
 ## Builder Plugin Workspace
 
@@ -111,7 +113,7 @@ The Advanced MPR module is treated as an external runtime, not ordinary Python f
 - To assemble the runtime before release:
 
 ```powershell
-python tools/assemble_slicer_runtime.py
+python tools/slicer/assemble_slicer_runtime.py
 ```
 
 ## Verification Checklist
@@ -125,7 +127,10 @@ After a release run:
 5. If Inno Setup is installed, confirm both:
    - `builder/output/installer/ai-pacs installer.exe`
    - `builder/output/installer/ai-pacs installer v<version>.exe`
-6. Install on a clean Windows VM or target PC and verify:
+6. Confirm fresh installer metadata exists:
+   - `builder/output/installer/INSTALL_NOTES.txt`
+   - `builder/output/installer/SHA256.txt`
+7. Install on a clean Windows VM or target PC and verify:
    - Core app launches.
    - Selected optional modules appear.
    - Graphics mode falls back safely when GPU is unavailable.

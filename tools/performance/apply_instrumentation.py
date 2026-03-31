@@ -283,8 +283,8 @@ def perf_log(component: str, threshold_ms: float = 50.0):
         print("")
         print("Next steps:")
         print("  1. Test application to verify instrumentation works")
-        print("  2. Run performance test: tools\\run_performance_test.ps1 -Scenario mode_b")
-        print("  3. Analyze logs: python tools\\performance_log_analyzer.py <log_file>")
+        print("  2. Run performance test: tools\\performance\\run_performance_test.ps1 -Scenario mode_b")
+        print("  3. Analyze logs: python tools\\performance\\performance_log_analyzer.py <log_file>")
         print("")
     
     def remove(self):
@@ -321,7 +321,7 @@ def main():
         sys.exit(1)
     
     mode = sys.argv[1]
-    root_dir = Path(__file__).parent.parent
+    root_dir = Path(__file__).resolve().parents[2]
     
     instr = Instrumentation(root_dir)
     

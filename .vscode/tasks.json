@@ -1,75 +1,95 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Setup Python Environment",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\setup_env.ps1"
-            ],
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared",
-                "showReuseMessage": false
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "temp edit",
-            "type": "shell",
-            "command": "python tools/_temp_edit2.py"
-        },
-        {
-            "label": "GitHub: Check connection (auto)",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\tools\\git\\Push-GitHub.ps1",
-                "-Mode",
-                "Auto",
-                "-CheckOnly"
-            ],
-            "problemMatcher": []
-        },
-        {
-            "label": "GitHub: Push current branch (dry-run)",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\tools\\git\\Push-GitHub.ps1",
-                "-Mode",
-                "Auto",
-                "-DryRun"
-            ],
-            "problemMatcher": []
-        },
-        {
-            "label": "GitHub: Push current branch",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\tools\\git\\Push-GitHub.ps1",
-                "-Mode",
-                "Auto"
-            ],
-            "problemMatcher": []
-        }
-    ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Setup Python Environment",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\setup_env.ps1"
+			],
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared",
+				"showReuseMessage": false
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "temp edit",
+			"type": "shell",
+			"command": "python tools/dev/_temp_edit2.py"
+		},
+		{
+			"label": "GitHub: Check connection (auto)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\tools\\git\\Push-GitHub.ps1",
+				"-Mode",
+				"Auto",
+				"-CheckOnly"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "GitHub: Push current branch (dry-run)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\tools\\git\\Push-GitHub.ps1",
+				"-Mode",
+				"Auto",
+				"-DryRun"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "GitHub: Push current branch",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\tools\\git\\Push-GitHub.ps1",
+				"-Mode",
+				"Auto"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "diag_series_pipeline",
+			"type": "shell",
+			"command": "python tools/diagnostics/_diag2.py"
+		},
+		{
+			"label": "Run DM Test Suite",
+			"type": "shell",
+			"command": "python tests/download_manager/run_dm_test.py"
+		},
+		{
+			"label": "Run DM Test v2",
+			"type": "shell",
+			"command": "python tests/download_manager/run_dm_test.py"
+		},
+		{
+			"label": "Verify DM Tests",
+			"type": "shell",
+			"command": "python tests/download_manager/run_dm_test.py"
+		}
+	]
 }

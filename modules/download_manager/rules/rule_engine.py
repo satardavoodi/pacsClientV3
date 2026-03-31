@@ -6,6 +6,7 @@ only relevant rules are checked for each operation (70-92% efficiency gain).
 """
 
 import logging
+import time
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from enum import Enum
@@ -83,8 +84,69 @@ class DownloadRuleEngine:
         self.priority_rules = PriorityRules(state_store, config)
         self.resume_rules = ResumeRules(state_store, config)
         self.validation_rules = ValidationRules(state_store, config)
+        self._db_progress_cache: Dict[str, Dict[str, Any]] = {}
+        self._db_progress_cache_ttl_seconds = float(
+            config.get('db_progress_cache_ttl_seconds', 1.0)
+        )
         
         logger.info("✅ DownloadRuleEngine initialized")
+
+    def _invalidate_db_progress_cache(self, study_uid: str) -> None:
+        """Drop cached DB progress for a study when queue state changes."""
+        self._db_progress_cache.pop(study_uid, None)
+
+    def _get_cached_db_progress(self, study_uid: str) -> Optional[Dict[str, Any]]:
+        """
+        Read DB progress with a short-lived cache.
+
+        This reduces repeated queue-selection DB hits on the UI scheduling path
+        while still allowing fast recovery from transient DB failures.
+        """
+        if not DATABASE_AVAILABLE:
+            return None
+
+        now = time.monotonic()
+        cached = self._db_progress_cache.get(study_uid)
+        if cached and (now - cached['timestamp']) <= self._db_progress_cache_ttl_seconds:
+            return cached['progress']
+
+        try:
+            db_progress = get_download_progress(study_uid)
+        except Exception as e:
+            logger.debug(f"Database check failed for {study_uid[:40]}...: {e}")
+            # Do not cache failures; allow rapid recovery on the next pass.
+            self._invalidate_db_progress_cache(study_uid)
+            return None
+
+        self._db_progress_cache[study_uid] = {
+            'timestamp': now,
+            'progress': db_progress,
+        }
+        return db_progress
+
+    def _filter_database_completed_pending(
+        self,
+        pending: List[DownloadState],
+    ) -> List[DownloadState]:
+        """Filter pending states against persistent DB completion exactly once."""
+        if not DATABASE_AVAILABLE:
+            return pending
+
+        filtered_pending = []
+        for state in pending:
+            db_progress = self._get_cached_db_progress(state.study_uid)
+            if db_progress and db_progress.get('status') == 'Completed':
+                logger.info(
+                    f"⏭️ Skipping database-completed study in queue: "
+                    f"{state.patient_name} ({db_progress.get('progress_percent', 0)}%)"
+                )
+                self.state.remove(state.study_uid)
+                self._invalidate_db_progress_cache(state.study_uid)
+                continue
+
+            filtered_pending.append(state)
+
+        return filtered_pending
     
     def can_add_download(self, task: DownloadTask) -> RuleResult:
         """
@@ -366,31 +428,11 @@ class DownloadRuleEngine:
         if not pending:
             return None
         
-        # R17: Filter out studies that are completed in database
-        # (Prevents re-download of studies completed in previous sessions)
-        if DATABASE_AVAILABLE:
-            filtered_pending = []
-            for state in pending:
-                try:
-                    db_progress = get_download_progress(state.study_uid)
-                    if db_progress and db_progress.get('status') == 'Completed':
-                        logger.info(
-                            f"⏭️ Skipping database-completed study in queue: "
-                            f"{state.patient_name} ({db_progress.get('progress_percent', 0)}%)"
-                        )
-                        # Remove from StateStore to prevent future attempts
-                        self.state.remove(state.study_uid)
-                        continue
-                except Exception as e:
-                    logger.debug(f"Database check failed for {state.study_uid[:40]}...: {e}")
-                
-                filtered_pending.append(state)
-            
-            pending = filtered_pending
-            
-            if not pending:
-                logger.info("📋 No pending downloads after database filtering")
-                return None
+        pending = self._filter_database_completed_pending(pending)
+
+        if not pending:
+            logger.info("📋 No pending downloads after database filtering")
+            return None
         
         # R4, R7, R15: Priority order with LIFO within priority
         return self.priority_rules.get_next_download_by_priority(pending)

@@ -5,7 +5,7 @@ This copies ONLY the runtime files (DLLs, Python, modules) needed to run
 AIPacsAdvancedViewer, producing a portable directory that doesn't depend
 on any system-installed components.
 
-Run once:  python tools/assemble_slicer_runtime.py
+Run once:  python tools/slicer/assemble_slicer_runtime.py
 """
 import shutil
 import sys
@@ -17,7 +17,7 @@ SLICER_BUILD = SUPERBUILD / "Slicer-build"
 QT_DIR       = Path(r"C:\Qt\5.15.2\msvc2019_64")
 
 TARGET = (
-    Path(__file__).resolve().parent.parent
+    Path(__file__).resolve().parents[2]
     / "modules" / "mpr" / "advanced_3d_slicer"
     / "slicer_custom_app" / "NewMPR2Slicer" / "build"
 )
@@ -222,7 +222,7 @@ def main():
     # ── 10. SplashScreen ─────────────────────────────────────────────────
     print("\n[10/11] Splash screen + branding")
     splash_src = (
-        Path(__file__).resolve().parent.parent
+        Path(__file__).resolve().parents[2]
         / "modules" / "mpr" / "advanced_3d_slicer"
         / "slicer_custom_app" / "NewMPR2Slicer"
         / "Applications" / "NewMPR2SlicerApp" / "Resources" / "Images"

@@ -749,6 +749,7 @@ class SocketDicomClient:
         # Check for existing files (R19: file-level resume)
         logger.info(f"🔍 Scanning for existing files...")
         existing_files = self._scan_existing_files(output_dir)
+        existing_files_set = set(existing_files)  # for O(1) lookup in per-instance skip
         skipped_count = len(existing_files)
         logger.info(f"📊 Found {skipped_count} existing files")
         
@@ -883,7 +884,10 @@ class SocketDicomClient:
                 
                 # Skip if exists (R19: file-level resume)
                 if file_path.exists():
-                    skipped_count += 1
+                    # Only count as newly skipped if not already in initial scan
+                    # (avoids double-counting pre-existing files in skipped_count)
+                    if file_name not in existing_files_set:
+                        skipped_count += 1
                     continue
                 
                 if not dicom_data_b64:

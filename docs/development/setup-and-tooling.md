@@ -70,6 +70,13 @@ python -m venv .venv_build
 .venv_build\Scripts\python build.py
 ```
 
+Successful installer builds produce:
+
+- `builder/output/installer/ai-pacs installer.exe`
+- `builder/output/installer/ai-pacs installer v<version>.exe`
+- `builder/output/installer/INSTALL_NOTES.txt`
+- `builder/output/installer/SHA256.txt`
+
 ## GitHub Push Workflow
 
 This repository is configured to push to GitHub over HTTPS. That avoids the SSH path that is currently unreliable on this machine.
@@ -89,6 +96,7 @@ If GitHub only works through a proxy on your network, create `tools/git/github-n
 - `pyproject.toml` is the entrypoint for pytest and Ruff settings.
 - `.editorconfig` defines basic formatting defaults across the repo.
 - Keep new test files under `tests/` unless they are package-specific and benefit from local proximity.
+- For `tools/` organization rules, lifecycle policy, and improvement plan, see `docs/development/tools-governance-and-roadmap.md`.
 
 ## Current Practical Rules
 

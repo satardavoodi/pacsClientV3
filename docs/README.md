@@ -1,6 +1,6 @@
 ﻿# AIPacs Documentation
 
-> **Current Stable Version:** v2.2.7 (2026-03-21)
+> **Current Stable Version:** v2.2.7 (2026-03-31)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -41,11 +41,12 @@ This is the canonical entrypoint for all project documentation. The docs are org
 
 ### Development
 - [Setup & Tooling](development/setup-and-tooling.md) — Dependencies, commands, day-to-day workflow
+- [Tools Governance & Roadmap](development/tools-governance-and-roadmap.md) — Rules, lifecycle, and 90-day plan for `tools/`
 - [GapGPT API Usage](development/GAPGPT_API_USAGE.md) — External AI API reference
 
 ### Releases
 - [Release Notes](releases/RELEASE_NOTES.md) — Current consolidated release history
-- [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) — Stable release notes for the current published version
+- [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) — Stable release notes for the current published version and refreshed packaging snapshot
 
 ### Archive
 - [Archive Index](archive/README.md) — Historical documents (not current truth)

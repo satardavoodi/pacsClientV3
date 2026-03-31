@@ -1,15 +1,15 @@
 # AIPacs Version 2.2.7 Release
-**Date:** March 21, 2026
+**Date:** March 31, 2026
 **Version:** 2.2.7
-**Type:** Stable Release / Install and Build Alignment
-**Status:** Ready for Git publication
+**Type:** Stable Release / Build, Installer, and Documentation Refresh
+**Status:** Stable snapshot prepared for backup and GitHub publication
 **Tag:** `v2.2.7`
 
 ---
 
 ## Summary
 
-Version **2.2.7** captures the current stable workspace and aligns the release metadata, environment setup, build helpers, and top-level documentation with the repository's current dependency and packaging model.
+Version **2.2.7** captures the current stable workspace and refreshes the release-facing build, installer, and documentation surfaces so the local backup, staged output, and GitHub state all match the same stable line.
 
 ## Included Release Updates
 
@@ -20,20 +20,22 @@ Version **2.2.7** captures the current stable workspace and aligns the release m
 - `builder/plugin package/packages/*/module_package.json` -> module versions `2.2.7`
 - `setup_env.ps1` -> runtime-first setup flow with optional `-IncludeDev`
 - `builder/scripts/_common.ps1` -> build dependency install aligned with `requirements-core.txt`
-- `README.md` and active docs -> install/build/release instructions refreshed for this stable version
+- `builder/build_release.py` -> installer notes and SHA256 metadata generated per release run
+- `build.bat`, `README.md`, and active docs -> install/build/release instructions refreshed for this stable version
 
 ## Install and Build Notes
 
 - Runtime setup now defaults to `requirements-core.txt`
 - Developer setup can be enabled with `.\setup_env.ps1 -IncludeDev`
 - Release builds should use `builder/requirements/build_requirements.txt` plus `requirements-core.txt`
+- Successful installer builds now regenerate `INSTALL_NOTES*.txt` and `SHA256*.txt` in `builder/output/installer/`
 - Legacy `requirements.txt` remains a fallback path for older tooling, but it is no longer the primary setup path
 
 ## Release Intent
 
 - Save the current stable codebase as release `v2.2.7`
 - Create a local backup artifact before publication
-- Commit, tag, and push the release state to the configured Git remotes
+- Commit and push the refreshed stable snapshot to the configured Git remotes without rewriting the existing `v2.2.7` tag
 
 ## Notes
 

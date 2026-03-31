@@ -18,7 +18,7 @@ from datetime import datetime
 
 from ..core.models import SeriesInfo, DownloadResult, SeriesDownloadResult
 from ..core.enums import DownloadStatus
-from ..core.constants import MAX_CONCURRENT_STUDIES
+from ..core.constants import MAX_CONCURRENT_STUDIES, MAX_SERIES_RETRIES, SERIES_RETRY_BASE_DELAY
 from ..state.state_store import DownloadStateStore
 from ..rules.rule_engine import DownloadRuleEngine
 from ..network.socket_client import SocketDicomClient
@@ -126,6 +126,20 @@ class SeriesDownloader:
         logger.info(f"   Total Series: {len(series_list)}")
         logger.info(f"   Total Images: {sum(s.image_count for s in series_list)}")
         logger.info(f"   Authentication: ✅ Token available")
+        
+        # ── Series-level priority: put the viewed series first ──────────
+        # If a specific series is being viewed (CRITICAL), download it
+        # before the other HIGH series.  This is re-checked before each
+        # series in the loop below so that a mid-download priority change
+        # from the viewer is respected at the next series boundary.
+        viewed_series = getattr(state, 'viewed_series_number', None)
+        if viewed_series:
+            # Move the viewed series to the front of the list
+            viewed = [s for s in series_list if str(s.series_number) == str(viewed_series)]
+            rest   = [s for s in series_list if str(s.series_number) != str(viewed_series)]
+            if viewed:
+                series_list = viewed + rest
+                logger.info(f"   ⚡ Viewed series {viewed_series} moved to front (CRITICAL)")
         logger.info("=" * 70)
         
         # Update state
@@ -218,6 +232,22 @@ class SeriesDownloader:
                     error_message="Paused for higher priority download"
                 )
             
+            # ── Re-check viewed series: if the user clicked a different
+            #    series thumbnail since we started, reorder the remaining
+            #    series so the newly-viewed one is next. ──────────────────
+            current_state = self.state.get(study_uid)
+            new_viewed = getattr(current_state, 'viewed_series_number', None) if current_state else None
+            if new_viewed and str(new_viewed) != str(series_info.series_number):
+                remaining = series_list[idx:]
+                viewed_in_remaining = [s for s in remaining if str(s.series_number) == str(new_viewed)]
+                if viewed_in_remaining:
+                    others_in_remaining = [s for s in remaining if str(s.series_number) != str(new_viewed)]
+                    # Rebuild the tail of series_list in-place
+                    series_list[idx:] = viewed_in_remaining + others_in_remaining
+                    # Re-fetch series_info since the list was reordered
+                    series_info = series_list[idx]
+                    logger.info(f"   ⚡ Reordered remaining series: {new_viewed} moved to next slot (CRITICAL)")
+            
             series_number = str(series_info.series_number)
             series_output_dir = study_output_dir / series_number
             
@@ -243,6 +273,7 @@ class SeriesDownloader:
                 series_output_dir,
                 series_info.image_count
             )
+            logger.info(f"    📋 R20 check: is_complete={is_complete}, existing={existing_count}, expected={series_info.image_count}, dir={series_output_dir}")
             
             if is_complete:
                 # Series complete - skip download but ensure instances in database
@@ -288,8 +319,8 @@ class SeriesDownloader:
             
             # ✅ CONNECTION HEALTH CHECK: Verify socket is still connected before each series
             if not socket_client.connected:
-                logger.warning(f"    ⚠️ Socket connection lost, attempting to reconnect...")
-                if not socket_client.connect():
+                logger.warning(f"    ⚠️ Socket connection lost, attempting to reconnect with backoff...")
+                if not socket_client.connect_with_retry():
                     logger.error(f"    ❌ FAILED: Could not reconnect for series {series_number}")
                     failed_series.append(series_info.series_uid)
                     if state:
@@ -360,6 +391,114 @@ class SeriesDownloader:
             
             logger.info(f"═══ Completed Series {idx + 1}/{len(series_list)}: {series_number} ═══")
         
+        # ── Retry failed series with exponential backoff ────────────────
+        if failed_series and MAX_SERIES_RETRIES > 0:
+            # Build a lookup from series_uid → SeriesInfo for retry
+            series_by_uid = {s.series_uid: s for s in series_list}
+
+            for retry_round in range(1, MAX_SERIES_RETRIES + 1):
+                if not failed_series:
+                    break
+
+                # Check cancellation
+                if self.cancel_check and self.cancel_check():
+                    logger.info(f"⏸️ Retry cancelled (preemption)")
+                    break
+
+                # Exponential backoff between retry rounds
+                retry_delay = SERIES_RETRY_BASE_DELAY * (2 ** (retry_round - 1))
+                logger.info(
+                    f"🔄 Retry round {retry_round}/{MAX_SERIES_RETRIES} for "
+                    f"{len(failed_series)} failed series (waiting {retry_delay:.0f}s)..."
+                )
+                await asyncio.sleep(retry_delay)
+
+                # Reconnect if socket is down
+                if not socket_client.connected:
+                    logger.info(f"🔌 Reconnecting socket for retry round {retry_round}...")
+                    if not socket_client.connect_with_retry():
+                        logger.error(f"❌ Reconnect failed for retry round {retry_round}")
+                        break
+
+                still_failed = []
+                for series_uid in list(failed_series):
+                    if self.cancel_check and self.cancel_check():
+                        still_failed.append(series_uid)
+                        continue
+
+                    s_info = series_by_uid.get(series_uid)
+                    if not s_info:
+                        still_failed.append(series_uid)
+                        continue
+
+                    s_num = str(s_info.series_number)
+                    s_out = study_output_dir / s_num
+
+                    logger.info(f"    🔄 Retrying series {s_num} (attempt {retry_round})...")
+
+                    # Connection check before each series retry
+                    if not socket_client.connected:
+                        if not socket_client.connect_with_retry():
+                            logger.error(f"    ❌ Reconnect failed for series {s_num}")
+                            still_failed.append(series_uid)
+                            continue
+
+                    retry_result = await socket_client.download_series(
+                        study_uid=study_uid,
+                        series_info=s_info,
+                        output_dir=s_out,
+                        progress_callback=self.progress_callback,
+                    )
+
+                    if retry_result.success:
+                        logger.info(
+                            f"    ✅ Retry SUCCESS: series {s_num} "
+                            f"({retry_result.downloaded} downloaded)"
+                        )
+                        completed_series.append(series_uid)
+                        total_downloaded += retry_result.downloaded
+                        total_skipped += retry_result.skipped
+
+                        # Update state: move from failed to completed
+                        if state:
+                            updated_completed = list(state.completed_series or [])
+                            if series_uid not in updated_completed:
+                                updated_completed.append(series_uid)
+                            updated_failed_list = list(state.failed_series or [])
+                            if series_uid in updated_failed_list:
+                                updated_failed_list.remove(series_uid)
+                            self.state.update(
+                                study_uid,
+                                completed_series=updated_completed,
+                                failed_series=updated_failed_list,
+                            )
+
+                        # DB updates
+                        if self.database_manager:
+                            try:
+                                await self._update_series_path_in_db(
+                                    series_uid=s_info.series_uid,
+                                    series_path=str(s_out),
+                                )
+                                await self._save_series_instances_to_db(
+                                    study_uid=study_uid,
+                                    series_info=s_info,
+                                    series_output_dir=s_out,
+                                )
+                            except Exception as e:
+                                logger.warning(f"    ⚠️ DB update after retry failed: {e}")
+                    else:
+                        logger.warning(
+                            f"    ❌ Retry FAILED: series {s_num} - {retry_result.error_message}"
+                        )
+                        still_failed.append(series_uid)
+
+                failed_series = still_failed
+                logger.info(
+                    f"🔄 Retry round {retry_round} done: "
+                    f"{len(failed_series)} still failed"
+                )
+
         # Calculate elapsed time
         elapsed = (datetime.now() - start_time).total_seconds()
         

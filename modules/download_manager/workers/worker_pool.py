@@ -229,6 +229,32 @@ class WorkerPool:
                     result.append((study_uid, worker))
             return result
     
+    def cancel_all_non_blocking(self) -> int:
+        """
+        Request cancellation on all active workers WITHOUT waiting for them
+        to finish.  Workers will clean themselves up via their ``finished``
+        signal (already connected to ``_remove_worker``).
+
+        This is safe to call from the main Qt thread — it only sets cancel
+        flags and returns immediately.
+
+        Returns:
+            Number of workers that were signalled.
+        """
+        with self.lock:
+            count = 0
+            for worker_id, worker in list(self.active_workers.items()):
+                try:
+                    if worker and worker.isRunning():
+                        worker.request_cancel()
+                        count += 1
+                        logger.debug(f"⏸️ [CANCEL-NB] Cancel requested for worker {worker_id[:8]}...")
+                except Exception as e:
+                    logger.warning(f"⚠️ [CANCEL-NB] Error requesting cancel for {worker_id[:8]}...: {e}")
+            if count:
+                logger.info(f"⏸️ [CANCEL-NB] Requested cancellation on {count} worker(s) (non-blocking)")
+            return count
+
     def stop_all(self) -> None:
         """
         Stop all workers (graceful shutdown)

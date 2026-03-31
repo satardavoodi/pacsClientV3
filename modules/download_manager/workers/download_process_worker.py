@@ -321,6 +321,16 @@ class DownloadProcessWorker(QThread):
             "action_session_id": self.action_session_id,
             "study_uid": self.task.study_uid,
         }
+
+        # Pass series-level priority hint so the subprocess can reorder
+        # the series download to start with the viewed (CRITICAL) series.
+        try:
+            from ..state.state_store import get_state_store
+            main_state = get_state_store().get(self.task.study_uid)
+            if main_state and main_state.viewed_series_number:
+                cfg["viewed_series_number"] = main_state.viewed_series_number
+        except Exception:
+            pass
         logger.debug(
             "[ProcessWorker] _build_config_dict → %s",
             {k: v for k, v in cfg.items() if k != "auth_token"},

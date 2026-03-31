@@ -17,13 +17,6 @@ from ..core.constants import (
     MAX_PARALLEL_SERIES_LOW,
 )
 
-# Import database functions for persistent state check
-try:
-    from PacsClient.utils.database import get_download_progress
-    DATABASE_AVAILABLE = True
-except ImportError:
-    DATABASE_AVAILABLE = False
-
 logger = logging.getLogger(__name__)
 
 
@@ -193,8 +186,6 @@ class PriorityRules:
         """
         Get next download to execute based on priority order (R4, R7)
         
-        Enhanced: Filters database-completed studies before priority sorting
-        
         Args:
             pending_states: List of pending downloads
             
@@ -204,32 +195,12 @@ class PriorityRules:
         if not pending_states:
             return None
         
-        # R17: Filter out database-completed studies (if database available)
-        if DATABASE_AVAILABLE:
-            filtered_pending = []
-            for state in pending_states:
-                try:
-                    db_progress = get_download_progress(state.study_uid)
-                    if db_progress and db_progress.get('status') == 'Completed':
-                        logger.info(
-                            f"⏭️ [Priority Queue] Skipping database-completed: "
-                            f"{state.patient_name}"
-                        )
-                        continue
-                except Exception as e:
-                    logger.debug(f"Database check failed: {e}")
-                
-                filtered_pending.append(state)
-            
-            pending_states = filtered_pending
-            
-            if not pending_states:
-                return None
-        
         # R4: Priority order: CRITICAL > HIGH > NORMAL > LOW
         # R7: LIFO within same priority (newest first)
         
-        # Sort by priority (descending) then by created_at (descending for LIFO)
+        # Sort by priority (descending) then by start_time (descending for LIFO).
+        # For equal timestamps, Python's stable sort preserves insertion order,
+        # which keeps tie-break behavior deterministic and repeatable.
         sorted_downloads = sorted(
             pending_states,
             key=lambda s: (
