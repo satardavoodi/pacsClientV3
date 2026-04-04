@@ -89,6 +89,16 @@ def test_modules_runtime_root_moves_to_local_appdata_for_frozen_installs(monkeyp
     )
 
 
+def test_default_installation_profile_tracks_installer_version_state():
+    profile = runtime.default_installation_profile()
+
+    assert profile["app_version"] == ""
+    assert profile["installer"]["current_version"] == ""
+    assert profile["installer"]["detected_existing_version"] == ""
+    assert profile["installer"]["install_action"] == "fresh_install"
+    assert profile["installer"]["should_update"] is False
+
+
 def test_install_runtime_payload_package_copies_files_and_validates(monkeypatch, tmp_path):
     _configure_frozen_runtime(monkeypatch, tmp_path)
     archive = _create_package_archive(

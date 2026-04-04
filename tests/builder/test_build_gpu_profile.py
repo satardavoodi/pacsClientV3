@@ -39,9 +39,15 @@ def test_write_manifest_writes_cpu_safe_install_profile(monkeypatch, tmp_path):
     profile = json.loads((tmp_path / runtime.INSTALLATION_PROFILE_FILENAME).read_text(encoding="utf-8"))
     manifest = json.loads((tmp_path / "release_manifest.json").read_text(encoding="utf-8"))
 
+    assert profile["app_version"] == "9.9.9"
+    assert profile["installer"]["current_version"] == "9.9.9"
+    assert profile["installer"]["install_action"] == "fresh_install"
+    assert profile["installer"]["should_update"] is False
     assert profile["graphics"]["user_declared_gpu"] is False
     assert profile["graphics"]["preferred_mode"] == "cpu_safe"
     assert manifest["version"] == "9.9.9"
+    assert manifest["installer"]["version"] == "9.9.9"
+    assert manifest["installer"]["supports_existing_install_detection"] is True
     assert manifest["modules"] == runtime.MODULE_CATALOG
     assert manifest["module_packages"] == [{"module_id": "advanced_mpr", "available": False}]
 

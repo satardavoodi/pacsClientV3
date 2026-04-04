@@ -416,6 +416,13 @@ def write_manifest(
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
 
     install_profile = default_installation_profile()
+    install_profile["app_version"] = version
+    install_profile["installer"] = {
+        "current_version": version,
+        "detected_existing_version": "",
+        "install_action": "fresh_install",
+        "should_update": False,
+    }
     install_profile["generated_at_utc"] = ""
     (MANIFEST_DIR / INSTALLATION_PROFILE_FILENAME).write_text(
         json.dumps(install_profile, indent=2, ensure_ascii=False),
@@ -428,6 +435,11 @@ def write_manifest(
         "modules": MODULE_CATALOG,
         "payloads": {
             "advanced_mpr": advanced_payload,
+        },
+        "installer": {
+            "version": version,
+            "supports_existing_install_detection": True,
+            "supports_version_comparison": True,
         },
         "module_packages": module_packages,
     }
@@ -534,6 +546,10 @@ def write_installer_release_metadata(installer_artifacts: dict[str, str], versio
             "  - The installer probes Windows for a compatible GPU",
             "  - The checkbox can still be overridden manually",
             "  - AIPacs will probe again at first launch and fall back safely when required",
+            "- If the selected install folder already has AIPacs, the installer compares versions",
+            "  - Older installed version: update in place",
+            "  - Same installed version: reinstall/repair",
+            "  - Newer installed version: downgrade warning before continuing",
             "- Complete the wizard and launch AIPacs.",
             "",
             "Post-install quick check:",
@@ -541,6 +557,7 @@ def write_installer_release_metadata(installer_artifacts: dict[str, str], versio
             "- Optional modules selected during setup are available.",
             "- Graphics mode works (GPU when available, software fallback otherwise).",
             "- installation_profile.json records the chosen modules and graphics preference.",
+            "- installation_profile.json records the detected previous version and planned install action.",
             "",
             "Note:",
             "You only need one installer EXE for end users. Keep the versioned EXE for release tracking.",

@@ -40,6 +40,9 @@ Run installer and verify each wizard stage:
    - Manual checkbox override works
 5. Ready page summary includes:
    - install path
+   - installed version in selected folder
+   - current installer version
+   - planned install action
    - selected modules
    - graphics preference
 6. Install completes and launch option works.
@@ -65,6 +68,11 @@ After first launch:
 
 Also verify inside `installation_profile.json`:
 
+- `app_version` matches the installer version
+- `installer.current_version` matches the installer version
+- `installer.detected_existing_version` matches what setup found in the target folder
+- `installer.install_action` is correct for fresh install, update, reinstall, or downgrade
+- `installer.should_update` is `true` only when an older installed version was detected
 - selected optional modules are marked `selected_for_install`
 - non-selected optional modules are marked `not_installed`
 - `graphics.user_declared_gpu` matches the setup checkbox choice

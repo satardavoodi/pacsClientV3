@@ -308,7 +308,14 @@ def _should_enforce_module_profile() -> bool:
 def default_installation_profile() -> dict[str, Any]:
     return {
         "app_name": APP_NAME,
+        "app_version": "",
         "generated_at_utc": "",
+        "installer": {
+            "current_version": "",
+            "detected_existing_version": "",
+            "install_action": "fresh_install",
+            "should_update": False,
+        },
         "modules": module_defaults(),
         "module_packages": module_package_defaults(),
         "graphics": {

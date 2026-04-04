@@ -83,8 +83,12 @@ The installer UX flow covers:
 2. Setup type (Core vs Custom).
 3. Optional plugin selection for Custom installs.
 4. Graphics preference page with automatic GPU detection hint and manual override.
-5. Ready summary with selected modules and graphics mode.
-6. Install progress and post-install launch option.
+5. Existing-installation check page showing:
+   - installed version detected in the selected folder
+   - current installer version
+   - planned action: fresh install, update, reinstall, or downgrade
+6. Ready summary with selected modules, version-check result, and graphics mode.
+7. Install progress and post-install launch option.
 
 During `Custom` setup, the installer is expected to clearly answer two deployment questions for the target PC:
 
@@ -102,7 +106,8 @@ The running application reads that profile and:
 - bootstraps setup-selected bundled plugin packages on first launch,
 - stores writable user config in `%APPDATA%\AIPacs\config`,
 - stores user data in `%LOCALAPPDATA%\AIPacs\user_data`,
-- probes GPU availability when the installer marked the workstation as GPU-capable.
+- probes GPU availability when the installer marked the workstation as GPU-capable,
+- keeps installer version metadata (`current_version`, detected previous version, install action, should-update flag) for support and audit purposes.
 
 ## Install On Another PC
 
@@ -111,11 +116,15 @@ When sharing the build with an end user or another workstation:
 1. Deliver `builder/output/installer/ai-pacs installer.exe` and `SHA256.txt`.
 2. Ask the installer operator to choose `Custom` if the target PC needs optional modules.
 3. Let the installer operator confirm the module list for that PC.
-4. Review the GPU page:
+4. Review the existing-installation page:
+   - if an older version is detected, setup will perform an update
+   - if the same version is detected, setup will perform a reinstall/repair
+   - if a newer version is detected, setup will warn before downgrading
+5. Review the GPU page:
    - if the probe detects a supported GPU, GPU mode can stay enabled
    - if the PC has no supported GPU, leave CPU-safe mode selected
-5. After install, launch AIPacs once so `installation_profile.json` and the first-launch module bootstrap can complete.
-6. Validate that the selected modules appear and the graphics mode is usable on that machine.
+6. After install, launch AIPacs once so `installation_profile.json` and the first-launch module bootstrap can complete.
+7. Validate that the selected modules appear and the graphics mode is usable on that machine.
 
 ## Advanced MPR Payload
 
@@ -153,6 +162,7 @@ After a release run:
    - Selected optional modules appear.
    - Graphics mode falls back safely when GPU is unavailable.
    - `installation_profile.json` matches the module choices made during setup.
+   - existing-version detection reports update/reinstall/downgrade correctly when the target folder already contains AIPacs.
 
 For a full pass/fail workflow (including PC A/PC B evidence capture), use:
 

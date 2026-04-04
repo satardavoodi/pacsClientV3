@@ -30,6 +30,7 @@ Education/**/CacheFile/
 sample_files
 PacsClient/segments/
 *.spec
+!builder/spec/appA_workstation.spec
 
 # ── User data (downloaded / generated / cached) ──
 user_data/

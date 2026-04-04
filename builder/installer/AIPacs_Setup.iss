@@ -73,11 +73,19 @@ Filename: "{app}\AIPacs.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Fl
 
 [Code]
 var
+  ExistingInstallPage: TWizardPage;
+  ExistingInstallSummaryLabel: TNewStaticText;
+  ExistingInstallWarningLabel: TNewStaticText;
   GpuPage: TWizardPage;
   GpuCheckBox: TNewCheckBox;
   GpuHintLabel: TNewStaticText;
   GpuAutoDetected: Boolean;
   GpuDetectionError: String;
+  ExistingInstallDetected: Boolean;
+  ExistingInstalledVersion: String;
+  ExistingInstallAction: String;
+  ExistingInstallShouldUpdate: Boolean;
+  ExistingInstallWarning: String;
 
 function BoolToJson(Value: Boolean): String;
 begin
@@ -114,6 +122,168 @@ begin
     Result := 'bundled_setup_selection'
   else
     Result := '';
+end;
+
+function InstalledVersionValue(): String;
+begin
+  if ExistingInstallDetected then
+    Result := ExistingInstalledVersion
+  else
+    Result := '';
+end;
+
+function InstalledVersionDisplayValue(): String;
+begin
+  if ExistingInstallDetected and (ExistingInstalledVersion <> '') then
+    Result := ExistingInstalledVersion
+  else
+    Result := 'none detected';
+end;
+
+function InstallActionDisplayValue(): String;
+begin
+  if ExistingInstallAction = 'update' then
+    Result := 'Update existing installation'
+  else if ExistingInstallAction = 'reinstall' then
+    Result := 'Reinstall / repair current version'
+  else if ExistingInstallAction = 'downgrade' then
+    Result := 'Downgrade existing installation'
+  else
+    Result := 'Fresh install';
+end;
+
+function ShouldUpdateValue(): String;
+begin
+  Result := BoolToJson(ExistingInstallShouldUpdate);
+end;
+
+function ExtractNextVersionPart(var Value: String): Integer;
+var
+  DotPos: Integer;
+  Token: String;
+begin
+  DotPos := Pos('.', Value);
+  if DotPos = 0 then
+  begin
+    Token := Trim(Value);
+    Value := '';
+  end
+  else
+  begin
+    Token := Trim(Copy(Value, 1, DotPos - 1));
+    Delete(Value, 1, DotPos);
+  end;
+
+  if Token = '' then
+    Result := 0
+  else
+    Result := StrToIntDef(Token, 0);
+end;
+
+function CompareVersionText(const LeftVersion: String; const RightVersion: String): Integer;
+var
+  LeftWork: String;
+  RightWork: String;
+  SegmentIndex: Integer;
+  LeftPart: Integer;
+  RightPart: Integer;
+begin
+  LeftWork := LeftVersion;
+  RightWork := RightVersion;
+
+  for SegmentIndex := 0 to 3 do
+  begin
+    LeftPart := ExtractNextVersionPart(LeftWork);
+    RightPart := ExtractNextVersionPart(RightWork);
+
+    if LeftPart < RightPart then
+    begin
+      Result := -1;
+      Exit;
+    end;
+
+    if LeftPart > RightPart then
+    begin
+      Result := 1;
+      Exit;
+    end;
+
+    if (LeftWork = '') and (RightWork = '') then
+      Break;
+  end;
+
+  Result := 0;
+end;
+
+function ExistingAppExePath(): String;
+begin
+  Result := AddBackslash(WizardDirValue()) + 'AIPacs.exe';
+end;
+
+procedure RefreshExistingInstallState();
+var
+  ExistingExe: String;
+  DetectedVersion: String;
+  VersionCompare: Integer;
+begin
+  ExistingInstallDetected := False;
+  ExistingInstalledVersion := '';
+  ExistingInstallAction := 'fresh_install';
+  ExistingInstallShouldUpdate := False;
+  ExistingInstallWarning := '';
+
+  ExistingExe := ExistingAppExePath();
+  if FileExists(ExistingExe) and GetVersionNumbersString(ExistingExe, DetectedVersion) then
+  begin
+    ExistingInstallDetected := True;
+    ExistingInstalledVersion := Trim(DetectedVersion);
+    VersionCompare := CompareVersionText(ExistingInstalledVersion, '{#MyAppVersion}');
+
+    if VersionCompare < 0 then
+    begin
+      ExistingInstallAction := 'update';
+      ExistingInstallShouldUpdate := True;
+      ExistingInstallWarning :=
+        'An older AIPacs version was detected in the selected folder. ' +
+        'Setup will update it to the current installer version.';
+    end
+    else if VersionCompare = 0 then
+    begin
+      ExistingInstallAction := 'reinstall';
+      ExistingInstallWarning :=
+        'The same AIPacs version is already installed in the selected folder. ' +
+        'Setup will reinstall or repair that version.';
+    end
+    else
+    begin
+      ExistingInstallAction := 'downgrade';
+      ExistingInstallWarning :=
+        'A newer AIPacs version is already installed in the selected folder. ' +
+        'Continuing will downgrade that installation to the current installer version.';
+    end;
+  end;
+end;
+
+procedure RefreshExistingInstallPage();
+begin
+  RefreshExistingInstallState();
+
+  ExistingInstallSummaryLabel.Caption :=
+    'Selected install folder:' + #13#10 +
+    '  ' + WizardDirValue() + #13#10 + #13#10 +
+    'Installed version in this folder:' + #13#10 +
+    '  ' + InstalledVersionDisplayValue() + #13#10 + #13#10 +
+    'Current installer version:' + #13#10 +
+    '  {#MyAppVersion}' + #13#10 + #13#10 +
+    'Planned action:' + #13#10 +
+    '  ' + InstallActionDisplayValue();
+
+  if ExistingInstallWarning <> '' then
+    ExistingInstallWarningLabel.Caption := ExistingInstallWarning
+  else
+    ExistingInstallWarningLabel.Caption :=
+      'No previous AIPacs installation was detected in the selected folder. ' +
+      'Setup will perform a fresh install.';
 end;
 
 function InternalConfigDir(): String;
@@ -212,6 +382,8 @@ function UpdateReadyMemo(
 var
   GraphicsSummary: String;
 begin
+  RefreshExistingInstallState();
+
   if GpuCheckBox.Checked then
     GraphicsSummary := 'Prefer GPU acceleration'
   else
@@ -222,18 +394,52 @@ begin
     MemoTypeInfo + NewLine + NewLine +
     MemoComponentsInfo + NewLine + NewLine +
     MemoTasksInfo + NewLine + NewLine +
+    'Version Check:' + NewLine +
+    Space + 'Installed version in selected folder: ' + InstalledVersionDisplayValue() + NewLine +
+    Space + 'Current installer version: {#MyAppVersion}' + NewLine +
+    Space + 'Planned action: ' + InstallActionDisplayValue() + NewLine + NewLine +
     'Graphics Preference:' + NewLine +
     Space + GraphicsSummary + NewLine + NewLine +
     'Optional Modules:' + NewLine +
     SelectedModulesSummary() + NewLine +
     'Install behavior:' + NewLine +
     Space + 'Selected optional modules are copied now and activated on first launch.' + NewLine +
+    Space + 'Setup compares any existing installed version in the target folder before copying files.' + NewLine +
     Space + 'A runtime graphics probe will confirm GPU use and fall back safely if needed.';
 end;
 
 procedure InitializeWizard();
 begin
+  ExistingInstallDetected := False;
+  ExistingInstalledVersion := '';
+  ExistingInstallAction := 'fresh_install';
+  ExistingInstallShouldUpdate := False;
+  ExistingInstallWarning := '';
   GpuAutoDetected := AutoDetectGpuSupport(GpuDetectionError);
+
+  ExistingInstallPage := CreateCustomPage(
+    wpSelectDir,
+    'Existing Installation Check',
+    'Review the detected installed version in the selected folder before setup continues.'
+  );
+
+  ExistingInstallSummaryLabel := TNewStaticText.Create(ExistingInstallPage.Surface);
+  ExistingInstallSummaryLabel.Parent := ExistingInstallPage.Surface;
+  ExistingInstallSummaryLabel.Left := ScaleX(0);
+  ExistingInstallSummaryLabel.Top := ScaleY(8);
+  ExistingInstallSummaryLabel.Width := ExistingInstallPage.SurfaceWidth;
+  ExistingInstallSummaryLabel.Height := ScaleY(140);
+  ExistingInstallSummaryLabel.AutoSize := False;
+  ExistingInstallSummaryLabel.WordWrap := True;
+
+  ExistingInstallWarningLabel := TNewStaticText.Create(ExistingInstallPage.Surface);
+  ExistingInstallWarningLabel.Parent := ExistingInstallPage.Surface;
+  ExistingInstallWarningLabel.Left := ScaleX(0);
+  ExistingInstallWarningLabel.Top := ScaleY(156);
+  ExistingInstallWarningLabel.Width := ExistingInstallPage.SurfaceWidth;
+  ExistingInstallWarningLabel.Height := ScaleY(88);
+  ExistingInstallWarningLabel.AutoSize := False;
+  ExistingInstallWarningLabel.WordWrap := True;
 
   GpuPage := CreateCustomPage(
     wpSelectComponents,
@@ -279,6 +485,31 @@ begin
     'Other packages can still be installed later from Settings -> Installation Module.';
 end;
 
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = ExistingInstallPage.ID then
+    RefreshExistingInstallPage();
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+
+  if CurPageID = ExistingInstallPage.ID then
+  begin
+    RefreshExistingInstallPage();
+    if ExistingInstallAction = 'downgrade' then
+      Result :=
+        MsgBox(
+          'A newer AIPacs version (' + InstalledVersionDisplayValue() + ') is already installed in this folder.' + #13#10 + #13#10 +
+          'The current installer version is {#MyAppVersion}.' + #13#10 +
+          'Continuing will downgrade the installation. Do you want to continue?',
+          mbConfirmation,
+          MB_YESNO
+        ) = IDYES;
+  end;
+end;
+
 procedure WriteInstallationProfile();
 var
   ConfigDir: String;
@@ -292,7 +523,14 @@ begin
   JsonText :=
     '{' + #13#10 +
     '  "app_name": "AIPacs",' + #13#10 +
+    '  "app_version": "{#MyAppVersion}",' + #13#10 +
     '  "generated_at_utc": "",' + #13#10 +
+    '  "installer": {' + #13#10 +
+    '    "current_version": "{#MyAppVersion}",' + #13#10 +
+    '    "detected_existing_version": "' + InstalledVersionValue() + '",' + #13#10 +
+    '    "install_action": "' + ExistingInstallAction + '",' + #13#10 +
+    '    "should_update": ' + ShouldUpdateValue() + #13#10 +
+    '  },' + #13#10 +
     '  "modules": {' + #13#10 +
     '    "viewer": true,' + #13#10 +
     '    "download_manager": true,' + #13#10 +
