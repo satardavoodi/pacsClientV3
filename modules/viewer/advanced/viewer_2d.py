@@ -838,6 +838,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     def update_corners_actors(self, update_just_zoom=False, window_height=None):
         if update_just_zoom:
+            if self.vtk_image_data is None:
+                return
             im_h = self.vtk_image_data.GetDimensions()[1]
             # win_h = self.image_render_window.GetSize()[1]
             win_h = window_height if window_height is not None else self.image_render_window.GetSize()[1]
@@ -879,8 +881,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             # update bottom-left
             series_thk = self.metadata['series']['series_thk']
 
-            rows = self.metadata['instances'][current_slice]['rows']
-            columns = self.metadata['instances'][current_slice]['columns']
+            instances = self.metadata.get('instances') or []
+            if current_slice < len(instances):
+                rows = instances[current_slice].get('rows', 0)
+                columns = instances[current_slice].get('columns', 0)
+            else:
+                # Stale metadata fallback: use VTK image dimensions
+                dims = self.vtk_image_data.GetDimensions() if self.vtk_image_data else (0, 0, 0)
+                columns, rows = dims[0], dims[1]
             series_size = f"{rows} * {columns}"
 
             _wl = self.get_window_level()
@@ -965,13 +973,18 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         current_slice = self.GetSlice()
         series_thk = self.metadata['series']['series_thk']
 
-        rows = self.metadata['instances'][current_slice]['rows']
-        columns = self.metadata['instances'][current_slice]['columns']
+        instances = self.metadata.get('instances') or []
+        if current_slice < len(instances):
+            rows = instances[current_slice].get('rows', 0)
+            columns = instances[current_slice].get('columns', 0)
+        else:
+            dims = self.vtk_image_data.GetDimensions() if self.vtk_image_data else (0, 0, 0)
+            columns, rows = dims[0], dims[1]
         series_size = f"{rows} * {columns}"
         window_width, window_center = self.get_window_level()
 
-        im_h = self.vtk_image_data.GetDimensions()[1]
-        # im_h = float(series_size[0:series_size.find('x')])
+        dims = self.vtk_image_data.GetDimensions() if self.vtk_image_data else (1, 1, 1)
+        im_h = dims[1] or 1
         win_h = self.image_render_window.GetSize()[1]
         scale_zoom = win_h / im_h
         scale_zoom = f'{scale_zoom:.2f}'
@@ -1365,14 +1378,26 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.Render()
 
     def apply_default_window_level(self, slice_index):
-        instance_metadata = self.metadata['instances'][slice_index]
-        window_width, window_center = normalize_window_level(
-            instance_metadata.get('window_width'),
-            instance_metadata.get('window_center'),
-            treat_legacy_placeholder_as_missing=True,
-        )
+        instances = self.metadata.get('instances') or []
+        if slice_index < len(instances):
+            instance_metadata = instances[slice_index]
+        else:
+            # Stale metadata: viewer has more slices than metadata entries
+            # (progressive grow updated VTK volume but metadata deep copy
+            # was not yet synced).  Fall back to auto-calc from scalar range.
+            instance_metadata = None
+
+        window_width = window_center = None
+        if instance_metadata is not None:
+            window_width, window_center = normalize_window_level(
+                instance_metadata.get('window_width'),
+                instance_metadata.get('window_center'),
+                treat_legacy_placeholder_as_missing=True,
+            )
 
         if window_width is None or window_center is None:
+            if self.vtk_image_data is None:
+                return
             scalar_range = self.vtk_image_data.GetScalarRange()
             window_width, window_center = auto_window_level_from_range(
                 scalar_range[0],
@@ -1392,7 +1417,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.set_window_level(window_width, window_center, flag_default=True)
 
     def set_window_level(self, window_width, window_center, flag_default=False):
-        is_rgb = self.metadata['instances'][self.GetSlice()]['is_rgb']
+        instances = self.metadata.get('instances') or []
+        current_slice = self.GetSlice()
+        is_rgb = False
+        if current_slice < len(instances):
+            is_rgb = instances[current_slice].get('is_rgb', False)
         if is_rgb:
             return
 

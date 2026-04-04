@@ -27,7 +27,7 @@ import threading
 import qtawesome as qta
 
 from ..core.models import DownloadTask, DownloadState
-from ..core.enums import DownloadPriority, DownloadStatus, PreemptionAction
+from ..core.enums import DownloadPriority, DownloadStatus
 from ..state.state_store import DownloadStateStore, get_state_store
 from ..state.observers import UIObserver
 from ..rules.rule_engine import DownloadRuleEngine
@@ -38,6 +38,7 @@ from ..network.socket_client import SocketDicomClient
 from ..storage.database_manager import DatabaseManager
 from ..workers.worker_pool import WorkerPool
 from ..workers.download_process_worker import DownloadProcessWorker as DownloadWorker
+from ..coordinator import SeriesIntentCoordinator
 from .styles.theme import ModernTheme, get_current_theme
 from .styles.colors import ColorPalette
 from .components.priority_group import PriorityGroupHeader
@@ -135,7 +136,17 @@ class DownloadManagerWidget(QWidget):
         # Initialize core components
         self.state_store = get_state_store()
         self.database_manager = DatabaseManager()
-        self.grpc_client = GrpcMetadataClient()
+        
+        # Read server host from SocketConfig (same source as socket client)
+        from modules.network.socket_config import get_socket_server_settings
+        from modules.download_manager.core.constants import DEFAULT_GRPC_PORT
+        _srv = get_socket_server_settings()
+        _grpc_host = _srv.get("host") or "localhost"
+        logger.info("[DM-INIT] gRPC host from SocketConfig: %s:%s", _grpc_host, DEFAULT_GRPC_PORT)
+        self.grpc_client = GrpcMetadataClient(
+            host=_grpc_host,
+            port=DEFAULT_GRPC_PORT,
+        )
         self.rule_engine = DownloadRuleEngine(self.state_store, {})
         self.executor = DownloadExecutor(
             state_store=self.state_store,
@@ -145,6 +156,24 @@ class DownloadManagerWidget(QWidget):
             base_output_dir=self.base_output_dir
         )
         self.worker_pool = WorkerPool(max_workers=1)
+
+        # Task storage - keep original tasks for worker creation
+        self._tasks: Dict[str, DownloadTask] = {}  # study_uid -> DownloadTask
+
+        # Additional task information (patient_age, patient_sex, body_part, etc.)
+        self._additional_task_info: Dict[str, Dict] = {}  # study_uid -> {additional_info}
+
+        self.intent_coordinator = SeriesIntentCoordinator(
+            state_store=self.state_store,
+            rule_engine=self.rule_engine,
+            worker_pool=self.worker_pool,
+            tasks_ref=self._tasks,
+            pause_downloads_for_preemption=self._pause_downloads_for_preemption,
+            start_download_worker=self._start_download_worker,
+            start_next_pending=self._start_next_pending,
+            refresh_table_order=self._refresh_table_order,
+            check_auto_resume=self._check_auto_resume,
+        )
         
         # Register UI observer
         ui_observer = UIObserver(self)
@@ -159,12 +188,6 @@ class DownloadManagerWidget(QWidget):
         self.status_summary = None
         self.download_rows: Dict[str, int] = {}  # study_uid -> table row index
         self._speed_label_widgets: Dict[str, QLabel] = {}  # study_uid -> speed QLabel widget in table
-        
-    # Task storage - keep original tasks for worker creation
-        self._tasks: Dict[str, DownloadTask] = {}  # study_uid -> DownloadTask
-    
-        # Additional task information (patient_age, patient_sex, body_part, etc.)
-        self._additional_task_info: Dict[str, Dict] = {}  # study_uid -> {additional_info}
 
         # Cache series image counts for fast overall progress calculations
         self._series_image_count_cache: Dict[str, Dict[str, int]] = {}
@@ -1576,7 +1599,9 @@ class DownloadManagerWidget(QWidget):
             try:
                 if study_uid == self._selected_study_uid:
                     if hasattr(self, 'priority_combo'):
+                        self.priority_combo.blockSignals(True)
                         self.priority_combo.setCurrentText(priority.display_name)
+                        self.priority_combo.blockSignals(False)
             except Exception as e:
                 logger.error(f"Error updating priority combo: {e}")
         
@@ -2452,7 +2477,7 @@ class DownloadManagerWidget(QWidget):
             # the completed signal is processed. Using QTimer.singleShot(0, ...) defers execution
             # to the next event loop iteration when the worker has been removed.
             logger.info("   Scheduling next pending check (deferred)...")
-            QTimer.singleShot(100, self._start_next_pending)
+            QTimer.singleShot(0, self._start_next_pending)
             logger.info("   Next pending scheduled")
 
             # Log database update for completion
@@ -2549,7 +2574,7 @@ class DownloadManagerWidget(QWidget):
             )
             # Allow the pipeline to continue for other downloads.
             self._check_auto_resume()
-            QTimer.singleShot(100, self._start_next_pending)
+            QTimer.singleShot(0, self._start_next_pending)
             return
 
         # Update state to FAILED before emitting signal
@@ -2578,7 +2603,7 @@ class DownloadManagerWidget(QWidget):
         self._check_auto_retry()
 
         # Defer starting next pending to allow worker cleanup
-        QTimer.singleShot(100, self._start_next_pending)
+        QTimer.singleShot(0, self._start_next_pending)
 
         # Log database update for error
         state = self.state_store.get(study_uid)
@@ -2593,6 +2618,24 @@ class DownloadManagerWidget(QWidget):
         automatically resume when the higher priority download completes.
         """
         try:
+            # Do NOT auto-resume while a CRITICAL intent is still active.
+            # This prevents HIGH/NORMAL downloads from bouncing back during
+            # per-series CRITICAL preemption (viewer drag/drop or click).
+            all_states = self.state_store.get_all()
+            critical_active = any(
+                (
+                    s.status in [DownloadStatus.PENDING, DownloadStatus.VALIDATING, DownloadStatus.DOWNLOADING]
+                    and (
+                        s.priority == DownloadPriority.CRITICAL
+                        or bool(getattr(s, 'viewed_series_number', None))
+                    )
+                )
+                for s in all_states
+            )
+            if critical_active:
+                logger.info("⏳ Auto-resume deferred: CRITICAL download/intent still active")
+                return
+
             # Get all paused downloads
             paused = self.state_store.get_by_status(DownloadStatus.PAUSED)
             
@@ -3089,23 +3132,38 @@ class DownloadManagerWidget(QWidget):
             if not series_removed:
                 _active_count = self.worker_pool.get_active_count()
                 if _active_count > 0 and state.status == DownloadStatus.DOWNLOADING:
+                    current_num = str(state.current_series_number) if state.current_series_number is not None else None
+                    current_uid = str(state.current_series) if state.current_series is not None else None
+
+                    target_is_current = False
+                    if target_num and current_num and str(target_num) == str(current_num):
+                        target_is_current = True
+                    if target_uid and current_uid and str(target_uid) == str(current_uid):
+                        target_is_current = True
+
+                    if target_is_current:
+                        logger.info(
+                            f"⏳ [SERIES RETRY] Target series {target_num or series_number} is already "
+                            f"the active downloading series (pool={_active_count}). Skipping retry."
+                        )
+                        return
+
                     logger.info(
-                        f"⏳ [SERIES RETRY] Series {target_num or series_number} is currently being "
-                        f"downloaded (pool={_active_count}). Skipping retry."
+                        f"⚡ [SERIES RETRY] Critical request for series {target_num or series_number} "
+                        f"while series {current_num or current_uid or 'unknown'} is active. "
+                        f"Preempting current study worker for immediate reprioritization."
                     )
-                    return
 
             # Non-blocking preemption of active downloads
             if self.worker_pool.get_active_count() > 0:
                 logger.info(f"⏸️ [SERIES RETRY] Preempting active downloads (non-blocking)")
                 self._pause_all_active_downloads()
 
-            # Promote priority to CRITICAL
-            if state.priority != DownloadPriority.CRITICAL:
-                self.state_store.update(study_uid, priority=DownloadPriority.CRITICAL)
-                if task and task.priority != DownloadPriority.CRITICAL:
-                    task = replace(task, priority=DownloadPriority.CRITICAL)
-                    self._tasks[study_uid] = task
+            # Promote priority to CRITICAL and latch viewed series via coordinator.
+            if target_num:
+                self.intent_coordinator.request_critical_series(study_uid, str(target_num))
+            else:
+                self.intent_coordinator.request_study_priority(study_uid, DownloadPriority.CRITICAL)
 
             # Force state to PENDING (bypass terminal state protection)
             if state.status == DownloadStatus.COMPLETED:
@@ -3121,6 +3179,10 @@ class DownloadManagerWidget(QWidget):
                 self.state_store._notify_observers('updated', study_uid, state, 'status', old_status, DownloadStatus.PENDING)
             if state.status != DownloadStatus.PENDING:
                 self.state_store.update(study_uid, status=DownloadStatus.PENDING, error_message=None)
+
+            # Final consolidated table refresh after ALL state changes
+            # (priority→CRITICAL, others→PAUSED, this→PENDING) are applied.
+            QTimer.singleShot(50, self._refresh_table_order)
 
             # ──────────────────────────────────────────────────────────
             # SLOW PATH — offloaded to a background thread
@@ -4361,7 +4423,7 @@ class DownloadManagerWidget(QWidget):
 
                 # Update state
                 self.state_store.update(study_uid, priority=priority)
-                self._negotiate_priority_change(study_uid, priority)
+                self.intent_coordinator.negotiate_priority_change(study_uid, priority)
                 self._refresh_table_order()
                 
                 # Update button states after priority change
@@ -5113,7 +5175,14 @@ class DownloadManagerWidget(QWidget):
             if started:
                 logger.info(f"✅ [PRIORITY-DOWNLOAD] Priority download started in {elapsed:.0f}ms for {study_uid[:40]}...")
             else:
-                logger.warning(f"⚠️ [PRIORITY-DOWNLOAD] Could not start download worker for {study_uid[:40]}...")
+                # Pool is at capacity — the old worker will stop shortly (cancel flag set).
+                # Schedule a retry poll so the new study starts the moment a slot opens
+                # instead of waiting for _start_next_pending to be triggered by worker completion.
+                logger.info(
+                    f"⏳ [PRIORITY-DOWNLOAD] Pool at capacity — scheduling deferred start retry "
+                    f"for {study_uid[:40]}..."
+                )
+                self.intent_coordinator.schedule_priority_start_retry(study_uid)
 
             return started
 
@@ -5122,6 +5191,31 @@ class DownloadManagerWidget(QWidget):
             import traceback
             logger.error(traceback.format_exc())
             return False
+
+    def _schedule_priority_start_retry(
+        self,
+        study_uid: str,
+        max_retries: int = 60,
+        interval_ms: int = 500,
+        _attempt: int = 0,
+    ) -> None:
+        """
+        Poll for a free worker-pool slot and start the priority download worker
+        as soon as one becomes available.
+
+        Called only when ``start_priority_download_immediately`` could not start
+        the worker immediately because the pool was at capacity (the old worker
+        is still winding down its current batch after receiving the cancel flag).
+
+        Each attempt is scheduled with ``QTimer.singleShot`` so the Qt event
+        loop is never blocked.
+        """
+        self.intent_coordinator.schedule_priority_start_retry(
+            study_uid,
+            max_retries=max_retries,
+            interval_ms=interval_ms,
+            _attempt=_attempt,
+        )
 
     # ── Series-level priority management ────────────────────────────────
     def set_viewed_series(self, study_uid: str, series_number: str) -> None:
@@ -5152,12 +5246,8 @@ class DownloadManagerWidget(QWidget):
                 logger.debug(f"[VIEWED-SERIES] Series {series_number} already marked as viewed")
                 return
 
-            # Update state: record viewed series and escalate to CRITICAL
-            updates = {'viewed_series_number': str(series_number)}
-            if state.priority != DownloadPriority.CRITICAL:
-                updates['priority'] = DownloadPriority.CRITICAL
-
-            self.state_store.update(study_uid, **updates)
+            # Delegate to coordinator for atomic intent application.
+            self.intent_coordinator.request_critical_series(study_uid, str(series_number))
 
             logger.info(
                 f"⚡ [VIEWED-SERIES] Study {study_uid[:40]}… series {series_number} → CRITICAL "
@@ -5169,6 +5259,23 @@ class DownloadManagerWidget(QWidget):
 
         except Exception as e:
             logger.error(f"❌ [VIEWED-SERIES] Error setting viewed series: {e}")
+
+    def request_critical_series_download(
+        self,
+        study_uid: str,
+        series_number: str,
+        series_uid: str = None,
+    ) -> None:
+        """Single entry-point for viewer-driven critical-series requests.
+
+        This is the preferred public API for FAST/ADV viewer interactions.
+        It atomically applies CRITICAL intent and starts series retry.
+        """
+        try:
+            self.intent_coordinator.request_critical_series(study_uid, str(series_number))
+            self._on_series_retry(study_uid, series_number, series_uid)
+        except Exception as e:
+            logger.error(f"❌ [VIEWED-SERIES] Error requesting critical series download: {e}")
 
     def clear_viewed_series(self, study_uid: str) -> None:
         """
@@ -5187,15 +5294,11 @@ class DownloadManagerWidget(QWidget):
             if state.viewed_series_number is None:
                 return  # Nothing to clear
 
-            self.state_store.update(
-                study_uid,
-                viewed_series_number=None,
-                priority=DownloadPriority.HIGH,
-            )
-            logger.info(
-                f"🔽 [VIEWED-SERIES] Cleared viewed series for {study_uid[:40]}… → HIGH"
-            )
-            self._refresh_table_order()
+            cleared = self.intent_coordinator.clear_series_intent(study_uid)
+            if cleared:
+                logger.info(
+                    f"🔽 [VIEWED-SERIES] Cleared viewed series for {study_uid[:40]}… → HIGH"
+                )
 
         except Exception as e:
             logger.error(f"❌ [VIEWED-SERIES] Error clearing viewed series: {e}")
@@ -5239,56 +5342,7 @@ class DownloadManagerWidget(QWidget):
         non-blockingly preempt the lower-priority work and give the promoted study
         a fair chance to run next.
         """
-        state = self.state_store.get(study_uid)
-        if not state:
-            return
-
-        task = self._tasks.get(study_uid)
-        preemption_result = None
-        if task:
-            try:
-                task = replace(task, priority=new_priority)
-                self._tasks[study_uid] = task
-                preemption_result = self.rule_engine.evaluate_preemption(task)
-            except Exception as e:
-                logger.warning(f"⚠️ [PRIORITY] Could not evaluate preemption for {study_uid[:40]}...: {e}")
-
-        if preemption_result:
-            if preemption_result.action == PreemptionAction.PAUSE_ALL:
-                # Exclude the promoted study itself from being paused.
-                # When the promoted study is already DOWNLOADING, pausing it and
-                # immediately restarting it via _start_next_pending is wasteful
-                # (needless worker cancel + R19b re-scan).  Only yield for OTHER
-                # lower-priority active downloads.
-                others_to_pause = [
-                    uid for uid in preemption_result.affected_downloads
-                    if uid != study_uid
-                ]
-                if others_to_pause:
-                    self._pause_downloads_for_preemption(others_to_pause)
-            elif preemption_result.action == PreemptionAction.PREEMPT_LOWER and preemption_result.affected_downloads:
-                self._pause_downloads_for_preemption(preemption_result.affected_downloads)
-
-        refreshed_state = self.state_store.get(study_uid)
-        if refreshed_state and refreshed_state.status == DownloadStatus.PAUSED and refreshed_state.is_auto_paused:
-            self.state_store.update(
-                study_uid,
-                status=DownloadStatus.PENDING,
-                is_auto_paused=False,
-                error_message=None,
-            )
-
-        should_schedule = False
-        refreshed_state = self.state_store.get(study_uid)
-        if refreshed_state and refreshed_state.status == DownloadStatus.PENDING:
-            should_schedule = True
-
-        if preemption_result and preemption_result.affected_downloads:
-            should_schedule = True
-
-        if should_schedule:
-            logger.info(f"🚦 [PRIORITY] Scheduling queue re-evaluation after priority change for {study_uid[:40]}...")
-            QTimer.singleShot(150, self._start_next_pending)
+        self.intent_coordinator.negotiate_priority_change(study_uid, new_priority)
     
     def _pause_all_active_downloads(self) -> None:
         """
@@ -5305,33 +5359,56 @@ class DownloadManagerWidget(QWidget):
         Each component checks the cancel flag and stops gracefully.
         """
         try:
-            # Get all downloading and validating studies (active downloads)
+            # Ground truth for active work is the worker pool, not only state status.
+            # In some flows the state can temporarily lag (e.g., still PENDING) while
+            # a subprocess worker is actively downloading; relying only on status then
+            # misses cancellation and CRITICAL preemption appears to be ignored.
+            active_workers = self.worker_pool.get_all_workers()
+            active_worker_uids = [uid for uid, _ in active_workers]
+
+            # Keep state-based view for logging and state normalization.
             downloading = self.state_store.get_by_status(DownloadStatus.DOWNLOADING)
             validating = self.state_store.get_by_status(DownloadStatus.VALIDATING)
-            active = downloading + validating
+            state_active_uids = {s.study_uid for s in (downloading + validating)}
 
-            if not active:
-                logger.info("��️ [PAUSE-ALL] No active downloads to pause")
+            # Union: any worker actually running OR any state marked active.
+            to_pause_uids = list(dict.fromkeys(active_worker_uids + list(state_active_uids)))
+
+            if not to_pause_uids:
+                logger.info("⏸️ [PAUSE-ALL] No active downloads/workers to pause")
                 return
 
-            logger.info(f"⏸️ [PAUSE-ALL] Pausing {len(active)} active downloads...")
+            logger.info(
+                f"⏸️ [PAUSE-ALL] Pausing downloads: workers={len(active_worker_uids)}, "
+                f"state_active={len(state_active_uids)}, total_unique={len(to_pause_uids)}"
+            )
 
-            for state in active:
-                logger.info(f"⏸️ [PAUSE-ALL] Pausing: {state.patient_name[:20]}... ({state.status.value})")
+            # Request cancel by active workers first (fast path).
+            for study_uid, worker in active_workers:
+                try:
+                    if worker:
+                        worker.request_cancel()
+                        logger.info(f"⏸️ [PAUSE-ALL] Cancel requested for active worker: {study_uid[:40]}...")
+                except Exception as e:
+                    logger.warning(f"⚠️ [PAUSE-ALL] Failed requesting cancel for {study_uid[:40]}...: {e}")
 
-                # Request cancellation on worker (sets flag that propagates through)
-                worker = self.worker_pool.get_worker(state.study_uid)
-                if worker:
-                    worker.request_cancel()
-                    logger.info(f"⏸️ [PAUSE-ALL] Cancel requested for worker: {state.study_uid[:40]}...")
+            # Normalize state to auto-paused so queue rules can resume later.
+            for study_uid in to_pause_uids:
+                state = self.state_store.get(study_uid)
+                if not state:
+                    continue
+                if state.status in [DownloadStatus.COMPLETED, DownloadStatus.CANCELLED]:
+                    continue
 
-                # Update state to paused (mark as auto-paused for auto-resume later)
-                self.state_store.update(
-                    state.study_uid,
-                    status=DownloadStatus.PAUSED,
-                    is_auto_paused=True
-                )
-                logger.info(f"💾 [DATABASE] State updated to PAUSED (auto_paused=True) for {state.study_uid[:40]}...")
+                if state.status != DownloadStatus.PAUSED or not state.is_auto_paused:
+                    self.state_store.update(
+                        study_uid,
+                        status=DownloadStatus.PAUSED,
+                        is_auto_paused=True
+                    )
+                    logger.info(
+                        f"💾 [DATABASE] State updated to PAUSED (auto_paused=True) for {study_uid[:40]}..."
+                    )
 
             # Also signal all workers to cancel (non-blocking — workers clean
             # themselves up via their ``finished`` signal).  Do NOT call

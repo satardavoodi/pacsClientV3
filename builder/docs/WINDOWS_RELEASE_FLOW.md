@@ -86,6 +86,11 @@ The installer UX flow covers:
 5. Ready summary with selected modules and graphics mode.
 6. Install progress and post-install launch option.
 
+During `Custom` setup, the installer is expected to clearly answer two deployment questions for the target PC:
+
+1. Which optional modules should be installed on this workstation?
+2. Should the workstation prefer GPU acceleration, or stay in CPU-safe mode?
+
 The installer writes the selected module state to:
 
 - `{app}\_internal\config\installation_profile.json`
@@ -98,6 +103,19 @@ The running application reads that profile and:
 - stores writable user config in `%APPDATA%\AIPacs\config`,
 - stores user data in `%LOCALAPPDATA%\AIPacs\user_data`,
 - probes GPU availability when the installer marked the workstation as GPU-capable.
+
+## Install On Another PC
+
+When sharing the build with an end user or another workstation:
+
+1. Deliver `builder/output/installer/ai-pacs installer.exe` and `SHA256.txt`.
+2. Ask the installer operator to choose `Custom` if the target PC needs optional modules.
+3. Let the installer operator confirm the module list for that PC.
+4. Review the GPU page:
+   - if the probe detects a supported GPU, GPU mode can stay enabled
+   - if the PC has no supported GPU, leave CPU-safe mode selected
+5. After install, launch AIPacs once so `installation_profile.json` and the first-launch module bootstrap can complete.
+6. Validate that the selected modules appear and the graphics mode is usable on that machine.
 
 ## Advanced MPR Payload
 
@@ -134,6 +152,7 @@ After a release run:
    - Core app launches.
    - Selected optional modules appear.
    - Graphics mode falls back safely when GPU is unavailable.
+   - `installation_profile.json` matches the module choices made during setup.
 
 For a full pass/fail workflow (including PC A/PC B evidence capture), use:
 

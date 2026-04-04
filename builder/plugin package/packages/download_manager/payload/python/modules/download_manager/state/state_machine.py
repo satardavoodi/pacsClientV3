@@ -54,6 +54,7 @@ class DownloadStateMachine:
         DownloadStatus.PENDING: {
             DownloadStatus.DOWNLOADING,   # Normal start
             DownloadStatus.VALIDATING,    # Validation before download
+            DownloadStatus.COMPLETED,     # Already complete on disk (R17b skip)
             DownloadStatus.PAUSED,        # Paused before starting
             DownloadStatus.FAILED,        # Failed before starting (e.g., no auth)
             DownloadStatus.CANCELLED,     # User cancelled

@@ -36,17 +36,17 @@ UninstallDisplayIcon={app}\AIPacs.exe
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Types]
-Name: "core"; Description: "Core workstation only"
-Name: "custom"; Description: "Core workstation with selected plugin packages"; Flags: iscustom
+Name: "core"; Description: "Core workstation only (viewer, download manager, education, stitching)"
+Name: "custom"; Description: "Choose optional modules for this PC before installation"; Flags: iscustom
 
 [Components]
 Name: "core"; Description: "Core platform"; Types: core custom; Flags: fixed
-Name: "optional"; Description: "Optional plugin packages"; Types: custom
-Name: "optional\advanced_mpr"; Description: "Advanced MPR (3D reconstruction / slicer runtime)"; Types: custom
-Name: "optional\printing"; Description: "Printing Module (medical print workflows)"; Types: custom
-Name: "optional\run_cd"; Description: "Run CD Module (media/export workflows)"; Types: custom
-Name: "optional\web_browser"; Description: "Web Browser Module (embedded web access)"; Types: custom
-Name: "optional\echomind"; Description: "EchoMind Module (assistant features)"; Types: custom
+Name: "optional"; Description: "Optional modules copied into the installer bundle for first-launch activation"; Types: custom
+Name: "optional\advanced_mpr"; Description: "Advanced MPR (3D reconstruction and bundled Slicer runtime)"; Types: custom
+Name: "optional\printing"; Description: "Printing Module (medical print and filming workflows)"; Types: custom
+Name: "optional\run_cd"; Description: "Run CD Module (media export and portable delivery workflows)"; Types: custom
+Name: "optional\web_browser"; Description: "Web Browser Module (embedded web access inside the workstation)"; Types: custom
+Name: "optional\echomind"; Description: "EchoMind Module (assistant and guided workflow features)"; Types: custom
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -181,16 +181,26 @@ function SelectedModulesSummary(): String;
 var
   Items: String;
 begin
-  Items := '';
+  Items :=
+    '  - Core platform (always installed)' + #13#10 +
+    '  - Viewer' + #13#10 +
+    '  - Download Manager' + #13#10 +
+    '  - ZetaBoost' + #13#10 +
+    '  - Education Module' + #13#10 +
+    '  - Stitching Module' + #13#10;
 
-  if OptionalModuleSelected('advanced_mpr') then Items := Items + '  - Advanced MPR' + #13#10;
-  if OptionalModuleSelected('printing') then Items := Items + '  - Printing Module' + #13#10;
-  if OptionalModuleSelected('run_cd') then Items := Items + '  - Run CD Module' + #13#10;
-  if OptionalModuleSelected('web_browser') then Items := Items + '  - Web Browser Module' + #13#10;
-  if OptionalModuleSelected('echomind') then Items := Items + '  - EchoMind Module' + #13#10;
+  if OptionalModuleSelected('advanced_mpr') then Items := Items + '  - Advanced MPR (selected)' + #13#10;
+  if OptionalModuleSelected('printing') then Items := Items + '  - Printing Module (selected)' + #13#10;
+  if OptionalModuleSelected('run_cd') then Items := Items + '  - Run CD Module (selected)' + #13#10;
+  if OptionalModuleSelected('web_browser') then Items := Items + '  - Web Browser Module (selected)' + #13#10;
+  if OptionalModuleSelected('echomind') then Items := Items + '  - EchoMind Module (selected)' + #13#10;
 
-  if Items = '' then
-    Result := '  - No optional modules selected' + #13#10
+  if not OptionalModuleSelected('advanced_mpr') and
+     not OptionalModuleSelected('printing') and
+     not OptionalModuleSelected('run_cd') and
+     not OptionalModuleSelected('web_browser') and
+     not OptionalModuleSelected('echomind') then
+    Result := Items + '  - No optional modules selected for this PC' + #13#10
   else
     Result := Items;
 end;
@@ -215,7 +225,10 @@ begin
     'Graphics Preference:' + NewLine +
     Space + GraphicsSummary + NewLine + NewLine +
     'Optional Modules:' + NewLine +
-    SelectedModulesSummary();
+    SelectedModulesSummary() + NewLine +
+    'Install behavior:' + NewLine +
+    Space + 'Selected optional modules are copied now and activated on first launch.' + NewLine +
+    Space + 'A runtime graphics probe will confirm GPU use and fall back safely if needed.';
 end;
 
 procedure InitializeWizard();
@@ -225,7 +238,7 @@ begin
   GpuPage := CreateCustomPage(
     wpSelectComponents,
     'Graphics Acceleration',
-    'Choose whether this workstation should prefer GPU acceleration.'
+    'Choose whether this workstation should prefer GPU acceleration on this PC.'
   );
 
   GpuCheckBox := TNewCheckBox.Create(GpuPage.Surface);
@@ -261,7 +274,8 @@ begin
 
   GpuHintLabel.Caption :=
     GpuHintLabel.Caption + #13#10 + #13#10 +
-    'Optional plugin packages selected during setup are copied now and activated on first launch. ' +
+    'This setup stores the module choices for this workstation, copies the selected optional packages, ' +
+    'and lets AIPacs validate graphics support again on first launch. ' +
     'Other packages can still be installed later from Settings -> Installation Module.';
 end;
 

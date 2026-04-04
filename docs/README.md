@@ -1,16 +1,36 @@
 ﻿# AIPacs Documentation
 
-> **Current Stable Version:** v2.2.7 (2026-03-31)
+> **Current Stable Version:** v2.3.0 (2026-04-04)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
+
+## Quick Start for AI Agents
+
+| I need to... | Go to |
+|-------------|-------|
+| Understand the overall architecture | [Architecture Overview](architecture/overview.md) |
+| Find a specific file/class/function | `.github/copilot-instructions.md` → "Complete file map" and "Function lookup" |
+| Understand how modules talk to each other | [Module Connections](architecture/module-connections.md) |
+| Find test files and run commands | [Test Catalog](architecture/test-catalog.md) |
+| Check KPIs and performance targets | `.github/copilot-instructions.md` → "KPI thresholds" |
+| Debug a download issue | `.github/copilot-instructions.md` → "Common debugging patterns" |
+| Understand the download pipeline | [Download Pipeline](pipelines/download-pipeline.md) |
+| Understand the viewer pipeline | [Viewer Pipeline](pipelines/viewer-pipeline.md) |
+| Find config for a specific module | [Module Catalog](modules/README.md) → "Module Configuration Reference" |
+| Find where a signal is emitted/handled | [Module Connections](architecture/module-connections.md) → "Inter-Module Signal Connections" |
+| Check rules before changing timers | `.github/copilot-instructions.md` → "Critical rules" and "Pipeline latency budget" |
 
 ## Quick Navigation
 
 ### Architecture & Design
-- [Architecture Overview](architecture/overview.md) — System layers, module boundaries, database and cache responsibilities
+- [Architecture Overview](architecture/overview.md) — System layers, module boundaries, database and cache responsibilities, KPI snapshot
+- [Module Connections & Signal Map](architecture/module-connections.md) — Inter-module signals, data flow, thread model, timer inventory
 - [Repository Layout](architecture/repository-layout.md) — Standardized folder ownership and conventions
 - [Workstation Lifecycle](architecture/workstation-lifecycle.md) — App startup, session loops, resource lifecycle, shutdown
 - [Database Architecture](architecture/database-architecture.md) — Schema, connection pooling, WAL mode, migration strategy
+- [Network Architecture](architecture/network-architecture.md) — Socket/gRPC protocol, framing, retry, connection health
+- [Home UI Services](architecture/home-ui-services.md) — Thin controller + service layer pattern
+- [Test Catalog](architecture/test-catalog.md) — All test suites, scenarios, KPI thresholds, run commands
 
 ### Pipelines
 - [Image Pipeline Reference](pipelines/IMAGE_PIPELINE_REFERENCE.md) — DICOM→ITK→VTK coordinate transforms (essential)
@@ -37,7 +57,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - [Mode B Documentation Index](performance/MODE_B_DOCUMENTATION_INDEX.md) — Performance doc navigation
 
 ### Modules
-- [Module Catalog](modules/README.md) — Active workstation modules and integration notes
+- [Module Catalog](modules/README.md) — Active workstation modules, DM internal structure, signal flows
 
 ### Development
 - [Setup & Tooling](development/setup-and-tooling.md) — Dependencies, commands, day-to-day workflow
@@ -46,7 +66,12 @@ This is the canonical entrypoint for all project documentation. The docs are org
 
 ### Releases
 - [Release Notes](releases/RELEASE_NOTES.md) — Current consolidated release history
-- [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) — Stable release notes for the current published version and refreshed packaging snapshot
+- [Version 2.3.0 Release](releases/VERSION_2.3.0_RELEASE.md) — Stable release notes for the current published version
+- [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) — Previous stable release snapshot
+
+### Deployment
+- [Windows Release Flow](../builder/docs/WINDOWS_RELEASE_FLOW.md) — Build, stage, and install workflow for shipping to another PC
+- [Installer QA Checklist](../builder/docs/INSTALLER_QA_CHECKLIST.md) — Cross-PC validation for module selection, first launch, and graphics fallback
 
 ### Archive
 - [Archive Index](archive/README.md) — Historical documents (not current truth)

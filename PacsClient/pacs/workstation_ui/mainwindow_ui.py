@@ -1068,6 +1068,11 @@ class MainWindowWidget(QWidget):
         for name, err in results.items():
             if err is not None:
                 print(f"Warning: shutdown({name}): {err}")
+        # Break reference cycles that the GC can't collect (VTK C++ pointers etc.)
+        # A single explicit gc.collect() before the process ends silences the
+        # "gc: N uncollectable objects at shutdown" ResourceWarning.
+        import gc
+        gc.collect()
         event.accept()
 
     # ------------------------------------------------------------------

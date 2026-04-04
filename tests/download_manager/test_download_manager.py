@@ -74,6 +74,7 @@ for _pkg in [
     "modules.download_manager.core",
     "modules.download_manager.state",
     "modules.download_manager.rules",
+    "modules.download_manager.coordinator",
 ]:
     if _pkg not in sys.modules:
         _stub = types.ModuleType(_pkg)
@@ -125,6 +126,10 @@ _rule_engine_mod = _load_module_from_file(
     "modules.download_manager.rules.rule_engine",
     str(_DM_ROOT / "rules" / "rule_engine.py"),
 )
+_coordinator_mod = _load_module_from_file(
+    "modules.download_manager.coordinator.series_intent_coordinator",
+    str(_DM_ROOT / "coordinator" / "series_intent_coordinator.py"),
+)
 
 DownloadPriority = _enums_mod.DownloadPriority
 DownloadStatus = _enums_mod.DownloadStatus
@@ -139,6 +144,7 @@ MAX_RETRIES = _constants_mod.MAX_RETRIES
 DownloadStateStore = _state_store_mod.DownloadStateStore
 ValidationRules = _validation_rules_mod.ValidationRules
 DownloadRuleEngine = _rule_engine_mod.DownloadRuleEngine
+SeriesIntentCoordinator = _coordinator_mod.SeriesIntentCoordinator
 
 # ═══════════════════════════════════════════════════════════════════
 #  KPI Collector
@@ -1806,6 +1812,570 @@ def scenario_no_self_preemption_on_critical_promotion():
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  SCENARIO 21 — SeriesIntentCoordinator Atomic Critical Intent
+# ═══════════════════════════════════════════════════════════════════
+
+def scenario_series_intent_coordinator_atomicity():
+    """Ensure coordinator applies critical intent atomically and demotes cleanly."""
+    SCENARIO = "S21: SeriesIntentCoordinator Atomicity"
+    logger.info(f"\n{'='*80}\n  {SCENARIO}\n{'='*80}")
+
+    store = DownloadStateStore()
+    engine = DownloadRuleEngine(store, {})
+
+    task_a = _make_task(patient_name="Intent-A", priority=DownloadPriority.HIGH, series_count=3)
+    task_b = _make_task(patient_name="Intent-B", priority=DownloadPriority.NORMAL, series_count=2)
+    store.create(task_a)
+    store.create(task_b)
+    store.update(task_a.study_uid, status=DownloadStatus.DOWNLOADING)
+    store.update(task_b.study_uid, status=DownloadStatus.DOWNLOADING)
+
+    calls = {
+        'paused': [],
+        'start_next': 0,
+        'refreshed': 0,
+        'auto_resume': 0,
+    }
+
+    class _FakePool:
+        def can_add_worker(self):
+            return True
+
+    coordinator = SeriesIntentCoordinator(
+        state_store=store,
+        rule_engine=engine,
+        worker_pool=_FakePool(),
+        tasks_ref={task_a.study_uid: task_a, task_b.study_uid: task_b},
+        pause_downloads_for_preemption=lambda uids: calls['paused'].extend(uids),
+        start_download_worker=lambda _uid: True,
+        start_next_pending=lambda: calls.__setitem__('start_next', calls['start_next'] + 1),
+        refresh_table_order=lambda: calls.__setitem__('refreshed', calls['refreshed'] + 1),
+        check_auto_resume=lambda: calls.__setitem__('auto_resume', calls['auto_resume'] + 1),
+        defer_call=lambda _delay, cb: cb(),
+    )
+
+    ok = coordinator.request_critical_series(task_a.study_uid, "2")
+    _kpi.record(SCENARIO, "request_critical_series returns True", ok, "", ok)
+
+    state_a = store.get(task_a.study_uid)
+    ok = state_a.priority == DownloadPriority.CRITICAL
+    _kpi.record(SCENARIO, "A promoted to CRITICAL", ok, "", ok)
+    ok = str(state_a.viewed_series_number) == "2"
+    _kpi.record(SCENARIO, "A viewed_series_number latched", ok, "", ok)
+
+    ok = task_b.study_uid in calls['paused']
+    _kpi.record(SCENARIO, "Lower-priority active study preempted", ok, "", ok)
+
+    _kpi.record(SCENARIO, "Queue recheck scheduled", calls['start_next'] >= 1, "", calls['start_next'] >= 1)
+
+    cleared = coordinator.clear_series_intent(task_a.study_uid)
+    _kpi.record(SCENARIO, "clear_series_intent returns True", cleared, "", cleared)
+    state_a2 = store.get(task_a.study_uid)
+    ok = state_a2.priority == DownloadPriority.HIGH and state_a2.viewed_series_number is None
+    _kpi.record(SCENARIO, "Clear intent demotes to HIGH", ok, "", ok)
+
+    logger.info(f"  ✅ {SCENARIO} done\n")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SCENARIO 22 — Coordinator negotiate_priority_change Latency
+# ═══════════════════════════════════════════════════════════════════
+
+def scenario_negotiate_priority_latency():
+    """
+    Measure the wall-clock cost of negotiate_priority_change.
+    This runs on the main thread during drag-drop, so it MUST be fast.
+    Target: < 1ms per call (no I/O, no Qt, pure state ops).
+    """
+    SCENARIO = "S22: Coordinator Negotiate Priority Latency"
+    logger.info(f"\n{'='*80}\n  {SCENARIO}\n{'='*80}")
+
+    NUM_ROUNDS = 200
+    store = DownloadStateStore()
+    engine = DownloadRuleEngine(store, {})
+
+    # Create 5 concurrent downloading studies to maximise preemption checks
+    tasks = []
+    for i in range(5):
+        t = _make_task(patient_name=f"Lat-{i}", priority=DownloadPriority.NORMAL, series_count=2)
+        store.create(t)
+        store.update(t.study_uid, status=DownloadStatus.DOWNLOADING)
+        tasks.append(t)
+
+    calls = {"paused": 0, "start": 0, "refresh": 0, "resume": 0}
+    coordinator = SeriesIntentCoordinator(
+        state_store=store,
+        rule_engine=engine,
+        worker_pool=type("P", (), {"can_add_worker": lambda self: True})(),
+        tasks_ref={t.study_uid: t for t in tasks},
+        pause_downloads_for_preemption=lambda uids: calls.__setitem__("paused", calls["paused"] + len(uids)),
+        start_download_worker=lambda _uid: True,
+        start_next_pending=lambda: calls.__setitem__("start", calls["start"] + 1),
+        refresh_table_order=lambda: calls.__setitem__("refresh", calls["refresh"] + 1),
+        check_auto_resume=lambda: calls.__setitem__("resume", calls["resume"] + 1),
+        defer_call=lambda _delay, cb: cb(),
+    )
+
+    latencies = []
+    for rnd in range(NUM_ROUNDS):
+        target = tasks[rnd % len(tasks)]
+        # Alternate between CRITICAL promotion and HIGH demotion
+        new_pri = DownloadPriority.CRITICAL if rnd % 2 == 0 else DownloadPriority.HIGH
+        store.update(target.study_uid, priority=new_pri)
+
+        t0 = time.perf_counter()
+        coordinator.negotiate_priority_change(target.study_uid, new_pri)
+        latencies.append(_elapsed_ms(t0))
+
+    avg_ms = sum(latencies) / len(latencies)
+    p50_ms = sorted(latencies)[len(latencies) // 2]
+    p95_ms = sorted(latencies)[int(len(latencies) * 0.95)]
+    p99_ms = sorted(latencies)[int(len(latencies) * 0.99)]
+    max_ms = max(latencies)
+
+    _kpi.record(SCENARIO, "Rounds", NUM_ROUNDS, "")
+    _kpi.record(SCENARIO, "Concurrent downloading studies", 5, "")
+    _kpi.record(SCENARIO, "Avg negotiate latency", avg_ms, "ms")
+    _kpi.record(SCENARIO, "P50 negotiate latency", p50_ms, "ms")
+    _kpi.record(SCENARIO, "P95 negotiate latency", p95_ms, "ms")
+    _kpi.record(SCENARIO, "P99 negotiate latency", p99_ms, "ms")
+    _kpi.record(SCENARIO, "Max negotiate latency", max_ms, "ms")
+
+    ok = p95_ms < 1.0
+    _kpi.record(SCENARIO, "P95 < 1ms (no event-loop block)", ok, "", ok)
+    ok = max_ms < 5.0
+    _kpi.record(SCENARIO, "Max < 5ms (no outlier spike)", ok, "", ok)
+
+    logger.info(f"  ✅ {SCENARIO} done\n")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SCENARIO 23 — Observer Priority→Table Refresh Signal Chain
+# ═══════════════════════════════════════════════════════════════════
+
+def scenario_observer_priority_refresh_chain():
+    """
+    When state_store.update(priority=CRITICAL) fires, observers MUST trigger
+    a table refresh so the DM UI shows the updated priority badge.
+    Verify the full chain: update → observer → refresh_table_order.
+    """
+    SCENARIO = "S23: Observer Priority→Table Refresh Chain"
+    logger.info(f"\n{'='*80}\n  {SCENARIO}\n{'='*80}")
+
+    store = DownloadStateStore()
+    task = _make_task(patient_name="ObsRefresh", priority=DownloadPriority.NORMAL)
+    store.create(task)
+
+    events_log: List[Dict[str, Any]] = []
+
+    class DetailedObserver:
+        def on_state_change(self, event, study_uid, state, *args):
+            if event == "updated" and len(args) >= 3:
+                field_name, old_val, new_val = args[0], args[1], args[2]
+                events_log.append({
+                    "field": field_name,
+                    "old": old_val,
+                    "new": new_val,
+                    "time": time.perf_counter(),
+                })
+
+    observer = DetailedObserver()
+    store.register_observer(observer)
+
+    # Atomic update with both viewed_series_number AND priority
+    t0 = time.perf_counter()
+    store.update(
+        task.study_uid,
+        viewed_series_number="5",
+        priority=DownloadPriority.CRITICAL,
+    )
+    update_ms = _elapsed_ms(t0)
+
+    # Check that priority change WAS notified
+    priority_events = [e for e in events_log if e["field"] == "priority"]
+    ok = len(priority_events) >= 1
+    _kpi.record(SCENARIO, "Priority change observer fired", ok, "", ok)
+
+    if priority_events:
+        ok = priority_events[0]["new"] == DownloadPriority.CRITICAL
+        _kpi.record(SCENARIO, "Observer received CRITICAL value", ok, "", ok)
+
+    # Check that viewed_series_number change was also notified
+    vsn_events = [e for e in events_log if e["field"] == "viewed_series_number"]
+    ok = len(vsn_events) >= 1
+    _kpi.record(SCENARIO, "viewed_series_number observer fired", ok, "", ok)
+
+    # Total update latency
+    _kpi.record(SCENARIO, "Multi-field update latency", update_ms, "ms")
+    ok = update_ms < 1.0
+    _kpi.record(SCENARIO, "Multi-field update < 1ms", ok, "", ok)
+
+    # Now verify demote path
+    events_log.clear()
+    store.update(task.study_uid, viewed_series_number=None, priority=DownloadPriority.HIGH)
+    demote_events = [e for e in events_log if e["field"] == "priority"]
+    ok = len(demote_events) >= 1 and demote_events[0]["new"] == DownloadPriority.HIGH
+    _kpi.record(SCENARIO, "Demote to HIGH observer fired", ok, "", ok)
+
+    logger.info(f"  ✅ {SCENARIO} done\n")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SCENARIO 24 — Critical Series Request Full Roundtrip
+# ═══════════════════════════════════════════════════════════════════
+
+def scenario_critical_series_roundtrip():
+    """
+    End-to-end roundtrip for the drag-drop → CRITICAL priority flow:
+    1. Study downloading at HIGH
+    2. request_critical_series(study, "5")
+    3. Verify: priority=CRITICAL, viewed_series_number="5"
+    4. Verify: peer studies paused
+    5. Verify: refresh_table_order called (UI visible)
+    6. Verify: full roundtrip < 2ms (no I/O)
+    """
+    SCENARIO = "S24: Critical Series Request Roundtrip"
+    logger.info(f"\n{'='*80}\n  {SCENARIO}\n{'='*80}")
+
+    store = DownloadStateStore()
+    engine = DownloadRuleEngine(store, {})
+
+    task_main = _make_task(patient_name="Main-DragDrop", priority=DownloadPriority.HIGH, series_count=5)
+    task_peer = _make_task(patient_name="Peer-Background", priority=DownloadPriority.NORMAL, series_count=3)
+    store.create(task_main)
+    store.create(task_peer)
+    store.update(task_main.study_uid, status=DownloadStatus.DOWNLOADING)
+    store.update(task_peer.study_uid, status=DownloadStatus.DOWNLOADING)
+
+    calls = {"paused": [], "start": 0, "refresh": 0, "resume": 0}
+    coordinator = SeriesIntentCoordinator(
+        state_store=store,
+        rule_engine=engine,
+        worker_pool=type("P", (), {"can_add_worker": lambda self: True})(),
+        tasks_ref={task_main.study_uid: task_main, task_peer.study_uid: task_peer},
+        pause_downloads_for_preemption=lambda uids: calls["paused"].extend(uids),
+        start_download_worker=lambda _uid: True,
+        start_next_pending=lambda: calls.__setitem__("start", calls["start"] + 1),
+        refresh_table_order=lambda: calls.__setitem__("refresh", calls["refresh"] + 1),
+        check_auto_resume=lambda: calls.__setitem__("resume", calls["resume"] + 1),
+        defer_call=lambda _delay, cb: cb(),
+    )
+
+    # Measure full roundtrip
+    t0 = time.perf_counter()
+    ok = coordinator.request_critical_series(task_main.study_uid, "5")
+    roundtrip_ms = _elapsed_ms(t0)
+
+    _kpi.record(SCENARIO, "request_critical_series returned True", ok, "", ok)
+    _kpi.record(SCENARIO, "Full roundtrip latency", roundtrip_ms, "ms")
+    ok = roundtrip_ms < 2.0
+    _kpi.record(SCENARIO, "Roundtrip < 2ms (no I/O)", ok, "", ok)
+
+    # State verification
+    state = store.get(task_main.study_uid)
+    ok = state.priority == DownloadPriority.CRITICAL
+    _kpi.record(SCENARIO, "Main study priority == CRITICAL", ok, "", ok)
+    ok = str(state.viewed_series_number) == "5"
+    _kpi.record(SCENARIO, "viewed_series_number == '5'", ok, "", ok)
+
+    # Peer paused
+    ok = task_peer.study_uid in calls["paused"]
+    _kpi.record(SCENARIO, "Peer study paused (preempted)", ok, "", ok)
+
+    # Main NOT paused (no self-preemption)
+    ok = task_main.study_uid not in calls["paused"]
+    _kpi.record(SCENARIO, "Main study NOT self-paused", ok, "", ok)
+
+    # UI refresh called
+    ok = calls["refresh"] >= 1
+    _kpi.record(SCENARIO, "refresh_table_order called (UI visible)", ok, "", ok)
+
+    # Queue recheck scheduled
+    ok = calls["start"] >= 1
+    _kpi.record(SCENARIO, "start_next_pending scheduled", ok, "", ok)
+
+    logger.info(f"  ✅ {SCENARIO} done\n")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SCENARIO 25 — State Store Rapid Priority Toggle Stress
+# ═══════════════════════════════════════════════════════════════════
+
+def scenario_rapid_priority_toggle_stress():
+    """
+    Stress test: rapidly toggle priority between CRITICAL and NORMAL
+    simulating fast drag-drop → undo → drag-drop cycles.
+    Verify state consistency after N toggles.
+    """
+    SCENARIO = "S25: Rapid Priority Toggle Stress"
+    logger.info(f"\n{'='*80}\n  {SCENARIO}\n{'='*80}")
+
+    store = DownloadStateStore()
+    NUM_TOGGLES = 1000
+    task = _make_task(patient_name="ToggleStress", priority=DownloadPriority.NORMAL)
+    store.create(task)
+    store.update(task.study_uid, status=DownloadStatus.DOWNLOADING)
+
+    notification_count = [0]
+
+    class ToggleObserver:
+        def on_state_change(self, event, study_uid, state, *args):
+            notification_count[0] += 1
+
+    store.register_observer(ToggleObserver())
+
+    t0 = time.perf_counter()
+    for i in range(NUM_TOGGLES):
+        if i % 2 == 0:
+            store.update(
+                task.study_uid,
+                priority=DownloadPriority.CRITICAL,
+                viewed_series_number=str(i % 10),
+            )
+        else:
+            store.update(
+                task.study_uid,
+                priority=DownloadPriority.NORMAL,
+                viewed_series_number=None,
+            )
+    total_ms = _elapsed_ms(t0)
+
+    per_toggle_ms = total_ms / NUM_TOGGLES
+    _kpi.record(SCENARIO, "Toggles executed", NUM_TOGGLES, "")
+    _kpi.record(SCENARIO, "Total time", total_ms, "ms")
+    _kpi.record(SCENARIO, "Per-toggle latency", per_toggle_ms, "ms")
+    ok = per_toggle_ms < 0.1  # < 100µs per toggle
+    _kpi.record(SCENARIO, "Per-toggle < 0.1ms", ok, "", ok)
+
+    # Final state consistency
+    final = store.get(task.study_uid)
+    if NUM_TOGGLES % 2 == 0:
+        # Last toggle was even → will be index NUM_TOGGLES which doesn't run,
+        # so last executed was NUM_TOGGLES-1 (odd) → NORMAL
+        expected_pri = DownloadPriority.NORMAL
+        expected_vsn = None
+    else:
+        expected_pri = DownloadPriority.CRITICAL
+        expected_vsn = str((NUM_TOGGLES - 1) % 10)
+
+    ok = final.priority == expected_pri
+    _kpi.record(SCENARIO, f"Final priority == {expected_pri.name}", ok, "", ok)
+
+    ok = final.viewed_series_number == expected_vsn
+    _kpi.record(SCENARIO, f"Final viewed_series == {expected_vsn}", ok, "", ok)
+
+    # Still downloading (no accidental state corruption)
+    ok = final.status == DownloadStatus.DOWNLOADING
+    _kpi.record(SCENARIO, "Status still DOWNLOADING (no corruption)", ok, "", ok)
+
+    # Notifications delivered
+    ok = notification_count[0] >= NUM_TOGGLES
+    _kpi.record(SCENARIO, f"Notifications >= {NUM_TOGGLES}", ok, "", ok)
+
+    logger.info(f"  ✅ {SCENARIO} done\n")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SCENARIO 27 — Series Interrupt on Same-Study Viewed-Series Change
+# ═══════════════════════════════════════════════════════════════════
+
+def scenario_series_interrupt_same_study():
+    """
+    When the user drags Series 5 while Series 1 is downloading (same study),
+    the coordinator must cancel the current worker so the study restarts with
+    the viewed series first.  Previously, the worker kept downloading Series 1
+    until completion — causing a multi-second stall.
+
+    Verified behavior (post-fix):
+    - The study's own worker is cancelled
+    - State transitions: DOWNLOADING → PAUSED → PENDING (for _start_next_pending)
+    - viewed_series_number is set to the new series
+    - priority remains CRITICAL
+    - schedule_priority_start_retry is invoked as backup
+    """
+    SCENARIO = "S27: Series Interrupt on Same-Study Viewed-Series Change"
+    logger.info(f"\n{'='*80}\n  {SCENARIO}\n{'='*80}")
+
+    store = DownloadStateStore()
+    engine = DownloadRuleEngine(store, {})
+
+    task_a = _make_task(patient_name="Interrupt-Study", priority=DownloadPriority.HIGH, series_count=5)
+    store.create(task_a)
+    store.update(task_a.study_uid, status=DownloadStatus.DOWNLOADING, current_series_number="1")
+
+    calls = {"paused": [], "start": 0, "refresh": 0, "resume": 0, "retry_uid": [], "worker_started": 0}
+    coordinator = SeriesIntentCoordinator(
+        state_store=store,
+        rule_engine=engine,
+        worker_pool=type("P", (), {"can_add_worker": lambda self: True})(),
+        tasks_ref={task_a.study_uid: task_a},
+        pause_downloads_for_preemption=lambda uids: calls["paused"].extend(uids),
+        start_download_worker=lambda _uid: (calls.__setitem__("worker_started", calls["worker_started"] + 1) or True),
+        start_next_pending=lambda: calls.__setitem__("start", calls["start"] + 1),
+        refresh_table_order=lambda: calls.__setitem__("refresh", calls["refresh"] + 1),
+        check_auto_resume=lambda: calls.__setitem__("resume", calls["resume"] + 1),
+        defer_call=lambda _delay, cb: cb(),
+    )
+
+    # Override schedule_priority_start_retry to track calls
+    orig_retry = coordinator.schedule_priority_start_retry
+    def _mock_retry(uid, **kwargs):
+        calls["retry_uid"].append(uid)
+    coordinator.schedule_priority_start_retry = _mock_retry
+
+    # Request series 5 while series 1 is downloading
+    result = coordinator.request_critical_series(task_a.study_uid, "5")
+
+    ok = result is True
+    _kpi.record(SCENARIO, "request_critical_series returned True", ok, "", ok)
+
+    # The own worker must have been paused (cancel requested)
+    ok = task_a.study_uid in calls["paused"]
+    _kpi.record(SCENARIO, "Own worker pause/cancel requested", ok, "", ok)
+
+    # State should be PENDING (not PAUSED) for _start_next_pending
+    state = store.get(task_a.study_uid)
+    ok = state.status == DownloadStatus.PENDING
+    _kpi.record(SCENARIO, "State overridden to PENDING (for scheduler)", ok, "", ok)
+
+    ok = not state.is_auto_paused
+    _kpi.record(SCENARIO, "is_auto_paused cleared", ok, "", ok)
+
+    ok = state.priority == DownloadPriority.CRITICAL
+    _kpi.record(SCENARIO, "Priority is CRITICAL", ok, "", ok)
+
+    ok = state.viewed_series_number == "5"
+    _kpi.record(SCENARIO, "viewed_series_number == '5'", ok, "", ok)
+
+    # _start_next_pending must have been called (via negotiate_priority_change)
+    # OR the worker was started immediately via the fast path (optimization:
+    # when a worker slot is available, start_download_worker fires inline).
+    ok = calls["start"] >= 1 or calls["worker_started"] >= 1
+    _kpi.record(SCENARIO, "_start_next_pending scheduled", ok, "", ok)
+
+    # schedule_priority_start_retry must have been called as backup
+    # OR the worker was started immediately (no retry needed).
+    ok = task_a.study_uid in calls["retry_uid"] or calls["worker_started"] >= 1
+    _kpi.record(SCENARIO, "schedule_priority_start_retry called", ok, "", ok)
+
+    ok = calls["refresh"] >= 1
+    _kpi.record(SCENARIO, "refresh_table_order called", ok, "", ok)
+
+    # ── Verify: requesting the SAME series that's already downloading does NOT cancel ──
+    # Reset state: downloading series 5 now
+    store.update(task_a.study_uid, status=DownloadStatus.DOWNLOADING, current_series_number="5")
+    calls["paused"].clear()
+
+    coordinator.request_critical_series(task_a.study_uid, "5")
+    ok = task_a.study_uid not in calls["paused"]
+    _kpi.record(SCENARIO, "Same series: no cancel (no self-interrupt)", ok, "", ok)
+
+    state_after = store.get(task_a.study_uid)
+    ok = state_after.status == DownloadStatus.DOWNLOADING
+    _kpi.record(SCENARIO, "Same series: stays DOWNLOADING", ok, "", ok)
+
+    logger.info(f"  ✅ {SCENARIO} done\n")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SCENARIO 26 — Auto-Resume After Critical Completes End-to-End
+# ═══════════════════════════════════════════════════════════════════
+
+def scenario_auto_resume_after_critical():
+    """
+    Full end-to-end flow:
+    1. 3 studies downloading at NORMAL
+    2. Study-A promoted to CRITICAL (drag-drop)
+    3. Studies B,C auto-paused
+    4. Study-A completes → clear_series_intent
+    5. Studies B,C must auto-resume in priority order
+    6. Measure total preemption→resume cycle time
+    """
+    SCENARIO = "S26: Auto-Resume After CRITICAL Completes"
+    logger.info(f"\n{'='*80}\n  {SCENARIO}\n{'='*80}")
+
+    store = DownloadStateStore()
+    engine = DownloadRuleEngine(store, {})
+
+    tasks = [
+        _make_task(patient_name=f"AR-{c}", priority=DownloadPriority.NORMAL, series_count=2)
+        for c in "ABC"
+    ]
+    for t in tasks:
+        store.create(t)
+        store.update(t.study_uid, status=DownloadStatus.DOWNLOADING)
+
+    paused_uids: List[str] = []
+    resume_calls = [0]
+
+    coordinator = SeriesIntentCoordinator(
+        state_store=store,
+        rule_engine=engine,
+        worker_pool=type("P", (), {"can_add_worker": lambda self: True})(),
+        tasks_ref={t.study_uid: t for t in tasks},
+        pause_downloads_for_preemption=lambda uids: [
+            (paused_uids.extend(uids),
+             [store.update(u, status=DownloadStatus.PAUSED, is_auto_paused=True) for u in uids])
+        ],
+        start_download_worker=lambda _uid: True,
+        start_next_pending=lambda: None,
+        refresh_table_order=lambda: None,
+        check_auto_resume=lambda: resume_calls.__setitem__(0, resume_calls[0] + 1),
+        defer_call=lambda _delay, cb: cb(),
+    )
+
+    # Step 1: Promote A to CRITICAL
+    t0 = time.perf_counter()
+    coordinator.request_critical_series(tasks[0].study_uid, "1")
+    promote_ms = _elapsed_ms(t0)
+
+    ok = store.get(tasks[0].study_uid).priority == DownloadPriority.CRITICAL
+    _kpi.record(SCENARIO, "A promoted to CRITICAL", ok, "", ok)
+
+    paused_peers = [u for u in paused_uids if u != tasks[0].study_uid]
+    ok = len(paused_peers) == 2
+    _kpi.record(SCENARIO, "B,C both paused", ok, "", ok)
+    _kpi.record(SCENARIO, "Promote latency", promote_ms, "ms")
+
+    # Step 2: A completes
+    store.update(tasks[0].study_uid, status=DownloadStatus.COMPLETED, progress_percent=100.0)
+
+    # Step 3: Clear intent (simulates series_downloaded callback)
+    t1 = time.perf_counter()
+    coordinator.clear_series_intent(tasks[0].study_uid)
+    clear_ms = _elapsed_ms(t1)
+
+    ok = resume_calls[0] >= 1
+    _kpi.record(SCENARIO, "check_auto_resume called after clear", ok, "", ok)
+    _kpi.record(SCENARIO, "Clear intent latency", clear_ms, "ms")
+
+    # Step 4: Simulate auto-resume (the DM widget does this)
+    auto_paused = [s for s in store.get_all()
+                   if s.status == DownloadStatus.PAUSED and s.is_auto_paused]
+    auto_paused.sort(key=lambda s: s.priority, reverse=True)
+    resumed = []
+    for s in auto_paused:
+        store.update(s.study_uid, status=DownloadStatus.PENDING, is_auto_paused=False)
+        resumed.append(s.study_uid)
+
+    ok = len(resumed) == 2
+    _kpi.record(SCENARIO, "2 studies auto-resumed", ok, "", ok)
+
+    # Both B and C should now be PENDING
+    for t in tasks[1:]:
+        s = store.get(t.study_uid)
+        ok = s.status == DownloadStatus.PENDING
+        _kpi.record(SCENARIO, f"{t.patient_name} is PENDING after resume", ok, "", ok)
+
+    total_cycle_ms = promote_ms + clear_ms
+    _kpi.record(SCENARIO, "Total preempt→resume cycle", total_cycle_ms, "ms")
+    ok = total_cycle_ms < 5.0
+    _kpi.record(SCENARIO, "Full cycle < 5ms (no I/O)", ok, "", ok)
+
+    logger.info(f"  ✅ {SCENARIO} done\n")
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  RUNNER
 # ═══════════════════════════════════════════════════════════════════
 
@@ -1847,6 +2417,13 @@ def main():
         ("S18", "Transient DB-Read Failure Behavior", scenario_transient_db_read_failure_behavior),
         ("S19", "Queue DB Filter Cache Efficiency", scenario_queue_db_filter_cache_efficiency),
         ("S20", "No Self-Preemption on CRITICAL Promotion", scenario_no_self_preemption_on_critical_promotion),
+        ("S21", "SeriesIntentCoordinator Atomicity", scenario_series_intent_coordinator_atomicity),
+        ("S22", "Coordinator Negotiate Priority Latency", scenario_negotiate_priority_latency),
+        ("S23", "Observer Priority→Table Refresh Chain", scenario_observer_priority_refresh_chain),
+        ("S24", "Critical Series Request Roundtrip", scenario_critical_series_roundtrip),
+        ("S25", "Rapid Priority Toggle Stress", scenario_rapid_priority_toggle_stress),
+        ("S26", "Auto-Resume After CRITICAL Completes", scenario_auto_resume_after_critical),
+        ("S27", "Series Interrupt on Same-Study View Change", scenario_series_interrupt_same_study),
     ]
 
     failed_scenarios = []

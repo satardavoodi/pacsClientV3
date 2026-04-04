@@ -47,8 +47,10 @@ Each plugin package definition should declare:
 - Builder definitions stay here.
 - `python builder/materialize_plugin_packages.py` materializes the current module packages into `packages/`.
 - `builder/build_release.py` turns optional definitions into staged package directories and distributable archives.
-- The Windows installer can ship selected staged packages.
+- The Windows installer can ship selected staged packages to another PC in `Custom` mode.
+- The installer copies selected package payloads into `{app}\module_packages\`.
 - On first launch, the app bootstraps installer-selected bundled packages into the existing runtime module area.
+- The setup choice is persisted in `installation_profile.json` so release support can verify exactly which modules were selected for that workstation.
 
 ## Runtime Payload Note
 

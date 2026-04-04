@@ -1,0 +1,133 @@
+
+====================================================================================================
+  DATABASE MODULE — TEST SUITE
+  Date: 2026-04-02 14:39:08
+  Python: 3.13.5
+  Platform: win32
+====================================================================================================
+14:39:08  INFO     Using temp database: C:\Users\vahid\AppData\Local\Temp\db_test_z479bqq6\test_dicom.db
+14:39:08  INFO     
+======================================================================
+  D1: init_database & Schema
+======================================================================
+14:39:08  INFO       ✅ D1: init_database & Schema done
+
+14:39:08  INFO     
+======================================================================
+  D2: Connection Pool Safety
+======================================================================
+⚠️ Database error in transaction: test rollback
+14:39:08  INFO       ✅ D2: Connection Pool Safety done
+
+14:39:08  INFO     
+======================================================================
+  D3: CRUD Operations
+======================================================================
+14:39:08  INFO       ✅ D3: CRUD Operations done
+
+14:39:08  INFO     
+======================================================================
+  D4: Commit Discipline
+======================================================================
+14:39:08  INFO       ✅ D4: Commit Discipline done
+
+14:39:08  INFO     
+======================================================================
+  D5: Thread Safety
+======================================================================
+14:39:08  INFO       ✅ D5: Thread Safety done
+
+14:39:08  INFO     
+======================================================================
+  D6: Patient Search
+======================================================================
+
+[DB_SEARCH] search_patients_local called
+[DB_SEARCH] Returned 5 results
+
+[DB_SEARCH] search_patients_local called
+[DB_SEARCH] Returned 1 results
+
+[DB_SEARCH] search_patients_local called
+[DB_SEARCH] Returned 0 results
+14:39:08  INFO       ✅ D6: Patient Search done
+
+14:39:08  INFO     
+======================================================================
+  D7: No PRAGMA read_uncommitted
+======================================================================
+14:39:08  INFO       ✅ D7: No PRAGMA read_uncommitted done
+
+
+====================================================================================================
+  DATABASE MODULE — KPI REPORT
+====================================================================================================
+
+  ┌─ Scenario: D1: init_database & Schema
+  │Metric                                                    Value Unit       Status
+  │──────────────────────────────────────────────────────────────────────────────────
+  │ init_database() latency                                189.486 ms        ── info
+  │ Required tables exist                                     True           ✅ PASS
+  │ Total tables found                                          27           ── info
+  │ FK indexes present                                           4 /4        ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────
+
+  ┌─ Scenario: D2: Connection Pool Safety
+  │Metric                                                    Value Unit       Status
+  │──────────────────────────────────────────────────────────────────────────────────
+  │ Context manager returns conn to pool                      True           ✅ PASS
+  │ Auto-rollback on exception (no leaked data)               True           ✅ PASS
+  │ 10 sequential pool acquire/release                       0.128 ms        ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────
+
+  ┌─ Scenario: D3: CRUD Operations
+  │Metric                                                    Value Unit       Status
+  │──────────────────────────────────────────────────────────────────────────────────
+  │ insert_patient succeeded                                  True           ✅ PASS
+  │ insert_patient latency                                   4.168 ms        ── info
+  │ find_patient_pk matches                                   True           ✅ PASS
+  │ insert_study succeeded                                    True           ✅ PASS
+  │ find_study_pk matches                                     True           ✅ PASS
+  │ insert_series succeeded                                   True           ✅ PASS
+  │ find_series_pk matches                                    True           ✅ PASS
+  │ insert_instance succeeded                                 True           ✅ PASS
+  │ find_instance_pk matches                                  True           ✅ PASS
+  │ FK join patient→study works                               True           ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────
+
+  ┌─ Scenario: D4: Commit Discipline
+  │Metric                                                    Value Unit       Status
+  │──────────────────────────────────────────────────────────────────────────────────
+  │ Committed data persists across connections                True           ✅ PASS
+  │ Uncommitted data is rolled back                           True           ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────
+
+  ┌─ Scenario: D5: Thread Safety
+  │Metric                                                    Value Unit       Status
+  │──────────────────────────────────────────────────────────────────────────────────
+  │ No errors under 4-thread concurrency                      True           ✅ PASS
+  │ All inserts findable across threads                       True           ✅ PASS
+  │ Total records written                                       20           ── info
+  │ Concurrent write elapsed                               121.451 ms        ── info
+  └──────────────────────────────────────────────────────────────────────────────────
+
+  ┌─ Scenario: D6: Patient Search
+  │Metric                                                    Value Unit       Status
+  │──────────────────────────────────────────────────────────────────────────────────
+  │ search_patients_local returns results                     True           ✅ PASS
+  │ Search latency                                           0.781 ms        ── info
+  │ Target patient found in results                           True           ✅ PASS
+  │ Search by patient_id works                                True           ✅ PASS
+  │ Empty search returns empty list                           True           ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────
+
+  ┌─ Scenario: D7: No PRAGMA read_uncommitted
+  │Metric                                                    Value Unit       Status
+  │──────────────────────────────────────────────────────────────────────────────────
+  │ read_uncommitted is OFF (0)                               True           ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────
+
+====================================================================================================
+  TOTALS:  ✅ 23 passed   ❌ 0 failed   ── 6 info
+====================================================================================================
+

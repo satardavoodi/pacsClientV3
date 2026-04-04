@@ -17,6 +17,18 @@ import pytest
         "PacsClient.pacs.patient_tab.ui",
         "PacsClient.pacs.workstation_ui.settings_ui",
         "PacsClient.pacs.workstation_ui.web_browser_ui",
+        # v2.2.8.0 service layer modules
+        "PacsClient.pacs.workstation_ui.home_ui.home_db_service",
+        "PacsClient.pacs.workstation_ui.home_ui.home_tab_service",
+        "PacsClient.pacs.workstation_ui.home_ui.home_download_service",
+        "PacsClient.pacs.workstation_ui.home_ui.home_search_service",
+        "PacsClient.pacs.workstation_ui.home_ui.home_widget_utils",
+        "PacsClient.pacs.workstation_ui.home_ui.home_module_tabs",
+        # v2.2.8.0 network modules
+        "modules.network.socket_config",
+        "modules.network.socket_token_manager",
+        "modules.download_manager.rules.validation_rules",
+        "modules.download_manager.network.health_monitor",
     ],
 )
 def test_module_imports_are_build_safe(module_name):

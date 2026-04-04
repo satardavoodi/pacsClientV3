@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QPixmap, QPainter, QColor, QPen
 from PySide6.QtPrintSupport import QPrinterInfo
 from PySide6.QtWidgets import (
@@ -253,12 +253,13 @@ class PrintingWidget(QWidget):
             }
             """
         )
-        # Connect to itemSelectionChanged to track selection internally
-        # Use Qt.QueuedConnection to debounce rapid mouse events and prevent toggle-on/toggle-off
-        # This ensures all pending selection events are batched before the slot is called
-        self.series_list.itemSelectionChanged.connect(
-            self._on_series_selection_changed, type=Qt.ConnectionType.QueuedConnection
-        )
+        # Debounce selection changes: clearSelection + setSelected fires multiple
+        # itemSelectionChanged signals; a short timer coalesces them into one call.
+        self._selection_debounce = QTimer(self)
+        self._selection_debounce.setSingleShot(True)
+        self._selection_debounce.setInterval(50)  # ms
+        self._selection_debounce.timeout.connect(self._on_series_selection_changed)
+        self.series_list.itemSelectionChanged.connect(self._selection_debounce.start)
         # Install event filter to log mouse events for debugging
         self.series_list.viewport().installEventFilter(self)
         series_layout.addWidget(self.series_list)
@@ -705,33 +706,16 @@ class PrintingWidget(QWidget):
     def _on_series_selection_changed(self):
         """
         Sync internal series list with current QListWidget selection.
-        Called automatically by itemSelectionChanged signal from ExtendedSelection mode.
-        ExtendedSelection handles Ctrl/Shift modifier keys automatically:
-        - Click: select single item (clears previous selection)
-        - Ctrl+Click: add/remove item to existing selection
-        - Shift+Click: select range from anchor point to clicked item
+        Called via debounce timer — fires once after rapid selection changes settle.
         """
-        print(f"[SELECTION_DEBUG] ========== _on_series_selection_changed CALLED ==========")
-        print(f"[SELECTION_DEBUG] Total items in list: {self.series_list.count()}")
-        
-        # Log which items are currently selected in the widget
         selected_items = self.series_list.selectedItems()
-        print(f"[SELECTION_DEBUG] selectedItems() returned: {len(selected_items)} items")
-        
-        for idx, item in enumerate(selected_items):
-            series = item.data(Qt.UserRole)
-            series_desc = series.get('SeriesDescription', 'N/A') if series else 'NO_DATA'
-            print(f"[SELECTION_DEBUG]   [{idx}] Selected: {series_desc}")
         
         # Update internal state
         self._selected_series = []
-        for item in self.series_list.selectedItems():
+        for item in selected_items:
             series = item.data(Qt.UserRole)
             if series:
                 self._selected_series.append(series)
-        
-        print(f"[SELECTION_DEBUG] Internal _selected_series updated: {len(self._selected_series)} items")
-        print(f"[SELECTION_DEBUG] ========== END ==========\n")
         
         self.status_label.setText(f"Selected {len(self._selected_series)} series")
 

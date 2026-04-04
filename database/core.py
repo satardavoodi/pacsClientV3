@@ -72,6 +72,7 @@ def get_db_connection():
             stage="transaction_scope",
             start_ms=t_txn,
             query_type="mixed",
+            min_ms=5.0,
         )
 
 
@@ -88,6 +89,7 @@ def _get_pooled_connection():
         stage="pool_lock_wait",
         start_ms=t_lock,
         query_type="mixed",
+        min_ms=5.0,
     )
     try:
         if thread_id in _connection_pool:
@@ -105,6 +107,7 @@ def _get_pooled_connection():
                         stage="reuse_validate",
                         start_ms=t_validate,
                         query_type="mixed",
+                        min_ms=5.0,
                     )
                     return conn
                 except sqlite3.OperationalError:
@@ -122,6 +125,7 @@ def _get_pooled_connection():
             stage="create_connection",
             start_ms=t_create,
             query_type="mixed",
+            min_ms=5.0,
         )
         return conn
     finally:
@@ -414,6 +418,12 @@ def init_database():
             )
             """
         )
+
+        # ── FK indexes for high-frequency JOIN/WHERE columns ──────────
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_studies_patient_fk ON studies(patient_fk)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_series_study_fk ON series(study_fk)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_instances_series_fk ON instances(series_fk)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_instances_series_group ON instances(series_fk, group_id)")
 
         cur.execute(
             """
@@ -841,6 +851,7 @@ def add_transcript_usage_delta(center_name: str, model_name: str, seconds_delta:
                 """,
                 (center_name, model_name, sec, mins, sec, mins),
             )
+            conn.commit()
         except sqlite3.OperationalError:
             # fallback for very old DBs without total_minutes
             cur.execute(
@@ -928,6 +939,7 @@ def add_api_transcript_usage_delta(api_key: str, center_name: str, model_name: s
                 """,
                 (api_hash, api_mask, center_name, model_name, sec, mins, sec, mins),
             )
+            conn.commit()
         except sqlite3.OperationalError:
             cur.execute(
                 """
@@ -1827,11 +1839,13 @@ def ai_get_last_session_for_study(study_uid: str) -> str | None:
 def ai_update_session_title(sid: str, title: str):
     with get_db_connection() as conn:
         conn.execute("UPDATE ai_sessions SET title=? WHERE sid=?", (title, sid))
+        conn.commit()
 
 
 def ai_set_server_sid(sid: str, server_sid: str | None):
     with get_db_connection() as conn:
         conn.execute("UPDATE ai_sessions SET server_sid=? WHERE sid=?", (server_sid, sid))
+        conn.commit()
 
 
 def ai_get_server_sid(sid: str) -> str | None:
@@ -1869,6 +1883,7 @@ def ai_append_message(sid: str, who: str, html: str, ts: int | None = None, orig
 def ai_update_message(msg_id: int, new_html: str):
     with get_db_connection() as conn:
         conn.execute("UPDATE ai_messages SET html=? WHERE id=?", (new_html, msg_id))
+        conn.commit()
 
 
 def ai_fetch_messages_full(sid: str) -> list[tuple[int, str, str, str | None]]:
@@ -1899,6 +1914,7 @@ def ai_reassign_session(old_sid: str, new_sid: str, new_title: str | None = None
         except Exception:
             pass
         conn.execute("DELETE FROM ai_sessions WHERE sid=?", (old_sid,))
+        conn.commit()
 
 
 def ai_fetch_all_sessions() -> list[tuple[str, str | None]]:
@@ -1926,6 +1942,7 @@ def ai_set_pinned(sid: str, pinned: bool):
         return
     with get_db_connection() as conn:
         conn.execute("UPDATE ai_sessions SET pinned=? WHERE sid=?", (1 if pinned else 0, sid))
+        conn.commit()
 
 
 def ai_toggle_pinned(sid: str) -> bool:
@@ -1977,6 +1994,7 @@ def ai_set_pinned_bulk(study_uid: str | None, pinned_sids: list[str]):
                     f"UPDATE ai_sessions SET pinned=1 WHERE sid IN ({ph})",
                     (*pinned_sids,)
                 )
+        conn.commit()
 
 
 def ai_delete_session_and_messages(sid: str):
@@ -2005,6 +2023,7 @@ def ai_delete_session_and_messages(sid: str):
             pass
         cur.execute("DELETE FROM ai_messages WHERE sid=?", (sid,))
         cur.execute("DELETE FROM ai_sessions WHERE sid=?", (sid,))
+        conn.commit()
 
 
 def ai_set_last_session(sid: str):
@@ -2013,6 +2032,7 @@ def ai_set_last_session(sid: str):
             INSERT INTO ai_meta(k, v) VALUES('last_session', ?)
             ON CONFLICT(k) DO UPDATE SET v=excluded.v
         """, (sid,))
+        conn.commit()
 
 def ai_insert_report(
     sid: str,
@@ -2349,23 +2369,11 @@ def ai_save_reception_report(
     import logging
     
     logger = logging.getLogger(__name__)
-    
-    logger.info("=" * 80)
-    logger.info("AI_SAVE_RECEPTION_REPORT - START")
-    logger.info("=" * 80)
-    logger.info(f"→ Patient ID: {patient_id}")
-    logger.info(f"→ Study UID: {study_uid}")
-    logger.info(f"→ Session ID: {session_id}")
-    logger.info(f"→ Message ID: {msg_id}")
-    logger.info(f"→ Sender Info: {sender_info}")
-    logger.info(f"→ Content length: {len(html_content) if html_content else 0} chars")
-    logger.info(f"→ Content preview: {(html_content[:200] + '...' if len(html_content) > 200 else html_content) if html_content else 'None'}")
+    logger.debug("ai_save_reception_report: patient=%s study=%s session=%s", patient_id, study_uid, session_id)
 
     with get_db_connection() as conn:
         cur = conn.cursor()
         created_at = int(time.time())
-
-        logger.info(f"→ About to execute INSERT query at timestamp: {created_at}")
         
         cur.execute("""
             INSERT INTO ai_reception_reports
@@ -2375,15 +2383,7 @@ def ai_save_reception_report(
 
         conn.commit()
         report_id = cur.lastrowid
-        
-        logger.info(f"→ INSERT successful, report_id: {report_id}")
-        logger.info("=" * 80)
-        logger.info("AI_SAVE_RECEPTION_REPORT - COMPLETED SUCCESSFULLY")
-        logger.info(f"  • Report ID: {report_id}")
-        logger.info(f"  • Patient ID: {patient_id}")
-        logger.info(f"  • Status: pending")
-        logger.info(f"  • Created at: {created_at}")
-        logger.info("=" * 80)
+        logger.debug("ai_save_reception_report: report_id=%s", report_id)
 
         return report_id
 
@@ -2408,14 +2408,7 @@ def ai_get_reception_reports(
     """
     import logging
     logger = logging.getLogger(__name__)
-    
-    logger.info("=" * 80)
-    logger.info("AI_GET_RECEPTION_REPORTS - START")
-    logger.info("=" * 80)
-    logger.info(f"→ Patient ID: {patient_id}")
-    logger.info(f"→ Study UID: {study_uid}")
-    logger.info(f"→ Status: {status}")
-    logger.info(f"→ Limit: {limit}")
+    logger.debug("ai_get_reception_reports: patient=%s study=%s status=%s limit=%s", patient_id, study_uid, status, limit)
 
     with get_db_connection() as conn:
         cur = conn.cursor()
@@ -2426,49 +2419,30 @@ def ai_get_reception_reports(
         if patient_id:
             query += " AND patient_id = ?"
             params.append(patient_id)
-            logger.info(f"  • Added patient_id filter: {patient_id}")
 
         if study_uid:
             query += " AND study_uid = ?"
             params.append(study_uid)
-            logger.info(f"  • Added study_uid filter: {study_uid}")
 
         if status:
             query += " AND status = ?"
             params.append(status)
-            logger.info(f"  • Added status filter: {status}")
 
         query += " ORDER BY created_at DESC"
-        logger.info(f"  • Query: {query}")
 
         if limit:
-            query += f" LIMIT {int(limit)}"
-            logger.info(f"  • Added limit: {limit}")
+            query += " LIMIT ?"
+            params.append(int(limit))
 
-        logger.info(f"→ Executing query with params: {params}")
         cur.execute(query, params)
         rows = cur.fetchall()
 
-        logger.info(f"→ Query returned {len(rows)} rows")
-
         if not rows:
-            logger.info("→ No reports found in database")
-            logger.info("=" * 80)
-            logger.info("AI_GET_RECEPTION_REPORTS - COMPLETED (NO RESULTS)")
-            logger.info("=" * 80)
             return []
 
-        # Convert to dictionaries
         columns = [desc[0] for desc in cur.description]
         result = [dict(zip(columns, row)) for row in rows]
-        
-        logger.info(f"→ Converted {len(result)} rows to dictionaries")
-        logger.info(f"→ Sample report IDs: {[r.get('id') for r in result[:3]]}")  # Show first 3 report IDs
-        logger.info("=" * 80)
-        logger.info("AI_GET_RECEPTION_REPORTS - COMPLETED SUCCESSFULLY")
-        logger.info(f"  • Total reports returned: {len(result)}")
-        logger.info(f"  • Columns: {columns}")
-        logger.info("=" * 80)
+        logger.debug("ai_get_reception_reports: returned %d rows", len(result))
 
         return result
 
@@ -2484,18 +2458,11 @@ def ai_mark_reception_report_read(report_id: int):
     import logging
     
     logger = logging.getLogger(__name__)
-    
-    logger.info("=" * 80)
-    logger.info("AI_MARK_RECEPTION_REPORT_READ - START")
-    logger.info("=" * 80)
-    logger.info(f"→ Report ID: {report_id}")
-    logger.info(f"→ Current timestamp: {int(time.time())}")
+    logger.debug("ai_mark_reception_report_read: report_id=%s", report_id)
 
     with get_db_connection() as conn:
         cur = conn.cursor()
         read_at = int(time.time())
-
-        logger.info(f"→ About to execute UPDATE query for report_id: {report_id}")
         
         cur.execute("""
             UPDATE ai_reception_reports
@@ -2504,16 +2471,6 @@ def ai_mark_reception_report_read(report_id: int):
         """, (read_at, report_id))
 
         conn.commit()
-        rows_affected = cur.rowcount
-        
-        logger.info(f"→ UPDATE successful, rows affected: {rows_affected}")
-        logger.info("=" * 80)
-        logger.info("AI_MARK_RECEPTION_REPORT_READ - COMPLETED")
-        logger.info(f"  • Report ID: {report_id}")
-        logger.info(f"  • Rows affected: {rows_affected}")
-        logger.info(f"  • New status: read")
-        logger.info(f"  • Read at: {read_at}")
-        logger.info("=" * 80)
 
 
 def ai_update_reception_report_status(report_id: int, status: str):
@@ -2531,18 +2488,10 @@ def ai_update_reception_report_status(report_id: int, status: str):
     import logging
     
     logger = logging.getLogger(__name__)
-    
-    logger.info("=" * 80)
-    logger.info("AI_UPDATE_RECEPTION_REPORT_STATUS - START")
-    logger.info("=" * 80)
-    logger.info(f"→ Report ID: {report_id}")
-    logger.info(f"→ New Status: {status}")
-    logger.info(f"→ Current timestamp: {int(time.time())}")
+    logger.debug("ai_update_reception_report_status: report_id=%s status=%s", report_id, status)
 
     with get_db_connection() as conn:
         cur = conn.cursor()
-
-        logger.info(f"→ About to execute UPDATE query for report_id: {report_id}, new status: {status}")
         
         cur.execute("""
             UPDATE ai_reception_reports
@@ -2551,17 +2500,6 @@ def ai_update_reception_report_status(report_id: int, status: str):
         """, (status, int(time.time()), report_id))
 
         conn.commit()
-        rows_affected = cur.rowcount
-        
-        logger.info(f"→ UPDATE successful, rows affected: {rows_affected}")
-        logger.info("=" * 80)
-        logger.info("AI_UPDATE_RECEPTION_REPORT_STATUS - COMPLETED")
-        logger.info(f"  • Report ID: {report_id}")
-        logger.info(f"  • New Status: {status}")
-        logger.info(f"  • Rows affected: {rows_affected}")
-        logger.info(f"  • Success: {rows_affected > 0}")
-        logger.info("=" * 80)
-        
         return cur.rowcount > 0
 
 
@@ -2578,28 +2516,12 @@ def ai_delete_reception_report(report_id: int):
     import logging
     
     logger = logging.getLogger(__name__)
-    
-    logger.info("=" * 80)
-    logger.info("AI_DELETE_RECEPTION_REPORT - START")
-    logger.info("=" * 80)
-    logger.info(f"→ Report ID: {report_id}")
+    logger.debug("ai_delete_reception_report: report_id=%s", report_id)
 
     with get_db_connection() as conn:
         cur = conn.cursor()
-
-        logger.info(f"→ About to execute DELETE query for report_id: {report_id}")
-        
         cur.execute("DELETE FROM ai_reception_reports WHERE id = ?", (report_id,))
         conn.commit()
-        rows_affected = cur.rowcount
-        
-        logger.info(f"→ DELETE successful, rows affected: {rows_affected}")
-        logger.info("=" * 80)
-        logger.info("AI_DELETE_RECEPTION_REPORT - COMPLETED")
-        logger.info(f"  • Report ID: {report_id}")
-        logger.info(f"  • Rows affected: {rows_affected}")
-        logger.info(f"  • Success: {rows_affected > 0}")
-        logger.info("=" * 80)
         
         return cur.rowcount > 0
 
@@ -2615,25 +2537,18 @@ def ai_get_pending_reception_reports_count(patient_id: str | None = None) -> int
         Number of pending reports
     """
     import logging
-    
     logger = logging.getLogger(__name__)
-    
-    logger.info("=" * 80)
-    logger.info("AI_GET_PENDING_RECEPTION_REPORTS_COUNT - START")
-    logger.info("=" * 80)
-    logger.info(f"→ Patient ID: {patient_id}")
+    logger.debug("ai_get_pending_reception_reports_count: patient=%s", patient_id)
 
     with get_db_connection() as conn:
         cur = conn.cursor()
 
         if patient_id:
-            logger.info(f"→ About to execute COUNT query for patient_id: {patient_id}")
             cur.execute("""
                 SELECT COUNT(*) FROM ai_reception_reports
                 WHERE patient_id = ? AND status = 'pending'
             """, (patient_id,))
         else:
-            logger.info(f"→ About to execute COUNT query for all patients")
             cur.execute("""
                 SELECT COUNT(*) FROM ai_reception_reports
                 WHERE status = 'pending'
@@ -2641,13 +2556,7 @@ def ai_get_pending_reception_reports_count(patient_id: str | None = None) -> int
 
         row = cur.fetchone()
         count = row[0] if row else 0
-        
-        logger.info(f"→ COUNT query returned: {count}")
-        logger.info("=" * 80)
-        logger.info("AI_GET_PENDING_RECEPTION_REPORTS_COUNT - COMPLETED")
-        logger.info(f"  • Patient ID: {patient_id}")
-        logger.info(f"  • Pending reports count: {count}")
-        logger.info("=" * 80)
+        logger.debug("ai_get_pending_reception_reports_count: count=%d", count)
         
         return count
 
@@ -2723,209 +2632,164 @@ def search_patients_local(search_data: dict) -> list:
     Returns:
         List of patient dictionaries matching the criteria
     """
-    print(f"\n[DB_SEARCH] 🔍 search_patients_local called with:\n{search_data}")
-    conn = get_connection_database()
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
+    print(f"\n[DB_SEARCH] search_patients_local called")
     
-    # Check total patients in database first
-    cur.execute("SELECT COUNT(*) as count FROM patients")
-    total_count = cur.fetchone()[0]
-    print(f"[DB_SEARCH] Total patients in database: {total_count}")
+    with get_db_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        # Check if any series_description filter is needed
+        has_series_filter = bool(search_data.get('series_description'))
     
-    # Check total studies in database
-    cur.execute("SELECT COUNT(*) as count FROM studies")
-    total_studies = cur.fetchone()[0]
-    print(f"[DB_SEARCH] Total studies in database: {total_studies}")
-    
-    # Check if any studies have study_path set
-    cur.execute("SELECT COUNT(*) as count FROM studies WHERE study_path IS NOT NULL AND study_path != ''")
-    studies_with_path = cur.fetchone()[0]
-    print(f"[DB_SEARCH] Studies with study_path: {studies_with_path}")
-    
-    # List first few studies
-    cur.execute("SELECT patient_fk, study_uid, study_path, study_date FROM studies LIMIT 5")
-    studies = cur.fetchall()
-    print(f"[DB_SEARCH] Sample studies (first 5):")
-    for s in studies:
-        print(f"[DB_SEARCH]   - patient_fk={s[0]}, study_uid={s[1]}, study_path={s[2]}, study_date={s[3]}")
-    
-    # Check if any series_description filter is needed
-    has_series_filter = bool(search_data.get('series_description'))
-    
-    # Build the SQL query dynamically based on provided filters
-    if has_series_filter:
-        # If we need to filter by series, we must join the series table
-        query = """
-            SELECT DISTINCT
-                p.*,
-                s.*
-            FROM patients p
-            LEFT JOIN studies s ON p.patient_pk = s.patient_fk
-            LEFT JOIN series sr ON s.study_pk = sr.study_fk
-            WHERE 1=1
-        """
-    else:
-        # Simple query without series join
-        query = """
-            SELECT
-                p.*,
-                s.*
-            FROM patients p
-            LEFT JOIN studies s ON p.patient_pk = s.patient_fk
-            WHERE 1=1
-        """
-    
-    params = []
-    
-    # Patient ID filter (partial match, case-insensitive)
-    if search_data.get('patient_id'):
-        query += " AND LOWER(p.patient_id) LIKE LOWER(?)"
-        params.append(f"%{search_data['patient_id']}%")
-    
-    # Patient Name filter (partial match, case-insensitive)
-    if search_data.get('patient_name'):
-        query += " AND LOWER(p.patient_name) LIKE LOWER(?)"
-        params.append(f"%{search_data['patient_name']}%")
-    
-    # Patient Sex filter (exact match, case-insensitive)
-    if search_data.get('patient_sex'):
-        query += " AND LOWER(p.patient_sex) = LOWER(?)"
-        params.append(search_data['patient_sex'])
-    
-    # Study ID filter (partial match, case-insensitive)
-    if search_data.get('study_id'):
-        query += " AND LOWER(s.study_id) LIKE LOWER(?)"
-        params.append(f"%{search_data['study_id']}%")
-    
-    # Date range filter - only apply if dates are explicitly provided (not None)
-    if search_data.get('date_from') and search_data['date_from'] is not None:
-        query += " AND s.study_date >= ?"
-        params.append(search_data['date_from'])
-    
-    if search_data.get('date_to') and search_data['date_to'] is not None:
-        query += " AND s.study_date <= ?"
-        params.append(search_data['date_to'])
-    
-    # Study Description filter (partial match, case-insensitive)
-    if search_data.get('study_description'):
-        query += " AND LOWER(s.study_description) LIKE LOWER(?)"
-        params.append(f"%{search_data['study_description']}%")
-    
-    # Series Description filter (partial match, case-insensitive)
-    if has_series_filter:
-        query += " AND LOWER(sr.series_description) LIKE LOWER(?)"
-        params.append(f"%{search_data['series_description']}%")
-    
-    # Modality filter (supports multiple modalities)
-    if search_data.get('modality'):
-        modalities = search_data['modality'].split(',')
-        modalities = [m.strip() for m in modalities if m.strip()]
-        if modalities:
-            placeholders = ','.join(['?' for _ in modalities])
-            query += f" AND s.modality IN ({placeholders})"
-            params.extend(modalities)
-    
-    # Order by patient name and study date
-    query += " ORDER BY p.patient_name, s.study_date DESC"
-    
-    print(f"[DB_SEARCH] ✅ Built query with {len(params)} parameters")
-    print(f"[DB_SEARCH] Query: {query}")
-    print(f"[DB_SEARCH] Params: {params}")
-    
-    try:
+        # Build the SQL query dynamically based on provided filters
+        if has_series_filter:
+            # If we need to filter by series, we must join the series table
+            query = """
+                SELECT DISTINCT
+                    p.*,
+                    s.*
+                FROM patients p
+                LEFT JOIN studies s ON p.patient_pk = s.patient_fk
+                LEFT JOIN series sr ON s.study_pk = sr.study_fk
+                WHERE 1=1
+            """
+        else:
+            # Simple query without series join
+            query = """
+                SELECT
+                    p.*,
+                    s.*
+                FROM patients p
+                LEFT JOIN studies s ON p.patient_pk = s.patient_fk
+                WHERE 1=1
+            """
+        
+        params = []
+        
+        # Patient ID filter (partial match, case-insensitive)
+        if search_data.get('patient_id'):
+            query += " AND LOWER(p.patient_id) LIKE LOWER(?)"
+            params.append(f"%{search_data['patient_id']}%")
+        
+        # Patient Name filter (partial match, case-insensitive)
+        if search_data.get('patient_name'):
+            query += " AND LOWER(p.patient_name) LIKE LOWER(?)"
+            params.append(f"%{search_data['patient_name']}%")
+        
+        # Patient Sex filter (exact match, case-insensitive)
+        if search_data.get('patient_sex'):
+            query += " AND LOWER(p.patient_sex) = LOWER(?)"
+            params.append(search_data['patient_sex'])
+        
+        # Study ID filter (partial match, case-insensitive)
+        if search_data.get('study_id'):
+            query += " AND LOWER(s.study_id) LIKE LOWER(?)"
+            params.append(f"%{search_data['study_id']}%")
+        
+        # Date range filter - only apply if dates are explicitly provided (not None)
+        if search_data.get('date_from') and search_data['date_from'] is not None:
+            query += " AND s.study_date >= ?"
+            params.append(search_data['date_from'])
+        
+        if search_data.get('date_to') and search_data['date_to'] is not None:
+            query += " AND s.study_date <= ?"
+            params.append(search_data['date_to'])
+        
+        # Study Description filter (partial match, case-insensitive)
+        if search_data.get('study_description'):
+            query += " AND LOWER(s.study_description) LIKE LOWER(?)"
+            params.append(f"%{search_data['study_description']}%")
+        
+        # Series Description filter (partial match, case-insensitive)
+        if has_series_filter:
+            query += " AND LOWER(sr.series_description) LIKE LOWER(?)"
+            params.append(f"%{search_data['series_description']}%")
+        
+        # Modality filter (supports multiple modalities)
+        if search_data.get('modality'):
+            modalities = search_data['modality'].split(',')
+            modalities = [m.strip() for m in modalities if m.strip()]
+            if modalities:
+                placeholders = ','.join(['?' for _ in modalities])
+                query += f" AND s.modality IN ({placeholders})"
+                params.extend(modalities)
+        
+        # Order by patient name and study date
+        query += " ORDER BY p.patient_name, s.study_date DESC"
+        
         cur.execute(query, params)
         rows = cur.fetchall()
         result = [dict(r) for r in rows]
-        print(f"[DB_SEARCH] ✅ Query returned {len(rows)} rows")
-        if result:
-            for i, r in enumerate(result[:3]):
-                patient_name = r.get('patient_name')
-                study_uid = r.get('study_uid')
-                study_date = r.get('study_date')
-                print(f"[DB_SEARCH]   Row {i}: patient_name={patient_name}, study_uid={study_uid}, study_date={study_date}")
-        print(f"[DB_SEARCH] ✅ Returning {len(result)} results\n")
+        print(f"[DB_SEARCH] Returned {len(result)} results")
         return result
-    except Exception as e:
-        print(f"[DB_SEARCH] ❌ Query execution failed: {e}")
-        raise
-    finally:
-        conn.close()
 
 
 def get_patient_by_id(patient_id: str) -> dict:
     """Return patient row as dict or ``None`` if not found."""
-    conn = get_connection_database()
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM patients WHERE patient_id = ?", (patient_id,))
-    row = cur.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    with get_db_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM patients WHERE patient_id = ?", (patient_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
 
 
 
 def find_patient_pk(patient_id: str) -> int:
     """Find patient primary key by patient_id. Returns None if not found."""
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT patient_pk FROM patients WHERE patient_id = ?", (patient_id,))
-    result = cur.fetchone()
-    conn.close()
-    return result[0] if result else None
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT patient_pk FROM patients WHERE patient_id = ?", (patient_id,))
+        result = cur.fetchone()
+        return result[0] if result else None
 
 
 def find_study_pk(patient_fk: int) -> int:
     """Find study primary key by patient_fk. Returns None if not found."""
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT study_pk FROM studies WHERE patient_fk = ?", (patient_fk,))
-    result = cur.fetchone()
-    conn.close()
-    return result[0] if result else None
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT study_pk FROM studies WHERE patient_fk = ?", (patient_fk,))
+        result = cur.fetchone()
+        return result[0] if result else None
 
 
 def find_study_pk_with_study_uid(study_uid: str) -> int:
     """Find study primary key by study_uid. Returns None if not found."""
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
-    result = cur.fetchone()
-    conn.close()
-    return result[0] if result else None
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
+        result = cur.fetchone()
+        return result[0] if result else None
 
 
 def find_series_pk(series_uid: str) -> int:
     """Find series primary key by series_uid. Returns None if not found."""
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_uid,))
-    result = cur.fetchone()
-    conn.close()
-    return result[0] if result else None
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_uid,))
+        result = cur.fetchone()
+        return result[0] if result else None
 
 
 def find_series_pk_by_number(series_number, study_pk) -> int:
     """Find series primary key by series_number and study_pk. Returns None if not found."""
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT series_pk FROM series WHERE series_number = ? AND study_fk = ?", 
-        (str(series_number), study_pk)
-    )
-    result = cur.fetchone()
-    conn.close()
-    return result[0] if result else None
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT series_pk FROM series WHERE series_number = ? AND study_fk = ?", 
+            (str(series_number), study_pk)
+        )
+        result = cur.fetchone()
+        return result[0] if result else None
 
 
 def find_instance_pk(sop_uid: str) -> int:
     """Find instance primary key by sop_uid. Returns None if not found."""
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT instance_pk FROM instances WHERE sop_uid = ?", (sop_uid,))
-    result = cur.fetchone()
-    conn.close()
-    return result[0] if result else None
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT instance_pk FROM instances WHERE sop_uid = ?", (sop_uid,))
+        result = cur.fetchone()
+        return result[0] if result else None
 
 
 # Download Progress Functions
@@ -3131,9 +2995,6 @@ def get_incomplete_downloads() -> list:
         try:
             with get_db_connection() as conn:
                 cur = conn.cursor()
-                
-                # Use READ UNCOMMITTED isolation level for better concurrency
-                cur.execute("PRAGMA read_uncommitted = 1")
                 
                 cur.execute("""
                     SELECT dp.study_uid, dp.downloaded_count, dp.total_instances, dp.progress_percent,

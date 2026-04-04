@@ -122,7 +122,15 @@ def get_zeta_executor(base_output_dir: Path = None) -> DownloadExecutor:
         
         state_store = get_state_store()
         database_manager = DatabaseManager()
-        grpc_client = GrpcMetadataClient()
+        
+        # Read server host from SocketConfig (same source as socket client)
+        from modules.network.socket_config import get_socket_server_settings
+        from modules.download_manager.core.constants import DEFAULT_GRPC_PORT
+        _srv = get_socket_server_settings()
+        grpc_client = GrpcMetadataClient(
+            host=_srv.get("host"),
+            port=DEFAULT_GRPC_PORT,
+        )
         rule_engine = DownloadRuleEngine(state_store, {})
         
         _zeta_executor = DownloadExecutor(

@@ -559,10 +559,17 @@ class QtViewerBridge:
     def _update_annotations(self, slice_index: int, ww: float, wc: float) -> None:
         """Update corner annotations from metadata."""
         zoom_pct = self.qt_viewer.get_zoom() * 100.0
+        # Use the widget-level count which respects progressive expected total
+        total = self._slice_count
+        if self.vtk_widget is not None:
+            try:
+                total = int(self.vtk_widget.get_count_of_slices()) or total
+            except Exception:
+                pass
         self.qt_viewer.annotations.update_from_metadata(
             metadata=self.metadata,
             slice_index=slice_index,
-            total_slices=self._slice_count,
+            total_slices=total,
             window_width=ww,
             window_center=wc,
             zoom_pct=zoom_pct,

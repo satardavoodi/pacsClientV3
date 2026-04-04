@@ -53,6 +53,7 @@ from .import_preview_dialog import (
     import_scanned_dicom_studies,
     scan_dicom_import_folder,
 )
+from .offline_cloud_export_dialog import OfflineCloudExportDialog
 from .patient_search_widget import PatientSearchWidget
 from .patient_table_widget import PatientTableWidget, COL
 from .right_panel_widget import RightPanelWidget
@@ -61,8 +62,25 @@ from modules.download_manager.ui.main_widget import DownloadManagerWidget
 from PacsClient.utils import get_connection_database, get_all_patients, search_patients_local, find_patient_pk, \
     find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 
-from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget import PatientWidget
-from modules.ai_imaging.ai_module_ui import AiMainWindow
+# Heavy viewer / AI modules: lazy-import at first use to speed up main-page init.
+# from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget import PatientWidget
+# from modules.ai_imaging.ai_module_ui import AiMainWindow
+PatientWidget = None  # lazy
+AiMainWindow = None   # lazy
+
+def _ensure_patient_widget():
+    global PatientWidget
+    if PatientWidget is None:
+        from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget import PatientWidget as _PW
+        PatientWidget = _PW
+    return PatientWidget
+
+def _ensure_ai_main_window():
+    global AiMainWindow
+    if AiMainWindow is None:
+        from modules.ai_imaging.ai_module_ui import AiMainWindow as _AI
+        AiMainWindow = _AI
+    return AiMainWindow
 
 # Zeta Download Manager handles priority internally
 PRIORITY_MANAGER_AVAILABLE = False  # Legacy priority manager removed
@@ -70,12 +88,29 @@ from PacsClient.pacs.patient_tab.ui.patient_ui.custom_tab_manager import CustomT
 import warnings
 from PacsClient.utils.config import SOURCE_PATH
 from PacsClient.utils.config import THUMBNAIL_PATH
+from modules.offline_cloud_server.service import (
+    export_studies_to_offline_cloud,
+    get_all_offline_cloud_servers,
+    list_offline_cloud_studies,
+    record_offline_cloud_sync_event,
+    sync_offline_cloud_study_preview_to_local,
+    sync_offline_cloud_study_to_local,
+    validate_offline_cloud_package,
+)
 from modules.network.socket_config import update_socket_server_settings, get_socket_server_settings
 from modules.network.upload_download_attchments import download_attachments_for_study, download_attachments_for_study_async
 from PacsClient.utils.scroll_style import get_scroll_area_style
 from PacsClient.utils.theme_manager import get_theme_manager
 from modules.viewer.viewer_backend_config import BACKEND_PYDICOM
 from PacsClient.pacs.patient_tab.utils.image_io import load_series_preview
+
+# ── Service Layer (v2.2.8 architecture refactor) ──
+from .home_db_service import HomeDbService
+from .home_tab_service import HomeTabService
+from .home_download_service import HomeDownloadService
+from .home_search_service import HomeSearchService
+from .home_widget_utils import is_widget_alive
+from .home_module_tabs import activate_or_create_module_tab
 
 warnings.simplefilter("error")
 
@@ -84,6 +119,7 @@ class SourceOfPatientLoad:
     DB = 'db'  # local
     SERVER = 'server'
     IMPORT = 'import'
+    OFFLINE_CLOUD = 'offline_cloud'
 
 
 # Global reference to home widget for easy access
@@ -138,6 +174,13 @@ class HomePanelWidget(QWidget):
         
         # Initialize custom tab manager with title bar integration
         self.custom_tab_manager = CustomTabManager(tab_widget, title_bar_tab_area, right_tab_area) if tab_widget else None
+
+        # ── Service Layer (keeps HomePanelWidget as a thin UI facade) ──
+        self.db_service = HomeDbService()
+        self.tab_service = HomeTabService(tab_widget, self.custom_tab_manager)
+        self.download_service = HomeDownloadService(tab_widget, self.custom_tab_manager)
+        self.search_service = HomeSearchService(self)
+
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
@@ -147,9 +190,9 @@ class HomePanelWidget(QWidget):
         self.setup_center_panel()
         self.setup_right_panel()
         # set combo for register server_settings changes
-        UpdaterDataFromServerToHome().set_combo_server(self.data_access_panel_widget.server_combo)
-        # Apply anti-aliasing to all widgets after UI setup
-        self.apply_anti_aliasing()
+        UpdaterDataFromServerToHome().set_combo_server(self.data_access_panel_widget)
+        # Defer anti-aliasing to after the first paint so the main page appears faster.
+        QTimer.singleShot(0, self.apply_anti_aliasing)
         self.theme_manager.themeChanged.connect(self.apply_theme)
         self.apply_theme(self._active_theme)
 
@@ -199,7 +242,7 @@ class HomePanelWidget(QWidget):
         if self.loading_message:
             self.loading_message.hide()  # Hide loading message
         # Logic to open the patient widget goes here
-        patient_widget = PatientWidget(patient_id, patient_name, study_uid)
+        patient_widget = _ensure_patient_widget()(patient_id, patient_name, study_uid)
         patient_widget.show()  # Show the patient widget
 
     def setup_left_panel(self):
@@ -870,6 +913,15 @@ class HomePanelWidget(QWidget):
     ######################################################################################################
 
     def _run_background_job_with_progress(self, title: str, label_text: str, task, *args, **kwargs):
+        """Run *task* in a background thread with a modal progress dialog.
+
+        Uses a ``QEventLoop`` + ``QTimer`` callback instead of the old
+        ``processEvents + time.sleep`` poll loop.  The Qt event loop stays
+        responsive because the inner event loop processes events normally
+        while waiting for the future to complete.
+        """
+        from PySide6.QtCore import QEventLoop, QTimer
+
         progress = QProgressDialog(label_text, None, 0, 0, self)
         progress.setWindowTitle(title)
         progress.setWindowModality(Qt.WindowModal)
@@ -878,19 +930,46 @@ class HomePanelWidget(QWidget):
         progress.setAutoClose(False)
         progress.setAutoReset(False)
         progress.setValue(0)
+        progress.setMinimumWidth(560)
+        progress.setStyleSheet(
+            """
+            QProgressDialog {
+                background: #0b1118;
+                color: #eef5ff;
+            }
+            QProgressDialog QLabel {
+                color: #eef5ff;
+                font-size: 14px;
+                font-weight: 600;
+                min-width: 460px;
+                padding: 10px 6px 4px 6px;
+            }
+            QProgressBar {
+                min-height: 16px;
+                border-radius: 8px;
+                border: 1px solid #26405d;
+                background: #101b28;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                border-radius: 7px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #4d9dff, stop:1 #2d6ee8);
+            }
+            """
+        )
         progress.show()
-        QApplication.processEvents()
 
         future = self.thread_pool.submit(task, *args, **kwargs)
-        try:
-            while not future.done():
-                QApplication.processEvents()
-                time.sleep(0.05)
-            return future.result()
-        finally:
-            progress.close()
-            progress.deleteLater()
-            QApplication.processEvents()
+        loop = QEventLoop()
+        # When the future finishes, quit the inner event loop from the Qt thread
+        future.add_done_callback(lambda _f: QTimer.singleShot(0, loop.quit))
+        if not future.done():
+            loop.exec()
+
+        progress.close()
+        progress.deleteLater()
+        return future.result()
 
     def _refresh_local_patient_list_after_import(self):
         self.source_of_patient_load = SourceOfPatientLoad.DB
@@ -1228,8 +1307,11 @@ class HomePanelWidget(QWidget):
         self.patient_table_widget.patientClicked.connect(self._on_patient_single_clicked)
         self.patient_table_widget.downloadRequested.connect(self._on_download_requested)
         self.patient_table_widget.zetaNprRequested.connect(self._on_zeta_npr_requested)
+        self.patient_table_widget.offlineCloudExportRequested.connect(self._on_offline_cloud_export_requested)
+        self.patient_table_widget.offlineCloudSyncRequested.connect(self._on_offline_cloud_sync_requested)
         self.patient_table_widget.cdBurnRequested.connect(self._on_cd_burn_requested)
         self.patient_table_widget.printRequested.connect(self.open_printing_module)
+        self.patient_table_widget.localStudyStateChanged.connect(self._on_local_study_state_changed)
 
         # ★★★ تنظیمات وسط‌چین کردن هدر جدول ★★★
         if hasattr(self.patient_table_widget, 'results_table'):
@@ -1368,73 +1450,28 @@ class HomePanelWidget(QWidget):
             existing_widget = self._find_widget_by_study_uid(study_uid)
             if existing_widget:
                 try:
-                    # Check if the widget is still valid (not deleted by Qt)
-                    try:
-                        import sip
-                        if sip.isdeleted(existing_widget):
-                            print(f"⚠️ Existing widget for study {study_uid} has been deleted, creating new one")
-                            # Remove from cache since widget is deleted
-                            if study_uid in self.dict_tabs_widget:
-                                del self.dict_tabs_widget[study_uid]
-                        else:
-                            idx = self.tab_widget.indexOf(existing_widget)
-                            if idx != -1:
-                                # Activate the tab using custom tab manager if available
-                                if self.custom_tab_manager:
-                                    self.custom_tab_manager.set_tab_active(idx)
-                                else:
-                                    self.tab_widget.setCurrentIndex(idx)
+                    if not is_widget_alive(existing_widget):
+                        print(f"⚠️ Existing widget for study {study_uid} has been deleted, creating new one")
+                        self.dict_tabs_widget.pop(study_uid, None)
+                    else:
+                        idx = self.tab_widget.indexOf(existing_widget)
+                        if idx != -1:
+                            if self.custom_tab_manager:
+                                self.custom_tab_manager.set_tab_active(idx)
+                            else:
+                                self.tab_widget.setCurrentIndex(idx)
 
-                                self._trace_action_done(
-                                    action_id,
-                                    phase='already_open_tab',
-                                    extra={'study_uid': str(study_uid)}
-                                )
-                                
-                                # Ensure the loading is hidden
-                                self.hide_loading()
-                                self._double_click_first_series_loaded = True
-                                self._maybe_hide_double_click_loading()
-                                
-                                # Update the patient table status
-                                self.patient_table_widget.update_visited_status(study_uid, status='opened')
-                                
-                                return
-                    except ImportError:
-                        # If sip is not available, try a different approach
-                        # Check if widget still has parent or is visible
-                        try:
-                            # Try to access a basic property to see if object is valid
-                            _ = existing_widget.isVisible()
-                            idx = self.tab_widget.indexOf(existing_widget)
-                            if idx != -1:
-                                # Activate the tab using custom tab manager if available
-                                if self.custom_tab_manager:
-                                    self.custom_tab_manager.set_tab_active(idx)
-                                else:
-                                    self.tab_widget.setCurrentIndex(idx)
+                            self._trace_action_done(
+                                action_id,
+                                phase='already_open_tab',
+                                extra={'study_uid': str(study_uid)}
+                            )
 
-                                self._trace_action_done(
-                                    action_id,
-                                    phase='already_open_tab',
-                                    extra={'study_uid': str(study_uid)}
-                                )
-                                
-                                # Ensure the loading is hidden
-                                self.hide_loading()
-                                self._double_click_first_series_loaded = True
-                                self._maybe_hide_double_click_loading()
-                                
-                                # Update the patient table status
-                                self.patient_table_widget.update_visited_status(study_uid, status='opened')
-                                
-                                return
-                        except RuntimeError:
-                            # Widget has been deleted, continue with normal flow
-                            print(f"⚠️ Existing widget for study {study_uid} has been deleted, creating new one")
-                            # Remove from cache since widget is deleted
-                            if study_uid in self.dict_tabs_widget:
-                                del self.dict_tabs_widget[study_uid]
+                            self.hide_loading()
+                            self._double_click_first_series_loaded = True
+                            self._maybe_hide_double_click_loading()
+                            self.patient_table_widget.update_visited_status(study_uid, status='opened')
+                            return
                 except Exception as e:
                     print(f"⚠️ Error switching to existing tab: {e}")
                     # Continue with normal flow if tab switching fails
@@ -1449,9 +1486,11 @@ class HomePanelWidget(QWidget):
             self.patient_table_widget.update_visited_status(study_uid, status='opened')
             
             # --- STEP 2: Quick check - is study already downloaded? ---
+            selected_server = self.data_access_panel_widget.get_server_selected() or {}
+            is_offline_cloud = selected_server.get("server_type") == "offline_cloud"
             study_data = get_study_by_study_uid(study_uid=study_uid)
             output_dir = None
-            is_local = self.source_of_patient_load == SourceOfPatientLoad.DB
+            is_local = self.source_of_patient_load in (SourceOfPatientLoad.DB, SourceOfPatientLoad.OFFLINE_CLOUD)
 
             if study_data:
                 output_dir = study_data.get('study_path')
@@ -1459,7 +1498,24 @@ class HomePanelWidget(QWidget):
             if not output_dir:
                 # Create output directory path
                 output_dir = str(SOURCE_PATH / study_uid)
-                
+
+            if is_offline_cloud:
+                sync_result = await asyncio.to_thread(
+                    sync_offline_cloud_study_to_local,
+                    selected_server,
+                    study_uid,
+                )
+                if not sync_result.get("ok"):
+                    QMessageBox.warning(
+                        self,
+                        "Offline Cloud",
+                        sync_result.get("error") or "Could not sync the selected study from the offline cloud package.",
+                    )
+                    self._double_click_first_series_loaded = True
+                    self._maybe_hide_double_click_loading()
+                    return
+                output_dir = sync_result.get("study_path") or output_dir
+
             # --- STEP 3: Open tab immediately (UI first) ---
             caller = CallerTypes.IMPORT if is_local else CallerTypes.SERVER
 
@@ -1478,6 +1534,9 @@ class HomePanelWidget(QWidget):
                 self._double_click_first_series_loaded = True
                 self._maybe_hide_double_click_loading()
                 return
+
+            if is_offline_cloud:
+                widget.offline_cloud_server = dict(selected_server)
 
             self._attach_action_to_widget(widget, action_id)
             
@@ -1737,6 +1796,8 @@ class HomePanelWidget(QWidget):
         """Safely close a tab and clean up references"""
         try:
             widget = self.tab_widget.widget(index)
+            study_uid = None
+            offline_cloud_server = getattr(widget, 'offline_cloud_server', None) if widget else None
             
             # Clean up download tasks if this is a patient widget
             if widget and hasattr(widget, 'study_uid'):
@@ -1757,6 +1818,9 @@ class HomePanelWidget(QWidget):
             # Force cleanup
             if widget:
                 widget.deleteLater()
+
+            if offline_cloud_server and study_uid:
+                self._autosync_studies_to_offline_cloud(offline_cloud_server, [study_uid], show_errors=False)
                 
         except Exception as e:
             print(f"⚠️ Error closing tab: {e}")
@@ -1945,6 +2009,13 @@ class HomePanelWidget(QWidget):
                 QMessageBox.warning(self, "Server Not Selected",
                                     "Please select a PACS server first.")
                 return
+            if server.get("server_type") == "offline_cloud":
+                QMessageBox.information(
+                    self,
+                    "Offline Cloud Server",
+                    "The selected server is an Offline Cloud Server. Work directly against the shared folder package here, and use Offline Sync manually when handing data between the folder and a live AI PACS server.",
+                )
+                return
             
             print(f"[Zeta Download] Server selected - {server}")
             
@@ -1997,6 +2068,459 @@ class HomePanelWidget(QWidget):
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error in download request: {str(e)}")
+
+    def _normalize_study_uids(self, studies):
+        return sorted({
+            str(study.get("study_uid") or "").strip()
+            for study in (studies or [])
+            if str(study.get("study_uid") or "").strip()
+        })
+
+    def _current_actor_identity(self) -> dict:
+        auth_user = None
+        try:
+            host_window = getattr(self.mainwindow, "host_window", None)
+            auth_user = getattr(host_window, "auth_user", None) if host_window is not None else None
+        except Exception:
+            auth_user = None
+        return dict(auth_user or {})
+
+    @staticmethod
+    def _server_identity(server: dict | None) -> dict | None:
+        if not isinstance(server, dict):
+            return None
+        return {
+            "name": server.get("name"),
+            "host": server.get("host") or server.get("folder_path"),
+            "port": server.get("port"),
+            "ae_title": server.get("ae_title"),
+            "server_type": server.get("server_type"),
+        }
+
+    def _autosync_studies_to_offline_cloud(self, cloud_server, study_uids, *, show_errors: bool = False):
+        """Best-effort sync of local study changes back into an Offline Cloud package."""
+        try:
+            if not cloud_server or cloud_server.get("server_type") != "offline_cloud":
+                return
+            study_uids = sorted({str(uid or "").strip() for uid in (study_uids or []) if str(uid or "").strip()})
+            if not study_uids:
+                return
+            result = export_studies_to_offline_cloud(
+                cloud_server,
+                study_uids,
+                actor=self._current_actor_identity(),
+                source_server=None,
+                operation="offline_update",
+            )
+            if show_errors and result.get("errors"):
+                QMessageBox.warning(
+                    self,
+                    "Offline Cloud Sync",
+                    "Some study changes could not be saved back to the Offline Cloud package:\n\n"
+                    + "\n".join(result.get("errors", [])[:5]),
+                )
+        except Exception as exc:
+            if show_errors:
+                QMessageBox.warning(self, "Offline Cloud Sync", f"Could not save changes to Offline Cloud:\n{exc}")
+
+    def _on_local_study_state_changed(self, study_uid: str):
+        """Autosave local study-state changes when the active source is Offline Cloud."""
+        server = self.data_access_panel_widget.get_server_selected()
+        if not server or server.get("server_type") != "offline_cloud":
+            return
+        try:
+            self._autosync_studies_to_offline_cloud(server, [study_uid], show_errors=False)
+        except Exception:
+            pass
+
+    def _validate_offline_cloud_server_for_read(self, cloud_server: dict, *, action_label: str) -> dict | None:
+        manifest = validate_offline_cloud_package(cloud_server.get("folder_path", ""))
+        validation = manifest.get("validation") or {}
+
+        if manifest.get("format") is None:
+            QMessageBox.warning(
+                self,
+                "Offline Cloud Package",
+                "The selected Offline Cloud folder does not have a valid root manifest.json yet.\n\n"
+                "Open Settings -> Offline Cloud Server -> Package JSON... and rebuild or save the JSON file first.",
+            )
+            return None
+
+        if not validation.get("database_present"):
+            QMessageBox.warning(
+                self,
+                "Offline Cloud Package",
+                "The selected Offline Cloud package is missing package.db, so it cannot be used for "
+                f"{action_label}.",
+            )
+            return None
+
+        if not validation.get("is_complete"):
+            details = "\n".join((validation.get("missing_items") or [])[:8]) or "\n".join((validation.get("warnings") or [])[:8])
+            QMessageBox.warning(
+                self,
+                "Offline Cloud Package",
+                "The selected Offline Cloud package is incomplete and cannot be used safely for "
+                f"{action_label}.\n\n{details}",
+            )
+            return None
+
+        return manifest
+
+    def _choose_offline_cloud_server(self, *, title: str = "Offline Sync", label: str = "Choose Offline Cloud Server:"):
+        cloud_servers = get_all_offline_cloud_servers()
+        if not cloud_servers:
+            QMessageBox.warning(
+                self,
+                "No Offline Cloud Server",
+                "Configure at least one Offline Cloud Server in Settings before syncing.",
+            )
+            return None
+
+        if len(cloud_servers) == 1:
+            return cloud_servers[0]
+
+        from PySide6.QtWidgets import QInputDialog
+
+        cloud_names = [str(server.get("name") or "") for server in cloud_servers]
+        cloud_name, accepted = QInputDialog.getItem(
+            self,
+            title,
+            label,
+            cloud_names,
+            0,
+            False,
+        )
+        if not accepted or not cloud_name:
+            return None
+        return next((server for server in cloud_servers if server.get("name") == cloud_name), None)
+
+    def _confirm_offline_cloud_export(self, selected_studies):
+        cloud_servers = get_all_offline_cloud_servers()
+        if not cloud_servers:
+            QMessageBox.warning(
+                self,
+                "No Offline Cloud Server",
+                "Configure at least one Offline Cloud Server in Settings before exporting.",
+            )
+            return None, []
+
+        downloaded_studies = self.patient_table_widget.get_downloaded_selected_patient_data_list()
+        selected_uids = self._normalize_study_uids(selected_studies)
+        downloadable_uids = self._normalize_study_uids(downloaded_studies)
+        skipped_count = max(0, len(selected_uids) - len(downloadable_uids))
+
+        if not downloaded_studies:
+            QMessageBox.warning(
+                self,
+                "No Downloaded Studies",
+                "Offline Cloud export needs local study data first. Download or open the selected studies locally, then try again.",
+            )
+            return None, []
+
+        dlg = OfflineCloudExportDialog(
+            self,
+            studies=downloaded_studies,
+            cloud_servers=cloud_servers,
+            skipped_count=skipped_count,
+        )
+        if dlg.exec() != OfflineCloudExportDialog.Accepted:
+            return None, []
+        return dlg.selected_server(), downloaded_studies
+
+    def _export_selected_studies_to_offline_cloud(self, cloud_server, selected_studies):
+        downloaded_lookup = {
+            str(study.get("study_uid") or "").strip(): study
+            for study in self.patient_table_widget.get_downloaded_selected_patient_data_list()
+            if str(study.get("study_uid") or "").strip()
+        }
+        requested_uids = self._normalize_study_uids(selected_studies)
+        downloaded_studies = [
+            downloaded_lookup[study_uid]
+            for study_uid in requested_uids
+            if study_uid in downloaded_lookup
+        ]
+        study_uids = self._normalize_study_uids(downloaded_studies)
+        if not study_uids:
+            QMessageBox.warning(
+                self,
+                "No Downloaded Studies",
+                "Offline Cloud export needs local study data first. Download or open the selected studies locally, then try again.",
+            )
+            return
+        skipped_count = max(0, len(requested_uids) - len(study_uids))
+
+        current_server = self.data_access_panel_widget.get_server_selected()
+        source_server = None
+        operation = "offline_update"
+        if current_server and current_server.get("server_type") != "offline_cloud":
+            source_server = self._server_identity(current_server)
+            operation = "export_from_ai_pacs"
+
+        export_result = self._run_background_job_with_progress(
+            "Offline Cloud Export",
+            f"Exporting {len(study_uids)} study{'ies' if len(study_uids) != 1 else ''} to {cloud_server.get('name', 'Offline Cloud Server')}...",
+            export_studies_to_offline_cloud,
+            cloud_server,
+            study_uids,
+            actor=self._current_actor_identity(),
+            source_server=source_server,
+            operation=operation,
+        )
+
+        if export_result.get("ok") and not export_result.get("errors"):
+            message = (
+                f"Exported {export_result.get('exported', 0)} studies.\n\n"
+                f"Package studies available: {export_result.get('study_count', 0)}\n"
+                f"Manifest: {export_result.get('manifest_path', '')}\n\n"
+            )
+            if skipped_count:
+                message += f"Skipped not-yet-downloaded selections: {skipped_count}\n\n"
+            message += "This folder can now be transferred manually or synced by an external tool."
+            QMessageBox.information(
+                self,
+                "Offline Cloud Export",
+                message,
+            )
+            return
+
+        error_lines = "\n".join((export_result.get("errors") or [])[:5])
+        QMessageBox.warning(
+            self,
+            "Offline Cloud Export",
+            f"Exported {export_result.get('exported', 0)} studies with some issues.\n\n{error_lines}",
+        )
+
+    def _sync_local_study_to_ai_server(self, study_uid: str, ai_server: dict, actor: dict | None = None) -> dict:
+        """Push locally stored workstation-side changes back to the active AI PACS server."""
+        from modules.network.socket_config import get_socket_server_settings
+        from modules.network.socket_report_status_service import VALID_STATUSES, get_report_status_service
+        from modules.network.upload_download_attchments import upload_attachments_for_study
+        from PacsClient.utils import get_attachments_uploaded, get_study_by_study_uid, set_visit_status
+
+        socket_cfg = get_socket_server_settings()
+        update_socket_server_settings(
+            host=str(ai_server.get("host") or ""),
+            port=int(socket_cfg.get("port") or socket_cfg.get("socket_port") or 50052),
+        )
+
+        study_row = get_study_by_study_uid(study_uid) or {}
+        report_status = str(study_row.get("reportStatus") or "pending").strip() or "pending"
+        if report_status not in VALID_STATUSES:
+            report_status = "pending"
+
+        attachment_state = str(get_attachments_uploaded(study_uid) or "")
+        actor = dict(actor or {})
+        actor_name = str(actor.get("full_name") or actor.get("username") or "").strip() or None
+        actor_user_id = str(actor.get("user_id") or actor.get("id") or actor.get("username") or "").strip() or None
+        upload_result = upload_attachments_for_study(
+            study_uid=study_uid,
+            attachments_uploaded=attachment_state,
+            uploaded_by=actor_name,
+            verbose=False,
+        )
+
+        report_service = get_report_status_service()
+        status_response = report_service.update_report_status(
+            study_uid=study_uid,
+            new_status=report_status,
+            user_id=actor_user_id,
+            comment=f"Synced from Offline Cloud hub by {actor_name or 'offline user'}",
+        )
+
+        ok = status_response is not None and int(upload_result.get("failed", 0) or 0) == 0
+        if ok:
+            set_visit_status(study_uid, "synced")
+
+        return {
+            "ok": ok,
+            "study_uid": study_uid,
+            "uploaded": int(upload_result.get("success", 0) or 0),
+            "failed_uploads": int(upload_result.get("failed", 0) or 0),
+            "report_status": report_status,
+            "status_synced": status_response is not None,
+        }
+
+    def _import_offline_cloud_studies_into_ai_server(self, cloud_server: dict, study_uids: list[str], ai_server: dict) -> dict:
+        imported = 0
+        synced = 0
+        errors: list[str] = []
+        synced_uids: list[str] = []
+        actor = self._current_actor_identity()
+
+        for study_uid in study_uids:
+            try:
+                import_result = sync_offline_cloud_study_to_local(
+                    cloud_server,
+                    study_uid,
+                    actor=actor,
+                )
+                if not import_result.get("ok"):
+                    errors.append(import_result.get("error") or f"{study_uid}: import failed")
+                    continue
+                imported += 1
+
+                sync_result = self._sync_local_study_to_ai_server(study_uid, ai_server, actor=actor)
+                if sync_result.get("ok"):
+                    synced += 1
+                    synced_uids.append(study_uid)
+                else:
+                    errors.append(
+                        f"{study_uid}: workstation sync incomplete "
+                        f"(uploads failed={sync_result.get('failed_uploads', 0)}, "
+                        f"status synced={sync_result.get('status_synced', False)})"
+                    )
+            except Exception as exc:
+                errors.append(f"{study_uid}: {exc}")
+
+        try:
+            record_offline_cloud_sync_event(
+                cloud_server.get("folder_path", ""),
+                event_type="import_to_ai_pacs",
+                actor=actor,
+                server=self._server_identity(ai_server),
+                study_uids=study_uids,
+                details={"imported": imported, "synced": synced, "errors": len(errors)},
+            )
+        except Exception:
+            pass
+
+        return {
+            "ok": imported > 0,
+            "imported": imported,
+            "synced": synced,
+            "synced_uids": synced_uids,
+            "errors": errors,
+        }
+
+    def _on_offline_cloud_sync_requested(self, selected_studies):
+        """Main hub action for Offline Cloud import/export."""
+        try:
+            current_server = self.data_access_panel_widget.get_server_selected()
+            downloaded_studies = self.patient_table_widget.get_downloaded_selected_patient_data_list()
+
+            if current_server and current_server.get("server_type") == "offline_cloud":
+                self._export_selected_studies_to_offline_cloud(current_server, selected_studies)
+                return
+
+            if not current_server:
+                cloud_server, export_studies = self._confirm_offline_cloud_export(selected_studies)
+                if not cloud_server or not export_studies:
+                    return
+                self._export_selected_studies_to_offline_cloud(cloud_server, export_studies)
+                return
+
+            allow_export = bool(downloaded_studies)
+            allow_import = current_server.get("server_type") == "ai_pacs"
+            if not allow_export and not allow_import:
+                QMessageBox.warning(
+                    self,
+                    "Offline Sync",
+                    "Download the selected studies first before exporting them to an Offline Cloud Server folder.",
+                )
+                return
+
+            mode = None
+            if allow_export and not allow_import:
+                mode = "Export to Offline Cloud"
+            elif allow_import and not allow_export:
+                mode = "Import from Offline Cloud to AI PACS"
+            else:
+                from PySide6.QtWidgets import QInputDialog
+
+                mode, accepted = QInputDialog.getItem(
+                    self,
+                    "Offline Sync",
+                    "Select manual hub action:",
+                    [
+                        "Export to Offline Cloud",
+                        "Import from Offline Cloud to AI PACS",
+                    ],
+                    0,
+                    False,
+                )
+                if not accepted or not mode:
+                    return
+
+            if mode == "Export to Offline Cloud":
+                cloud_server, export_studies = self._confirm_offline_cloud_export(selected_studies)
+                if not cloud_server or not export_studies:
+                    return
+                self._export_selected_studies_to_offline_cloud(cloud_server, export_studies)
+                return
+
+            cloud_server = self._choose_offline_cloud_server(
+                title="Offline Sync",
+                label="Choose which Offline Cloud Server folder should be read back into AI PACS:",
+            )
+            if not cloud_server:
+                return
+
+            study_uids = self._normalize_study_uids(selected_studies)
+            if not study_uids:
+                QMessageBox.warning(self, "Offline Sync", "Select at least one study to import from Offline Cloud.")
+                return
+
+            if not self._validate_offline_cloud_server_for_read(
+                cloud_server,
+                action_label="manual import back to AI PACS",
+            ):
+                return
+
+            sync_result = self._run_background_job_with_progress(
+                "Offline Cloud Import",
+                f"Importing {len(study_uids)} study{'ies' if len(study_uids) != 1 else ''} from {cloud_server.get('name', 'Offline Cloud Server')} and syncing workstation data to {current_server.get('name', 'AI PACS')}...",
+                self._import_offline_cloud_studies_into_ai_server,
+                cloud_server,
+                study_uids,
+                current_server,
+            )
+
+            for study_uid in sync_result.get("synced_uids", []):
+                try:
+                    self.patient_table_widget.update_visited_status(study_uid, status='synced')
+                except Exception:
+                    pass
+
+            if sync_result.get("ok") and not sync_result.get("errors"):
+                QMessageBox.information(
+                    self,
+                    "Offline Cloud Import",
+                    f"Imported {sync_result.get('imported', 0)} studies and synced {sync_result.get('synced', 0)} studies to {current_server.get('name', 'AI PACS')}.\n\n"
+                    "This was a manual hub sync from the Offline Cloud folder back into the live server workflow.",
+                )
+                return
+
+            QMessageBox.warning(
+                self,
+                "Offline Cloud Import",
+                f"Imported {sync_result.get('imported', 0)} studies and synced {sync_result.get('synced', 0)} studies.\n\n"
+                + "\n".join(sync_result.get("errors", [])[:6]),
+            )
+
+        except Exception as e:
+            print(f"Offline Cloud sync error: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Offline Cloud Sync", f"Failed to run Offline Cloud sync:\n{e}")
+
+    def _on_offline_cloud_export_requested(self, selected_studies):
+        """Backward-compatible path for explicit export-only calls."""
+        try:
+            server = self.data_access_panel_widget.get_server_selected()
+            if not server or server.get("server_type") != "offline_cloud":
+                QMessageBox.warning(
+                    self,
+                    "Offline Cloud Server Required",
+                    "Select an Offline Cloud Server from the server dropdown before exporting.",
+                )
+                return
+            self._export_selected_studies_to_offline_cloud(server, selected_studies)
+        except Exception as e:
+            print(f"Offline Cloud export error: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Offline Cloud Export", f"Failed to export studies:\n{e}")
     
     def _on_zeta_npr_requested(self, selected_studies, set_current_tab=True):
         """
@@ -2010,6 +2534,13 @@ class HomePanelWidget(QWidget):
             if not server:
                 QMessageBox.warning(self, "Server Not Selected",
                                     "Please select a PACS server first.")
+                return
+            if server.get("server_type") == "offline_cloud":
+                QMessageBox.information(
+                    self,
+                    "Offline Cloud Server",
+                    "The selected server is an Offline Cloud Server. Download Manager is only available for online AI PACS servers.",
+                )
                 return
             
             print(f"🚀 [Zeta NPR] Server selected - {server}")
@@ -2104,209 +2635,26 @@ class HomePanelWidget(QWidget):
             QMessageBox.critical(self, "Error", f"Error in CD burn request: {str(e)}")
 
     def _get_or_create_download_manager_tab(self, activate_tab: bool = False):
-        """Get existing Download Manager tab or create new one (optionally activate it)."""
-        try:
-            from PacsClient.utils.config import SOURCE_PATH
-            
-            # Check if download manager tab already exists
-            for i in range(self.tab_widget.count()):
-                widget = self.tab_widget.widget(i)
-                if isinstance(widget, DownloadManagerWidget):
-                    print(f"[Download Manager] Using existing tab at index {i}")
-                    if activate_tab:
-                        if self.custom_tab_manager:
-                            self.custom_tab_manager.set_tab_active_simple(i)
-                        else:
-                            self.tab_widget.setCurrentIndex(i)
-                    return widget
+        """Get existing Download Manager tab or create new one (delegates to service).
 
-            # Create new Download Manager tab (Zeta with v1.0.6 UI)
-            print("[Download Manager] Creating new Download Manager tab (Zeta with v1.0.6 UI)")
-
-            download_manager = get_zeta_download_manager_widget(base_output_dir=Path(SOURCE_PATH))
-            
-            # Add to tab widget with standard name "Download Manager"
-            if self.custom_tab_manager:
-                tab_index = self.custom_tab_manager.add_download_manager_tab(
-                    widget=download_manager,
-                    activate=activate_tab
-                )
-                print(f"[Download Manager] Tab added at index: {tab_index}")
-            else:
-                self.tab_widget.addTab(download_manager, "Download Manager")
-                if activate_tab:
-                    self.tab_widget.setCurrentWidget(download_manager)
-            
-            # Connect download completion signals
+        The service handles creation, but completion signals need to be
+        connected to *this* widget's handler the first time.
+        """
+        dm = self.download_service.get_or_create_dm_tab(activate=activate_tab)
+        if dm is not None:
+            # Ensure completion signals are connected (idempotent check)
             try:
-                download_manager.download_completed.connect(self._on_study_download_completed)
-                download_manager.download_failed.connect(self._on_study_download_failed)
-            except Exception as e:
-                print(f"⚠️ Could not connect download signals: {e}")
-            
-            return download_manager
-
-        except Exception as e:
-            print(f"❌ Error creating download manager tab: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return None
+                if not getattr(dm, '_home_signals_connected', False):
+                    dm.download_completed.connect(self._on_study_download_completed)
+                    dm.download_failed.connect(self._on_study_download_failed)
+                    dm._home_signals_connected = True
+            except Exception:
+                pass
+        return dm
     
     def _connect_download_manager_to_widget(self, download_manager, widget, study_uid: str):
-        """
-        Connect Download Manager progress signals to a patient widget.
-        
-        This allows real-time progress tracking for opened patients.
-        The widget will receive updates on:
-        - Overall study progress (images downloaded)
-        - Series-level progress (which series is being downloaded)
-        - Series completion events
-        """
-        try:
-            # Store connection key to avoid duplicate connections
-            if not hasattr(self, '_dm_widget_connections'):
-                self._dm_widget_connections = {}
-            
-            connection_key = f"{study_uid}_{id(widget)}"
-            if connection_key in self._dm_widget_connections:
-                return  # Already connected
-            
-            # Filter function to only process events for this study
-            def on_study_progress(uid, current, total, percent):
-                if uid == study_uid and widget:
-                    try:
-                        # Update widget's progress tracking
-                        if hasattr(widget, 'update_download_progress'):
-                            widget.update_download_progress(current, total, percent)
-                    except Exception:
-                        pass  # Widget may have been deleted
-            
-            def _resolve_series_number(series_uid_or_number):
-                try:
-                    if hasattr(widget, 'resolve_series_key'):
-                        return str(widget.resolve_series_key(series_uid_or_number))
-                except Exception:
-                    pass
-                return str(series_uid_or_number)
-
-            def on_series_started(uid, series_uid, series_desc):
-                if uid == study_uid and widget:
-                    try:
-                        series_number = _resolve_series_number(series_uid)
-                        if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.start_series_download(series_number)
-                        # Pipeline: signal that a download session is active
-                        if hasattr(widget, 'viewer_controller') and hasattr(widget.viewer_controller, 'pipeline'):
-                            widget.viewer_controller.pipeline.on_series_download_started(series_number)
-                    except Exception:
-                        pass
-            
-            def on_series_progress(uid, series_uid, current, total):
-                # This slot is now called at most 10x/sec via the 100ms throttle
-                # timer in DownloadManagerWidget — no additional modulo guard needed.
-                if uid == study_uid and widget:
-                    try:
-                        series_number = _resolve_series_number(series_uid)
-                        if hasattr(widget, 'thumbnail_manager'):
-                            if total > 0:
-                                progress_percent = (current / total) * 100
-                                widget.thumbnail_manager.update_series_progress(
-                                    series_number=series_number,
-                                    progress_percent=progress_percent,
-                                    status_text=f"{current}/{total}"
-                                )
-                        # Emit per-batch progress for incremental viewer display
-                        if total > 0 and hasattr(widget, 'series_images_progress'):
-                            widget.series_images_progress.emit(
-                                str(series_number), int(current), int(total)
-                            )
-                    except Exception:
-                        pass
-            
-            # ── v2.2.3.2.6: Coalesced series-completion handler ──────────
-            # Multiple series can complete within a few hundred ms during
-            # bulk downloads.  Processing each one individually on the main
-            # thread (thumbnail border update + pipeline signal + warmup
-            # enqueue + viewer display) blocked the Qt event loop for
-            # seconds, starving scroll events (event_queue_delay 600–5400ms).
-            #
-            # Fix: accumulate completed series and flush them in one batch
-            # after a short debounce (100ms).  The first series in a burst
-            # is still emitted immediately (critical for first-series
-            # display latency), subsequent ones are batched.
-
-            _pending_completed: list = []
-            _flush_timer = QTimer()
-            _flush_timer.setSingleShot(True)
-            _flush_timer.setInterval(100)  # 100ms coalesce window
-            _first_series_emitted = {'done': False}
-
-            def _flush_pending_completions():
-                """Process all accumulated series completions in one batch."""
-                batch = list(_pending_completed)
-                _pending_completed.clear()
-                if not batch:
-                    return
-                try:
-                    _ = widget.isVisible()
-                except (RuntimeError, AttributeError):
-                    return  # Widget deleted
-                for i, sn in enumerate(batch):
-                    try:
-                        if hasattr(widget, 'thumbnail_manager'):
-                            widget.thumbnail_manager.complete_series_download(sn)
-                        if hasattr(widget, 'series_downloaded'):
-                            widget.series_downloaded.emit(sn)
-                    except (RuntimeError, AttributeError):
-                        break  # Widget deleted mid-loop
-                    except Exception:
-                        pass
-                    # Yield to event loop every 2 series so scroll events can drain
-                    if i % 2 == 1 and i < len(batch) - 1:
-                        try:
-                            from PySide6.QtWidgets import QApplication
-                            QApplication.processEvents()
-                        except Exception:
-                            pass
-
-            _flush_timer.timeout.connect(_flush_pending_completions)
-
-            def on_series_completed(uid, series_uid):
-                if uid == study_uid and widget:
-                    try:
-                        series_number = _resolve_series_number(series_uid)
-
-                        # First completed series is dispatched immediately so
-                        # the viewer starts loading without waiting for the
-                        # coalesce window.
-                        if not _first_series_emitted['done']:
-                            _first_series_emitted['done'] = True
-                            if hasattr(widget, 'thumbnail_manager'):
-                                widget.thumbnail_manager.complete_series_download(series_number)
-                            if hasattr(widget, 'series_downloaded'):
-                                widget.series_downloaded.emit(series_number)
-                            return
-
-                        # Subsequent completions are batched.
-                        _pending_completed.append(series_number)
-                        if not _flush_timer.isActive():
-                            _flush_timer.start()
-                    except Exception:
-                        pass
-            
-            # Connect signals
-            download_manager.studyProgressUpdated.connect(on_study_progress)
-            download_manager.seriesDownloadStarted.connect(on_series_started)
-            download_manager.seriesProgressUpdated.connect(on_series_progress)
-            download_manager.seriesDownloadCompleted.connect(on_series_completed)
-            
-            # Track connection
-            self._dm_widget_connections[connection_key] = True
-            
-            print(f"✅ Connected Download Manager signals to widget for study: {study_uid[:30]}...")
-            
-        except Exception as e:
-            print(f"⚠️ Error connecting Download Manager to widget: {e}")
+        """Connect DM progress signals to a patient widget (delegates to service)."""
+        self.download_service.connect_dm_to_widget(download_manager, widget, study_uid)
     
     def _on_study_download_completed(self, study_uid: str):
         """Update patient list when a study download completes.
@@ -2452,21 +2800,8 @@ class HomePanelWidget(QWidget):
             traceback.print_exc()
 
     def _refresh_global_download_flag(self):
-        """Update the ZetaBoost global download flag from the live state store.
-
-        Clears the flag (allowing full-speed warmup) when no downloads are
-        active; leaves it set when at least one study is still downloading.
-        Called after each study completes or fails.
-        """
-        try:
-            from modules.download_manager.state.state_store import get_state_store
-            from modules.zeta_boost.engine import set_global_download_active
-            active_list = get_state_store().get_active_downloads()
-            active = bool(active_list)
-            set_global_download_active(active)
-            print(f"[GlobalDL] set_global_download_active={active} (remaining_active={len(active_list)})")
-        except Exception as _e:
-            print(f"[GlobalDL] refresh error: {_e}")
+        """Update the ZetaBoost global download flag (delegates to service)."""
+        self.download_service.refresh_global_download_flag()
 
     def _get_study_info_for_completed_download(self, study_uid: str) -> dict:
         """Get study info for a completed download from local files or database"""
@@ -2864,24 +3199,6 @@ class HomePanelWidget(QWidget):
         # finally:
         #     self.hide_loading()
 
-    async def download_and_update_tab(self, *args, **kwargs):
-        """
-        DEPRECATED: This function has been removed as part of Phase 1 refactoring.
-
-        The legacy download_and_update_tab function used DicomDownloader gRPC calls
-        and bypassed Zeta Download Manager state tracking.
-
-        All downloads must now route through Zeta Download Manager.
-
-        Raises NotImplementedError to force use of Zeta Download Manager.
-        """
-        raise NotImplementedError(
-            "Legacy download_and_update_tab has been removed (bypassed Zeta state). "
-            "Please use Zeta Download Manager instead: "
-            "zeta_manager = self._get_or_create_download_manager_tab(); "
-            "zeta_manager.add_downloads(studies, start_immediately=True)"
-        )
-
     def cancel_search(self):
         """Cancel the current search operation"""
         print(f"\n[CANCEL_SEARCH] 🛑 Cancel search requested by user")
@@ -2909,356 +3226,18 @@ class HomePanelWidget(QWidget):
         
         print(f"[CANCEL_SEARCH] ✅ UI state reset")
 
-    # ---------- 2) نسخه‌ی جدید Async با قابلیت Cancel برای جستجوی لوکال ----------
+    # ---------- Search (delegated to HomeSearchService) ----------
     async def search_patients_from_local_async(self):
-        """
-        جستجوی لوکال با قابلیت کنسل (همسان با سرچ سرور):
-        - اجرای عملیات‌های سنگین داخل executor
-        - دیالوگ لودینگ با دکمه‌ی Cancel
-        - چک کردن self._cancel_search_requested در فواصل مناسب
-        """
-        from PySide6.QtWidgets import QApplication, QMessageBox
-
-        loop = asyncio.get_running_loop()
-        self._cancel_search_requested = False
-
-        try:
-            print(f"\n{'='*70}")
-            print(f"[LOCAL_SEARCH] Starting local database search...")
-            print(f"{'='*70}")
-
-            # دیالوگ لودینگ و نوار پیشرفت شبیه سرور (قابل کنسل)
-            self.show_loading("Local Search", "Searching local database...", cancellable=True)
-            self.search_progress.setVisible(True)
-            self.search_progress.setRange(0, 0)  # نامعین تا وقتی لیست را گرفتیم
-            # Update status using theme colors
-            self._update_connection_indicator_by_status('busy', 'Searching local database...')
-
-            # جدول را خالی کن و یک ذره به UI نفس بده
-            self.patient_table_widget.clear_table()
-            QApplication.processEvents()
-            await asyncio.sleep(0)
-
-            # Get search criteria from search widget
-            search_data = self.patient_search_widget.get_search_data()
-            print(f"\n[LOCAL_SEARCH] 📋 Search criteria from UI:\n{search_data}")
-            
-            # For Local tab: Remove date filters so downloaded studies appear even
-            # if the user last searched a narrow date range on the Server tab.
-            search_data_local = search_data.copy()
-            search_data_local['date_from'] = None
-            search_data_local['date_to'] = None
-            print(f"[LOCAL_SEARCH] 📋 Modified search_data for local (date filters removed):\n{search_data_local}")
-            
-            # مرحله‌ی نسبتاً سنگین: جستجوی بیماران با فیلتر از DB
-            # (داخل executor تا UI قفل نشود)
-            print(f"[LOCAL_SEARCH] 🔍 Querying database with executor...")
-            patients = await loop.run_in_executor(self.thread_pool, search_patients_local, search_data_local)
-            print(f"[LOCAL_SEARCH] ✅ search_patients_local returned {len(patients or [])} patient records")
-
-            if self._cancel_search_requested:
-                raise asyncio.CancelledError()
-
-            total = len(patients or [])
-            # حالا که total را می‌دانیم، progress را determinate کنیم
-            self.search_progress.setRange(0, max(1, total))
-            self.search_progress.setValue(0)
-
-            # پیمایش و افزودن به جدول — با چکِ کنسل در هر چند آیتم
-            CHUNK = 25
-            added = 0
-            skipped = 0
-            if patients:
-                from PacsClient.pacs.patient_tab.utils.utils import has_subfolders
-                from PacsClient.utils.db_manager import find_study_pk_with_study_uid, update_study_missing_fields
-
-                for i, patient in enumerate(patients, start=1):
-                    if self._cancel_search_requested:
-                        raise asyncio.CancelledError()
-
-                    # فقط رکوردهای تکمیل/دارای فایل را نمایش بدهیم (رفتار فعلی شما)
-                    study_path = patient.get('study_path')
-                    study_uid = patient.get('study_uid')
-                    
-                    # Log details
-                    print(f"[LOCAL_SEARCH] [{i}/{total}] Processing: {patient.get('patient_name')} - study_uid={study_uid}, study_path={study_path}")
-
-                    # Fallback: try SOURCE_PATH if study_path is missing OR stale
-                    _need_fallback = False
-                    if not study_path:
-                        _need_fallback = True
-                    elif study_uid:
-                        try:
-                            if not Path(study_path).exists():
-                                _need_fallback = True
-                        except Exception:
-                            _need_fallback = True
-
-                    if _need_fallback and study_uid:
-                        try:
-                            fallback_path = SOURCE_PATH / study_uid
-                            print(f"[LOCAL_SEARCH]   🔍 Checking fallback path: {fallback_path}")
-                            if fallback_path.exists() and has_subfolders(fallback_path):
-                                study_path = str(fallback_path)
-                                patient['study_path'] = study_path
-                                print(f"[LOCAL_SEARCH]   ✅ Using fallback path")
-                                # Persist corrected study_path for future local searches
-                                study_pk = find_study_pk_with_study_uid(study_uid)
-                                if study_pk:
-                                    from database.manager import force_update_study_path
-                                    force_update_study_path(study_pk, study_path)
-                            else:
-                                print(f"[LOCAL_SEARCH]   ⚠️ Fallback path doesn't exist or has no subfolders")
-                        except Exception as update_error:
-                            print(f"[LOCAL_SEARCH]   ⚠️ Error checking fallback: {update_error}")
-
-                    if not study_path:
-                        if study_uid:
-                            study_path = str(SOURCE_PATH / study_uid)
-                    if not study_path:
-                        print(f"[LOCAL_SEARCH]   ❌ Skipping - no study_path")
-                        skipped += 1
-                        continue
-                    _has_dicom = False
-                    try:
-                        _has_dicom = has_subfolders(study_path)
-                    except Exception:
-                        pass
-                    if not _has_dicom:
-                        # No DICOM on disk — still show if thumbnails exist
-                        from PacsClient.pacs.patient_tab.utils.utils import THUMBNAIL_PATH
-                        _thumb_dir = THUMBNAIL_PATH / study_uid if study_uid else None
-                        if _thumb_dir and _thumb_dir.exists() and any(_thumb_dir.iterdir()):
-                            print(f"[LOCAL_SEARCH]   ⚠️ No DICOM on disk but thumbnails exist — showing anyway")
-                        else:
-                            print(f"[LOCAL_SEARCH]   ❌ Skipping - no subfolders and no thumbnails for {study_path}")
-                            skipped += 1
-                            continue
-
-                    # مقادیر لازم
-                    # Backfill missing modality / study_date from first DICOM on disk
-                    _disp_modality = patient.get('modality')
-                    _disp_date = patient.get('study_date')
-                    if (_disp_modality in (None, '', 'Unknown') or _disp_date in (None, '', 'Unknown')):
-                        try:
-                            _sp = Path(study_path)
-                            _first_dcm = None
-                            for _sub in sorted(_sp.iterdir()):
-                                if _sub.is_dir():
-                                    for _f in sorted(_sub.iterdir()):
-                                        if _f.suffix.lower() in ('.dcm', '.dicom'):
-                                            _first_dcm = _f
-                                            break
-                                if _first_dcm:
-                                    break
-                            if _first_dcm:
-                                import pydicom
-                                _ds = pydicom.dcmread(str(_first_dcm), stop_before_pixels=True, force=True)
-                                if _disp_modality in (None, '', 'Unknown'):
-                                    _raw_mod = _ds.get('Modality', None)
-                                    if _raw_mod:
-                                        _disp_modality = str(_raw_mod)
-                                        patient['modality'] = _disp_modality
-                                if _disp_date in (None, '', 'Unknown'):
-                                    _raw_date = _ds.get('StudyDate', None)
-                                    if _raw_date:
-                                        _disp_date = str(_raw_date)
-                                        patient['study_date'] = _disp_date
-                                # Persist to DB so next local load is instant
-                                _s_uid = patient.get('study_uid')
-                                if _s_uid:
-                                    _s_pk = find_study_pk_with_study_uid(_s_uid)
-                                    if _s_pk:
-                                        update_study_missing_fields(
-                                            _s_pk,
-                                            modality=_disp_modality if _disp_modality not in (None, '', 'Unknown') else None,
-                                            study_date=_disp_date if _disp_date not in (None, '', 'Unknown') else None,
-                                        )
-                        except Exception as _bf_err:
-                            print(f"[LOCAL_SEARCH]   ⚠️ modality/date backfill error: {_bf_err}")
-
-                    print(f"[LOCAL_SEARCH]   ✅ Adding to table: {patient.get('patient_name')}")
-                    self.add_data2patient_list_table(
-                        patient_id=patient.get('patient_id'),
-                        patient_name=patient.get('patient_name'),
-                        study_date=_disp_date,
-                        description=patient.get('study_description'),
-                        modality=_disp_modality,
-                        study_uid=patient.get('study_uid'),
-                        series_count=patient.get('number_of_series'),
-                        images_count=patient.get('number_of_instances'),
-                        is_downloaded=True,
-                        body_part=patient.get('body_part'),
-                        study_time=patient.get('study_time'),
-                        age=patient.get('age')
-                    )
-                    added += 1
-
-                    # هر CHUNK رکورد: progress/UI را به‌روز کن و فرصت به حلقه‌ی event بده
-                    if (i % CHUNK == 0) or (i == total):
-                        self.search_progress.setValue(i)
-                        QApplication.processEvents()
-                        await asyncio.sleep(0)
-
-            # Final status
-            print(f"[LOCAL_SEARCH] ✅ COMPLETED: {added} studies loaded, {skipped} skipped\n")
-            self._update_connection_indicator_by_status('online', f'Local DB - Found {added} studies')
-            print(f"[LOCAL] ✅ Loaded {added} studies from local database")
-
-        except asyncio.CancelledError:
-            # User cancelled
-            print("[LOCAL_SEARCH] ⚠️ Local patient search cancelled by user.\n")
-            try:
-                self.search_progress.setVisible(False)
-                self._update_connection_indicator_by_status('busy', 'Local Search Cancelled')
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"[LOCAL_SEARCH] ❌ Error: {e}\n")
-            QMessageBox.critical(self, "Error", f"Error in local search: {str(e)}")
-        finally:
-            self.search_progress.setVisible(False)
-            self.hide_loading()
-            # Reset searching state
-            self.patient_search_widget.set_searching_state(False)
+        """Search local database — delegated to search service."""
+        await self.search_service.search_local()
 
     async def search_patients_from_server_async(self):
-        """
-        جستجوی بیماران از طریق Socket با امکان کنسل:
-        - عملیات سنگین در executor
-        - دکمه Cancel در دیالوگ
-        """
-        from PySide6.QtWidgets import QMessageBox, QApplication
-        try:
-            self._cancel_search_requested = False  # ریست فلگ کنسل
-
-            server = self.data_access_panel_widget.get_server_selected()
-            if not server or not all(k in server for k in ('host', 'port')):
-                QMessageBox.warning(self, "Server Not Selected", "Please select a PACS server first.")
-                return
-
-            # socket_port = get_socket_config().get_socket_port()
-            socket_port = get_socket_server_settings()['port']
-            update_socket_server_settings(host=server['host'], port=int(socket_port))
-
-            server_name = server.get('name', server['host'])
-            # ← همین‌جا دکمه Cancel را فعال می‌کنیم
-            self.show_loading("Socket Server Search",
-                              f"Searching {server_name} server via Socket...",
-                              cancellable=True)
-
-            self.patient_table_widget.clear_table()
-            self.search_progress.setVisible(True)
-            self.search_progress.setRange(0, 0)
-
-            loop = asyncio.get_running_loop()
-            from modules.network.socket_patient_service import get_socket_patient_service
-            socket_service = get_socket_patient_service()
-
-            # تست اتصال
-            is_connected = await loop.run_in_executor(self.thread_pool, socket_service.test_connection)
-            if self._cancel_search_requested:
-                raise asyncio.CancelledError()
-
-            if not is_connected:
-                cfg = socket_service.config
-                config_info = f"{cfg.get_socket_host()}:{cfg.get_socket_port()}"
-                self._update_connection_indicator_by_status('offline', 'Socket Connection Failed', config_info)
-                QMessageBox.critical(self, "Connection Failed",
-                                     f"Failed to connect to Socket server at {config_info}")
-                return
-
-            search_data = self.patient_search_widget.get_search_data()
-            socket_params = self._convert_search_data_to_socket_params(search_data)
-
-            # جستجوی اصلی (سینک) در تردبک‌گراند
-            patients = await loop.run_in_executor(self.thread_pool,
-                                                  lambda: socket_service.search_patients_sync(socket_params))
-            if self._cancel_search_requested:
-                raise asyncio.CancelledError()
-
-            total = len(patients or [])
-            self.search_progress.setRange(0, max(1, total))
-
-            CHUNK = 25
-            if patients:
-                for i, patient in enumerate(patients, start=1):
-                    if self._cancel_search_requested:
-                        raise asyncio.CancelledError()
-                    self._add_socket_patient_to_table(patient)
-
-                    if (i % CHUNK == 0) or (i == total):
-                        self.search_progress.setValue(i)
-                        QApplication.processEvents()
-                        await asyncio.sleep(0)
-
-                self._update_connection_indicator_by_status('online', f'Socket Connected - Found {total} patients')
-            else:
-                self._update_connection_indicator_by_status('busy', 'Socket Connected - No patients found')
-
-            # پاکسازی سرویس
-            try:
-                await loop.run_in_executor(self.thread_pool, socket_service.cleanup)
-            except Exception:
-                pass
-
-        except asyncio.CancelledError:
-            # کنسل توسط کاربر
-            print("🔸 Socket patient search cancelled by user.")
-            # وضعیت UI قبلاً در cancel_current_search تنظیم شده، ولی اگر لازم شد:
-            try:
-                self.search_progress.setVisible(False)
-                self.connection_indicator.setPixmap(qta.icon('fa5s.circle', color='#f59e0b').pixmap(12, 12))
-                self.connection_indicator.setText(" Socket Search Cancelled")
-                self.connection_indicator.setStyleSheet("""
-                    QLabel { font-size: 14px; color: #f59e0b; padding: 4px 8px;
-                             background: rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.3); border-radius:8px; }
-                """)
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"Error in search_patients_from_server_async: {e}")
-            QMessageBox.critical(self, "Error", f"Error searching patients: {str(e)}")
-        finally:
-            self.search_progress.setVisible(False)
-            self.hide_loading()
-            # Reset searching state
-            self.patient_search_widget.set_searching_state(False)
+        """Search remote PACS via Socket — delegated to search service."""
+        await self.search_service.search_server()
 
     def _convert_search_data_to_socket_params(self, search_data):
-        """
-        Convert UI search data to Socket API parameters
-
-        Args:
-            search_data (dict): Search data from UI
-
-        Returns:
-            dict: Socket API parameters
-        """
-        socket_params = {
-            "limit": 100,  # Default limit
-            "offset": 0,
-            "include_study_count": True,
-            "include_latest_study": True
-        }
-
-        # Map UI fields to Socket parameters
-        if search_data.get('patient_id'):
-            socket_params['patient_id'] = search_data['patient_id']
-
-        if search_data.get('patient_name'):
-            socket_params['patient_name'] = search_data['patient_name']
-
-        if search_data.get('modality'):
-            socket_params['modality'] = search_data['modality']
-
-        if search_data.get('date_from'):
-            socket_params['date_from'] = search_data['date_from']
-
-        if search_data.get('date_to'):
-            socket_params['date_to'] = search_data['date_to']
-
-        return socket_params
+        """Convert UI search data to Socket API parameters (delegates to service)."""
+        return HomeSearchService._convert_search_data_to_socket_params(search_data)
 
     def _add_socket_patient_to_table(self, patient):
         """
@@ -3353,115 +3332,12 @@ class HomePanelWidget(QWidget):
             print(f"Error adding Socket patient to table: {e}")
 
     def _save_socket_patient_to_db(self, patient):
-        """
-        Save Socket patient data to local database
-
-        Args:
-            patient (dict): Patient data from Socket API
-        """
-        try:
-            # Extract patient information
-            patient_id = patient.get('patient_id', 'N/A')
-            patient_name = patient.get('patient_name', 'N/A')
-            patient_birth_date = patient.get('patient_birth_date', 'N/A')
-            patient_sex = patient.get('patient_sex', 'N/A')
-            patient_age = patient.get('patient_age', 'N/A')
-
-            # Get or create patient record
-            patient_pk = find_patient_pk(patient_id)
-            if patient_pk is None:
-                patient_pk = insert_patient(
-                    patient_id, patient_name, patient_birth_date,
-                    patient_sex, patient_age, "N/A"  # weight not available from Socket
-                )
-
-            # Get or create study record if study UID is available
-            study_uid = patient.get('latest_study_uid')
-            if study_uid and study_uid != 'N/A':
-                study_pk = find_study_pk(patient_pk)
-                if study_pk is None:
-                    study_date = patient.get('latest_study_date', 'N/A')
-                    study_description = patient.get('latest_study_description', 'N/A')
-                    modality = ', '.join(patient.get('modalities', []))
-
-                    # Convert date format if needed
-                    if study_date and study_date != 'N/A':
-                        try:
-                            if len(study_date) == 8:  # YYYYMMDD format
-                                date_obj = datetime.strptime(study_date, "%Y%m%d")
-                                study_date = date_obj.strftime("%Y/%m/%d")
-                        except:
-                            pass
-
-                    # Calculate study_path from SOURCE_PATH if study files exist
-                    study_path = None
-                    if study_uid:
-                        potential_path = SOURCE_PATH / study_uid
-                        if potential_path.exists():
-                            study_path = str(potential_path)
-                    
-                    study_pk = insert_study(
-                        study_uid, patient_pk, study_date, "N/A",  # time not available
-                        study_description, "N/A",  # institution not available
-                        modality, "N/A",  # body part not available
-                        patient.get('count_of_series', 0),
-                        patient.get('count_of_instances', 0),
-                        study_path=study_path  # Add study_path parameter
-                    )
-
-        except Exception as e:
-            print(f"Error saving Socket patient to database: {e}")
+        """Save Socket patient data to local database (delegates to service)."""
+        self.db_service.save_socket_patient_to_db(patient)
 
     def save_patient_and_study_on_db(self, dataset):
-        # print('dataset:', dataset)
-
-        # get or create new patient record on patients table
-        patient_id = str(getattr(dataset, 'PatientID', 'N/A'))
-        patient_pk = find_patient_pk(patient_id)
-        if patient_pk is None:
-            patient_name = str(getattr(dataset, 'PatientName', 'N/A'))
-            patient_birthdate = str(getattr(dataset, 'PatientBirthDate', 'N/A'))
-            patient_sex = str(getattr(dataset, "PatientSex", "N/A"))
-            patient_age = str(getattr(dataset, "PatientAge", "N/A"))
-            patient_weight = str(getattr(dataset, "PatientWeight", "N/A"))
-            patient_pk = insert_patient(patient_id, patient_name, patient_birthdate, patient_sex,
-                                        patient_age, patient_weight)
-
-        # get or create new study record on studies table
-        study_pk = find_study_pk(patient_pk)
-        if study_pk is None:
-            study_uid = str(getattr(dataset, 'StudyInstanceUID', 'N/A'))
-            study_date = str(getattr(dataset, 'StudyDate', None))
-            if study_date:
-                try:
-                    date_obj = datetime.strptime(study_date, "%Y%m%d")
-                    study_date = date_obj.strftime("%Y/%m/%d")
-                except:
-                    study_date = str(study_date)
-
-            study_time = str(getattr(dataset, "StudyTime", "N/A"))
-            study_description = str(getattr(dataset, "StudyDescription", "N/A"))
-            hospital_name = str(getattr(dataset, "InstitutionName", "N/A"))
-            institution_name = hospital_name
-            modality = str(getattr(dataset, 'Modality', 'N/A'))
-            bodypart = str(getattr(dataset, "BodyPartExamined", "N/A"))
-
-            number_of_series = int(getattr(dataset, 'NumberOfStudyRelatedSeries', 0))
-            number_of_instances = int(getattr(dataset, 'NumberOfStudyRelatedInstances', 0))
-
-            # Calculate study_path from SOURCE_PATH if study files exist
-            study_path = None
-            if study_uid:
-                potential_path = SOURCE_PATH / study_uid
-                if potential_path.exists():
-                    study_path = str(potential_path)
-            
-            study_pk = insert_study(study_uid, patient_pk, study_date, study_time,
-                                    study_description, institution_name,
-                                    modality, bodypart, number_of_series, number_of_instances,
-                                    study_path=study_path)  # Add study_path parameter
-
-        return patient_pk, study_pk
+        """Persist patient + study from a pydicom Dataset (delegates to service)."""
+        self.db_service.save_patient_and_study_on_db(dataset)
 
     def add_data2patient_list_table(self, **kwargs):
         '''
@@ -3635,12 +3511,18 @@ class HomePanelWidget(QWidget):
 
     def show_loading(self, title, message, cancellable=False, on_cancel=None,
                      cancel_text="Cancel Searching", dim_background=False):
-        """No-op: loading dialog disabled by request."""
-        return
+        """Show a non-blocking loading overlay over the tab area.
+
+        This replaces the old modal-dialog approach (which blocked the event
+        loop) and the subsequent no-op stub.  The overlay is lightweight:
+        a semi-transparent background + status text, rendered via the
+        ``_loading_overlay`` mechanism already present in this class.
+        """
+        self._show_loading_overlay()
 
     def hide_loading(self):
-        """No-op: loading dialog disabled by request."""
-        return
+        """Hide the loading overlay."""
+        self._hide_loading_overlay()
 
     def _on_cancel_search_clicked(self):
         # جلوگیری از چندبار کلیک
@@ -3727,147 +3609,55 @@ class HomePanelWidget(QWidget):
             self.hide_loading()
 
     def get_patient_study(self, study_uid):
-        conn = get_connection_database()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT 
-                StudyInstanceUID,
-                PatientID,
-                PatientName,
-                PatientSex,
-                PatientAge,
-                PatientWeight,
-                StudyDate,
-                StudyTime,
-                StudyDescription,
-                Modality,
-                BodyPart,
-                ProtocolName,
-                StationName,
-                InstitutionName,
-                NumberOfSeries,
-                NumberOfInstances
-            FROM study_details
-            WHERE StudyInstanceUID = ?
-        ''', (study_uid,))
-
-        row = cursor.fetchone()
-        conn.close()
-
-        if row:
-            # keys = [
-            #     'StudyInstanceUID',
-            #     'PatientID',
-            #     'PatientName',
-            #     'PatientSex',
-            #     'PatientAge',
-            #     'PatientWeight',
-            #     'StudyDate',
-            #     'StudyTime',
-            #     'StudyDescription',
-            #     'Modality',
-            #     'BodyPart',
-            #     'ProtocolName',
-            #     'StationName',
-            #     'InstitutionName',
-            #     'NumberOfSeries',
-            #     'NumberOfInstances'
-            # ]
-
-            #############################
-
-            keys = [
-                'study_uid',
-                'patient_id',
-                'patient_name',
-                'PatientSex',
-                'PatientAge',
-                'PatientWeight',
-                'study_date',
-                'StudyTime',
-                'StudyDescription',
-                'Modality',
-                'BodyPart',
-                'ProtocolName',
-                'StationName',
-                'InstitutionName',
-                'NumberOfSeries',
-                'NumberOfInstances'
-            ]
-            return dict(zip(keys, row))
-        else:
-            return None
+        """Get patient study details (delegates to service)."""
+        return self.db_service.get_patient_study(study_uid)
 
     def save_study_details(self, dataset):
-        conn = get_connection_database()
-
-        """ذخیره اطلاعات تکمیلی مطالعه در دیتابیس"""
-        try:
-
-            description = []
-            if hasattr(dataset, 'StudyDescription'):
-                description.append(str(dataset.StudyDescription))
-            if hasattr(dataset, 'BodyPartExamined'):
-                description.append(f"Body: {dataset.BodyPartExamined}")
-            if hasattr(dataset, 'NumberOfStudyRelatedSeries'):
-                description.append(f"Series: {dataset.NumberOfStudyRelatedSeries}")
-            if hasattr(dataset, 'NumberOfStudyRelatedInstances'):
-                description.append(f"Images: {dataset.NumberOfStudyRelatedInstances}")
-            description = ' | '.join(description)
-
-            study_data = {
-                'StudyInstanceUID': getattr(dataset, 'StudyInstanceUID', ''),
-                'PatientID': getattr(dataset, 'PatientID', ''),
-                'PatientName': str(getattr(dataset, 'PatientName', '')),
-                'PatientSex': getattr(dataset, 'PatientSex', ''),
-                'PatientAge': getattr(dataset, 'PatientAge', ''),
-                'PatientWeight': getattr(dataset, 'PatientWeight', ''),
-                'StudyDate': getattr(dataset, 'StudyDate', ''),
-                'StudyTime': getattr(dataset, 'StudyTime', ''),
-                # 'StudyDescription': getattr(dataset, 'StudyDescription', ''),
-                'StudyDescription': description,
-                'Modality': getattr(dataset, 'Modality', ''),
-                'BodyPart': getattr(dataset, 'BodyPartExamined', ''),
-                'ProtocolName': getattr(dataset, 'ProtocolName', ''),
-                'StationName': getattr(dataset, 'StationName', ''),
-                'InstitutionName': getattr(dataset, 'InstitutionName', ''),
-                'NumberOfSeries': int(getattr(dataset, 'NumberOfStudyRelatedSeries', 0)),
-                'NumberOfInstances': int(getattr(dataset, 'NumberOfStudyRelatedInstances', 0))
-            }
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO study_details VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-            ''', (
-                study_data['StudyInstanceUID'],
-                study_data['PatientID'],
-                study_data['PatientName'],
-                study_data['PatientSex'],
-                study_data['PatientAge'],
-                study_data['PatientWeight'],
-                study_data['StudyDate'],
-                study_data['StudyTime'],
-                study_data['StudyDescription'],
-                study_data['Modality'],
-                study_data['BodyPart'],
-                study_data['ProtocolName'],
-                study_data['StationName'],
-                study_data['InstitutionName'],
-                study_data['NumberOfSeries'],
-                study_data['NumberOfInstances']
-            ))
-            conn.commit()
-
-        except Exception as e:
-            print(f"Error saving study details: {str(e)}")
+        """Save study details from pydicom Dataset (delegates to service)."""
+        self.db_service.save_study_details(dataset)
 
     async def show_patient_studies(self, patient_info):
         """Display patient studies asynchronously - Optimized for speed"""
         try:
             study_uid = patient_info['StudyInstanceUID']
             patient_id = patient_info['PatientID']
+
+            if self.source_of_patient_load == SourceOfPatientLoad.OFFLINE_CLOUD:
+                server = self.data_access_panel_widget.get_server_selected()
+                if not server or server.get("server_type") != "offline_cloud":
+                    return
+
+                sync_result = await asyncio.to_thread(
+                    sync_offline_cloud_study_preview_to_local,
+                    server,
+                    study_uid,
+                )
+                if not sync_result.get("ok"):
+                    QMessageBox.warning(
+                        self,
+                        "Offline Cloud",
+                        sync_result.get("error") or "Could not read the offline cloud package.",
+                    )
+                    return
+
+                thumbnails = {'thumbnails': []}
+                all_series_thumbnails = get_all_series_thumbnail_from_study_folder(study_uid)
+                for series_path in all_series_thumbnails:
+                    series_number = get_name_file_from_path(series_path)
+                    series_info = self.get_series_info_from_database(study_uid, series_number)
+                    thumbnails['thumbnails'].append(
+                        {
+                            'file_path': series_path,
+                            'series_number': series_number,
+                            'modality': series_info.get('modality', 'Unknown'),
+                            'series_description': series_info.get('series_description', f'Series {series_number}'),
+                            'image_count': series_info.get('image_count', 0),
+                            'protocol_name': series_info.get('protocol_name', ''),
+                            'body_part_examined': series_info.get('body_part_examined', ''),
+                        }
+                    )
+                self.display_thumbnails(thumbnails.get('thumbnails', []))
+                return
 
             # Fast check for cached thumbnails
             if check_study_complete(study_uid) or self.source_of_patient_load == SourceOfPatientLoad.DB:
@@ -4069,15 +3859,8 @@ class HomePanelWidget(QWidget):
         task.add_done_callback(lambda t: self._cleanup_priority_task(series_number))
 
     def _find_widget_by_study_uid(self, study_uid):
-        """Find widget by study UID"""
-        try:
-            for i in range(self.tab_widget.count()):
-                tab_widget = self.tab_widget.widget(i)
-                if hasattr(tab_widget, 'study_uid') and tab_widget.study_uid == study_uid:
-                    return tab_widget
-        except Exception as e:
-            print(f"❌ Error finding widget: {e}")
-        return None
+        """Find widget by study UID (delegates to tab service)."""
+        return self.tab_service.find_widget_by_study_uid(study_uid)
 
     def _cleanup_priority_task(self, series_number):
         """Clean up completed priority task"""
@@ -4651,173 +4434,105 @@ Study UID: {study_uid}
     
     def open_web_browser(self):
         """Open web browser in a new tab"""
-        print("[HomePanelWidget] open_web_browser called")
         try:
             if not is_module_enabled("web_browser"):
-                QMessageBox.information(
-                    self,
-                    "Web Browser Module",
-                    "The Web Browser module is not installed for this workstation.",
-                )
+                QMessageBox.information(self, "Web Browser Module",
+                                        "The Web Browser module is not installed for this workstation.")
                 return
-
             from modules.web_browser import WebBrowserWidget
-            
-            # Create web browser widget
-            web_browser = WebBrowserWidget()
-            
-            # Use custom tab manager if available
-            if self.custom_tab_manager:
-                print("[HomePanelWidget] Using custom tab manager")
-                tab_index = self.custom_tab_manager.add_web_browser_tab(widget=web_browser)
-                print(f"[HomePanelWidget] Web Browser tab added at index: {tab_index}")
-            else:
-                print("[HomePanelWidget] Using default tab widget")
-                # Fallback to normal tab
-                self.tab_widget.addTab(web_browser, "Web Browser")
-                self.tab_widget.setCurrentWidget(web_browser)
-            
-            print("[HomePanelWidget] Web Browser opened successfully")
+            activate_or_create_module_tab(
+                self.tab_widget, self.custom_tab_manager,
+                tab_flag_key='is_web_browser_tab',
+                widget_factory=WebBrowserWidget,
+                add_tab_method_name='add_web_browser_tab',
+                fallback_label='Web Browser',
+            )
         except Exception as e:
-            print(f"[HomePanelWidget] Error opening web browser: {str(e)}")
-            import traceback
-            traceback.print_exc()
-    
+            print(f"[HomePanelWidget] Error opening web browser: {e}")
+            import traceback; traceback.print_exc()
+
     def open_education_module(self):
         """Open education module in a new tab"""
-        print("[HomePanelWidget] open_education_module called")
         try:
-            # Check if education module tab already exists
-            if self.custom_tab_manager:
-                for i in range(self.tab_widget.count()):
-                    tab_data = self.custom_tab_manager.patient_tabs.get(i, {})
-                    if tab_data.get('is_education_tab', False):
-                        # Tab exists, just switch to it
-                        self.tab_widget.setCurrentIndex(i)
-                        print(f"[HomePanelWidget] Switched to existing Education Module tab at index {i}")
-                        return
-            
-            # Import EducationModuleRedesigned
             from modules.education.education_module_redesigned import EducationModuleRedesigned
-
-            # Create education module widget
-            education_widget = EducationModuleRedesigned(
-                parent=self,
-                host_tab_widget=self.tab_widget,
-                host_custom_tab_manager=self.custom_tab_manager,
-                host_parent=self,
+            activate_or_create_module_tab(
+                self.tab_widget, self.custom_tab_manager,
+                tab_flag_key='is_education_tab',
+                widget_factory=lambda: EducationModuleRedesigned(
+                    parent=self,
+                    host_tab_widget=self.tab_widget,
+                    host_custom_tab_manager=self.custom_tab_manager,
+                    host_parent=self,
+                ),
+                add_tab_method_name='add_education_module_tab',
+                fallback_label='Educational Module',
             )
-            
-            # Use custom tab manager if available
-            if self.custom_tab_manager:
-                print("[HomePanelWidget] Using custom tab manager")
-                tab_index = self.custom_tab_manager.add_education_module_tab(widget=education_widget)
-                print(f"[HomePanelWidget] Education Module tab added at index: {tab_index}")
-            else:
-                print("[HomePanelWidget] Using default tab widget")
-                # Fallback to normal tab
-                self.tab_widget.addTab(education_widget, "📚 Educational Module")
-                self.tab_widget.setCurrentWidget(education_widget)
-            
-            print("[HomePanelWidget] Education Module opened successfully")
         except Exception as e:
-            print(f"[HomePanelWidget] Error opening education module: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            print(f"[HomePanelWidget] Error opening education module: {e}")
+            import traceback; traceback.print_exc()
 
     def open_printing_module(self):
         """Open printing module in a new tab"""
-        print("[HomePanelWidget] open_printing_module called")
         try:
             if not is_module_enabled("printing"):
-                QMessageBox.information(
-                    self,
-                    "Printing Module",
-                    "The Printing module is not installed for this workstation.",
-                )
+                QMessageBox.information(self, "Printing Module",
+                                        "The Printing module is not installed for this workstation.")
                 return
 
             selected_patients = []
             if hasattr(self, 'patient_table_widget') and hasattr(self.patient_table_widget, 'get_selected_patient_data_list'):
                 selected_patients = self.patient_table_widget.get_selected_patient_data_list() or []
 
-            print(f"[HomePanelWidget] Selected patients count: {len(selected_patients)}")
-            for p in selected_patients:
-                print(f"[HomePanelWidget]   patient={p.get('patient_name')}, study_uid={p.get('study_uid')!r}")
-
             if not selected_patients:
                 QMessageBox.warning(self, "Printing", "Please select at least one patient in the list.")
                 return
 
-            # Check if printing module tab already exists
-            if self.custom_tab_manager:
-                for i in range(self.tab_widget.count()):
-                    tab_data = self.custom_tab_manager.patient_tabs.get(i, {})
-                    if tab_data.get('is_printing_tab', False):
-                        # Tab exists — update its patient data and switch to it
-                        self.tab_widget.setCurrentIndex(i)
-                        printing_widget = tab_data.get('widget')
-                        if printing_widget and hasattr(printing_widget, 'update_patients'):
-                            printing_widget.update_patients(selected_patients)
-                        print(f"[HomePanelWidget] Updated existing Printing tab at index {i}")
-                        return
+            # Printing is special: update existing tab with new patient selection
+            from .home_module_tabs import find_existing_module_tab
+            existing_idx = find_existing_module_tab(self.tab_widget, self.custom_tab_manager, 'is_printing_tab')
+            if existing_idx is not None:
+                self.tab_widget.setCurrentIndex(existing_idx)
+                tab_data = self.custom_tab_manager.patient_tabs.get(existing_idx, {})
+                printing_widget = tab_data.get('widget')
+                if printing_widget and hasattr(printing_widget, 'update_patients'):
+                    printing_widget.update_patients(selected_patients)
+                return
 
             from modules.printing.ui.printing_widget import PrintingWidget
-
-            printing_widget = PrintingWidget(
-                parent=self,
-                host_tab_widget=self.tab_widget,
-                host_custom_tab_manager=self.custom_tab_manager,
-                selected_patients=selected_patients,
+            activate_or_create_module_tab(
+                self.tab_widget, self.custom_tab_manager,
+                tab_flag_key='is_printing_tab',
+                widget_factory=lambda: PrintingWidget(
+                    parent=self,
+                    host_tab_widget=self.tab_widget,
+                    host_custom_tab_manager=self.custom_tab_manager,
+                    selected_patients=selected_patients,
+                ),
+                add_tab_method_name='add_printing_tab',
+                fallback_label='Printing',
             )
-
-            if self.custom_tab_manager:
-                print("[HomePanelWidget] Using custom tab manager")
-                tab_index = self.custom_tab_manager.add_printing_tab(widget=printing_widget)
-                print(f"[HomePanelWidget] Printing tab added at index: {tab_index}")
-            else:
-                print("[HomePanelWidget] Using default tab widget")
-                self.tab_widget.addTab(printing_widget, "Printing")
-                self.tab_widget.setCurrentWidget(printing_widget)
-
-            print("[HomePanelWidget] Printing Module opened successfully")
         except Exception as e:
-            print(f"[HomePanelWidget] Error opening printing module: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            print(f"[HomePanelWidget] Error opening printing module: {e}")
+            import traceback; traceback.print_exc()
             try:
                 QMessageBox.critical(self, "Printing", f"Failed to open Printing module:\n{e}")
             except Exception:
                 pass
-    
+
     def open_reception_data_tab(self):
         """Open Reception Data tab"""
-        print("[HomePanelWidget] open_reception_data_tab called")
         try:
-            # Import ReceptionDataTab
             from modules.ai_imaging.ai_module_ui.service_tab import ReceptionDataTab
-            
-            # Create Reception Data widget
-            print("[HomePanelWidget] Creating ReceptionDataTab...")
-            reception_tab = ReceptionDataTab()
-            print("[HomePanelWidget] ReceptionDataTab created")
-            
-            # Use custom tab manager if available
-            if self.custom_tab_manager:
-                print("[HomePanelWidget] Using custom tab manager")
-                tab_index = self.custom_tab_manager.add_reception_data_tab(widget=reception_tab)
-                print(f"[HomePanelWidget] Reception tab added at index: {tab_index}")
-            else:
-                print("[HomePanelWidget] Using default tab widget")
-                # Fallback to normal tab
-                self.tab_widget.addTab(reception_tab, "Reception Data")
-                self.tab_widget.setCurrentWidget(reception_tab)
-            
-            print("[HomePanelWidget] Reception Data tab opened successfully")
+            activate_or_create_module_tab(
+                self.tab_widget, self.custom_tab_manager,
+                tab_flag_key='is_reception_data_tab',
+                widget_factory=ReceptionDataTab,
+                add_tab_method_name='add_reception_data_tab',
+                fallback_label='Reception Data',
+            )
         except Exception as e:
-            print(f"[HomePanelWidget] Error opening Reception Data tab: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            print(f"[HomePanelWidget] Error opening Reception Data tab: {e}")
+            import traceback; traceback.print_exc()
 
     def add_new_tab_widget(self, patient_id=None, patient_name=None, folder_path=None, open_ai_client_tab=False,
                         caller=None, study_uid=None, enable_progressive_mode=False, report_status='pending',
@@ -4825,18 +4540,9 @@ Study UID: {study_uid}
 
         if open_ai_client_tab is True:
             try:
-                # Create AI client widget
-                ai_client = AiMainWindow(study_uid=study_uid)
-
-                # Add to main tab widget
+                ai_client = _ensure_ai_main_window()(study_uid=study_uid)
                 self.tab_widget.addTab(ai_client, "AI Analysis")
                 self.tab_widget.setCurrentWidget(ai_client)
-                
-                # Force process events to ensure tab is rendered
-                from PySide6.QtWidgets import QApplication
-                QApplication.processEvents()
-                QApplication.processEvents()
-                
                 return ai_client
             except Exception as e:
                 print(f"Error opening AI client: {str(e)}")
@@ -4882,50 +4588,19 @@ Study UID: {study_uid}
                 if existing_widget is None and study_uid in self.dict_tabs_widget:
                     cached_widget = self.dict_tabs_widget.get(study_uid)
                     if cached_widget:
-                        try:
-                            # Check if the widget is still valid (not deleted by Qt)
-                            try:
-                                import sip
-                                if sip.isdeleted(cached_widget):
-                                    print(f"⚠️ Cached widget for study {study_uid} has been deleted, removing from cache")
-                                    del self.dict_tabs_widget[study_uid]
+                        if not is_widget_alive(cached_widget):
+                            print(f"⚠️ Cached widget for study {study_uid} has been deleted, removing from cache")
+                            del self.dict_tabs_widget[study_uid]
+                        else:
+                            idx = self.tab_widget.indexOf(cached_widget)
+                            if idx != -1:
+                                if self.custom_tab_manager:
+                                    self.custom_tab_manager.set_tab_active(idx)
                                 else:
-                                    # Verify it's actually in the tab widget
-                                    idx = self.tab_widget.indexOf(cached_widget)
-                                    if idx != -1:
-                                        # Activate the tab using custom tab manager if available
-                                        if self.custom_tab_manager:
-                                            self.custom_tab_manager.set_tab_active(idx)
-                                        else:
-                                            self.tab_widget.setCurrentIndex(idx)
-                                        return cached_widget
-                                    else:
-                                        # Widget exists but not in tab widget, remove from cache
-                                        print(f"⚠️ Widget for study {study_uid} not found in tabs, removing from cache")
-                                        del self.dict_tabs_widget[study_uid]
-                            except ImportError:
-                                # If sip is not available, try a different approach
-                                try:
-                                    # Try to access a basic property to see if object is valid
-                                    _ = cached_widget.isVisible()
-                                    idx = self.tab_widget.indexOf(cached_widget)
-                                    if idx != -1:
-                                        # Activate the tab using custom tab manager if available
-                                        if self.custom_tab_manager:
-                                            self.custom_tab_manager.set_tab_active(idx)
-                                        else:
-                                            self.tab_widget.setCurrentIndex(idx)
-                                        return cached_widget
-                                    else:
-                                        del self.dict_tabs_widget[study_uid]
-                                except RuntimeError:
-                                    # Widget has been deleted, remove from cache
-                                    print(f"⚠️ Cached widget for study {study_uid} has been deleted, removing from cache")
-                                    del self.dict_tabs_widget[study_uid]
-                        except Exception as e:
-                            print(f"⚠️ Error checking cached widget: {e}")
-                            # Remove from cache to be safe
-                            if study_uid in self.dict_tabs_widget:
+                                    self.tab_widget.setCurrentIndex(idx)
+                                return cached_widget
+                            else:
+                                print(f"⚠️ Widget for study {study_uid} not found in tabs, removing from cache")
                                 del self.dict_tabs_widget[study_uid]
 
                 # Third check: Scan all tabs for matching study_uid (fallback)
@@ -4933,36 +4608,16 @@ Study UID: {study_uid}
                     for i in range(self.tab_widget.count()):
                         w = self.tab_widget.widget(i)
                         if hasattr(w, 'study_uid') and w.study_uid == study_uid:
-                            # Check if the widget is still valid
-                            try:
-                                import sip
-                                if not sip.isdeleted(w):
-                                    self.dict_tabs_widget[study_uid] = w
-                                    try:
-                                        # Activate the tab using custom tab manager if available
-                                        if self.custom_tab_manager:
-                                            self.custom_tab_manager.set_tab_active(i)
-                                        else:
-                                            self.tab_widget.setCurrentIndex(i)
-                                    except Exception as e:
-                                        print(f"⚠️ Error switching to existing tab: {e}")
-                                    return w
-                            except ImportError:
-                                # If sip is not available, try a different approach
+                            if is_widget_alive(w):
+                                self.dict_tabs_widget[study_uid] = w
                                 try:
-                                    _ = w.isVisible()
-                                    self.dict_tabs_widget[study_uid] = w
-                                    try:
-                                        if self.custom_tab_manager:
-                                            self.custom_tab_manager.set_tab_active(i)
-                                        else:
-                                            self.tab_widget.setCurrentIndex(i)
-                                    except Exception as e:
-                                        print(f"⚠️ Error switching to existing tab: {e}")
-                                    return w
-                                except RuntimeError:
-                                    # Widget has been deleted, skip it
-                                    continue
+                                    if self.custom_tab_manager:
+                                        self.custom_tab_manager.set_tab_active(i)
+                                    else:
+                                        self.tab_widget.setCurrentIndex(i)
+                                except Exception as e:
+                                    print(f"⚠️ Error switching to existing tab: {e}")
+                                return w
 
             # Create new widget if not found or existing was invalid
             if not enable_progressive_mode and study_uid and caller == CallerTypes.SERVER:
@@ -4970,7 +4625,7 @@ Study UID: {study_uid}
                 is_complete = check_study_complete(study_uid)
                 enable_progressive_mode = not is_complete
             
-            widget = PatientWidget(
+            widget = _ensure_patient_widget()(
                 import_folder_path=folder_path, 
                 caller=caller, 
                 study_uid=study_uid, 
@@ -5450,85 +5105,8 @@ Study UID: {study_uid}
 
 
     def save_series_info_to_database(self, study_uid: str, series_thumbnails: list):
-        """
-        Save series information to database from gRPC response
-
-        Args:
-            study_uid: Study Instance UID
-            series_thumbnails: List of series data from gRPC response
-        """
-        try:
-
-            # Get study_pk from database
-            study_pk = find_study_pk_with_study_uid(study_uid)
-            if not study_pk:
-                return False
-
-            saved_count = 0
-            for series_data in series_thumbnails:
-                try:
-                    # Extract series information
-                    series_uid = series_data.get('series_uid', '')
-                    series_number = series_data.get('series_number', '')
-                    series_description = series_data.get('series_description', '')
-                    modality = series_data.get('modality', '')
-                    image_count = series_data.get('image_count', 0)
-                    thumbnail_path = series_data.get('thumbnail_path', '')
-
-                    # Check if series already exists
-                    existing_series_pk = find_series_pk(series_uid)
-                    if existing_series_pk:
-                        # Update existing series with new information
-                        from PacsClient.utils.database import get_connection_database
-                        conn = get_connection_database()
-                        cur = conn.cursor()
-                        cur.execute("""
-                            UPDATE series 
-                            SET series_description = ?, modality = ?, image_count = ?, 
-                                protocol_name = ?, body_part_examined = ?, manufacturer = ?, 
-                                institution_name = ?, thumbnail_path = ?
-                            WHERE series_uid = ?
-                        """, (
-                            series_description, modality, image_count,
-                            series_data.get('protocol_name', ''),
-                            series_data.get('body_part_examined', ''),
-                            series_data.get('manufacturer', ''),
-                            series_data.get('institution_name', ''),
-                            thumbnail_path, series_uid
-                        ))
-                        conn.commit()
-                        saved_count += 1
-                        continue
-
-                    # Save series to database with all metadata
-                    series_pk = insert_series(
-                        series_uid=series_uid,
-                        study_fk=study_pk,
-                        series_name=f"Series {series_number}",
-                        series_number=series_number,
-                        series_description=series_description,
-                        modality=modality,
-                        image_count=image_count,
-                        protocol_name=series_data.get('protocol_name', ''),
-                        body_part_examined=series_data.get('body_part_examined', ''),
-                        manufacturer=series_data.get('manufacturer', ''),
-                        institution_name=series_data.get('institution_name', ''),
-                        main_thumbnail=True if thumbnail_path else False,
-                        thumbnail_path=thumbnail_path,
-                        series_path=None  # Will be set when DICOM files are downloaded
-                    )
-
-                    saved_count += 1
-
-                except Exception as e:
-                    print(f"Error saving series {series_data.get('series_number', 'Unknown')}: {str(e)}")
-                    continue
-
-            return saved_count > 0
-
-        except Exception as e:
-            print(f"Error in save_series_info_to_database: {str(e)}")
-            return False
+        """Save series info from gRPC response (delegates to service)."""
+        return self.db_service.save_series_info_to_database(study_uid, series_thumbnails)
 
     def get_series_info_from_server(self, study_uid: str, patient_id: str = None):
         """
@@ -5545,6 +5123,20 @@ Study UID: {study_uid}
             server = self.data_access_panel_widget.get_server_selected()
             if not server:
                 return None
+
+            if server.get("server_type") == "offline_cloud":
+                sync_result = sync_offline_cloud_study_preview_to_local(
+                    server,
+                    study_uid,
+                    actor=self._current_actor_identity(),
+                )
+                if not sync_result.get("ok"):
+                    return None
+                study_data = get_study_by_study_uid(study_uid)
+                if not study_data:
+                    return None
+                from PacsClient.utils.db_manager import get_study_info_with_series
+                return get_study_info_with_series(study_uid)
 
             grpc_client = DicomGrpcClient(host=server['host'], port=50051)
 
@@ -5593,27 +5185,8 @@ Study UID: {study_uid}
             return None
 
     def get_series_info_from_database(self, study_uid: str, series_number: str):
-        """Get series information from database"""
-        try:
-            from PacsClient.utils.db_manager import get_series_by_study_and_number
-
-            series_info = get_series_by_study_and_number(study_uid, int(series_number))
-            if series_info:
-                return {
-                    'series_uid': series_info.get('series_uid', ''),
-                    'series_number': series_info.get('series_number', series_number),
-                    'series_description': series_info.get('series_description', ''),
-                    'modality': series_info.get('modality', ''),
-                    'image_count': series_info.get('image_count', 0),
-                    'protocol_name': series_info.get('protocol_name', ''),
-                    'body_part_examined': series_info.get('body_part_examined', '')
-                }
-            else:
-                return {}
-
-        except Exception as e:
-            print(f"Error getting series info from database: {str(e)}")
-            return {}
+        """Get series info from database (delegates to service)."""
+        return self.db_service.get_series_info_from_database(study_uid, series_number)
 
     def save_complete_study_info(self, study_uid: str, patient_id: str = None, study_info: dict = None):
         """
@@ -5858,56 +5431,5 @@ Study UID: {study_uid}
         """No-op: loading feed disabled by request."""
         return
 
-    def resizeEvent(self, event):
-        """Handle resize event - loading feed disabled by request."""
-        super().resizeEvent(event)
-        # No loading feed overlay to resize
-
-    # def get_series_statistics(self, study_uid: str):
-    #     """
-    #     Get statistics about series in a study from database
-    #
-    #     Args:
-    #         study_uid: Study Instance UID
-    #
-    #     Returns:
-    #         dict: Statistics about the study
-    #     """
-    #     try:
-    #         study_pk = find_study_pk_with_study_uid(study_uid)
-    #         if not study_pk:
-    #             return None
-    #
-    #         # Get series from database
-    #         series_list = get_series_by_study_pk(study_pk)
-    #
-    #         if not series_list:
-    #             return None
-    #
-    #         # Calculate statistics
-    #         total_series = len(series_list)
-    #         modalities = {}
-    #         total_images = 0
-    #
-    #         for series in series_list:
-    #             modality = series.get('modality', 'Unknown')
-    #             modalities[modality] = modalities.get(modality, 0) + 1
-    #
-    #             # Get instances for this series
-    #             instances = get_instances_by_series_pk(series['series_pk'], 0)
-    #             if instances:
-    #                 total_images += len(instances)
-    #
-    #         stats = {
-    #             'study_uid': study_uid,
-    #             'total_series': total_series,
-    #             'total_images': total_images,
-    #             'modalities': modalities,
-    #             'series_list': series_list
-    #         }
-    #
-    #         return stats
-    #
-    #     except Exception as e:
-    #         print(f"Error getting series statistics: {str(e)}")
-    #         return None
+    # NOTE: resizeEvent is defined earlier with loading overlay logic.
+    # The duplicate that was here has been removed (v2.2.8).

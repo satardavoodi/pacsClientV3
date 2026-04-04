@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout,
                                QVBoxLayout, QGridLayout, QWidget, QTabWidget, QLayout,
                                QMainWindow, QStackedWidget)
 
-from PacsClient.utils.config import JSON_PATH, ICON_PATH
+from PacsClient.utils.config import JSON_PATH, ICON_PATH, IMAGES_LOGIN_PATH
 from PacsClient.utils.db_manager import init_database, migrate_fix_null_study_paths
 from PacsClient.utils.theme_manager import get_theme_manager
 from . import settings_ui
@@ -45,16 +45,16 @@ class ControlPanelInterface(QMainWindow):
         self.ui.setupUi()
 
         self.setWindowTitle("AIPacs")
-        self.setWindowIcon(QIcon("PacsClient/login/images/favicon.ico"))
+        self.setWindowIcon(QIcon(fr"{IMAGES_LOGIN_PATH}/favicon.ico"))
         self.setContentsMargins(0, 0, 0, 0)
         if self.centralWidget() is not None:
             self.centralWidget().setContentsMargins(0, 0, 0, 0)
 
         self.setStyleSheet("QMainWindow { border: none; }")
 
-        init_database()
-        # ✅ Migration: Fix studies with NULL study_path by checking disk
-        migrate_fix_null_study_paths()
+        # NOTE: init_database() + migrate_fix_null_study_paths() are called
+        # once in MainWindowWidget.__init__ (the owner). Removed from here
+        # to avoid redundant double-init (v2.2.8 architecture cleanup).
         self.showMaximized()
 
     def __add_AIPacs_tab(self):

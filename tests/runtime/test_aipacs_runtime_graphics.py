@@ -150,7 +150,7 @@ def test_build_windows_graphics_environment_targets_software_opengl(monkeypatch)
     assert plan["execution_mode"] == runtime.GRAPHICS_EXECUTION_SOFTWARE
     assert plan["env"]["QT_OPENGL"] == "software"
     assert plan["env"]["QT_OPENGL_DLL"] == "opengl32sw"
-    assert plan["env"]["VTK_DEFAULT_OPENGL_WINDOW"] == "vtkOSOpenGLRenderWindow"
+    assert "VTK_DEFAULT_OPENGL_WINDOW" not in plan["env"]
     assert runtime.SAFE_VIEWER_BACKEND_ENV not in plan["env"]
     assert "--disable-software-rasterizer" not in plan["env"]["QTWEBENGINE_CHROMIUM_FLAGS"]
 

@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import re
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon
@@ -14,20 +16,35 @@ from pynetdicom import AE
 from pynetdicom.sop_class import Verification
 
 from PacsClient.utils.utils import get_all_servers, UpdaterDataFromServerToHome
+from modules.offline_cloud_server.dialogs import (
+    OfflineCloudPackageDialog,
+    OfflineCloudServerDialog,
+)
+from modules.offline_cloud_server.service import (
+    get_all_offline_cloud_servers,
+    load_offline_cloud_config,
+    save_offline_cloud_config,
+    validate_offline_cloud_package,
+)
 import asyncio
 
 from .external_pacs_server_dialog import ExternalPacsServerDialog
 from .external_pacs_settings import _load_config, _save_config
+from .servers_config import (
+    load_servers as load_ai_service_urls,
+    save_servers as save_ai_service_urls,
+)
 
 log = logging.getLogger(__name__)
 
 # Compact column set for the external-PACS table (details in edit dialog)
 _EXT_COLUMNS = ["AE Title", "Host / URL", "Port", "Protocol", "Status"]
+_AI_SERVICE_NAMES = ["breast", "boneage", "segmentation"]
 
 # ── Local styles – role-based button colours (matches Viewer Config pattern) ──
 _LOCAL_STYLE = """
     /* ── Card containers ─────────────────────────────────── */
-    QFrame#LeftCard, QFrame#RightCard {
+    QFrame#LeftCard, QFrame#RightCard, QFrame#CloudCard, QFrame#ServiceUrlCard {
         background-color: #10141a;
         border: 1px solid #232a33;
         border-radius: 12px;
@@ -116,14 +133,16 @@ _TABLE_STYLE = """
 
 
 class ServerSettingsWidget(QWidget):
-    """Unified Server Settings – AI-PACS + External PACS side-by-side."""
+    """Unified Server Settings – AI-PACS, External PACS, and Offline Cloud."""
 
     def __init__(self):
         super().__init__()
         self.json_file = 'servers.json'
         self._setup_ui()
         self.load_servers()
+        self._load_ai_service_urls()
         self._ext_load_and_display()
+        self._cloud_load_and_display()
 
     # ════════════════════════════════════════════════════════════════════════
     #  UI SETUP
@@ -155,7 +174,7 @@ class ServerSettingsWidget(QWidget):
 
         subtitle = QLabel(
             "Manage connections to AI-PACS company servers and "
-            "third-party PACS systems"
+            "third-party PACS systems, plus Offline Cloud package folders"
         )
         subtitle.setObjectName("PageSubtitle")
         subtitle.setWordWrap(True)
@@ -171,9 +190,18 @@ class ServerSettingsWidget(QWidget):
         columns = QHBoxLayout()
         columns.setSpacing(14)
 
-        self._build_left_card(columns)   # AI-PACS
-        self._build_right_card(columns)  # External PACS
+        left_column = QVBoxLayout()
+        left_column.setSpacing(14)
+        right_column = QVBoxLayout()
+        right_column.setSpacing(14)
 
+        self._build_left_card(left_column)
+        self._build_ai_service_url_card(left_column)
+        self._build_right_card(right_column)
+        self._build_cloud_card(right_column)
+
+        columns.addLayout(left_column, 1)
+        columns.addLayout(right_column, 1)
         root.addLayout(columns, 1)
 
         scroll.setWidget(container)
@@ -182,9 +210,10 @@ class ServerSettingsWidget(QWidget):
     # ────────────────────────────────────────────────────────────────────────
     #  LEFT CARD – AI-PACS Company Servers
     # ────────────────────────────────────────────────────────────────────────
-    def _build_left_card(self, parent: QHBoxLayout):
+    def _build_left_card(self, parent):
         card = QFrame()
         card.setObjectName("LeftCard")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         lay = QVBoxLayout(card)
         lay.setContentsMargins(14, 10, 14, 14)
         lay.setSpacing(4)
@@ -307,12 +336,103 @@ class ServerSettingsWidget(QWidget):
         # Equal stretch weight with right card
         parent.addWidget(card, 1)
 
+    def _build_ai_service_url_card(self, parent):
+        card = QFrame()
+        card.setObjectName("ServiceUrlCard")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 10, 14, 14)
+        lay.setSpacing(4)
+
+        hdr = QLabel("AI Service URL")
+        hdr.setObjectName("SectionTitle")
+        lay.addWidget(hdr)
+
+        sub = QLabel(
+            "Service endpoints for AI modules. Review the current URLs, approve them, "
+            "and save the shared endpoint list from the same Server Settings page."
+        )
+        sub.setObjectName("SectionSubtitle")
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+
+        panel = QFrame()
+        panel.setObjectName("FormArea")
+        pl = QVBoxLayout(panel)
+        pl.setContentsMargins(14, 10, 14, 10)
+        pl.setSpacing(10)
+
+        rows = QGridLayout()
+        rows.setHorizontalSpacing(10)
+        rows.setVerticalSpacing(8)
+
+        self._ai_service_edits = {}
+        self._ai_service_status_labels = {}
+
+        for row, service_name in enumerate(_AI_SERVICE_NAMES):
+            name_label = QLabel(service_name)
+            name_label.setObjectName("FormLabel")
+            name_label.setFixedWidth(95)
+
+            edit = QLineEdit()
+            edit.setPlaceholderText("http://host:port")
+            edit.setFixedHeight(30)
+
+            status = QLabel("-")
+            status.setObjectName("FormLabel")
+            status.setAlignment(Qt.AlignCenter)
+            status.setFixedWidth(90)
+
+            approve_btn = QPushButton("Approve")
+            approve_btn.setFixedHeight(30)
+            approve_btn.clicked.connect(
+                lambda _checked=False, name=service_name: self._on_ai_service_test(name)
+            )
+
+            rows.addWidget(name_label, row, 0)
+            rows.addWidget(edit, row, 1)
+            rows.addWidget(status, row, 2)
+            rows.addWidget(approve_btn, row, 3)
+
+            self._ai_service_edits[service_name] = edit
+            self._ai_service_status_labels[service_name] = status
+
+        rows.setColumnStretch(1, 1)
+        pl.addLayout(rows)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+
+        self._ai_service_save_btn = QPushButton("Save URLs")
+        self._ai_service_save_btn.setProperty("role", "primary")
+        self._ai_service_save_btn.setFixedHeight(30)
+        self._ai_service_save_btn.clicked.connect(self._save_ai_service_urls)
+
+        self._ai_service_load_btn = QPushButton("Load")
+        self._ai_service_load_btn.setFixedHeight(30)
+        self._ai_service_load_btn.clicked.connect(self._load_ai_service_urls)
+
+        btn_row.addWidget(self._ai_service_save_btn, 1)
+        btn_row.addWidget(self._ai_service_load_btn, 1)
+
+        action_panel = QFrame()
+        action_panel.setObjectName("FormArea")
+        action_layout = QVBoxLayout(action_panel)
+        action_layout.setContentsMargins(14, 10, 14, 10)
+        action_layout.setSpacing(0)
+        action_layout.addLayout(btn_row)
+
+        lay.addWidget(panel, 1)
+        lay.addWidget(action_panel)
+        parent.addWidget(card, 1)
+
     # ────────────────────────────────────────────────────────────────────────
     #  RIGHT CARD – External / Third-Party PACS
     # ────────────────────────────────────────────────────────────────────────
-    def _build_right_card(self, parent: QHBoxLayout):
+    def _build_right_card(self, parent):
         card = QFrame()
         card.setObjectName("RightCard")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         lay = QVBoxLayout(card)
         lay.setContentsMargins(14, 10, 14, 14)
         lay.setSpacing(4)
@@ -442,6 +562,86 @@ class ServerSettingsWidget(QWidget):
         )
 
         # Equal stretch weight with left card
+        parent.addWidget(card, 1)
+
+    def _build_cloud_card(self, parent):
+        card = QFrame()
+        card.setObjectName("CloudCard")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 10, 14, 14)
+        lay.setSpacing(4)
+
+        hdr = QLabel("Offline Cloud Server")
+        hdr.setObjectName("SectionTitle")
+        lay.addWidget(hdr)
+
+        sub = QLabel(
+            "Bind a manual exchange folder as a package-backed offline server. "
+            "The folder can be shared by USB or by tools such as Dropbox/Google Drive, "
+            "and it carries DICOM files, workstation data, and a fast manifest.json index."
+        )
+        sub.setObjectName("SectionSubtitle")
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+
+        self._cloud_table = QTableWidget()
+        self._cloud_table.setColumnCount(6)
+        self._cloud_table.setHorizontalHeaderLabels(["Name", "Folder", "Patients", "Studies", "JSON", "Status"])
+        self._cloud_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._cloud_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._cloud_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._cloud_table.verticalHeader().setVisible(False)
+        self._cloud_table.verticalHeader().setDefaultSectionSize(38)
+        self._cloud_table.setStyleSheet(_TABLE_STYLE)
+        self._cloud_table.setMinimumHeight(130)
+        self._cloud_table.itemSelectionChanged.connect(self._cloud_on_selection_changed)
+        lay.addWidget(self._cloud_table, 1)
+
+        panel = QFrame()
+        panel.setObjectName("FormArea")
+        pl = QHBoxLayout(panel)
+        pl.setContentsMargins(14, 10, 14, 10)
+        pl.setSpacing(12)
+
+        self._cloud_new_btn = QPushButton("New…")
+        self._cloud_new_btn.setProperty("role", "primary")
+        self._cloud_new_btn.clicked.connect(self._cloud_on_new)
+
+        self._cloud_edit_btn = QPushButton("Edit…")
+        self._cloud_edit_btn.clicked.connect(self._cloud_on_edit)
+        self._cloud_edit_btn.setEnabled(False)
+
+        self._cloud_delete_btn = QPushButton("Delete")
+        self._cloud_delete_btn.setProperty("role", "danger")
+        self._cloud_delete_btn.clicked.connect(self._cloud_on_delete)
+        self._cloud_delete_btn.setEnabled(False)
+
+        self._cloud_open_btn = QPushButton("Open Folder")
+        self._cloud_open_btn.clicked.connect(self._cloud_open_folder)
+        self._cloud_open_btn.setEnabled(False)
+
+        self._cloud_manifest_btn = QPushButton("Package JSON...")
+        self._cloud_manifest_btn.clicked.connect(self._cloud_open_manifest)
+        self._cloud_manifest_btn.setEnabled(False)
+
+        self._cloud_refresh_btn = QPushButton("Refresh")
+        self._cloud_refresh_btn.setProperty("role", "success")
+        self._cloud_refresh_btn.clicked.connect(self._cloud_load_and_display)
+
+        for btn in (
+            self._cloud_new_btn,
+            self._cloud_edit_btn,
+            self._cloud_delete_btn,
+            self._cloud_open_btn,
+            self._cloud_manifest_btn,
+            self._cloud_refresh_btn,
+        ):
+            btn.setFixedHeight(30)
+            pl.addWidget(btn)
+        pl.addStretch()
+        lay.addWidget(panel)
+
         parent.addWidget(card, 1)
 
     # ════════════════════════════════════════════════════════════════════════
@@ -672,6 +872,73 @@ class ServerSettingsWidget(QWidget):
         with open(self.json_file, 'w', encoding='utf-8') as f:
             json.dump(servers, f, indent=4)
 
+    def _validate_ai_service_url(self, raw: str) -> bool:
+        value = (raw or "").strip()
+        if not value:
+            return False
+
+        value = re.sub(r"^\s*https?://", "", value, flags=re.IGNORECASE)
+        value = value.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0].strip()
+        match = re.fullmatch(r"([A-Za-z0-9.-]+):(\d{1,5})", value)
+        if not match:
+            return False
+
+        host, port_text = match.groups()
+        port = int(port_text)
+        if not (1 <= port <= 65535):
+            return False
+
+        if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", host):
+            return all(0 <= int(part) <= 255 for part in host.split("."))
+
+        return bool(re.fullmatch(r"[A-Za-z0-9.-]{1,253}", host)) and not any(
+            label == "" for label in host.split(".")
+        )
+
+    def _set_ai_service_status(self, name: str, text: str, ok=None):
+        label = self._ai_service_status_labels.get(name)
+        if not label:
+            return
+        label.setText(text)
+        if ok is True:
+            label.setStyleSheet("color: #10b981; font-weight: 700;")
+        elif ok is False:
+            label.setStyleSheet("color: #f59e0b; font-weight: 700;")
+        else:
+            label.setStyleSheet("color: #94a3b8;")
+
+    def _load_ai_service_urls(self):
+        services = load_ai_service_urls()
+        for name in _AI_SERVICE_NAMES:
+            edit = self._ai_service_edits.get(name)
+            if not edit:
+                continue
+            edit.setText(str(services.get(name, "")).strip())
+            self._set_ai_service_status(name, "Loaded", ok=None)
+
+    def _save_ai_service_urls(self):
+        services = {}
+        for name in _AI_SERVICE_NAMES:
+            edit = self._ai_service_edits.get(name)
+            services[name] = (edit.text().strip() if edit else "")
+
+        if save_ai_service_urls(services):
+            QMessageBox.information(self, "Saved", "AI service URLs saved to config.")
+            for name in _AI_SERVICE_NAMES:
+                self._set_ai_service_status(name, "Saved", ok=None)
+            return
+
+        QMessageBox.critical(self, "Error", "Failed to save AI service URLs.")
+
+    def _on_ai_service_test(self, name: str):
+        edit = self._ai_service_edits.get(name)
+        if not edit:
+            return
+        if self._validate_ai_service_url(edit.text()):
+            self._set_ai_service_status(name, "Approved", ok=True)
+        else:
+            self._set_ai_service_status(name, "Invalid", ok=False)
+
     # ════════════════════════════════════════════════════════════════════════
     #  EXTERNAL PACS LOGIC  (reads/writes config/external_pacs_servers.json)
     # ════════════════════════════════════════════════════════════════════════
@@ -880,3 +1147,149 @@ class ServerSettingsWidget(QWidget):
             return False, "Association rejected or aborted by remote."
         except Exception as e:
             return False, str(e)
+
+    def _cloud_selected_row(self) -> int:
+        items = self._cloud_table.selectedItems()
+        return items[0].row() if items else -1
+
+    def _cloud_on_selection_changed(self):
+        has = self._cloud_selected_row() >= 0
+        self._cloud_edit_btn.setEnabled(has)
+        self._cloud_delete_btn.setEnabled(has)
+        self._cloud_open_btn.setEnabled(has)
+        self._cloud_manifest_btn.setEnabled(has)
+
+    def _cloud_on_new(self):
+        dlg = OfflineCloudServerDialog(self)
+        if dlg.exec() == OfflineCloudServerDialog.Accepted:
+            data = dlg.get_server_data()
+            if data:
+                cfg = load_offline_cloud_config()
+                cfg.setdefault("servers", []).append(data)
+                save_offline_cloud_config(cfg)
+                self._cloud_load_and_display()
+                UpdaterDataFromServerToHome().update()
+
+    def _cloud_on_edit(self):
+        row = self._cloud_selected_row()
+        if row < 0:
+            return
+        servers = get_all_offline_cloud_servers()
+        if row >= len(servers):
+            return
+        dlg = OfflineCloudServerDialog(self, server_data=servers[row])
+        if dlg.exec() == OfflineCloudServerDialog.Accepted:
+            data = dlg.get_server_data()
+            if data:
+                cfg = load_offline_cloud_config()
+                cfg.setdefault("servers", [])
+                if row < len(cfg["servers"]):
+                    cfg["servers"][row] = data
+                    save_offline_cloud_config(cfg)
+                    self._cloud_load_and_display()
+                    UpdaterDataFromServerToHome().update()
+
+    def _cloud_on_delete(self):
+        row = self._cloud_selected_row()
+        if row < 0:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            "Are you sure you want to remove this Offline Cloud Server?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            cfg = load_offline_cloud_config()
+            cfg.setdefault("servers", [])
+            if row < len(cfg["servers"]):
+                del cfg["servers"][row]
+                save_offline_cloud_config(cfg)
+                self._cloud_load_and_display()
+                UpdaterDataFromServerToHome().update()
+
+    def _cloud_open_folder(self):
+        row = self._cloud_selected_row()
+        if row < 0:
+            return
+        servers = get_all_offline_cloud_servers()
+        if row >= len(servers):
+            return
+        folder = str(servers[row].get("folder_path") or "").strip()
+        if not folder:
+            return
+        try:
+            os.makedirs(folder, exist_ok=True)
+            os.startfile(folder)
+        except Exception as exc:
+            QMessageBox.warning(self, "Open Folder", f"Could not open folder:\n{exc}")
+
+    def _cloud_open_manifest(self):
+        row = self._cloud_selected_row()
+        if row < 0:
+            return
+        servers = get_all_offline_cloud_servers()
+        if row >= len(servers):
+            return
+        dlg = OfflineCloudPackageDialog(self, server_data=servers[row])
+        dlg.exec()
+        self._cloud_load_and_display()
+
+    def _cloud_load_and_display(self):
+        servers = get_all_offline_cloud_servers()
+        self._cloud_table.setRowCount(len(servers))
+
+        for i, server in enumerate(servers):
+            folder_path = str(server.get("folder_path") or "")
+            manifest = validate_offline_cloud_package(folder_path)
+            validation = manifest.get("validation") or {}
+            study_count = int(manifest.get("study_count") or 0)
+            patient_count = int(manifest.get("patient_count") or 0)
+            exists = os.path.isdir(folder_path)
+            json_status = str(validation.get("status") or "manifest_missing")
+            status = "Ready" if validation.get("is_complete") else ("Folder Missing" if not exists else "Needs Attention")
+
+            self._cloud_table.setItem(i, 0, QTableWidgetItem(server.get("name", "")))
+            self._cloud_table.setItem(i, 1, QTableWidgetItem(folder_path))
+
+            patients_item = QTableWidgetItem(str(patient_count))
+            patients_item.setTextAlignment(Qt.AlignCenter)
+            self._cloud_table.setItem(i, 2, patients_item)
+
+            studies_item = QTableWidgetItem(str(study_count))
+            studies_item.setTextAlignment(Qt.AlignCenter)
+            self._cloud_table.setItem(i, 3, studies_item)
+
+            json_item = QTableWidgetItem(json_status.replace("_", " ").title())
+            json_item.setTextAlignment(Qt.AlignCenter)
+            json_item.setForeground(QColor("#10b981" if manifest.get("format") else "#f59e0b"))
+            self._cloud_table.setItem(i, 4, json_item)
+
+            status_item = QTableWidgetItem(status)
+            status_item.setTextAlignment(Qt.AlignCenter)
+            status_item.setForeground(QColor("#10b981" if validation.get("is_complete") else "#f59e0b"))
+            self._cloud_table.setItem(i, 5, status_item)
+
+            tooltip = (
+                f"Folder: {folder_path}\n"
+                f"Manifest: {'present' if manifest.get('format') else 'missing/invalid'}\n"
+                f"Origin server: {((manifest.get('origin_server') or {}).get('name') or '-')}\n"
+                f"Hub user: {((manifest.get('hub_user') or {}).get('full_name') or (manifest.get('hub_user') or {}).get('username') or '-')}\n"
+                f"Patients indexed: {patient_count}\n"
+                f"Studies indexed: {study_count}\n"
+                f"Validation status: {json_status}\n"
+                f"Missing items: {len(validation.get('missing_items') or [])}"
+            )
+            for col in range(6):
+                item = self._cloud_table.item(i, col)
+                if item:
+                    item.setToolTip(tooltip)
+
+        header = self._cloud_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self._cloud_on_selection_changed()

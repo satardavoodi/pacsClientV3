@@ -158,9 +158,13 @@ class SubprocessDownloadWorker(QThread):
             return
 
         base_output_dir = self._resolve_base_output_dir()
-        socket_host     = DEFAULT_SOCKET_HOST
-        socket_port     = DEFAULT_SOCKET_PORT
-        grpc_host       = DEFAULT_SOCKET_HOST
+        
+        # Read actual server host from SocketConfig (not the localhost default)
+        from modules.network.socket_config import get_socket_server_settings
+        _srv = get_socket_server_settings()
+        socket_host     = _srv.get("host") or DEFAULT_SOCKET_HOST
+        socket_port     = int(_srv.get("port", DEFAULT_SOCKET_PORT))
+        grpc_host       = _srv.get("host") or DEFAULT_SOCKET_HOST
         grpc_port       = DEFAULT_GRPC_PORT
         log_level       = _logging.getLogger().level or _logging.INFO
 

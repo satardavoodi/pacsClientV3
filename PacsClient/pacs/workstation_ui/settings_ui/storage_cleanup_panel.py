@@ -32,6 +32,7 @@ class StorageCleanupPanelWidget(QWidget):
         self.cleanup_manager = LocalStorageCleanupManager()
         self.folder_size_labels: Dict[str, QLabel] = {}
         self.folder_comp_labels: Dict[str, QLabel] = {}
+        self.cleanup_rows_layout: QVBoxLayout | None = None
         self.drive_usage_container: QVBoxLayout | None = None
         self.storage_summary_label: QLabel | None = None
         self._setup_ui()
@@ -116,10 +117,26 @@ class StorageCleanupPanelWidget(QWidget):
         folders_card_layout.addWidget(self.storage_summary_label)
 
         folders_card_layout.addSpacing(10)
-        self._build_cleanup_rows(folders_card_layout)
+        self.cleanup_rows_layout = QVBoxLayout()
+        self.cleanup_rows_layout.setSpacing(12)
+        folders_card_layout.addLayout(self.cleanup_rows_layout)
+        self._rebuild_cleanup_rows()
         
         layout.addWidget(folders_card)
         layout.addStretch(1)
+
+    def _rebuild_cleanup_rows(self):
+        if self.cleanup_rows_layout is None:
+            return
+
+        while self.cleanup_rows_layout.count():
+            item = self.cleanup_rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        self.folder_size_labels = {}
+        self.folder_comp_labels = {}
+        self._build_cleanup_rows(self.cleanup_rows_layout)
 
     def _build_cleanup_rows(self, parent_layout: QVBoxLayout):
         folder_map = self.cleanup_manager.get_folder_map()
@@ -129,8 +146,26 @@ class StorageCleanupPanelWidget(QWidget):
             ("cache", "Cache Folder", "Clear Cache"),
             ("printing", "Printing Folder", "Clear Printing"),
         ]
+        offline_rows = []
+        for key, paths in folder_map.items():
+            if not key.startswith("offline_cloud::"):
+                continue
+            server_name = key.split("::", 1)[1].strip() or "Offline Cloud"
+            offline_rows.append(
+                (
+                    key,
+                    f"Offline Cloud Server: {server_name}",
+                    "Clear Offline Cloud",
+                    paths,
+                )
+            )
 
-        for key, label_text, btn_text in rows:
+        ordered_rows = [
+            (key, label_text, btn_text, folder_map.get(key, []))
+            for key, label_text, btn_text in rows
+        ] + sorted(offline_rows, key=lambda row: row[1].lower())
+
+        for key, label_text, btn_text, paths in ordered_rows:
             # Each row gets its own card for visual separation
             row_card = QWidget()
             row_card.setStyleSheet(
@@ -185,7 +220,6 @@ class StorageCleanupPanelWidget(QWidget):
             row_layout.addLayout(top_row)
             
             # Bottom: Path (smaller, secondary info)
-            paths = folder_map.get(key, [])
             path_label = QLabel(" | ".join(str(p) for p in paths))
             path_label.setWordWrap(True)
             path_label.setStyleSheet(
@@ -202,14 +236,24 @@ class StorageCleanupPanelWidget(QWidget):
             "cache": "Cache",
             "printing": "Printing",
         }
-        pretty = title_map.get(category, category)
+        is_offline_cloud = category.startswith("offline_cloud::")
+        pretty = (
+            f"Offline Cloud Server: {category.split('::', 1)[1].strip()}"
+            if is_offline_cloud
+            else title_map.get(category, category)
+        )
+        detail_line = (
+            "This will remove the package payload, then refresh manifest.json so the Offline Cloud package stays valid but empty."
+            if is_offline_cloud
+            else "Core app data (license/config) will NOT be removed."
+        )
 
         answer = QMessageBox.question(
             self,
             f"Confirm {pretty} Cleanup",
             (
                 f"This will permanently clear local {pretty} folder data and related database entries.\n\n"
-                "Core app data (license/config) will NOT be removed.\n\n"
+                f"{detail_line}\n\n"
                 "Do you want to continue?"
             ),
             QMessageBox.Yes | QMessageBox.No,
@@ -227,6 +271,10 @@ class StorageCleanupPanelWidget(QWidget):
                 result = self.cleanup_manager.cleanup_cache_folder()
             elif category == "printing":
                 result = self.cleanup_manager.cleanup_printing_folder()
+            elif is_offline_cloud:
+                result = self.cleanup_manager.cleanup_offline_cloud_folder(
+                    category.split("::", 1)[1].strip()
+                )
             else:
                 raise ValueError(f"Unknown cleanup category: {category}")
 
@@ -498,6 +546,9 @@ class StorageCleanupPanelWidget(QWidget):
     def refresh_storage_insights(self, force_refresh: bool = False):
         if self.drive_usage_container is None:
             return
+
+        if force_refresh:
+            self._rebuild_cleanup_rows()
 
         while self.drive_usage_container.count():
             item = self.drive_usage_container.takeAt(0)

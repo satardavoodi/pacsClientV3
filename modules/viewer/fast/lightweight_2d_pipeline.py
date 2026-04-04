@@ -338,6 +338,81 @@ class Lightweight2DPipeline(QObject):
     def get_file_paths(self) -> List[str]:
         return [s.path for s in self._slices]
 
+    def refresh_file_list(self) -> int:
+        """Re-scan the series directory for newly-downloaded DICOM files.
+
+        Only reads headers for files not already in ``_slices``.  Existing
+        SliceMeta entries (and their cached pixel data) are preserved.
+        Returns the new slice count.
+
+        This mirrors ``PyDicom2DBackend.refresh_file_list()`` and is called by
+        ``QtViewerBridge.grow()`` during progressive download.
+        """
+        if not self._series_path:
+            return len(self._slices)
+        from pathlib import Path as _Path
+        series_dir = _Path(self._series_path)
+        if not series_dir.is_dir():
+            return len(self._slices)
+
+        existing_paths = {s.path for s in self._slices}
+        new_files = [
+            f for f in series_dir.iterdir()
+            if f.is_file()
+            and f.suffix.lower() in {".dcm", ".dicom", ""}
+            and str(f) not in existing_paths
+        ]
+        if not new_files:
+            return len(self._slices)
+
+        new_slices: List[SliceMeta] = []
+        for f in new_files:
+            try:
+                ds = pydicom.dcmread(str(f), stop_before_pixels=True, force=True)
+                iop = _as_float_tuple(getattr(ds, "ImageOrientationPatient", None), 6, (1, 0, 0, 0, 1, 0))
+                ipp = _as_float_tuple(getattr(ds, "ImagePositionPatient", None), 3, (0, 0, 0))
+                ps = _as_float_tuple(getattr(ds, "PixelSpacing", None), 2, (1, 1))
+                spp = int(getattr(ds, "SamplesPerPixel", 1) or 1)
+                new_slices.append(SliceMeta(
+                    path=str(f),
+                    rows=int(getattr(ds, "Rows", 0) or 0),
+                    cols=int(getattr(ds, "Columns", 0) or 0),
+                    pixel_spacing=(float(ps[0]), float(ps[1])),
+                    iop=(float(iop[0]), float(iop[1]), float(iop[2]),
+                         float(iop[3]), float(iop[4]), float(iop[5])),
+                    ipp=(float(ipp[0]), float(ipp[1]), float(ipp[2])),
+                    slice_thickness=_safe_float(getattr(ds, "SliceThickness", None)),
+                    spacing_between_slices=_safe_float(getattr(ds, "SpacingBetweenSlices", None)),
+                    photometric=str(getattr(ds, "PhotometricInterpretation", "MONOCHROME2")),
+                    bits_allocated=int(getattr(ds, "BitsAllocated", 16) or 16),
+                    pixel_representation=int(getattr(ds, "PixelRepresentation", 1) or 1),
+                    samples_per_pixel=spp,
+                    window_width=_safe_float(getattr(ds, "WindowWidth", None)),
+                    window_center=_safe_float(getattr(ds, "WindowCenter", None)),
+                    slope=_safe_float(getattr(ds, "RescaleSlope", None), 1.0) or 1.0,
+                    intercept=_safe_float(getattr(ds, "RescaleIntercept", None), 0.0) or 0.0,
+                    instance_number=(
+                        int(getattr(ds, "InstanceNumber"))
+                        if getattr(ds, "InstanceNumber", None) is not None
+                        else None
+                    ),
+                    is_rgb=(spp >= 3),
+                ))
+            except Exception:
+                continue
+
+        if new_slices:
+            self._slices.extend(new_slices)
+            self._slices = self._sort_slices(self._slices)
+            # Invalidate rendered-frame cache so new slices get fresh frames;
+            # pixel cache is keyed by path so existing decoded pixels are kept.
+            self._frame_cache.clear()
+            logger.debug(
+                "lw2d-pipeline refresh_file_list: +%d files total=%d path=%s",
+                len(new_slices), len(self._slices), self._series_path,
+            )
+        return len(self._slices)
+
     def set_window_level(self, window: Optional[float], level: Optional[float]) -> None:
         self._window = float(window) if window is not None else None
         self._level = float(level) if level is not None else None

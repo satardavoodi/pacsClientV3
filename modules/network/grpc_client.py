@@ -1,83 +1,92 @@
 # -*- coding: utf-8 -*-
 
+import logging
 import os
 import grpc
 
 from . import dicom_service_pb2
 from . import dicom_service_pb2_grpc
 
+logger = logging.getLogger(__name__)
+
 
 class DicomGrpcClient:
     """
     gRPC client for DICOM services with timeout support for slow networks.
-    
+
     Key features:
     - Configurable timeout for all RPC calls (default: 30s)
-    - Connection timeout to detect unreachable servers quickly
+    - Automatic reconnection on channel failure
     - Graceful fallback on timeout
+
+    Note: insecure_channel is used because the server runs on a private LAN
+    behind a firewall. TLS can be added via grpc.secure_channel when needed.
     """
-    
-    # Default timeout in seconds - suitable for slow networks
+
     DEFAULT_TIMEOUT = 30.0
-    
+
     def __init__(self, host='localhost', port=50051, timeout: float = None):
         self.server_address = f"{host}:{port}"
         self.timeout = timeout or self.DEFAULT_TIMEOUT
-        print(f'server_address: {self.server_address} (timeout: {self.timeout}s)')
+        logger.info(f"gRPC client init: {self.server_address} (timeout={self.timeout}s)")
         self.channel = None
         self.stub = None
         self._connect()
-        
+
     def _connect(self):
-        """برقراری ارتباط با سرور gRPC with timeout options"""
+        """Establish gRPC channel with keepalive options."""
         try:
-            # Configure channel options for better performance on slow networks
+            # Close stale channel before reconnecting
+            if self.channel is not None:
+                try:
+                    self.channel.close()
+                except Exception:
+                    pass
+
             options = [
-                ('grpc.keepalive_time_ms', 60000),  # Send keepalive ping every 60s (reduced frequency)
-                ('grpc.keepalive_timeout_ms', 10000),  # Wait 10s for ping response
-                ('grpc.keepalive_permit_without_calls', False),  # Disable keepalive without active calls
-                ('grpc.http2.min_time_between_pings_ms', 10000),  # Min 10s between pings
-                ('grpc.max_receive_message_length', 100 * 1024 * 1024),  # 100MB max message
+                ('grpc.keepalive_time_ms', 60000),
+                ('grpc.keepalive_timeout_ms', 10000),
+                ('grpc.keepalive_permit_without_calls', False),
+                ('grpc.http2.min_time_between_pings_ms', 10000),
+                ('grpc.max_receive_message_length', 100 * 1024 * 1024),  # 100MB
             ]
-            
             self.channel = grpc.insecure_channel(self.server_address, options=options)
             self.stub = dicom_service_pb2_grpc.DicomServiceStub(self.channel)
-            print(f"Connected to gRPC server at {self.server_address}")
+            logger.info(f"Connected to gRPC server at {self.server_address}")
         except Exception as e:
-            print(f"Error connecting to gRPC server: {e}")
+            logger.error(f"Error connecting to gRPC server: {e}")
             self.channel = None
             self.stub = None
-    
+
+    def _ensure_stub(self) -> bool:
+        """Reconnect if channel/stub is missing. Returns True if stub is usable."""
+        if self.stub is not None:
+            return True
+        logger.warning("gRPC stub unavailable — attempting reconnect")
+        self._connect()
+        return self.stub is not None
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def get_study_thumbnails_with_timeout(self, study_uid: str, timeout: float = None) -> dict:
         """
-        Get study thumbnails with explicit timeout.
-        
-        This is optimized for the download manager - returns series info quickly
-        even on slow networks by using a reasonable timeout.
-        
-        Args:
-            study_uid: Study Instance UID
-            timeout: Timeout in seconds (default: self.timeout)
-            
-        Returns:
-            dict with series_list or None on timeout/error
+        Get study thumbnails (metadata only, no image data).
+        Optimized for the download manager.
         """
-        if not self.stub:
+        if not self._ensure_stub():
             return None
-            
+
         call_timeout = timeout or self.timeout
-        
         try:
             request = dicom_service_pb2.StudyThumbnailsRequest(
                 study_instance_uid=study_uid,
                 include_image_data=False,
-                include_base64=False
+                include_base64=False,
             )
-            
-            # Call with explicit timeout - prevents indefinite hanging
             response = self.stub.GetStudyThumbnails(request, timeout=call_timeout)
-            
-            # Extract series list
+
             series_list = []
             for series in response.series_thumbnails:
                 series_list.append({
@@ -89,157 +98,130 @@ class DicomGrpcClient:
                     'protocol_name': getattr(series, 'protocol_name', ''),
                     'body_part_examined': getattr(series, 'body_part_examined', ''),
                 })
-            
+
             return {
                 'series_list': series_list,
                 'patient_name': response.patient_name,
                 'patient_id': response.patient_id,
                 'study_date': response.study_date,
             }
-            
+
         except grpc.RpcError as e:
-            if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
-                print(f"⏰ gRPC timeout after {call_timeout}s for study {study_uid[:40]}...")
-            else:
-                print(f"❌ gRPC error: {e.code()}, {e.details()}")
+            self._log_rpc_error(e, "get_study_thumbnails_with_timeout", call_timeout, study_uid)
             return None
         except Exception as e:
-            print(f"❌ Error getting study thumbnails: {e}")
+            logger.error(f"Error getting study thumbnails: {e}")
             return None
 
     def get_thumbnails(self, patient_id, study_uid, timeout: float = None):
-        """دریافت تصاویر کوچک (thumbnails) از سرور با timeout"""
-        if not self.stub:
+        """Get study thumbnails including image data."""
+        if not self._ensure_stub():
             return None
-        
+
         call_timeout = timeout or self.timeout
-            
         try:
             request = dicom_service_pb2.StudyThumbnailsRequest(
                 study_instance_uid=study_uid,
-                include_image_data=True
+                include_image_data=True,
             )
-
-            # Call with timeout to prevent indefinite hanging on slow networks
             response = self.stub.GetStudyThumbnails(request, timeout=call_timeout)
-            # print('response:', response)
+
             result = {
                 'patient_name': response.patient_name,
                 'patient_id': response.patient_id,
                 'study_date': response.study_date,
                 'study_uid': response.study_instance_uid,
-            #     'study_description': response.study_description,
-            #     'accession_number': response.accession_number,
-            #     'referring_physician_name': response.referring_physician_name,
-                'thumbnails': []
+                'thumbnails': [],
             }
 
-            # تبدیل پاسخ gRPC به دیکشنری
-            #
-            # print('result:', result)
-            #
-            # # تبدیل سری‌ها با ساختار جدید
             for series in response.series_thumbnails:
-                series_data = {
+                result['thumbnails'].append({
                     'series_uid': series.series_uid,
                     'series_number': series.series_number,
                     'series_description': series.series_description,
                     'modality': series.modality,
-            #         'protocol_name': series.protocol_name,
-            #         'body_part_examined': series.body_part_examined,
-            #         'manufacturer': series.manufacturer,
-            #         'institution_name': series.institution_name,
                     'image_count': series.image_count,
-            #         'thumbnail_base64': series.first_image_thumbnail_base64,
-            #         # داده‌ها به فرمت قبلی برای سازگاری با کد موجود
-            #         'image_data': series.first_image_thumbnail_base64,
                     'thumbnail_path': series.thumbnail_path,
                     'thumbnail_data': series.thumbnail_data,
-                }
-                result['thumbnails'].append(series_data)
+                })
 
-            # for series in response.series_thumbnails:
-            #     # if series.thumbnail_data:
-            #         filename = f"series_{series.series_number}.jpg"
-            #         with open(filename, "wb") as f:
-            #             f.write(series.thumbnail_data)
-            #         print(f"Saved: {filename}")
-
-            # print('resulttt:', result)
             return result
+
         except grpc.RpcError as e:
-            status_code = e.code()
-            details = e.details()
-            print(f"gRPC Error: {status_code}, {details}")
+            self._log_rpc_error(e, "get_thumbnails", call_timeout, study_uid)
             return None
         except Exception as e:
-            print(f"Error getting thumbnails: {e}")
+            logger.error(f"Error getting thumbnails: {e}")
             return None
 
     def get_dicom_images(self, patient_id, study_uid, series_uid, save_dir):
-        """دریافت تصاویر DICOM از سرور به صورت استریم"""
-        if not self.stub:
+        """Download DICOM images via streaming RPC."""
+        if not self._ensure_stub():
             return {'images': [], 'error': 'Not connected to server'}
-            
+
         try:
             request = dicom_service_pb2.DicomImageRequest(
                 patient_id=patient_id,
                 study_uid=study_uid,
-                series_uid=series_uid
+                series_uid=series_uid,
             )
-            
-            # اطمینان از وجود دایرکتوری ذخیره‌سازی
             series_dir = os.path.join(save_dir, study_uid, series_uid)
             os.makedirs(series_dir, exist_ok=True)
-            
-            print(f"درخواست تصاویر برای سری {series_uid} - مسیر ذخیره: {series_dir}")
-            
-            # دریافت استریم پاسخ
+
+            logger.info(f"Requesting images for series {series_uid} → {series_dir}")
+
             received_files = []
             error = None
-            
+
             try:
-                for response in self.stub.GetDicomImages(request):
-                    sop_uid = response.sop_instance_uid
-                    instance_number = response.instance_number
-                    image_data = response.image_data
-                    file_name = response.file_name
-                    
-                    # ذخیره فایل
-                    file_path = os.path.join(series_dir, file_name)
+                for response in self.stub.GetDicomImages(request, timeout=self.timeout):
+                    file_path = os.path.join(series_dir, response.file_name)
                     with open(file_path, 'wb') as f:
-                        f.write(image_data)
-                    
-                    print(f"تصویر {file_name} با حجم {len(image_data)} بایت در {file_path} ذخیره شد")
-                    
+                        f.write(response.image_data)
+
                     received_files.append({
-                        'sop_instance_uid': sop_uid,
-                        'instance_number': instance_number,
+                        'sop_instance_uid': response.sop_instance_uid,
+                        'instance_number': response.instance_number,
                         'file_path': file_path,
-                        'file_name': file_name
+                        'file_name': response.file_name,
                     })
-                
-                print(f"در مجموع {len(received_files)} تصویر دریافت شد")
-                
+
+                logger.info(f"Received {len(received_files)} images for series {series_uid}")
+
             except grpc.RpcError as e:
-                error = f"خطای gRPC: {e.code()}, {e.details()}"
-                print(error)
-            
-            result = {
-                'images': received_files,
-                'error': error
-            }
-            
-            return result
+                error = f"gRPC error: {e.code()}, {e.details()}"
+                logger.error(error)
+
+            return {'images': received_files, 'error': error}
+
         except Exception as e:
-            print(f"خطا در تابع get_dicom_images: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error in get_dicom_images: {e}", exc_info=True)
             return {'images': [], 'error': str(e)}
 
     def close(self):
-        """بستن ارتباط با سرور"""
+        """Close the gRPC channel."""
         if self.channel:
             self.channel.close()
             self.channel = None
-            self.stub = None 
+            self.stub = None
+            logger.info("gRPC channel closed")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _log_rpc_error(e, method: str, timeout: float, uid: str = ""):
+        """Centralized gRPC error logging."""
+        if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+            logger.warning(f"gRPC timeout ({timeout}s) in {method} for {uid[:40]}")
+        elif e.code() == grpc.StatusCode.UNAVAILABLE:
+            logger.error(f"gRPC server unavailable in {method}: {e.details()}")
+        else:
+            logger.error(f"gRPC error in {method}: {e.code()}, {e.details()}")

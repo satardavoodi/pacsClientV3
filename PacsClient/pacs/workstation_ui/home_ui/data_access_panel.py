@@ -2,7 +2,9 @@ from PySide6.QtWidgets import QApplication, QWidget, QTabWidget, QVBoxLayout, QL
     QFileDialog, QHBoxLayout
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from PacsClient.utils import get_all_servers, get_server
+from pathlib import Path
+
+from PacsClient.utils import get_all_selectable_servers, get_selectable_server
 from PacsClient.utils.theme_manager import get_theme_manager
 import qtawesome as qta
 
@@ -32,7 +34,7 @@ class DataAccessPanelWidget(QWidget):
 
     def get_server_selected(self) -> dict:
         if self.server_selected:
-            return get_server(server_name=self.server_selected)
+            return get_selectable_server(server_name=self.server_selected)
         else:
             return None
 
@@ -308,14 +310,20 @@ class DataAccessPanelWidget(QWidget):
             """)
             
             # Check if server actually exists
-            server_config = get_server(server_name=self.server_selected)
+            server_config = get_selectable_server(server_name=self.server_selected)
             if server_config:
-                self.connection_status.setPixmap(qta.icon('fa5s.check-circle', color='#10b981').pixmap(10, 10))
-                self.connection_status.setText(" Server Ready")
+                is_offline = server_config.get("server_type") == "offline_cloud"
+                status_color = '#10b981'
+                status_text = " Offline Server Ready" if is_offline else " Server Ready"
+                if is_offline and not Path(str(server_config.get("folder_path") or "")).expanduser().exists():
+                    status_color = '#f59e0b'
+                    status_text = " Offline Folder Missing"
+                self.connection_status.setPixmap(qta.icon('fa5s.check-circle', color=status_color).pixmap(10, 10))
+                self.connection_status.setText(status_text)
                 self.connection_status.setStyleSheet("""
                     QLabel {
                         font-size: 14px;
-                        color: #10b981;
+                        color: """ + status_color + """;
                         padding: 4px 6px;
                         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                             stop:0 rgba(16, 185, 129, 0.1), stop:1 rgba(16, 185, 129, 0.05));
@@ -360,16 +368,17 @@ class DataAccessPanelWidget(QWidget):
     def load_servers(self):
         self.server_combo.clear()
         try:
-            servers = get_all_servers()
+            servers = get_all_selectable_servers()
             if servers and len(servers) > 0:
-                # Add servers directly without placeholder
                 for server in servers:
-                    self.server_combo.addItem(qta.icon('fa5s.hospital', color='#10b981'), f" {server['name']}")
+                    if server.get("server_type") == "offline_cloud":
+                        icon = qta.icon('fa5s.cloud', color='#60a5fa')
+                    else:
+                        icon = qta.icon('fa5s.hospital', color='#10b981')
+                    self.server_combo.addItem(icon, f" {server['name']}")
                 
-                # Auto-select first server
                 if len(servers) > 0:
                     self.server_combo.setCurrentIndex(0)
-                    # Trigger the change event to set the selected server
                     self.on_server_changed()
             else:
                 self.server_combo.addItem("No servers found")

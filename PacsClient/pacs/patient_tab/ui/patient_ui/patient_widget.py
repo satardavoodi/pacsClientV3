@@ -893,12 +893,30 @@ class PatientWidget(QWidget):
                 except (TypeError, ValueError):
                     return 0
 
+            # Collect series numbers + counts for background DB update.
+            db_update_entries: list = []
+
             thumb_index = 0
             for series in sorted(series_entries, key=_sort_key):
                 file_path = series.get('file_path')
                 series_number = str(series.get('series_number', ''))
                 if not (file_path and series_number):
                     continue
+
+                # ── Sync _server_series_info with gRPC image_count ──────────
+                # The gRPC response carries the authoritative image count.
+                # Patch _server_series_info so that _render_thumbnails_from_files
+                # (called on subsequent visits within the same session) shows the
+                # correct count without waiting for download progress signals.
+                img_count = int(series.get('image_count', 0) or 0)
+                if img_count > 0:
+                    ssi = getattr(self, '_server_series_info', {})
+                    if series_number in ssi:
+                        ssi[series_number]['image_count'] = img_count
+                    else:
+                        ssi[series_number] = dict(series)
+                    db_update_entries.append((series_number, img_count))
+
                 thumb_index = self.add_thumbnail_to_thumbnail_layout(
                     thumb_index=thumb_index,
                     file_path_thumbnail=file_path,
@@ -911,6 +929,24 @@ class PatientWidget(QWidget):
                         self.thumbnail_manager.set_series_ready(series_number)
                     else:
                         self.thumbnail_manager.set_series_pending(series_number)
+
+            # ── Persist image_count to DB in background ─────────────────────
+            # This ensures future sessions (thumbnails loaded from disk cache)
+            # also display the correct DICOM image count before download starts.
+            if db_update_entries and self.study_uid:
+                study_uid = self.study_uid
+
+                def _persist_counts():
+                    try:
+                        from database.manager import update_series_image_count_by_uid
+                        for sn, cnt in db_update_entries:
+                            update_series_image_count_by_uid(study_uid, sn, cnt)
+                    except Exception:
+                        pass
+
+                import threading as _threading
+                _threading.Thread(target=_persist_counts, daemon=True).start()
+
         except Exception as e:
             self.logger.debug(f"Error rendering server thumbnails: {e}")
 
@@ -7082,12 +7118,25 @@ class PatientWidget(QWidget):
                     
                     if download_manager:
                         print(f"✅ [PatientWidget] Found download manager, triggering SERIES-SPECIFIC retry")
-                        
-                        # Call the download manager's SERIES retry method (not full study retry)
-                        if hasattr(download_manager, '_on_series_retry'):
-                            print(f"🚀 [PatientWidget] Calling _on_series_retry with series_number={series_number}, series_uid={series_uid}")
+
+                        # Preferred single API: apply CRITICAL intent + start retry.
+                        if hasattr(download_manager, 'request_critical_series_download'):
+                            print(
+                                f"🚀 [PatientWidget] Calling request_critical_series_download "
+                                f"with series_number={series_number}, series_uid={series_uid}"
+                            )
+                            download_manager.request_critical_series_download(study_uid, series_number, series_uid)
+                            print(f"✅✅ [PatientWidget] Critical series request initiated for series {series_number}")
+                        # Backward-compatible fallback for older manager versions
+                        elif hasattr(download_manager, '_on_series_retry'):
+                            print(f"🚀 [PatientWidget] Fallback _on_series_retry with series_number={series_number}, series_uid={series_uid}")
+                            try:
+                                if hasattr(download_manager, 'set_viewed_series'):
+                                    download_manager.set_viewed_series(study_uid, str(series_number))
+                            except Exception as _e:
+                                print(f"⚠️ [PatientWidget] set_viewed_series fallback failed: {_e}")
                             download_manager._on_series_retry(study_uid, series_number, series_uid)
-                            print(f"✅✅ [PatientWidget] Series retry initiated for series {series_number}")
+                            print(f"✅✅ [PatientWidget] Fallback series retry initiated for series {series_number}")
                         else:
                             print(f"⚠️ [PatientWidget] Download manager doesn't have _on_series_retry method")
                             print(f"⚠️ [PatientWidget] Falling back to full study retry")

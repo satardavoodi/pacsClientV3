@@ -23,19 +23,18 @@ class SocketService:
     def _ensure_client(self) -> Optional[ResumableDicomSocketClient]:
         try:
             if self.client is None:
-                logger.info(f"🔧 Creating new ResumableDicomSocketClient")
-                logger.info(f"   Host: {self.config.get_socket_host()}")
-                logger.info(f"   Port: {self.config.get_socket_port()}")
-                logger.info(f"   Timeout: {self.config.get_connection_timeout()}")
+                logger.info(
+                    f"Creating ResumableDicomSocketClient → "
+                    f"{self.config.get_socket_host()}:{self.config.get_socket_port()}"
+                )
                 self.client = ResumableDicomSocketClient(
                     host=self.config.get_socket_host(),
                     port=int(self.config.get_socket_port()),
                     timeout=int(self.config.get_connection_timeout()),
                 )
-                logger.info(f"✅ Client created successfully")
             return self.client
         except Exception as e:
-            logger.error(f"❌ Failed to ensure client: {e}")
+            logger.error(f"Failed to ensure client: {e}")
             return None
 
     def connect(self) -> bool:
@@ -100,15 +99,10 @@ class SocketService:
     def get_study_info(self, study_uid: str) -> Optional[Dict[str, Any]]:
         client = self._ensure_client()
         if not client:
-            logger.error("❌ Failed to ensure client for get_study_info")
             return None
         if not self.is_connected() and not self.connect_with_retry():
-            logger.error("❌ Failed to connect for get_study_info")
             return None
-        logger.info(f"🔍 Calling client.get_study_info for: {study_uid}")
-        result = client.get_study_info(study_uid)
-        logger.info(f"🔍 get_study_info result: {result is not None}")
-        return result
+        return client.get_study_info(study_uid)
 
     def download_study_resumable(
         self,
@@ -119,65 +113,40 @@ class SocketService:
         resume: bool = True,
         progress_callback=None,
     ) -> bool:
-        logger.info(f"🔄 SocketService.download_study_resumable called")
-        logger.info(f"   Study UID: {study_uid}")
-        logger.info(f"   Output dir: {output_dir}")
-        logger.info(f"   Batch size: {batch_size}")
-        logger.info(f"   Compression: {compression}")
-        logger.info(f"   Resume: {resume}")
-        logger.info(f"   Progress callback: {progress_callback is not None}")
-        
+        logger.info(
+            f"download_study_resumable study={study_uid[:40]} "
+            f"batch={batch_size} resume={resume}"
+        )
+
         client = self._ensure_client()
         if not client:
-            logger.error("❌ Failed to ensure client")
+            logger.error("Failed to ensure client for download")
             return False
-        logger.info(f"✅ Client ensured: {type(client)}")
-            
+
         if not self.is_connected() and not self.connect_with_retry():
-            logger.error("❌ Failed to connect to server")
+            logger.error("Failed to connect to server for download")
             return False
-        
-        logger.info("✅ Client connected, starting download")
-        
-        # Try the working code approach first
+
+        # Primary path
         try:
-            logger.info("🔄 Trying download_study_batch_like_working_code")
-            logger.info(f"   Calling client.download_study_batch_like_working_code")
-            logger.info(f"   Parameters: study_uid={study_uid}, output_dir={output_dir}, batch_size={batch_size}, compression={compression}, resume={resume}")
             result = client.download_study_batch_like_working_code(
-                study_uid,
-                output_dir,
-                batch_size,
-                compression,
-                resume,
-                progress_callback
+                study_uid, output_dir, batch_size,
+                compression, resume, progress_callback,
             )
-            logger.info(f"🔍 download_study_batch_like_working_code result: {result}")
             return result
         except Exception as e:
-            logger.error(f"❌ Working code approach failed: {e}")
-            import traceback
-            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-            # Fallback to original method
-            try:
-                logger.info("🔄 Trying fallback method: get_study_dicom_files_resumable")
-                logger.info(f"   Calling client.get_study_dicom_files_resumable")
-                logger.info(f"   Parameters: study_uid={study_uid}, output_dir={output_dir}, batch_size={batch_size}, compression={compression}, resume={resume}")
-                result = client.get_study_dicom_files_resumable(
-                    study_uid,
-                    output_dir,
-                    batch_size,
-                    compression,
-                    resume,
-                    progress_callback,
-                )
-                logger.info(f"🔍 get_study_dicom_files_resumable result: {result}")
-                return result
-            except Exception as e2:
-                logger.error(f"❌ Fallback method also failed: {e2}")
-                import traceback
-                logger.error(f"❌ Fallback traceback: {traceback.format_exc()}")
-                return False
+            logger.error(f"Primary download failed: {e}", exc_info=True)
+
+        # Fallback path
+        try:
+            result = client.get_study_dicom_files_resumable(
+                study_uid, output_dir, batch_size,
+                compression, resume, progress_callback,
+            )
+            return result
+        except Exception as e2:
+            logger.error(f"Fallback download also failed: {e2}", exc_info=True)
+            return False
     
     def cleanup(self):
         """Cleanup resources"""
@@ -203,9 +172,8 @@ _socket_service: Optional[SocketService] = None
 def get_socket_service() -> SocketService:
     global _socket_service
     if _socket_service is None:
-        logger.info("🔧 Creating new SocketService")
         _socket_service = SocketService()
-        logger.info("✅ SocketService created successfully")
+        logger.info("SocketService singleton created")
     return _socket_service
 
 

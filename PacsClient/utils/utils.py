@@ -7,6 +7,7 @@ from pathlib import Path
 
 from aipacs_runtime import roaming_config_root, seed_user_config_defaults
 from . import database
+from .offline_cloud import get_all_offline_cloud_servers, get_offline_cloud_server
 
 json_file = 'servers.json'
 from _project_root import PROJECT_ROOT as _ROOT
@@ -234,6 +235,32 @@ def get_all_servers():
     return []
 
 
+def get_all_selectable_servers():
+    servers: list[dict] = []
+    for server in get_all_servers():
+        if not isinstance(server, dict):
+            continue
+        server_copy = dict(server)
+        server_copy.setdefault("server_type", "ai_pacs")
+        servers.append(server_copy)
+    servers.extend(get_all_offline_cloud_servers())
+    return servers
+
+
+def get_selectable_server(server_name: str):
+    server_name = str(server_name or "").strip()
+    if not server_name:
+        return None
+
+    server = get_server(server_name)
+    if server:
+        server = dict(server)
+        server.setdefault("server_type", "ai_pacs")
+        return server
+
+    return get_offline_cloud_server(server_name)
+
+
 def get_all_patients():
     return database.get_all_patients()
 
@@ -261,8 +288,13 @@ class UpdaterDataFromServerToHome(metaclass=Singleton):
         self.server_combo = servers_combo
 
     def update(self):
+        if not hasattr(self, "server_combo") or self.server_combo is None:
+            return
+        if hasattr(self.server_combo, "load_servers"):
+            self.server_combo.load_servers()
+            return
         self.server_combo.clear()
-        servers = get_all_servers()
+        servers = get_all_selectable_servers()
         for server in servers:
             self.server_combo.addItem(server['name'])
 

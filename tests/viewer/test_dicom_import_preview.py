@@ -104,7 +104,8 @@ def test_scan_dicom_import_folder_groups_files_by_study_and_series(tmp_path):
     assert scan_result["study_count"] == 1
     assert scan_result["series_count"] == 2
     assert scan_result["primary_study_uid"] == study_uid
-    assert scan_result["warnings"] == []
+    business_warnings = [w for w in scan_result["warnings"] if not w.startswith("Detected decoders")]
+    assert business_warnings == []
 
     study_info = scan_result["studies"][0]
     assert study_info["patient_id"] == "P100"
@@ -141,9 +142,10 @@ def test_scan_dicom_import_folder_warns_for_multiple_patients_and_studies(tmp_pa
 
     assert scan_result["patient_count"] == 2
     assert scan_result["study_count"] == 2
-    assert len(scan_result["warnings"]) == 2
-    assert "2 patients" in scan_result["warnings"][0] or "2 patients" in scan_result["warnings"][1]
-    assert "2 studies" in scan_result["warnings"][0] or "2 studies" in scan_result["warnings"][1]
+    business_warnings = [w for w in scan_result["warnings"] if not w.startswith("Detected decoders")]
+    assert len(business_warnings) == 2
+    assert any("2 patients" in w for w in business_warnings)
+    assert any("2 studies" in w for w in business_warnings)
 
 
 def test_filter_scan_result_for_selection_keeps_only_selected_studies_and_series(tmp_path):

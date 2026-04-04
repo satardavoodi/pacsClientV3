@@ -379,11 +379,20 @@ class ViewerController:
         self._progressive_series = {}  # series_number -> {total, last_grow_count}
         self._progressive_grow_timer = QTimer()
         self._progressive_grow_timer.setSingleShot(True)
-        self._progressive_grow_timer.setInterval(500)
+        self._progressive_grow_timer.setInterval(150)   # was 500 — tightened for live feel
         self._progressive_grow_timer.timeout.connect(self._flush_progressive_grow)
         self._progressive_grow_batch_size = max(
             5, int(os.getenv("AIPACS_PROGRESSIVE_GROW_BATCH", "10") or "10")
         )
+
+        # -- Completion sweep safety-net timer (Layer 4) --
+        # Periodically checks all viewers for stale display counts.
+        # Only active when downloads triggered progressive display; stops
+        # itself when no series are tracked.
+        self._completion_sweep_series_set: set = set()   # series still to verify
+        self._completion_sweep_timer = QTimer()
+        self._completion_sweep_timer.setInterval(3000)   # 3 seconds
+        self._completion_sweep_timer.timeout.connect(self._completion_sweep_tick)
 
     def _ensure_grid_config_exists(self):
         """Create the modality grid config if missing."""
@@ -703,11 +712,19 @@ class ViewerController:
         Triggers progressive display: first batch opens the viewer, subsequent
         batches grow the volume in-place so the user sees progress live.
 
+        Only active in FAST (PyDicom) mode.  In Advanced (VTK) mode the full
+        series must be downloaded before display — series_downloaded handles that.
+
         Throttled to max once per 250ms per series to avoid CPU spikes when
         progress signals fire rapidly (one per downloaded file).
         """
         sn = str(series_number)
         if total <= 0 or downloaded <= 0:
+            return
+
+        # Advanced (VTK) mode: skip progressive display entirely.
+        # The series will be loaded once via series_downloaded signal.
+        if not self._is_fast_viewer_mode():
             return
 
         # Track this series for progressive updates
@@ -718,9 +735,8 @@ class ViewerController:
 
         # ── Throttle: skip if called less than 250ms ago for this series
         #    (always process 'download complete' signals though) ──────────
-        import time as _time
-        now_ms_val = _time.monotonic() * 1000
-        if downloaded < total and (now_ms_val - info.get("last_signal_ms", 0)) < 250:
+        now_ms_val = time.monotonic() * 1000
+        if downloaded < total and (now_ms_val - info.get("last_signal_ms", 0)) < 100:
             return
         info["last_signal_ms"] = now_ms_val
 
@@ -735,62 +751,183 @@ class ViewerController:
                     self._progressive_grow_timer.start()
             return
 
-        # Check if a viewer already shows this series (non-progressive, e.g. user
-        # clicked thumbnail before progress signals started).  If so, activate
-        # progressive mode retroactively so grows will work.
-        if downloaded < total:
-            for node in self.lst_nodes_viewer or []:
-                vtk_w = getattr(node, "vtk_widget", None)
-                if vtk_w is None or vtk_w._progressive_mode:
-                    continue
-                try:
-                    viewer_sn = str(
-                        getattr(vtk_w.image_viewer, "metadata", {})
-                        .get("series", {}).get("series_number", "")
-                    )
-                except Exception:
-                    viewer_sn = ""
-                if viewer_sn == sn:
-                    avail = vtk_w.image_viewer.get_count_of_slices() if vtk_w.image_viewer else 0
-                    vtk_w.enter_progressive_mode(total, sn)
-                    vtk_w.update_available_slice_count(avail)
-                    slider = getattr(node, "slider", None)
-                    if slider is not None:
-                        try:
-                            slider.blockSignals(True)
-                            slider.setMaximum(max(0, total - 1))
-                            slider.blockSignals(False)
-                        except Exception:
-                            pass
-                    # Fast mode: activate ±20 booster for the active series
-                    if self._is_fast_viewer_mode():
-                        try:
-                            loader = getattr(vtk_w, "_lazy_loader", None)
-                            backend = getattr(loader, "backend", None) if loader is not None else None
-                            if backend is not None:
-                                paths = backend.get_file_paths()
-                                if paths:
-                                    self._image_slice_booster.set_active(sn, paths, center_slice=0)
-                        except Exception:
-                            pass
-                    info["last_grow_count"] = avail
-                    self.logger.info(
-                        "progressive: retroactive activate series=%s avail=%d total=%d",
-                        sn, avail, total,
-                    )
-                    return  # Will grow on next progress signal
+        # Check if a viewer already shows this series (non-progressive, e.g. the
+        # user drag-dropped during an active download so change_series_on_viewer
+        # loaded whatever files were on disk at that moment without entering
+        # progressive mode).  Two sub-cases:
+        #
+        #   downloaded < total  — still downloading: activate progressive mode
+        #                         retroactively so future grow ticks will fire.
+        #   downloaded >= total — download just completed: the last N images may
+        #                         have all arrived in one batch so no intermediate
+        #                         signal could activate progressive mode.  Do a
+        #                         single final grow immediately to expose those
+        #                         images.  The "live connection" between viewer
+        #                         and download ends here — no more signals come.
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is None or vtk_w._progressive_mode:
+                continue
+            try:
+                viewer_sn = str(
+                    getattr(vtk_w.image_viewer, "metadata", {})
+                    .get("series", {}).get("series_number", "")
+                )
+            except Exception:
+                viewer_sn = ""
+            if viewer_sn != sn:
+                continue
+
+            if downloaded < total:
+                # Still downloading — activate progressive mode retroactively
+                avail = vtk_w.image_viewer.get_count_of_slices() if vtk_w.image_viewer else 0
+                vtk_w.enter_progressive_mode(total, sn)
+                vtk_w.update_available_slice_count(avail)
+                slider = getattr(node, "slider", None)
+                if slider is not None:
+                    try:
+                        slider.blockSignals(True)
+                        slider.setMaximum(max(0, total - 1))
+                        slider.blockSignals(False)
+                    except Exception:
+                        pass
+                # Fast mode: activate ±20 booster for the active series
+                if self._is_fast_viewer_mode():
+                    try:
+                        loader = getattr(vtk_w, "_lazy_loader", None)
+                        backend = getattr(loader, "backend", None) if loader is not None else None
+                        if backend is not None:
+                            paths = backend.get_file_paths()
+                            if paths:
+                                self._image_slice_booster.set_active(sn, paths, center_slice=0)
+                    except Exception:
+                        pass
+                info["last_grow_count"] = avail
+                self.logger.info(
+                    "progressive: retroactive activate series=%s avail=%d total=%d",
+                    sn, avail, total,
+                )
+            else:
+                # Download COMPLETE — one-shot final grow so the viewer shows
+                # all downloaded images (covers the "last batch arrived at once"
+                # scenario that bypassed retroactive activation).
+                self.logger.info(
+                    "progressive: one-shot final grow series=%s downloaded=%d total=%d",
+                    sn, downloaded, total,
+                )
+                self._grow_progressive_fast(sn, downloaded, [(vtk_w, node)])
+            return  # Handled — exit after first matching viewer
 
         # No viewer showing this series yet — start first progressive display.
         # Guard: only trigger once per series to avoid spawning dozens of
         # concurrent load tasks that spike CPU.
+        # _progressive_display_done persists beyond inflight to prevent re-entry
+        # when the series download completes (downloaded==total) after the first
+        # progressive display already succeeded.
+
+        # Check for viewers awaiting this series (drag-drop while download
+        # was still in progress — spinner is already visible).
+        _awaiting_viewer = None
+        _awaiting_node = None
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is None:
+                continue
+            if getattr(vtk_w, "_awaiting_series_number", None) == sn:
+                _awaiting_viewer = vtk_w
+                _awaiting_node = node
+                break
+
         if downloaded >= self._progressive_grow_batch_size:
+            done = getattr(self, '_progressive_display_done', None)
+            if done is None:
+                self._progressive_display_done = set()
+                done = self._progressive_display_done
+            if sn in done:
+                # Already displayed once — grow path should handle updates.
+                # Defensive: if progressive mode was lost (e.g. race between
+                # threaded done.add and activation, or switch_series skipped
+                # progressive entry), re-enter progressive mode so the grow
+                # path works on the next signal.
+                if downloaded < total:
+                    for node in self.lst_nodes_viewer or []:
+                        vtk_w = getattr(node, "vtk_widget", None)
+                        if vtk_w is None or vtk_w._progressive_mode:
+                            continue
+                        try:
+                            viewer_sn = str(
+                                getattr(vtk_w.image_viewer, "metadata", {})
+                                .get("series", {}).get("series_number", "")
+                            )
+                        except Exception:
+                            viewer_sn = ""
+                        if viewer_sn == sn:
+                            avail = vtk_w.get_count_of_slices()
+                            vtk_w.enter_progressive_mode(total, sn)
+                            vtk_w.update_available_slice_count(avail)
+                            info["last_grow_count"] = avail
+                            self.logger.info(
+                                "progressive: re-activated series=%s avail=%d (done-guard recovery)",
+                                sn, avail,
+                            )
+                            return  # Will grow on next progress signal
+                # downloaded < total but no viewer found — nothing further to do
+                if downloaded < total:
+                    return
+                # downloaded >= total — completion signal.  If progressive mode was
+                # exited prematurely (e.g. stale-grow exhaustion at fewer slices),
+                # fire a one-shot grow so the viewer reaches the full file count.
+                for _node in self.lst_nodes_viewer or []:
+                    _vtk_w = getattr(_node, "vtk_widget", None)
+                    if _vtk_w is None or _vtk_w._progressive_mode:
+                        continue  # skip progressive viewers — handled by normal grow path
+                    try:
+                        _viewer_sn = str(
+                            getattr(_vtk_w.image_viewer, "metadata", {})
+                            .get("series", {}).get("series_number", "")
+                        )
+                    except Exception:
+                        _viewer_sn = ""
+                    if _viewer_sn != sn:
+                        continue
+                    _current_count = _vtk_w.get_count_of_slices()
+                    if _current_count >= downloaded:
+                        continue  # already showing full count — no action needed
+                    self.logger.info(
+                        "progressive: done-guard completion one-shot series=%s current=%d downloaded=%d",
+                        sn, _current_count, downloaded,
+                    )
+                    _ps_info = self._progressive_series.get(sn)
+                    if _ps_info is None:
+                        self._progressive_series[sn] = {
+                            "total": total,
+                            "last_grow_count": _current_count,
+                            "last_signal_ms": 0,
+                            "pending_downloaded": downloaded,
+                        }
+                    else:
+                        _ps_info["pending_downloaded"] = downloaded
+                        _ps_info["total"] = total
+                    _viewers_shot = self._find_progressive_viewers(sn)
+                    if not _viewers_shot:
+                        # Re-enter progressive mode so _grow_progressive_fast locates the viewer
+                        _vtk_w.enter_progressive_mode(total, sn)
+                        _vtk_w.update_available_slice_count(_current_count)
+                        _viewers_shot = [(_vtk_w, _node)]
+                    self._grow_progressive_fast(sn, downloaded, _viewers_shot)
+                    return
+
             inflight = getattr(self, '_progressive_display_inflight', None)
             if inflight is None:
                 self._progressive_display_inflight = set()
                 inflight = self._progressive_display_inflight
             if sn not in inflight:
                 inflight.add(sn)
-                self._start_progressive_display(sn, downloaded, total)
+                self._start_progressive_display(
+                    sn, downloaded, total,
+                    target_vtk_widget=_awaiting_viewer,
+                    target_node=_awaiting_node,
+                )
 
     def _find_progressive_viewers(self, series_number: str):
         """Find all VTK widgets currently in progressive mode for a series."""
@@ -804,16 +941,28 @@ class ViewerController:
                 result.append((vtk_w, node))
         return result
 
-    def _start_progressive_display(self, series_number: str, downloaded: int, total: int):
-        """Display a partially downloaded series for the first time."""
+    def _start_progressive_display(self, series_number: str, downloaded: int, total: int,
+                                    target_vtk_widget=None, target_node=None):
+        """Display a partially downloaded series for the first time.
+
+        If *target_vtk_widget* / *target_node* are provided, the first batch
+        is loaded directly into that specific viewer (used when the user
+        drag-dropped a series that wasn't on disk yet — the viewer is already
+        showing a spinner waiting for this series).
+        """
         import asyncio
         self.logger.info(
-            "progressive: START first display series=%s downloaded=%d total=%d",
+            "progressive: START first display series=%s downloaded=%d total=%d target_viewer=%s",
             series_number, downloaded, total,
+            getattr(target_vtk_widget, 'id_vtk_widget', None) if target_vtk_widget else None,
         )
         self._progressive_series.setdefault(series_number, {
             "total": total, "last_grow_count": 0,
         })
+
+        # Ensure import_folder_path is set — during download the PatientWidget
+        # may have been created before any files existed on disk.
+        study_path = self._ensure_import_folder_path()
 
         async def _load_and_show():
             try:
@@ -821,6 +970,16 @@ class ViewerController:
                     series_number,
                     progressive_total=total,
                 )
+                # If a specific target viewer was awaiting this series,
+                # switch it to show the loaded data and hide the spinner.
+                if target_vtk_widget is not None:
+                    self._apply_progressive_to_target_viewer(
+                        series_number, total, target_vtk_widget, target_node,
+                    )
+                # Mark done so on_series_images_progress won't re-start
+                done = getattr(self, '_progressive_display_done', None)
+                if done is not None:
+                    done.add(series_number)
             except Exception as e:
                 self.logger.warning("progressive: first display failed: %s", e)
             finally:
@@ -835,7 +994,62 @@ class ViewerController:
             self.parent_widget._background_tasks.add(task)
             task.add_done_callback(lambda t: self.parent_widget._background_tasks.discard(t))
         except RuntimeError:
-            pass  # No event loop — fallback will happen via series_downloaded
+            # No running asyncio loop — schedule via thread + QTimer callback
+            self.logger.warning(
+                "progressive: no asyncio loop — falling back to threaded load series=%s",
+                series_number,
+            )
+            import threading
+
+            def _threaded_load():
+                try:
+                    ok = self._load_single_series_on_demand(
+                        int(series_number), study_path=study_path,
+                    )
+                    if ok:
+                        _sn_local = str(series_number)
+                        _total_local = total
+                        _target_vw = target_vtk_widget
+                        _target_nd = target_node
+
+                        def _display_activate_and_mark_done():
+                            """Display, activate progressive mode, THEN mark done.
+
+                            Previously done.add() ran from the background thread
+                            before these callbacks fired, causing a race where
+                            subsequent progress signals hit the done-guard before
+                            progressive mode was entered — killing the grow path.
+                            """
+                            # If a specific viewer was awaiting this series (drag-drop
+                            # before data existed), switch that viewer directly.
+                            if _target_vw is not None:
+                                self._apply_progressive_to_target_viewer(
+                                    _sn_local, _total_local, _target_vw, _target_nd,
+                                )
+                            else:
+                                self._display_series_after_load(
+                                    _sn_local, progressive_total=_total_local,
+                                )
+                            self._activate_progressive_mode_on_viewers(
+                                _sn_local, _total_local,
+                            )
+                            # Mark done AFTER activation so grow path is reachable
+                            done = getattr(self, '_progressive_display_done', None)
+                            if done is not None:
+                                done.add(_sn_local)
+
+                        QTimer.singleShot(0, _display_activate_and_mark_done)
+                except Exception as exc:
+                    self.logger.warning("progressive: threaded fallback failed: %s", exc)
+                finally:
+                    inflight = getattr(self, '_progressive_display_inflight', None)
+                    if inflight is not None:
+                        inflight.discard(series_number)
+
+            threading.Thread(
+                target=_threaded_load, daemon=True,
+                name=f"progressive-load-{series_number}",
+            ).start()
 
     def _flush_progressive_grow(self):
         """Timer callback: grow all progressive viewers with newly downloaded images."""
@@ -871,6 +1085,17 @@ class ViewerController:
                 except RuntimeError:
                     pass
 
+        # Stale-grow safety net: restart the single-shot timer if any tracked
+        # series still has pending_downloaded > last_grow_count after this
+        # tick.  Prevents permanent "stuck" state when loader.grow() returned
+        # a stale file count (OS flush delay) and closed the timer.
+        if any(
+            info.get("pending_downloaded", 0) > info.get("last_grow_count", 0)
+            for info in self._progressive_series.values()
+        ):
+            if not self._progressive_grow_timer.isActive():
+                self._progressive_grow_timer.start()
+
     def _grow_progressive_fast(self, series_number: str, pending_count: int,
                                viewers: list):
         """Fast mode growth: refresh PyDicom backend file list & update counts.
@@ -889,32 +1114,68 @@ class ViewerController:
         for vtk_w, node in viewers:
             new_count = pending_count  # fallback
             try:
-                # 1. Refresh the PyDicom backend file list + grow lazy volume
+                # 1. Refresh the PyDicom backend file list + grow lazy volume.
+                #
+                # IMPORTANT: call loader.grow() FIRST without pre-calling
+                # backend.refresh_file_list() separately.  grow() snapshots
+                # old_paths BEFORE refreshing, so it can correctly build the
+                # old-index → new-index remap for interleaved DICOM series.
+                # Pre-calling refresh_file_list() here poisons that snapshot,
+                # causing decoded pixels to land at wrong memmap positions when
+                # instance numbers interleave across download batches.
                 loader = getattr(vtk_w, "_lazy_loader", None)
                 backend = getattr(loader, "backend", None) if loader is not None else None
-                if backend is not None and hasattr(backend, "refresh_file_list"):
+                if loader is not None and hasattr(loader, "grow"):
+                    # PyDicom lazy backend: grow() handles refresh + remap internally
+                    new_count = loader.grow()
+                    # v2.2.8.2: After grow(), the lazy volume's vtk_image_data now has
+                    # new_count slices, but ImageReslice.SetOutputExtent() was set at
+                    # construction time with the original (smaller) Z extent.  VTK's
+                    # vtkResliceImageViewer clamps SetSlice(n) to the output extent max,
+                    # so slices >= old_count are silently rendered as old_count-1.
+                    # Fix: re-derive the output extent from the updated input dimensions.
+                    # If preprocessing (e.g. CT XY-upsample) created a different object,
+                    # reconnect reslice input to loader.vtk_image_data which has all slices.
+                    try:
+                        _iv = getattr(vtk_w, "image_viewer", None)
+                        _reslice = getattr(_iv, "image_reslice", None) if _iv is not None else None
+                        if _reslice is not None:
+                            _raw_vtkdata = getattr(loader, "vtk_image_data", None)
+                            _reslice_input = getattr(_reslice, "vtk_image_data", None)
+                            if (_raw_vtkdata is not None and _reslice_input is not None
+                                    and _reslice_input is not _raw_vtkdata):
+                                # Preprocessing created a separate copy (e.g. CT upsample).
+                                # Reconnect so the new slices in loader.vtk_image_data are
+                                # reachable by the reslice pipeline.
+                                _reslice.SetInputData(_raw_vtkdata)
+                                _reslice.vtk_image_data = _raw_vtkdata
+                            # Update output extent from current input dimensions (new_count).
+                            if hasattr(_reslice, "_configure_output_from_input"):
+                                _reslice._configure_output_from_input()
+                            _reslice.Modified()
+                            _reslice.Update()
+                    except Exception as _reslice_exc:
+                        self.logger.debug(
+                            "progressive-fast: reslice extent update failed: %s", _reslice_exc
+                        )
+                elif backend is not None and hasattr(backend, "refresh_file_list"):
+                    # Lazy loader without grow() – fallback to direct backend refresh
                     new_count = backend.refresh_file_list()
-                    # Grow the lazy volume memmap/VTK dims to match new file count
-                    if loader is not None and hasattr(loader, "grow"):
-                        new_count = loader.grow()
-                    elif loader is not None and hasattr(loader, "slice_count"):
+                    if loader is not None and hasattr(loader, "slice_count"):
                         loader.slice_count = new_count
+                elif getattr(vtk_w, "_qt_bridge_active", False):
+                    # Qt bridge (PYDICOM_QT): grow the pipeline's file list so
+                    # _slice_count on the bridge stays in sync with downloaded
+                    # files.  Without this the bridge clamps set_slice() to the
+                    # original batch size and the image appears "stuck".
+                    bridge = getattr(vtk_w, "image_viewer", None)
+                    if bridge is not None and hasattr(bridge, "grow"):
+                        new_count = bridge.grow()
             except Exception as exc:
                 self.logger.debug("progressive-fast: refresh_file_list/grow failed: %s", exc)
 
-            # 2. Update available slice count on the widget
-            vtk_w.update_available_slice_count(new_count)
-
-            # 3. Update slider max (may have grown if get_count_of_slices uses
-            #    progressive total — but in case it doesn't yet, force it)
-            slider = getattr(node, "slider", None)
-            if slider is not None:
-                try:
-                    slider.blockSignals(True)
-                    slider.setMaximum(max(0, vtk_w.get_count_of_slices() - 1))
-                    slider.blockSignals(False)
-                except Exception:
-                    pass
+            # 2+3. Update slice count and slider max
+            self._update_vtk_slice_range(vtk_w, node, new_count)
 
             # 4. Update ImageSliceBooster paths if active for this series
             try:
@@ -929,8 +1190,8 @@ class ViewerController:
             except Exception as exc:
                 self.logger.debug("progressive-fast: booster update_paths failed: %s", exc)
 
-        # 5. Update stored metadata instances so re-drop sees the real count
-        self._refresh_stored_metadata_instances(series_number, new_count)
+        # 5+6. Update stored metadata and sync to live viewers
+        self._refresh_and_sync_metadata(series_number, new_count)
 
         info["last_grow_count"] = new_count
         self.logger.info(
@@ -938,16 +1199,92 @@ class ViewerController:
             series_number, new_count, total,
         )
 
+        # ── Stale-grow guard ───────────────────────────────────────────────
+        # loader.grow() may return fewer slices than expected if the OS has
+        # not yet flushed all downloaded files to disk.  The single-shot
+        # timer will not fire again on its own, so we must reschedule it.
+        # Also handles the one-shot path where the viewer is not in
+        # progressive mode — enter_progressive_mode() lets
+        # _find_progressive_viewers() locate the viewer on the retry tick.
+        # MAX = 5 retries (×150ms = 750ms window).  On exhaustion: accept
+        # best-effort count, stop safety-net loop, exit progressive mode.
+        # The done-guard completion one-shot will recover when DM sends the
+        # final signal (after the OS has certainly flushed).
+        _STALE_RETRY_MAX = 5
+        if new_count < pending_count:
+            _stale_retry = info.get("_stale_retry_count", 0)
+            if _stale_retry < _STALE_RETRY_MAX:
+                info["_stale_retry_count"] = _stale_retry + 1
+                # Keep pending_downloaded set so _flush_progressive_grow retries
+                info["pending_downloaded"] = pending_count
+                # Enter progressive mode on non-progressive viewers (one-shot path)
+                # so _find_progressive_viewers() can locate them on the retry tick
+                for _vtk_w2, _ in viewers:
+                    if not _vtk_w2._progressive_mode:
+                        _vtk_w2.enter_progressive_mode(total, series_number)
+                        _vtk_w2.update_available_slice_count(new_count)
+                if not self._progressive_grow_timer.isActive():
+                    self._progressive_grow_timer.start()
+                self.logger.warning(
+                    "progressive-fast: STALE grow series=%s got=%d expected=%d "
+                    "(retry %d/%d in %dms)",
+                    series_number, new_count, pending_count,
+                    info["_stale_retry_count"], _STALE_RETRY_MAX,
+                    self._progressive_grow_timer.interval(),
+                )
+            else:
+                # Max retries exhausted — OS buffer not flushing in time.
+                # Accept best-effort count: equalise pending to stop the
+                # _flush_progressive_grow safety-net from looping, then
+                # exit progressive mode so the viewer is usable at whatever
+                # count is available.  The done-guard completion one-shot
+                # will recover the remaining images when DM sends the final
+                # completion signal.
+                self.logger.error(
+                    "progressive-fast: STALE-EXHAUSTED series=%s stuck at %d/%d after %d retries"
+                    " — exiting progressive mode; done-guard will recover on completion signal",
+                    series_number, new_count, pending_count, _stale_retry,
+                )
+                info["pending_downloaded"] = new_count  # stop safety-net loop
+                self._progressive_series.pop(series_number, None)
+                for _vtk_w2, _n2 in viewers:
+                    _sl2 = getattr(_n2, "slider", None)
+                    if _sl2 is not None:
+                        try:
+                            _sl2.blockSignals(True)
+                            _sl2.setMaximum(max(0, new_count - 1))
+                            _sl2.blockSignals(False)
+                        except Exception:
+                            pass
+                    _vtk_w2.exit_progressive_mode()
+                    # Refresh corner text after exiting progressive mode
+                    try:
+                        _iv = getattr(_vtk_w2, "image_viewer", None)
+                        if _iv is not None and hasattr(_iv, "update_corners_actors"):
+                            _iv.update_corners_actors()
+                    except Exception:
+                        pass
+                self._update_thumbnail_count(series_number, new_count)
+                return  # don't fall through to step 6 (already cleaned up)
+
         # 6. Check if download completed
         if new_count >= total and total > 0:
             # Final refresh of stored metadata with complete file list
-            self._refresh_stored_metadata_instances(series_number, new_count)
+            self._refresh_and_sync_metadata(series_number, new_count)
             # Invalidate stale caches so next access rebuilds from full data
             self._invalidate_series_caches(series_number)
 
             for vtk_w, node in viewers:
                 vtk_w.exit_progressive_mode()
+                # Refresh corner text after exiting progressive mode
+                try:
+                    iv = getattr(vtk_w, "image_viewer", None)
+                    if iv is not None and hasattr(iv, "update_corners_actors"):
+                        iv.update_corners_actors()
+                except Exception:
+                    pass
             self._progressive_series.pop(series_number, None)
+            self._update_thumbnail_count(series_number, new_count)
             self.logger.info(
                 "progressive-fast: series=%s COMPLETE (%d slices)", series_number, new_count
             )
@@ -1001,7 +1338,7 @@ class ViewerController:
         total = info.get("total", 0)
         if new_z >= total and total > 0:
             # Refresh stored metadata + invalidate stale caches
-            self._refresh_stored_metadata_instances(series_number, new_z)
+            self._refresh_and_sync_metadata(series_number, new_z)
             self._invalidate_series_caches(series_number)
             for vtk_w, node in viewers:
                 vtk_w.exit_progressive_mode()
@@ -1038,15 +1375,287 @@ class ViewerController:
     def on_series_download_fully_complete(self, series_number: str):
         """Called when a series finishes downloading completely.
 
-        Ensures progressive mode is exited and final data is loaded.
+        Performs a FINAL grow on all viewers showing this series to ensure
+        every downloaded file is visible, then exits progressive mode.
+        Also refreshes corner text ("X / Y") and thumbnail image count.
+        Schedules a deferred verification (500ms) to catch OS-flush-delayed
+        files that were not yet visible at the time of this call.
         """
         sn = str(series_number)
-        self._progressive_series.pop(sn, None)
-        # Exit progressive mode on any viewers showing this series
+        info = self._progressive_series.get(sn, {})
+        expected_total = info.get("total", 0)
+        final_count = 0
+
         for node in self.lst_nodes_viewer or []:
             vtk_w = getattr(node, "vtk_widget", None)
-            if vtk_w is not None and vtk_w._progressive_series_number == sn:
-                vtk_w.exit_progressive_mode()
+            if vtk_w is None:
+                continue
+            # Match by progressive series number OR by displayed series metadata
+            is_match = (vtk_w._progressive_series_number == sn)
+            if not is_match:
+                try:
+                    viewer_sn = str(
+                        getattr(vtk_w.image_viewer, "metadata", {})
+                        .get("series", {}).get("series_number", "")
+                    )
+                    is_match = (viewer_sn == sn)
+                except Exception:
+                    pass
+            if not is_match:
+                continue
+
+            # Final grow: pick up any remaining files before exiting progressive
+            try:
+                loader = getattr(vtk_w, "_lazy_loader", None)
+                if loader is not None and hasattr(loader, "grow"):
+                    new_count = loader.grow()
+                    final_count = max(final_count, new_count)
+                    self._update_vtk_slice_range(vtk_w, node, new_count)
+                    self.logger.info(
+                        "progressive: final grow on download-complete series=%s count=%d",
+                        sn, new_count,
+                    )
+            except Exception as exc:
+                self.logger.debug(
+                    "progressive: final grow failed series=%s: %s", sn, exc
+                )
+
+            vtk_w.exit_progressive_mode()
+
+            # Refresh corner text "Slice: X / Y" so it shows the final total
+            try:
+                iv = getattr(vtk_w, "image_viewer", None)
+                if iv is not None and hasattr(iv, "update_corners_actors"):
+                    iv.update_corners_actors()
+            except Exception:
+                pass
+
+        self._progressive_series.pop(sn, None)
+
+        # Update stored metadata so re-drop and thumbnails use the final count
+        if final_count > 0:
+            self._refresh_and_sync_metadata(sn, final_count)
+            self._invalidate_series_caches(sn)
+
+        # Update thumbnail label to show the definitive image count
+        self._update_thumbnail_count(sn, final_count)
+
+        # Schedule deferred verification to catch OS-flush-delayed files.
+        # Expected total comes from DICOM headers (set by DM progress signals).
+        if expected_total > 0:
+            QTimer.singleShot(
+                500,
+                lambda _sn=sn, _total=expected_total: self._completion_verify_series(_sn, _total),
+            )
+            # Also register for Layer 4 sweep in case Layer 3 retries exhaust
+            self._completion_sweep_register(sn, expected_total)
+
+    def _update_thumbnail_count(self, series_number: str, count: int):
+        """Update the thumbnail image count label (blue text) for a series.
+
+        Falls back gracefully if thumbnail_manager is unavailable.  Uses the
+        disk file count if *count* is 0 (caller didn't have a final grow count).
+        """
+        sn = str(series_number)
+        if count <= 0:
+            try:
+                count = self._count_series_files_on_disk(sn)
+            except Exception:
+                return
+        if count <= 0:
+            return
+        try:
+            tm = getattr(self.parent_widget, "thumbnail_manager", None)
+            if tm is not None and hasattr(tm, "update_series_image_count"):
+                tm.update_series_image_count(sn, count)
+        except Exception:
+            pass
+
+    def _refresh_corner_text(self, series_number: str):
+        """Refresh 'Slice: X / Y' corner text on all viewers showing *series_number*."""
+        sn = str(series_number)
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is None:
+                continue
+            try:
+                viewer_sn = str(
+                    getattr(vtk_w.image_viewer, "metadata", {})
+                    .get("series", {}).get("series_number", "")
+                )
+            except Exception:
+                viewer_sn = ""
+            if viewer_sn != sn:
+                continue
+            try:
+                iv = getattr(vtk_w, "image_viewer", None)
+                if iv is not None and hasattr(iv, "update_corners_actors"):
+                    iv.update_corners_actors()
+            except Exception:
+                pass
+
+    # ── Layer 3: Deferred completion verification ──────────────────────
+    _COMPLETION_VERIFY_MAX_RETRIES = 3
+    _COMPLETION_VERIFY_INTERVAL_MS = 500
+
+    def _completion_verify_series(self, series_number: str, expected_total: int,
+                                  _retry: int = 0):
+        """Deferred verification: ensure viewer shows all downloaded files.
+
+        Called 500ms after on_series_download_fully_complete.  If the viewer
+        still shows fewer slices than files on disk (OS flush delay), does
+        one more loader.grow() + slider update and retries up to 3 times.
+        """
+        sn = str(series_number)
+        try:
+            disk_count = self._count_series_files_on_disk(sn)
+        except Exception:
+            disk_count = 0
+
+        if disk_count <= 0:
+            return  # no files at all — nothing to verify
+
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is None:
+                continue
+            try:
+                viewer_sn = str(
+                    getattr(vtk_w.image_viewer, "metadata", {})
+                    .get("series", {}).get("series_number", "")
+                )
+            except Exception:
+                viewer_sn = ""
+            if viewer_sn != sn:
+                continue
+
+            current_count = vtk_w.get_count_of_slices()
+            if current_count >= disk_count:
+                self.logger.debug(
+                    "completion-verify: series=%s OK (viewer=%d disk=%d)",
+                    sn, current_count, disk_count,
+                )
+                return  # viewer is up to date
+
+            # Viewer is behind — do a catch-up grow
+            self.logger.info(
+                "completion-verify: series=%s viewer=%d < disk=%d — growing (retry %d/%d)",
+                sn, current_count, disk_count, _retry + 1,
+                self._COMPLETION_VERIFY_MAX_RETRIES,
+            )
+            try:
+                loader = getattr(vtk_w, "_lazy_loader", None)
+                if loader is not None and hasattr(loader, "grow"):
+                    new_count = loader.grow()
+                    self._update_vtk_slice_range(vtk_w, node, new_count)
+                    self._refresh_and_sync_metadata(sn, new_count)
+                    self.logger.info(
+                        "completion-verify: series=%s grew to %d", sn, new_count,
+                    )
+                    if new_count >= disk_count:
+                        self._refresh_corner_text(sn)
+                        self._update_thumbnail_count(sn, new_count)
+                        return  # success
+            except Exception as exc:
+                self.logger.debug(
+                    "completion-verify: grow failed series=%s: %s", sn, exc,
+                )
+
+            # Still behind — retry if allowed
+            if _retry < self._COMPLETION_VERIFY_MAX_RETRIES - 1:
+                QTimer.singleShot(
+                    self._COMPLETION_VERIFY_INTERVAL_MS,
+                    lambda _sn=sn, _t=expected_total, _r=_retry + 1:
+                        self._completion_verify_series(_sn, _t, _r),
+                )
+            else:
+                self.logger.warning(
+                    "completion-verify: EXHAUSTED series=%s viewer still at %d vs disk=%d"
+                    " after %d retries",
+                    sn, vtk_w.get_count_of_slices(), disk_count,
+                    self._COMPLETION_VERIFY_MAX_RETRIES,
+                )
+            return  # handled first matching viewer
+
+    # ── Layer 4: Completion sweep safety-net ────────────────────────────
+
+    def _completion_sweep_register(self, series_number: str, expected_total: int):
+        """Register a series for periodic completion sweep verification."""
+        self._completion_sweep_series_set.add((series_number, expected_total))
+        if not self._completion_sweep_timer.isActive():
+            self._completion_sweep_timer.start()
+
+    def _completion_sweep_tick(self):
+        """Periodic safety net: check all registered series for stale display.
+
+        Runs every 3 seconds while there are series to verify.  For each
+        series, compares viewer slice count against disk file count and
+        triggers a catch-up grow if the viewer is behind.  Removes series
+        from tracking once the viewer matches disk count or no viewer is
+        showing it anymore.
+        """
+        resolved = set()
+        for sn, expected_total in list(self._completion_sweep_series_set):
+            try:
+                disk_count = self._count_series_files_on_disk(sn)
+            except Exception:
+                disk_count = 0
+
+            if disk_count <= 0:
+                resolved.add((sn, expected_total))
+                continue
+
+            _found_viewer = False
+            for node in self.lst_nodes_viewer or []:
+                vtk_w = getattr(node, "vtk_widget", None)
+                if vtk_w is None:
+                    continue
+                try:
+                    viewer_sn = str(
+                        getattr(vtk_w.image_viewer, "metadata", {})
+                        .get("series", {}).get("series_number", "")
+                    )
+                except Exception:
+                    viewer_sn = ""
+                if viewer_sn != sn:
+                    continue
+
+                _found_viewer = True
+                current_count = vtk_w.get_count_of_slices()
+                if current_count >= disk_count:
+                    resolved.add((sn, expected_total))
+                    break
+
+                # Viewer behind — catch-up grow
+                try:
+                    loader = getattr(vtk_w, "_lazy_loader", None)
+                    if loader is not None and hasattr(loader, "grow"):
+                        new_count = loader.grow()
+                        self._update_vtk_slice_range(vtk_w, node, new_count)
+                        self._refresh_and_sync_metadata(sn, new_count)
+                        self.logger.info(
+                            "completion-sweep: grew series=%s from %d to %d (disk=%d)",
+                            sn, current_count, new_count, disk_count,
+                        )
+                        if new_count >= disk_count:
+                            self._refresh_corner_text(sn)
+                            self._update_thumbnail_count(sn, new_count)
+                            resolved.add((sn, expected_total))
+                except Exception as exc:
+                    self.logger.debug(
+                        "completion-sweep: grow failed series=%s: %s", sn, exc,
+                    )
+                break  # handle first matching viewer only
+
+            if not _found_viewer:
+                resolved.add((sn, expected_total))
+
+        self._completion_sweep_series_set -= resolved
+
+        # Stop timer when nothing left to verify
+        if not self._completion_sweep_series_set:
+            self._completion_sweep_timer.stop()
+            self.logger.debug("completion-sweep: all series verified — timer stopped")
 
     def _activate_progressive_mode_on_viewers(self, series_number: str, total_expected: int):
         """After first progressive display, mark viewers for progressive growth.
@@ -1098,6 +1707,82 @@ class ViewerController:
                     "progressive: activated viewer series=%s avail=%d total=%d fast=%s",
                     series_number, avail, total_expected, is_fast,
                 )
+
+    def _apply_progressive_to_target_viewer(
+        self, series_number: str, total: int, vtk_widget, node
+    ):
+        """Switch a specific viewer to a freshly loaded progressive series.
+
+        Used when the user drag-dropped a series that wasn't on disk yet.
+        The viewer was marked with ``_awaiting_series_number`` and a spinner
+        was kept visible.  Now the first batch has been loaded — display it
+        in that viewer, hide the spinner, and enter progressive mode.
+        """
+        try:
+            # Clear the awaiting marker
+            vtk_widget._awaiting_series_number = None
+
+            # Look up loaded data from cache
+            vtk_image_data, metadata, series_idx = self._get_series_by_number_fast(
+                str(series_number)
+            )
+            if metadata is None or vtk_image_data is None:
+                self.logger.warning(
+                    "progressive-target: series=%s not in cache after load", series_number
+                )
+                self._hide_spinner_for_widget(vtk_widget)
+                return
+
+            slider = getattr(node, "slider", None) if node else None
+
+            # Display the series on the target viewer
+            self._display_loaded_series(
+                series_number=str(series_number),
+                series_idx=series_idx,
+                vtk_image_data=vtk_image_data,
+                metadata=metadata,
+                flag_change_selected_widget=False,
+                vtk_widget=vtk_widget,
+                slider=slider,
+                progressive_total=total,
+            )
+
+            # Enter progressive mode on this viewer
+            avail = vtk_widget.get_count_of_slices()
+            vtk_widget.enter_progressive_mode(total, str(series_number))
+            vtk_widget.update_available_slice_count(avail)
+            if slider is not None:
+                try:
+                    slider.blockSignals(True)
+                    slider.setMaximum(max(0, total - 1))
+                    slider.blockSignals(False)
+                except Exception:
+                    pass
+
+            # Fast mode: activate ImageSliceBooster for ±20 prefetch
+            if self._is_fast_viewer_mode():
+                try:
+                    loader = getattr(vtk_widget, "_lazy_loader", None)
+                    backend = getattr(loader, "backend", None) if loader else None
+                    if backend is not None:
+                        paths = backend.get_file_paths()
+                        if paths:
+                            self._image_slice_booster.set_active(
+                                str(series_number), paths, center_slice=0,
+                            )
+                except Exception:
+                    pass
+
+            # Hide the spinner now that content is visible
+            self._hide_spinner_for_widget(vtk_widget)
+
+            self.logger.info(
+                "progressive-target: displayed series=%s on awaiting viewer avail=%d total=%d",
+                series_number, avail, total,
+            )
+        except Exception as exc:
+            self.logger.warning("progressive-target: failed series=%s: %s", series_number, exc)
+            self._hide_spinner_for_widget(vtk_widget)
 
     def on_tab_activated(self):
         """Mark this patient tab as active and allow predictive prefetching."""
@@ -1312,7 +1997,7 @@ class ViewerController:
             self.zeta_boost.invalidate_series(sn, clear_disk=True)
         except Exception:
             pass
-        print(f"🗑️ [CACHE_INVALIDATE] series={sn} cleared all cache layers")
+        self.logger.debug("cache-invalidate: series=%s cleared all cache layers", sn)
 
     def _refresh_stored_metadata_instances(self, series_number: str,
                                            current_disk_count: int):
@@ -1353,7 +2038,13 @@ class ViewerController:
             if not series_path or not Path(series_path).is_dir():
                 return
 
-            # Collect existing instance paths for dedup
+            # Fast pre-flight: TTL-cached scandir count avoids running the
+            # expensive full iterdir scan when disk count hasn't grown yet
+            # (e.g. OS hasn't flushed the downloaded files).  This is the
+            # primary guard against per-grow-tick iterdir overhead.
+            _fast_disk_count = self._count_series_files_on_disk(sn)
+            if _fast_disk_count <= existing_count:
+                return
             existing_paths = set()
             for inst in existing_instances:
                 p = inst.get("instance_path", "")
@@ -1401,6 +2092,11 @@ class ViewerController:
 
             # Mutate the metadata in-place so all references see the updated list
             metadata["instances"] = new_instances
+            # Also update series-level image_count so thumbnails show the
+            # correct count (thumbnail reads this field, not len(instances))
+            _series_meta = metadata.get("series")
+            if isinstance(_series_meta, dict):
+                _series_meta["image_count"] = len(new_instances)
 
             # Bump caches to reflect the updated metadata
             vtk_data = item.get("vtk_image_data")
@@ -1409,23 +2105,141 @@ class ViewerController:
                 self._series_cache[sn] = result
                 self._hot_series_cache[sn] = result
 
-            print(
-                f"📋 [METADATA_REFRESH] series={sn} instances {existing_count} → {len(new_instances)}"
+            self.logger.debug(
+                "metadata-refresh: series=%s instances %d → %d",
+                sn, existing_count, len(new_instances),
             )
         except Exception as exc:
             self.logger.debug("_refresh_stored_metadata_instances failed for %s: %s", sn, exc)
 
-    def _count_series_files_on_disk(self, series_number: str) -> int:
-        """Return the number of .dcm files on disk for *series_number*."""
+    def _sync_viewer_metadata_instances(self, series_number: str):
+        """Sync ImageViewer2D.metadata['instances'] on live viewers with the
+        refreshed source in lst_thumbnails_data.
+
+        ImageViewer2D receives a deep-copied metadata dict at creation time.
+        After ``_refresh_stored_metadata_instances`` replaces the ``instances``
+        list on the source dict, the viewer's copy is stale.  This causes
+        ``IndexError`` in ``apply_default_window_level(n)`` for any slice
+        ``n >= original_count``, silently killing per-slice W/L and corners.
+
+        Must be called AFTER ``_refresh_stored_metadata_instances`` on every
+        grow path (progressive, completion, in-place re-drop).
+        """
+        sn = str(series_number)
         try:
+            idx = self._series_number_to_index.get(sn)
+            if idx is None or idx >= len(self.parent_widget.lst_thumbnails_data):
+                return
+            source_metadata = self.parent_widget.lst_thumbnails_data[idx].get("metadata")
+            if not isinstance(source_metadata, dict):
+                return
+            source_instances = source_metadata.get("instances")
+            if not source_instances:
+                return
+
+            for node in self.lst_nodes_viewer or []:
+                vtk_w = getattr(node, "vtk_widget", None)
+                if vtk_w is None:
+                    continue
+                iv = getattr(vtk_w, "image_viewer", None)
+                if iv is None:
+                    continue
+                iv_meta = getattr(iv, "metadata", None)
+                if not isinstance(iv_meta, dict):
+                    continue
+                try:
+                    viewer_sn = str(
+                        iv_meta.get("series", {}).get("series_number", "")
+                    )
+                except Exception:
+                    viewer_sn = ""
+                if viewer_sn != sn:
+                    continue
+                old_count = len(iv_meta.get("instances", []) or [])
+                new_count = len(source_instances)
+                if new_count >= old_count:
+                    # Shallow copy — prevents cross-viewer mutation if any code
+                    # later appends/pops on the list.  The dict *values* (per-
+                    # instance metadata dicts) are still shared by reference,
+                    # which is fine since they are read-only after creation.
+                    iv_meta["instances"] = list(source_instances)
+                    # Also sync series-level image_count
+                    src_series = source_metadata.get("series")
+                    iv_series = iv_meta.get("series")
+                    if isinstance(src_series, dict) and isinstance(iv_series, dict):
+                        ic = src_series.get("image_count")
+                        if ic is not None:
+                            iv_series["image_count"] = ic
+                    self.logger.debug(
+                        "viewer-metadata-sync: series=%s viewer instances %d → %d",
+                        sn, old_count, new_count,
+                    )
+        except Exception as exc:
+            self.logger.debug("_sync_viewer_metadata_instances failed for %s: %s", sn, exc)
+
+    # ── Grow helpers ───────────────────────────────────────────────────────
+
+    def _update_vtk_slice_range(self, vtk_w, node, new_count: int, *, slider=None):
+        """Update VTK widget slice count and slider maximum after a grow.
+
+        *slider* can be passed explicitly when the caller has it directly
+        (e.g. ``change_series_on_viewer``).  Otherwise it is obtained from
+        *node*.
+        """
+        vtk_w.update_available_slice_count(new_count)
+        if slider is None:
+            slider = getattr(node, "slider", None)
+        if slider is not None:
+            try:
+                slider.blockSignals(True)
+                slider.setMaximum(max(0, new_count - 1))
+                slider.blockSignals(False)
+            except Exception:
+                pass
+
+    def _refresh_and_sync_metadata(self, series_number, new_count: int):
+        """Refresh source metadata instances AND sync to live viewers.
+
+        Ensures ``_refresh_stored_metadata_instances`` and
+        ``_sync_viewer_metadata_instances`` are always called as a pair.
+        """
+        self._refresh_stored_metadata_instances(series_number, new_count)
+        self._sync_viewer_metadata_instances(series_number)
+
+    def _count_series_files_on_disk(self, series_number: str) -> int:
+        """Return the number of .dcm files on disk for *series_number*.
+
+        Uses os.scandir (single syscall per entry) instead of Path.iterdir +
+        stat for ~3-5x faster enumeration.  Results are cached for 1s to
+        avoid redundant I/O when called multiple times in the same frame.
+        """
+        try:
+            # 1-second TTL cache per series
+            cache = getattr(self, '_disk_count_cache', None)
+            if cache is None:
+                self._disk_count_cache = {}
+                cache = self._disk_count_cache
+            _now = time.monotonic()
+            key = str(series_number)
+            entry = cache.get(key)
+            if entry and (_now - entry[1]) < 1.0:
+                return entry[0]
+
             study_path = self._get_correct_study_path()
             if not study_path:
                 return 0
-            series_dir = Path(study_path) / str(series_number)
-            if not series_dir.is_dir():
+            series_dir = os.path.join(study_path, str(series_number))
+            if not os.path.isdir(series_dir):
                 return 0
-            return sum(1 for f in series_dir.iterdir()
-                       if f.is_file() and f.suffix.lower() in (".dcm", ".dicom"))
+            count = 0
+            with os.scandir(series_dir) as it:
+                for e in it:
+                    if e.is_file(follow_symlinks=False):
+                        name = e.name
+                        if name.endswith('.dcm') or name.endswith('.dicom'):
+                            count += 1
+            cache[key] = (count, _now)
+            return count
         except Exception:
             return 0
 
@@ -3023,9 +3837,16 @@ class ViewerController:
                 target_widget_for_spinner = vtk_widget
 
             if vtk_widget is None or slider is None:
-                print(f"â‌Œ [SWITCH FAIL] Invalid target viewport for series {series_number}")
+                self.logger.warning("change-series: invalid target viewport for series %s", series_number)
                 self._hide_spinner_for_widget(target_widget_for_spinner)
                 return
+
+            # Clear any previous awaiting marker from a prior drag-drop that
+            # targeted this viewer.  A new series switch supersedes the old one.
+            try:
+                vtk_widget._awaiting_series_number = None
+            except Exception:
+                pass
 
             # Re-entrancy guard: prevent duplicate same-series switch requests from
             # overlapping on the same viewport during active downloads.
@@ -3033,7 +3854,7 @@ class ViewerController:
                 viewer_id = self._get_viewer_id(vtk_widget)
                 switch_key = (viewer_id, series_number)
                 if switch_key in self._viewer_switch_inflight:
-                    print(f"âڈ³ [SWITCH DEDUP] Suppressed duplicate switch series={series_number} viewer={viewer_id}")
+                    self.logger.debug("change-series: suppressed duplicate switch series=%s viewer=%s", series_number, viewer_id)
                     self._hide_spinner_for_widget(target_widget_for_spinner)
                     return
                 self._viewer_switch_inflight.add(switch_key)
@@ -3060,22 +3881,40 @@ class ViewerController:
                     # Stuck-slice guard: if disk has more files than the currently
                     # displayed metadata, the series has grown — skip no-op.
                     series_grew = False
+                    series_incomplete = False
+                    expected_instances = 0
+                    displayed_count = 0
+                    disk_count = 0
                     try:
                         displayed_count = len((current_metadata or {}).get("instances", []) or [])
                         disk_count = self._count_series_files_on_disk(series_number)
+                        if hasattr(self.parent_widget, '_get_expected_series_image_count'):
+                            expected_instances = int(
+                                self.parent_widget._get_expected_series_image_count(series_number) or 0
+                            )
                         if disk_count > 0 and disk_count > displayed_count:
                             series_grew = True
+                        if expected_instances > 0 and max(displayed_count, disk_count) < expected_instances:
+                            series_incomplete = True
                     except Exception:
                         pass
-                    if (not backend_mismatch) and (not rebuild_needed) and (not series_grew):
+                    if (not backend_mismatch) and (not rebuild_needed) and (not series_grew) and (not series_incomplete):
                         if hasattr(vtk_widget, '_finalize_pending_action'):
                             try:
                                 vtk_widget._finalize_pending_action(series_index, phase="switch_series_noop_same")
                             except Exception:
                                 pass
                         self._hide_spinner_for_widget(target_widget_for_spinner)
-                        print(f"[PROFILE] change_series_on_viewer: noop same-series series={series_number} total={(time.perf_counter() - _t0)*1000:.1f}ms")
+                        self.logger.debug("change-series: noop same-series series=%s total=%.1fms", series_number, (time.perf_counter() - _t0) * 1000)
                         return
+                    if series_incomplete:
+                        self.logger.info(
+                            "change-series: same-series retry incomplete series=%s displayed=%s disk=%s expected=%s",
+                            series_number, displayed_count, disk_count, expected_instances,
+                        )
+                        # Reassert critical download request for repeated drag/drop.
+                        # _trigger_download_if_needed has its own short dedup window.
+                        self._trigger_download_if_needed(series_number)
                     # Same series re-drop with growth: if a lazy loader is present,
                     # grow it in-place instead of doing an expensive full reload
                     # that would restart the volume from scratch.
@@ -3084,32 +3923,32 @@ class ViewerController:
                         try:
                             loader = getattr(vtk_widget, "_lazy_loader", None)
                             backend = getattr(loader, "backend", None) if loader else None
-                            if backend is not None and hasattr(backend, "refresh_file_list"):
-                                new_count = backend.refresh_file_list()
-                                if loader is not None and hasattr(loader, "grow"):
+                            _has_grow = loader is not None and hasattr(loader, "grow")
+                            _has_refresh = backend is not None and hasattr(backend, "refresh_file_list")
+                            if _has_grow or _has_refresh:
+                                # grow() first (preserves file-path snapshot integrity for
+                                # interleaved DICOM); fall back to refresh_file_list() only
+                                # when no grow() is available.
+                                if _has_grow:
                                     new_count = loader.grow()
-                                vtk_widget.update_available_slice_count(new_count)
-                                if slider is not None:
-                                    try:
-                                        slider.blockSignals(True)
-                                        slider.setMaximum(max(0, vtk_widget.get_count_of_slices() - 1))
-                                        slider.blockSignals(False)
-                                    except Exception:
-                                        pass
-                                self._refresh_stored_metadata_instances(series_number, new_count)
+                                else:
+                                    new_count = backend.refresh_file_list()
+                                self._update_vtk_slice_range(vtk_widget, None, new_count, slider=slider)
+                                self._refresh_and_sync_metadata(series_number, new_count)
                                 _grew_ok = True
-                                print(
-                                    f"[PROFILE] change_series_on_viewer: in-place grow series={series_number} "
-                                    f"slices={new_count} total={(time.perf_counter() - _t0)*1000:.1f}ms"
+                                self.logger.debug(
+                                    "change-series: in-place grow series=%s slices=%d total=%.1fms",
+                                    series_number, new_count, (time.perf_counter() - _t0) * 1000,
                                 )
                         except Exception as _grow_exc:
                             self.logger.debug("same-series in-place grow failed: %s", _grow_exc)
                         if _grew_ok:
                             self._hide_spinner_for_widget(target_widget_for_spinner)
                             return
-                    print(
-                        f"[BACKEND_RELOAD_SAME_SERIES] series={series_number} current={getattr(vtk_widget, '_active_backend', BACKEND_VTK)} "
-                        f"requested={requested_backend} rebuild_needed={rebuild_needed}"
+                    self.logger.debug(
+                        "change-series: backend-reload series=%s current=%s requested=%s rebuild_needed=%s",
+                        series_number, getattr(vtk_widget, '_active_backend', BACKEND_VTK),
+                        requested_backend, rebuild_needed,
                     )
             except Exception:
                 pass
@@ -3142,6 +3981,11 @@ class ViewerController:
                 trigger_reason = str(current_action_id or f"viewer_request series={series_number}")
                 self._activate_zeta_manual_trigger(reason=trigger_reason)
 
+                # Notify DM of viewed series so priority updates in the DM UI.
+                # This ensures the drag-dropped / clicked series becomes CRITICAL
+                # and other downloading series show their adjusted state.
+                self._notify_dm_viewed_series(series_number)
+
             self._arm_spinner_timeout(vtk_widget, timeout_ms=20000)
             expected_token = self._next_request_token(vtk_widget)
             self.logger.info(
@@ -3171,9 +4015,10 @@ class ViewerController:
             # ── Stuck-slice guard: verify cached instance count matches disk ──
             # If more files exist on disk than the cached metadata knows about,
             # the cache is stale (series was opened during partial download).
-            # Invalidate everything and force a fresh load directly from disk.
-            # IMPORTANT: skip the lst_thumbnails_data linear scan — it would
-            # return the same stale entry.  Go straight to async disk load.
+            # Show the stale cache IMMEDIATELY (no visual delay), then schedule
+            # a background reload that silently refreshes the viewer when done.
+            # IMPORTANT: do NOT block the drag-drop fast-path with a synchronous
+            # reload — the user must see the image within 1 frame.
             if metadata is not None:
                 try:
                     cached_instance_count = len(metadata.get("instances", []) or [])
@@ -3181,23 +4026,40 @@ class ViewerController:
                     if disk_count > 0 and disk_count > cached_instance_count:
                         print(
                             f"🔄 [STALE_GUARD] series={series_number} "
-                            f"cached_instances={cached_instance_count} disk_files={disk_count} → forcing disk reload"
+                            f"cached_instances={cached_instance_count} disk_files={disk_count} → show stale + bg refresh"
                         )
-                        self._invalidate_series_caches(series_number)
-                        study_path = self._get_correct_study_path()
-                        self._schedule_async_load_and_switch(
-                            series_number=series_number,
-                            study_path=study_path,
-                            vtk_widget=vtk_widget,
-                            slider=slider,
-                            allow_paired=allow_paired,
-                            expected_token=expected_token,
-                            target_widget_for_spinner=target_widget_for_spinner,
-                            total_start=_t0,
-                            viewer_backend=requested_backend,
-                            force_reload=True,
-                        )
-                        return
+                        # Schedule a background reload AFTER the switch completes.
+                        # Use a short delay so the viewer first shows what it has.
+                        _sn_stale = str(series_number)
+                        _vw_stale = vtk_widget
+                        _slider_stale = slider
+                        _paired_stale = allow_paired
+                        _token_stale = expected_token
+                        _target_stale = target_widget_for_spinner
+                        _t0_stale = _t0
+                        _backend_stale = requested_backend
+
+                        def _bg_stale_refresh():
+                            try:
+                                self._invalidate_series_caches(_sn_stale)
+                                _study_path = self._get_correct_study_path()
+                                self._schedule_async_load_and_switch(
+                                    series_number=_sn_stale,
+                                    study_path=_study_path,
+                                    vtk_widget=_vw_stale,
+                                    slider=_slider_stale,
+                                    allow_paired=_paired_stale,
+                                    expected_token=_token_stale,
+                                    target_widget_for_spinner=_target_stale,
+                                    total_start=_t0_stale,
+                                    viewer_backend=_backend_stale,
+                                    force_reload=True,
+                                )
+                            except Exception:
+                                pass
+
+                        QTimer.singleShot(150, _bg_stale_refresh)
+                        # Fall through so the stale cache is used for immediate display
                 except Exception:
                     pass
 
@@ -3238,6 +4100,15 @@ class ViewerController:
             # If still not found, try loading from disk
             if metadata is None:
                 study_path = self._get_correct_study_path()
+                # Show loading spinner and clear old image so the user doesn't
+                # see stale content from a previous series while waiting.
+                try:
+                    if hasattr(vtk_widget, 'viewport_spinner'):
+                        vtk_widget.viewport_spinner.show_loading(
+                            f"Loading series {series_number}..."
+                        )
+                except Exception:
+                    pass
                 # Run heavy DICOM/ITK load in background to keep UI responsive.
                 self._schedule_async_load_and_switch(
                     series_number=series_number,
@@ -3410,7 +4281,21 @@ class ViewerController:
                         print(f"[PROFILE] change_series_on_viewer: async load-on-demand FAILED for series {series_number} in {(time.perf_counter() - _t_load)*1000:.1f}ms")
                         if preview_applied:
                             print(f"â„¹ï¸ڈ [ASYNC SWITCH] preview remained active for series={series_number} (full load failed)")
-                        self._hide_spinner_for_widget(target_widget_for_spinner)
+                        # Keep spinner visible and mark this viewer as awaiting
+                        # the series download.  Progressive display will populate
+                        # it once the first batch arrives from the DM.
+                        try:
+                            vtk_widget._awaiting_series_number = str(series_number)
+                            if hasattr(vtk_widget, 'viewport_spinner'):
+                                vtk_widget.viewport_spinner.show_loading(
+                                    f"Downloading series {series_number}..."
+                                )
+                            print(
+                                f"⏳ [AWAIT] viewer marked awaiting series={series_number} "
+                                f"(spinner kept visible)"
+                            )
+                        except Exception:
+                            self._hide_spinner_for_widget(target_widget_for_spinner)
                         return
 
                     print(f"[PROFILE] change_series_on_viewer: async load-on-demand OK for series {series_number} in {(time.perf_counter() - _t_load)*1000:.1f}ms")
@@ -3443,6 +4328,47 @@ class ViewerController:
             self._queue_on_ui_thread(_finish_on_ui)
 
         threading.Thread(target=_worker, daemon=True, name=f"AsyncSwitchLoad-{series_number}-v{viewer_id}").start()
+
+    def _ensure_import_folder_path(self) -> str:
+        """Ensure parent_widget.import_folder_path is set and return the study path.
+
+        During download-time viewing, the PatientWidget may have been created
+        before any files landed on disk.  This helper resolves the path from
+        SOURCE_PATH + study_uid and stamps it on the widget so that all
+        downstream loaders (``_load_single_series_on_demand``, lazy backends,
+        ZetaBoost) can find the series directories.
+
+        Returns the study-level directory as a string, or None if unresolvable.
+        """
+        from pathlib import Path
+        pw = self.parent_widget
+        if pw.import_folder_path and Path(pw.import_folder_path).exists():
+            return str(pw.import_folder_path)
+        try:
+            from PacsClient.utils.config import SOURCE_PATH
+            study_uid = str(getattr(pw, 'study_uid', '') or '')
+            if study_uid:
+                candidate = Path(SOURCE_PATH) / study_uid
+                if candidate.exists():
+                    pw.import_folder_path = str(candidate)
+                    self.logger.info(
+                        "progressive: set import_folder_path=%s", candidate,
+                    )
+                    return str(candidate)
+        except Exception:
+            pass
+        # Final fallback: try the existing resolver
+        try:
+            from PacsClient.pacs.patient_tab.utils import get_study_source_path
+            study_uid = str(getattr(pw, 'study_uid', '') or '')
+            if study_uid:
+                resolved, _ = get_study_source_path(study_uid)
+                if resolved:
+                    pw.import_folder_path = str(resolved)
+                    return str(resolved)
+        except Exception:
+            pass
+        return None
 
     def _get_correct_study_path(self) -> str:
         """Get the correct study path, ensuring it's not pointing to a series subfolder"""
@@ -5938,6 +6864,87 @@ class ViewerController:
         except Exception:
             pass
 
+    # ── DM priority notification on viewer interaction ────────────────
+    _DM_VIEWED_NOTIFY_COOLDOWN_MS = 500  # min interval between notifications per series
+
+    def _notify_dm_viewed_series(self, series_number: str):
+        """Notify the Download Manager that a series is being actively viewed.
+
+        Called on drag-drop / thumbnail click so the DM can:
+        - Set the viewed series to CRITICAL priority.
+        - Pause / demote other series in the same study.
+        - Update the DM UI to reflect the new priority grouping.
+
+        NON-BLOCKING: the actual DM call is deferred via QTimer.singleShot(0)
+        so it doesn't block the drag-drop / series-switch fast path.
+
+        Has a per-series cooldown to avoid flooding the DM with duplicate
+        calls during rapid drag-drops.
+        """
+        try:
+            study_uid = str(getattr(self.parent_widget, 'study_uid', '') or '')
+            if not study_uid:
+                return
+
+            # Per-series cooldown (fast check — stays on main thread)
+            now = time.monotonic() * 1000
+            cooldown_map = getattr(self, '_dm_viewed_notify_ts', None)
+            if cooldown_map is None:
+                self._dm_viewed_notify_ts = {}
+                cooldown_map = self._dm_viewed_notify_ts
+            last_ts = cooldown_map.get(series_number, 0)
+            if (now - last_ts) < self._DM_VIEWED_NOTIFY_COOLDOWN_MS:
+                return
+            cooldown_map[series_number] = now
+
+            # Defer the heavy DM work so the series switch isn't blocked
+            _sn = str(series_number)
+            _uid = study_uid
+
+            def _deferred_dm_notify():
+                try:
+                    from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
+                    home = get_home_widget()
+                    if not home:
+                        return
+                    # Fast path: only use an EXISTING DM tab — do NOT create one
+                    # just for a priority notification.  Creating the DM widget on
+                    # first call adds 100+ms and blocks the main thread.
+                    dm = None
+                    try:
+                        from modules.download_manager.ui.main_widget import DownloadManagerWidget
+                        tab_w = getattr(home, 'tab_widget', None)
+                        if tab_w is not None:
+                            for i in range(tab_w.count()):
+                                w = tab_w.widget(i)
+                                if isinstance(w, DownloadManagerWidget):
+                                    dm = w
+                                    break
+                    except Exception:
+                        pass
+                    # Fallback: use the original helper if the fast scan failed
+                    if dm is None and hasattr(home, '_get_or_create_download_manager_tab'):
+                        dm = home._get_or_create_download_manager_tab(activate_tab=False)
+                    if dm is None:
+                        return
+
+                    state = dm.state_store.get(_uid)
+                    if not state:
+                        return
+
+                    if hasattr(dm, 'set_viewed_series'):
+                        dm.set_viewed_series(_uid, _sn)
+                        self.logger.info(
+                            "dm-notify: viewed series=%s study=%s → CRITICAL",
+                            _sn, _uid[:30],
+                        )
+                except Exception as exc:
+                    self.logger.debug("dm-notify: deferred failed for series=%s: %s", _sn, exc)
+
+            QTimer.singleShot(0, _deferred_dm_notify)
+        except Exception as exc:
+            self.logger.debug("dm-notify: failed for series=%s: %s", series_number, exc)
+
     def _trigger_download_if_needed(self, series_number: str):
         """Trigger server download if series not available locally"""
         try:
@@ -6007,9 +7014,6 @@ class ViewerController:
             if _pipeline_state not in (PipelineState.POST_DOWNLOAD, PipelineState.READY):
                 self.pipeline.on_series_download_completed(series_number_str)
                 self._mark_download_active()
-
-            # Exit progressive mode for this series (fully downloaded now)
-            self.on_series_download_fully_complete(series_number_str)
 
             # Exit progressive mode for this series (fully downloaded now)
             self.on_series_download_fully_complete(series_number_str)

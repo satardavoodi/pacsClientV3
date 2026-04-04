@@ -290,6 +290,17 @@ def apply_font_smoothing_to_widget(widget):
     try:
         # Apply anti-aliasing through font settings instead of CSS
         font = widget.font()
+        # Guard against resolved fonts with invalid pointSize (-1).
+        # When Qt returns -1, the font uses pixel-sizing; calling setFont
+        # with that -1 triggers "QFont::setPointSize: Point size <= 0".
+        ps = font.pointSize()
+        if ps is not None and ps <= 0:
+            # Convert to a safe explicit size so setFont won't warn.
+            px = font.pixelSize()
+            if px is not None and px > 0:
+                font.setPixelSize(px)  # keep pixel route
+            else:
+                font.setPointSize(9)   # safe fallback
         font.setStyleStrategy(QFont.PreferAntialias)
         font.setHintingPreference(QFont.PreferFullHinting)
         widget.setFont(font)

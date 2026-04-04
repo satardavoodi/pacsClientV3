@@ -280,14 +280,6 @@ class ThumbnailPanel(QWidget):
                             'protocol_name': '',
                             'body_part_examined': ''
                         }
-                                    self.thumbnail_manager = ThumbnailManager(self.change_series_on_viewer, theme=self._active_theme)
-                                    theme = self._active_theme
-            
-                                    # Update thumbnail manager with new theme for live color updates
-                                    if self.thumbnail_manager:
-                                        self.thumbnail_manager._on_theme_changed(theme)
-            
-                                    # Update all header stylesheets
                         self.add_thumbnail_to_thumbnail_layout(
                             thumb_index=len(self.lst_thumbnails_data) - 1,
                             file_path_thumbnail=thumbnail_file

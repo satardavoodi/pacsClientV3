@@ -78,6 +78,16 @@ class PatientListSocketClient:
         """Check if connected"""
         return self.connected and self.socket is not None
     
+    def _recv_exact(self, size: int) -> bytes:
+        """Receive exactly *size* bytes from the socket, accumulating partial reads."""
+        data = b''
+        while len(data) < size:
+            chunk = self.socket.recv(min(65536, size - len(data)))
+            if not chunk:
+                return data  # connection closed
+            data += chunk
+        return data
+    
     def send_request(self, endpoint: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Send request and receive response"""
         logger.info(f"🔌 [Socket] send_request called for endpoint: {endpoint}")
@@ -101,46 +111,46 @@ class PatientListSocketClient:
                 token_manager = get_socket_token_manager()
                 request = token_manager.add_token_to_request(request)
                 
-                logger.info(f"📤 [Socket] Preparing request for endpoint: {endpoint}")
+                logger.debug(f"📤 [Socket] Preparing request for endpoint: {endpoint}")
                 
                 # Convert to JSON
                 request_json = json.dumps(request, ensure_ascii=False)
                 request_bytes = request_json.encode('utf-8')
                 
-                logger.info(f"📤 [Socket] Sending request ({len(request_bytes)} bytes)")
+                logger.debug(f"📤 [Socket] Sending request ({len(request_bytes)} bytes)")
                 
-                # Send message length (4 bytes, Big Endian)
+                # Send message length (4 bytes, Big Endian) + content
+                # Use sendall to guarantee complete delivery
                 length_bytes = len(request_bytes).to_bytes(4, byteorder='big')
-                self.socket.send(length_bytes)
+                self.socket.sendall(length_bytes)
+                self.socket.sendall(request_bytes)
                 
-                # Send message content
-                self.socket.send(request_bytes)
-                
-                logger.info(f"✅ [Socket] Request sent, waiting for response...")
+                logger.debug(f"📤 [Socket] Request sent, waiting for response...")
                 
                 # Loop to handle broadcasts and wait for actual response
                 max_broadcast_retries = 10
                 broadcast_count = 0
                 
                 while broadcast_count < max_broadcast_retries:
-                    # Receive response length
-                    response_length_bytes = self.socket.recv(4)
-                    if len(response_length_bytes) != 4:
+                    # Receive response length (exactly 4 bytes)
+                    response_length_bytes = self._recv_exact(4)
+                    if not response_length_bytes or len(response_length_bytes) != 4:
                         raise Exception("Invalid response length header")
                     
                     response_length = int.from_bytes(response_length_bytes, byteorder='big')
-                    logger.info(f"📥 [Socket] Response length: {response_length} bytes")
                     
-                    # Receive response content
-                    response_data = b''
-                    while len(response_data) < response_length:
-                        chunk_size = min(8192, response_length - len(response_data))
-                        chunk = self.socket.recv(chunk_size)
-                        if not chunk:
-                            break
-                        response_data += chunk
+                    # Validate response size to prevent excessive allocation
+                    if response_length > 50 * 1024 * 1024:  # 50MB limit
+                        raise Exception(f"Response too large: {response_length} bytes")
                     
-                    logger.info(f"📥 [Socket] Received {len(response_data)} bytes of response data")
+                    logger.debug(f"📥 [Socket] Response length: {response_length} bytes")
+                    
+                    # Receive response content (exact byte count)
+                    response_data = self._recv_exact(response_length)
+                    if not response_data or len(response_data) != response_length:
+                        raise Exception("Incomplete response data")
+                    
+                    logger.debug(f"📥 [Socket] Received {len(response_data)} bytes of response data")
                     
                     # Convert to JSON
                     response = json.loads(response_data.decode('utf-8'))
@@ -149,11 +159,11 @@ class PatientListSocketClient:
                     if response.get('type') == 'broadcast':
                         broadcast_count += 1
                         event_type = response.get('event_type', 'unknown')
-                        logger.info(f"📡 [Socket] Received broadcast message (type: {event_type}), continuing to wait for actual response... ({broadcast_count}/{max_broadcast_retries})")
-                        continue  # Skip this broadcast and wait for the actual response
+                        logger.debug(f"📡 [Socket] Broadcast message (type: {event_type}), waiting for response... ({broadcast_count}/{max_broadcast_retries})")
+                        continue
                     
                     # This is the actual response
-                    logger.info(f"📥 [Socket] Parsed response successfully")
+                    logger.debug(f"📥 [Socket] Parsed response successfully")
                     return response
                 
                 # If we exit the loop, we received too many broadcasts without a response
@@ -371,29 +381,35 @@ class PatientListSocketClient:
 
 class SocketConnectionPool:
     """
-    Simple connection pool for socket connections
+    Lazy connection pool for socket connections.
+
+    Connections are created on demand (not eagerly at init) and validated
+    before reuse.  Pool size is a cap — not a pre-allocation target.
     """
-    
+
     def __init__(self, host: str, port: int, pool_size: int = 5):
         self.host = host
         self.port = port
         self.pool_size = pool_size
-        self.connections = []
+        self.connections: list = []
         self.lock = threading.Lock()
-        
-        # Initialize connections
-        for _ in range(pool_size):
-            client = PatientListSocketClient(host, port)
-            self.connections.append(client)
-    
+
     def get_connection(self) -> Optional[PatientListSocketClient]:
-        """Get a connection from the pool"""
+        """Get a connection from the pool, or create a new one."""
         with self.lock:
-            if self.connections:
-                return self.connections.pop()
-            else:
-                # Create new connection if pool is empty
-                return PatientListSocketClient(self.host, self.port)
+            # Try to return an existing connected client
+            while self.connections:
+                client = self.connections.pop()
+                if client.is_connected():
+                    return client
+                # Stale — close and discard
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
+
+        # No pooled connection available — create fresh
+        return PatientListSocketClient(self.host, self.port)
     
     def return_connection(self, client: PatientListSocketClient):
         """Return a connection to the pool"""

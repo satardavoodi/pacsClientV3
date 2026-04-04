@@ -1,6 +1,6 @@
 # AIPacs
 
-Stable release: `v2.2.7` (`2026-03-31`)
+Stable release: `v2.3.0` (`2026-04-04`)
 
 Modular DICOM workstation for viewing, download orchestration, printing, education, and AI-assisted workflows.
 
@@ -12,6 +12,7 @@ Modular DICOM workstation for viewing, download orchestration, printing, educati
 - [Module Catalog](docs/modules/README.md)
 - [Development Setup](docs/development/setup-and-tooling.md)
 - [Current Release Notes](docs/releases/RELEASE_NOTES.md)
+- [Version 2.3.0 Release Notes](docs/releases/VERSION_2.3.0_RELEASE.md)
 - [Version 2.2.7 Release Notes](docs/releases/VERSION_2.2.7_RELEASE.md)
 - [Windows Release Flow](builder/docs/WINDOWS_RELEASE_FLOW.md)
 - [Plugin Package Workspace](builder/plugin%20package/README.md)
@@ -83,3 +84,5 @@ python -m venv .venv_build
 ```
 
 Primary build outputs land under `builder/output/`, including staged bundles and the installer when Inno Setup is available. Successful installer builds also emit `INSTALL_NOTES*.txt` and `SHA256*.txt` under `builder/output/installer/`.
+
+The Windows installer is prepared for deployment on other PCs. In `Custom` mode it asks which optional modules should be installed on that workstation, stores the selection in `installation_profile.json`, and uses a GPU probe plus runtime fallback logic so unsupported systems can still run with CPU-safe software OpenGL.

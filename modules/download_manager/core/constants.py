@@ -1,11 +1,14 @@
 """
 Core Constants - Configuration values and limits
 """
+import os as _os
 
 # Network Configuration
-DEFAULT_SOCKET_HOST = "81.16.117.196"
-DEFAULT_SOCKET_PORT = 50052
-DEFAULT_GRPC_PORT = 50051
+# Host/port come from environment or socket_config.json at runtime.
+# These defaults are used only when config is unavailable.
+DEFAULT_SOCKET_HOST = _os.environ.get("AIPACS_SOCKET_HOST", "localhost")
+DEFAULT_SOCKET_PORT = int(_os.environ.get("AIPACS_SOCKET_PORT", "50052"))
+DEFAULT_GRPC_PORT = int(_os.environ.get("AIPACS_GRPC_PORT", "50051"))
 CONNECTION_TIMEOUT = 30.0  # seconds
 SOCKET_CHUNK_SIZE = 65536  # 64 KB
 

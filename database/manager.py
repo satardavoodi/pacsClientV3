@@ -51,284 +51,155 @@ def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_n
 
 
 def find_patient_pk(patient_id: str):
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT patient_pk FROM patients WHERE patient_id = ?", (patient_id,))
-    row = cur.fetchone()
-    if row:
-        return row[0]
-    return
+    return database.find_patient_pk(patient_id)
 
 
 def find_study_pk(patient_pk: str):
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT study_pk FROM studies WHERE patient_fk = ?", (patient_pk,))
-    row = cur.fetchone()
-    if row:
-        return row[0]
-    return
+    return database.find_study_pk(patient_pk)
 
 
 def find_study_pk_with_study_uid(study_uid: str):
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
-    row = cur.fetchone()
-    if row:
-        return row[0]
-    return
+    return database.find_study_pk_with_study_uid(study_uid)
 
 
 def find_series_pk(series_uid: str):
-    conn = get_connection_database()
-    cur = conn.cursor()
-
-    cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_uid,))
-    row = cur.fetchone()
-    if row:
-        return row[0]
-    return
+    return database.find_series_pk(series_uid)
 
 
 def find_instance_pk(sop_uid: str):
-    conn = get_connection_database()
-    cur = conn.cursor()
-
-    cur.execute("SELECT instance_pk FROM instances WHERE sop_uid = ?", (sop_uid,))
-    row = cur.fetchone()
-    if row:
-        return row[0]
-    return
+    return database.find_instance_pk(sop_uid)
 
 
 ###############################################################################################
 
 
 def get_patient_by_patient_pk(patient_pk: str):
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM patients WHERE patient_pk = ?", (patient_pk,))
-    row = cur.fetchone()
-    keys = [
-        'patient_pk',
-        'patient_id',
-        'patient_name',
-        'birthday',
-        'patient_sex',
-        'patient_age',
-        'patient_weight'
-
-    ]
-    if row:
-        return dict(zip(keys, row))
-        # return dict(row) if row else None
-    return
+    with database.get_db_connection() as conn:
+        conn.row_factory = None
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM patients WHERE patient_pk = ?", (patient_pk,))
+        row = cur.fetchone()
+        if row:
+            columns = [d[0] for d in cur.description]
+            return dict(zip(columns, row))
+        return None
 
 
 def get_studies_by_patient_pk(patient_pk: str):
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM studies WHERE patient_fk = ?", (patient_pk,))
-    row = cur.fetchone()
-
-    keys = [
-        'study_pk',
-        'study_uid',
-        'patient_fk',
-        'study_date',
-        'study_time',
-        'study_description',
-        'institution_name',
-        'modality',
-        'body_part',
-        'number_of_series',
-        'number_of_instances',
-        'study_path'
-    ]
-    if row:
-        dic = dict(zip(keys, row))
-        # del dic['patient_fk']
-        return dic
-
-    return
-
-    # return dict(row) if row else None
-    # cur.execute("SELECT * FROM studies WHERE patient_fk = ? ORDER BY study_date, study_time", (patient_pk,))
-    # return [dict(r) for r in cur.fetchall()]
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM studies WHERE patient_fk = ?", (patient_pk,))
+        row = cur.fetchone()
+        if row:
+            columns = [d[0] for d in cur.description]
+            return dict(zip(columns, row))
+        return None
 
 
 def get_study_by_study_uid(study_uid: str):
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM studies WHERE study_uid = ?", (study_uid,))
-    row = cur.fetchone()
-
-    keys = [
-        'study_pk',
-        'study_uid',
-        'patient_fk',
-        'study_date',
-        'study_time',
-        'study_description',
-        'institution_name',
-        'modality',
-        'body_part',
-        'number_of_series',
-        'number_of_instances',
-        'study_path'
-
-    ]
-    if row:
-        dic = dict(zip(keys, row))
-        # del dic['patient_fk']
-        return dic
-
-    return
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM studies WHERE study_uid = ?", (study_uid,))
+        row = cur.fetchone()
+        if row:
+            columns = [d[0] for d in cur.description]
+            return dict(zip(columns, row))
+        return None
 
 
 def get_patient_by_study_uid(study_uid: str):
     """Get patient information by study UID"""
-    conn = get_connection_database()
-    cur = conn.cursor()
-    
-    # Join studies and patients tables
-    # ✅ CRITICAL FIX: Use correct column names from schema (birth_date, sex, age)
-    cur.execute("""
-        SELECT 
-            p.patient_pk,
-            p.patient_id,
-            p.patient_name,
-            p.birth_date,
-            p.sex,
-            p.age,
-            p.patient_weight
-        FROM patients p
-        JOIN studies s ON p.patient_pk = s.patient_fk
-        WHERE s.study_uid = ?
-    """, (study_uid,))
-    
-    row = cur.fetchone()
-    
-    if row:
-        keys = [
-            'patient_pk',
-            'patient_id',
-            'patient_name',
-            'birth_date',
-            'patient_sex',
-            'patient_age',
-            'patient_weight'
-        ]
-        return dict(zip(keys, row))
-    
-    return None
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT 
+                p.patient_pk,
+                p.patient_id,
+                p.patient_name,
+                p.birth_date,
+                p.sex,
+                p.age,
+                p.patient_weight
+            FROM patients p
+            JOIN studies s ON p.patient_pk = s.patient_fk
+            WHERE s.study_uid = ?
+        """, (study_uid,))
+        
+        row = cur.fetchone()
+        if row:
+            keys = [
+                'patient_pk',
+                'patient_id',
+                'patient_name',
+                'birth_date',
+                'patient_sex',
+                'patient_age',
+                'patient_weight'
+            ]
+            return dict(zip(keys, row))
+        return None
 
 
 def get_series_by_study_pk(study_pk: int) -> list[dict]:
-    conn = get_connection_database()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM series WHERE study_fk = ? ORDER BY series_number", (study_pk,))
-    rows = cur.fetchall()
-
-    # Convert rows to dictionaries
-    columns = [description[0] for description in cur.description]
-    return [dict(zip(columns, row)) for row in rows]
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM series WHERE study_fk = ? ORDER BY series_number", (study_pk,))
+        rows = cur.fetchall()
+        columns = [description[0] for description in cur.description]
+        return [dict(zip(columns, row)) for row in rows]
 
 
 def get_study_info_with_series(study_uid: str) -> dict:
     """
     Get complete study information including patient data and series list.
     Used for download retry when state is not found.
-    
-    Returns:
-        dict with keys: study_uid, patient_id, patient_name, study_date, 
-        study_description, modality, series_count, images_count, series (list)
     """
     try:
-        conn = get_connection_database()
-        cur = conn.cursor()
-        
-        # Get study info with patient data
-        cur.execute("""
-            SELECT 
-                s.study_uid,
-                s.study_date,
-                s.study_time,
-                s.study_description,
-                s.modality,
-                s.body_part,
-                s.number_of_series,
-                s.number_of_instances,
-                p.patient_id,
-                p.patient_name,
-                p.birth_date,
-                p.sex,
-                p.age
-            FROM studies s
-            JOIN patients p ON s.patient_fk = p.patient_pk
-            WHERE s.study_uid = ?
-        """, (study_uid,))
-        
-        study_row = cur.fetchone()
-        if not study_row:
-            return None
-        
-        # Get series list
-        study_pk = find_study_pk_with_study_uid(study_uid)
-        cur.execute("""
-            SELECT 
-                series_uid,
-                series_number,
-                series_description,
-                modality,
-                image_count,
-                protocol_name,
-                body_part_examined,
-                manufacturer,
-                institution_name,
-                thumbnail_path
-            FROM series 
-            WHERE study_fk = ? 
-            ORDER BY series_number
-        """, (study_pk,))
-        
-        series_rows = cur.fetchall()
-        
-        # Build series list
-        series_list = []
-        for sr in series_rows:
-            series_list.append({
-                'series_uid': sr[0],
-                'series_number': sr[1],
-                'series_description': sr[2] or '',
-                'modality': sr[3] or '',
-                'image_count': sr[4] or 0,
-                'protocol_name': sr[5],
-                'body_part_examined': sr[6],
-                'manufacturer': sr[7],
-                'institution_name': sr[8],
-                'thumbnail_path': sr[9]
-            })
-        
-        # Build complete study info
-        return {
-            'study_uid': study_row[0],
-            'study_date': study_row[1] or '',
-            'study_time': study_row[2] or '',
-            'study_description': study_row[3] or '',
-            'modality': study_row[4] or '',
-            'body_part': study_row[5] or '',
-            'series_count': study_row[6] or 0,
-            'images_count': study_row[7] or 0,
-            'patient_id': study_row[8] or '',
-            'patient_name': study_row[9] or '',
-            'patient_birth_date': study_row[10] or '',
-            'patient_sex': study_row[11] or '',
-            'patient_age': study_row[12] or '',
-            'series': series_list
-        }
+        with database.get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            cur.execute("""
+                SELECT 
+                    s.study_uid, s.study_date, s.study_time, s.study_description,
+                    s.modality, s.body_part, s.number_of_series, s.number_of_instances,
+                    p.patient_id, p.patient_name, p.birth_date, p.sex, p.age
+                FROM studies s
+                JOIN patients p ON s.patient_fk = p.patient_pk
+                WHERE s.study_uid = ?
+            """, (study_uid,))
+            
+            study_row = cur.fetchone()
+            if not study_row:
+                return None
+            
+            study_pk = find_study_pk_with_study_uid(study_uid)
+            cur.execute("""
+                SELECT series_uid, series_number, series_description, modality,
+                       image_count, protocol_name, body_part_examined, manufacturer,
+                       institution_name, thumbnail_path
+                FROM series WHERE study_fk = ? ORDER BY series_number
+            """, (study_pk,))
+            
+            series_list = [
+                {
+                    'series_uid': sr[0], 'series_number': sr[1],
+                    'series_description': sr[2] or '', 'modality': sr[3] or '',
+                    'image_count': sr[4] or 0, 'protocol_name': sr[5],
+                    'body_part_examined': sr[6], 'manufacturer': sr[7],
+                    'institution_name': sr[8], 'thumbnail_path': sr[9]
+                }
+                for sr in cur.fetchall()
+            ]
+            
+            return {
+                'study_uid': study_row[0], 'study_date': study_row[1] or '',
+                'study_time': study_row[2] or '', 'study_description': study_row[3] or '',
+                'modality': study_row[4] or '', 'body_part': study_row[5] or '',
+                'series_count': study_row[6] or 0, 'images_count': study_row[7] or 0,
+                'patient_id': study_row[8] or '', 'patient_name': study_row[9] or '',
+                'patient_birth_date': study_row[10] or '', 'patient_sex': study_row[11] or '',
+                'patient_age': study_row[12] or '', 'series': series_list
+            }
         
     except Exception as e:
         print(f"❌ Error getting study info with series: {e}")
@@ -340,177 +211,140 @@ def get_study_info_with_series(study_uid: str) -> dict:
 def get_series_by_study_and_number(study_uid: str, series_number: int) -> dict:
     """Get series information by study UID and series number"""
     try:
-        conn = get_connection_database()
-        cur = conn.cursor()
-
-        # First get the study_pk
-        study_pk = find_study_pk_with_study_uid(study_uid)
-        if not study_pk:
+        with database.get_db_connection() as conn:
+            cur = conn.cursor()
+            study_pk = find_study_pk_with_study_uid(study_uid)
+            if not study_pk:
+                return {}
+            cur.execute("SELECT * FROM series WHERE study_fk = ? AND series_number = ?", (study_pk, series_number))
+            row = cur.fetchone()
+            if row:
+                columns = [d[0] for d in cur.description]
+                return dict(zip(columns, row))
             return {}
-
-        # Then get the series
-        cur.execute("SELECT * FROM series WHERE study_fk = ? AND series_number = ?", (study_pk, series_number))
-        row = cur.fetchone()
-
-        if row:
-            # Convert row to dictionary
-            columns = [description[0] for description in cur.description]
-            return dict(zip(columns, row))
-        return {}
-
     except Exception as e:
         print(f"Error getting series by study and number: {str(e)}")
         return {}
 
 
 def get_series_by_series_pk(series_pk):
-    conn = get_connection_database()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM series WHERE series_pk = ?", (series_pk,))
-    row = cur.fetchone()
-
-    keys = [
-        'series_pk',
-        'series_uid',
-        'series_name',
-        'study_fk',
-        'series_number',
-        'series_thk',
-        'series_description',
-        'orientation',
-        'modality',
-        'image_count',
-        'protocol_name',
-        'body_part_examined',
-        'manufacturer',
-        'institution_name',
-        'main_thumbnail',
-        'thumbnail_path',
-        'series_path',
-    ]
-    if row:
-        dic = dict(zip(keys, row))
-        # del dic['patient_fk']
-        return dic
-
-    return
+    try:
+        with database.get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM series WHERE series_pk = ?", (series_pk,))
+            row = cur.fetchone()
+            if row:
+                columns = [d[0] for d in cur.description]
+                return dict(zip(columns, row))
+            return None
+    except Exception:
+        return None
 
 
 def get_instances_by_series_pk(series_pk: int, group_id: int) -> list[dict]:
-    conn = get_connection_database()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        SELECT
-            instance_pk, sop_uid, series_fk, instance_path, instance_number,
-            rows, columns, window_width, window_center, is_rgb, group_id,
-            image_position_patient, image_orientation_patient, pixel_spacing, direction,
-            slice_thickness, spacing_between_slices, rescale_slope, rescale_intercept,
-            bits_allocated, pixel_representation
-        FROM instances
-        WHERE series_fk = ? AND group_id = ?
-        ORDER BY instance_number
-        """,
-        (series_pk, group_id),
-    )
-    rows = cur.fetchall()
-
-    keys = [
-        'instance_pk',
-        'sop_uid',
-        'series_fk',
-        'instance_path',
-        'instance_number',
-        'rows',
-        'columns',
-        'window_width',
-        'window_center',
-        'is_rgb',
-        'group_id',
-        'image_position_patient',
-        'image_orientation_patient',
-        'pixel_spacing',
-        'direction',
-        'slice_thickness',
-        'spacing_between_slices',
-        'rescale_slope',
-        'rescale_intercept',
-        'bits_allocated',
-        'pixel_representation'
-    ]
-
-    # print('rows:', rows)
-    # idx = 0
-    # type_series = rows[0][-1]  # flag is_rgb for first instance
-    # for i in range(1, len(rows)):
-    #     if rows[i][-1] != type_series:  # is not same color channel
-    #         idx = i
-    #         break
-
-    if rows:
-        # return [dict(zip(keys, row)) for row in rows]
-        result = []
-        for row in rows:
-            d = dict(zip(keys, row))
-            # Deserialize JSON fields (changed from ast.literal_eval to json.loads)
-            for field in ('image_position_patient', 'image_orientation_patient', 'pixel_spacing', 'direction'):
-                if d[field] is not None and isinstance(d[field], str):
-                    try:
-                        import json
-                        d[field] = json.loads(d[field])  # JSON string to list
-                    except (json.JSONDecodeError, ValueError):
-                        # Fallback to ast.literal_eval for backward compatibility
+    import json as _json
+    try:
+        with database.get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                    instance_pk, sop_uid, series_fk, instance_path, instance_number,
+                    rows, columns, window_width, window_center, is_rgb, group_id,
+                    image_position_patient, image_orientation_patient, pixel_spacing, direction,
+                    slice_thickness, spacing_between_slices, rescale_slope, rescale_intercept,
+                    bits_allocated, pixel_representation
+                FROM instances
+                WHERE series_fk = ? AND group_id = ?
+                ORDER BY instance_number
+                """,
+                (series_pk, group_id),
+            )
+            rows = cur.fetchall()
+            if not rows:
+                return []
+            columns = [d[0] for d in cur.description]
+            result = []
+            for row in rows:
+                d = dict(zip(columns, row))
+                for field in ('image_position_patient', 'image_orientation_patient', 'pixel_spacing', 'direction'):
+                    val = d.get(field)
+                    if val is not None and isinstance(val, str):
                         try:
-                            d[field] = ast.literal_eval(d[field])
-                        except:
-                            d[field] = None
-            result.append(d)
-        return result
-    return
+                            d[field] = _json.loads(val)
+                        except (ValueError, _json.JSONDecodeError):
+                            try:
+                                d[field] = ast.literal_eval(val)
+                            except Exception:
+                                d[field] = None
+                result.append(d)
+            return result
+    except Exception:
+        return []
 
 
 def update_series_thumbnail_path(series_pk: int, thumbnail_path: str) -> bool:
-    conn = get_connection_database()
-    cur = conn.cursor()
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE series
+            SET thumbnail_path = ?
+            WHERE series_pk = ?
+        """, (thumbnail_path, series_pk))
+        conn.commit()
+        return cur.rowcount > 0
 
-    cur.execute("""
-        UPDATE series
-        SET thumbnail_path = ?
-        WHERE series_pk = ?
-    """, (thumbnail_path, series_pk))
-    conn.commit()
-    return cur.rowcount > 0
+
+def update_series_image_count_by_uid(study_uid: str, series_number: str, image_count: int) -> bool:
+    """Set image_count for a series identified by study UID + series number.
+
+    Unlike ``update_series_missing_fields`` this always overwrites existing
+    values (including 0).  Used when a reliable count arrives from the gRPC
+    thumbnail response so the DB stays accurate across restarts.
+    """
+    if not study_uid or not series_number or image_count is None:
+        return False
+    try:
+        study_pk = find_study_pk_with_study_uid(study_uid)
+        if not study_pk:
+            return False
+        with database.get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE series SET image_count = ? WHERE study_fk = ? AND series_number = ?",
+                (int(image_count), study_pk, str(series_number)),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+    except Exception:
+        return False
 
 
 def get_series_thumbnail_path(series_pk: int):
-    conn = get_connection_database()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT thumbnail_path
-        FROM series
-        WHERE series_pk = ?
-    """, (series_pk,))
-    row = cur.fetchone()
-    return row[0] if row else None
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT thumbnail_path
+            FROM series
+            WHERE series_pk = ?
+        """, (series_pk,))
+        row = cur.fetchone()
+        return row[0] if row else None
 
 
 def get_count_instances_in_study(study_uid: str) -> int:
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM series AS s
-        JOIN instances AS i ON i.series_fk = s.series_pk
-        WHERE s.study_fk = (
-            SELECT study_pk FROM studies WHERE study_uid = ?
-        )
-    """, (study_uid,))
-    row = cur.fetchone()
-    conn.close()
-    return row[0] if row else 0
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM series AS s
+            JOIN instances AS i ON i.series_fk = s.series_pk
+            WHERE s.study_fk = (
+                SELECT study_pk FROM studies WHERE study_uid = ?
+            )
+        """, (study_uid,))
+        row = cur.fetchone()
+        return row[0] if row else 0
 
 
 def update_study_counts_by_uid(
@@ -536,11 +370,11 @@ def update_study_counts_by_uid(
 
     params.append(study_uid)
 
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute(f"UPDATE studies SET {', '.join(sets)} WHERE study_uid = ?", params)
-    conn.commit()
-    return cur.rowcount
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE studies SET {', '.join(sets)} WHERE study_uid = ?", params)
+        conn.commit()
+        return cur.rowcount
 
 
 ###############################################################################################
@@ -591,11 +425,11 @@ def update_patient_missing_fields(patient_pk: int, *,
     set_sql, params = _build_update_if_missing_clause(fields)
     if not set_sql:
         return 0
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute(f"UPDATE patients SET {set_sql} WHERE patient_pk = ?", (*params, patient_pk))
-    conn.commit()
-    return cur.rowcount
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE patients SET {set_sql} WHERE patient_pk = ?", (*params, patient_pk))
+        conn.commit()
+        return cur.rowcount
 
 
 def update_study_missing_fields(study_pk: int, *,
@@ -624,21 +458,21 @@ def update_study_missing_fields(study_pk: int, *,
     set_sql, params = _build_update_if_missing_clause(fields)
     if not set_sql:
         return 0
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute(f"UPDATE studies SET {set_sql} WHERE study_pk = ?", (*params, study_pk))
-    conn.commit()
-    return cur.rowcount
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE studies SET {set_sql} WHERE study_pk = ?", (*params, study_pk))
+        conn.commit()
+        return cur.rowcount
 
 
 def force_update_study_path(study_pk: int, study_path: str) -> int:
     """Unconditionally overwrite study_path (even if not NULL)."""
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("UPDATE studies SET study_path = ? WHERE study_pk = ?",
-                (study_path, study_pk))
-    conn.commit()
-    return cur.rowcount
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE studies SET study_path = ? WHERE study_pk = ?",
+                    (study_path, study_pk))
+        conn.commit()
+        return cur.rowcount
 
 
 def update_series_missing_fields(series_pk: int, *,
@@ -678,11 +512,11 @@ def update_series_missing_fields(series_pk: int, *,
     set_sql, params = _build_update_if_missing_clause(fields)
     if not set_sql:
         return 0
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute(f"UPDATE series SET {set_sql} WHERE series_pk = ?", (*params, series_pk))
-    conn.commit()
-    return cur.rowcount
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE series SET {set_sql} WHERE series_pk = ?", (*params, series_pk))
+        conn.commit()
+        return cur.rowcount
 
 
 def update_instance_missing_fields(instance_pk: int, *,
@@ -717,11 +551,11 @@ def update_instance_missing_fields(instance_pk: int, *,
     set_sql, params = _build_update_if_missing_clause(fields)
     if not set_sql:
         return 0
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute(f"UPDATE instances SET {set_sql} WHERE instance_pk = ?", (*params, instance_pk))
-    conn.commit()
-    return cur.rowcount
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE instances SET {set_sql} WHERE instance_pk = ?", (*params, instance_pk))
+        conn.commit()
+        return cur.rowcount
 
 
 # =============================
@@ -827,49 +661,49 @@ def append_attachments_uploaded(study_uid: str, value: str, sep: str = ",") -> b
         # اگر مسیر نامعتبر بود، همان value را استفاده کن
         value_normalized = value
 
-    conn = get_connection_database()
-    cur = conn.cursor()
-    
-    # ✅ بررسی که آیا این مسیر قبلاً ذخیره شده یا نه
-    cur.execute(
-        "SELECT attachments_uploaded FROM studies WHERE study_uid = ?",
-        (study_uid,)
-    )
-    row = cur.fetchone()
-    existing_value = row[0] if row and row[0] else ""
-    
-    # اگر قبلاً ذخیره شده، نباید دوباره اضافه شود
-    if existing_value:
-        existing_paths = existing_value.split(sep)
-        # نرمال‌سازی مسیرهای موجود
-        existing_normalized = set()
-        for p in existing_paths:
-            if p.strip():
-                try:
-                    existing_normalized.add(str(Path(p).resolve()))
-                except Exception:
-                    existing_normalized.add(p)
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
         
-        # اگر مسیر قبلاً ذخیره شده، نیازی به آپدیت نیست
-        if value_normalized in existing_normalized:
-            return False
+        # ✅ بررسی که آیا این مسیر قبلاً ذخیره شده یا نه
+        cur.execute(
+            "SELECT attachments_uploaded FROM studies WHERE study_uid = ?",
+            (study_uid,)
+        )
+        row = cur.fetchone()
+        existing_value = row[0] if row and row[0] else ""
+        
+        # اگر قبلاً ذخیره شده، نباید دوباره اضافه شود
+        if existing_value:
+            existing_paths = existing_value.split(sep)
+            # نرمال‌سازی مسیرهای موجود
+            existing_normalized = set()
+            for p in existing_paths:
+                if p.strip():
+                    try:
+                        existing_normalized.add(str(Path(p).resolve()))
+                    except Exception:
+                        existing_normalized.add(p)
+            
+            # اگر مسیر قبلاً ذخیره شده، نیازی به آپدیت نیست
+            if value_normalized in existing_normalized:
+                return False
 
-    # اگر قبلا مقداری داشته باشد، با sep بچسبان؛ در غیر اینصورت همان value
-    cur.execute(
-        f"""
-        UPDATE studies
-        SET attachments_uploaded = 
-            CASE 
-                WHEN attachments_uploaded IS NULL OR attachments_uploaded='' 
-                    THEN ?
-                ELSE attachments_uploaded || ?
-            END
-        WHERE study_uid = ?
-        """,
-        (value_normalized, f"{sep}{value_normalized}", study_uid)
-    )
-    conn.commit()
-    return cur.rowcount > 0
+        # اگر قبلا مقداری داشته باشد، با sep بچسبان؛ در غیر اینصورت همان value
+        cur.execute(
+            f"""
+            UPDATE studies
+            SET attachments_uploaded = 
+                CASE 
+                    WHEN attachments_uploaded IS NULL OR attachments_uploaded='' 
+                        THEN ?
+                    ELSE attachments_uploaded || ?
+                END
+            WHERE study_uid = ?
+            """,
+            (value_normalized, f"{sep}{value_normalized}", study_uid)
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def get_attachments_uploaded(study_uid: str) -> str | None:
@@ -878,14 +712,14 @@ def get_attachments_uploaded(study_uid: str) -> str | None:
     """
     if not study_uid:
         return None
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT attachments_uploaded FROM studies WHERE study_uid = ?",
-        (study_uid,)
-    )
-    row = cur.fetchone()
-    return row[0] if row else None
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT attachments_uploaded FROM studies WHERE study_uid = ?",
+            (study_uid,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
 
 
 def get_series_path_with_study_pk_and_series_number(study_fk: int, series_number: int) -> str | None:
@@ -893,19 +727,18 @@ def get_series_path_with_study_pk_and_series_number(study_fk: int, series_number
     از جدول series، با داشتن study_fk و series_number، مسیر سری (series_path) را برمی‌گرداند.
     اگر پیدا نشد، None برمی‌گرداند.
     """
-    conn = get_connection_database()
-    cur = conn.cursor()
-    # در بعضی DBها series_number ممکن است TEXT باشد؛ برای اطمینان cast می‌کنیم
-    cur.execute("""
-        SELECT series_path
-        FROM series
-        WHERE study_fk = ?
-          AND CAST(series_number AS INTEGER) = ?
-        ORDER BY series_pk
-        LIMIT 1
-    """, (study_fk, series_number))
-    row = cur.fetchone()
-    return row[0] if row and row[0] else None
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT series_path
+            FROM series
+            WHERE study_fk = ?
+              AND CAST(series_number AS INTEGER) = ?
+            ORDER BY series_pk
+            LIMIT 1
+        """, (study_fk, series_number))
+        row = cur.fetchone()
+        return row[0] if row and row[0] else None
 
 
 # ============================================================================
@@ -920,20 +753,20 @@ def ensure_filming_columns() -> None:
       - has_filming: INTEGER (0/1)
       - filming_folder_path: TEXT
     """
-    conn = get_connection_database()
-    cur = conn.cursor()
-    try:
-        cur.execute("PRAGMA table_info(studies)")
-        columns = [info[1] for info in cur.fetchall()]
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute("PRAGMA table_info(studies)")
+            columns = [info[1] for info in cur.fetchall()]
 
-        if 'has_filming' not in columns:
-            cur.execute("ALTER TABLE studies ADD COLUMN has_filming INTEGER DEFAULT 0")
-        if 'filming_folder_path' not in columns:
-            cur.execute("ALTER TABLE studies ADD COLUMN filming_folder_path TEXT DEFAULT NULL")
+            if 'has_filming' not in columns:
+                cur.execute("ALTER TABLE studies ADD COLUMN has_filming INTEGER DEFAULT 0")
+            if 'filming_folder_path' not in columns:
+                cur.execute("ALTER TABLE studies ADD COLUMN filming_folder_path TEXT DEFAULT NULL")
 
-        conn.commit()
-    except Exception as e:
-        print(f"⚠️ [DB] Error ensuring filming columns: {e}")
+            conn.commit()
+        except Exception as e:
+            print(f"⚠️ [DB] Error ensuring filming columns: {e}")
 
 
 def set_filming_folder_for_study(study_uid: str, folder_path: str) -> bool:
@@ -943,24 +776,24 @@ def set_filming_folder_for_study(study_uid: str, folder_path: str) -> bool:
     if not study_uid or not folder_path:
         return False
 
-    conn = get_connection_database()
-    cur = conn.cursor()
-    try:
-        ensure_filming_columns()
-        cur.execute(
-            """
-            UPDATE studies
-            SET has_filming = 1,
-                filming_folder_path = ?
-            WHERE study_uid = ?
-            """,
-            (folder_path, study_uid),
-        )
-        conn.commit()
-        return cur.rowcount > 0
-    except Exception as e:
-        print(f"⚠️ [DB] Error setting filming folder: {e}")
-        return False
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        try:
+            ensure_filming_columns()
+            cur.execute(
+                """
+                UPDATE studies
+                SET has_filming = 1,
+                    filming_folder_path = ?
+                WHERE study_uid = ?
+                """,
+                (folder_path, study_uid),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        except Exception as e:
+            print(f"⚠️ [DB] Error setting filming folder: {e}")
+            return False
 
 
 def get_filming_folder_for_study(study_uid: str) -> str | None:
@@ -970,22 +803,22 @@ def get_filming_folder_for_study(study_uid: str) -> str | None:
     if not study_uid:
         return None
 
-    conn = get_connection_database()
-    cur = conn.cursor()
-    try:
-        ensure_filming_columns()
-        cur.execute(
-            """
-            SELECT filming_folder_path
-            FROM studies
-            WHERE study_uid = ? AND COALESCE(has_filming, 0) = 1
-            """,
-            (study_uid,),
-        )
-        row = cur.fetchone()
-        return row[0] if row and row[0] else None
-    except Exception:
-        return None
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        try:
+            ensure_filming_columns()
+            cur.execute(
+                """
+                SELECT filming_folder_path
+                FROM studies
+                WHERE study_uid = ? AND COALESCE(has_filming, 0) = 1
+                """,
+                (study_uid,),
+            )
+            row = cur.fetchone()
+            return row[0] if row and row[0] else None
+        except Exception:
+            return None
 
 
 # ============================================================================
@@ -997,19 +830,17 @@ def ensure_visit_status_column():
     اطمینان از وجود ستون visit_status در جدول studies.
     اگر وجود نداشته باشد، اضافه می‌شود.
     """
-    conn = get_connection_database()
-    cur = conn.cursor()
-    try:
-        # Check if column exists
-        cur.execute("PRAGMA table_info(studies)")
-        columns = [info[1] for info in cur.fetchall()]
-        
-        if 'visit_status' not in columns:
-            cur.execute("ALTER TABLE studies ADD COLUMN visit_status TEXT DEFAULT NULL")
-            conn.commit()
-            print("✅ [DB] Added visit_status column to studies table")
-    except Exception as e:
-        print(f"⚠️ [DB] Error ensuring visit_status column: {e}")
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute("PRAGMA table_info(studies)")
+            columns = [info[1] for info in cur.fetchall()]
+            
+            if 'visit_status' not in columns:
+                cur.execute("ALTER TABLE studies ADD COLUMN visit_status TEXT DEFAULT NULL")
+                conn.commit()
+        except Exception as e:
+            print(f"⚠️ [DB] Error ensuring visit_status column: {e}")
 
 
 def get_visit_status(study_uid: str) -> str | None:
@@ -1024,18 +855,17 @@ def get_visit_status(study_uid: str) -> str | None:
     if not study_uid:
         return None
     
-    conn = get_connection_database()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "SELECT visit_status FROM studies WHERE study_uid = ?",
-            (study_uid,)
-        )
-        row = cur.fetchone()
-        return row[0] if row else None
-    except Exception:
-        # Column might not exist yet
-        return None
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT visit_status FROM studies WHERE study_uid = ?",
+                (study_uid,)
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
 
 
 def set_visit_status(study_uid: str, status: str) -> bool:
@@ -1052,21 +882,20 @@ def set_visit_status(study_uid: str, status: str) -> bool:
     if not study_uid or status not in ('opened', 'synced', None):
         return False
     
-    conn = get_connection_database()
-    cur = conn.cursor()
-    try:
-        # Ensure column exists
-        ensure_visit_status_column()
-        
-        cur.execute(
-            "UPDATE studies SET visit_status = ? WHERE study_uid = ?",
-            (status, study_uid)
-        )
-        conn.commit()
-        return cur.rowcount > 0
-    except Exception as e:
-        print(f"⚠️ [DB] Error setting visit_status: {e}")
-        return False
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        try:
+            ensure_visit_status_column()
+            
+            cur.execute(
+                "UPDATE studies SET visit_status = ? WHERE study_uid = ?",
+                (status, study_uid)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        except Exception as e:
+            print(f"⚠️ [DB] Error setting visit_status: {e}")
+            return False
 
 def get_series_by_study_uid(study_uid: str) -> list[dict]:
     """
@@ -1075,15 +904,15 @@ def get_series_by_study_uid(study_uid: str) -> list[dict]:
         List of series dictionaries with all relevant fields
     """
     try:
-        conn = get_connection_database()
-        cur = conn.cursor()
-        
-        # First get the study_pk using study_uid
-        cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
-        study_row = cur.fetchone()
-        
-        if not study_row:
-            return []
+        with database.get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # First get the study_pk using study_uid
+            cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
+            study_row = cur.fetchone()
+            
+            if not study_row:
+                return []
             
         study_pk = study_row[0]
         

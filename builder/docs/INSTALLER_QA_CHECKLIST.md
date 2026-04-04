@@ -57,10 +57,17 @@ After first launch:
 5. Graphics behavior:
    - if GPU-capable: app can run in GPU-preferred mode
    - if not GPU-capable: app falls back to software OpenGL mode safely
+   - runtime profile captures the final graphics probe outcome on first launch
 6. Basic smoke flow works:
    - open a patient/study
    - load images
    - close app cleanly
+
+Also verify inside `installation_profile.json`:
+
+- selected optional modules are marked `selected_for_install`
+- non-selected optional modules are marked `not_installed`
+- `graphics.user_declared_gpu` matches the setup checkbox choice
 
 ## 3) Uninstall checks (PC A)
 

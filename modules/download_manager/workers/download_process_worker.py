@@ -321,6 +321,10 @@ class DownloadProcessWorker(QThread):
             "action_session_id": self.action_session_id,
             "study_uid": self.task.study_uid,
         }
+        logger.info(
+            "[ProcessWorker] subprocess config: grpc=%s:%s  socket=%s:%s",
+            cfg['grpc_host'], cfg['grpc_port'], cfg['socket_host'], cfg['socket_port'],
+        )
 
         # Pass series-level priority hint so the subprocess can reorder
         # the series download to start with the viewed (CRITICAL) series.

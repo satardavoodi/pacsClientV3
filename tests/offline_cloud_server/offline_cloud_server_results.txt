@@ -1,0 +1,64 @@
+
+====================================================================================================
+  OFFLINE CLOUD SERVER - TEST SUITE
+  Date: 2026-04-03 17:33:57
+  Python: 3.13.5
+  Platform: win32
+====================================================================================================
+
+====================================================================================================
+  OFFLINE CLOUD SERVER - KPI REPORT
+====================================================================================================
+
+  +- Scenario: OC1: Export local study to Offline Cloud package
+  |Metric                                                       Value Unit       Status
+  |------------------------------------------------------------------------------------
+  | export_studies_to_offline_cloud latency                   494.800 ms        PASS
+  | exported study count                                            1           PASS
+  | export errors                                                   0           PASS
+  | package validation status                                   ready           PASS
+  | patient count                                                   1           PASS
+  | study count                                                     1           PASS
+  | folder count                                                    7           PASS
+  | origin server captured                                 AI PACS Razi           PASS
+  | hub user captured                                        hub.user           PASS
+  | voice file exported                                          True           PASS
+  | report attachment exported                                   True           PASS
+  | dicom file exported                                          True           PASS
+  | report rows exported                                            1           PASS
+  | admission rows exported                                         1           PASS
+  +------------------------------------------------------------------------------------
+
+  +- Scenario: OC2: Offline package query, files, and permissions
+  |Metric                                                       Value Unit       Status
+  |------------------------------------------------------------------------------------
+  | query latency                                              46.511 ms        PASS
+  | study query count                                               1           PASS
+  | study info available                                         True           PASS
+  | series count in study info                                      2           PASS
+  | manifest load order includes manifest first            manifest.json           PASS
+  | package read access                                          True           PASS
+  | package write access                                         True           PASS
+  | offline side can see exported voice file                     True           PASS
+  +------------------------------------------------------------------------------------
+
+  +- Scenario: OC3: Round-trip import from Offline Cloud package
+  |Metric                                                       Value Unit       Status
+  |------------------------------------------------------------------------------------
+  | sync_offline_cloud_study_to_local latency                 371.308 ms        PASS
+  | import result ok                                             True           PASS
+  | voice file restored locally                                  True           PASS
+  | report attachment restored locally                           True           PASS
+  | dicom restored locally                                       True           PASS
+  | report status restored                                  finalized           PASS
+  | visit status restored                                  downloaded           PASS
+  | report rows restored                                            1           PASS
+  | admission rows restored                                         1           PASS
+  | timeline event count                                            2           PASS
+  | last importer captured                                 offline.reader           PASS
+  +------------------------------------------------------------------------------------
+
+====================================================================================================
+  TOTALS:  PASS 33   FAIL 0   info 0
+====================================================================================================
+

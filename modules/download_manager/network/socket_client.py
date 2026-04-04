@@ -24,6 +24,7 @@ from pathlib import Path
 
 from ..core.models import SeriesInfo, SeriesDownloadResult
 from ..core.exceptions import NetworkError
+from ..core import constants as _dm_consts   # module ref for monkey-patchable defaults
 from ..core.constants import (
     DEFAULT_SOCKET_HOST,
     DEFAULT_SOCKET_PORT,
@@ -101,8 +102,9 @@ class SocketDicomClient:
             health_monitor: Connection health monitor (uses global if not provided)
             cancel_check: Callable that returns True if download should be cancelled (R25 preemption)
         """
-        self.host = host or DEFAULT_SOCKET_HOST
-        self.port = port or DEFAULT_SOCKET_PORT
+        # Read host/port from module object so subprocess constant-patching is visible
+        self.host = host or _dm_consts.DEFAULT_SOCKET_HOST
+        self.port = port or _dm_consts.DEFAULT_SOCKET_PORT
         self.timeout = timeout or CONNECTION_TIMEOUT
         
         # Use provided token_manager or fall back to global singleton
@@ -163,7 +165,7 @@ class SocketDicomClient:
                 return True
             
             except Exception as e:
-                logger.error(f"❌ Connection failed: {e}")
+                logger.error(f"❌ Connection failed to {self.host}:{self.port}: {e}")
                 self.connected = False
                 if self.socket:
                     try:
@@ -435,6 +437,12 @@ class SocketDicomClient:
 
             # If more attempts remain, wait with exponential backoff then reconnect
             if attempt < max_attempts - 1:
+                # R25: never retry if download was cancelled (fast preemption path)
+                if self.is_cancelled():
+                    logger.info(
+                        f"⏸️ send_request({endpoint}) cancelled — skipping retry"
+                    )
+                    return None
                 jitter = random.uniform(0, RECONNECT_JITTER_MAX)
                 delay = min(
                     REQUEST_RETRY_BASE_DELAY * (RECONNECT_BACKOFF_FACTOR ** attempt),
@@ -579,6 +587,18 @@ class SocketDicomClient:
                         f"{params.get('batch_index', 'na')}"
                     )
                     while len(response_data) < response_length:
+                        # R25: fast preemption — check cancel before every chunk so a
+                        # 37-second batch can be interrupted within a single chunk recv
+                        # instead of waiting for the entire batch to complete.
+                        if self.is_cancelled():
+                            try:
+                                if self.socket:
+                                    self.socket.close()
+                            except Exception:
+                                pass
+                            self.socket = None
+                            self.connected = False
+                            raise NetworkError("Download cancelled during receive (preemption)")
                         chunk_size = min(SOCKET_CHUNK_SIZE, response_length - len(response_data))
                         chunk = self._safe_recv(chunk_size)
                         if not chunk:

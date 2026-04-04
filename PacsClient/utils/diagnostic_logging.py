@@ -59,9 +59,12 @@ def log_stage_timing(
     start_ms: float,
     result: str = "ok",
     level: int = logging.INFO,
+    min_ms: float = 0.0,
     **fields,
 ) -> float:
     elapsed_ms = max(0.0, now_ms() - start_ms)
+    if elapsed_ms < min_ms:
+        return elapsed_ms
     extra = {"component": component, "function": function, "stage": stage, "result": result}
     extra.update({k: v for k, v in fields.items() if v is not None})
     logger_.log(level, "stage-timing duration_ms=%.2f", elapsed_ms, extra=extra)

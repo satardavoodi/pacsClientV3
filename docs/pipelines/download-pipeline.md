@@ -1,10 +1,12 @@
 # Download Pipeline
 
-> **Version:** v2.2.7+ | **Updated:** 2026-03-26
+> **Version:** v2.3.0 | **Updated:** 2026-04-04
 
 ## Overview
 
 The download pipeline handles fetching DICOM studies from the PACS server to local storage. It runs in a **separate subprocess** to avoid GIL contention with the viewer.
+
+In `v2.3.0`, the download manager remains part of the core workstation bundle, so every installed PC receives the same download engine even when optional modules differ.
 
 ## Pipeline Stages
 
@@ -66,9 +68,23 @@ User Action (double-click study)
 | `DownloadExecutor` | `modules/download_manager/download/executor.py` | Orchestrate validation→fetch→download→complete |
 | `SeriesDownloader` | `modules/download_manager/download/series_downloader.py` | Per-series download logic |
 | `DownloadProcessWorker` | `modules/download_manager/download/worker.py` | Subprocess worker thread |
-| `SocketService` | `modules/network/socket_service.py` | PACS protocol communication |
-| `ResumableDicomSocketClient` | `modules/network/socket_client.py` | Resumable download support |
+| `SocketService` | `modules/network/socket_service.py` | PACS protocol communication (singleton facade) |
+| `PatientListSocketClient` | `modules/network/socket_client.py` | Patient list/report socket queries |
+| `ResumableDicomSocketClient` | `modules/download_manager/network/socket_client.py` | Resumable download with retry/health |
+| `DicomGrpcClient` | `modules/network/grpc_client.py` | gRPC thumbnail + DICOM streaming |
 | `DicomDownloader` | `modules/network/dicom_downloader.py` | gRPC DICOM download |
+| `ConnectionHealthMonitor` | `modules/download_manager/network/health_monitor.py` | R30-R34 adaptive health tracking |
+| `SocketConfig` | `modules/network/socket_config.py` | Server host/port/timeout config |
+| `SocketTokenManager` | `modules/network/socket_token_manager.py` | JWT token management (singleton) |
+
+## Install and Runtime Contract
+
+The download manager is always installed as a core module:
+
+- The Windows installer does not let users remove it, because study open, resumable fetch, and progressive viewing depend on it.
+- The install profile written during setup keeps the download manager enabled on the target PC.
+- Optional modules selected during setup are bootstrapped on first launch without changing the download manager contract.
+- Cross-PC installs therefore keep a consistent download path while still allowing per-PC optional module choices.
 
 ## Data Flow
 
@@ -171,17 +187,79 @@ start_priority_download_immediately()
   └─ STEP 5: Start worker
 ```
 
-## Progressive Viewer Loading (v2.2.7+)
+## Progressive Viewer Loading (v2.2.8.1)
 
 When a patient tab is opened, the viewer progressively loads images as series download:
 
 | Guard | Purpose |
 |-------|---------|
-| 250ms per-series throttle | Prevents CPU spike from rapid download progress signals |
+| 100ms per-series throttle | Prevents CPU spike from rapid download progress signals (was 250ms pre-v2.2.8.1) |
 | `_progressive_display_inflight` set | Prevents spawning duplicate concurrent load tasks for the same series |
+| `_progressive_display_done` set | Marks series that completed initial display — routes to grow path |
+| Done-guard recovery | Re-activates progressive mode if guard says done but no progressive viewer exists |
 | `finally` block cleanup | Ensures inflight guard is always cleared even on error |
 
+**v2.2.8.1 Changes:**
+- Progressive grow timer reduced: 500ms → 150ms
+- Progress debounce reduced: 250ms → 100ms
+- Done-guard ordering fixed: `done.add(sn)` now runs AFTER display+activation on main thread
+- Stale guard: show-then-refresh (display immediately, background reload at +150ms)
+- DM notify deferred: `QTimer.singleShot(0)` with 500ms cooldown per series
+- Loading spinner: shown on target viewer for empty series drag-drop
+
 Located in `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py`.
+
+## Series-Interrupt (v2.2.8.1)
+
+When user drag-drops a different series within the same study that's actively downloading:
+
+1. `request_critical_series()` detects `current_series_number != requested_series`
+2. Own worker is cancelled non-blocking (sets cancel flag, doesn't wait)
+3. State overridden to PENDING (not PAUSED) — so `_start_next_pending` picks it up
+4. `negotiate_priority_change()` defers `_start_next_pending` + schedules retry backup
+5. Result: ~batch RTT + 250ms to switch (was: wait for entire series to finish)
+
+Located in `modules/download_manager/coordinator/series_intent_coordinator.py`.
+
+## Critical Series Intent (FAST Viewer Drag/Drop) — 2026-04-01 Hardening
+
+### Why this matters
+
+In FAST mode, users may drag/drop any series while a study is already downloading in routine order. The pipeline must treat this as immediate clinical intent, not as a best-effort hint.
+
+### Required behavior
+
+1. Patient open from server enters **High** priority study flow.
+2. User drag/drop of an undownloaded series creates **Critical** series intent.
+3. Active lower-priority worker is preempted/cancelled non-blocking.
+4. Requested series is fetched first.
+5. After requested series is available, study returns to **High** and normal order continues.
+
+### Failure modes that were hardened
+
+- DM init crash due to `_tasks` initialization order before coordinator wiring.
+- Repeated same-series drag/drop treated as no-op despite incomplete files.
+- Same-study critical retry accepted in UI but not enforced as immediate preemption.
+- Preemption relying only on state flags (which can lag) instead of active worker truth.
+- Cancel responsiveness too slow during long in-flight socket responses.
+
+### Implementation rules now enforced
+
+- Coordinator-backed critical intent path in DM (`request_critical_series_download` + viewed-series intent).
+- Same-series drag/drop re-triggers download when on-disk data is still incomplete.
+- `_on_series_retry()` avoids false skip when requested series differs from active same-study series.
+- `_pause_all_active_downloads()` first cancels by active worker pool, then normalizes state to `PAUSED`.
+- Socket receive/retry loops check cancellation early to shorten preemption latency.
+
+### Operational note
+
+Priority orchestration is now designed as:
+
+- **Rules + state machine** for validation/transitions,
+- **Thin intent coordinator** for atomic viewer-to-DM decisions,
+- **Worker pool truth** for runtime preemption decisions.
+
+This avoids a heavyweight monolithic orchestrator while preserving deterministic behavior under repeated user actions.
 
 ## Error Handling
 
@@ -215,3 +293,58 @@ Located in `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_cont
 13. **Non-blocking retry (v2.2.7.4)**: `_on_series_retry()` and `_on_per_patient_retry()` offload file I/O and gRPC calls to background threads — the Qt event loop is never blocked by retry operations
 14. **Non-blocking worker preemption (v2.2.7.4)**: `_pause_all_active_downloads()` uses `cancel_all_non_blocking()` instead of `stop_all()` — avoids 5s/worker blocking on the main thread
 15. **Module independence (v2.2.7.4)**: Download manager operations cannot freeze the viewer, thumbnails, or other modules — all cross-thread marshaling uses `QTimer.singleShot(0, callback)`
+16. **sendall() for all socket writes (v2.2.8.0)**: `PatientListSocketClient.send_request()` uses `sendall()` instead of `send()` — prevents partial writes from corrupting framing on large payloads
+17. **Exact-length recv (v2.2.8.0)**: `_recv_exact(size)` accumulates partial reads until the exact byte count is received — prevents framing corruption on slow/congested networks
+18. **Response size validation (v2.2.8.0)**: 50 MB limit on response allocation — prevents unbounded memory growth from server bugs or corrupted length headers
+19. **Lazy connection pool (v2.2.8.0)**: `SocketConnectionPool` creates connections on demand instead of eagerly at init — validates `is_connected()` before returning pooled clients
+20. **gRPC auto-reconnect (v2.2.8.0)**: `DicomGrpcClient._ensure_stub()` reconnects if channel/stub is `None` — subsequent thumbnail calls succeed after transient failure
+21. **No hardcoded server IPs (v2.2.8.0)**: `constants.py` defaults to `localhost` with `AIPACS_SOCKET_HOST` env var override — production IPs come from config only
+
+## Network Architecture Reference
+
+For full details on wire protocol, authentication, connection pools, TCP tuning,
+and the complete file map, see `docs/architecture/network-architecture.md`.
+
+## Test Coverage
+
+### Download Manager Tests (`tests/download_manager/test_download_manager.py`)
+
+27 scenarios, 129 assertions. Run: `python tests/download_manager/run_dm_test.py`
+
+| Scenario | What it tests |
+|----------|---------------|
+| S1 | State machine transitions: PENDING→DOWNLOADING→COMPLETED, FAILED→PENDING, PAUSED→PENDING |
+| S2 | Priority preemption: HIGH pauses NORMAL, CRITICAL pauses all, resume order HIGH→NORMAL |
+| S3 | Disconnect/reconnect resume: socket failure → state preserved → resume path |
+| S4 | R20 skip & retry file cleanup: series skip logic, per-patient retry file deletion |
+| S5 | R19b verified batch-skip: sequential file verification, gap detection |
+| S6 | State store thread safety: 8 threads × 12 ops, no corruption |
+| S7 | Observer fan-out: state changes propagate to all registered observers |
+| S8 | Rule engine validation: R17a/R17b duplicate detection, resume detection |
+| S9 | Skipped-count accuracy: existing_files_set prevents double-counting |
+| S10 | Priority ordering: CRITICAL > HIGH > NORMAL sorting |
+| S11 | State reset on resume: progress counters cleared on re-download |
+| S12–S21 | Additional state machine, retry, and error handling edge cases |
+| S22 | Coordinator negotiate latency: priority change completes in <5ms |
+| S23 | Observer priority chain: state change → priority change → UI refresh in sequence |
+| S24 | Critical series roundtrip: request_critical_series → state=CRITICAL, viewed_series set |
+| S25 | Rapid toggle stress: 100 rapid NORMAL↔CRITICAL toggles, state remains consistent |
+| S26 | Auto-resume after critical done: peers resume when critical study completes |
+| S27 | Series-interrupt: same-study worker cancelled, state=PENDING, viewed_series updated |
+
+### Stress Tests (`tests/download_manager/test_dm_stress.py`)
+
+10 heavy-load scenarios, 31 pass / 1 expected fail. Run: `python tests/download_manager/test_dm_stress.py`
+
+| Scenario | What it tests | KPI |
+|----------|---------------|-----|
+| H1 | 50 concurrent patient downloads | State store handles 50 entries in <100ms |
+| H2 | 500 rapid series switches | Coordinator handles 500 priority changes in <5s |
+| H3 | 16-thread × 500 ops contention | P99 lock wait <5ms (expected fail: GIL contention) |
+| H4 | 10,000 progress updates with observer fan-out | No dropped signals |
+| H5 | 200 studies × 20 series memory pressure | Memory stays bounded |
+| H6 | Priority negotiation storm (all CRITICAL) | Coordinator resolves deterministically |
+| H7 | 100 create/promote/complete/resume cycles | No state corruption |
+| H8 | 10 studies × 10 series × 100 files I/O stress | All files created/verified |
+| H9 | 1000 get_next_download under full store | Rule engine throughput >1000/s |
+| H10 | Combined pipeline (priority + observer + coordinator + I/O) | End-to-end <10ms/op |

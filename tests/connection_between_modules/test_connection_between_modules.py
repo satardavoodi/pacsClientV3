@@ -59,6 +59,22 @@ DownloadStateStore = _state_store_mod.DownloadStateStore
 ValidationRules = _validation_rules_mod.ValidationRules
 DownloadRuleEngine = _rule_engine_mod.DownloadRuleEngine
 
+# Populate the stub module with exported symbols so that other tests running in the
+# same pytest session (e.g. smoke tests) can do `from modules.download_manager import X`
+# without hitting ImportError against the empty stub.
+_dm_stub = sys.modules["modules.download_manager"]
+_dm_stub.DownloadPriority = _enums_mod.DownloadPriority
+_dm_stub.DownloadStatus = _enums_mod.DownloadStatus
+_dm_stub.DownloadTask = _models_mod.DownloadTask
+_dm_stub.DownloadState = _models_mod.DownloadState
+_dm_stub.SeriesInfo = _models_mod.SeriesInfo
+_dm_stub.DownloadStateStore = _state_store_mod.DownloadStateStore
+_dm_stub.get_state_store = _state_store_mod.get_state_store
+_dm_stub.DownloadRuleEngine = _rule_engine_mod.DownloadRuleEngine
+class _StubDownloadExecutor:  # lightweight stand-in; smoke tests only need importability
+    pass
+_dm_stub.DownloadExecutor = _StubDownloadExecutor
+
 
 class KPICollector:
     def __init__(self):

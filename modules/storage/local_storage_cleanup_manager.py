@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 import ctypes
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,13 @@ from PacsClient.utils.config import (
     ZETA_BOOST_CACHE_DIR,
 )
 from PacsClient.utils.database import get_db_connection
+from modules.offline_cloud_server.service import (
+    get_all_offline_cloud_servers,
+    package_paths as offline_cloud_package_paths,
+    read_offline_cloud_manifest,
+    rebuild_offline_cloud_manifest,
+    record_offline_cloud_sync_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +128,19 @@ class LocalStorageCleanupManager:
 
     @staticmethod
     def get_folder_map() -> Dict[str, List[Path]]:
-        return {
+        folder_map = {
             "patients": [SOURCE_PATH],
             "education": [EDUCATION_STORAGE_PATH, EDUCATION_ASSETS_PATH],
             "cache": [THUMBNAIL_PATH, ZETA_BOOST_CACHE_DIR],
             "printing": [ATTACHMENT_PATH],
         }
+        for server in get_all_offline_cloud_servers():
+            name = str(server.get("name") or "").strip()
+            folder_path = str(server.get("folder_path") or "").strip()
+            if not name or not folder_path:
+                continue
+            folder_map[f"offline_cloud::{name}"] = [Path(folder_path).expanduser().resolve()]
+        return folder_map
 
     def cleanup_patients_folder(self) -> CleanupResult:
         files_deleted, folders_touched = self._clear_paths([SOURCE_PATH])
@@ -196,9 +211,106 @@ class LocalStorageCleanupManager:
             + self._calculate_directory_size(ZETA_BOOST_CACHE_DIR),
             "printing": self._calculate_printing_usage_bytes(),
         }
+        for server in get_all_offline_cloud_servers():
+            name = str(server.get("name") or "").strip()
+            folder_path = str(server.get("folder_path") or "").strip()
+            if not name or not folder_path:
+                continue
+            data[f"offline_cloud::{name}"] = self._calculate_directory_size(
+                Path(folder_path).expanduser().resolve()
+            )
         self._folder_usage_cache = dict(data)
         self._folder_usage_cache_ts = now
         return data
+
+    def cleanup_offline_cloud_folder(self, server_name: str) -> CleanupResult:
+        wanted = str(server_name or "").strip()
+        if not wanted:
+            raise ValueError("Offline Cloud server name is required.")
+
+        server = next(
+            (item for item in get_all_offline_cloud_servers() if str(item.get("name") or "").strip() == wanted),
+            None,
+        )
+        if not server:
+            raise ValueError(f"Offline Cloud server '{wanted}' was not found.")
+
+        paths = offline_cloud_package_paths(server.get("folder_path", ""))
+        previous_manifest = read_offline_cloud_manifest(paths["root"])
+
+        files_deleted = 0
+        folders_touched = 0
+
+        for folder_key in ("dicom", "attachments", "thumbnails"):
+            folder = paths[folder_key]
+            folder.mkdir(parents=True, exist_ok=True)
+            deleted_files, touched = self._clear_directory_contents(folder)
+            files_deleted += deleted_files
+            folders_touched += touched
+
+        patients_root = paths["patients_root"]
+        patients_root.mkdir(parents=True, exist_ok=True)
+        for child in list(patients_root.iterdir()):
+            if child in {paths["dicom"], paths["attachments"], paths["thumbnails"]}:
+                continue
+            try:
+                if child.is_file() or child.is_symlink():
+                    child.unlink(missing_ok=True)
+                    files_deleted += 1
+                elif child.is_dir():
+                    child_files = sum(1 for p in child.rglob("*") if p.is_file())
+                    shutil.rmtree(child, ignore_errors=False)
+                    files_deleted += child_files
+                    folders_touched += 1
+            except Exception as exc:
+                logger.warning(f"Failed deleting offline cloud payload {child}: {exc}")
+
+        if paths["database"].exists():
+            try:
+                paths["database"].unlink()
+                files_deleted += 1
+            except Exception as exc:
+                logger.warning(f"Failed deleting offline cloud database {paths['database']}: {exc}")
+
+        for folder_key in ("root", "patients_root", "dicom", "attachments", "thumbnails"):
+            paths[folder_key].mkdir(parents=True, exist_ok=True)
+
+        with sqlite3.connect(paths["database"]):
+            pass
+
+        rebuild_offline_cloud_manifest(
+            paths["root"],
+            actor=None,
+            source_server=previous_manifest.get("origin_server") or server,
+            changed_studies=None,
+            operation="rebuild_manifest",
+        )
+        record_offline_cloud_sync_event(
+            paths["root"],
+            event_type="cleanup_offline_cloud",
+            actor=None,
+            server=server,
+            study_uids=[],
+            details={
+                "cleared_from_settings": True,
+                "server_name": wanted,
+                "files_deleted": files_deleted,
+                "folders_touched": folders_touched,
+            },
+        )
+
+        self.invalidate_caches()
+        return CleanupResult(
+            success=True,
+            category=f"offline_cloud::{wanted}",
+            folders_touched=folders_touched,
+            files_deleted=files_deleted,
+            db_rows_affected=0,
+            message=(
+                f"Offline Cloud package '{wanted}' was cleaned. "
+                "Payload files were removed and manifest.json was refreshed to an empty package state."
+            ),
+        )
 
     def _calculate_directory_size(self, root: Path) -> int:
         if not root.exists() or not root.is_dir():

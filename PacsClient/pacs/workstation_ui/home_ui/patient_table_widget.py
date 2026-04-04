@@ -565,9 +565,12 @@ class PatientTableWidget(QWidget):
     checkboxStateChanged = Signal(int, bool)  # row index, checked state
     downloadRequested = Signal(list)  # list of patient data dictionaries for download
     zetaNprRequested = Signal(list)  # list of patient data dictionaries for Zeta Download download
+    offlineCloudExportRequested = Signal(list)  # downloaded studies to export into offline cloud package
+    offlineCloudSyncRequested = Signal(list)  # selected studies for offline cloud import/export
     cdBurnRequested = Signal(list)  # list of patient data dictionaries for CD burning
     printRequested = Signal()  # request to open printing module with current selected studies
     statusUpdateResult = Signal(str, str, object)  # study_uid, new_status, response
+    localStudyStateChanged = Signal(str)  # study_uid changed locally and may need offline cloud autosync
 
     def __init__(self, parent=None):
         super(PatientTableWidget, self).__init__(parent)
@@ -1107,6 +1110,16 @@ class PatientTableWidget(QWidget):
         self.print_btn.setCursor(Qt.PointingHandCursor)
         self.print_btn.setEnabled(False)
 
+        self.offline_export_btn = QPushButton(qta.icon('fa5s.cloud-upload-alt', color='white'), "Offline Sync")
+        self.offline_export_btn.setToolTip(
+            "Manual hub sync with an Offline Cloud Server folder "
+            "(for USB / Dropbox / Google Drive style exchange)"
+        )
+        self.offline_export_btn.clicked.connect(self._on_offline_cloud_sync_clicked)
+        self.offline_export_btn.setFixedHeight(40)
+        self.offline_export_btn.setCursor(Qt.PointingHandCursor)
+        self.offline_export_btn.setEnabled(False)
+
         # Unified button style for all utility buttons
         utility_button_style = """
             QPushButton {
@@ -1177,6 +1190,7 @@ class PatientTableWidget(QWidget):
         header_layout.addWidget(self.refresh_btn)
         header_layout.addWidget(self.settings_btn)
         header_layout.addWidget(self.delete_btn)
+        header_layout.addWidget(self.offline_export_btn)
         header_layout.addWidget(self.print_btn)
         header_layout.addWidget(self.cd_burn_btn)
         header_layout.addWidget(self.download_btn)
@@ -1210,6 +1224,10 @@ class PatientTableWidget(QWidget):
                 'delete': {
                     'accent': theme.get('danger', '#dc2626'),
                     'button': self.delete_btn,
+                },
+                'offline_export': {
+                    'accent': theme.get('info', '#6366f1'),
+                    'button': self.offline_export_btn,
                 },
                 'cd_burn': {
                     'accent': theme.get('info', '#6366f1'),
@@ -1584,7 +1602,31 @@ class PatientTableWidget(QWidget):
             print(f"Error in Zeta Download: {str(e)}")
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Error in Zeta Download: {str(e)}")
-    
+
+    def _on_offline_cloud_sync_clicked(self):
+        """Emit selected studies for offline cloud import/export actions."""
+        try:
+            selected_data = self.get_selected_patient_data_list()
+            if not selected_data:
+                QMessageBox.warning(
+                    self,
+                    "No Studies Selected",
+                    "Select at least one study for Offline Cloud sync.",
+                )
+                return
+            if not self._is_offline_cloud_selection_mode() and not self._get_downloaded_selected_studies():
+                QMessageBox.warning(
+                    self,
+                    "Download Required",
+                    "Download the selected study or studies first. After the local download is complete, "
+                    "Offline Sync will let you choose which Offline Cloud Server folder to export into.",
+                )
+                return
+            self.offlineCloudSyncRequested.emit(selected_data)
+        except Exception as e:
+            print(f"Error in Offline Cloud sync: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error preparing Offline Cloud sync: {str(e)}")
+
     def _on_cd_burn_clicked(self):
         """Handle CD burn button click"""
         try:
@@ -1660,6 +1702,26 @@ class PatientTableWidget(QWidget):
     def _get_downloaded_selected_count(self):
         """Get count of selected studies that are downloaded locally"""
         return len(self._get_downloaded_selected_studies())
+
+    def _is_offline_cloud_selection_mode(self) -> bool:
+        selected_rows = self.get_selected_rows()
+        if not selected_rows:
+            return False
+
+        has_offline_cloud = False
+        has_other_sources = False
+        for row in selected_rows:
+            patient_data = self.get_patient_data_by_row(row) or {}
+            server_type = str(
+                patient_data.get("server_type")
+                or patient_data.get("source")
+                or ""
+            ).strip()
+            if server_type == "offline_cloud":
+                has_offline_cloud = True
+            else:
+                has_other_sources = True
+        return has_offline_cloud and not has_other_sources
     
     def _get_downloaded_selected_studies(self):
         """Get list of selected studies that are downloaded locally"""
@@ -1675,6 +1737,10 @@ class PatientTableWidget(QWidget):
                     downloaded_studies.append(patient_data)
         
         return downloaded_studies
+
+    def get_downloaded_selected_patient_data_list(self):
+        """Public wrapper for downloaded selected studies."""
+        return self._get_downloaded_selected_studies()
     
     def _is_study_downloaded(self, study_uid: str) -> bool:
         """Check if a study is downloaded locally"""
@@ -1843,12 +1909,34 @@ class PatientTableWidget(QWidget):
         
         # Update delete button - only enable if at least one downloaded study is selected
         downloaded_count = self._get_downloaded_selected_count()
+        selected_count = self.get_checked_count()
         if downloaded_count > 0:
             self.delete_btn.setEnabled(True)
             # متن فقط هنگام hover نشان داده می‌شود
         else:
             self.delete_btn.setEnabled(False)
             # متن پاک می‌شود
+        offline_mode = self._is_offline_cloud_selection_mode()
+        self.offline_export_btn.setEnabled(
+            selected_count > 0 and (offline_mode or downloaded_count > 0)
+        )
+        if selected_count <= 0:
+            self.offline_export_btn.setToolTip(
+                "Select studies to use Offline Cloud sync."
+            )
+        elif offline_mode:
+            self.offline_export_btn.setToolTip(
+                "Sync the selected Offline Cloud studies with the package folder."
+            )
+        elif downloaded_count > 0:
+            self.offline_export_btn.setToolTip(
+                "Export the selected downloaded studies into one of your Offline Cloud Server folders, "
+                "or import Offline Cloud updates back through the manual hub flow."
+            )
+        else:
+            self.offline_export_btn.setToolTip(
+                "Download the selected studies first, then use Offline Sync to export them into an Offline Cloud Server folder."
+            )
 
     def update_study_download_status(self, study_uid: str, status: str = None, is_downloaded: bool = None):
         """
@@ -2020,6 +2108,8 @@ class PatientTableWidget(QWidget):
                         patient_name_item.setData(Qt.UserRole + 1, status)
                         self.results_table.viewport().update()
                     break
+            if status == 'synced':
+                self.localStudyStateChanged.emit(study_uid)
         except Exception:
             pass
 
@@ -2437,6 +2527,7 @@ class PatientTableWidget(QWidget):
             else:
                 logger.info(f"✅ Status updated successfully: {final_status}")
                 QMessageBox.information(self, "Success", f"Report status changed to '{status_label}'.")
+            self.localStudyStateChanged.emit(study_uid)
         else:
             logger.error(f"❌ Failed to update report status for {study_uid}")
             QMessageBox.warning(self, "Error", "Failed to change report status.\nServer did not respond.")

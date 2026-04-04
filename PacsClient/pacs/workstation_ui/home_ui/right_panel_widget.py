@@ -4,7 +4,7 @@ Right Panel Widget for displaying series information and thumbnails
 
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QRect
 from PySide6.QtGui import QPixmap, QPainter, QPen
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QGridLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QGridLayout, QSizePolicy
 from PacsClient.utils.scroll_style import get_scroll_area_style
 from PacsClient.utils.theme_manager import get_theme_manager
 try:
@@ -83,6 +83,9 @@ class LoadingSpinner(QWidget):
 
 class RightPanelWidget(QWidget):
     """Right panel widget for displaying series information and thumbnails"""
+
+    THUMBNAIL_BOX_HEIGHT = 190
+    DEFAULT_MAX_WIDGET_HEIGHT = 16777215
     
     # Signals
     thumbnailClicked = Signal(str)  # series_number
@@ -102,6 +105,7 @@ class RightPanelWidget(QWidget):
         self.thumbnails_to_display = []
         self._display_generation = 0
         self._active_progressive_generation = 0
+        self._reserved_thumbnail_count = 0
         
         self.setup_ui()
         
@@ -111,6 +115,7 @@ class RightPanelWidget(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(6)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         
         # Enhanced header
         header_height = 54
@@ -139,6 +144,7 @@ class RightPanelWidget(QWidget):
         self.count_label = QLabel("0 series")
         self.count_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         self.count_label.setStyleSheet(self._get_header_count_stylesheet())
+        self.count_label.setMinimumWidth(92)
         
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
@@ -153,9 +159,12 @@ class RightPanelWidget(QWidget):
         # never changes as thumbnails are added — prevents layout-feedback shaking.
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.scroll_area.setStyleSheet(self._get_scrollarea_stylesheet())
+        self.scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.scroll_area.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         
         # Content container
         self.content_widget = QWidget()
+        self.content_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.content_widget.setStyleSheet("""
             QWidget {
                 background-color: transparent;
@@ -274,12 +283,44 @@ class RightPanelWidget(QWidget):
             except Exception:
                 pass
         self.thumbnail_timer = None
+
+    @staticmethod
+    def calculate_reserved_content_height(item_count: int, *, item_height: int, spacing: int,
+                                          top_margin: int, bottom_margin: int) -> int:
+        """Compute a stable one-column content height for the scroll area."""
+        count = max(0, int(item_count or 0))
+        if count == 0:
+            return max(0, top_margin + bottom_margin)
+        return top_margin + bottom_margin + (count * item_height) + ((count - 1) * max(0, spacing))
+
+    def _set_reserved_content_height(self, item_count: int):
+        """Pre-reserve final content height so the scroll range stays stable while thumbnails stream in."""
+        self._reserved_thumbnail_count = max(0, int(item_count or 0))
+        top_margin, _, _, bottom_margin = self.content_grid.getContentsMargins()
+        reserved_height = self.calculate_reserved_content_height(
+            self._reserved_thumbnail_count,
+            item_height=self.THUMBNAIL_BOX_HEIGHT,
+            spacing=self.content_grid.verticalSpacing(),
+            top_margin=top_margin,
+            bottom_margin=bottom_margin,
+        )
+        self.content_widget.setMinimumHeight(reserved_height)
+        self.content_widget.setMaximumHeight(reserved_height)
+        self.content_widget.updateGeometry()
+
+    def _reset_reserved_content_height(self):
+        """Release any previously reserved content height."""
+        self._reserved_thumbnail_count = 0
+        self.content_widget.setMinimumHeight(0)
+        self.content_widget.setMaximumHeight(self.DEFAULT_MAX_WIDGET_HEIGHT)
+        self.content_widget.updateGeometry()
     
     def clear_content(self):
         """Clear all content from the panel"""
         self._cancel_thumbnail_timer()
         self.current_thumbnail_index = 0
         self.thumbnails_to_display = []
+        self._reset_reserved_content_height()
 
         while self.content_grid.count():
             item = self.content_grid.takeAt(0)
@@ -312,6 +353,7 @@ class RightPanelWidget(QWidget):
             generation = self._display_generation
             self._cancel_thumbnail_timer()
             self.clear_content()
+            self._set_reserved_content_height(len(thumbnails))
 
             self.count_label.setText(f"Loading {len(thumbnails)} series...")
             if progressive:
@@ -360,10 +402,12 @@ class RightPanelWidget(QWidget):
             self.current_thumbnail_index = 0
             self.thumbnails_to_display = thumbnails
             self._active_progressive_generation = generation if generation is not None else self._display_generation
+            self._set_reserved_content_height(len(thumbnails))
 
             # Pre-create the manager once — avoids re-importing on every timer tick.
             from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
-            self._progressive_manager = ThumbnailManager(lambda x: None)
+            self._progressive_manager = ThumbnailManager(
+                lambda sn: self.thumbnailClicked.emit(str(sn)))
 
             self.count_label.setText(f"0/{len(thumbnails)} series")
 
@@ -383,10 +427,12 @@ class RightPanelWidget(QWidget):
 
             self.hide_loading()
             total = len(thumbnails)
+            self._set_reserved_content_height(total)
             self.count_label.setText(f"0/{total} series")
 
             from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
-            temp_manager = ThumbnailManager(lambda x: None)
+            temp_manager = ThumbnailManager(
+                lambda sn: self.thumbnailClicked.emit(str(sn)))
 
             # Suppress repaints while building all widgets — prevents per-addWidget flicker.
             self.content_widget.setUpdatesEnabled(False)
@@ -460,8 +506,15 @@ class RightPanelWidget(QWidget):
                             show_progress=False
                         )
 
+                        # Save scroll position before adding widget to prevent jumping
+                        vbar = self.scroll_area.verticalScrollBar()
+                        scroll_pos = vbar.value()
+
                         self.content_grid.addWidget(combined_widget, self.current_thumbnail_index, 0, 1, 1)
-                        # No forced updateGeometry/update — Qt schedules the repaint itself.
+
+                        # Restore scroll position (layout recalc shifts it)
+                        if scroll_pos > 0:
+                            vbar.setValue(scroll_pos)
 
                 except Exception as e:
                     print(f"Error displaying thumbnail {self.current_thumbnail_index}: {str(e)}")

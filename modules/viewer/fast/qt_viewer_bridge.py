@@ -543,6 +543,35 @@ class QtViewerBridge:
         self._build_mock_vtk_data()
         return True
 
+    def grow(self) -> int:
+        """Grow the pipeline with any new files downloaded to the series directory.
+
+        Called from ``_grow_progressive_fast`` during progressive download when
+        the active backend is PYDICOM_QT (no lazy loader).  Rescans the series
+        directory via ``Lightweight2DPipeline.refresh_file_list()`` and updates
+        ``_slice_count`` so that ``set_slice()`` no longer clamps at the initial
+        batch size, which was causing the viewer to appear "stuck".
+
+        Returns the new (possibly unchanged) slice count.
+        """
+        new_count = self._slice_count
+        try:
+            if hasattr(self.pipeline, "refresh_file_list"):
+                new_count = self.pipeline.refresh_file_list()
+        except Exception as exc:
+            logger.debug("qt-viewer-bridge grow: refresh_file_list failed: %s", exc)
+            return self._slice_count
+
+        if new_count > self._slice_count:
+            self._slice_count = new_count
+            # Update mock vtk_image_data slice dimension so callers that
+            # inspect GetDimensions() see the correct z-count.
+            if self.vtk_image_data is not None:
+                dims = self.vtk_image_data.GetDimensions()
+                self.vtk_image_data._dims = (dims[0], dims[1], new_count)
+            logger.debug("qt-viewer-bridge grow: %d slices", new_count)
+        return self._slice_count
+
     # ── Curved MPR stubs ───────────────────────────────────────────────
 
     def enable_curved_mpr_mode(self, enable: bool) -> None:
@@ -559,10 +588,17 @@ class QtViewerBridge:
     def _update_annotations(self, slice_index: int, ww: float, wc: float) -> None:
         """Update corner annotations from metadata."""
         zoom_pct = self.qt_viewer.get_zoom() * 100.0
+        # Use the widget-level count which respects progressive expected total
+        total = self._slice_count
+        if self.vtk_widget is not None:
+            try:
+                total = int(self.vtk_widget.get_count_of_slices()) or total
+            except Exception:
+                pass
         self.qt_viewer.annotations.update_from_metadata(
             metadata=self.metadata,
             slice_index=slice_index,
-            total_slices=self._slice_count,
+            total_slices=total,
             window_width=ww,
             window_center=wc,
             zoom_pct=zoom_pct,

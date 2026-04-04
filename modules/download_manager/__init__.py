@@ -11,6 +11,7 @@ from .core.models import DownloadTask, DownloadState, SeriesInfo
 from .state.state_store import DownloadStateStore, get_state_store
 from .rules.rule_engine import DownloadRuleEngine
 from .download.executor import DownloadExecutor
+from .coordinator import SeriesIntentCoordinator
 
 __all__ = [
     'DownloadPriority',
@@ -22,4 +23,5 @@ __all__ = [
     'get_state_store',
     'DownloadRuleEngine',
     'DownloadExecutor',
+    'SeriesIntentCoordinator',
 ]

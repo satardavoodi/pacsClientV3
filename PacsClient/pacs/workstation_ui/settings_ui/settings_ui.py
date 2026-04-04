@@ -5,7 +5,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QTabWidget, QWidget, QLabel, QVBoxLayout
 from .server_settings import ServerSettingsWidget
 from .tools_settings_ui import ToolsSettingsWidget
-from .servers_config import ServersConfigWidget
 from .viewerconfigsetting import ModalityGridConfigWidget
 from .filter_config import FilterConfigWidget
 from .installation_module_settings import InstallationModuleSettingsWidget
@@ -21,7 +20,6 @@ class SettingsTabWidget(QTabWidget):
     def setup_ui(self):
         self.server_settings = ServerSettingsWidget()
         self.tools_settings = ToolsSettingsWidget()
-        self.servers_config = ServersConfigWidget()
         self.viewer_config=ModalityGridConfigWidget()
         self.image_filter=FilterConfigWidget()
         self.lightviewer_settings = None
@@ -29,11 +27,8 @@ class SettingsTabWidget(QTabWidget):
         self.installation_module_settings = InstallationModuleSettingsWidget()
         self.tab2 = QWidget()
 
-        self.servers_config.saved.connect(self.on_ai_servers_saved)
-
         self.addTab(self.server_settings, 'Server Settings')
         self.addTab(self.tools_settings, 'Tools Settings')
-        self.addTab(self.servers_config, "Server Config")
         #self.addTab(self.tab2, 'Tab 2')
         self.addTab(self.viewer_config,"Viewer Configuration")
         self.addTab(self.image_filter,"Image Filter")

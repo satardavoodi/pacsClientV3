@@ -1,8 +1,587 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.2.7
-**Release Date:** 2026-03-31
+**Current Stable Version:** v2.3.0
+**Release Date:** 2026-04-04
 **Branch:** main  
+
+---
+
+## v2.3.0 — Stable Release / Installer, Modules, and Cross-PC Delivery (2026-04-04)
+
+### Summary
+
+This release publishes **v2.3.0** as the current stable AIPacs version and finishes the release packaging work for deployment on other PCs.
+
+### Highlights
+
+- Installer flow clarified so `Custom` setup explicitly lets the operator choose optional modules for the target workstation.
+- Graphics setup clarified so the installer recommends GPU usage when Windows detects a likely supported GPU, while the application still validates the decision again on first launch.
+- First-launch module bootstrap remains tied to `installation_profile.json`, so setup-selected packages are copied during install and activated automatically when the app starts.
+- Build metadata and release notes were aligned to describe the real staging output, installer artifacts, and cross-PC validation path.
+- Canonical documentation for the modular structure, home UI services, network layer, and download pipeline was refreshed around the `2.3.0` stable release.
+
+### Installer and Deployment Notes
+
+- Core modules are always installed.
+- Optional modules are selected per PC during `Custom` setup.
+- The target machine can still add or change optional modules later from `Settings -> Installation Module`.
+- Systems without a usable GPU are expected to run through the software OpenGL fallback path.
+
+---
+
+## Unreleased — Viewer Metadata Sync + Defensive W/L Bounds (v2.2.8.7)
+
+### Summary
+
+Fixes the **white images from slice N onward** bug observed during progressive download.
+When a series was opened during download (e.g. 22 slices on disk) and new slices arrived
+via progressive grow (up to 135), the VTK viewer's `apply_default_window_level(n)` would
+crash with `IndexError` for any slice `n >= 22` because the viewer held a stale deep-copy
+of the metadata.  The exception was silently swallowed, leaving VTK's color mapper with
+the last-applied W/L — which clipped the different-anatomy slices to **white (255)** or
+rendered them with incorrect contrast.
+
+Also fixes the same IndexError crash paths in `set_window_level`, `update_corners_actors`,
+and `load_bottom_left_actors` with defensive bounds-checking and auto-fallback.
+
+### Root Cause
+
+**The stale metadata deep-copy problem:**
+
+```
+                     Creation time (22 slices on disk)
+                     ┌─────────────────────────────┐
+lst_thumbnails_data  │ metadata["instances"] = [22] │  ◄── SOURCE OF TRUTH
+                     └──────────────┬──────────────┘
+                                    │ copy.deepcopy()
+                     ┌──────────────▼──────────────┐
+ImageViewer2D        │ self.metadata["instances"]   │  ◄── STALE COPY (never updated)
+                     │ = [22] (frozen at creation)  │
+                     └─────────────────────────────┘
+
+                     After grow (135 slices on disk)
+                     ┌─────────────────────────────┐
+lst_thumbnails_data  │ metadata["instances"] = [135]│  ◄── Updated by _refresh_stored_metadata_instances
+                     └─────────────────────────────┘
+                     ┌──────────────────────────────┐
+ImageViewer2D        │ self.metadata["instances"]    │  ◄── STILL [22]!
+                     │ = [22] (never synced)         │
+                     └──────────────────────────────┘
+
+When user scrolls to slice 23:
+  apply_default_window_level(23)
+    → self.metadata['instances'][23]  ← IndexError! (only 22 entries)
+    → exception swallowed → VTK keeps last-applied W/L
+    → pixels clipped to white
+```
+
+The deep-copy happens in `create_new_vtk_widget()` at line 3553:
+```python
+metadata = copy.deepcopy(thumbnail_item['metadata'])
+```
+
+And in `_clone_metadata_for_switch()` (shallow clone, shares `instances` by reference —
+but the creator path uses `deepcopy`):
+```python
+cloned = dict(metadata)
+```
+
+The `_refresh_stored_metadata_instances()` method correctly mutates the *source* dict in
+`lst_thumbnails_data` (in-place: `metadata["instances"] = new_instances`), and updates
+the series cache.  But the live `ImageViewer2D.metadata` — which is a separate object
+from `copy.deepcopy()` — was never patched.
+
+### Metadata Object Graph
+
+```
+┌──────────────────────────────────────────────────────┐
+│                   lst_thumbnails_data[i]              │
+│  ┌─────────────────────────────────────────────┐     │
+│  │ "metadata" ──►  { "series": {...},          │     │
+│  │                   "instances": [0..N-1] }   │ ◄── _refresh_stored_metadata_instances
+│  └─────────────────────────────────────────────┘     │    mutates THIS dict
+│  ┌─────────────────────────────────────────────┐     │
+│  │ "vtk_image_data" ──► vtkImageData           │     │
+│  └─────────────────────────────────────────────┘     │
+└──────────────────────────────────────────────────────┘
+                       │
+                       │ _series_cache[sn] = (vtk_data, metadata, idx)
+                       │   ↑ tuple points to SAME metadata object
+                       │
+                       ▼
+         ┌───────────────────────────────────────┐
+         │ copy.deepcopy(metadata)               │ ◄── create_new_vtk_widget
+         │   → SEPARATE dict with SEPARATE list  │
+         │   → passed to ImageViewer2D.__init__  │
+         └───────────────────────┬───────────────┘
+                                 │
+                                 ▼
+         ┌───────────────────────────────────────┐
+         │ ImageViewer2D.metadata                │
+         │   .instances = [0..21]  (frozen)      │ ◄── NEVER UPDATED until v2.2.8.7
+         │                                       │
+         │ Used by:                              │
+         │  • apply_default_window_level(idx)    │
+         │  • set_window_level (is_rgb check)    │
+         │  • update_corners_actors (rows/cols)  │
+         │  • load_bottom_left_actors (rows/cols) │
+         └───────────────────────────────────────┘
+```
+
+### Fixes
+
+**Fix 1 — `_sync_viewer_metadata_instances()` (NEW METHOD):**
+
+New method in `ViewerController` that patches `ImageViewer2D.metadata['instances']`
+on all live viewers showing a given series.  Copies the reference from the freshly-updated
+`lst_thumbnails_data` source.  Also syncs `series.image_count`.
+
+Called from **5 grow paths** (every path that calls `_refresh_stored_metadata_instances`):
+
+| Call site | When it fires |
+|-----------|---------------|
+| `_grow_progressive_fast` | Every 150ms progressive grow tick |
+| `on_series_download_fully_complete` | Layer 2b: final grow before exiting progressive mode |
+| `change_series_on_viewer` (in-place grow) | Same-series re-drop with disk growth |
+| `_completion_verify_series` | Layer 3: 500ms deferred verification (up to 3 retries) |
+| `_completion_sweep_tick` | Layer 4: 3s periodic safety-net sweep |
+
+**Fix 2 — Defensive bounds-checking in `ImageViewer2D` (viewer_2d.py):**
+
+Four methods in `ImageViewer2D` directly indexed `self.metadata['instances'][slice_index]`
+without bounds checking.  If `slice_index >= len(instances)` (stale metadata), they threw
+`IndexError` that was silently caught by outer exception handlers.
+
+| Method | Before (crash) | After (fallback) |
+|--------|----------------|-------------------|
+| `apply_default_window_level(idx)` | `instances[idx]` → IndexError | Bounds-check; fall back to `GetScalarRange()` auto-calc |
+| `set_window_level(ww, wc)` | `instances[GetSlice()]['is_rgb']` → IndexError | Bounds-check; default `is_rgb=False` |
+| `update_corners_actors()` | `instances[current_slice]['rows']` → IndexError | Bounds-check; fall back to VTK `GetDimensions()` |
+| `load_bottom_left_actors()` | `instances[current_slice]['rows']` → IndexError | Bounds-check; fall back to VTK `GetDimensions()` |
+
+The `GetScalarRange()` fallback computes W/L from the actual VTK volume data, which
+produces correct windowing for any slice — slightly less optimal than per-slice DICOM W/L
+but visually correct (no white/black images).
+
+### Signal Flow With Fix
+
+```
+DM seriesProgressUpdated(sn, 50, 135)
+  │
+  ▼
+on_series_images_progress  [100ms debounce]
+  │
+  ▼
+_grow_progressive_fast(sn, 50, viewers)
+  │
+  ├─ loader.grow()                          → VTK volume: 50 slices
+  ├─ update_available_slice_count(50)
+  ├─ slider.setMaximum(49)
+  ├─ _refresh_stored_metadata_instances()   → lst_thumbnails_data: 50 instances ✅
+  ├─ _sync_viewer_metadata_instances()      → ImageViewer2D.metadata: 50 instances ✅ (NEW)
+  │
+  ▼
+User scrolls to slice 35:
+  apply_default_window_level(35)
+    → instances[35] exists (50 entries)     → per-slice W/L applied correctly ✅
+```
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `patient_widget_viewer_controller.py` | New `_sync_viewer_metadata_instances()` method; called from 5 grow paths |
+| `modules/viewer/advanced/viewer_2d.py` | Bounds-checking in `apply_default_window_level`, `set_window_level`, `update_corners_actors`, `load_bottom_left_actors` |
+| `builder/.../viewer_2d.py` | Same bounds-checking fixes (builder copy) |
+| `.github/copilot-instructions.md` | Two new critical rules documenting the sync requirement and bounds-check rule |
+
+### Tests
+
+All existing tests pass (no new tests needed — the fix is structural):
+- 18 viewer pipeline tests ✅
+- 24 smoke import tests ✅
+- 27 DM scenarios (129 assertions) ✅
+- 1 module connection test ✅
+
+---
+
+## Unreleased — FAST Viewer Count Accuracy + Stale Exhaustion Fix (v2.2.8.4)
+
+### Summary
+
+Fixes five production-observed bugs in the FAST Viewer progressive download path:
+1. **Series count/scroll mismatch** — viewer stuck at 30 of 40 downloaded images (Series 201 symptom)
+2. **Thumbnail image_count not updating** — thumbnail shows server-reported 20 instead of actual 40
+3. **Safety-net infinite loop** — stale-grow exhaustion caused `_flush_progressive_grow` to loop forever
+4. **In-place grow violated snapshot rule** — `backend.refresh_file_list()` was called before `loader.grow()`
+5. **Per-grow-tick `iterdir` lag** — expensive disk scan ran every 150ms even when disk count unchanged
+
+Three new tests (L24–L26) added; total viewer test count: **57 tests** across 3 suites.
+
+### Root Causes
+
+**Bug 1 (Series 201 — 20/40/30 mismatch):**
+When DM initially reported `total=30`, progressive mode exited at 30. When 10 more files arrived and DM sent a completion signal `(40, 40)`, the done-guard code hit a bare `return` for the `downloaded >= total` case — `_grow_progressive_fast` was never called. Viewer stuck at 30 (slider=29), but the `_total_expected_slices` counter showed 40 briefly during re-entry, causing the observed count mismatch.
+
+**Bug 2 (stale-grow exhaustion → infinite loop):**
+When `_stale_retry_count` reached 3 (max), the stale guard silently did nothing. The safety-net `_flush_progressive_grow` saw `pending_downloaded(40) > last_grow_count(30)` and restarted the timer — indefinitely. Each cycle: grow returns 30, stale guard does nothing, safety-net restarts. CPU was consumed but images never appeared.
+
+**Bug 3 (thumbnail shows 20 not 40):**
+`_refresh_stored_metadata_instances` updated `metadata["instances"]` but not `metadata["series"]["image_count"]`. The thumbnail widget reads `image_count` (server metadata), so it permanently showed the original server-reported count.
+
+**Bug 4 (in-place grow snapshot violation):**
+`change_series_on_viewer`'s same-series in-place grow called `backend.refresh_file_list()` BEFORE `loader.grow()`. This pre-refreshed the backend's file-path index, poisoning the old-path snapshot that `grow()` uses for interleaved DICOM instance-number remap.
+
+**Bug 5 (per-grow-tick lag):**
+`_refresh_stored_metadata_instances` ran `Path.iterdir()` (full disk listing) every 150ms grow tick even when no new files had landed. With 200+ DICOM files, this added 2–10ms of main-thread I/O per tick.
+
+### Fixes
+
+**Fix 1 — Done-guard completion one-shot (`on_series_images_progress`):**
+Added an `else:` branch to the `if sn in done:` + `if downloaded < total:` done-guard block. When `downloaded >= total`, scans for non-progressive viewers showing `sn` with fewer slices than `downloaded`, re-enters progressive mode on the viewer, and fires `_grow_progressive_fast` directly. This reliably recovers any viewer that was stuck at a lower count.
+
+**Fix 2 — Stale exhaustion handling + retry max 5 (`_grow_progressive_fast`):**
+Increased max stale retries from 3 → 5 (750ms window). Added an `else:` branch on exhaustion:
+- Logs `STALE-EXHAUSTED` error
+- Sets `info["pending_downloaded"] = new_count` (stops safety-net from looping)
+- Pops series from `_progressive_series`
+- Updates slider to `(new_count - 1)` so no empty positions are accessible
+- Calls `exit_progressive_mode()` on each viewer
+- Returns early — done-guard completion one-shot (Fix 1) recovers the remaining images when DM sends the final signal
+
+**Fix 3 — `_refresh_stored_metadata_instances` updates `series["image_count"]`:**
+After `metadata["instances"] = new_instances`, also sets:
+```python
+_series_meta = metadata.get("series")
+if isinstance(_series_meta, dict):
+    _series_meta["image_count"] = len(new_instances)
+```
+
+**Fix 4 — In-place grow calls `loader.grow()` first (not `backend.refresh_file_list()`):**
+Restructured same-series in-place grow: `if _has_grow: new_count = loader.grow() elif _has_refresh: new_count = backend.refresh_file_list()`. Preserves snapshot integrity for interleaved DICOM.
+
+**Fix 5 — TTL pre-check in `_refresh_stored_metadata_instances`:**
+Added `_count_series_files_on_disk(sn)` (1s TTL cache) guard before the expensive `Path.iterdir()` scan. If the TTL-cached disk count ≤ existing instance count, returns immediately without running `iterdir`. Reduces per-150ms-tick I/O to max once per second.
+
+**Bonus — Convert hot-path `print()` to `logger.debug()`:**
+Converted all `print()` calls in `_refresh_stored_metadata_instances`, `change_series_on_viewer` same-series path, cache-invalidate, and switch-dedup to structured logger calls. Eliminates console noise and minor I/O overhead.
+
+### New Tests
+
+`tests/viewer/test_fast_viewer_live_sync.py` extended from 23 to **26 tests**:
+
+| Test | Scenario |
+|------|----------|
+| **L24** `test_done_guard_completion_triggers_one_shot_grow` | Done-guard fires `_grow_progressive_fast` when `downloaded>=total` and non-progressive viewer shows fewer slices than downloaded (Series 201 fix) |
+| **L25** `test_stale_grow_exhaustion_exits_progressive_mode` | Max retries (5) exhausted: `exit_progressive_mode` called, series popped, slider updated, timer NOT restarted, STALE-EXHAUSTED logged |
+| **L26** `test_refresh_metadata_updates_series_image_count` | `_refresh_stored_metadata_instances` updates `series["image_count"]` from old server count (20) to actual disk count (40) |
+
+### Files Changed
+
+- `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py`
+  - `on_series_images_progress`: done-guard completion one-shot (Fix 1)
+  - `_grow_progressive_fast`: stale exhaustion branch, max retries 3→5 (Fix 2)
+  - `_refresh_stored_metadata_instances`: `series["image_count"]` update (Fix 3), TTL pre-check (Fix 5), print→logger
+  - `change_series_on_viewer` in-place grow: `loader.grow()` first (Fix 4), print→logger
+  - Cache-invalidate, switch-fail, switch-dedup: print→logger
+- `tests/viewer/test_fast_viewer_live_sync.py` — L24, L25, L26 added (57 total tests)
+
+---
+
+## Unreleased — FAST Viewer Stale-Grow Robustness Fix + Test Suite (v2.2.8.3)
+
+### Summary
+
+Fixes the "last N images stuck" stability bug in the FAST Viewer progressive display path.
+When `loader.grow()` returned a stale count (OS file-system flush delay), the single-shot
+`_progressive_grow_timer` would fire once, record the stale count as `last_grow_count`, and
+never fire again — permanently leaving the viewer showing fewer images than were available on
+disk. Three new tests (L21–L23) cover all stale-grow scenarios.
+
+### Root Cause
+
+`_progressive_grow_timer` uses `setSingleShot(True)` (150ms interval). When the DM writes
+the final batch of files and emits the completion signal, the timer fires, calls
+`loader.grow()`, and records whatever the OS reports at that instant. If the OS file-system
+buffer has not yet committed some files, the count is stale (e.g. 20 instead of 25). Since
+the timer is single-shot and no more DM signals arrive (download is complete), the viewer
+is stuck at 20/25 images with no recovery mechanism.
+
+The **one-shot path** (non-progressive viewer receiving a completion signal) has the same
+problem: `_grow_progressive_fast` is called directly without any timer, so there is no retry
+regardless of the stale count.
+
+### Bugs Fixed
+
+#### Bug: Single-shot timer exhaustion on stale `loader.grow()` count
+
+**Files changed:** `patient_widget_viewer_controller.py`
+
+**Fix 1 — Stale-grow guard in `_grow_progressive_fast`:**
+After each grow, if `new_count < pending_count` and fewer than 3 retries have been attempted:
+- Increment `info["_stale_retry_count"]`
+- Set `info["pending_downloaded"] = pending_count` so `_flush_progressive_grow` knows to retry
+- Call `enter_progressive_mode()` on any non-progressive viewer so `_find_progressive_viewers`
+  can locate it on the retry tick (critical for the one-shot path)
+- Restart the single-shot timer — it exhausted after the first fire and needs to restart
+
+**Fix 2 — Safety-net restart in `_flush_progressive_grow`:**
+After the per-series for-loop, if any tracked series still has
+`pending_downloaded > last_grow_count`, restart the timer. This is an independent second
+protection layer; both layers must remain.
+
+#### Bug: One-shot path had no retry mechanism
+
+When a non-progressive viewer received the completion signal, `_grow_progressive_fast` was
+called directly without a timer. On stale grow: no timer was started, viewer stayed at stale
+count. Fix 1 above also resolves this: `enter_progressive_mode()` is called on the viewer
+(enabling the retry to find it via `_find_progressive_viewers`), and the timer is started.
+
+### New Tests
+
+`tests/viewer/test_fast_viewer_live_sync.py` extended from 20 to **23 tests**:
+
+| Test | Scenario |
+|------|----------|
+| **L21** `test_stale_grow_restarts_timer_and_tracks_retry` | Stale grow: `_stale_retry_count` incremented, `pending_downloaded` preserved, timer started, `exit_progressive_mode` NOT called, STALE warning logged |
+| **L22** `test_one_shot_stale_grow_sets_up_retry_via_progressive_mode` | One-shot path: non-progressive viewer calls `enter_progressive_mode` so retry can find it; timer started |
+| **L23** `test_flush_progressive_grow_safety_net_restarts_timer` | `_flush_progressive_grow` safety-net: restarts timer when `pending > last_grow_count` after all grows |
+
+### Documentation Updated
+
+- `docs/pipelines/viewer-pipeline.md` — added "Stale OS-Flush Guard (v2.2.8.3)" section
+- `.github/copilot-instructions.md` — added three new critical rules
+
+---
+
+## Unreleased — Drag-Drop Progressive Display: Three-Bug Fix + Test Suite (2026-04-02)
+
+### Summary
+
+Fixes three independent bugs in the drag-and-drop → progressive display pipeline that caused the viewer to (A) never show the first downloaded batch, (B) never show the second batch even when the first appeared, and (C) keep the old image on screen instead of switching to a loading state. A new test suite (`test_dragdrop_progressive.py`, 16 scenarios) was added to lock in all three fixes.
+
+
+### Summary
+
+Fixes the "last N images stuck" stability bug in the FAST Viewer progressive display path.
+When `loader.grow()` returned a stale count (OS file-system flush delay), the single-shot
+`_progressive_grow_timer` would fire once, record the stale count as `last_grow_count`, and
+never fire again — permanently leaving the viewer showing fewer images than were available on
+disk. Three new tests (L21–L23) cover all stale-grow scenarios.
+
+### Root Cause
+
+`_progressive_grow_timer` uses `setSingleShot(True)` (150ms interval). When the DM writes
+the final batch of files and emits the completion signal, the timer fires, calls
+`loader.grow()`, and records whatever the OS reports at that instant. If the OS file-system
+buffer has not yet committed some files, the count is stale (e.g. 20 instead of 25). Since
+the timer is single-shot and no more DM signals arrive (download is complete), the viewer
+is stuck at 20/25 images with no recovery mechanism.
+
+The **one-shot path** (non-progressive viewer receiving a completion signal) has the same
+problem: `_grow_progressive_fast` is called directly without any timer, so there is no retry
+regardless of the stale count.
+
+### Bugs Fixed
+
+#### Bug: Single-shot timer exhaustion on stale `loader.grow()` count
+
+**Files changed:** `patient_widget_viewer_controller.py`
+
+**Fix 1 — Stale-grow guard in `_grow_progressive_fast`:**
+After each grow, if `new_count < pending_count` and fewer than 3 retries have been attempted:
+- Increment `info["_stale_retry_count"]`
+- Set `info["pending_downloaded"] = pending_count` so `_flush_progressive_grow` knows to retry
+- Call `enter_progressive_mode()` on any non-progressive viewer so `_find_progressive_viewers`
+  can locate it on the retry tick (critical for the one-shot path)
+- Restart the single-shot timer — it exhausted after the first fire and needs to restart
+
+**Fix 2 — Safety-net restart in `_flush_progressive_grow`:**
+After the per-series for-loop, if any tracked series still has
+`pending_downloaded > last_grow_count`, restart the timer. This is an independent second
+protection layer; both layers must remain.
+
+#### Bug: One-shot path had no retry mechanism
+
+When a non-progressive viewer received the completion signal, `_grow_progressive_fast` was
+called directly without a timer. On stale grow: no timer was started, viewer stayed at stale
+count. Fix 1 above also resolves this: `enter_progressive_mode()` is called on the viewer
+(enabling the retry to find it via `_find_progressive_viewers`), and the timer is started.
+
+### New Tests
+
+`tests/viewer/test_fast_viewer_live_sync.py` extended from 20 to **23 tests**:
+
+| Test | Scenario |
+|------|----------|
+| **L21** `test_stale_grow_restarts_timer_and_tracks_retry` | Stale grow: `_stale_retry_count` incremented, `pending_downloaded` preserved, timer started, `exit_progressive_mode` NOT called, STALE warning logged |
+| **L22** `test_one_shot_stale_grow_sets_up_retry_via_progressive_mode` | One-shot path: non-progressive viewer calls `enter_progressive_mode` so retry can find it; timer started |
+| **L23** `test_flush_progressive_grow_safety_net_restarts_timer` | `_flush_progressive_grow` safety-net: restarts timer when `pending > last_grow_count` after all grows |
+
+### Documentation Updated
+
+- `docs/pipelines/viewer-pipeline.md` — added "Stale OS-Flush Guard (v2.2.8.3)" section
+- `.github/copilot-instructions.md` — added three new critical rules
+
+---
+
+## Unreleased — Drag-Drop Progressive Display: Three-Bug Fix + Test Suite (2026-04-02)
+
+### Summary
+
+Fixes three independent bugs in the drag-and-drop → progressive display pipeline that caused the viewer to (A) never show the first downloaded batch, (B) never show the second batch even when the first appeared, and (C) keep the old image on screen instead of switching to a loading state. A new test suite (`test_dragdrop_progressive.py`, 16 scenarios) was added to lock in all three fixes.
+
+### Bugs Found & Fixed
+
+#### Bug A — First batch (10 images) never populated the dragged-to viewer
+
+**Root cause:** When a user drag-dropped a series that was not yet on disk, `change_series_on_viewer` failed the async load (`ok=False`) and returned early — but it never marked the viewer as "waiting" for that series. When the DM later emitted `seriesProgressUpdated(sn=5, downloaded=10)`, `on_series_images_progress` had no scan for an awaiting viewer. It found no progressive viewer and no existing viewer showing the series, so it fell into `_start_progressive_display` with `target_vtk_widget=None`. The loaded data was placed in the first available empty slot, which was often the wrong layout position or not displayed at all.
+
+**Fix (`patient_widget_viewer_controller.py`):**
+- In the `_finish_on_ui(ok=False)` path, set `vtk_widget._awaiting_series_number = str(series_number)` and keep the spinner visible with a "Downloading series N..." message instead of hiding it.
+- Added an awaiting-viewer scan at the start of `on_series_images_progress` (before the done-guard):
+  ```python
+  for node in self.lst_nodes_viewer:
+      if getattr(node.vtk_widget, '_awaiting_series_number', None) == sn:
+          _awaiting_viewer = node.vtk_widget
+          _awaiting_node  = node
+          break
+  ```
+- Extended `_start_progressive_display` signature with `target_vtk_widget=None, target_node=None`.
+- Added `_apply_progressive_to_target_viewer(series_number, total, vtk_widget, node)` — clears the marker, calls `_display_loaded_series` on that exact viewer, enters progressive mode, hides the spinner.
+- `change_series_on_viewer` clears `vtk_widget._awaiting_series_number = None` at the start of every new switch (so old markers from prior drops don't linger).
+
+#### Bug B — Second batch (images 11–20) never triggered a grow
+
+**Root cause:** A race condition in the threaded fallback of `_start_progressive_display`. Before the fix, the background thread called `done.add(sn)` immediately after loading files — **before** `QTimer.singleShot(0, ...)` fired the activation callback. The next progress signal arrived, found `sn` in the done-set, scanned for a progressive viewer (found none because activation hadn't fired yet), and returned early from the done-guard. The grow timer was never started, permanently blocking all subsequent batches.
+
+**Fix (`patient_widget_viewer_controller.py` — threaded path of `_start_progressive_display`):**
+- Moved `done.add(sn)` **inside** the `QTimer.singleShot(0, _display_activate_and_mark_done)` callback, after both `_display_series_after_load` and `_activate_progressive_mode_on_viewers` complete.
+- The done-guard recovery path was strengthened: if `sn` is already in `done` but no progressive viewer is found, the guard scans for any non-progressive viewer showing that series and re-enters progressive mode, keeping the grow path alive.
+
+#### Bug C — Drag-drop showed old image instead of loading state
+
+**Root cause:** `change_series_on_viewer` always sent `request_critical_series()` to escalate priority, but when the async load failed (`ok=False`) it called `_hide_spinner_for_widget` — restoring the previous series image and providing no visual cue that a download was about to begin.
+
+**Fix:** The `ok=False` branch now:
+1. Sets `vtk_widget._awaiting_series_number = str(series_number)` — visually marks the viewport.
+2. Calls `vtk_widget.viewport_spinner.show_loading("Downloading series N...")` — replaces the old image with a recognizable loading state.
+3. Does **not** hide the spinner (the spinner persists until `_apply_progressive_to_target_viewer` completes).
+
+### Related Coordinator Fix
+
+`negotiate_priority_change` in `series_intent_coordinator.py` was updated to attempt `_start_download_worker(study_uid)` immediately when `worker_pool.can_add_worker()` is True, falling back to the 50ms deferred path only if the immediate start fails. This reduces priority-escalation latency from ≥50ms to ~0ms in most cases.
+
+### Test Suite Added
+
+**File:** `tests/viewer/test_dragdrop_progressive.py` (16 tests, 48 KPI assertions)
+
+| # | Scenario | Covers |
+|---|----------|--------|
+| S1 | `_awaiting_series_number` set on `ok=False` | Bug C |
+| S2 | Marker cleared on new drag-drop | Bug C |
+| S3 | Repeated drag-drop overwrites marker | Bug C |
+| S4 | Progress scan finds awaiting viewer | Bug A |
+| S5 | Two layouts track independent series | Bug A |
+| S6 | `_apply_progressive_to_target_viewer` happy path | Bug A |
+| S7 | Cache miss path hides spinner | Bug A |
+| S8 | Inflight guard blocks restart | Guards |
+| S9 | Done guard blocks restart | Guards |
+| S10 | KPI: scan over 10 nodes < 1ms avg | Perf |
+| S11 | End-to-end: 10-series patient, drag sn=5 | A+B+C |
+| S12 | Bug A regression: first batch populates awaiting viewer | Bug A |
+| S13 | Bug B regression: second batch takes grow path, not restart | Bug B |
+| S14 | Bug C regression: drag-drop replaces image AND escalates priority | Bug C |
+| S15 | Stability: 10 batches → 1 start + 9 grows (3 reps) | A+B |
+| S16 | Repeatability: full lifecycle × 5, timing < 5ms/rep | A+B+C |
+
+**Run commands:**
+```
+.venv\Scripts\python.exe -m pytest tests/viewer/test_dragdrop_progressive.py -v
+.venv\Scripts\python.exe tests/viewer/test_dragdrop_progressive.py
+```
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` | `_finish_on_ui(ok=False)` keeps spinner; `change_series_on_viewer` clears awaiting; `on_series_images_progress` awaiting scan; `_start_progressive_display` gets `target_*` params; new `_apply_progressive_to_target_viewer`; done.add ordering fix |
+| `modules/download_manager/coordinator/series_intent_coordinator.py` | `negotiate_priority_change` tries immediate worker start |
+| `tests/download_manager/test_download_manager.py` | S27 updated (accepts immediate-start path) |
+| `tests/viewer/test_dragdrop_progressive.py` | **New** — 16-scenario drag-drop + progressive display test suite |
+
+---
+
+## Unreleased — Critical Series Intent & Preemption Hardening (2026-04-01)
+
+### Summary
+
+Hardens the FAST Viewer ↔ Download Manager interaction when users drag-and-drop a not-yet-downloaded series during active study download. The system now handles repeated user intent reliably and avoids silent no-op paths.
+
+### Challenge
+
+In real workflow, users repeatedly drag different series (or the same series multiple times) while another series is already downloading. The expected behavior is deterministic:
+
+- requested series becomes **Critical** immediately,
+- active lower-priority series are preempted,
+- requested series is downloaded first,
+- then study returns to **High** and routine order resumes.
+
+### Problems Found
+
+1. **Constructor-order regression**
+	- `DownloadManagerWidget` instantiated coordinator before `_tasks` existed.
+	- Result: DM tab creation crash (`AttributeError: ... has no attribute '_tasks'`).
+
+2. **Repeated same-series drag/drop could be swallowed**
+	- Same-series fast path treated repeated requests as no-op even when the series was still incomplete on disk.
+
+3. **Critical retry accepted but not enforced immediately**
+	- Retry path could skip effective preemption for same-study active worker scenarios.
+
+4. **Preemption depended on potentially stale state**
+	- Pause logic relied on `state.status` and could miss an actually running subprocess worker.
+	- Outcome: scheduler continued normal order (`...6,7,8,9...`) instead of switching to the requested critical series.
+
+5. **Slow cancel reaction under large in-flight request**
+	- Cancel checks were too coarse in socket receive/retry flow, causing delayed slot release.
+
+### Solution Implemented
+
+- Fixed DM initialization order so `_tasks` is initialized before coordinator construction.
+- Added same-series incomplete detection in viewer routing; repeated drag/drop now re-triggers download intent when files are still missing.
+- Strengthened `_on_series_retry()` behavior to avoid false skip and force preemption path for active same-study, different-series requests.
+- Hardened `_pause_all_active_downloads()` to use **active worker pool as source of truth** (not only state flags), then normalize state to `PAUSED`.
+- Added faster cancellation checks in socket request loop/retry path to reduce cancellation latency.
+- Added prioritized-start retry scheduling when pool is temporarily full.
+
+### Engineering Outcome
+
+- Better repeatability under high-frequency drag/drop interactions.
+- Reduced drift between UI intent and actual download execution.
+- Improved stability of Critical → High transition model in FAST workflow.
+
+---
+
+## v2.3.0 — Stable Release (2026-03-31)
+
+### Summary
+
+Publishes **v2.3.0** as the next stable AIPacs release and aligns the runtime, packaging, build metadata, backup snapshot, and GitHub publication around the same release number.
+
+### Highlights
+
+- Updated application version in `main.py` to `2.3.0`
+- Updated package metadata in `pyproject.toml` to `2.3.0`
+- Updated Nuitka Windows product version in `build_nuitka.py` to `2.3.0`
+- Updated plugin package feed and package manifests under `builder/plugin package/packages/` to `2.3.0`
+- Rebuilt release artifacts and installer outputs for `2.3.0`
+- Published `main` and tagged the release as `v2.3.0`
+
+### Notes
+
+- `v2.2.7` remains the previous stable line in release history.
+- `v2.3.0` is now the active published stable release.
 
 ---
 
