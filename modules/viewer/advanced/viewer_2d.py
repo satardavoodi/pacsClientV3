@@ -177,7 +177,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         self.vtk_image_data = vtk_image_data
 
-        self.vtk_image_data = self._preprocess_vtk_image_data(self.vtk_image_data)
+        # For pydicom_2d (lazy backend), skip preprocessing: it may create a disconnected
+        # vtkImageData copy (e.g. CT upsampling) that severs mark_vtk_modified() signaling.
+        # The viewer is wired directly to the raw numpy-backed source instead.
+        _is_pydicom_lazy = (
+            getattr(getattr(self, 'vtk_widget', None), '_active_backend', None) == 'pydicom_2d'
+        )
+        if not _is_pydicom_lazy:
+            self.vtk_image_data = self._preprocess_vtk_image_data(self.vtk_image_data)
         self._apply_direction_matrix_from_field_data()
         # vtk_image_data = flip_image_y(vtk_image_data)
         # self.vtk_image_data = _display_upsample_xy(self.vtk_image_data)
@@ -208,9 +215,18 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.renderer.SetBackground(0, 0, 0)
 
         # Fast initialization without renders
+        _raw_lazy_vtk = self.vtk_image_data  # capture before ImageReslice may chain
         self.image_reslice = ImageReslice(self.vtk_image_data, self.metadata)
-        self.SetInputData(self.image_reslice.GetOutput())  # without color map (window level)
-        self.vtk_image_data = self.image_reslice.GetOutput()
+        if _is_pydicom_lazy:
+            # Bypass image_reslice: wire viewer directly to the raw numpy-backed source.
+            # mark_vtk_modified() on the source causes the viewer's trivial producer to
+            # detect the MTime increase and re-read numpy scalars on Render() — no
+            # image_reslice.Update() needed per scroll event.
+            self.SetInputData(_raw_lazy_vtk)
+            self.vtk_image_data = _raw_lazy_vtk
+        else:
+            self.SetInputData(self.image_reslice.GetOutput())  # without color map (window level)
+            self.vtk_image_data = self.image_reslice.GetOutput()
         # v2.2.3.1.7: Track which VTK output object the viewer pipeline is connected to.
         # reset_image_viewer compares against this to skip the expensive SetInputData when
         # the same image_reslice object is updated in-place (saves ~1.4s per series switch).
@@ -1028,7 +1044,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     def reset_image_viewer(self, vtk_image_data, metadata):
         import time
         _reset_start = time.time()
-        
+        # Keep a reference to the original raw input. For pydicom_2d the viewer is wired
+        # directly to this source so mark_vtk_modified() MTime signaling works correctly.
+        _src_vtk_image_data = vtk_image_data
+        _is_pydicom_lazy = (
+            getattr(getattr(self, 'vtk_widget', None), '_active_backend', None) == 'pydicom_2d'
+        )
+
         # âœ… CRITICAL: Check if this is the same series or a different series
         # Only preserve zoom scale for the SAME series (user zoom preservation)
         # For different series, always calculate proper zoom based on image dimensions
@@ -1211,7 +1233,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             old_global_warning = vtk.vtkObject.GetGlobalWarningDisplay()
             vtk.vtkObject.GlobalWarningDisplayOff()
             try:
-                self.SetInputData(_current_reslice_output)
+                # For lazy backend, wire viewer directly to the raw numpy-backed source
+                # so mark_vtk_modified() causes the trivial producer to detect the MTime
+                # change and re-read fresh numpy scalars on Render() -- no reslice.Update()
+                # needed per scroll event.
+                _viewer_input = _src_vtk_image_data if _is_pydicom_lazy else _current_reslice_output
+                self.SetInputData(_viewer_input)
             finally:
                 vtk.vtkObject.SetGlobalWarningDisplay(old_global_warning)
                 self._suppress_render = _prev_suppress
@@ -1221,7 +1248,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         else:
             # Same output object â€” pipeline already connected; Modified() propagated.
             print(f"         â€¢ SetInputData: SKIPPED (reslice output unchanged â€” saves ~1.4s)")
-        self.vtk_image_data = _current_reslice_output  # refresh Python-side ref
+        # For lazy backend the viewer input is the raw source; keep Python ref consistent.
+        self.vtk_image_data = _src_vtk_image_data if _is_pydicom_lazy else _current_reslice_output
 
         # Update metadata
         _metadata_start = time.time()
@@ -1496,9 +1524,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.Render()
         return parallel_scale
 
-    def zoom_to_fit(self, skip_render=False):
+    def zoom_to_fit(self, skip_render=False, _deferred_retry: int = 0):
         try:
-            logger.debug(f"[ZOOM_TO_FIT] START - skip_render={skip_render}")
+            logger.debug(f"[ZOOM_TO_FIT] START - skip_render={skip_render} retry={_deferred_retry}")
             
             self.renderer.ResetCamera()
             camera = self.renderer.GetActiveCamera()
@@ -1516,6 +1544,30 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
             logger.debug(f"[ZOOM_TO_FIT]   Image dimensions: {image_width}x{image_height}")
             logger.debug(f"[ZOOM_TO_FIT]   Window dimensions: {window_width}x{window_height}")
+
+            # Guard: if window not yet sized (0×0), defer zoom to next event
+            # loop iteration so Qt layout has a chance to resolve dimensions.
+            if window_width <= 0 or window_height <= 0:
+                if _deferred_retry < 3:
+                    logger.warning(
+                        f"[ZOOM_TO_FIT] Window size {window_width}x{window_height} invalid "
+                        f"— deferring retry {_deferred_retry + 1}/3"
+                    )
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(
+                        50,
+                        lambda sr=skip_render, r=_deferred_retry + 1:
+                            self.zoom_to_fit(skip_render=sr, _deferred_retry=r),
+                    )
+                    return None
+                else:
+                    logger.error("[ZOOM_TO_FIT] Window still 0×0 after 3 retries — using fallback")
+                    # Fallback: use image physical height as parallel scale
+                    spacing = self.vtk_image_data.GetSpacing()
+                    fallback_scale = (image_height * spacing[1]) / 2.0
+                    if fallback_scale > 0:
+                        camera.SetParallelScale(fallback_scale)
+                    return fallback_scale
 
             spacing = self.vtk_image_data.GetSpacing()
 

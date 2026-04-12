@@ -51,3 +51,23 @@ def test_materialize_plugin_packages_keeps_runtime_payload_metadata_only_by_defa
     assert packages[0]["materialized_payload"] is False
     assert manifest["payload_dir"] == ""
     assert (package_dir / "PAYLOAD_NOT_MATERIALIZED.txt").exists()
+
+
+def test_materialize_plugin_packages_can_materialize_offline_cloud_server(monkeypatch, tmp_path):
+    monkeypatch.setattr(materialize_plugin_packages, "PLUGIN_PACKAGES_DIR", tmp_path / "packages")
+    monkeypatch.setattr(materialize_plugin_packages, "load_version", lambda: "9.9.9")
+    monkeypatch.setattr(
+        materialize_plugin_packages,
+        "load_plugin_package_definitions",
+        lambda: [plugin_package_definition_map()["offline_cloud_server"]],
+    )
+
+    packages = materialize_plugin_packages.materialize_plugin_packages()
+
+    package_dir = tmp_path / "packages" / "offline_cloud_server"
+    manifest = json.loads((package_dir / runtime.MODULE_PACKAGE_MANIFEST_FILENAME).read_text(encoding="utf-8"))
+
+    assert packages[0]["module_id"] == "offline_cloud_server"
+    assert packages[0]["materialized_payload"] is True
+    assert manifest["module_id"] == "offline_cloud_server"
+    assert (package_dir / runtime.MODULE_PACKAGE_PAYLOAD_DIRNAME / "python" / "modules" / "offline_cloud_server" / "service.py").exists()

@@ -70,13 +70,19 @@ class DownloadStateStore:
             if task.study_uid in self._states:
                 raise StateError(f"State already exists for {task.study_uid}")
             
-            # Create new state
+            # Create new state — include all display metadata so every read site
+            # (DM details panel, size_label, series breakdown) can use state as
+            # the single source of truth without also requiring task lookup.
             state = DownloadState(
                 study_uid=task.study_uid,
                 status=DownloadStatus.PENDING,
                 priority=task.priority,
                 total_count=task.total_image_count,
+                total_series_count=len(task.series_list),
                 patient_name=task.patient_name,
+                patient_id=task.patient_id,
+                modality=task.modality,
+                study_date=task.study_date,
                 study_description=task.description,
                 start_time=datetime.now(),
                 last_update=datetime.now()

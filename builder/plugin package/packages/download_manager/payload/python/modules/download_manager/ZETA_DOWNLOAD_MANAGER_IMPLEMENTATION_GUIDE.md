@@ -57,7 +57,7 @@ class DownloadTask:
     - task_id: str (unique identifier)
     - study_id: str (DICOM study reference)
     - files: List[str] (files to download)
-    - priority: int (0-100, higher = more urgent)
+    - priority: DownloadPriority (LOW=0, NORMAL=1, HIGH=2, CRITICAL=3)
     - state: TaskState (pending, downloading, completed, failed)
     - progress: Dict (tracks bytes, file count, ETA)
     - retry_count: int (tracks failed attempts)
@@ -450,7 +450,7 @@ def _on_patient_double_clicked_async(self, patient_id):
     task = DownloadTask(
         study_id=patient_id,
         files=file_list,
-        priority=100  # Maximum priority
+        priority=DownloadPriority.HIGH  # HIGH for open patient; CRITICAL reserved for viewed series
     )
     
     # 4. Add to download manager
@@ -626,7 +626,57 @@ for task in tasks:
 
 ---
 
-**Document Version:** 2.2.2.6  
-**Last Updated:** February 22, 2026  
+## Series-Level Priority System (v2.2.7)
+
+### Overview
+
+As of v2.2.7 the download manager supports **series-level priority** within a
+study download.  When a user clicks a series thumbnail in the viewer, that
+specific series is promoted to CRITICAL and downloaded first.  Other series in
+the same study remain at HIGH.
+
+### Priority Semantics
+
+| Level    | Value | Meaning |
+|----------|------:|--------------------------------------------------------|
+| CRITICAL | 3     | Series currently being viewed in the patient tab       |
+| HIGH     | 2     | Other series of an open (double-clicked) patient       |
+| NORMAL   | 1     | Queued study that is not currently open                 |
+| LOW      | 0     | Background / prefetch downloads                        |
+
+### Data Flow
+
+```
+User double-clicks patient → home_ui starts download with priority=HIGH
+    ↓
+User clicks series thumbnail → home_ui calls download_manager.set_viewed_series(study_uid, series_no)
+    ↓
+state_store.update(study_uid, priority=CRITICAL, viewed_series_number=series_no)
+    ↓
+Subprocess receives viewed_series_number via config_dict
+    ↓
+executor propagates to state; SeriesDownloader reorders series_list
+    ↓
+Viewed series downloads first; on completion viewed_series_number is cleared
+```
+
+### Key Files Changed
+
+- `core/models.py` — `DownloadState.viewed_series_number` field
+- `state/state_store.py` — reset includes viewed_series_number
+- `ui/main_widget.py` — `set_viewed_series()` / `clear_viewed_series()`
+- `download/series_downloader.py` — series reordering + mid-download re-check
+- `download/executor.py` — `viewed_series_number` attribute + state propagation
+- `workers/download_process_worker.py` — passes field via config_dict
+- `workers/download_process_entry.py` — reads field, sets on executor
+- `workers/download_subprocess.py` — parameter added to function signature
+- `workers/subprocess_worker.py` — reads field from main-process state_store
+- `PacsClient/pacs/workstation_ui/home_ui/home_ui.py` — fixed priority
+  assignment (HIGH not CRITICAL) and fixed `_handle_priority_download_from_thumbnail`
+
+---
+
+**Document Version:** 2.2.7  
+**Last Updated:** March 26, 2026  
 **Maintained By:** AI Assistant  
-**Next Review:** March 2026
+**Next Review:** April 2026

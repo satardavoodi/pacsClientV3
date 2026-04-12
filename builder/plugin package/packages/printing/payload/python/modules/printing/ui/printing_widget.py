@@ -54,6 +54,7 @@ from modules.printing.printers.dicom_printer import (
 from modules.printing.render.dicom_renderer import load_dicom_as_pixmap, load_series_pixmaps
 from PacsClient.utils.config import BASE_PATH
 from PacsClient.utils import db_manager
+from PacsClient.utils.theme_manager import get_theme_manager
 
 
 class PrintingWidget(QWidget):
@@ -98,8 +99,20 @@ class PrintingWidget(QWidget):
             "print_priority": "MED",
         }
 
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
+
         self._build_ui()
         self._load_selected_patients()
+
+    def _on_theme_changed(self, theme: dict):
+        self._theme = theme or self.theme_manager.current_theme()
+        self._apply_modern_styles()
+        if hasattr(self, "series_list"):
+            self._load_series()
+        if hasattr(self, "filming_container_layout"):
+            self._load_filming_pages()
 
     def eventFilter(self, watched, event):
         """Debug event filter to log mouse events on series list."""
@@ -157,7 +170,6 @@ class PrintingWidget(QWidget):
         self.header_button.setMinimumHeight(self._scaled(32))
         self.header_button.clicked.connect(self._open_header_settings_dialog)
         self.layout_label = QLabel("Layout: --")
-        self.layout_label.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 12px;")
         self.layout_label.setMinimumWidth(self._scaled(100))
         self._set_current_layout(self._get_available_layouts()[0] if self._get_available_layouts() else None)
 
@@ -174,7 +186,6 @@ class PrintingWidget(QWidget):
 
         # Film size label
         film_size_label = QLabel("Film")
-        film_size_label.setStyleSheet("color: #cbd5e1; font-weight: 500; font-size: 11px;")
         # Page navigation
         self.prev_page_btn = QPushButton("◄")
         self.prev_page_btn.setMinimumWidth(self._scaled(36))
@@ -184,7 +195,6 @@ class PrintingWidget(QWidget):
         self.page_label = QLabel("Page 1/1")
         self.page_label.setMinimumWidth(self._scaled(80))
         self.page_label.setAlignment(Qt.AlignCenter)
-        self.page_label.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 12px;")
         self.next_page_btn = QPushButton("►")
         self.next_page_btn.setMinimumWidth(self._scaled(36))
         self.next_page_btn.setMinimumHeight(self._scaled(32))
@@ -233,26 +243,6 @@ class PrintingWidget(QWidget):
         # - Shift+Click: select range from anchor to clicked item
         self.series_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.series_list.setUniformItemSizes(False)
-        self.series_list.setStyleSheet(
-            """
-            QListWidget {
-                background: #1f2937;
-                border: 1px solid #374151;
-                border-radius: 8px;
-                padding: 4px;
-            }
-            QListWidget::item {
-                border: none;
-                margin: 2px;
-                padding: 2px;
-            }
-            QListWidget::item:selected {
-                background: #0f172a;
-                border: 1px solid #22d3ee;
-                border-radius: 6px;
-            }
-            """
-        )
         # Debounce selection changes: clearSelection + setSelected fires multiple
         # itemSelectionChanged signals; a short timer coalesces them into one call.
         self._selection_debounce = QTimer(self)
@@ -301,12 +291,10 @@ class PrintingWidget(QWidget):
         self.range_end.setMinimumHeight(self._scaled(36))
         self.range_end.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
         from_lbl = QLabel("From")
-        from_lbl.setStyleSheet("color: #cbd5e1; font-size: 11px;")
         range_layout.addWidget(from_lbl)
         range_layout.addWidget(self.range_start)
         range_layout.addSpacing(4)
         to_lbl = QLabel("To")
-        to_lbl.setStyleSheet("color: #cbd5e1; font-size: 11px;")
         range_layout.addWidget(to_lbl)
         range_layout.addWidget(self.range_end)
         range_layout.addStretch(1)
@@ -317,7 +305,6 @@ class PrintingWidget(QWidget):
         adjustments_layout.setVerticalSpacing(8)
         adjustments_layout.setHorizontalSpacing(6)
         adjustments_lbl = QLabel("Left Mouse")
-        adjustments_lbl.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 12px;")
         adjustments_lbl.setMaximumWidth(self._scaled(140))
         self.left_drag_mode = QComboBox()
         self.left_drag_mode.addItems([
@@ -351,7 +338,6 @@ class PrintingWidget(QWidget):
         self.dicom_settings_btn.clicked.connect(self._open_dicom_printer_settings)
 
         self.printer_status = QLabel("Ready")
-        self.printer_status.setStyleSheet("color: #93c5fd; font-size: 11px;")
         self.printer_status.setWordWrap(True)
         self.printer_status.setMaximumHeight(self._scaled(40))
 
@@ -359,7 +345,6 @@ class PrintingWidget(QWidget):
         type_col.setSpacing(4)
         type_col.setContentsMargins(0, 0, 0, 0)
         type_lbl = QLabel("Type")
-        type_lbl.setStyleSheet("font-weight: 600; color: #cbd5e1; font-size: 12px;")
         type_col.addWidget(type_lbl)
         type_col.addWidget(self.printer_type_combo)
         printer_layout.addLayout(type_col)
@@ -368,7 +353,6 @@ class PrintingWidget(QWidget):
         local_col.setSpacing(4)
         local_col.setContentsMargins(0, 0, 0, 0)
         local_lbl = QLabel("Local Printer")
-        local_lbl.setStyleSheet("font-weight: 600; color: #cbd5e1; font-size: 12px;")
         local_lbl.setMaximumWidth(self._scaled(180))
         local_col.addWidget(local_lbl)
         local_col.addWidget(self.local_printer_combo)
@@ -425,15 +409,6 @@ class PrintingWidget(QWidget):
         self.filming_scroll.setWidgetResizable(True)
         self.filming_scroll.setMinimumHeight(180)
         self.filming_scroll.setMaximumHeight(280)
-        self.filming_scroll.setStyleSheet(
-            """
-            QScrollArea {
-                background: #0f172a;
-                border: 1px solid #334155;
-                border-radius: 6px;
-            }
-            """
-        )
         self.filming_container = QWidget()
         self.filming_container_layout = QVBoxLayout(self.filming_container)
         self.filming_container_layout.setSpacing(6)
@@ -584,10 +559,11 @@ class PrintingWidget(QWidget):
         from PySide6.QtGui import QPainter, QPixmap, QColor, QPen
 
         pixmap = QPixmap(34, 34)
-        pixmap.fill(QColor(30, 41, 59))
+        theme = self._theme
+        pixmap.fill(QColor(theme["panel_alt_bg"]))
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(QColor(148, 163, 184))
+        pen = QPen(QColor(theme["text_muted"]))
         pen.setWidth(1)
         painter.setPen(pen)
 
@@ -664,32 +640,44 @@ class PrintingWidget(QWidget):
             series = get_series_with_enrichment(self._selected_study_uid)
         except Exception as e:
             print(f"[PRINTING] ⚠️ Enrichment failed, falling back: {e}")
-            series = get_series_for_study(self._selected_study_uid)
+            import traceback
+            traceback.print_exc()
+            try:
+                series = get_series_for_study(self._selected_study_uid)
+            except Exception as e2:
+                print(f"[PRINTING] ❌ Fallback also failed: {e2}")
+                series = []
         
         print(f"[PRINTING] Found {len(series)} series")
         
         for item in series:
-            series_num = item.get('series_number', 'unknown')
-            series_desc = item.get('series_description', '')
-            modality = item.get('modality', '')
-            img_count = item.get('image_count', 0)
+            try:
+                series_num = item.get('series_number', 'unknown')
+                series_desc = item.get('series_description', '')
+                modality = item.get('modality', '')
+                img_count = item.get('image_count', 0)
 
-            list_item = QListWidgetItem()
-            list_item.setSizeHint(QSize(0, self._scaled(96)))
-            list_item.setData(Qt.UserRole, item)
-            self.series_list.addItem(list_item)
-            thumb_pm = self._build_series_thumbnail_pixmap(item)
-            widget = self._build_series_thumbnail_widget(
-                series=item,
-                series_number=self._truncate_label(str(series_num), 20),
-                description=self._truncate_label(str(series_desc), 60),
-                modality=self._truncate_label(str(modality), 15),
-                image_count=int(img_count or 0),
-                thumbnail=thumb_pm,
-            )
-            self.series_list.setItemWidget(list_item, widget)
-            self._series_records.append(item)
-            print(f"[PRINTING]   series_pk={item.get('series_pk')}, series_number={series_num}, images={img_count}")
+                list_item = QListWidgetItem()
+                list_item.setSizeHint(QSize(0, self._scaled(96)))
+                list_item.setData(Qt.UserRole, item)
+                self.series_list.addItem(list_item)
+                thumb_pm = self._build_series_thumbnail_pixmap(item)
+                widget = self._build_series_thumbnail_widget(
+                    series=item,
+                    series_number=self._truncate_label(str(series_num), 20),
+                    description=self._truncate_label(str(series_desc), 60),
+                    modality=self._truncate_label(str(modality), 15),
+                    image_count=int(img_count or 0),
+                    thumbnail=thumb_pm,
+                )
+                self.series_list.setItemWidget(list_item, widget)
+                self._series_records.append(item)
+                src = item.get("_source", "db")
+                print(f"[PRINTING]   [{src}] series_pk={item.get('series_pk')}, series_number={series_num}, images={img_count}")
+            except Exception as exc:
+                import traceback
+                print(f"[PRINTING] ❌ Error building series item: {exc}")
+                traceback.print_exc()
         
         if self.series_list.count() > 0:
             first_item = self.series_list.item(0)
@@ -730,17 +718,18 @@ class PrintingWidget(QWidget):
     ) -> QWidget:
         container = QFrame()
         container.setObjectName("seriesThumb")
+        theme = self._theme
         container.setStyleSheet(
-            """
-            QFrame#seriesThumb {
-                background: #111827;
-                border: 1px solid #374151;
+            f"""
+            QFrame#seriesThumb {{
+                background: {theme['panel_bg']};
+                border: 1px solid {theme['border']};
                 border-radius: 8px;
-            }
-            QFrame#seriesThumb:hover {
-                border-color: #60a5fa;
-                background: #1a202c;
-            }
+            }}
+            QFrame#seriesThumb:hover {{
+                border-color: {theme['accent_hover']};
+                background: {theme['panel_alt_bg']};
+            }}
             """
         )
         
@@ -763,7 +752,9 @@ class PrintingWidget(QWidget):
 
         thumb = QLabel()
         thumb.setFixedSize(72, 54)
-        thumb.setStyleSheet("background:#1f2937; border:1px solid #4b5563; border-radius:6px;")
+        thumb.setStyleSheet(
+            f"background:{theme['panel_alt_bg']}; border:1px solid {theme['border']}; border-radius:6px;"
+        )
 
         pm = thumbnail if thumbnail is not None and not thumbnail.isNull() else self._create_series_placeholder_pixmap()
         thumb.setPixmap(pm)
@@ -771,12 +762,12 @@ class PrintingWidget(QWidget):
         info = QVBoxLayout()
         info.setSpacing(2)
         title = QLabel(f"Series {series_number}")
-        title.setStyleSheet("font-weight:600; color:#e5e7eb;")
+        title.setStyleSheet(f"font-weight:600; color:{theme['text_primary']};")
         desc = QLabel(description or "-")
-        desc.setStyleSheet("color:#cbd5e1;")
+        desc.setStyleSheet(f"color:{theme['text_secondary']};")
         desc.setWordWrap(True)
         meta = QLabel(f"{modality} • {image_count} images")
-        meta.setStyleSheet("color:#93c5fd;")
+        meta.setStyleSheet(f"color:{theme['info']};")
 
         info.addWidget(title)
         info.addWidget(desc)
@@ -789,23 +780,23 @@ class PrintingWidget(QWidget):
         view_btn.setMinimumHeight(self._scaled(36))
         view_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         view_btn.clicked.connect(lambda: self._open_series_viewer(series, ensure_selection=True))
-        view_btn_style = """
-            QPushButton {
-                background: #1e3a8a;
-                color: #ffffff;
-                border: 1px solid #2563eb;
+        view_btn_style = f"""
+            QPushButton {{
+                background: {theme['accent']};
+                color: {theme['button_text']};
+                border: 1px solid {theme['accent']};
                 border-radius: 6px;
                 padding: 6px 12px;
                 font-weight: 600;
                 font-size: 13px;
-            }
-            QPushButton:hover {
-                background: #2563eb;
-                border-color: #3b82f6;
-            }
-            QPushButton:pressed {
-                background: #1e40af;
-            }
+            }}
+            QPushButton:hover {{
+                background: {theme['accent_hover']};
+                border-color: {theme['accent_hover']};
+            }}
+            QPushButton:pressed {{
+                background: {theme['accent_pressed']};
+            }}
         """
         view_btn.setStyleSheet(view_btn_style)
         actions.addWidget(view_btn)
@@ -887,11 +878,12 @@ class PrintingWidget(QWidget):
         return self._selected_series
 
     def _create_series_placeholder_pixmap(self) -> QPixmap:
+        theme = self._theme
         pm = QPixmap(72, 54)
-        pm.fill(QColor("#1f2937"))
+        pm.fill(QColor(theme["panel_alt_bg"]))
         p = QPainter(pm)
         p.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(QColor("#9ca3af"))
+        pen = QPen(QColor(theme["text_muted"]))
         p.setPen(pen)
         p.drawRect(8, 8, 56, 38)
         p.drawLine(8, 8, 64, 46)
@@ -928,7 +920,11 @@ class PrintingWidget(QWidget):
             paths: List[str] = []
             series_pk = series.get("series_pk")
             if series_pk:
-                paths = get_dicom_paths_for_series(series_pk)
+                paths = get_dicom_paths_for_series(
+                    series_pk,
+                    study_uid=series.get("study_uid") or self._selected_study_uid,
+                    series_number=series.get("series_number"),
+                )
             elif series.get("series_path"):
                 series_dir = Path(str(series.get("series_path")))
                 if series_dir.exists():
@@ -953,7 +949,11 @@ class PrintingWidget(QWidget):
         series_pk = series.get("series_pk")
         paths: List[str] = []
         if series_pk:
-            paths = get_dicom_paths_for_series(series_pk)
+            paths = get_dicom_paths_for_series(
+                series_pk,
+                study_uid=series.get("study_uid") or self._selected_study_uid,
+                series_number=series.get("series_number"),
+            )
         elif series.get("series_path"):
             series_dir = Path(str(series.get("series_path")))
             if series_dir.exists():
@@ -974,7 +974,9 @@ class PrintingWidget(QWidget):
         image_label = QLabel()
         image_label.setAlignment(Qt.AlignCenter)
         image_label.setMinimumSize(640, 480)
-        image_label.setStyleSheet("background:#0b1220; border:1px solid #334155; border-radius:8px;")
+        image_label.setStyleSheet(
+            f"background:{self._theme['panel_deep_bg']}; border:1px solid {self._theme['border']}; border-radius:8px;"
+        )
         main_layout.addWidget(image_label, 1)
 
         controls = QHBoxLayout()
@@ -983,7 +985,7 @@ class PrintingWidget(QWidget):
         slider = QSlider(Qt.Horizontal)
         slider.setRange(0, max(0, len(paths) - 1))
         index_label = QLabel()
-        index_label.setStyleSheet("color:#cbd5e1;")
+        index_label.setStyleSheet(f"color:{self._theme['text_secondary']};")
         set_scout_btn = QPushButton("Set as Scout")
         clear_scout_btn = QPushButton("Clear Scout")
 
@@ -1031,30 +1033,31 @@ class PrintingWidget(QWidget):
         dialog.exec()
 
     def _apply_modern_styles(self) -> None:
+        t = self._theme
         arrow_path = (BASE_PATH / "Qss" / "icons" / "fefefe" / "feather" / "chevron-down.png").as_posix()
         combo_style = f"""
             QComboBox {{
-                background: #0f172a;
-                color: #e5e7eb;
-                border: 1px solid #334155;
+                background: {t['panel_deep_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
                 border-radius: 8px;
                 padding: 6px 28px 6px 10px;
                 min-height: 30px;
             }}
             QComboBox:hover {{
-                border-color: #60a5fa;
+                border-color: {t['accent_hover']};
             }}
             QComboBox:focus {{
-                border: 1px solid #38bdf8;
+                border: 1px solid {t['accent']};
             }}
             QComboBox::drop-down {{
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
                 width: 24px;
-                border-left: 1px solid #334155;
+                border-left: 1px solid {t['border']};
                 border-top-right-radius: 8px;
                 border-bottom-right-radius: 8px;
-                background: #111827;
+                background: {t['panel_bg']};
             }}
             QComboBox::down-arrow {{
                 image: url({arrow_path});
@@ -1062,71 +1065,72 @@ class PrintingWidget(QWidget):
                 height: 12px;
             }}
             QComboBox QAbstractItemView {{
-                background: #0f172a;
-                color: #e5e7eb;
-                border: 1px solid #334155;
-                selection-background-color: #1d4ed8;
-                selection-color: #ffffff;
+                background: {t['panel_deep_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
+                selection-background-color: {t['accent']};
+                selection-color: {t['button_text']};
             }}
         """
 
-        button_style = """
-            QPushButton {
-                background: #1e293b;
-                color: #f1f5f9;
-                border: 1px solid #334155;
+        button_style = f"""
+            QPushButton {{
+                background: {t['panel_alt_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
                 border-radius: 8px;
                 padding: 7px 12px;
                 font-weight: 600;
-            }
-            QPushButton:hover {
-                background: #334155;
-                border-color: #60a5fa;
-            }
-            QPushButton:pressed {
-                background: #0f172a;
-            }
+            }}
+            QPushButton:hover {{
+                background: {t['menu_hover_bg']};
+                border-color: {t['accent_hover']};
+            }}
+            QPushButton:pressed {{
+                background: {t['accent_pressed']};
+                color: {t['button_text']};
+            }}
         """
 
-        spinbox_style = """
-            QSpinBox {
-                background: #0f172a;
-                color: #e5e7eb;
-                border: 1px solid #334155;
+        spinbox_style = f"""
+            QSpinBox {{
+                background: {t['panel_deep_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
                 border-radius: 8px;
                 padding: 8px 36px 8px 10px;
                 min-height: 38px;
                 font-size: 14px;
                 font-weight: 500;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
+            }}
+            QSpinBox::up-button, QSpinBox::down-button {{
                 subcontrol-origin: border;
-                background: #1e293b;
-                border-left: 1px solid #334155;
+                background: {t['panel_alt_bg']};
+                border-left: 1px solid {t['border']};
                 width: 36px;
-            }
-            QSpinBox::up-button {
+            }}
+            QSpinBox::up-button {{
                 subcontrol-position: top right;
                 border-top-right-radius: 8px;
                 height: 19px;
-            }
-            QSpinBox::down-button {
+            }}
+            QSpinBox::down-button {{
                 subcontrol-position: bottom right;
                 border-bottom-right-radius: 8px;
                 height: 19px;
-            }
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                background: #334155;
-            }
-            QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
-                background: #0f172a;
-            }
-            QSpinBox:hover {
-                border-color: #60a5fa;
-            }
-            QSpinBox:focus {
-                border: 1px solid #38bdf8;
-            }
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                background: {t['menu_hover_bg']};
+            }}
+            QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {{
+                background: {t['accent_pressed']};
+            }}
+            QSpinBox:hover {{
+                border-color: {t['accent_hover']};
+            }}
+            QSpinBox:focus {{
+                border: 1px solid {t['accent']};
+            }}
         """
 
         self._combo_style = combo_style
@@ -1144,6 +1148,63 @@ class PrintingWidget(QWidget):
 
         for spin in [self.range_start, self.range_end]:
             spin.setStyleSheet(spinbox_style)
+
+        self.series_list.setStyleSheet(
+            f"""
+            QListWidget {{
+                background: {t['panel_alt_bg']};
+                border: 1px solid {t['border']};
+                border-radius: 8px;
+                padding: 4px;
+            }}
+            QListWidget::item {{
+                border: none;
+                margin: 2px;
+                padding: 2px;
+            }}
+            QListWidget::item:selected {{
+                background: {t['panel_deep_bg']};
+                border: 1px solid {t['accent']};
+                border-radius: 6px;
+            }}
+            """
+        )
+
+        self.filming_scroll.setStyleSheet(
+            f"""
+            QScrollArea {{
+                background: {t['panel_deep_bg']};
+                border: 1px solid {t['border']};
+                border-radius: 6px;
+            }}
+            """
+        )
+
+        self.setStyleSheet(
+            f"""
+            QWidget {{
+                color: {t['text_primary']};
+            }}
+            QGroupBox {{
+                border: 1px solid {t['border']};
+                border-radius: 8px;
+                margin-top: 8px;
+                padding-top: 10px;
+                background: {t['panel_bg']};
+                font-weight: 600;
+                color: {t['text_primary']};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+                color: {t['text_secondary']};
+            }}
+            QLabel {{
+                color: {t['text_secondary']};
+            }}
+            """
+        )
 
     def _collect_image_paths(self) -> List[str]:
         from pathlib import Path
@@ -1179,7 +1240,11 @@ class PrintingWidget(QWidget):
                 continue
             
             print(f"[PRINTING] Processing series_pk={series_pk}")
-            series_paths = get_dicom_paths_for_series(series_pk)
+            series_paths = get_dicom_paths_for_series(
+                series_pk,
+                study_uid=series.get("study_uid") or self._selected_study_uid,
+                series_number=series.get("series_number"),
+            )
             series_paths = [p for p in sorted(series_paths) if p and Path(p).exists()]
             print(f"[PRINTING]   Got {len(series_paths)} paths")
             paths.extend(series_paths)
@@ -1428,9 +1493,14 @@ class PrintingWidget(QWidget):
             elif self._selected_series:
                 try:
                     from modules.printing.data.series_repository import get_dicom_paths_for_series
-                    series_pk = self._selected_series[0].get("series_pk")
+                    s0 = self._selected_series[0]
+                    series_pk = s0.get("series_pk")
                     if series_pk:
-                        paths = get_dicom_paths_for_series(series_pk)
+                        paths = get_dicom_paths_for_series(
+                            series_pk,
+                            study_uid=s0.get("study_uid") or self._selected_study_uid,
+                            series_number=s0.get("series_number"),
+                        )
                         if paths:
                             sample_path = paths[0]
                 except Exception:
@@ -1729,7 +1799,7 @@ class PrintingWidget(QWidget):
         
         if not pages:
             no_pages_lbl = QLabel("No saved filming pages")
-            no_pages_lbl.setStyleSheet("color: #6b7280; padding: 10px;")
+            no_pages_lbl.setStyleSheet(f"color: {self._theme['text_muted']}; padding: 10px;")
             no_pages_lbl.setAlignment(Qt.AlignCenter)
             self.filming_container_layout.addWidget(no_pages_lbl)
             return
@@ -1742,17 +1812,18 @@ class PrintingWidget(QWidget):
         """Create a thumbnail widget for a saved filming page."""
         container = QFrame()
         container.setObjectName("filmingThumb")
+        t = self._theme
         container.setStyleSheet(
-            """
-            QFrame#filmingThumb {
-                background: #111827;
-                border: 1px solid #374151;
+            f"""
+            QFrame#filmingThumb {{
+                background: {t['panel_bg']};
+                border: 1px solid {t['border']};
                 border-radius: 6px;
                 padding: 6px;
-            }
-            QFrame#filmingThumb:hover {
-                border-color: #60a5fa;
-            }
+            }}
+            QFrame#filmingThumb:hover {{
+                border-color: {t['accent_hover']};
+            }}
             """
         )
         
@@ -1763,7 +1834,9 @@ class PrintingWidget(QWidget):
         # Thumbnail image
         thumb_label = QLabel()
         thumb_label.setFixedSize(96, 72)
-        thumb_label.setStyleSheet("background:#0f172a; border:1px solid #4b5563; border-radius:4px;")
+        thumb_label.setStyleSheet(
+            f"background:{t['panel_deep_bg']}; border:1px solid {t['border']}; border-radius:4px;"
+        )
         
         thumb_path = page_data.get("thumbnail_path")
         if thumb_path and Path(thumb_path).exists():
@@ -1782,17 +1855,17 @@ class PrintingWidget(QWidget):
         film_size_str = metadata.get("film_size", "unknown")
         
         title_lbl = QLabel(f"Page {page_num}")
-        title_lbl.setStyleSheet("font-weight:600; color:#e5e7eb; font-size:13px;")
+        title_lbl.setStyleSheet(f"font-weight:600; color:{t['text_primary']}; font-size:13px;")
         
         details_lbl = QLabel(f"{layout_str} • {film_size_str}")
-        details_lbl.setStyleSheet("color:#94a3b8; font-size:11px;")
+        details_lbl.setStyleSheet(f"color:{t['text_secondary']}; font-size:11px;")
         
         timestamp_str = metadata.get("timestamp", "")
         if timestamp_str:
             try:
                 dt = datetime.fromisoformat(timestamp_str)
                 time_lbl = QLabel(dt.strftime("%Y-%m-%d %H:%M"))
-                time_lbl.setStyleSheet("color:#6b7280; font-size:10px;")
+                time_lbl.setStyleSheet(f"color:{t['text_muted']}; font-size:10px;")
             except:
                 time_lbl = QLabel("")
         else:
@@ -1810,18 +1883,18 @@ class PrintingWidget(QWidget):
         load_btn = QPushButton("Load")
         load_btn.setFixedSize(60, 24)
         load_btn.setStyleSheet(
-            """
-            QPushButton {
-                background: #1e40af;
-                color: #fff;
+            f"""
+            QPushButton {{
+                background: {t['accent']};
+                color: {t['button_text']};
                 border: none;
                 border-radius: 4px;
                 font-size: 11px;
                 font-weight: 600;
-            }
-            QPushButton:hover {
-                background: #2563eb;
-            }
+            }}
+            QPushButton:hover {{
+                background: {t['accent_hover']};
+            }}
             """
         )
         load_btn.clicked.connect(lambda: self._load_saved_filming_page(page_data))
@@ -1829,18 +1902,18 @@ class PrintingWidget(QWidget):
         delete_btn = QPushButton("Delete")
         delete_btn.setFixedSize(60, 24)
         delete_btn.setStyleSheet(
-            """
-            QPushButton {
-                background: #991b1b;
-                color: #fff;
+            f"""
+            QPushButton {{
+                background: {t['danger']};
+                color: {t['button_text']};
                 border: none;
                 border-radius: 4px;
                 font-size: 11px;
                 font-weight: 600;
-            }
-            QPushButton:hover {
-                background: #dc2626;
-            }
+            }}
+            QPushButton:hover {{
+                background: {t['danger_hover']};
+            }}
             """
         )
         delete_btn.clicked.connect(lambda: self._delete_filming_page(page_data))
@@ -1876,7 +1949,9 @@ class PrintingWidget(QWidget):
 
         preview = QLabel()
         preview.setAlignment(Qt.AlignCenter)
-        preview.setStyleSheet("background:#0b1220; border:1px solid #334155; border-radius:8px;")
+        preview.setStyleSheet(
+            f"background:{self._theme['panel_deep_bg']}; border:1px solid {self._theme['border']}; border-radius:8px;"
+        )
         scaled = pixmap.scaled(860, 640, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         preview.setPixmap(scaled)
         layout.addWidget(preview, 1)

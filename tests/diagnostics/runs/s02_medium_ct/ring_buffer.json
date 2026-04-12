@@ -1,0 +1,140 @@
+[
+  {
+    "ts": 0.032141499999852385,
+    "wall_ts": 1775853001.5415626,
+    "event_type": "SCENARIO_BEGIN",
+    "thread_name": "MainThread",
+    "seq": 0,
+    "scenario": "s02_medium_ct",
+    "modality": "CT",
+    "slice_count": 120
+  },
+  {
+    "ts": 0.03270429999975022,
+    "wall_ts": 1775853001.5421236,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 1,
+    "label": "first_batch"
+  },
+  {
+    "ts": 0.03299049999623094,
+    "wall_ts": 1775853001.5424087,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 2,
+    "series_number": "1",
+    "downloaded": 10,
+    "total": 120
+  },
+  {
+    "ts": 0.03323139999702107,
+    "wall_ts": 1775853001.542649,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 3,
+    "label": "burst_batches"
+  },
+  {
+    "ts": 0.03488739999738755,
+    "wall_ts": 1775853001.544308,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 4,
+    "series_number": "1",
+    "downloaded": 12,
+    "total": 120
+  },
+  {
+    "ts": 0.03515299999708077,
+    "wall_ts": 1775853001.5445707,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 5,
+    "series_number": "1",
+    "downloaded": 24,
+    "total": 120
+  },
+  {
+    "ts": 0.04666670000005979,
+    "wall_ts": 1775853001.5560842,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 6,
+    "series_number": "1",
+    "downloaded": 36,
+    "total": 120
+  },
+  {
+    "ts": 0.04683559999830322,
+    "wall_ts": 1775853001.556253,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 7,
+    "series_number": "1",
+    "downloaded": 48,
+    "total": 120
+  },
+  {
+    "ts": 0.04700109999976121,
+    "wall_ts": 1775853001.5564187,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 8,
+    "series_number": "1",
+    "downloaded": 60,
+    "total": 120
+  },
+  {
+    "ts": 0.04716039999766508,
+    "wall_ts": 1775853001.5565784,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 9,
+    "label": "final_batch"
+  },
+  {
+    "ts": 0.047302399994805455,
+    "wall_ts": 1775853001.5567205,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 10,
+    "series_number": "1",
+    "downloaded": 110,
+    "total": 120
+  },
+  {
+    "ts": 0.04747249999491032,
+    "wall_ts": 1775853001.55689,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 11,
+    "series_number": "1",
+    "downloaded": 120,
+    "total": 120
+  },
+  {
+    "ts": 0.04784599999402417,
+    "wall_ts": 1775853001.5572636,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 12,
+    "label": "download_complete"
+  },
+  {
+    "ts": 0.04805389999819454,
+    "wall_ts": 1775853001.5574722,
+    "event_type": "SERIES_DOWNLOAD_COMPLETE",
+    "thread_name": "MainThread",
+    "seq": 13,
+    "series_number": "1"
+  },
+  {
+    "ts": 0.04819899999711197,
+    "wall_ts": 1775853001.557617,
+    "event_type": "SCENARIO_END",
+    "thread_name": "MainThread",
+    "seq": 14,
+    "scenario": "s02_medium_ct"
+  }
+]

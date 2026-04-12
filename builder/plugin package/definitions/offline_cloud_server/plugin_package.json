@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "offline_cloud_server",
+  "title": "Offline Cloud Server",
+  "tier": "basic",
+  "package_kind": "core",
+  "build_strategy": "source_tree",
+  "source_paths": [
+    "modules/offline_cloud_server"
+  ],
+  "python_paths": [
+    "python"
+  ],
+  "healthcheck_import": "modules.offline_cloud_server.service",
+  "integration_points": [
+    "settings.server_settings",
+    "home.offline_sync",
+    "storage.offline_cloud_cleanup"
+  ],
+  "install_channels": [
+    "core_bundle"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "offline_cloud_server"
+}

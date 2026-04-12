@@ -40,6 +40,7 @@ from modules.viewer.fast.lightweight_2d_pipeline import (
 from modules.viewer.fast.qt_slice_viewer import (
     QtSliceViewer,
 )
+from modules.viewer.tools.coord_resolver import CoordinateResolver
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +290,7 @@ class QtViewerBridge:
         self._suppress_render: bool = False
         self._wl_scroll_cache_ww: Optional[float] = None
         self._wl_scroll_cache_wc: Optional[float] = None
+        self._first_image_logged: bool = False
 
         # Curved MPR (not supported in Qt mode — stubs only)
         self.curved_mpr_mode: bool = False
@@ -307,10 +309,33 @@ class QtViewerBridge:
         self.qt_viewer.window_level_changed.connect(self._on_qt_wl_changed)
         self.qt_viewer.slice_scroll_requested.connect(self._on_qt_scroll)
 
+        # Initialize ToolController for measurement annotations
+        self._init_tool_controller()
+
+        # Wire pipeline as coordinate backend for patient-space conversions
+        # This enables ruler distance_mm, angle computation, etc.
+        self.qt_viewer._coord_backend = self.pipeline
+
         logger.info(
             "qt-viewer-bridge created slices=%d",
             self._slice_count,
         )
+
+    def _init_tool_controller(self) -> None:
+        """Create and attach a ToolController to the Qt viewer."""
+        try:
+            from modules.viewer.tools.store import ToolStore
+            from modules.viewer.tools.controller import ToolController
+            from modules.viewer.tools.renderers.qpainter import QPainterToolRenderer
+            store = ToolStore()
+            renderer = QPainterToolRenderer()
+            ctrl = ToolController(store, renderer)
+            # Wire pixel data access so ROI tools can compute statistics
+            ctrl._pixel_data_fn = self.pipeline.get_pixel_array
+            ctrl._pixel_spacing_fn = lambda idx: self.pipeline.get_slice_meta(idx).pixel_spacing
+            self.qt_viewer.tool_controller = ctrl
+        except Exception as exc:
+            logger.debug("ToolController init skipped: %s", exc)
 
     def _build_mock_vtk_data(self) -> None:
         """Build a mock vtkImageData from pipeline state."""
@@ -362,6 +387,7 @@ class QtViewerBridge:
 
     def SetSlice(self, slice_index: int) -> None:
         self._current_slice = max(0, min(int(slice_index), self._slice_count - 1))
+        self.qt_viewer._current_slice_index = self._current_slice
 
     def GetSliceMin(self) -> int:
         return 0
@@ -387,16 +413,20 @@ class QtViewerBridge:
         t_start = time.perf_counter()
         idx = max(0, min(int(slice_index), self._slice_count - 1))
         self._current_slice = idx
+        self.qt_viewer._current_slice_index = idx
         self.pipeline.set_slice_index(idx)
+        logger.debug("[FAST-DIAG] QtBridge.set_slice ENTER idx=%d suppress=%s", idx, self._suppress_render)  # CP5
 
         if self._suppress_render:
             return
 
         # Get rendered frame
         frame = self.pipeline.get_rendered_frame(idx)
+        logger.debug("[FAST-DIAG] QtBridge.set_slice FRAME_READY wl_ms=%.1f", getattr(frame, 'wl_ms', -1.0))  # CP5
 
         # Display
         self.qt_viewer.set_image(frame.qimage)
+        logger.debug("[FAST-DIAG] QtBridge.set_slice COMMIT done (set_image+update called)")  # CP5
         self.qt_viewer.set_window_level_values(frame.window_width, frame.window_center)
 
         # Update annotations
@@ -404,6 +434,34 @@ class QtViewerBridge:
 
         total_ms = (time.perf_counter() - t_start) * 1000.0
         self.last_wl_convert_ms = frame.wl_ms
+
+        if not self._first_image_logged:
+            self._first_image_logged = True
+            _series_no = str(self.metadata.get('series', {}).get('series_number', '?'))
+            _frame_cached = (frame.decode_ms == 0.0 and frame.filter_ms == 0.0
+                             and frame.wl_ms == 0.0)
+            _filter_status = (
+                "cached" if _frame_cached
+                else ("applied" if self.pipeline._config.opencv_filter_enabled else "disabled")
+            )
+            logger.info(
+                "FAST:first_image_visible series=%s slice=%d "
+                "decode_ms=%.1f filter_ms=%.1f wl_ms=%.1f render_ms=%.1f "
+                "filter_status=%s frame_was_cached=%s",
+                _series_no, idx,
+                frame.decode_ms, frame.filter_ms, frame.wl_ms, total_ms,
+                _filter_status, _frame_cached,
+            )
+            # Legacy alias kept for existing log parsers
+            logger.info(
+                "[UX_FIRST_IMAGE_VISIBLE] series=%s slice=%d decode_ms=%.1f total_ms=%.1f",
+                _series_no, idx, frame.decode_ms, total_ms,
+            )
+            # viewer-interactive-ready fires immediately after first paint
+            logger.info(
+                "FAST:viewer_interactive_ready series=%s slice=%d total_ms=%.1f",
+                _series_no, idx, total_ms,
+            )
 
         if total_ms > 20.0:
             logger.info(
@@ -495,10 +553,27 @@ class QtViewerBridge:
         self._wl_scroll_cache_wc = None
 
     def pick_world_point(self, display_x: float, display_y: float) -> Optional[Tuple[float, float, float]]:
-        """Convert display coordinates to world (patient) coordinates."""
-        img_x, img_y = self.qt_viewer.widget_to_image_coords(display_x, display_y)
+        """Convert display coordinates to world (patient) coordinates.
+
+        Uses CoordinateResolver.widget_to_image so that rotation and flip
+        applied via the Qt viewer toolbar are correctly undone before the
+        DICOM patient-space transform (image_xy_to_patient_xyz) is called.
+        Falls back to the non-rotation-aware path when the resolver cannot
+        be constructed (safety net only).
+        """
         try:
-            return self.pipeline.image_xy_to_patient_xyz(img_x, img_y, self._current_slice)
+            cr = CoordinateResolver(self.qt_viewer, backend=self.pipeline)
+            img_x, img_y = cr.widget_to_image(display_x, display_y)
+        except Exception:
+            img_x, img_y = self.qt_viewer.widget_to_image_coords(display_x, display_y)
+        try:
+            patient_xyz = self.pipeline.image_xy_to_patient_xyz(img_x, img_y, self._current_slice)
+            logger.info(
+                "[QT-PICK] display=(%.1f, %.1f) \u2192 img=(%.2f, %.2f) slice=%d \u2192 patient=(%.4f, %.4f, %.4f)",
+                display_x, display_y, img_x, img_y, self._current_slice,
+                patient_xyz[0], patient_xyz[1], patient_xyz[2],
+            )
+            return patient_xyz
         except Exception:
             return None
 
@@ -510,14 +585,111 @@ class QtViewerBridge:
             pass
         self.qt_viewer.clear()
 
-    # ── Sync point stubs (not supported in Qt mode) ────────────────────
+    # ── Sync point (Qt overlay) ──────────────────────────────────────
+
+
+    def _find_closest_slice(self, patient_lps) -> "Optional[int]":
+        """Return slice index closest to patient_lps via physical IOP/IPP scan.
+
+        Uses find_closest_slice_physical (O(n) per-slice scan) so that sparse
+        stacks (lumbar disc-by-disc MRI) navigate to the correct disc group
+        instead of the formula-based approach which assumes uniform spacing.
+        Returns None when metadata is insufficient.
+        """
+        try:
+            from modules.viewer.fast.dicom_sync_geometry import (
+                find_closest_slice_physical,
+                compute_slice_positions,
+                compute_slice_normal,
+            )
+            instances = self.metadata.get("instances") or []
+            if not instances:
+                return None
+            iop = instances[0].get('image_orientation_patient')
+            n_t = compute_slice_normal(iop)
+            if n_t is None:
+                return None
+            positions = compute_slice_positions(instances, n_t)
+            k, _d_src, _min_dist = find_closest_slice_physical(
+                np.asarray(patient_lps, dtype=float), instances, n_t,
+                positions=positions
+            )
+            return k
+        except Exception:
+            return None
 
     def set_sync_point(self, world_pos, adjust_slice: bool = False) -> None:
-        """Sync point display is not supported in Qt mode."""
-        pass
+        """Display a sync-point crosshair by converting world patient-LPS -> image coords.
+
+        *world_pos* is TRUE patient-LPS from _map_sync_dicom (Qt target fix).
+        Slice navigation uses _find_closest_slice() (IPP projection) so that
+        Sagittal and Coronal targets navigate to the correct slice.
+        """
+        try:
+            if adjust_slice:
+                # Primary: IOP/IPP slice finder - correct for all orientations
+                _new_slice = self._find_closest_slice(world_pos)
+                if _new_slice is None and self.vtk_image_data is not None:
+                    # Fallback: mock-VTK Z formula (axial legacy path)
+                    sp = self.vtk_image_data.GetSpacing()
+                    orig = self.vtk_image_data.GetOrigin()
+                    dims = self.vtk_image_data.GetDimensions()
+                    if sp[2] > 1e-9:
+                        z_idx = int(round((world_pos[2] - orig[2]) / sp[2]))
+                        _new_slice = max(0, min(z_idx, dims[2] - 1))
+                if _new_slice is not None and _new_slice != self._current_slice:
+                    logger.info(
+                        "[QT-SET-SYNC] adjust_slice: %d -> %d",
+                        self._current_slice, _new_slice,
+                    )
+                    self.set_slice(_new_slice)
+
+            # world_pos is patient-LPS - patient_xyz_to_image_xy is the
+            # exact inverse of image_xy_to_patient_xyz for any orientation.
+            img_x, img_y = 0.0, 0.0
+            try:
+                img_x, img_y = self.pipeline.patient_xyz_to_image_xy(
+                    world_pos, self._current_slice)
+            except Exception:
+                # Fallback: mock-VTK index formula (axial only)
+                if self.vtk_image_data is not None:
+                    sp = self.vtk_image_data.GetSpacing()
+                    orig = self.vtk_image_data.GetOrigin()
+                    img_x = (world_pos[0] - orig[0]) / sp[0] if sp[0] > 1e-9 else 0.0
+                    img_y = (world_pos[1] - orig[1]) / sp[1] if sp[1] > 1e-9 else 0.0
+
+            # Bounds check diagnostic
+            try:
+                _inst_list = self.metadata.get("instances") or []
+                _inst = _inst_list[self._current_slice] if self._current_slice < len(_inst_list) else {}
+                _t_rows = _inst.get("rows") or 0
+                _t_cols = _inst.get("columns") or 0
+            except Exception:
+                _t_rows = _t_cols = 0
+            _out_reason = []
+            if _t_cols:
+                if img_x < 0:          _out_reason.append("left")
+                elif img_x >= _t_cols: _out_reason.append("right")
+            if _t_rows:
+                if img_y < 0:          _out_reason.append("top")
+                elif img_y >= _t_rows: _out_reason.append("bottom")
+            _in_bounds = not _out_reason and bool(_t_rows and _t_cols)
+            logger.info(
+                "[QT-SET-SYNC] world=(%.4f,%.4f,%.4f) adjust=%s slice=%d\n"
+                "  img=(%.2f,%.2f)  target=[%dx%d]  in_bounds=%s  outside=%s"
+                "  rotate=%s flip_h=%s flip_v=%s",
+                world_pos[0], world_pos[1], world_pos[2], adjust_slice, self._current_slice,
+                img_x, img_y, _t_cols, _t_rows, _in_bounds, _out_reason or "none",
+                getattr(self.qt_viewer, "_rotation_angle", "?"),
+                getattr(self.qt_viewer, "_flip_h", "?"),
+                getattr(self.qt_viewer, "_flip_v", "?"),
+            )
+            self.qt_viewer.set_sync_point(img_x, img_y)
+        except Exception:
+            pass
 
     def hide_sync_point(self) -> None:
-        pass
+        self.qt_viewer.hide_sync_point()
 
     # ── Camera state stubs ─────────────────────────────────────────────
 
@@ -617,16 +789,50 @@ class QtViewerBridge:
         self._update_annotations(self._current_slice, window, level)
 
     def _on_qt_scroll(self, delta: int) -> None:
-        """Handle scroll from Qt viewer — forward to vtk_widget."""
-        if self.vtk_widget is not None and hasattr(self.vtk_widget, 'slider'):
-            try:
-                slider = self.vtk_widget.slider
-                if slider is not None:
-                    new_val = slider.value() + delta
-                    new_val = max(slider.minimum(), min(slider.maximum(), new_val))
-                    slider.setValue(new_val)
-            except Exception:
-                pass
+        """Handle scroll from Qt viewer — render directly + update slider."""
+        new_val = self._current_slice + delta
+        new_val = max(0, min(self._slice_count - 1, new_val))
+        if new_val == self._current_slice:
+            return  # at boundary
+
+        # ── Direct render: bypass slider→set_slice chain ──
+        self.set_slice(new_val)
+        self.last_index_slice_saved = new_val
+
+        # ── Update slider display (blocked to prevent re-entry) ──
+        if self.vtk_widget is not None:
+            slider = getattr(self.vtk_widget, 'slider', None)
+            if slider is not None:
+                slider.blockSignals(True)
+                slider.setValue(new_val)
+                slider.blockSignals(False)
+            # Keep vtk_widget's saved index in sync
+            self.vtk_widget.image_viewer = self  # should already be, but ensure
+
+        # ── Lock sync (throttled to 100ms) ──
+        try:
+            _cb = getattr(self.vtk_widget, '_on_slice_changed_cb', None)
+            if _cb is not None:
+                import time as _time
+                _now = _time.perf_counter() * 1000.0
+                _last = getattr(self, '_last_sync_ms', 0.0)
+                if _now - _last >= 100.0:
+                    self._last_sync_ms = _now
+                    _cb(self.vtk_widget)
+        except Exception:
+            pass
+
+        # ── Reference lines ──
+        # Mirror the VTKWidget.set_slice() Qt-bridge path in _vw_scroll.py which
+        # calls _schedule_reference_line_update() after every slice change.
+        # Without this, reference lines on other viewers never update when the
+        # user scrolls directly inside the Qt viewer widget.
+        try:
+            _pw = getattr(self.vtk_widget, 'patient_widget', None)
+            if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):
+                _pw._schedule_reference_line_update()
+        except Exception:
+            pass
 
 
 class _CurvedMPRStub:

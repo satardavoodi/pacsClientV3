@@ -128,4 +128,4 @@ def gapgpt_chat_with_image(api_key: str, user_msg: str, image_path: str, model: 
 - Network issues: handle request exceptions and timeouts
 
 ## References in this codebase
-- GapGPT usage example: [PacsClient/pacs/patient_tab/viewers/openai_reporter.py](PacsClient/pacs/patient_tab/viewers/openai_reporter.py)
+- GapGPT usage example: [modules/EchoMind/viewer_chat/openai_reporter.py](../../modules/EchoMind/viewer_chat/openai_reporter.py)

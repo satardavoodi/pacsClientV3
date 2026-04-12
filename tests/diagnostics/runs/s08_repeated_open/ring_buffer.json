@@ -1,0 +1,323 @@
+[
+  {
+    "ts": 0.019017799997527618,
+    "wall_ts": 1775853002.371545,
+    "event_type": "SCENARIO_BEGIN",
+    "thread_name": "MainThread",
+    "seq": 0,
+    "scenario": "s08_repeated_open",
+    "modality": "CT",
+    "slice_count": 120
+  },
+  {
+    "ts": 0.019549099997675512,
+    "wall_ts": 1775853002.372075,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 1,
+    "label": "cycle_1_open"
+  },
+  {
+    "ts": 0.019794599997112527,
+    "wall_ts": 1775853002.37232,
+    "event_type": "TAB_OPENED",
+    "thread_name": "MainThread",
+    "seq": 2,
+    "series_number": "1",
+    "cycle": 1
+  },
+  {
+    "ts": 0.019997800001874566,
+    "wall_ts": 1775853002.3725228,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 3,
+    "series_number": "1",
+    "downloaded": 20,
+    "total": 120
+  },
+  {
+    "ts": 0.0208894000024884,
+    "wall_ts": 1775853002.3734138,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 4,
+    "series_number": "1",
+    "downloaded": 26,
+    "total": 120
+  },
+  {
+    "ts": 0.02112929999566404,
+    "wall_ts": 1775853002.3736537,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 5,
+    "series_number": "1",
+    "downloaded": 53,
+    "total": 120
+  },
+  {
+    "ts": 0.021279799999319948,
+    "wall_ts": 1775853002.373804,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 6,
+    "series_number": "1",
+    "downloaded": 80,
+    "total": 120
+  },
+  {
+    "ts": 0.021413900001789443,
+    "wall_ts": 1775853002.373938,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 7,
+    "series_number": "1",
+    "downloaded": 120,
+    "total": 120
+  },
+  {
+    "ts": 0.02153800000087358,
+    "wall_ts": 1775853002.3740623,
+    "event_type": "SERIES_DOWNLOAD_COMPLETE",
+    "thread_name": "MainThread",
+    "seq": 8,
+    "series_number": "1"
+  },
+  {
+    "ts": 0.021653099996910896,
+    "wall_ts": 1775853002.3741772,
+    "event_type": "DONE_GUARD_SET",
+    "thread_name": "MainThread",
+    "seq": 9,
+    "series_number": "1",
+    "cycle": 1
+  },
+  {
+    "ts": 0.021749799998360686,
+    "wall_ts": 1775853002.3742745,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 10,
+    "label": "cycle_1_close"
+  },
+  {
+    "ts": 0.021837300002516713,
+    "wall_ts": 1775853002.3743615,
+    "event_type": "TAB_CLOSED",
+    "thread_name": "MainThread",
+    "seq": 11,
+    "series_number": "1",
+    "cycle": 1
+  },
+  {
+    "ts": 0.021931700001005083,
+    "wall_ts": 1775853002.3744562,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 12,
+    "label": "cycle_2_open"
+  },
+  {
+    "ts": 0.02201989999593934,
+    "wall_ts": 1775853002.3745441,
+    "event_type": "TAB_OPENED",
+    "thread_name": "MainThread",
+    "seq": 13,
+    "series_number": "1",
+    "cycle": 2
+  },
+  {
+    "ts": 0.022109899997303728,
+    "wall_ts": 1775853002.3746343,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 14,
+    "series_number": "1",
+    "downloaded": 20,
+    "total": 120
+  },
+  {
+    "ts": 0.02223999999841908,
+    "wall_ts": 1775853002.3747642,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 15,
+    "series_number": "1",
+    "downloaded": 26,
+    "total": 120
+  },
+  {
+    "ts": 0.022367099998518825,
+    "wall_ts": 1775853002.3748913,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 16,
+    "series_number": "1",
+    "downloaded": 53,
+    "total": 120
+  },
+  {
+    "ts": 0.022546200001670513,
+    "wall_ts": 1775853002.3750725,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 17,
+    "series_number": "1",
+    "downloaded": 80,
+    "total": 120
+  },
+  {
+    "ts": 0.02287870000145631,
+    "wall_ts": 1775853002.3754032,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 18,
+    "series_number": "1",
+    "downloaded": 120,
+    "total": 120
+  },
+  {
+    "ts": 0.023067900001478847,
+    "wall_ts": 1775853002.3755925,
+    "event_type": "SERIES_DOWNLOAD_COMPLETE",
+    "thread_name": "MainThread",
+    "seq": 19,
+    "series_number": "1"
+  },
+  {
+    "ts": 0.023199299997941125,
+    "wall_ts": 1775853002.3757238,
+    "event_type": "DONE_GUARD_SET",
+    "thread_name": "MainThread",
+    "seq": 20,
+    "series_number": "1",
+    "cycle": 2
+  },
+  {
+    "ts": 0.02330200000142213,
+    "wall_ts": 1775853002.3758261,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 21,
+    "label": "cycle_2_close"
+  },
+  {
+    "ts": 0.023396099997626152,
+    "wall_ts": 1775853002.3759205,
+    "event_type": "TAB_CLOSED",
+    "thread_name": "MainThread",
+    "seq": 22,
+    "series_number": "1",
+    "cycle": 2
+  },
+  {
+    "ts": 0.023569099997985177,
+    "wall_ts": 1775853002.3760936,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 23,
+    "label": "cycle_3_open"
+  },
+  {
+    "ts": 0.023867500000051223,
+    "wall_ts": 1775853002.3763926,
+    "event_type": "TAB_OPENED",
+    "thread_name": "MainThread",
+    "seq": 24,
+    "series_number": "1",
+    "cycle": 3
+  },
+  {
+    "ts": 0.024005100000067614,
+    "wall_ts": 1775853002.3765297,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 25,
+    "series_number": "1",
+    "downloaded": 20,
+    "total": 120
+  },
+  {
+    "ts": 0.024150299999746494,
+    "wall_ts": 1775853002.3766747,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 26,
+    "series_number": "1",
+    "downloaded": 26,
+    "total": 120
+  },
+  {
+    "ts": 0.024529800000891555,
+    "wall_ts": 1775853002.3770542,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 27,
+    "series_number": "1",
+    "downloaded": 53,
+    "total": 120
+  },
+  {
+    "ts": 0.02472459999989951,
+    "wall_ts": 1775853002.377249,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 28,
+    "series_number": "1",
+    "downloaded": 80,
+    "total": 120
+  },
+  {
+    "ts": 0.024883199999749195,
+    "wall_ts": 1775853002.3774078,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 29,
+    "series_number": "1",
+    "downloaded": 120,
+    "total": 120
+  },
+  {
+    "ts": 0.02500539999891771,
+    "wall_ts": 1775853002.3775296,
+    "event_type": "SERIES_DOWNLOAD_COMPLETE",
+    "thread_name": "MainThread",
+    "seq": 30,
+    "series_number": "1"
+  },
+  {
+    "ts": 0.025117500001215376,
+    "wall_ts": 1775853002.377642,
+    "event_type": "DONE_GUARD_SET",
+    "thread_name": "MainThread",
+    "seq": 31,
+    "series_number": "1",
+    "cycle": 3
+  },
+  {
+    "ts": 0.02521790000173496,
+    "wall_ts": 1775853002.3777852,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 32,
+    "label": "cycle_3_close"
+  },
+  {
+    "ts": 0.025366499998199288,
+    "wall_ts": 1775853002.3778908,
+    "event_type": "TAB_CLOSED",
+    "thread_name": "MainThread",
+    "seq": 33,
+    "series_number": "1",
+    "cycle": 3
+  },
+  {
+    "ts": 0.02545809999719495,
+    "wall_ts": 1775853002.3779833,
+    "event_type": "SCENARIO_END",
+    "thread_name": "MainThread",
+    "seq": 34,
+    "scenario": "s08_repeated_open"
+  }
+]

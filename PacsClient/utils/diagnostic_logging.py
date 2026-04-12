@@ -143,6 +143,8 @@ def _infer_component(logger_name: str) -> str:
         return "db"
     if "zeta_boost" in name:
         return "zetaboost"
+    if "thumbnail_manager" in name or "thumbnail" in name:
+        return "viewer"
     if "viewer" in name or "vtk" in name or "patient_widget_viewer_controller" in name:
         return "viewer"
     if "process" in name or "ipc" in name or "worker" in name:

@@ -1,5 +1,14 @@
 # Fast Mode — Download-Time Viewing Plan
 
+> ⚠️ **Historical planning document (proposal-era).**
+> This file captures design intent at the time it was written and may not match
+> current implementation details.
+>
+> For current architecture/debugging truth, start with:
+> - [Viewer Docs Hub](../viewer/README.md)
+> - [FAST Pipeline Detailed](../viewer/FAST_PIPELINE_DETAILED.md)
+> - [Viewer Backends Reference](VIEWER_BACKENDS_REFERENCE.md)
+
 **Version:** v2.2.3.5.0 (Plan)  
 **Status:** Proposed  
 **Author:** AI Assistant  

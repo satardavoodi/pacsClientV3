@@ -36,6 +36,7 @@ from modules.education.case_of_day_database import (
     search_cases,
 )
 from PacsClient.utils.config import EDUCATION_STORAGE_PATH
+from PacsClient.utils.theme_manager import get_theme_manager
 
 
 _COTD_PREFS_PATH = EDUCATION_STORAGE_PATH / "case_of_day_prefs.json"
@@ -64,6 +65,9 @@ class CaseOfDayEntryDialog(QDialog):
 
     def __init__(self, parent=None, prefill: Dict[str, Any] = None):
         super().__init__(parent)
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self.prefill = dict(prefill or {})
         self.setWindowTitle("Case of the Day")
         self.setMinimumWidth(720)
@@ -75,6 +79,10 @@ class CaseOfDayEntryDialog(QDialog):
         self._cleanup_on_cancel: bool = bool(self.prefill.get("cleanup_on_cancel"))
         self._copied_folder: Optional[str] = None
         self._saved_ok: bool = False
+        self._build_ui()
+
+    def _on_theme_changed(self, theme: Dict[str, Any]):
+        self._theme = theme or self.theme_manager.current_theme()
         self._build_ui()
 
     def reject(self) -> None:
@@ -93,6 +101,12 @@ class CaseOfDayEntryDialog(QDialog):
         super().reject()
 
     def _build_ui(self):
+        while self.layout() is not None and self.layout().count():
+            item = self.layout().takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        t = self._theme
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 16, 18, 16)
         root.setSpacing(12)
@@ -102,25 +116,27 @@ class CaseOfDayEntryDialog(QDialog):
         title_font.setPointSize(16)
         title_font.setWeight(QFont.DemiBold)
         title.setFont(title_font)
-        title.setStyleSheet("color: #f0f4f8;")
+        title.setStyleSheet(f"color: {t['text_primary']};")
         root.addWidget(title)
 
         form_container = QFrame()
-        form_container.setStyleSheet("QFrame { background-color: #111722; border: 1px solid #1f2a37; }")
+        form_container.setStyleSheet(
+            f"QFrame {{ background-color: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 8px; }}"
+        )
         form_layout = QFormLayout(form_container)
         form_layout.setContentsMargins(14, 14, 14, 14)
         form_layout.setSpacing(10)
 
-        field_style = """
-            QLineEdit, QTextEdit, QComboBox {
-                background-color: #0d1117;
-                color: #e2e8f0;
-                border: 1px solid #2a3442;
+        field_style = f"""
+            QLineEdit, QTextEdit, QComboBox {{
+                background-color: {t['panel_deep_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
                 border-radius: 2px;
                 padding: 8px 10px;
                 font-size: 10pt;
-            }
-            QLineEdit:focus, QTextEdit:focus, QComboBox:focus { border: 1px solid #4d8aaf; }
+            }}
+            QLineEdit:focus, QTextEdit:focus, QComboBox:focus {{ border: 1px solid {t['accent']}; }}
         """
 
         prefs = _load_prefs()
@@ -159,17 +175,17 @@ class CaseOfDayEntryDialog(QDialog):
 
         add_part = QPushButton("Add Body Part")
         add_part.setFixedWidth(140)
-        add_part.setStyleSheet("""
-            QPushButton {
-                background-color: #1f4a67;
-                color: #f0f4f8;
-                border: 1px solid #2f6c90;
+        add_part.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border: 1px solid {t['accent']};
                 border-radius: 2px;
                 padding: 8px 10px;
                 font-size: 9.5pt;
                 font-weight: 600;
-            }
-            QPushButton:hover { background-color: #2d5f82; }
+            }}
+            QPushButton:hover {{ background-color: {t['accent_hover']}; }}
         """)
         add_part.clicked.connect(self._add_body_part)
         body_part_layout.addWidget(add_part)
@@ -236,15 +252,15 @@ class CaseOfDayEntryDialog(QDialog):
         cancel = QPushButton("Cancel")
         cancel.setFixedHeight(40)
         cancel.setFixedWidth(120)
-        cancel.setStyleSheet("""
-            QPushButton {
+        cancel.setStyleSheet(f"""
+            QPushButton {{
                 background-color: transparent;
-                color: #a8b2c0;
-                border: 1px solid #3d5a80;
+                color: {t['text_secondary']};
+                border: 1px solid {t['border']};
                 border-radius: 2px;
                 font-size: 10pt;
-            }
-            QPushButton:hover { color: #d8e2ee; border-color: #4d7aa0; }
+            }}
+            QPushButton:hover {{ color: {t['text_primary']}; border-color: {t['accent_hover']}; }}
         """)
         cancel.clicked.connect(self.reject)
         actions.addWidget(cancel)
@@ -252,16 +268,16 @@ class CaseOfDayEntryDialog(QDialog):
         save = QPushButton("Save Case")
         save.setFixedHeight(40)
         save.setFixedWidth(140)
-        save.setStyleSheet("""
-            QPushButton {
-                background-color: #2d5a7b;
-                color: #f0f4f8;
-                border: 1px solid #3d7a9f;
+        save.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border: 1px solid {t['accent']};
                 border-radius: 2px;
                 font-size: 10pt;
                 font-weight: 700;
-            }
-            QPushButton:hover { background-color: #3d7a9f; }
+            }}
+            QPushButton:hover {{ background-color: {t['accent_hover']}; }}
         """)
         save.clicked.connect(self._save)
         actions.addWidget(save)
@@ -353,49 +369,55 @@ class CaseOfDayCard(QFrame):
     def __init__(self, entry: CaseOfDayEntry, parent=None):
         super().__init__(parent)
         self.entry = entry
+        t = get_theme_manager().current_theme()
         self.setObjectName("CaseOfDayCard")
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(320, 180)
-        self.setStyleSheet("""
-            QFrame#CaseOfDayCard {
-                background-color: #111722;
-                border: 1px solid #1f2a37;
+        self.setStyleSheet(f"""
+            QFrame#CaseOfDayCard {{
+                background-color: {t['panel_bg']};
+                border: 1px solid {t['border']};
                 border-radius: 2px;
-            }
-            QFrame#CaseOfDayCard:hover {
-                border-color: #2f6c90;
-                background-color: #141c28;
-            }
-            QLabel { color: #d7dfeb; }
+            }}
+            QFrame#CaseOfDayCard:hover {{
+                border-color: {t['accent_hover']};
+                background-color: {t['panel_alt_bg']};
+            }}
+            QLabel {{ color: {t['text_secondary']}; }}
         """)
         self._build()
 
     def _build(self):
+        t = get_theme_manager().current_theme()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(6)
 
         top = QHBoxLayout()
         mod = QLabel(self.entry.modality)
-        mod.setStyleSheet("color: #eef5fc; font-size: 10pt; font-weight: 700; padding: 2px 8px; background-color: #1f3f66;")
+        mod.setStyleSheet(
+            f"color: {t['button_text']}; font-size: 10pt; font-weight: 700; padding: 2px 8px; background-color: {t['accent']};"
+        )
         top.addWidget(mod)
         top.addStretch()
         body = QLabel(self.entry.body_part)
-        body.setStyleSheet("color: #cbd5e0; font-size: 9.5pt; padding: 2px 8px; background-color: #24384e;")
+        body.setStyleSheet(
+            f"color: {t['text_secondary']}; font-size: 9.5pt; padding: 2px 8px; background-color: {t['panel_alt_bg']};"
+        )
         top.addWidget(body)
         layout.addLayout(top)
 
         diag = QLabel(self.entry.diagnosis)
-        diag.setStyleSheet("color: #f0f4f8; font-size: 11pt; font-weight: 700;")
+        diag.setStyleSheet(f"color: {t['text_primary']}; font-size: 11pt; font-weight: 700;")
         diag.setWordWrap(True)
         layout.addWidget(diag)
 
         saved_by = QLabel(f"Saved by: {self.entry.saved_by}")
-        saved_by.setStyleSheet("color: #9bb0c6; font-size: 9.5pt;")
+        saved_by.setStyleSheet(f"color: {t['text_secondary']}; font-size: 9.5pt;")
         layout.addWidget(saved_by)
 
         extra = QLabel(self.entry.anatomical_classification or "")
-        extra.setStyleSheet("color: #95a7bb; font-size: 9pt;")
+        extra.setStyleSheet(f"color: {t['text_muted']}; font-size: 9pt;")
         extra.setWordWrap(True)
         layout.addWidget(extra)
 
@@ -412,6 +434,9 @@ class CaseOfDayPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self._selected_case: Optional[CaseOfDayEntry] = None
         self._current_modality: str = ""
         self._current_body_part: str = ""
@@ -419,14 +444,25 @@ class CaseOfDayPage(QWidget):
         self._build_ui()
         self.refresh()
 
+    def _on_theme_changed(self, theme: Dict[str, Any]):
+        self._theme = theme or self.theme_manager.current_theme()
+        self._build_ui()
+        self.refresh()
+
     def _build_ui(self):
+        while self.layout() is not None and self.layout().count():
+            item = self.layout().takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        t = self._theme
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         left = QFrame()
         left.setFixedWidth(380)
-        left.setStyleSheet("QFrame { background-color: #0f1419; border-right: 1px solid #1e2530; }")
+        left.setStyleSheet(f"QFrame {{ background-color: {t['panel_deep_bg']}; border-right: 1px solid {t['border']}; }}")
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(18, 18, 18, 18)
         left_layout.setSpacing(12)
@@ -436,44 +472,46 @@ class CaseOfDayPage(QWidget):
         title_font.setPointSize(18)
         title_font.setWeight(QFont.DemiBold)
         title.setFont(title_font)
-        title.setStyleSheet("color: #f0f4f8;")
+        title.setStyleSheet(f"color: {t['text_primary']};")
         left_layout.addWidget(title)
 
-        create_btn = QPushButton("Import DICOM Folder")
-        create_btn.setFixedHeight(42)
-        create_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2d5a7b;
-                color: #f0f4f8;
-                border: 1px solid #3d7a9f;
+        self.create_btn = QPushButton("Import DICOM Folder")
+        self.create_btn.setFixedHeight(42)
+        self.create_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border: 1px solid {t['accent']};
                 border-radius: 2px;
                 font-size: 11pt;
                 font-weight: 700;
-            }
-            QPushButton:hover { background-color: #3d7a9f; }
+            }}
+            QPushButton:hover {{ background-color: {t['accent_hover']}; }}
         """)
-        create_btn.clicked.connect(self._create_case)
-        left_layout.addWidget(create_btn)
+        self.create_btn.clicked.connect(self._create_case)
+        left_layout.addWidget(self.create_btn)
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search cases...")
         self.search.setFixedHeight(42)
-        self.search.setStyleSheet("""
-            QLineEdit {
-                background-color: #0d1117;
-                color: #f0f4f8;
-                border: 1px solid #3d5a80;
+        self.search.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {t['panel_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
                 border-radius: 2px;
                 padding: 0 14px;
                 font-size: 12pt;
-            }
+            }}
         """)
         self.search.textChanged.connect(self._on_search)
         left_layout.addWidget(self.search)
 
         self.modality_filter = QComboBox()
         self.modality_filter.setFixedHeight(40)
-        self.modality_filter.setStyleSheet("QComboBox { background-color: #0d1117; color: #e2e8f0; border: 1px solid #2a3442; padding: 6px 10px; }")
+        self.modality_filter.setStyleSheet(
+            f"QComboBox {{ background-color: {t['panel_bg']}; color: {t['text_primary']}; border: 1px solid {t['border']}; padding: 6px 10px; }}"
+        )
         self.modality_filter.addItem("All Modalities", "")
         for item in ["CT", "MRI", "US", "X-Ray", "PET", "SPECT", "Mammography", "Fluoroscopy", "Other"]:
             self.modality_filter.addItem(item, item)
@@ -496,7 +534,7 @@ class CaseOfDayPage(QWidget):
         center_layout.setSpacing(8)
 
         self.results = QLabel("0 cases")
-        self.results.setStyleSheet("color: #a8b2c0; font-size: 12pt;")
+        self.results.setStyleSheet(f"color: {t['text_secondary']}; font-size: 12pt;")
         center_layout.addWidget(self.results)
 
         self.scroll = QScrollArea()

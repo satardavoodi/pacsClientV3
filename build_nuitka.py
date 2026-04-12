@@ -32,7 +32,7 @@ if sys.platform == "win32":
 PROJECT_ROOT = Path(__file__).resolve().parent
 THEME_QSS_SOURCE = PROJECT_ROOT / "generated-files" / "css" / "main.css"
 
-# ─── Helpers ────────────────────────────────────────────────────────────
+# â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def print_step(message: str) -> None:
     print("\n" + "=" * 80)
@@ -61,11 +61,11 @@ def check_nuitka() -> bool:
         )
         if r.returncode == 0:
             ver = r.stdout.strip().splitlines()[0]
-            print(f"✅ Nuitka version: {ver}")
+            print(f"âœ… Nuitka version: {ver}")
             return True
     except Exception:
         pass
-    print("❌ Nuitka is NOT installed for this interpreter")
+    print("â‌Œ Nuitka is NOT installed for this interpreter")
     return False
 
 
@@ -84,25 +84,25 @@ def verify_required_files(spec: ModuleType) -> bool:
     ok = True
     entry = PROJECT_ROOT / getattr(spec, "ENTRY_POINT", "main.py")
     if entry.is_file():
-        print(f"✅ Entry point: {entry.name}")
+        print(f"âœ… Entry point: {entry.name}")
     else:
-        print(f"❌ Entry point missing: {entry}")
+        print(f"â‌Œ Entry point missing: {entry}")
         ok = False
 
     for src, _ in getattr(spec, "DATA_DIRS", []):
         p = PROJECT_ROOT / src
         if p.exists():
             count = sum(1 for _ in p.rglob("*") if _.is_file()) if p.is_dir() else 1
-            print(f"✅ {src} ({count} file{'s' if count != 1 else ''})")
+            print(f"âœ… {src} ({count} file{'s' if count != 1 else ''})")
         else:
-            print(f"❌ {src} — NOT FOUND")
+            print(f"â‌Œ {src} â€” NOT FOUND")
             ok = False
 
     icon = PROJECT_ROOT / getattr(spec, "ICON", "")
     if icon.is_file():
-        print(f"✅ Icon: {icon.name}")
+        print(f"âœ… Icon: {icon.name}")
     else:
-        print(f"⚠️  Icon not found: {icon}  (build will continue without icon)")
+        print(f"âڑ ï¸ڈ  Icon not found: {icon}  (build will continue without icon)")
 
     return ok
 
@@ -124,10 +124,10 @@ def clean(output_dir: Path) -> None:
                 dp = rp / d
                 print(f"Removing: {dp}")
                 shutil.rmtree(dp, ignore_errors=True)
-    print("✅ Cleanup completed")
+    print("âœ… Cleanup completed")
 
 
-# ─── Command builder ────────────────────────────────────────────────────
+# â”€â”€â”€ Command builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def build_command(spec: ModuleType) -> list[str]:
     """Translate the spec module into a Nuitka CLI invocation."""
@@ -172,7 +172,7 @@ def build_command(spec: ModuleType) -> list[str]:
 
     # Company / product info (optional, nice-to-have in exe properties)
     cmd.append(f"--product-name={app_name}")
-    cmd.append(f"--product-version=2.3.0")
+    cmd.append(f"--product-version=2.3.1")
     cmd.append(f"--company-name=AIPacs")
     cmd.append(f"--file-description={app_name} - Professional Medical Imaging Suite")
 
@@ -216,9 +216,9 @@ def build_command(spec: ModuleType) -> list[str]:
         qa_dir = Path(qtawesome.__file__).parent / "fonts"
         if qa_dir.is_dir():
             cmd.append(f"--include-data-dir={qa_dir}=qtawesome/fonts")
-            print(f"✅ Including qtawesome fonts from: {qa_dir}")
+            print(f"âœ… Including qtawesome fonts from: {qa_dir}")
     except Exception:
-        print("⚠️  qtawesome not found – icons may be missing at runtime")
+        print("âڑ ï¸ڈ  qtawesome not found â€“ icons may be missing at runtime")
 
     # Parallelism
     if jobs:
@@ -247,7 +247,7 @@ def build_command(spec: ModuleType) -> list[str]:
     return cmd
 
 
-# ─── Post-build ─────────────────────────────────────────────────────────
+# â”€â”€â”€ Post-build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def resolve_dist_dir(spec: ModuleType) -> Path:
     """Work out where Nuitka actually placed output."""
@@ -275,9 +275,9 @@ def stage_resources(dist_dir: Path) -> None:
         dst = dist_dir / name
         if src.exists() and not dst.exists():
             shutil.copytree(src, dst, dirs_exist_ok=True)
-            print(f"✅ Staged: {name} → {dst}")
+            print(f"âœ… Staged: {name} â†’ {dst}")
         elif dst.exists():
-            print(f"✅ {name} already present in dist")
+            print(f"âœ… {name} already present in dist")
 
 
     if THEME_QSS_SOURCE.exists():
@@ -285,13 +285,13 @@ def stage_resources(dist_dir: Path) -> None:
         qss_dir.mkdir(parents=True, exist_ok=True)
         dest = qss_dir / "main.qss"
         shutil.copy2(THEME_QSS_SOURCE, dest)
-        print(f"âœ… Theme stylesheet synced: {dest}")
+        print(f"أ¢إ“â€¦ Theme stylesheet synced: {dest}")
     else:
-        print(f"âڑ ï¸ڈ  Theme stylesheet missing: {THEME_QSS_SOURCE}")
+        print(f"أ¢ع‘آ أ¯آ¸عˆ  Theme stylesheet missing: {THEME_QSS_SOURCE}")
 
 
 def rename_exe(dist_dir: Path, spec: ModuleType) -> Path | None:
-    """Rename main.exe → AIPacs.exe if needed."""
+    """Rename main.exe â†’ AIPacs.exe if needed."""
     app_name = getattr(spec, "APP_NAME", "AIPacs")
     entry_stem = Path(getattr(spec, "ENTRY_POINT", "main.py")).stem
 
@@ -302,13 +302,13 @@ def rename_exe(dist_dir: Path, spec: ModuleType) -> Path | None:
     alt = dist_dir / f"{entry_stem}.exe"
     if alt.is_file():
         alt.rename(expected)
-        print(f"✅ Renamed {alt.name} → {expected.name}")
+        print(f"âœ… Renamed {alt.name} â†’ {expected.name}")
         return expected
 
     # search any exe
     for f in dist_dir.glob("*.exe"):
         f.rename(expected)
-        print(f"✅ Renamed {f.name} → {expected.name}")
+        print(f"âœ… Renamed {f.name} â†’ {expected.name}")
         return expected
 
     return None
@@ -318,20 +318,20 @@ def verify_build(dist_dir: Path, spec: ModuleType) -> bool:
     print_step("Verifying Nuitka build output")
     exe = rename_exe(dist_dir, spec)
     if exe is None:
-        print("❌ No executable found in dist directory!")
+        print("â‌Œ No executable found in dist directory!")
         return False
 
     size_mb = exe.stat().st_size / (1024 * 1024)
-    print(f"✅ Executable: {exe}")
+    print(f"âœ… Executable: {exe}")
     print(f"   Size: {size_mb:.2f} MB")
 
     required = ["PacsClient", "Fonts", "Qss"]
     ok = True
     for d in required:
         if (dist_dir / d).exists():
-            print(f"✅ {d}")
+            print(f"âœ… {d}")
         else:
-            print(f"❌ {d} — MISSING")
+            print(f"â‌Œ {d} â€” MISSING")
             ok = False
 
     return ok
@@ -352,12 +352,12 @@ Output Directory:  {dist_dir}
 """
     try:
         info_path.write_text(content, encoding="utf-8")
-        print(f"✅ Build info: {info_path}")
+        print(f"âœ… Build info: {info_path}")
     except Exception as e:
-        print(f"⚠️  Could not write build info: {e}")
+        print(f"âڑ ï¸ڈ  Could not write build info: {e}")
 
 
-# ─── Main ───────────────────────────────────────────────────────────────
+# â”€â”€â”€ Main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def main() -> bool:
     parser = argparse.ArgumentParser(description="Build AIPacs with Nuitka")
@@ -369,14 +369,14 @@ def main() -> bool:
                         help="Print the Nuitka command without executing it")
     args = parser.parse_args()
 
-    print_step("AIPacs — Nuitka Build Process")
+    print_step("AIPacs â€” Nuitka Build Process")
 
     # Load spec
     spec_path = Path(args.spec)
     if not spec_path.is_absolute():
         spec_path = PROJECT_ROOT / spec_path
     if not spec_path.is_file():
-        print(f"❌ Spec file not found: {spec_path}")
+        print(f"â‌Œ Spec file not found: {spec_path}")
         return False
 
     print(f"  Spec file: {spec_path.name}")
@@ -384,16 +384,16 @@ def main() -> bool:
 
     # Verify prerequisites
     if not verify_required_files(spec):
-        print("\n❌ Aborted — required files missing")
+        print("\nâ‌Œ Aborted â€” required files missing")
         return False
 
     if not check_nuitka():
         print("Attempting to install Nuitka ...")
         if not install_nuitka():
-            print("❌ Could not install Nuitka")
+            print("â‌Œ Could not install Nuitka")
             return False
         if not check_nuitka():
-            print("❌ Nuitka still not working after install")
+            print("â‌Œ Nuitka still not working after install")
             return False
 
     output_dir = Path(getattr(spec, "OUTPUT_DIR", "dist/AIPacs_nuitka"))
@@ -414,7 +414,7 @@ def main() -> bool:
     print()
 
     if args.dry_run:
-        print("(dry-run mode — not executing)")
+        print("(dry-run mode â€” not executing)")
         return True
 
     print_step("Building AIPacs with Nuitka")
@@ -435,10 +435,10 @@ def main() -> bool:
     proc.wait()
 
     if proc.returncode != 0:
-        print(f"\n❌ Nuitka exited with code {proc.returncode}")
+        print(f"\nâ‌Œ Nuitka exited with code {proc.returncode}")
         return False
 
-    print("\n✅ Nuitka compilation finished")
+    print("\nâœ… Nuitka compilation finished")
 
     # Post-build
     dist_dir = resolve_dist_dir(spec)
@@ -449,9 +449,9 @@ def main() -> bool:
 
     print_step("Build Process Complete!")
     exe_name = getattr(spec, "APP_NAME", "AIPacs") + ".exe"
-    print(f"✅ AIPacs has been built with Nuitka!")
-    print(f"\n📁 Output: {dist_dir}")
-    print(f"🚀 Run: {dist_dir / exe_name}")
+    print(f"âœ… AIPacs has been built with Nuitka!")
+    print(f"\nًں“پ Output: {dist_dir}")
+    print(f"ًںڑ€ Run: {dist_dir / exe_name}")
     return ok
 
 
@@ -459,5 +459,5 @@ if __name__ == "__main__":
     try:
         sys.exit(0 if main() else 1)
     except KeyboardInterrupt:
-        print("\n\n⚠️  Build interrupted by user")
+        print("\n\nâڑ ï¸ڈ  Build interrupted by user")
         sys.exit(1)

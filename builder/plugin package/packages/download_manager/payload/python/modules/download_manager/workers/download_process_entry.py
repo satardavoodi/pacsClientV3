@@ -161,6 +161,13 @@ def _run_download_in_process(
             database_manager=database_manager,
             base_output_dir=base_output_dir,
         )
+
+        # Propagate viewed-series hint so SeriesDownloader prioritises it
+        _viewed = config_dict.get("viewed_series_number")
+        if _viewed:
+            executor.viewed_series_number = _viewed
+            logger.info("  Viewed series hint: %s", _viewed)
+
         logger.info(
             "  DownloadExecutor ready (out_dir=%s)", base_output_dir,
         )

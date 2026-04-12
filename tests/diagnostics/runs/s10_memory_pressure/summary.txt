@@ -1,0 +1,31 @@
+========================================================================
+AIPacs FAST Viewer Diagnostic Report
+Scenario : s10_memory_pressure  (synthetic)
+Modality : CT  Slices: 400
+Started  : 2026-04-11 00:00:02
+Ended    : N/A
+Crash    : NO
+========================================================================
+
+── KPI Highlights ──
+  Metadata refresh max (ms)                 0.0
+  Grow max (ms)                             0.0
+  First-progress→first-grow (ms)            -1.0
+  Progressive start calls                   0
+  Grow calls                                0
+  Decode failures                           0
+  Exceptions swallowed                      0
+  Peak RSS (MB)                             200.60546875
+
+── Failure Signatures ──
+  [CRITICAL] FS-09: PROGRESSIVE_NEVER_STARTED
+
+── Hypothesis Results ──
+  H1: POSSIBLE     (0.25)  Metadata scan stalls main thread (CT 400  
+  H2: NO_EVIDENCE  (0.00)  Teardown-decode race → UAF crash  
+  H3: POSSIBLE     (0.30)  Series-generation mismatch → wrong-serie  
+  H4: POSSIBLE     (0.20)  Done-guard collision on re-open → progre  
+  H5: NO_EVIDENCE  (0.00)  Asyncio/thread inflight stuck permanentl  
+  H6: NO_EVIDENCE  (0.00)  Completion layer miss → viewer stuck at   
+
+========================================================================

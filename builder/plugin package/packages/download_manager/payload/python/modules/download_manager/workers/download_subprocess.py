@@ -56,6 +56,7 @@ def run_download_subprocess(
     progress_queue,     # multiprocessing.Queue — outbound progress events
     cancel_event,       # multiprocessing.Event — set by main process to cancel
     log_level,          # int  — logging level (logging.DEBUG / INFO …)
+    viewed_series_number=None,  # str | None — series the user is viewing
 ):
     """
     Execute the complete DICOM download pipeline in an isolated subprocess.
@@ -142,6 +143,11 @@ def run_download_subprocess(
         database_manager=db_manager,
         base_output_dir=_Path(base_output_dir),
     )
+
+    # Propagate viewed-series hint so SeriesDownloader prioritises it
+    if viewed_series_number:
+        executor.viewed_series_number = viewed_series_number
+        logger.info(f"[SP] Viewed series hint: {viewed_series_number}")
 
     # ── 4. Progress callback → sends messages to the queue ───────────────────
     def _progress_cb(event_type, series_number, progress_percent, downloaded, total, **_kw):

@@ -1,0 +1,16 @@
+{
+  "scenario_name": "s02_medium_ct",
+  "scenario_type": "synthetic",
+  "started_at": 1775853001.5343778,
+  "ended_at": 1775853001.6490862,
+  "process_id": 3448,
+  "process_died": false,
+  "study_uid": null,
+  "series_number": null,
+  "modality": "CT",
+  "slice_count": 120,
+  "run_count": 1,
+  "python_version": "3.13.5",
+  "platform": "win32",
+  "notes": ""
+}

@@ -1,0 +1,23 @@
+{"ts": 0.014283299999078736, "wall_ts": 1775853002.7467678, "event_type": "SCENARIO_BEGIN", "thread_name": "MainThread", "seq": 0, "scenario": "s03_large_ct", "modality": "CT", "slice_count": 400}
+{"ts": 0.01477080000040587, "wall_ts": 1775853002.7472544, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 1, "label": "first_batch"}
+{"ts": 0.014994700002716854, "wall_ts": 1775853002.747478, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 2, "series_number": "1", "downloaded": 20, "total": 400}
+{"ts": 0.015215500003250781, "wall_ts": 1775853002.7476978, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 3, "label": "rapid_burst_start"}
+{"ts": 0.017032000003382564, "wall_ts": 1775853002.7495172, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 4, "series_number": "1", "downloaded": 66, "total": 400}
+{"ts": 0.017310399998677894, "wall_ts": 1775853002.7497928, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 5, "series_number": "1", "downloaded": 99, "total": 400}
+{"ts": 0.017857799997727852, "wall_ts": 1775853002.7503405, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 6, "series_number": "1", "downloaded": 132, "total": 400}
+{"ts": 0.01826509999955306, "wall_ts": 1775853002.7507474, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 7, "series_number": "1", "downloaded": 165, "total": 400}
+{"ts": 0.018449399998644367, "wall_ts": 1775853002.7509317, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 8, "series_number": "1", "downloaded": 198, "total": 400}
+{"ts": 0.018572699998912867, "wall_ts": 1775853002.751055, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 9, "series_number": "1", "downloaded": 231, "total": 400}
+{"ts": 0.018684800001210533, "wall_ts": 1775853002.7511675, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 10, "series_number": "1", "downloaded": 264, "total": 400}
+{"ts": 0.01880170000367798, "wall_ts": 1775853002.751284, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 11, "series_number": "1", "downloaded": 297, "total": 400}
+{"ts": 0.01891579999937676, "wall_ts": 1775853002.751398, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 12, "series_number": "1", "downloaded": 330, "total": 400}
+{"ts": 0.019066799999563955, "wall_ts": 1775853002.7515492, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 13, "series_number": "1", "downloaded": 363, "total": 400}
+{"ts": 0.019287000002805144, "wall_ts": 1775853002.7517693, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 14, "series_number": "1", "downloaded": 396, "total": 400}
+{"ts": 0.01942090000375174, "wall_ts": 1775853002.7519035, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 15, "label": "rapid_burst_end"}
+{"ts": 0.01973369999905117, "wall_ts": 1775853002.7522163, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 16, "label": "near_complete"}
+{"ts": 0.019860400003381073, "wall_ts": 1775853002.752343, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 17, "series_number": "1", "downloaded": 395, "total": 400}
+{"ts": 0.019995499998913147, "wall_ts": 1775853002.7524781, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 18, "label": "completion_pulse"}
+{"ts": 0.02009379999799421, "wall_ts": 1775853002.7525768, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 19, "series_number": "1", "downloaded": 400, "total": 400}
+{"ts": 0.020261800003936514, "wall_ts": 1775853002.7527442, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 20, "label": "download_complete"}
+{"ts": 0.02036219999718014, "wall_ts": 1775853002.752845, "event_type": "SERIES_DOWNLOAD_COMPLETE", "thread_name": "MainThread", "seq": 21, "series_number": "1"}
+{"ts": 0.02081190000171773, "wall_ts": 1775853002.7532942, "event_type": "SCENARIO_END", "thread_name": "MainThread", "seq": 22, "scenario": "s03_large_ct"}

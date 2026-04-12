@@ -1,0 +1,16 @@
+{
+  "scenario_name": "s01_small_mri",
+  "scenario_type": "synthetic",
+  "started_at": 1775853002.6487615,
+  "ended_at": 1775853002.7188292,
+  "process_id": 3448,
+  "process_died": false,
+  "study_uid": null,
+  "series_number": null,
+  "modality": "MR",
+  "slice_count": 25,
+  "run_count": 1,
+  "python_version": "3.13.5",
+  "platform": "win32",
+  "notes": ""
+}

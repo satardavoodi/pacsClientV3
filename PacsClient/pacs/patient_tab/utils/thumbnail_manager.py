@@ -1,6 +1,7 @@
 from PySide6.QtCore import QSize, Signal, QPropertyAnimation, QEasingCurve, QTimer, QRect
 from PySide6.QtGui import QPixmap, Qt, QFont, QPainter, QPen, QBrush, QLinearGradient, QColor, QPainterPath, QImage
 from PySide6.QtWidgets import QPushButton, QWidget, QLabel, QVBoxLayout, QApplication, QGridLayout, QProgressBar, QHBoxLayout, QFrame, QGraphicsDropShadowEffect
+import logging
 import weakref 
 from PySide6.QtCore import QObject, Signal, QTimer, QThread
 
@@ -14,6 +15,8 @@ from PySide6.QtCore import Qt
 import math
 import time
 from PacsClient.utils.theme_manager import get_theme_manager
+
+_tm_logger = logging.getLogger(__name__)
 
 
 class CircularProgressborder(QFrame):
@@ -220,7 +223,7 @@ class CircularProgressborder(QFrame):
                 pass
                 
         except Exception as e:
-            print(f"⚠️ Error hiding ready label: {e}")
+            _tm_logger.debug("error hiding ready label: %s", e)
 
     # Also fix the timer callback in create_thumbnail_widget or similar:
     def on_thumbnail_ready(self):
@@ -237,7 +240,7 @@ class CircularProgressborder(QFrame):
                 pass  # Object deleted
                 
         except Exception as e:
-            print(f"Error in on_thumbnail_ready: {e}")
+            _tm_logger.debug("error in on_thumbnail_ready: %s", e)
 
     def cleanup(self):
         """Clean up resources and timers"""
@@ -697,6 +700,10 @@ class ThumbnailManager(QObject):
         try:
             if image is None or image.isNull():
                 return
+            _tm_logger.info(
+                "FAST:first_thumbnail_visible series=%s t_abs=%.6f",
+                series_number, time.perf_counter(),
+            )
             self.thumbnail_image_ready.emit(str(series_number), image)
         except Exception:
             return
@@ -776,17 +783,21 @@ class ThumbnailManager(QObject):
             image_button.setIcon(scaled)
             image_button.setIconSize(scaled.size())
             image_button.update()
+            _tm_logger.info(
+                "FAST:thumbnail_cache series=%s source=generated source_detail=applied_to_widget",
+                series_number,
+            )
         except Exception:
             return
 
     def set_current_study_uid(self, study_uid):
         """Set the current study UID - fixes the AttributeError"""
         self.current_study_uid = study_uid
-        print(f"📝 [ThumbnailManager] Set current study UID: {study_uid}")
+        _tm_logger.debug("ThumbnailManager: set current study UID: %s", study_uid)
 
     def reset_all_states(self):
         """Reset all thumbnail states for a new patient"""
-        print(f"🔄 [ThumbnailManager] Resetting all states for new patient")
+        _tm_logger.debug("ThumbnailManager: resetting all states for new patient")
 
         # Clear all ready series
         self.ready_series.clear()
@@ -826,8 +837,7 @@ class ThumbnailManager(QObject):
         # Clear all widgets
         self.series_widgets.clear()
 
-        print(f"✅ [ThumbnailManager] All states reset")
-        
+        _tm_logger.debug("ThumbnailManager: all states reset")
     def apply_border_states(self):
         """
         همه‌ی ویجت‌ها را مرور می‌کند و بر اساس سه حالت زیر استایل می‌دهد:
@@ -896,7 +906,7 @@ class ThumbnailManager(QObject):
                         del self.series_widgets[key]
                     continue
         except Exception as e:
-            print(f"⚠️ apply_border_states error: {e}")
+            _tm_logger.debug("apply_border_states error: %s", e)
     
     def apply_border_states_new(self, immediate: bool = False):
         """
@@ -928,8 +938,6 @@ class ThumbnailManager(QObject):
             # Skip if no widgets
             if not self.series_widgets:
                 return
-                
-            print(f"🔄 [ThumbnailManager] apply_border_states_new called (widgets: {len(self.series_widgets)})")
             
             # Disable updates during batch processing
             for w in self.series_widgets.values():
@@ -981,7 +989,7 @@ class ThumbnailManager(QObject):
                     
                     except Exception as e:
                         if "deleted" not in str(e).lower():
-                            print(f"⚠️ Error processing widget {key}: {e}")
+                            _tm_logger.debug("error processing widget %s: %s", key, e)
                         continue
                 
                 # Now do a single update for all widgets
@@ -1011,13 +1019,13 @@ class ThumbnailManager(QObject):
                     except RuntimeError:
                         continue
             
-            print(f"✅ [ThumbnailManager] Border states applied")
+            _tm_logger.debug("ThumbnailManager: border states applied to %d widgets", len(self.series_widgets))
             
         except Exception as e:
             if immediate:
                 self._border_state_update_pending = False
             if "deleted" not in str(e).lower():
-                print(f"⚠️ apply_border_states_new error: {e}")
+                _tm_logger.debug("apply_border_states_new error: %s", e)
                 
 
     @staticmethod
@@ -1304,7 +1312,7 @@ class ThumbnailManager(QObject):
                     elif self.current_study_uid:
                         study_uid = self.current_study_uid
 
-                    print(f"🔥 [ThumbnailManager] Emitting priority download for series {series_number}, study {study_uid}")
+                    _tm_logger.debug("ThumbnailManager: priority download requested series=%s study=%s", series_number, study_uid)
                     self.priority_download_requested.emit(series_key, study_uid)
 
                     # First try to change series normally (this will trigger loading if needed)
@@ -1373,13 +1381,13 @@ class ThumbnailManager(QObject):
                         study_uid = self.current_study_uid
                     
                     # ✅ Use real series_number, NOT thumbnail_index
-                    print(f"🔄 [ThumbnailManager] Retry download requested for series {series_number} (UID: {series_uid}), study {study_uid}")
+                    _tm_logger.debug("ThumbnailManager: retry download requested series=%s uid=%s study=%s", series_number, series_uid, study_uid)
                     
                     # Emit retry signal with series info
                     if hasattr(self, 'retry_download_requested'):
                         self.retry_download_requested.emit(series_key, study_uid, series_uid)
                 except Exception as e:
-                    print(f"❌ Error in retry button click: {e}")
+                    _tm_logger.debug("error in retry button click: %s", e)
             
             retry_button.clicked.connect(on_retry_clicked)
             
@@ -1408,11 +1416,19 @@ class ThumbnailManager(QObject):
 
             # ✅ Store widget using real series_number as key, NOT thumbnail_index
             self.series_widgets[series_key] = widget
+            _tm_logger.debug("ThumbnailManager: stored in series_widgets key=%s", series_key)
+
+            # Apply deferred download state if start_series_download was called
+            # before this widget was created (download started before thumbnails built).
+            if getattr(self, '_pending_download_series', None) and series_key in self._pending_download_series:
+                self._pending_download_series.discard(series_key)
+                _tm_logger.debug("ThumbnailManager: applying deferred download state for series %s", series_key)
+                self.start_series_download(series_key)
 
             return widget
             
         except Exception as e:
-            print(f"Error creating thumbnail widget: {str(e)}")
+            _tm_logger.exception("error creating thumbnail widget: %s", e)
             error_widget = QWidget()
             error_widget.setFixedSize(180, 120)
             error_layout = QVBoxLayout(error_widget)
@@ -1480,7 +1496,7 @@ class ThumbnailManager(QObject):
             # Apply unified border state update (coalesced)
             self.apply_border_states_new()
         except Exception as e:
-            print(f"⚠️ set_series_pending error: {e}")
+            _tm_logger.debug("set_series_pending error: %s", e)
 
     def set_series_ready(self, series_number: str):
         try:
@@ -1507,7 +1523,7 @@ class ThumbnailManager(QObject):
                             del self.series_widgets[series_key]
             self.apply_border_states_new()
         except Exception as e:
-            print(f"⚠️ set_series_ready error: {e}")
+            _tm_logger.debug("set_series_ready error: %s", e)
         finally:
             self._set_ready_reentrant_guard = False
 
@@ -1525,7 +1541,7 @@ class ThumbnailManager(QObject):
         """
         try:
             series_key = self._resolve_series_key(series_number)
-            print(f"🎨 Applying priority styling to series {series_key}")
+            _tm_logger.debug("ThumbnailManager: apply priority styling to series %s", series_key)
 
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
@@ -1574,7 +1590,7 @@ class ThumbnailManager(QObject):
                                 for i in range(3):
                                     QTimer.singleShot(i * 1000, flash_priority)
 
-                                print(f"✅ Priority animation started for series {series_key}")
+                                _tm_logger.debug("ThumbnailManager: priority animation started for series %s", series_key)
                         except (RuntimeError, AttributeError):
                             # Widget or progress_border has been deleted, remove from tracking
                             if series_key in self.series_widgets:
@@ -1588,7 +1604,7 @@ class ThumbnailManager(QObject):
                 self.apply_border_states_new()
 
         except Exception as e:
-            print(f"⚠️ Error highlighting priority series: {e}")
+            _tm_logger.debug("error highlighting priority series: %s", e)
 
 
     def update_series_progress(self, series_number, progress_percent, status_text=""):
@@ -1602,7 +1618,13 @@ class ThumbnailManager(QObject):
             is_priority = "⚡" in status_text or "🎯" in status_text or "🔄" in status_text
             
             if is_priority and (progress_percent % 25 == 0 or progress_percent >= 100):
-                print(f"⚡ [PRIORITY PROGRESS] Series {series_key}: {progress_percent:.1f}% - {status_text}")
+                _tm_logger.debug("PRIORITY PROGRESS series=%s pct=%.1f status=%s", series_key, progress_percent, status_text)
+            
+            # Log state transition for diagnostic purposes
+            _tm_logger.info(
+                "[FAST-THUMB-STATE] series=%s state=downloading progress=%.0f count_label=%s",
+                series_key, progress_percent, status_text,
+            )
             
             # Rest of the existing code...
             if series_key in self.series_widgets:
@@ -1760,9 +1782,7 @@ class ThumbnailManager(QObject):
                         return
                     
         except Exception as e:
-            print(f"⚠️ Error updating series progress: {e}")
-            import traceback
-            traceback.print_exc()
+            _tm_logger.exception("ThumbnailManager: error in update_series_progress: %s", e)
     
     def _hide_overlay(self, widget):
         """Helper method to hide overlay safely (including glass background)"""
@@ -1793,7 +1813,7 @@ class ThumbnailManager(QObject):
                 except RuntimeError:
                     pass
         except Exception as e:
-            print(f"⚠️ Error hiding overlay: {e}")
+            _tm_logger.debug("error hiding overlay: %s", e)
 
 
     def _hide_overlay_safe(self, widget):
@@ -1825,7 +1845,7 @@ class ThumbnailManager(QObject):
                 except RuntimeError:
                     pass
         except Exception as e:
-            print(f"⚠️ Error hiding overlay (safe): {e}")
+            _tm_logger.debug("error hiding overlay (safe): %s", e)
 
 
     def start_series_download(self, series_number):
@@ -1835,10 +1855,15 @@ class ThumbnailManager(QObject):
         """
         try:
             series_key = self._resolve_series_key(series_number)
-            
-            # DEBUG: Print available keys
-            print(f"🔍 [ThumbnailManager] start_series_download called for series: {series_key}")
-            print(f"   📋 Available series_widgets keys: {list(self.series_widgets.keys())}")
+            _t_thumb_start = time.perf_counter()
+            if not hasattr(self, '_thumb_pipeline_start'):
+                self._thumb_pipeline_start = {}
+            self._thumb_pipeline_start[series_key] = _t_thumb_start
+            _tm_logger.info(
+                "FAST:thumbnail_pipeline event=start series=%s t_abs=%.6f",
+                series_key, _t_thumb_start,
+            )
+            _tm_logger.info("[FAST-THUMB-STATE] series=%s state=downloading bg_color=blue", series_key)
             
             # Find widget in series_widgets dictionary
             if series_key in self.series_widgets:
@@ -1922,14 +1947,16 @@ class ThumbnailManager(QObject):
                         if series_key in self.series_widgets:
                             del self.series_widgets[series_key]
                         return
-                    print(f"   ✅ Progress overlay shown for series {series_key}")
             else:
-                print(f"   ⚠️ Widget not found for series {series_key} - thumbnail may not be created yet")
+                # Widget not created yet — queue so we apply the download state
+                # as soon as create_thumbnail_widget registers it.
+                if not hasattr(self, '_pending_download_series'):
+                    self._pending_download_series = set()
+                self._pending_download_series.add(series_key)
+                _tm_logger.debug("ThumbnailManager: start_series_download deferred for series %s", series_key)
                         
         except Exception as e:
-            print(f"⚠️ Error starting series download: {e}")
-            import traceback
-            traceback.print_exc()
+            _tm_logger.exception("ThumbnailManager: error in start_series_download: %s", e)
     
     def complete_series_download(self, series_number):
         """
@@ -1937,34 +1964,46 @@ class ThumbnailManager(QObject):
         """
         try:
             series_key = self._resolve_series_key(series_number)
-            print(f"🎯 [PRIORITY COMPLETE] Completing download for series {series_key}")
 
-            # 1. علامت‌گذاری به عنوان آماده
+            # 1. Mark as ready
             self.ready_series.add(series_key)
-
-            # 2. فراخوانی نمایش اولویت‌دار در parent widget
-            if hasattr(self, 'parent_widget') and self.parent_widget:
-                # اینجا باید parent widget (PatientWidget) را پیدا کنیم
-                # فرض می‌کنیم که parent_widget به PatientWidget اشاره دارد
+            _t_thumb_end = time.perf_counter()
+            _t_thumb_start = getattr(self, '_thumb_pipeline_start', {}).pop(series_key, None)
+            _dl_ms = (_t_thumb_end - _t_thumb_start) * 1000 if _t_thumb_start is not None else -1
+            _tm_logger.info(
+                "FAST:thumbnail_pipeline event=end series=%s t_abs=%.6f dl_ms=%.1f",
+                series_key, _t_thumb_end, _dl_ms,
+            )
+            _tm_logger.info("[FAST-THUMB-STATE] series=%s state=completed bg_color=green", series_key)
+            # do NOT depend on parent_widget being set (it is rarely set in production).
+            # This is the primary path that makes the thumbnail turn green
+            # when a download completes.
+            if series_key in self.series_widgets:
+                widget = self.series_widgets[series_key]
                 try:
-                    # First try the existing method
+                    if widget and hasattr(widget, 'progress_border'):
+                        widget.progress_border.setDownloading(False)
+                        widget.progress_border.setReady(True)
+                except (RuntimeError, AttributeError):
+                    pass
+
+            # Schedule coalesced border repaint (immediate=False batches within 150ms)
+            self.apply_border_states_new()
+
+            # 3. Optionally notify parent widget (priority display, etc.)
+            if hasattr(self, 'parent_widget') and self.parent_widget:
+                try:
                     if hasattr(self.parent_widget, '_trigger_priority_display'):
                         self.parent_widget._trigger_priority_display(series_key)
-                    # If that doesn't work, try the new method for post-download display
                     elif hasattr(self.parent_widget, '_trigger_priority_display_after_download'):
                         self.parent_widget._trigger_priority_display_after_download(series_key)
                 except Exception as e:
-                    print(f"⚠️ Error triggering priority display: {e}")
+                    _tm_logger.debug("error triggering priority display: %s", e)
 
-            # 3. به‌روزرسانی border — handled by _trigger_priority_display, no
-            #    separate call needed (reduces UI thread work during bulk downloads).
-
-            print(f"✅ [PRIORITY COMPLETE] Series {series_key} ready for immediate display")
+            _tm_logger.debug("ThumbnailManager: series %s complete and ready for display", series_key)
 
         except Exception as e:
-            print(f"❌ Error in complete_series_download: {e}")
-            import traceback
-            traceback.print_exc()
+            _tm_logger.exception("ThumbnailManager: error in complete_series_download: %s", e)
 
 
     def _force_border_update(self, series_key):
@@ -2021,14 +2060,14 @@ class ThumbnailManager(QObject):
                     if hasattr(widget, 'status_label'):
                         widget.status_label.setPendingStyle()
         except Exception as e:
-            print(f"⚠️ Error resetting progress bars: {e}")
+            _tm_logger.debug("error resetting progress bars: %s", e)
     
     def show_auto_download_progress(self, study_uid, total_series):
         """
         نمایش پیشرفت دانلود خودکار تامب‌نیل‌ها
         """
         try:
-            print(f"📊 Showing auto-download progress for {total_series} series")
+            _tm_logger.debug("showing auto-download progress for %d series", total_series)
             
             # ایجاد ویجت پیشرفت کلی
             if not hasattr(self, 'auto_download_widget'):
@@ -2040,7 +2079,7 @@ class ThumbnailManager(QObject):
                 self.auto_download_widget.update_progress(0, total_series, "Starting download...")
             
         except Exception as e:
-            print(f"⚠️ Error showing auto-download progress: {e}")
+            _tm_logger.debug("error showing auto-download progress: %s", e)
     
     def create_auto_download_widget(self):
         """
@@ -2130,10 +2169,10 @@ class ThumbnailManager(QObject):
             # مخفی کردن در ابتدا
             self.auto_download_widget.setVisible(False)
             
-            print("✅ Auto download widget created")
+            _tm_logger.debug("auto download widget created")
             
         except Exception as e:
-            print(f"❌ Error creating auto download widget: {e}")
+            _tm_logger.debug("error creating auto download widget: %s", e)
     
     def update_auto_download_progress(self, current, total, status=""):
         """
@@ -2193,7 +2232,7 @@ class ThumbnailManager(QObject):
                     QTimer.singleShot(3000, self.hide_auto_download_widget)
                 
         except Exception as e:
-            print(f"⚠️ Error updating auto download progress: {e}")
+            _tm_logger.debug("error updating auto download progress: %s", e)
     
     def hide_auto_download_widget(self):
         """
@@ -2202,9 +2241,9 @@ class ThumbnailManager(QObject):
         try:
             if hasattr(self, 'auto_download_widget') and self.auto_download_widget:
                 self.auto_download_widget.setVisible(False)
-                print("✅ Auto download widget hidden")
+                _tm_logger.debug("auto download widget hidden")
         except Exception as e:
-            print(f"⚠️ Error hiding auto download widget: {e}")
+            _tm_logger.debug("error hiding auto download widget: %s", e)
     
     def show_all_progress_bars_for_test(self):
         """
@@ -2232,6 +2271,6 @@ class ThumbnailManager(QObject):
                             }
                         """)
         except Exception as e:
-            print(f"⚠️ Error in test method: {e}")
+            _tm_logger.debug("error in test method: %s", e)
             import traceback
             traceback.print_exc()

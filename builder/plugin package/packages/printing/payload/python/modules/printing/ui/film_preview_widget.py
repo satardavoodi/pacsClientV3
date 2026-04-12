@@ -18,6 +18,7 @@ from modules.printing.render.dicom_renderer import (
 )
 from modules.printing.render.film_renderer import render_film, HEADER_HEIGHT_RATIO, HEADER_PADDING_IN
 from modules.printing.ui.print_tools import PrintToolManager
+from PacsClient.utils.theme_manager import get_theme_manager
 
 
 @dataclass
@@ -49,6 +50,9 @@ class TileItem(QGraphicsPixmapItem):
 class FilmPreviewWidget(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._theme_manager = get_theme_manager()
+        self._theme = self._theme_manager.current_theme()
+        self._theme_manager.themeChanged.connect(self._on_theme_changed)
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
         self.setRenderHints(self.renderHints() | QPainter.Antialiasing)
@@ -89,6 +93,17 @@ class FilmPreviewWidget(QGraphicsView):
         self._rerender_timer.setSingleShot(True)
         self._rerender_timer.timeout.connect(self._flush_rerender)
         self._rerender_interval_ms = 16
+        self.setStyleSheet(
+            f"QGraphicsView {{ background-color: {self._theme['panel_deep_bg']}; border: 1px solid {self._theme['border']}; border-radius: 8px; }}"
+        )
+
+    def _on_theme_changed(self, theme: Dict[str, str]):
+        self._theme = theme or self._theme_manager.current_theme()
+        self.setStyleSheet(
+            f"QGraphicsView {{ background-color: {self._theme['panel_deep_bg']}; border: 1px solid {self._theme['border']}; border-radius: 8px; }}"
+        )
+        if self._film_size and self._layout:
+            self.set_tiles(self._film_size, self._layout, self._paths, self._overlay_info)
 
     def _should_reserve_scout_slot(self, total_cells: int) -> bool:
         # Keep historical scout/placeholder behavior for multi-cell layouts,
@@ -119,7 +134,7 @@ class FilmPreviewWidget(QGraphicsView):
         film_w_px = int(film_size.width_in * preview_dpi)
         film_h_px = int(film_size.height_in * preview_dpi)
         bg_rect = QGraphicsRectItem(0, 0, film_w_px, film_h_px)
-        bg_rect.setBrush(QBrush(QColor(18, 18, 18)))  # dark film background
+        bg_rect.setBrush(QBrush(QColor(self._theme["panel_bg"])))
         bg_rect.setPen(QPen(Qt.NoPen))
         bg_rect.setZValue(-100)  # behind everything
         bg_rect.setAcceptedMouseButtons(Qt.NoButton)
@@ -193,6 +208,7 @@ class FilmPreviewWidget(QGraphicsView):
         return self._scout_path
 
     def _draw_preview_header(self, overlay_info: Dict[str, str] | None, dpi: int, header_height_in: float) -> None:
+        t = self._theme
         if not overlay_info:
             overlay_info = {}
         patient_name = overlay_info.get("patient_name") or "Unknown Patient"
@@ -215,7 +231,7 @@ class FilmPreviewWidget(QGraphicsView):
 
         # Left block (2 lines)
         left_name = QGraphicsTextItem(patient_name)
-        left_name.setDefaultTextColor(QColor(240, 240, 240))
+        left_name.setDefaultTextColor(QColor(t["text_primary"]))
         left_name_font = QFont()
         left_name_font.setPointSize(fs_patient_name)
         left_name_font.setBold(True)
@@ -225,7 +241,7 @@ class FilmPreviewWidget(QGraphicsView):
         self._scene.addItem(left_name)
 
         left_id = QGraphicsTextItem(f"ID: {patient_id}")
-        left_id.setDefaultTextColor(QColor(220, 220, 220))
+        left_id.setDefaultTextColor(QColor(t["text_secondary"]))
         left_id_font = QFont()
         left_id_font.setPointSize(fs_patient_id)
         left_id.setFont(left_id_font)
@@ -235,7 +251,7 @@ class FilmPreviewWidget(QGraphicsView):
 
         # Center title (single centered line)
         center_item = QGraphicsTextItem(center_name)
-        center_item.setDefaultTextColor(QColor(245, 245, 245))
+        center_item.setDefaultTextColor(QColor(t["text_primary"]))
         center_font = QFont()
         center_font.setPointSize(fs_center_name)
         center_font.setBold(True)
@@ -247,7 +263,7 @@ class FilmPreviewWidget(QGraphicsView):
 
         # Right block (2 lines)
         right1 = QGraphicsTextItem(right_line_1)
-        right1.setDefaultTextColor(QColor(220, 220, 220))
+        right1.setDefaultTextColor(QColor(t["text_secondary"]))
         right_font = QFont()
         right_font.setPointSize(fs_right_block)
         right1.setFont(right_font)
@@ -257,7 +273,7 @@ class FilmPreviewWidget(QGraphicsView):
         self._scene.addItem(right1)
 
         right2 = QGraphicsTextItem(right_line_2)
-        right2.setDefaultTextColor(QColor(190, 190, 190))
+        right2.setDefaultTextColor(QColor(t["text_muted"]))
         right2.setFont(right_font)
         right2_rect = right2.boundingRect()
         right2.setPos(width_px - right2_rect.width() - x_px, y_px + right1.boundingRect().height())
@@ -265,7 +281,7 @@ class FilmPreviewWidget(QGraphicsView):
         self._scene.addItem(right2)
 
         separator_y = int(header_height_in * dpi)
-        pen = QPen(QColor(255, 255, 255))
+        pen = QPen(QColor(t["border"]))
         self._scene.addLine(0, separator_y, int(self._film_size.width_in * dpi), separator_y, pen)
 
     def _draw_preview_grid(
@@ -289,7 +305,7 @@ class FilmPreviewWidget(QGraphicsView):
         cell_h = cells[0].height if cells else film_area.height_in
         line_in = grid.GRID_LINE_WIDTH_IN
 
-        brush = QBrush(QColor(255, 255, 255))
+        brush = QBrush(QColor(self._theme["border"]))
         no_pen = QPen(Qt.NoPen)
 
         # Vertical lines (including left/right borders)
@@ -407,7 +423,7 @@ class FilmPreviewWidget(QGraphicsView):
         scale_x = w_px / crop_w
         scale_y = h_px / crop_h
 
-        pen = QPen(QColor(255, 217, 51))
+        pen = QPen(QColor(self._theme["warning"]))
         pen.setWidth(1)
 
         label_margin = 4  # pixels from edge
@@ -440,7 +456,7 @@ class FilmPreviewWidget(QGraphicsView):
             font.setPointSize(12)
             font.setBold(True)
             text.setFont(font)
-            text.setDefaultTextColor(QColor(255, 217, 51))
+            text.setDefaultTextColor(QColor(self._theme["warning"]))
             text.setAcceptedMouseButtons(Qt.NoButton)
             text.setZValue(2)
 
@@ -469,7 +485,7 @@ class FilmPreviewWidget(QGraphicsView):
         font.setPointSize(20)
         font.setBold(True)
         badge.setFont(font)
-        badge.setDefaultTextColor(QColor(255, 240, 160))
+        badge.setDefaultTextColor(QColor(self._theme["warning"]))
         badge.setPos(x_px + 6, y_px + 4)
         badge.setAcceptedMouseButtons(Qt.NoButton)
         self._scene.addItem(badge)
@@ -480,13 +496,13 @@ class FilmPreviewWidget(QGraphicsView):
         w_px = int(cell.width * dpi)
         h_px = int(cell.height * dpi)
 
-        pen = QPen(QColor(120, 120, 120))
+        pen = QPen(QColor(self._theme["text_muted"]))
         pen.setStyle(Qt.DashLine)
         pen.setWidth(1)
         self._scene.addRect(x_px, y_px, w_px, h_px, pen)
 
         placeholder = QGraphicsTextItem("Placeholder")
-        placeholder.setDefaultTextColor(QColor(160, 160, 160))
+        placeholder.setDefaultTextColor(QColor(self._theme["text_muted"]))
         font = QFont()
         font.setPointSize(12)
         font.setBold(True)

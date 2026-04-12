@@ -22,6 +22,11 @@
 - **Download validation R17a allows resume for non-terminal states** (v2.2.7.1). PENDING/DOWNLOADING/PAUSED/FAILED downloads return `should_resume=True` instead of blocking. Only COMPLETED and CANCELLED are truly blocked. Do NOT revert R17a to unconditional blocking — it caused the "Download already exists" bug where incomplete downloads could never resume.
 - **R17b verifies actual .dcm files on disk** (v2.2.7.1). Even if DB says "Completed", R17b counts `.dcm` files per series directory against `image_count`. Do NOT trust DB status alone for completeness checks.
 - **Download retry has 3 layers** (v2.2.7.1): send_request wrapper (3 retries), connect_with_retry (exponential backoff+jitter), per-series retry loop (3 rounds, 3s→6s→12s). All constants in `modules/download_manager/core/constants.py`. Do NOT add retry to Login requests (fail-fast by design).
+- **`load_single_series_by_number` pydicom_qt fast path** (v2.3.1). When `allow_lazy_backend=True` and `viewer_backend == BACKEND_PYDICOM_QT`, the function exits early **before** calling `resolve_viewer_backend`. It builds metadata from DB (or DICOM headers) and yields a minimal stub `vtkImageData` (correct dimensions, no pixel data). The entire SimpleITK filter chain (`apply_filters` 6–9s) and `convert_itk2vtk` are skipped. Do NOT remove this early exit — without it, every series click in FAST mode wasted 7–10 seconds on ITK work that was immediately discarded because `_bind_backend_from_metadata` always overrides the VTK payload with the Qt bridge. The stub VTK object satisfies `vtk_data is not None` cache checks in `_get_series_by_number_fast` so second-visit cache hits still work. Advanced mode (`vtk_simpleitk`) is completely unaffected — it never passes `BACKEND_PYDICOM_QT` to the function.
+- **`load_single_series_by_number` does NOT call `resolve_viewer_backend(metadata=None)` for pydicom_qt** (v2.3.1). The old call with `metadata=None` forced `instances=[]` inside `resolve_viewer_backend`, which triggered the `BACKEND_PYDICOM_QT → BACKEND_VTK` fallback guard. This is why the ITK pipeline ran even in FAST mode. The fix bypasses this entirely by checking `viewer_backend == BACKEND_PYDICOM_QT` directly before that call.
+- **`load_single_series_by_number` ITK pipeline guard** (v2.3.1). `BACKEND_PYDICOM_QT` is now imported in `image_io.py` from `modules.viewer.viewer_backend_config`. Do NOT remove this import — it is the guard comparison for the fast path.
+- **PYDICOM_QT stubs have no VTK scalar data by design** (v2.3.1). `load_single_series_by_number` creates a `vtkImageData` stub with `SetDimensions()` only — pixel data comes from DICOM files at render time via `Lightweight2DPipeline`. Never abort a series switch or any other code path because `GetPointData().GetScalars()` returns `None` without first checking `metadata['series']['viewer_backend'] == BACKEND_PYDICOM_QT`. The `switch_series` scalar guard in `_vw_series.py` already does this check (`_is_qt_stub` flag). Any NEW scalar-presence guard added anywhere in the viewer switch path MUST apply the same exception or it will reproduce the "scrollbar moves but image frozen" regression.
+- **pydicom_2d viewer MUST be wired directly to the raw lazy vtkImageData — NOT through image_reslice** (v2.3.1 / 2026-04-10). `SetInputData(image_reslice.GetOutput())` wraps the reslice output in a VTK trivial producer. `Render()` asks the trivial producer for data but NEVER calls `image_reslice.Update()`. The lazy decoder fills `lazy_vtk_image_data` (numpy backing store), but `image_reslice.GetOutput()` is a separate object still holding zeros — every scroll shows a frozen image. Fix: use `SetInputData(raw_lazy_vtk)` directly in `ImageViewer2D.__init__` and `reset_image_viewer` when `_active_backend == 'pydicom_2d'`. Also skip `_preprocess_vtk_image_data` for pydicom_2d — it runs `vtkImageResample` which creates a disconnected copy that `mark_vtk_modified()` cannot reach. Do NOT add `image_reslice.Modified()` or `image_reslice.Update()` to the pydicom_2d scroll path (`_vw_scroll.py`) or lazy-slice-ready callback (`_vw_backend.py`) — these are architecturally wrong for the trivial producer model and silently re-introduce the frozen image regression. See `docs/pipelines/IMAGE_PIPELINE_REFERENCE.md` Rule 11 and `docs/pipelines/PYDICOM_2D_BACKEND.md` "VTK Viewer Wiring" section.
 - **Progressive viewer has 250ms per-series throttle** (v2.2.7.1). `on_series_images_progress` debounces to prevent CPU spike from rapid signals. Do not remove the throttle or the `_progressive_display_inflight` guard.
 - **R19b batch-skip on resume** (v2.2.7.2; hardened v2.2.7.3). `download_series()` advances `batch_start` past **verified** leading complete batches. Each batch is verified by checking that all sequential `Instance_NNNN.dcm` files exist — do NOT revert to count-based skip (it skips batches with gaps). Do NOT reset `batch_start` to 0 unconditionally — it wastes minutes re-transferring data.
 - **Retry button keeps partial files** (v2.2.7.2). `_on_series_retry()` only deletes files when series is fully complete. Do NOT add unconditional `shutil.rmtree()` for incomplete series — it forces full re-download instead of incremental resume.
@@ -57,6 +62,9 @@
 - **Progressive grow timer is 150ms** (v2.2.8.1, was 500ms). `_progressive_grow_timer.setInterval(150)`. Do NOT increase — it controls how fast new batch images appear in the viewer during download.
 - **Coordinator queue_recheck is 50ms** (v2.2.8.1, was 150ms). `queue_recheck_ms=50` in `negotiate_priority_change`. Reduced to make priority preemption feel instant.
 - **Coordinator retry interval is 200ms** (v2.2.8.1, was 500ms). `schedule_priority_start_retry(interval_ms=200)`. Polling interval when worker can't start immediately after preemption.
+- **Coordinator retry budget is 90 attempts** (v2.2.9.1, was 60). `schedule_priority_start_retry(max_retries=90)` = 18s total window. Increased to cover slow-network edge cases where subprocess cancel detection is delayed by in-flight socket I/O. Do NOT reduce below 60 — it causes "Priority start retry exhausted" warnings in production.
+- **WorkerPool on_worker_removed callback** (v2.2.9.1). `WorkerPool.__init__` accepts `on_worker_removed` callback. `_remove_worker` fires the callback OUTSIDE the lock after freeing the pool slot. `DownloadManagerWidget` wires this to `_on_pool_slot_freed` → `QTimer.singleShot(0, _start_next_pending)`. This provides an event-driven path to start the next download immediately when a pool slot frees — eliminates dependence on the 200ms retry poller. Do NOT remove this callback — it reduces perceived preemption latency from up to 200ms (poll tick) to ~0ms (next event loop tick).
+- **WorkerPool add_worker logging is debug-level** (v2.2.9.1). Reduced from `logger.info` to `logger.debug` to eliminate 15+ log lines per worker add in the hot path. Only the final "Worker added" confirmation remains at info level.
 - **negotiate_priority_change also calls schedule_priority_start_retry** (v2.2.8.1). After deferring `_start_next_pending`, the coordinator schedules a retry poller as backup — prevents PENDING studies from getting stuck when the pool is still occupied by a dying worker.
 - **Same-study series interrupt** (v2.2.8.1). `request_critical_series` cancels the study's OWN worker if `current_series_number` differs from the requested series. This converts "wait for entire series to finish" into "wait for current batch to finish" (~1 socket round-trip). The state is set to PENDING (not PAUSED) so `_start_next_pending` picks it up. Do NOT remove the `current_series != series_number` guard — without it, requesting the SAME series that's downloading would needlessly restart the worker.
 - **Worker completion timer is 0ms** (v2.2.8.1, was 100ms). `_on_worker_completed` and `_on_worker_error` use `QTimer.singleShot(0, _start_next_pending)`. The `finished` signal (which frees the pool) is always processed before the deferred callback. Do NOT increase — it adds dead time between worker termination and new worker start.
@@ -64,10 +72,14 @@
 - **Stale OS-flush guard in `_grow_progressive_fast`** (v2.2.8.3). If `loader.grow()` returns fewer slices than `pending_count` (OS has not yet flushed all downloaded files to disk), the method must: (1) increment `info["_stale_retry_count"]` (max 5 — was 3 in v2.2.8.3), (2) set `info["pending_downloaded"] = pending_count`, (3) call `enter_progressive_mode()` on any non-progressive viewer so `_find_progressive_viewers` can locate it on the retry tick, (4) restart the single-shot timer. Do NOT skip the timer restart — without it, the viewer is stuck on the last N images forever. Root cause of the "last 5 images stuck" bug.
 - **Stale exhaustion exits progressive mode and stops safety-net** (v2.2.8.4). When `_stale_retry_count >= 5` (_STALE_RETRY_MAX), the exhaustion branch: (1) logs STALE-EXHAUSTED error, (2) sets `info["pending_downloaded"] = new_count` to stop `_flush_progressive_grow` from looping, (3) pops series from `_progressive_series`, (4) updates slider to `(new_count - 1)`, (5) calls `exit_progressive_mode()` on each viewer, (6) returns early. The done-guard completion one-shot recovers the remaining images when DM sends the final signal. Do NOT remove the exhaustion branch — without it, the safety-net loops infinitely calling `_grow_progressive_fast` forever.
 - **Done-guard completion one-shot** (v2.2.8.4). In `on_series_images_progress`, the `if sn in done:` block must handle `downloaded >= total` explicitly. When the completion signal arrives and a non-progressive viewer shows fewer slices than `downloaded`, the guard fires `_grow_progressive_fast` directly (after re-entering progressive mode). Do NOT leave a bare `return` at the end of the done-guard block — it permanently blocks the recovery path for Series 201-type count mismatches.
+- **`_progressive_display_done` is a lifecycle guard, NOT a permanent cache** (v2.2.9.2 — H4 fix). Every code path that calls `self._progressive_series.pop(sn, None)` as a lifecycle-close MUST also call `done.discard(sn)` immediately after. This applies to all three completion layers: Layer 2b (`_on_series_download_fully_complete_impl`), Layer 3 (`_completion_verify_series`), and Layer 4 (`_completion_sweep_tick_impl`). `discard()` is idempotent — safe if another layer already removed the key. **H4 root cause (fixed v2.2.9.2):** absence of `done.discard(sn)` caused stale keys to block `_start_progressive_display` on every re-open of the same series number within a session, producing a frozen viewer with no error in the log. s08 is the detection canary (H4 CONFIRMED always expected — tests detector logic); s11 is the post-fix health check (H4 NO_EVIDENCE always expected — tests real bound production methods).
+- **Global `sys.excepthook` captures crash tracebacks** (v2.2.9.3 — H5a). `main.py` installs `_aipacs_excepthook` after `configure_diagnostic_logging()`. It logs the FULL Python traceback to `aipacs.crash` logger at CRITICAL level BEFORE Qt intercepts the exception with the generic "Qt has caught an exception" message. Without this, the throwing file/line is permanently lost. Chains to the original hook. Do NOT remove this — it is the primary diagnostic tool for all Qt boundary crashes.
+- **QTimer callback slots MUST use wrapper+impl guard pattern** (v2.2.9.3 — H5b/H5c). Direct `QTimer.timeout` slots (`_reenable_gc`, `_flush_pending_wheel_slice`) are Qt event handler entry points. If any exception propagates through them, Qt catches it with the fatal "Qt has caught an exception" message and the Python traceback is lost (even with `sys.excepthook`, the exception may not reach it in all Qt versions). The wrapper+impl pattern (`_reenable_gc` → `_reenable_gc_impl`, `_flush_pending_wheel_slice` → `_flush_pending_wheel_slice_impl`) ensures exceptions are caught, logged with `exc_info=True`, and suppressed. Apply this pattern to ALL new QTimer.timeout slots and Qt signal slots that access VTK objects or cross-module state.
 - **`_refresh_stored_metadata_instances` updates `series["image_count"]`** (v2.2.8.4). After `metadata["instances"] = new_instances`, also sets `metadata["series"]["image_count"] = len(new_instances)`. Do NOT update `instances` without updating `image_count` — the thumbnail widget reads `image_count` (server metadata), and without this fix it permanently shows the original server-reported count (e.g. 20 instead of 40).
 - **`_refresh_stored_metadata_instances` TTL pre-check** (v2.2.8.4). Uses `_count_series_files_on_disk(sn)` (1s TTL cache) as a fast pre-check before the expensive `Path.iterdir()` scan. If TTL-cached disk count ≤ existing instance count, returns immediately without scanning. Do NOT remove this guard — it prevents 2–10ms of main-thread I/O on every 150ms grow tick with large series.
 - **`_sync_viewer_metadata_instances` after every grow** (v2.2.8.7). `ImageViewer2D.metadata` is a deep copy from creation time; `_refresh_stored_metadata_instances` only updates `lst_thumbnails_data`. After every `_refresh_stored_metadata_instances` call, also call `_sync_viewer_metadata_instances(series_number)` to patch live `ImageViewer2D.metadata['instances']`. Without this, `apply_default_window_level(n)` throws `IndexError` for slices `n >= initial_count`, silently killing per-slice W/L and corner text. Fixed in: `_grow_progressive_fast`, `on_series_download_fully_complete`, `change_series_on_viewer` in-place grow, `_completion_verify_series`, `_completion_sweep_tick`.
 - **`apply_default_window_level` bounds-checks `metadata['instances']`** (v2.2.8.7). Falls back to `GetScalarRange()` auto-calc when `slice_index >= len(instances)` instead of crashing. Same bounds-checking applied to `set_window_level` (is_rgb check), `update_corners_actors`, and `load_bottom_left_actors`. Do NOT revert to bare indexing — it causes white/missing images during progressive download.
+- **`_fill_stub_from_dicom_header` populates per-slice geometry on new stubs** (v2.2.8.7). During `_refresh_stored_metadata_instances`, each new stub is enriched with `pydicom.dcmread(stop_before_pixels=True)` to extract `image_position_patient` (IPP), `image_orientation_patient` (IOP), `pixel_spacing`, `window_width/center`, `rows`, `columns`, `slice_thickness`, `spacing_between_slices`, `rescale_slope/intercept`. Without this, stubs have `IPP = None` → `manage_reference_line()` silently skips new slices → reference lines disappear for progressively-added images. Reading is ~1-3ms per file (header only). Do NOT remove this call — it is the ONLY source of per-slice geometry during progressive grow.
 - **In-place grow calls `loader.grow()` first** (v2.2.8.4). `change_series_on_viewer`'s same-series in-place grow must call `loader.grow()` FIRST and only fall back to `backend.refresh_file_list()` if no `grow()` exists. Do NOT add a pre-call to `backend.refresh_file_list()` before `loader.grow()` — it poisons the old-path snapshot used by `grow()` for interleaved DICOM instance-number remap.
 - **Four-layer completion protocol** (v2.2.8.5). Progressive display uses defense-in-depth to guarantee all downloaded images reach the viewer: Layer 1 = DM throttled progress → incremental grows (existing); Layer 2a = `on_series_completed` emits `series_images_progress(sn, total, total)` completion pulse before `series_downloaded` — guarantees viewer sees `downloaded == total`; Layer 2b = `on_series_download_fully_complete` does `loader.grow()` + slider update BEFORE exiting progressive mode — direct final grow at the definitive completion signal; Layer 3 = `_completion_verify_series` fires 500ms after completion with up to 3 retries at 500ms intervals — catches OS-flush-delayed files; Layer 4 = `_completion_sweep_timer` (3s interval) registers completed series and periodically verifies disk count vs viewer count — catches any missed signal. Do NOT remove any layer — they are complementary, not redundant.
 - **`on_series_download_fully_complete` must grow before exit** (v2.2.8.5). Was: pop series + exit progressive. Now: final `loader.grow()` + slider update on ALL viewers showing the series, THEN `exit_progressive_mode()`, THEN pop series, THEN schedule Layer 3 verify + Layer 4 sweep registration. Do NOT remove the final grow — it was the root cause of "Series 202 shows 120/135" where `seriesDownloadCompleted` fired BEFORE the DM throttle timer emitted the final progress signal.
@@ -87,6 +99,10 @@
 - Resource paths must go through `PacsClient/utils/config.py` (`BASE_PATH`, `ICON_PATH`, `IMAGES_LOGIN_PATH`) to work for both dev and PyInstaller.
 - For sockets, update settings via `update_socket_server_settings()` before querying server-side lists.
 - Prefer signals/slots for UI updates; download progress is emitted from background threads via Qt signals.
+- **`set_server_series_info` is called TWICE per patient open** (v2.3.0+thumb-stable). Call 1 (main async thread, `_hp_patient_open.py` line 268) is the primary call; call 2 (from `_background_setup_thread`) is a merge-only call. The method now MERGES on subsequent calls (never overwrites `image_count` or `series_description` already populated by gRPC). Do NOT revert to unconditional `_server_series_info = {}` replacement — it discards gRPC-fetched image counts and triggers redundant thumbnail reloads.
+- **`ThumbnailManager` must not use `print()`** (v2.3.0+thumb-stable). All logging goes through `_tm_logger` (debug/info/exception). `print()` in hot paths (`update_series_progress`, `start_series_download`, `apply_border_states_new`) causes synchronous stdout I/O that blocks the calling thread on Windows. Use `_tm_logger.debug()` for routine events, `_tm_logger.exception()` for errors in except blocks.
+- **`QMetaObject.invokeMethod` for cross-thread UI dispatch in thumbnails** (v2.2.9.2). `set_server_series_info` may be called from a background `threading.Thread`. Use `QMetaObject.invokeMethod(self, "_load_server_thumbnails", Qt.QueuedConnection)` — never `QTimer.singleShot` — since QTimer.singleShot from a non-Qt thread has no event loop and is silently dropped. The `_load_server_thumbnails` and render slots must be decorated with `@Slot()`.
+- **`_thumbnail_load_inflight` guard prevents concurrent thumbnail loads** (v2.2.9.2). Set to `True` in `_load_server_thumbnails` before the worker starts; reset to `False` in the worker's `finally` block. Do NOT schedule another load while this is `True` — it results in duplicate work and may reset pending/ready series border states.
 
 ## Build/run/test workflows
 - Run app: `python main.py` (Windows uses software OpenGL flags set in `main.py`).
@@ -94,7 +110,8 @@
 - Tests are ad-hoc scripts like `test_*.py`; there is no single test runner configured.
 - DM tests: `.venv\Scripts\python.exe tests/download_manager/run_dm_test.py` (27 scenarios, 129 assertions — covers state store, coordinator, priority, observer, series-interrupt).
 - DM stress tests: `.venv\Scripts\python.exe tests/download_manager/test_dm_stress.py` (10 heavy-load scenarios H1–H10).
-- Viewer tests: `.venv\Scripts\python.exe -m pytest tests/viewer/test_fast_viewer_pipeline.py -v` (11 tests — covers progressive display, done-guard, stale-guard, DM notify cooldown, import path resolution).
+- Load tests: `.venv\Scripts\python.exe tests/load/run_load_test.py` (11 scenarios L1–L11 — multi-patient multi-modality: 2CT+3XR+1MRI, preemption, cache, scroll, progressive grow, pool-freed callback).
+- Viewer tests: `.venv\Scripts\python.exe -m pytest tests/viewer/test_fast_viewer_pipeline.py -v` (13 tests — covers progressive display, done-guard, stale-guard, DM notify cooldown, import path resolution, H4-fix done-guard lifecycle).
 - Network tests: `.venv\Scripts\python.exe tests/network/test_network.py` (8 scenarios).
 - Database tests: `.venv\Scripts\python.exe tests/database/run_db_test.py` (7 scenarios).
 - UI services tests: `.venv\Scripts\python.exe tests/ui_services/test_ui_services.py`.
@@ -191,7 +208,18 @@ Worst-case series-switch latency (drag-drop → new series starts): **~batch RTT
 ### Home UI (PacsClient/pacs/workstation_ui/home_ui/)
 | File | Key class | Purpose |
 |------|----------|---------|
-| `home_ui.py` | `HomePanelWidget` | Thin controller — patient list, tab creation, download start |
+| `home_ui.py` | — (shim) | Backward-compatible shim re-exporting from `home_panel/` |
+| `home_panel/widget.py` | `HomePanelWidget` | Core class: `__init__`, class attrs, 10 mixin bases |
+| `home_panel/_hp_layout.py` | `_HpLayoutMixin` | UI layout setup |
+| `home_panel/_hp_patient_open.py` | `_HpPatientOpenMixin` | Patient open/double-click |
+| `home_panel/_hp_search.py` | `_HpSearchMixin` | Search logic |
+| `home_panel/_hp_import.py` | `_HpImportMixin` | CD/local DICOM import |
+| `home_panel/_hp_download.py` | `_HpDownloadMixin` | Download start/wiring |
+| `home_panel/_hp_series.py` | `_HpSeriesMixin` | Series ops |
+| `home_panel/_hp_priority.py` | `_HpPriorityMixin` | Priority management |
+| `home_panel/_hp_modules.py` | `_HpModulesMixin` | Module tab management |
+| `home_panel/_hp_offline.py` | `_HpOfflineMixin` | Offline/cloud operations |
+| `home_panel/_hp_study_save.py` | `_HpStudySaveMixin` | Study save to DB |
 | `home_db_service.py` | `HomeDbService` | DB ops: save patient, get studies, search local |
 | `home_tab_service.py` | `HomeTabService` | Tab create/activate/find logic |
 | `home_download_service.py` | `HomeDownloadService` | Wire DM signals, start downloads, connect progress |
@@ -224,7 +252,17 @@ Worst-case series-switch latency (drag-drop → new series starts): **~batch RTT
 ### Patient tab (PacsClient/pacs/patient_tab/ui/patient_ui/)
 | File | Key class | Purpose |
 |------|----------|---------|
-| `patient_widget.py` | `PatientWidget` | Main patient viewer container; ref lines, lock sync |
+| `patient_widget.py` | — (shim) | Backward-compatible shim re-exporting from `patient_widget_core/` |
+| `patient_widget_core/widget.py` | `PatientWidget` | Core class: `__init__`, class attrs, 9 mixin bases |
+| `patient_widget_core/_pw_sync.py` | `_PwSyncMixin` | Cross-viewer sync, lock sync |
+| `patient_widget_core/_pw_advanced.py` | `_PwAdvancedMixin` | Advanced viewer, 3D, MPR |
+| `patient_widget_core/_pw_panels.py` | `_PwPanelsMixin` | Side panels, toolbars |
+| `patient_widget_core/_pw_viewers.py` | `_PwViewersMixin` | Viewer creation and management |
+| `patient_widget_core/_pw_series.py` | `_PwSeriesMixin` | Series switch, selection |
+| `patient_widget_core/_pw_pipeline.py` | `_PwPipelineMixin` | Image pipeline, progressive display |
+| `patient_widget_core/_pw_thumbnails.py` | `_PwThumbnailsMixin` | Thumbnail management |
+| `patient_widget_core/_pw_metadata.py` | `_PwMetadataMixin` | Metadata handling |
+| `patient_widget_core/_pw_lifecycle.py` | `_PwLifecycleMixin` | Init, cleanup, tab lifecycle |
 | `patient_widget_viewer_controller.py` | `ViewerController` (mixin) | Series switch, progressive display, DM notify, stale guard |
 | `vtk_widget.py` | `VTKWidget` | VTK render widget; `set_slice()`, wheelEvent, GC suppression |
 | `widget_viewer.py` | — | Viewer wrapper coordinating VTK + overlays |
@@ -330,7 +368,17 @@ Worst-case series-switch latency (drag-drop → new series starts): **~batch RTT
 | `storage/file_manager.py` | `FileManager` | Directory/file management |
 | `storage/database_manager.py` | `DatabaseManager` | DM-specific DB operations |
 | `storage/thumbnail_cache.py` | `ThumbnailCache` | Thumbnail file caching |
-| `ui/main_widget.py` | `DownloadManagerWidget` | DM UI panel (table, controls) |
+| `ui/main_widget.py` | — (shim) | Backward-compatible shim re-exporting from `ui/widget/` |
+| `ui/widget/widget.py` | `DownloadManagerWidget` | Core DM UI class with 9 mixin bases |
+| `ui/widget/_dm_ui_setup.py` | `_DmUiSetupMixin` | UI initialization & table setup |
+| `ui/widget/_dm_queue.py` | `_DmQueueMixin` | Queue management & task creation |
+| `ui/widget/_dm_controls.py` | `_DmControlsMixin` | Pause/resume/cancel controls |
+| `ui/widget/_dm_workers.py` | `_DmWorkersMixin` | Worker lifecycle & signals |
+| `ui/widget/_dm_retry.py` | `_DmRetryMixin` | Retry logic (series + per-patient) |
+| `ui/widget/_dm_details.py` | `_DmDetailsMixin` | Detail panel & status display |
+| `ui/widget/_dm_priority.py` | `_DmPriorityMixin` | Priority management |
+| `ui/widget/_dm_reception.py` | `_DmReceptionMixin` | Reception/AI integration |
+| `ui/widget/_dm_theming.py` | `_DmThemingMixin` | Theme color & stylesheet |
 | `utils/config_loader.py` | — | DM config loading |
 | `utils/logger.py` | — | DM-specific logger |
 | `utils/validators.py` | — | Input validators |
@@ -391,7 +439,13 @@ Worst-case series-switch latency (drag-drop → new series starts): **~batch RTT
 ### ZetaBoost cache (modules/zeta_boost/)
 | File | Key class | Purpose |
 |------|----------|---------|
-| `engine.py` | `ZetaBoostEngine` | Two-tier cache engine (L1 memory, L2 disk) |
+| `engine.py` | — (shim) | Backward-compatible shim re-exporting from `cache_engine/` |
+| `cache_engine/widget.py` | `ZetaBoostEngine` | Core class: `__init__`, class attrs, mixin assembly |
+| `cache_engine/_zb_globals.py` | — | Module-level globals: `_GLOBAL_DOWNLOAD_ACTIVE`, `set_global_download_active`, `_set_thread_low_priority` |
+| `cache_engine/_zb_cache.py` | `_ZBCacheMixin` | Cache ops: query, get, put, trim, clear, evict, invalidate |
+| `cache_engine/_zb_lanes.py` | `_ZBLanesMixin` | Lane management: enqueue, clear pending, lane-locked helpers |
+| `cache_engine/_zb_workers.py` | `_ZBWorkersMixin` | Worker loop, disk promotion, memory check, failsafe |
+| `cache_engine/_zb_lifecycle.py` | `_ZBLifecycleMixin` | Lifecycle, state, health, global lock, boost mode |
 | `disk_cache.py` | — | L2 disk cache management |
 | `image_slice_booster.py` | — | Per-slice boost/prefetch |
 | `warmup_subprocess.py` | `WarmupSubprocessManager` | Dedicated subprocess for cache warmup (IDLE priority) |
@@ -449,7 +503,7 @@ Worst-case series-switch latency (drag-drop → new series starts): **~batch RTT
 ### Viewer stack
 ```
 QWidget
-  ├─ PatientWidget (patient_widget.py) — container, ref lines, sync
+  ├─ PatientWidget (patient_widget_core/widget.py) — container, 9 mixins (sync, advanced, panels, viewers, series, pipeline, thumbnails, metadata, lifecycle)
   │   └─ mixin: ViewerController (patient_widget_viewer_controller.py) — series switch, progressive
   ├─ VTKWidget (vtk_widget.py) — VTK rendering, set_slice, scroll
   ├─ QtSliceViewer (qt_slice_viewer.py) — fast 2D Qt viewer
@@ -520,7 +574,7 @@ HomePanelWidget (thin controller)
 | Theme switch | `PacsClient/utils/theme_manager.py` → `ThemeManager.apply_theme()` |
 | Shutdown / cleanup | `PacsClient/components/lifecycle_manager.py` → `LifecycleManager.shutdown_all()` |
 | Module enable/disable | `modules/module_system/module_manager.py` |
-| ZetaBoost cache warmup | `modules/zeta_boost/engine.py` → `ZetaBoostEngine` |
+| ZetaBoost cache warmup | `modules/zeta_boost/cache_engine/widget.py` → `ZetaBoostEngine` |
 | Warmup subprocess | `modules/zeta_boost/warmup_subprocess.py` → `WarmupSubprocessManager` |
 | Disk cleanup | `modules/storage/local_storage_cleanup_manager.py` |
 | Image stitching | `modules/stitching/stitch_engine.py` |
@@ -650,7 +704,8 @@ StateStore.update(field, value)
 | 500 series switches | H2 | Coordinator throughput | same |
 | 16-thread contention | H3 | P99 lock wait | same |
 | 10K progress updates | H4 | No dropped signals | same |
-| Progressive display | `tests/viewer/test_fast_viewer_pipeline.py` | 18 tests | `python -m pytest tests/viewer/test_fast_viewer_pipeline.py -v` |
+| Multi-patient load | `tests/load/run_load_test.py` L1–L11 | 2CT+3XR+1MRI, preemption, cache, scroll, progressive grow, pool-freed callback | `python tests/load/run_load_test.py` |
+| Progressive display | `tests/viewer/test_fast_viewer_pipeline.py` | 20 tests | `python -m pytest tests/viewer/test_fast_viewer_pipeline.py -v` |
 | Network protocol | `tests/network/test_network.py` | 8 scenarios | `python tests/network/test_network.py` |
 | Database pool | `tests/database/run_db_test.py` | 7 scenarios | `python tests/database/run_db_test.py` |
 | Import smoke | `tests/smoke/test_import_smoke.py` | 26+ modules | `python -m pytest tests/smoke/ -v` |

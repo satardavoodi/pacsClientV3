@@ -1,0 +1,174 @@
+[
+  {
+    "ts": 0.024161900000763126,
+    "wall_ts": 1775853002.210345,
+    "event_type": "SCENARIO_BEGIN",
+    "thread_name": "MainThread",
+    "seq": 0,
+    "scenario": "s07_series_interrupt",
+    "modality": "CT",
+    "slice_count": 200
+  },
+  {
+    "ts": 0.02474369999981718,
+    "wall_ts": 1775853002.2109253,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 1,
+    "label": "series1_start"
+  },
+  {
+    "ts": 0.02508020000095712,
+    "wall_ts": 1775853002.2112613,
+    "event_type": "INFLIGHT_SET",
+    "thread_name": "MainThread",
+    "seq": 2,
+    "series_number": "1"
+  },
+  {
+    "ts": 0.025347700000565965,
+    "wall_ts": 1775853002.2115283,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 3,
+    "series_number": "1",
+    "downloaded": 20,
+    "total": 200
+  },
+  {
+    "ts": 0.026294499999494292,
+    "wall_ts": 1775853002.212474,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 4,
+    "series_number": "1",
+    "downloaded": 50,
+    "total": 200
+  },
+  {
+    "ts": 0.02654370000527706,
+    "wall_ts": 1775853002.2127235,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 5,
+    "label": "series1_interrupt"
+  },
+  {
+    "ts": 0.027009100005670916,
+    "wall_ts": 1775853002.2131908,
+    "event_type": "INFLIGHT_CLEARED",
+    "thread_name": "MainThread",
+    "seq": 6,
+    "series_number": "1",
+    "reason": "coordinator_interrupt"
+  },
+  {
+    "ts": 0.027199399999517482,
+    "wall_ts": 1775853002.21338,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 7,
+    "label": "series2_start"
+  },
+  {
+    "ts": 0.027355600002920255,
+    "wall_ts": 1775853002.2135355,
+    "event_type": "INFLIGHT_SET",
+    "thread_name": "MainThread",
+    "seq": 8,
+    "series_number": "2"
+  },
+  {
+    "ts": 0.02748979999887524,
+    "wall_ts": 1775853002.2136698,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 9,
+    "series_number": "2",
+    "downloaded": 20,
+    "total": 200
+  },
+  {
+    "ts": 0.027665200002957135,
+    "wall_ts": 1775853002.213845,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 10,
+    "series_number": "2",
+    "downloaded": 20,
+    "total": 200
+  },
+  {
+    "ts": 0.02781880000111414,
+    "wall_ts": 1775853002.2139983,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 11,
+    "series_number": "2",
+    "downloaded": 40,
+    "total": 200
+  },
+  {
+    "ts": 0.027962899999693036,
+    "wall_ts": 1775853002.2141426,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 12,
+    "series_number": "2",
+    "downloaded": 60,
+    "total": 200
+  },
+  {
+    "ts": 0.02811189999920316,
+    "wall_ts": 1775853002.2142918,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 13,
+    "series_number": "2",
+    "downloaded": 80,
+    "total": 200
+  },
+  {
+    "ts": 0.028260899998713285,
+    "wall_ts": 1775853002.2144408,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 14,
+    "series_number": "2",
+    "downloaded": 200,
+    "total": 200
+  },
+  {
+    "ts": 0.02840660000219941,
+    "wall_ts": 1775853002.214586,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 15,
+    "label": "series2_complete"
+  },
+  {
+    "ts": 0.02851809999992838,
+    "wall_ts": 1775853002.2146983,
+    "event_type": "SERIES_DOWNLOAD_COMPLETE",
+    "thread_name": "MainThread",
+    "seq": 16,
+    "series_number": "2"
+  },
+  {
+    "ts": 0.028657100003329106,
+    "wall_ts": 1775853002.214837,
+    "event_type": "INFLIGHT_CLEARED",
+    "thread_name": "MainThread",
+    "seq": 17,
+    "series_number": "2",
+    "reason": "download_fully_complete"
+  },
+  {
+    "ts": 0.02877019999868935,
+    "wall_ts": 1775853002.21495,
+    "event_type": "SCENARIO_END",
+    "thread_name": "MainThread",
+    "seq": 18,
+    "scenario": "s07_series_interrupt"
+  }
+]

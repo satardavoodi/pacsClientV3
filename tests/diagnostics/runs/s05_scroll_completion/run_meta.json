@@ -1,0 +1,16 @@
+{
+  "scenario_name": "s05_scroll_completion",
+  "scenario_type": "synthetic",
+  "started_at": 1775853001.9747145,
+  "ended_at": 1775853002.0354414,
+  "process_id": 3448,
+  "process_died": false,
+  "study_uid": null,
+  "series_number": null,
+  "modality": "CT",
+  "slice_count": 400,
+  "run_count": 1,
+  "python_version": "3.13.5",
+  "platform": "win32",
+  "notes": ""
+}

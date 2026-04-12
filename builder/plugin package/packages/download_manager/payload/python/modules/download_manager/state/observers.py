@@ -173,7 +173,7 @@ class UIObserver(StateObserver):
                     self.ui.update_priority_badge(study_uid, new_value)
                     # DEFER table reordering through QTimer (not directly!)
                     from PySide6.QtCore import QTimer
-                    QTimer.singleShot(100, self.ui.refresh_table_order)
+                    QTimer.singleShot(0, self.ui.refresh_table_order)
                 elif field_name in {
                     'current_series',
                     'current_series_number',

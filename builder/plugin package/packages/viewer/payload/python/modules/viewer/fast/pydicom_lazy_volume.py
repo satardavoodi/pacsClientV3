@@ -20,6 +20,36 @@ from .pydicom_2d_backend import PyDicom2DBackend
 
 logger = logging.getLogger(__name__)
 
+# ── v2.2.9.3: Deferred temp-file cleanup ──────────────────────────────
+# close() no longer unmaps the mmap (see close() docstring).  Temp files
+# are tracked here and cleaned up when the mmap is no longer in use.
+_STALE_TMPFILES_LOCK = threading.Lock()
+_STALE_TMPFILES: set = set()
+
+
+def _register_stale_tmpfile(path: str) -> None:
+    with _STALE_TMPFILES_LOCK:
+        _STALE_TMPFILES.add(str(path))
+
+
+def cleanup_stale_tmpfiles() -> int:
+    """Delete temp files whose mmap has been released by GC.
+
+    Called during app shutdown or periodically.  Returns count deleted.
+    """
+    removed = 0
+    with _STALE_TMPFILES_LOCK:
+        still_alive = set()
+        for p in _STALE_TMPFILES:
+            try:
+                os.remove(p)
+                removed += 1
+            except Exception:
+                still_alive.add(p)
+        _STALE_TMPFILES.clear()
+        _STALE_TMPFILES.update(still_alive)
+    return removed
+
 
 def _vtk_array_type_for(dtype: np.dtype) -> int:
     try:
@@ -454,10 +484,31 @@ class PyDicomLazyVolume(QObject):
         return self.slice_count
 
     def close(self) -> None:
+        """Stop workers and release this loader's reference to the volume.
+
+        v2.2.9.3: The underlying mmap is **not** closed here.  The VTK
+        scalar array (inside ``vtk_image_data``) holds a raw C++ pointer
+        to the mmap buffer.  If we unmap the memory now:
+
+          * A still-running worker thread doing ``self._volume[i] = arr``
+            would write to unmapped pages → **segfault**.
+          * A cached ``vtk_image_data`` (in ``lst_thumbnails_data``) would
+            be backed by unmapped memory.  A later ``Render()`` or even
+            ``GetDimensions()`` through the VTK pipeline → **segfault**.
+
+        Instead we:
+          1. Signal workers to stop and join them (best-effort 2s each).
+          2. Release *this loader's* reference (``self._volume = None``).
+          3. The mmap stays alive via ``vtk_image_data._numpy_backing_store``
+             until Python GC collects the vtk_image_data (which happens
+             when no viewer / cache holds a reference any more).
+          4. Track the temp file for deferred deletion.
+        """
         if self._closing.is_set():
             return
         self._closing.set()
 
+        # ── 1. Signal workers and drain queue ──
         try:
             self._request_queue.put_nowait((99, next(self._request_seq), None))
         except Exception:
@@ -465,7 +516,7 @@ class PyDicomLazyVolume(QObject):
         try:
             for worker in getattr(self, "_workers", []):
                 if worker is not None and worker.is_alive():
-                    worker.join(timeout=1.0)
+                    worker.join(timeout=2.0)
         except Exception:
             pass
 
@@ -484,21 +535,25 @@ class PyDicomLazyVolume(QObject):
             self.backend.close_series()
         except Exception:
             pass
+
+        # ── 2 & 3. Release loader's own reference; do NOT close the mmap ──
         try:
             if hasattr(self, "_volume") and self._volume is not None:
-                self._volume.flush()
                 try:
-                    mmap_obj = getattr(self._volume, "_mmap", None)
-                    if mmap_obj is not None:
-                        mmap_obj.close()
+                    self._volume.flush()
                 except Exception:
                     pass
+                # Drop *our* reference.  vtk_image_data._numpy_backing_store
+                # keeps the mmap alive until GC collects the vtk_image_data.
                 self._volume = None
         except Exception:
             pass
+
+        # ── 4. Track temp file for deferred cleanup ──
         try:
-            if self._tmp_file_path and os.path.exists(self._tmp_file_path):
-                os.remove(self._tmp_file_path)
+            if self._tmp_file_path:
+                _register_stale_tmpfile(self._tmp_file_path)
+                self._tmp_file_path = None
         except Exception:
             pass
 
@@ -692,12 +747,19 @@ class PyDicomLazyVolume(QObject):
                 return True
             if self._closing.is_set():
                 return False
-            self._volume[i] = arr
+            # v2.2.9.3: Double-check volume ref is still alive (close() sets
+            # self._volume = None).  Without this, a worker that passed the
+            # outer _closing check before close() ran could crash here.
+            vol = self._volume
+            if vol is None:
+                return False
+            vol[i] = arr
             self._loaded[i] = True
-            scalars = self.vtk_image_data.GetPointData().GetScalars()
-            if scalars is not None:
-                scalars.Modified()
-            self.vtk_image_data.Modified()
+            # v2.2.9.2: Do NOT call scalars.Modified() / vtk_image_data.Modified()
+            # from the worker thread.  VTK is NOT thread-safe — mutating the
+            # pipeline state while the main thread is mid-render causes a
+            # segfault.  The main thread already calls mark_vtk_modified()
+            # via _on_lazy_slice_ready before rendering.
         self._decode_count += 1
         self._decode_ms_total += float(decode_ms)
         self._decode_read_ms_total += read_ms

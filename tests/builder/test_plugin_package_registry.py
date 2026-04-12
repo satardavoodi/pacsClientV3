@@ -22,3 +22,11 @@ def test_optional_plugin_package_definitions_match_installable_modules():
     assert definitions["printing"]["source_paths"] == ["modules/printing"]
     assert definitions["web_browser"]["python_paths"] == ["python"]
     assert definitions["advanced_mpr"]["build_strategy"] == "runtime_payload"
+
+
+def test_basic_plugin_package_definitions_include_offline_cloud_server():
+    definitions = plugin_package_definition_map()
+
+    assert definitions["offline_cloud_server"]["tier"] == "basic"
+    assert definitions["offline_cloud_server"]["source_paths"] == ["modules/offline_cloud_server"]
+    assert definitions["offline_cloud_server"]["install_channels"] == ["core_bundle"]

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import aipacs_runtime as runtime
 from builder import build_release
+from builder.plugin_package_registry import plugin_package_definition_map
 from builder.spec import spec_utils
 
 
@@ -104,3 +105,65 @@ def test_validate_release_bundle_graphics_runtime_checks_dist_payload(monkeypatc
         assert "pipe_swrast.dll" in str(exc)
     else:
         raise AssertionError("validate_release_bundle_graphics_runtime should fail when dist bundle is incomplete")
+
+
+def test_publish_update_bundle_writes_core_and_module_feed(monkeypatch, tmp_path):
+    monkeypatch.setattr(build_release, "PACKAGE_OUTPUT_DIR", tmp_path / "packages")
+    monkeypatch.setattr(build_release, "INSTALLER_OUTPUT_DIR", tmp_path / "installer")
+    monkeypatch.setattr(build_release, "STAGED_PLUGIN_PACKAGE_DIR", tmp_path / "stage" / "plugin_packages")
+    monkeypatch.setattr(build_release, "UPDATES_OUTPUT_DIR", tmp_path / "updates")
+    monkeypatch.setattr(build_release, "UPDATES_CORE_DIR", tmp_path / "updates" / "core")
+    monkeypatch.setattr(build_release, "UPDATES_MODULES_DIR", tmp_path / "updates" / "modules")
+    monkeypatch.setattr(
+        build_release,
+        "load_plugin_package_definitions",
+        lambda optional_only=False: [
+            plugin_package_definition_map()["viewer"],
+            plugin_package_definition_map()["printing"],
+        ],
+    )
+
+    build_release.PACKAGE_OUTPUT_DIR.mkdir(parents=True)
+    build_release.STAGED_PLUGIN_PACKAGE_DIR.mkdir(parents=True)
+    build_release.INSTALLER_OUTPUT_DIR.mkdir(parents=True)
+
+    archive = build_release.PACKAGE_OUTPUT_DIR / "printing-9.9.9.zip"
+    archive.write_text("zip-bytes", encoding="utf-8")
+    (build_release.PACKAGE_OUTPUT_DIR / runtime.MODULE_PACKAGE_FEED_FILENAME).write_text(
+        json.dumps({"app_name": runtime.APP_NAME, "version": "9.9.9", "packages": []}, indent=2),
+        encoding="utf-8",
+    )
+
+    primary = build_release.INSTALLER_OUTPUT_DIR / "ai-pacs installer.exe"
+    versioned = build_release.INSTALLER_OUTPUT_DIR / "ai-pacs installer v9.9.9.exe"
+    primary.write_text("installer", encoding="utf-8")
+    versioned.write_text("installer", encoding="utf-8")
+    for name in ("SHA256.txt", "SHA256_FA.txt", "INSTALL_NOTES.txt", "INSTALL_NOTES_FA.txt"):
+        (build_release.INSTALLER_OUTPUT_DIR / name).write_text(name, encoding="utf-8")
+
+    feed = build_release.publish_update_bundle(
+        "9.9.9",
+        [
+            {
+                "module_id": "printing",
+                "archive_name": archive.name,
+                "staged_package_path": "printing",
+                "sha256": "ABC123",
+                "available": True,
+                "package_format": "zip",
+            }
+        ],
+        {
+            "primary": str(primary),
+            "versioned": str(versioned),
+        },
+    )
+
+    written_feed = json.loads((build_release.UPDATES_OUTPUT_DIR / runtime.UPDATE_FEED_FILENAME).read_text(encoding="utf-8"))
+
+    assert feed["core"]["release_version"] == "9.9.9"
+    assert written_feed["core"]["artifact_path"] == "core/ai-pacs installer v9.9.9.exe"
+    assert (build_release.UPDATES_CORE_DIR / versioned.name).exists()
+    assert (build_release.UPDATES_MODULES_DIR / archive.name).exists()
+    assert any(item["module_id"] == "viewer" and item["artifact_type"] == "core_bundle" for item in written_feed["components"])
+    assert any(item["module_id"] == "printing" and item["artifact_path"] == f"modules/{archive.name}" for item in written_feed["components"])

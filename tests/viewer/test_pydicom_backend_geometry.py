@@ -45,23 +45,45 @@ for pkg_name in [
     "PacsClient",
     "PacsClient.pacs",
     "PacsClient.pacs.patient_tab",
+    "PacsClient.pacs.patient_tab.utils",
     "modules.viewer",
-    "modules.viewer.backends",
+    "modules.viewer.fast",
 ]:
     if pkg_name not in sys.modules:
         pkg_mod = types.ModuleType(pkg_name)
         pkg_mod.__path__ = []  # mark as package
         sys.modules[pkg_name] = pkg_mod
 
-contracts_name = "modules.viewer.backends.contracts"
-contracts_path = ROOT_DIR / "modules" / "viewer" / "backends" / "contracts.py"
+# Stub dicom_windowing so pydicom_2d_backend can import it without full PacsClient.
+_dicom_windowing_name = "PacsClient.pacs.patient_tab.utils.dicom_windowing"
+if _dicom_windowing_name not in sys.modules:
+    _dw_mod = types.ModuleType(_dicom_windowing_name)
+
+    def _auto_window_level_from_array(arr, **kw):
+        return 400.0, 40.0
+
+    def _normalize_window_level(ww, wc, bits=16, signed=True):
+        return float(ww or 400.0), float(wc or 40.0)
+
+    def _window_to_uint8_stub(arr, ww, wc):
+        mn, mx = float(wc) - float(ww) / 2, float(wc) + float(ww) / 2
+        out = np.clip((arr - mn) / max(mx - mn, 1e-9) * 255.0, 0, 255)
+        return out.astype(np.uint8)
+
+    _dw_mod.auto_window_level_from_array = _auto_window_level_from_array
+    _dw_mod.normalize_window_level = _normalize_window_level
+    _dw_mod.window_to_uint8 = _window_to_uint8_stub
+    sys.modules[_dicom_windowing_name] = _dw_mod
+
+contracts_name = "modules.viewer.fast.contracts"
+contracts_path = ROOT_DIR / "modules" / "viewer" / "fast" / "contracts.py"
 contracts_spec = importlib.util.spec_from_file_location(contracts_name, contracts_path)
 contracts_mod = importlib.util.module_from_spec(contracts_spec)
 sys.modules[contracts_name] = contracts_mod
 contracts_spec.loader.exec_module(contracts_mod)
 
-backend_name = "modules.viewer.backends.pydicom_2d_backend"
-backend_path = ROOT_DIR / "modules" / "viewer" / "backends" / "pydicom_2d_backend.py"
+backend_name = "modules.viewer.fast.pydicom_2d_backend"
+backend_path = ROOT_DIR / "modules" / "viewer" / "fast" / "pydicom_2d_backend.py"
 backend_spec = importlib.util.spec_from_file_location(backend_name, backend_path)
 backend_mod = importlib.util.module_from_spec(backend_spec)
 sys.modules[backend_name] = backend_mod
@@ -71,8 +93,8 @@ PyDicom2DBackend = backend_mod.PyDicom2DBackend
 _SliceMeta = backend_mod._SliceMeta
 _window_level_to_uint8 = backend_mod._window_level_to_uint8
 
-stale_guard_name = "modules.viewer.backends.stale_frame_guard"
-stale_guard_path = ROOT_DIR / "modules" / "viewer" / "backends" / "stale_frame_guard.py"
+stale_guard_name = "modules.viewer.fast.stale_frame_guard"
+stale_guard_path = ROOT_DIR / "modules" / "viewer" / "fast" / "stale_frame_guard.py"
 stale_guard_spec = importlib.util.spec_from_file_location(stale_guard_name, stale_guard_path)
 stale_guard_mod = importlib.util.module_from_spec(stale_guard_spec)
 sys.modules[stale_guard_name] = stale_guard_mod

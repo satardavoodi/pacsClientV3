@@ -1,0 +1,12 @@
+{
+  "total_series": 2,
+  "clean_completions": 0,
+  "illegal_transition_series": [
+    "1"
+  ],
+  "max_stale_depth_any": 0,
+  "series_states": {
+    "?": "UNLOADED",
+    "1": "LOADING"
+  }
+}

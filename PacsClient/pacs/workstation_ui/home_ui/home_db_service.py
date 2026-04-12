@@ -160,6 +160,7 @@ class HomeDbService:
                                      series_thumbnails: list[dict]) -> bool:
         """Save series metadata received from gRPC thumbnail response."""
         try:
+            from database.core import get_db_connection
             study_pk = find_study_pk_with_study_uid(study_uid)
             if not study_pk:
                 return False
@@ -169,27 +170,27 @@ class HomeDbService:
                 series_uid = sd.get("series_uid", "")
                 existing = find_series_pk(series_uid)
                 if existing:
-                    conn = get_connection_database()
-                    cur = conn.cursor()
-                    cur.execute(
-                        """UPDATE series
-                           SET series_description=?, modality=?, image_count=?,
-                               protocol_name=?, body_part_examined=?, manufacturer=?,
-                               institution_name=?, thumbnail_path=?
-                           WHERE series_uid=?""",
-                        (
-                            sd.get("series_description", ""),
-                            sd.get("modality", ""),
-                            sd.get("image_count", 0),
-                            sd.get("protocol_name", ""),
-                            sd.get("body_part_examined", ""),
-                            sd.get("manufacturer", ""),
-                            sd.get("institution_name", ""),
-                            sd.get("thumbnail_path", ""),
-                            series_uid,
-                        ),
-                    )
-                    conn.commit()
+                    with get_db_connection() as conn:
+                        cur = conn.cursor()
+                        cur.execute(
+                            """UPDATE series
+                               SET series_description=?, modality=?, image_count=?,
+                                   protocol_name=?, body_part_examined=?, manufacturer=?,
+                                   institution_name=?, thumbnail_path=?
+                               WHERE series_uid=?""",
+                            (
+                                sd.get("series_description", ""),
+                                sd.get("modality", ""),
+                                sd.get("image_count", 0),
+                                sd.get("protocol_name", ""),
+                                sd.get("body_part_examined", ""),
+                                sd.get("manufacturer", ""),
+                                sd.get("institution_name", ""),
+                                sd.get("thumbnail_path", ""),
+                                series_uid,
+                            ),
+                        )
+                        conn.commit()
                     saved += 1
                     continue
 

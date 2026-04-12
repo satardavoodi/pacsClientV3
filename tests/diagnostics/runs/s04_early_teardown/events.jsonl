@@ -1,0 +1,24 @@
+{"ts": 0.036097100004553795, "wall_ts": 1775853001.8729856, "event_type": "SCENARIO_BEGIN", "thread_name": "MainThread", "seq": 0, "scenario": "s04_early_teardown", "modality": "CT", "slice_count": 120}
+{"ts": 0.036636700002418365, "wall_ts": 1775853001.8735237, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 1, "label": "partial_download"}
+{"ts": 0.03686120000202209, "wall_ts": 1775853001.8737478, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 2, "series_number": "1", "downloaded": 10, "total": 120}
+{"ts": 0.037084499999764375, "wall_ts": 1775853001.87397, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 3, "series_number": "1", "downloaded": 40, "total": 120}
+{"ts": 0.03779000000213273, "wall_ts": 1775853001.8746755, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 4, "series_number": "1", "downloaded": 60, "total": 120}
+{"ts": 0.03799230000004172, "wall_ts": 1775853001.8748777, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 5, "label": "teardown"}
+{"ts": 0.03816250000090804, "wall_ts": 1775853001.8750482, "event_type": "WIDGET_DESTROYED", "thread_name": "MainThread", "seq": 6, "series_number": "1", "reason": "tab_closed_by_user"}
+{"ts": 0.03824150000582449, "wall_ts": 1775853001.8751273, "event_type": "LOADER_RELEASED", "thread_name": "MainThread", "seq": 7, "series_number": "1"}
+{"ts": 0.03831400000490248, "wall_ts": 1775853001.8751996, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 8, "label": "late_decode_signals"}
+{"ts": 0.038384100000257604, "wall_ts": 1775853001.8752697, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 9, "series_number": "1", "slice_index": 61}
+{"ts": 0.03845260000525741, "wall_ts": 1775853001.875338, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 10, "series_number": "1", "slice_index": 62}
+{"ts": 0.038526700001966674, "wall_ts": 1775853001.8754122, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 11, "series_number": "1", "slice_index": 63}
+{"ts": 0.038599200001044665, "wall_ts": 1775853001.8754847, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 12, "series_number": "1", "slice_index": 64}
+{"ts": 0.0386655000038445, "wall_ts": 1775853001.8755512, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 13, "series_number": "1", "slice_index": 65}
+{"ts": 0.038731900000129826, "wall_ts": 1775853001.8756175, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 14, "series_number": "1", "slice_index": 66}
+{"ts": 0.03880300000309944, "wall_ts": 1775853001.8756888, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 15, "series_number": "1", "slice_index": 67}
+{"ts": 0.038867499999469146, "wall_ts": 1775853001.875753, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 16, "series_number": "1", "slice_index": 68}
+{"ts": 0.03893330000573769, "wall_ts": 1775853001.8758187, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 17, "series_number": "1", "slice_index": 69}
+{"ts": 0.039010400003462564, "wall_ts": 1775853001.875896, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 18, "series_number": "1", "slice_index": 70}
+{"ts": 0.03913650000322377, "wall_ts": 1775853001.8760223, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 19, "series_number": "1", "slice_index": 71}
+{"ts": 0.03921500000433298, "wall_ts": 1775853001.876101, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 20, "series_number": "1", "slice_index": 72}
+{"ts": 0.03928789999918081, "wall_ts": 1775853001.8761733, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 21, "series_number": "1", "slice_index": 73}
+{"ts": 0.03935569999885047, "wall_ts": 1775853001.8762414, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 22, "series_number": "1", "slice_index": 74}
+{"ts": 0.039636800000153016, "wall_ts": 1775853001.8765223, "event_type": "SCENARIO_END", "thread_name": "MainThread", "seq": 23, "scenario": "s04_early_teardown"}

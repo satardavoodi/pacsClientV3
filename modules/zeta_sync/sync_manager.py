@@ -31,6 +31,7 @@ class SyncManager:
             Callable[[str, str, Tuple[float, float, float]], Optional[Tuple[float, float, float]]]
         ] = None
         self._apply_slice: Optional[Callable[[str, int], None]] = None
+        self._hide_cursor: Optional[Callable[[str], None]] = None
 
     def set_mode(self, mode: SyncMode) -> None:
         self._mode = mode
@@ -70,6 +71,19 @@ class SyncManager:
     ) -> None:
         self._apply_slice = callback
 
+    def set_hide_cursor_callback(
+        self,
+        callback: Callable[[str], None]
+    ) -> None:
+        """Register a callback to hide a stale sync-point on a target viewer.
+
+        Called whenever _map_cursor returns None (rejected mapping — e.g. the
+        source point is outside the target stack).  The single argument is the
+        target viewer_id.  Without this, the last valid sync-point overlay
+        stays visible on the target indefinitely, appearing to be wrong.
+        """
+        self._hide_cursor = callback
+
     def set_active_point(self, world_pos: Tuple[float, float, float]) -> None:
         self._active_point = world_pos
 
@@ -98,6 +112,11 @@ class SyncManager:
                 if self._map_cursor is not None:
                     mapped_world = self._map_cursor(source_viewer_id, viewer_id, world_pos)
                 if mapped_world is None:
+                    # Mapping rejected (e.g. source point is outside target stack).
+                    # Hide the stale sync-point overlay so it doesn't linger at the
+                    # last valid position while the user is clicking elsewhere.
+                    if self._hide_cursor is not None:
+                        self._hide_cursor(viewer_id)
                     continue
                 self._apply_cursor(viewer_id, mapped_world)
         finally:

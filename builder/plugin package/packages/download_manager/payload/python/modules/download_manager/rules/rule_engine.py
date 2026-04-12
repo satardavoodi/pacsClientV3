@@ -114,6 +114,7 @@ class DownloadRuleEngine:
             db_progress = get_download_progress(study_uid)
         except Exception as e:
             logger.debug(f"Database check failed for {study_uid[:40]}...: {e}")
+            # Do not cache failures; allow rapid recovery on the next pass.
             self._invalidate_db_progress_cache(study_uid)
             return None
 

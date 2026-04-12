@@ -1,7 +1,7 @@
 # AIPacs Image Pipeline Reference — DICOM → Screen
 
-**Version:** 1.08.9.8.3  
-**Last Updated:** 2026-02-15  
+**Version:** 2.3.1
+**Last Updated:** 2026-04-10  
 **Scope:** DICOM → SimpleITK → VTK → Viewer/MPR → Screen  
 **Changelog:** See [Section 13](#13-test-results--findings-log) for chronological investigation results
 
@@ -370,7 +370,7 @@ account for the Y-flip compensation.
 ## 5. Stage 4 — Viewer Preprocessing
 
 ### Code Location
-- `PacsClient/pacs/patient_tab/viewers/viewer_2d.py` → `ImageViewer2D.__init__()`
+- `modules/viewer/advanced/viewer_2d.py` → `ImageViewer2D.__init__()`
 
 ### Step sequence in the constructor
 
@@ -807,7 +807,100 @@ eliminates this class of errors entirely.
 
 ---
 
+## 9b. FAST Mode — Pure-DICOM Sync Geometry Pipeline
+
+> **Version introduced:** v2.2.9.2 (2026-04-09)
+> **File:** `modules/viewer/fast/dicom_sync_geometry.py`
+> **Applies to:** FAST (`pydicom_2d` / `pydicom_qt`) backend sync targets only.
+> The Advanced backend uses the VTK-world-space path described in §9.
+
+### Why a separate geometry path?
+
+The Advanced backend stores a 3D `vtkImageData` volume whose "world space"
+coordinates are a VTK convention (origin + spacing + direction matrix, with
+the Y-flip compensation applied in `convert_itk2vtk`). Sync for Advanced
+targets is done via VTK world-space reverse-projection.
+
+FAST targets have **no VTK volume**.  Geometry must be derived entirely from
+the DICOM IOP/IPP metadata stored per instance.  All math is in the DICOM
+patient-LPS coordinate system (CS-1) and never passes through CS-2 – CS-5.
+
+### Coordinate space used
+
+All FAST sync geometry uses **CS-1 (patient-LPS)** exclusively:
+
+```
+DICOM File
+  IPP (Image Position Patient)     →  origin of this slice in LPS space
+  IOP (Image Orientation Patient)  →  row direction + column direction cosines
+
+n_t = cross(col_dir, row_dir)       →  slice normal in LPS space
+P_proj = P − dot(P−IPP_k, n_t)·n_t →  projection onto slice plane
+col_idx = dot(P_proj−IPP_k, row_dir) / pixel_spacing[1]
+row_idx = dot(P_proj−IPP_k, col_dir) / pixel_spacing[0]
+```
+
+This is identical to the DICOM standard § C.7.6.2 Patient Coordinate System.
+No direction-matrix Y-flip, no VTK axis reordering.
+
+### Sparse stack correction (v2.2.9.2)
+
+The formula-based slice finder (`k_float = d0 / ds`) estimated slice spacing
+from only the first two slices and assumed all slices were uniformly spaced.
+For lumbar MRI acquired disc-by-disc (3 slices per disc level, ~15 mm
+inter-disc gap) this produced catastrophically wrong results:
+
+```
+ds = 1 mm  (intra-group)
+Source at d_src = 40 mm above IPP_0 → k_float = 40 → clamped to last disc group
+Correct answer: k = 4 (slice at d = 40 mm inside L3-L4 group)
+```
+
+**Fix:** `find_closest_slice_physical()` scans all `n` slice positions in O(n)
+and returns `argmin |positions − d_src|`.  This is correct for any spacing
+pattern.
+
+**Sparse detection:** `analyse_target_stack()` classifies a stack as sparse
+when `max_spacing > 3.0 × median_spacing`.  If the source is more than
+`0.7 × typical_spacing` from the nearest slice, `between_groups = True` and
+the sync cursor is hidden (no anatomical correspondence at that position).
+
+### Comparison: Advanced vs FAST sync coordinate paths
+
+| Step | Advanced (VTK) | FAST (pure-DICOM) |
+|------|---------------|-------------------|
+| Input | Patient-LPS from `_pw_sync` event | Same patient-LPS |
+| Slice normal | From direction matrix in VTK field data | `cross(IOP_col, IOP_row)` |
+| Slice finder | `vtkImageViewer2.SetSlice()` with `GetSliceMin/Max` | `argmin |positions − d_src|` |
+| Floor/ceiling | VTK clamp to `[GetSliceMin, GetSliceMax]` | Physical extent check with ½-spacing tolerance |
+| Pixel coords | VTK picker or manual world→pixel | `lps_to_image_pixel()` via IOP/IPP |
+| Sparse stacks | Not an issue (full 3D volume in memory) | Explicit `between_groups` detection |
+| Rejection | No explicit rejection (always shows something) | `final_valid_sync_point=False` → cursor hidden |
+
+### Full function chain
+
+```
+project_lps_to_target(P_lps, instances)
+  ↓
+  compute_slice_normal(IOP)                     # n_t = cross(col, row)
+  compute_slice_positions(instances, n_t)       # positions[k] = dot(IPP_k−IPP_0, n_t)
+  analyse_target_stack(instances, positions)    # is_sparse, typical_spacing, max_gap
+  find_closest_slice_physical(P_lps, …)         # k_nearest, d_src, min_dist
+  between_groups detection                       # min_dist > 0.7 × typical_spacing?
+  project_lps_onto_plane(P_lps, IPP_k, n_t)    # P_proj, dp
+  lps_to_image_pixel(P_proj, IPP_k, IOP, px)   # col_idx, row_idx
+  validity classification                        # slab_valid, inplane_valid, final_valid
+  → SliceProjectionResult
+```
+
+See §6 of [VIEWER_BACKENDS_REFERENCE.md](VIEWER_BACKENDS_REFERENCE.md) for
+the complete pipeline diagram, rejection flow, all field definitions, and the
+`[FAST-SYNC-VALIDATION]` logging reference.
+
+---
+
 ## 10. Direction Matrix — What It Is, How It Changes
+
 
 ### The original ITK direction (D_itk)
 
@@ -965,6 +1058,74 @@ different coordinate path, rounding or ordering differences could make the dot
 and the line disagree.  The primary sync mapping (`_map_sync_dicom`) calls the
 same functions: `rl_center_of_slice`, `rl_apply_flip_y_in_plane`,
 `rl_lps_to_target_index`.
+
+### Rule 11: pydicom_2d viewer MUST be wired directly to the raw lazy vtkImageData — NOT through image_reslice (v2.3.1 / 2026-04-10)
+
+**Root cause of the "frozen image on scroll" regression:**
+
+`SetInputData(image_reslice.GetOutput())` wraps the reslice output in a
+**VTK trivial producer**.  When `Render()` is called, VTK requests data from the
+trivial producer but does NOT traverse upstream to re-execute `vtkImageReslice`.
+The lazy decoder writes decoded pixel data into `lazy_volume.vtk_image_data`
+(the numpy-backed source), but `image_reslice.GetOutput()` is a completely
+separate `vtkImageData` object that still holds the initial zeros.
+Every `SetSlice(N)` + `Render()` displays the frozen zeros — the image never
+changes no matter how much data is decoded.
+
+**Why `image_reslice.Modified()` does NOT fix it:**
+
+`image_reslice.Modified()` only sets the filter's own MTime.  The viewer mapper
+is connected to `image_reslice.GetOutput()` (the trivial producer), which has
+no knowledge of the filter MTime.  The mapper therefore sees no change and
+re-reads the same zero data.
+
+**The correct architecture for pydicom_2d (`ImageViewer2D.__init__`):**
+
+```python
+_is_pydicom_lazy = (
+    getattr(getattr(self, 'vtk_widget', None), '_active_backend', None) == 'pydicom_2d'
+)
+
+# For pydicom_2d: skip preprocessing and bypass image_reslice for the viewer connection
+if not _is_pydicom_lazy:
+    self.vtk_image_data = self._preprocess_vtk_image_data(self.vtk_image_data)
+
+_raw_lazy_vtk = self.vtk_image_data
+self.image_reslice = ImageReslice(self.vtk_image_data, self.metadata)
+
+if _is_pydicom_lazy:
+    self.SetInputData(_raw_lazy_vtk)       # Direct to raw lazy source — bypass reslice
+    self.vtk_image_data = _raw_lazy_vtk
+else:
+    self.SetInputData(self.image_reslice.GetOutput())  # Normal VTK path
+    self.vtk_image_data = self.image_reslice.GetOutput()
+```
+
+**Why this works:**
+
+1. Lazy decoder fills `numpy_array[N]` → data present in `vtk_image_data.GetPointData().GetScalars()`
+2. `mark_vtk_modified()` → `vtk_image_data.Modified()` → MTime on the raw source increases
+3. `Render()` → viewer mapper → trivial producer (wrapping raw source) detects MTime change
+   → re-reads numpy buffer → correct pixel data displayed at `SetSlice(N)`
+
+No `image_reslice.Update()` or `.Modified()` per scroll event is needed — the MTime
+propagation through the trivial producer handles it automatically.
+
+**Same bypass required in `reset_image_viewer`:** Both the rebuild branch and the
+reconnect block in `reset_image_viewer` must apply the same `_is_pydicom_lazy` guard
+so the viewer is re-connected to the raw source after a series switch.
+
+**Why `_preprocess_vtk_image_data` must also be skipped:**
+
+For CT + small stacks, `_preprocess_vtk_image_data` runs `display_upsample_xy` via
+`vtkImageResample`, creating a NEW `vtkImageData` completely disconnected from the lazy
+numpy backing store.  Calling `mark_vtk_modified()` on the original source has zero
+effect on this copy.  Skipping preprocessing for pydicom_2d prevents this disconnection.
+
+**DO NOT add `image_reslice.Modified()` or `image_reslice.Update()` to the pydicom_2d
+scroll path (`_vw_scroll.py`) or lazy-slice-ready callback (`_vw_backend.py`).  These
+calls are architecturally wrong for the trivial producer model and will silently
+re-introduce the frozen image regression.**
 
 ---
 
@@ -1338,6 +1499,60 @@ projections.
 ### v1.09.5 — DICOM-based sync mapping & metadata ordering fix (2026-02-08)
 
 **Status:** ✅ Confirmed working for both CT and MRI
+
+---
+
+### 2026-04-09 — FAST sync validity classification (slab vs FOV) hardening
+
+**Mode contract (must be preserved):**
+
+- Backend differs between FAST and Advanced.
+- UI/UX intent and product logic are the same for users.
+- Implementation path is backend-specific:
+  - Advanced(VTK) sync module was stable/correct historically and should remain stable.
+  - FAST(Qt/pydicom) needs dedicated geometry handling and dedicated validity policy.
+- Do not assume Advanced mapping rules can be copied directly into FAST without
+  backend adaptation (and vice versa).
+
+**Problem observed in production logs (FAST Qt mode):**
+
+- Source point pick (`P_lps`) was correct.
+- Target mapping produced large `slice_plane_residual_mm` / `dp` (e.g. 50–95 mm).
+- `patient_error_mm` still appeared near zero (projection roundtrip consistency), which looked like a false success.
+- `k_float` could be outside target stack range but mapping still projected onto a clamped edge slice.
+
+**Root cause:**
+
+The old validity logic conflated these states:
+
+1. inside target slab + inside in-plane FOV,
+2. outside target slab (through-plane miss),
+3. inside slab but outside in-plane FOV.
+
+Out-of-slab points were projected to the nearest available slice and displayed as if they were valid correspondences.
+
+**Fix (FAST pure-DICOM path):**
+
+`modules/viewer/fast/dicom_sync_geometry.py` now classifies validity explicitly:
+
+- `slab_valid`: `k_float` within `[k_min, k_max]` before clamp
+- `inplane_valid`: row/col inside image bounds
+- `final_valid_sync_point`: `slab_valid and inplane_valid`
+- `rejection_reason`: `none | out_of_stack | out_of_fov | geometry_error`
+
+Additional diagnostics are produced:
+
+- `slice_count`, `k_min`, `k_max`
+- `k_float_before_clamp`, `k_tgt_after_clamp`, `clamp_occurred`
+- `through_plane_distance_mm` (signed)
+- `world_delta_mm = ||P_proj - P_lps||`
+
+`_map_sync_dicom()` now rejects invalid FAST correspondences explicitly (`mapped=None`) instead of returning projected edge-slice points as valid markers.
+
+**Important interpretation rule:**
+
+`patient_error_mm` alone is **not** a validity metric for point correspondence in FAST sync.
+It only measures projection roundtrip self-consistency on the chosen target slice. Use `slab_valid` and `world_delta_mm` (or through-plane residual) to decide correspondence validity.
 
 ---
 

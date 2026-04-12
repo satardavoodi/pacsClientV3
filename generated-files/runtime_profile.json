@@ -1,12 +1,20 @@
 {
   "app_name": "AIPacs",
-  "generated_at_utc": "2026-04-03T21:23:47.516621+00:00",
+  "app_version": "",
+  "generated_at_utc": "2026-04-12T20:37:42.324167+00:00",
+  "installer": {
+    "current_version": "",
+    "detected_existing_version": "",
+    "install_action": "fresh_install",
+    "should_update": false
+  },
   "modules": {
     "viewer": true,
     "download_manager": true,
     "zeta_boost": true,
     "education": true,
     "stitching": true,
+    "offline_cloud_server": true,
     "advanced_mpr": false,
     "printing": false,
     "run_cd": false,
@@ -73,6 +81,20 @@
     "stitching": {
       "module_id": "stitching",
       "title": "Stitching Module",
+      "tier": "basic",
+      "package_kind": "core",
+      "status": "core",
+      "installed_version": "",
+      "installed_from": "core_bundle",
+      "installed_at_utc": "",
+      "runtime_path": "",
+      "archive_name": "",
+      "requires_restart": false,
+      "warning": ""
+    },
+    "offline_cloud_server": {
+      "module_id": "offline_cloud_server",
+      "title": "Offline Cloud Server",
       "tier": "basic",
       "package_kind": "core",
       "status": "core",
@@ -161,7 +183,7 @@
     "last_detected_gpu": false,
     "last_probe_backend": "",
     "last_probe_device": "",
-    "last_probe_utc": "2026-04-03T21:23:47.511400Z",
+    "last_probe_utc": "2026-04-12T20:37:42.319698Z",
     "last_execution_mode": "cpu_software_opengl",
     "last_software_rendering_status": "ready",
     "last_software_rendering_warning": ""

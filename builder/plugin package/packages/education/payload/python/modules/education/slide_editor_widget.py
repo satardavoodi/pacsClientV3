@@ -15,7 +15,6 @@ from modules.education.course_database import (
     delete_slide_content, save_course_asset
 )
 from modules.education.study_picker_dialog import StudyPickerDialog
-from PacsClient.utils.theme_manager import get_theme_manager
 
 
 class ContentItemWidget(QWidget):
@@ -220,16 +219,8 @@ class SlideEditorWidget(QWidget):
         self.slide_pk = slide_pk
         self.course_pk = course_pk
         self.content_items = []
-        self.theme_manager = get_theme_manager()
-        self._theme = self.theme_manager.current_theme()
-        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self.setup_ui()
         self.load_content()
-    
-    def _on_theme_changed(self, theme):
-        """Handle theme changes."""
-        self._theme = theme or self.theme_manager.current_theme()
-        self._apply_theme_styles()
     
     def setup_ui(self):
         """Setup the slide editor UI."""
@@ -295,45 +286,8 @@ class SlideEditorWidget(QWidget):
         # Empty state
         self.empty_label = QLabel("No content yet. Use the buttons above to add content to this slide.")
         self.empty_label.setAlignment(Qt.AlignCenter)
+        self.empty_label.setStyleSheet("color: #a0aec0; padding: 50px;")
         layout.addWidget(self.empty_label)
-        
-        self._apply_theme_styles()
-    
-    def _apply_theme_styles(self):
-        """Apply theme-based styling."""
-        t = self._theme
-        
-        # Empty label
-        self.empty_label.setStyleSheet(f"color: {t['text_muted']}; padding: 50px;")
-        
-        # Toolbar styling
-        toolbar_style = f"""
-            QWidget {{
-                background-color: {t['panel_deep_bg']};
-                border-radius: 8px;
-            }}
-        """
-        if hasattr(self, 'toolbar'):
-            self.toolbar.setStyleSheet(toolbar_style)
-        
-        # Update all buttons
-        button_style = f"""
-            QPushButton {{
-                background-color: {t['accent']};
-                color: {t['button_text']};
-                border: none;
-                border-radius: 5px;
-                padding: 8px 15px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {t['accent_hover']};
-            }}
-        """
-        
-        for button in self.findChildren(QPushButton):
-            if button.text() in ["Add Text", "Add Image", "Add Video", "Add DICOM"]:
-                button.setStyleSheet(button_style)
     
     def _get_toolbar_button_style(self):
         """Get toolbar button stylesheet."""

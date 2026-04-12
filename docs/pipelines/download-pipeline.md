@@ -1,62 +1,62 @@
 # Download Pipeline
 
-> **Version:** v2.3.0 | **Updated:** 2026-04-04
+> **Version:** v2.3.1 | **Updated:** 2026-04-13
 
 ## Overview
 
 The download pipeline handles fetching DICOM studies from the PACS server to local storage. It runs in a **separate subprocess** to avoid GIL contention with the viewer.
 
-In `v2.3.0`, the download manager remains part of the core workstation bundle, so every installed PC receives the same download engine even when optional modules differ.
+In `v2.3.1`, the download manager remains part of the core workstation bundle, so every installed PC receives the same download engine even when optional modules differ.
 
 ## Pipeline Stages
 
 ```
 User Action (double-click study)
-  │
-  ▼
-┌─────────────────────────────────────────┐
-│ 1. INITIATION (main process)            │
-│    HomePanelWidget._on_patient_double_  │
-│    clicked_async()                       │
-│    ├─ Create PatientWidget tab           │
-│    └─ Start Zeta download with priority  │
-└────────────────┬────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────┐
-│ 2. VALIDATION (DownloadExecutor)        │
-│    ├─ Rule engine validates task         │
-│    ├─ Check download state (resume?)     │
-│    └─ Create/update download state       │
-└────────────────┬────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────┐
-│ 3. METADATA FETCH (gRPC)                │
-│    ├─ Fetch study structure from server  │
-│    ├─ Validate study completeness        │
-│    └─ Initialize DB hierarchy            │
-│        (Patient→Study→Series→Instances)  │
-└────────────────┬────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────┐
-│ 4. DOWNLOAD (subprocess)                │
-│    DownloadProcessWorker (own GIL)       │
-│    ├─ Series downloaded via gRPC stream  │
-│    ├─ DICOM files saved to disk          │
-│    ├─ Progress signals → UI              │
-│    └─ Instance records → DB              │
-└────────────────┬────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────┐
-│ 5. COMPLETION                            │
-│    ├─ Download state → COMPLETED         │
-│    ├─ Global download counter decremented│
-│    ├─ ZetaBoost warmup lanes unblocked   │
-│    └─ UI progress → 100%                 │
-└─────────────────────────────────────────┘
+  أ¢â€‌â€ڑ
+  أ¢â€“آ¼
+أ¢â€‌إ’أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع¯
+أ¢â€‌â€ڑ 1. INITIATION (main process)            أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    HomePanelWidget._on_patient_double_  أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    clicked_async()                       أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Create PatientWidget tab           أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌â€‌أ¢â€‌â‚¬ Start Zeta download with priority  أ¢â€‌â€ڑ
+أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌آ¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع©
+                 أ¢â€‌â€ڑ
+                 أ¢â€“آ¼
+أ¢â€‌إ’أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع¯
+أ¢â€‌â€ڑ 2. VALIDATION (DownloadExecutor)        أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Rule engine validates task         أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Check download state (resume?)     أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌â€‌أ¢â€‌â‚¬ Create/update download state       أ¢â€‌â€ڑ
+أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌آ¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع©
+                 أ¢â€‌â€ڑ
+                 أ¢â€“آ¼
+أ¢â€‌إ’أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع¯
+أ¢â€‌â€ڑ 3. METADATA FETCH (gRPC)                أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Fetch study structure from server  أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Validate study completeness        أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌â€‌أ¢â€‌â‚¬ Initialize DB hierarchy            أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ        (Patientأ¢â€ â€™Studyأ¢â€ â€™Seriesأ¢â€ â€™Instances)  أ¢â€‌â€ڑ
+أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌آ¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع©
+                 أ¢â€‌â€ڑ
+                 أ¢â€“آ¼
+أ¢â€‌إ’أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع¯
+أ¢â€‌â€ڑ 4. DOWNLOAD (subprocess)                أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    DownloadProcessWorker (own GIL)       أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Series downloaded via gRPC stream  أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ DICOM files saved to disk          أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Progress signals أ¢â€ â€™ UI              أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌â€‌أ¢â€‌â‚¬ Instance records أ¢â€ â€™ DB              أ¢â€‌â€ڑ
+أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌آ¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع©
+                 أ¢â€‌â€ڑ
+                 أ¢â€“آ¼
+أ¢â€‌إ’أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع¯
+أ¢â€‌â€ڑ 5. COMPLETION                            أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Download state أ¢â€ â€™ COMPLETED         أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Global download counter decrementedأ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ ZetaBoost warmup lanes unblocked   أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌â€‌أ¢â€‌â‚¬ UI progress أ¢â€ â€™ 100%                 أ¢â€‌â€ڑ
+أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع©
 ```
 
 ## Key Components
@@ -65,7 +65,7 @@ User Action (double-click study)
 |-----------|------|----------------|
 | `HomePanelWidget` | `PacsClient/pacs/workstation_ui/home_ui/home_ui.py` | Download trigger, progress display |
 | `DownloadManagerWidget` | `modules/download_manager/ui/main_widget.py` | Download queue UI, worker management |
-| `DownloadExecutor` | `modules/download_manager/download/executor.py` | Orchestrate validation→fetch→download→complete |
+| `DownloadExecutor` | `modules/download_manager/download/executor.py` | Orchestrate validationأ¢â€ â€™fetchأ¢â€ â€™downloadأ¢â€ â€™complete |
 | `SeriesDownloader` | `modules/download_manager/download/series_downloader.py` | Per-series download logic |
 | `DownloadProcessWorker` | `modules/download_manager/download/worker.py` | Subprocess worker thread |
 | `SocketService` | `modules/network/socket_service.py` | PACS protocol communication (singleton facade) |
@@ -90,24 +90,24 @@ The download manager is always installed as a core module:
 
 ```
 PACS Server
-    │ (gRPC stream)
-    ▼
+    أ¢â€‌â€ڑ (gRPC stream)
+    أ¢â€“آ¼
 DownloadProcessWorker (subprocess, own GIL, own priority)
-    │ (signals)
-    ▼
+    أ¢â€‌â€ڑ (signals)
+    أ¢â€“آ¼
 DownloadManagerWidget (main process)
-    │ (Qt signals)
-    ├─▶ Database (insert instances, update progress)
-    ├─▶ Disk (DICOM files → user_data/patients/...)
-    └─▶ UI (progress bars, status updates)
+    أ¢â€‌â€ڑ (Qt signals)
+    أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€“آ¶ Database (insert instances, update progress)
+    أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€“آ¶ Disk (DICOM files أ¢â€ â€™ user_data/patients/...)
+    أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€“آ¶ UI (progress bars, status updates)
 ```
 
 ## ZetaBoost Interaction
 
 During active downloads:
-1. `ZetaBoostEngine.notify_global_download_start()` called → warmup/background lanes blocked
-2. Download subprocess runs at IDLE priority → minimal CPU contention
-3. On completion: `notify_global_download_stop()` → lanes unblocked → warmup begins
+1. `ZetaBoostEngine.notify_global_download_start()` called أ¢â€ â€™ warmup/background lanes blocked
+2. Download subprocess runs at IDLE priority أ¢â€ â€™ minimal CPU contention
+3. On completion: `notify_global_download_stop()` أ¢â€ â€™ lanes unblocked أ¢â€ â€™ warmup begins
 
 ## Resumability
 
@@ -141,32 +141,32 @@ All retry constants live in `modules/download_manager/core/constants.py`:
 
 ```
 Layer 1: send_request() retry wrapper
-  └─ Retries individual socket requests up to REQUEST_MAX_RETRIES
-  └─ Exponential backoff + reconnect between retries
-  └─ Login requests are NOT retried (fail-fast)
+  أ¢â€‌â€‌أ¢â€‌â‚¬ Retries individual socket requests up to REQUEST_MAX_RETRIES
+  أ¢â€‌â€‌أ¢â€‌â‚¬ Exponential backoff + reconnect between retries
+  أ¢â€‌â€‌أ¢â€‌â‚¬ Login requests are NOT retried (fail-fast)
 
 Layer 2: connect_with_retry() (socket level)
-  └─ Exponential backoff with jitter, capped at RECONNECT_MAX_DELAY
-  └─ Formula: delay = min(base * factor^attempt, max_delay) + random(0, jitter)
+  أ¢â€‌â€‌أ¢â€‌â‚¬ Exponential backoff with jitter, capped at RECONNECT_MAX_DELAY
+  أ¢â€‌â€‌أ¢â€‌â‚¬ Formula: delay = min(base * factor^attempt, max_delay) + random(0, jitter)
 
 Layer 3: Per-series retry loop (series_downloader.py)
-  └─ After main download loop completes, retries ALL failed series
-  └─ Up to MAX_SERIES_RETRIES rounds (3 by default)
-  └─ Exponential backoff between rounds: 3s → 6s → 12s
-  └─ Reconnects socket between retry rounds via connect_with_retry()
+  أ¢â€‌â€‌أ¢â€‌â‚¬ After main download loop completes, retries ALL failed series
+  أ¢â€‌â€‌أ¢â€‌â‚¬ Up to MAX_SERIES_RETRIES rounds (3 by default)
+  أ¢â€‌â€‌أ¢â€‌â‚¬ Exponential backoff between rounds: 3s أ¢â€ â€™ 6s أ¢â€ â€™ 12s
+  أ¢â€‌â€‌أ¢â€‌â‚¬ Reconnects socket between retry rounds via connect_with_retry()
 ```
 
-## Validation Rules (R17) — Duplicate/Resume Detection
+## Validation Rules (R17) أ¢â‚¬â€‌ Duplicate/Resume Detection
 
 Located in `modules/download_manager/rules/validation_rules.py`:
 
-### R17a — In-Memory StateStore Check
+### R17a أ¢â‚¬â€‌ In-Memory StateStore Check
 
 Checks if a download already exists in the active StateStore:
-- **Terminal states** (COMPLETED, CANCELLED): Block with `"Download already exists"` — no re-download.
+- **Terminal states** (COMPLETED, CANCELLED): Block with `"Download already exists"` أ¢â‚¬â€‌ no re-download.
 - **Non-terminal states** (PENDING, DOWNLOADING, PAUSED, FAILED): Return `should_resume=True` so the caller can resume instead of rejecting.
 
-### R17b — Persistent Database Check
+### R17b أ¢â‚¬â€‌ Persistent Database Check
 
 If R17a passes (no active state), checks the DB for completed records:
 - Queries DB status for the study_uid.
@@ -178,13 +178,13 @@ If R17a passes (no active state), checks the DB for completed records:
 
 ```
 start_priority_download_immediately()
-  ├─ STEP 1: Build task
-  ├─ STEP 2: Validate (R17a/R17b)
-  │     ├─ should_resume=True? → Fall through to STEP 3+ (resume)
-  │     └─ blocked? → Return False (truly duplicate/completed)
-  ├─ STEP 3: gRPC metadata fetch
-  ├─ STEP 4: State update (reset progress counters for resume)
-  └─ STEP 5: Start worker
+  أ¢â€‌إ“أ¢â€‌â‚¬ STEP 1: Build task
+  أ¢â€‌إ“أ¢â€‌â‚¬ STEP 2: Validate (R17a/R17b)
+  أ¢â€‌â€ڑ     أ¢â€‌إ“أ¢â€‌â‚¬ should_resume=True? أ¢â€ â€™ Fall through to STEP 3+ (resume)
+  أ¢â€‌â€ڑ     أ¢â€‌â€‌أ¢â€‌â‚¬ blocked? أ¢â€ â€™ Return False (truly duplicate/completed)
+  أ¢â€‌إ“أ¢â€‌â‚¬ STEP 3: gRPC metadata fetch
+  أ¢â€‌إ“أ¢â€‌â‚¬ STEP 4: State update (reset progress counters for resume)
+  أ¢â€‌â€‌أ¢â€‌â‚¬ STEP 5: Start worker
 ```
 
 ## Progressive Viewer Loading (v2.2.8.1)
@@ -195,13 +195,13 @@ When a patient tab is opened, the viewer progressively loads images as series do
 |-------|---------|
 | 100ms per-series throttle | Prevents CPU spike from rapid download progress signals (was 250ms pre-v2.2.8.1) |
 | `_progressive_display_inflight` set | Prevents spawning duplicate concurrent load tasks for the same series |
-| `_progressive_display_done` set | Marks series that completed initial display — routes to grow path |
+| `_progressive_display_done` set | Marks series that completed initial display أ¢â‚¬â€‌ routes to grow path |
 | Done-guard recovery | Re-activates progressive mode if guard says done but no progressive viewer exists |
 | `finally` block cleanup | Ensures inflight guard is always cleared even on error |
 
 **v2.2.8.1 Changes:**
-- Progressive grow timer reduced: 500ms → 150ms
-- Progress debounce reduced: 250ms → 100ms
+- Progressive grow timer reduced: 500ms أ¢â€ â€™ 150ms
+- Progress debounce reduced: 250ms أ¢â€ â€™ 100ms
 - Done-guard ordering fixed: `done.add(sn)` now runs AFTER display+activation on main thread
 - Stale guard: show-then-refresh (display immediately, background reload at +150ms)
 - DM notify deferred: `QTimer.singleShot(0)` with 500ms cooldown per series
@@ -215,13 +215,13 @@ When user drag-drops a different series within the same study that's actively do
 
 1. `request_critical_series()` detects `current_series_number != requested_series`
 2. Own worker is cancelled non-blocking (sets cancel flag, doesn't wait)
-3. State overridden to PENDING (not PAUSED) — so `_start_next_pending` picks it up
+3. State overridden to PENDING (not PAUSED) أ¢â‚¬â€‌ so `_start_next_pending` picks it up
 4. `negotiate_priority_change()` defers `_start_next_pending` + schedules retry backup
 5. Result: ~batch RTT + 250ms to switch (was: wait for entire series to finish)
 
 Located in `modules/download_manager/coordinator/series_intent_coordinator.py`.
 
-## Critical Series Intent (FAST Viewer Drag/Drop) — 2026-04-01 Hardening
+## Critical Series Intent (FAST Viewer Drag/Drop) أ¢â‚¬â€‌ 2026-04-01 Hardening
 
 ### Why this matters
 
@@ -267,10 +267,10 @@ This avoids a heavyweight monolithic orchestrator while preserving deterministic
 |------------|----------|
 | Network timeout | Exponential backoff retry (3 attempts, jitter) via `send_request` wrapper |
 | Socket disconnect mid-download | `connect_with_retry()` with exponential backoff + jitter |
-| Series download failure | Per-series retry loop: 3 rounds with backoff (3s→6s→12s) |
-| Partial download (app restart) | R17a detects non-terminal state → resume path |
+| Series download failure | Per-series retry loop: 3 rounds with backoff (3sأ¢â€ â€™6sأ¢â€ â€™12s) |
+| Partial download (app restart) | R17a detects non-terminal state أ¢â€ â€™ resume path |
 | Partial download (retry button) | Per-patient: deletes complete series, keeps incomplete + R19b/R19 resume |
-| DB says Complete but files missing | R17b filesystem verification → allows re-download |
+| DB says Complete but files missing | R17b filesystem verification أ¢â€ â€™ allows re-download |
 | Disk full | Error state + user notification |
 | Server unavailable | Queued for retry with backoff |
 | Corrupt DICOM file | Skip file, log warning, continue series |
@@ -278,27 +278,27 @@ This avoids a heavyweight monolithic orchestrator while preserving deterministic
 
 ## Stability Considerations
 
-1. **Subprocess isolation**: Download runs in separate process with own GIL — cannot block viewer
+1. **Subprocess isolation**: Download runs in separate process with own GIL أ¢â‚¬â€‌ cannot block viewer
 2. **Global counter**: Prevents ZetaBoost from competing for CPU during downloads
 3. **Connection pool**: gRPC connections are pooled and reused
 4. **State persistence**: Download progress survives app restart
 5. **Priority management**: Subprocess runs at IDLE OS priority
 6. **Progressive viewer throttle (v2.2.7+)**: 250ms debounce prevents CPU spike from rapid progress signals
 7. **Retry jitter (v2.2.7+)**: Random jitter on reconnect delays prevents thundering herd on server recovery
-8. **Filesystem truth (v2.2.7+)**: R17b verifies actual files on disk, not just DB state — catches silent partial downloads
-9. **Batch-skip on resume (v2.2.7.2; hardened v2.2.7.3)**: `download_series()` skips leading complete batches on partial resume — now verifies actual sequential files instead of trusting file count alone
-10. **Retry button preserves files (v2.2.7.2)**: Incomplete series are not deleted on retry — the downloader resumes incrementally via R19b + R19
-11. **Per-patient retry cleans complete series (v2.2.7.3)**: `_on_per_patient_retry()` deletes series directories where file count ≥ expected count — prevents R20 from skipping series that the user wants re-downloaded
-12. **Accurate skip counting (v2.2.7.3)**: Per-instance file-skip no longer double-counts pre-existing files — progress and result counts are correct
-13. **Non-blocking retry (v2.2.7.4)**: `_on_series_retry()` and `_on_per_patient_retry()` offload file I/O and gRPC calls to background threads — the Qt event loop is never blocked by retry operations
-14. **Non-blocking worker preemption (v2.2.7.4)**: `_pause_all_active_downloads()` uses `cancel_all_non_blocking()` instead of `stop_all()` — avoids 5s/worker blocking on the main thread
-15. **Module independence (v2.2.7.4)**: Download manager operations cannot freeze the viewer, thumbnails, or other modules — all cross-thread marshaling uses `QTimer.singleShot(0, callback)`
-16. **sendall() for all socket writes (v2.2.8.0)**: `PatientListSocketClient.send_request()` uses `sendall()` instead of `send()` — prevents partial writes from corrupting framing on large payloads
-17. **Exact-length recv (v2.2.8.0)**: `_recv_exact(size)` accumulates partial reads until the exact byte count is received — prevents framing corruption on slow/congested networks
-18. **Response size validation (v2.2.8.0)**: 50 MB limit on response allocation — prevents unbounded memory growth from server bugs or corrupted length headers
-19. **Lazy connection pool (v2.2.8.0)**: `SocketConnectionPool` creates connections on demand instead of eagerly at init — validates `is_connected()` before returning pooled clients
-20. **gRPC auto-reconnect (v2.2.8.0)**: `DicomGrpcClient._ensure_stub()` reconnects if channel/stub is `None` — subsequent thumbnail calls succeed after transient failure
-21. **No hardcoded server IPs (v2.2.8.0)**: `constants.py` defaults to `localhost` with `AIPACS_SOCKET_HOST` env var override — production IPs come from config only
+8. **Filesystem truth (v2.2.7+)**: R17b verifies actual files on disk, not just DB state أ¢â‚¬â€‌ catches silent partial downloads
+9. **Batch-skip on resume (v2.2.7.2; hardened v2.2.7.3)**: `download_series()` skips leading complete batches on partial resume أ¢â‚¬â€‌ now verifies actual sequential files instead of trusting file count alone
+10. **Retry button preserves files (v2.2.7.2)**: Incomplete series are not deleted on retry أ¢â‚¬â€‌ the downloader resumes incrementally via R19b + R19
+11. **Per-patient retry cleans complete series (v2.2.7.3)**: `_on_per_patient_retry()` deletes series directories where file count أ¢â€°آ¥ expected count أ¢â‚¬â€‌ prevents R20 from skipping series that the user wants re-downloaded
+12. **Accurate skip counting (v2.2.7.3)**: Per-instance file-skip no longer double-counts pre-existing files أ¢â‚¬â€‌ progress and result counts are correct
+13. **Non-blocking retry (v2.2.7.4)**: `_on_series_retry()` and `_on_per_patient_retry()` offload file I/O and gRPC calls to background threads أ¢â‚¬â€‌ the Qt event loop is never blocked by retry operations
+14. **Non-blocking worker preemption (v2.2.7.4)**: `_pause_all_active_downloads()` uses `cancel_all_non_blocking()` instead of `stop_all()` أ¢â‚¬â€‌ avoids 5s/worker blocking on the main thread
+15. **Module independence (v2.2.7.4)**: Download manager operations cannot freeze the viewer, thumbnails, or other modules أ¢â‚¬â€‌ all cross-thread marshaling uses `QTimer.singleShot(0, callback)`
+16. **sendall() for all socket writes (v2.2.8.0)**: `PatientListSocketClient.send_request()` uses `sendall()` instead of `send()` أ¢â‚¬â€‌ prevents partial writes from corrupting framing on large payloads
+17. **Exact-length recv (v2.2.8.0)**: `_recv_exact(size)` accumulates partial reads until the exact byte count is received أ¢â‚¬â€‌ prevents framing corruption on slow/congested networks
+18. **Response size validation (v2.2.8.0)**: 50 MB limit on response allocation أ¢â‚¬â€‌ prevents unbounded memory growth from server bugs or corrupted length headers
+19. **Lazy connection pool (v2.2.8.0)**: `SocketConnectionPool` creates connections on demand instead of eagerly at init أ¢â‚¬â€‌ validates `is_connected()` before returning pooled clients
+20. **gRPC auto-reconnect (v2.2.8.0)**: `DicomGrpcClient._ensure_stub()` reconnects if channel/stub is `None` أ¢â‚¬â€‌ subsequent thumbnail calls succeed after transient failure
+21. **No hardcoded server IPs (v2.2.8.0)**: `constants.py` defaults to `localhost` with `AIPACS_SOCKET_HOST` env var override أ¢â‚¬â€‌ production IPs come from config only
 
 ## Network Architecture Reference
 
@@ -313,22 +313,22 @@ and the complete file map, see `docs/architecture/network-architecture.md`.
 
 | Scenario | What it tests |
 |----------|---------------|
-| S1 | State machine transitions: PENDING→DOWNLOADING→COMPLETED, FAILED→PENDING, PAUSED→PENDING |
-| S2 | Priority preemption: HIGH pauses NORMAL, CRITICAL pauses all, resume order HIGH→NORMAL |
-| S3 | Disconnect/reconnect resume: socket failure → state preserved → resume path |
+| S1 | State machine transitions: PENDINGأ¢â€ â€™DOWNLOADINGأ¢â€ â€™COMPLETED, FAILEDأ¢â€ â€™PENDING, PAUSEDأ¢â€ â€™PENDING |
+| S2 | Priority preemption: HIGH pauses NORMAL, CRITICAL pauses all, resume order HIGHأ¢â€ â€™NORMAL |
+| S3 | Disconnect/reconnect resume: socket failure أ¢â€ â€™ state preserved أ¢â€ â€™ resume path |
 | S4 | R20 skip & retry file cleanup: series skip logic, per-patient retry file deletion |
 | S5 | R19b verified batch-skip: sequential file verification, gap detection |
-| S6 | State store thread safety: 8 threads × 12 ops, no corruption |
+| S6 | State store thread safety: 8 threads ط£â€” 12 ops, no corruption |
 | S7 | Observer fan-out: state changes propagate to all registered observers |
 | S8 | Rule engine validation: R17a/R17b duplicate detection, resume detection |
 | S9 | Skipped-count accuracy: existing_files_set prevents double-counting |
 | S10 | Priority ordering: CRITICAL > HIGH > NORMAL sorting |
 | S11 | State reset on resume: progress counters cleared on re-download |
-| S12–S21 | Additional state machine, retry, and error handling edge cases |
+| S12أ¢â‚¬â€œS21 | Additional state machine, retry, and error handling edge cases |
 | S22 | Coordinator negotiate latency: priority change completes in <5ms |
-| S23 | Observer priority chain: state change → priority change → UI refresh in sequence |
-| S24 | Critical series roundtrip: request_critical_series → state=CRITICAL, viewed_series set |
-| S25 | Rapid toggle stress: 100 rapid NORMAL↔CRITICAL toggles, state remains consistent |
+| S23 | Observer priority chain: state change أ¢â€ â€™ priority change أ¢â€ â€™ UI refresh in sequence |
+| S24 | Critical series roundtrip: request_critical_series أ¢â€ â€™ state=CRITICAL, viewed_series set |
+| S25 | Rapid toggle stress: 100 rapid NORMALأ¢â€ â€‌CRITICAL toggles, state remains consistent |
 | S26 | Auto-resume after critical done: peers resume when critical study completes |
 | S27 | Series-interrupt: same-study worker cancelled, state=PENDING, viewed_series updated |
 
@@ -340,11 +340,11 @@ and the complete file map, see `docs/architecture/network-architecture.md`.
 |----------|---------------|-----|
 | H1 | 50 concurrent patient downloads | State store handles 50 entries in <100ms |
 | H2 | 500 rapid series switches | Coordinator handles 500 priority changes in <5s |
-| H3 | 16-thread × 500 ops contention | P99 lock wait <5ms (expected fail: GIL contention) |
+| H3 | 16-thread ط£â€” 500 ops contention | P99 lock wait <5ms (expected fail: GIL contention) |
 | H4 | 10,000 progress updates with observer fan-out | No dropped signals |
-| H5 | 200 studies × 20 series memory pressure | Memory stays bounded |
+| H5 | 200 studies ط£â€” 20 series memory pressure | Memory stays bounded |
 | H6 | Priority negotiation storm (all CRITICAL) | Coordinator resolves deterministically |
 | H7 | 100 create/promote/complete/resume cycles | No state corruption |
-| H8 | 10 studies × 10 series × 100 files I/O stress | All files created/verified |
+| H8 | 10 studies ط£â€” 10 series ط£â€” 100 files I/O stress | All files created/verified |
 | H9 | 1000 get_next_download under full store | Rule engine throughput >1000/s |
 | H10 | Combined pipeline (priority + observer + coordinator + I/O) | End-to-end <10ms/op |

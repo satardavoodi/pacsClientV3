@@ -8,7 +8,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from PacsClient.utils.database import get_db_connection
-from PacsClient.utils.theme_manager import get_theme_manager
 import sqlite3
 
 
@@ -23,16 +22,8 @@ class StudyPickerDialog(QDialog):
         self.selected_patient_id = None
         self.selected_series_number = None
         self.mode = 'study'  # 'study' or 'series'
-        self.theme_manager = get_theme_manager()
-        self._theme = self.theme_manager.current_theme()
-        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self.setup_ui()
         self.load_studies()
-    
-    def _on_theme_changed(self, theme):
-        """Handle theme changes."""
-        self._theme = theme or self.theme_manager.current_theme()
-        self._apply_theme_styles()
     
     def setup_ui(self):
         """Setup the dialog UI."""
@@ -41,12 +32,13 @@ class StudyPickerDialog(QDialog):
         layout.setSpacing(15)
         
         # Title
-        self.title = QLabel("Select a DICOM Study or Series")
+        title = QLabel("Select a DICOM Study or Series")
         title_font = QFont()
         title_font.setPointSize(14)
         title_font.setBold(True)
-        self.title.setFont(title_font)
-        layout.addWidget(self.title)
+        title.setFont(title_font)
+        title.setStyleSheet("color: #e2e8f0;")
+        layout.addWidget(title)
         
         # Search and filter
         search_layout = QHBoxLayout()
@@ -54,15 +46,43 @@ class StudyPickerDialog(QDialog):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search by patient name, ID, or study description...")
         self.search_input.textChanged.connect(self.filter_studies)
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #374151;
+                color: #e2e8f0;
+                border: 1px solid #4a5568;
+                border-radius: 5px;
+                padding: 8px;
+                font-size: 11pt;
+            }
+        """)
         search_layout.addWidget(self.search_input, stretch=1)
         
         # Mode selector
-        self.mode_label = QLabel("Select:")
-        search_layout.addWidget(self.mode_label)
+        mode_label = QLabel("Select:")
+        mode_label.setStyleSheet("color: #e2e8f0;")
+        search_layout.addWidget(mode_label)
         
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Entire Study", "Specific Series"])
         self.mode_combo.currentTextChanged.connect(self.on_mode_changed)
+        self.mode_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #374151;
+                color: #e2e8f0;
+                border: 1px solid #4a5568;
+                border-radius: 5px;
+                padding: 8px;
+                min-width: 150px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border: none;
+            }
+        """)
         search_layout.addWidget(self.mode_combo)
         
         layout.addLayout(search_layout)
@@ -80,6 +100,28 @@ class StudyPickerDialog(QDialog):
         self.studies_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.studies_table.doubleClicked.connect(self.on_study_double_clicked)
         self.studies_table.itemSelectionChanged.connect(self.on_selection_changed)
+        self.studies_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #2d3748;
+                color: #e2e8f0;
+                border: 1px solid #4a5568;
+                border-radius: 5px;
+                gridline-color: #4a5568;
+            }
+            QTableWidget::item {
+                padding: 5px;
+            }
+            QTableWidget::item:selected {
+                background-color: #3182ce;
+            }
+            QHeaderView::section {
+                background-color: #1a202c;
+                color: #e2e8f0;
+                padding: 8px;
+                border: none;
+                font-weight: bold;
+            }
+        """)
         layout.addWidget(self.studies_table)
         
         # Series selection (hidden initially)
@@ -87,8 +129,9 @@ class StudyPickerDialog(QDialog):
         series_layout = QVBoxLayout(self.series_panel)
         series_layout.setContentsMargins(0, 10, 0, 0)
         
-        self.series_label = QLabel("Select Series:")
-        series_layout.addWidget(self.series_label)
+        series_label = QLabel("Select Series:")
+        series_label.setStyleSheet("color: #e2e8f0; font-weight: bold;")
+        series_layout.addWidget(series_label)
         
         self.series_table = QTableWidget()
         self.series_table.setColumnCount(5)
@@ -100,6 +143,7 @@ class StudyPickerDialog(QDialog):
         self.series_table.setSelectionMode(QTableWidget.SingleSelection)
         self.series_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.series_table.setMaximumHeight(200)
+        self.series_table.setStyleSheet(self.studies_table.styleSheet())
         series_layout.addWidget(self.series_table)
         
         self.series_panel.hide()
@@ -107,131 +151,53 @@ class StudyPickerDialog(QDialog):
         
         # Info label
         self.info_label = QLabel("Select a study from the list above")
+        self.info_label.setStyleSheet("color: #a0aec0; font-style: italic;")
         layout.addWidget(self.info_label)
         
         # Buttons
         buttons_layout = QHBoxLayout()
         buttons_layout.addStretch()
         
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setFixedSize(100, 35)
-        self.cancel_btn.clicked.connect(self.reject)
-        buttons_layout.addWidget(self.cancel_btn)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedSize(100, 35)
+        cancel_btn.clicked.connect(self.reject)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4a5568;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #6b7280;
+            }
+        """)
+        buttons_layout.addWidget(cancel_btn)
         
         self.select_btn = QPushButton("Select")
         self.select_btn.setFixedSize(100, 35)
         self.select_btn.setEnabled(False)
         self.select_btn.clicked.connect(self.on_select)
+        self.select_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3182ce;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2c5aa0;
+            }
+            QPushButton:disabled {
+                background-color: #4a5568;
+                color: #a0aec0;
+            }
+        """)
         buttons_layout.addWidget(self.select_btn)
         
         layout.addLayout(buttons_layout)
-        
-        self._apply_theme_styles()
-    
-    def _apply_theme_styles(self):
-        """Apply theme-based styling to all UI elements."""
-        t = self._theme
-        
-        # Title
-        self.title.setStyleSheet(f"color: {t['text_primary']};")
-        
-        # Search input
-        self.search_input.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {t['panel_bg']};
-                color: {t['text_primary']};
-                border: 1px solid {t['border']};
-                border-radius: 5px;
-                padding: 8px;
-                font-size: 11pt;
-            }}
-        """)
-        
-        # Mode label
-        self.mode_label.setStyleSheet(f"color: {t['text_primary']};")
-        
-        # Mode combo
-        self.mode_combo.setStyleSheet(f"""
-            QComboBox {{
-                background-color: {t['panel_bg']};
-                color: {t['text_primary']};
-                border: 1px solid {t['border']};
-                border-radius: 5px;
-                padding: 8px;
-                min-width: 150px;
-            }}
-            QComboBox::drop-down {{
-                border: none;
-            }}
-            QComboBox::down-arrow {{
-                image: none;
-                border: none;
-            }}
-        """)
-        
-        # Studies table and series table
-        table_stylesheet = f"""
-            QTableWidget {{
-                background-color: {t['panel_alt_bg']};
-                color: {t['text_primary']};
-                border: 1px solid {t['border']};
-                border-radius: 5px;
-                gridline-color: {t['border']};
-            }}
-            QTableWidget::item {{
-                padding: 5px;
-            }}
-            QTableWidget::item:selected {{
-                background-color: {t['accent']};
-            }}
-            QHeaderView::section {{
-                background-color: {t['panel_deep_bg']};
-                color: {t['text_primary']};
-                padding: 8px;
-                border: none;
-                font-weight: bold;
-            }}
-        """
-        self.studies_table.setStyleSheet(table_stylesheet)
-        self.series_table.setStyleSheet(table_stylesheet)
-        
-        # Series label
-        self.series_label.setStyleSheet(f"color: {t['text_primary']}; font-weight: bold;")
-        
-        # Info label
-        self.info_label.setStyleSheet(f"color: {t['text_secondary']}; font-style: italic;")
-        
-        # Cancel button
-        self.cancel_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {t['border']};
-                color: {t['button_text']};
-                border: none;
-                border-radius: 5px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {t['accent_hover']};
-            }}
-        """)
-        
-        # Select button
-        self.select_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {t['accent']};
-                color: {t['button_text']};
-                border: none;
-                border-radius: 5px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {t['accent_hover']};
-            }}
-            QPushButton:disabled {{
-                background-color: {t['border']};
-                color: {t['text_secondary']};
-            }}
-        """)
     
     def load_studies(self):
         """Populate table with studies from database."""

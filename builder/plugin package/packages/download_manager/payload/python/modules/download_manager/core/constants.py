@@ -1,11 +1,14 @@
 """
 Core Constants - Configuration values and limits
 """
+import os as _os
 
 # Network Configuration
-DEFAULT_SOCKET_HOST = "81.16.117.196"
-DEFAULT_SOCKET_PORT = 50052
-DEFAULT_GRPC_PORT = 50051
+# Host/port come from environment or socket_config.json at runtime.
+# These defaults are used only when config is unavailable.
+DEFAULT_SOCKET_HOST = _os.environ.get("AIPACS_SOCKET_HOST", "localhost")
+DEFAULT_SOCKET_PORT = int(_os.environ.get("AIPACS_SOCKET_PORT", "50052"))
+DEFAULT_GRPC_PORT = int(_os.environ.get("AIPACS_GRPC_PORT", "50051"))
 CONNECTION_TIMEOUT = 30.0  # seconds
 SOCKET_CHUNK_SIZE = 65536  # 64 KB
 
@@ -14,6 +17,21 @@ BATCH_SIZE = 10  # instances per batch (cap to reduce server load)
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0  # seconds (base delay for exponential backoff)
 MAX_CONSECUTIVE_FAILURES = 5
+
+# Reconnection Configuration (exponential backoff)
+RECONNECT_MAX_RETRIES = 5          # max reconnect attempts before giving up
+RECONNECT_BASE_DELAY = 1.0        # seconds, first retry delay
+RECONNECT_MAX_DELAY = 30.0        # seconds, cap on backoff delay
+RECONNECT_BACKOFF_FACTOR = 2.0    # exponential multiplier
+RECONNECT_JITTER_MAX = 1.0        # max random jitter added to delay (seconds)
+
+# Series-level retry (retry failed series within a study download)
+MAX_SERIES_RETRIES = 3             # max retry attempts per failed series
+SERIES_RETRY_BASE_DELAY = 3.0     # seconds, base delay between series retries
+
+# Request-level retry (for individual send_request calls)
+REQUEST_MAX_RETRIES = 3            # max retries for a single request
+REQUEST_RETRY_BASE_DELAY = 1.0    # seconds, base delay for request retry
 
 # Concurrency Configuration
 MAX_CONCURRENT_STUDIES = 1  # Only 1 study at a time (R11)

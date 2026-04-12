@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {
+      "code": "FS-11",
+      "title": "SLICE_READY_BEFORE_BIND",
+      "severity": "HIGH",
+      "hypothesis": "H2",
+      "evidence": {
+        "early_ready_count": 14,
+        "first_ready_seq": 9,
+        "first_bind_seq": 999999999
+      }
+    }
+  ],
+  "count": 1
+}

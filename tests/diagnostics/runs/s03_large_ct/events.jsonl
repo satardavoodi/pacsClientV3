@@ -1,0 +1,23 @@
+{"ts": 0.020336400004453026, "wall_ts": 1775853001.7296846, "event_type": "SCENARIO_BEGIN", "thread_name": "MainThread", "seq": 0, "scenario": "s03_large_ct", "modality": "CT", "slice_count": 400}
+{"ts": 0.023627800001122523, "wall_ts": 1775853001.732975, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 1, "label": "first_batch"}
+{"ts": 0.02390150000428548, "wall_ts": 1775853001.7332478, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 2, "series_number": "1", "downloaded": 20, "total": 400}
+{"ts": 0.024142900001606904, "wall_ts": 1775853001.7334876, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 3, "label": "rapid_burst_start"}
+{"ts": 0.025311199999123346, "wall_ts": 1775853001.7346585, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 4, "series_number": "1", "downloaded": 66, "total": 400}
+{"ts": 0.025640500003646594, "wall_ts": 1775853001.734985, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 5, "series_number": "1", "downloaded": 99, "total": 400}
+{"ts": 0.02578890000586398, "wall_ts": 1775853001.7351334, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 6, "series_number": "1", "downloaded": 132, "total": 400}
+{"ts": 0.025906900002155453, "wall_ts": 1775853001.7352514, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 7, "series_number": "1", "downloaded": 165, "total": 400}
+{"ts": 0.02601380000123754, "wall_ts": 1775853001.7353585, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 8, "series_number": "1", "downloaded": 198, "total": 400}
+{"ts": 0.026154900006076787, "wall_ts": 1775853001.7354996, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 9, "series_number": "1", "downloaded": 231, "total": 400}
+{"ts": 0.026261900005920324, "wall_ts": 1775853001.7356067, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 10, "series_number": "1", "downloaded": 264, "total": 400}
+{"ts": 0.026368300001195166, "wall_ts": 1775853001.735713, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 11, "series_number": "1", "downloaded": 297, "total": 400}
+{"ts": 0.02647110000543762, "wall_ts": 1775853001.7358158, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 12, "series_number": "1", "downloaded": 330, "total": 400}
+{"ts": 0.026576000003842637, "wall_ts": 1775853001.7359204, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 13, "series_number": "1", "downloaded": 363, "total": 400}
+{"ts": 0.02667910000309348, "wall_ts": 1775853001.736024, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 14, "series_number": "1", "downloaded": 396, "total": 400}
+{"ts": 0.026784900001075584, "wall_ts": 1775853001.7361295, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 15, "label": "rapid_burst_end"}
+{"ts": 0.027125700005854014, "wall_ts": 1775853001.7364702, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 16, "label": "near_complete"}
+{"ts": 0.02725750000536209, "wall_ts": 1775853001.7366023, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 17, "series_number": "1", "downloaded": 395, "total": 400}
+{"ts": 0.027385100001993123, "wall_ts": 1775853001.7367299, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 18, "label": "completion_pulse"}
+{"ts": 0.02747780000208877, "wall_ts": 1775853001.7368226, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 19, "series_number": "1", "downloaded": 400, "total": 400}
+{"ts": 0.027609200005827006, "wall_ts": 1775853001.7369547, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 20, "label": "download_complete"}
+{"ts": 0.02769320000516018, "wall_ts": 1775853001.7370389, "event_type": "SERIES_DOWNLOAD_COMPLETE", "thread_name": "MainThread", "seq": 21, "series_number": "1"}
+{"ts": 0.027970300005108584, "wall_ts": 1775853001.7373152, "event_type": "SCENARIO_END", "thread_name": "MainThread", "seq": 22, "scenario": "s03_large_ct"}

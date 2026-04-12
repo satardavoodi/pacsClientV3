@@ -8,6 +8,8 @@ All tests are under the `tests/` directory. No single test runner is configured 
 each suite has its own entry point. Tests use mocks/fakes and require no live
 server or DICOM data.
 
+Quick suite navigation: [`tests/README.md`](../../tests/README.md)
+
 ## Quick Reference
 
 | Suite | Command | Scenarios | Assertions | Status |
@@ -137,7 +139,7 @@ Expected: **34 passed**.
 - `test_dicom_import_preview.py` — DICOM folder import preview dialog
 - `test_flat_folder_import.py` — flat folder DICOM import
 - `test_pooyan_opencv_filter.py` — OpenCV filter pipeline
-- `test_pydicom_backend_geometry.py` — geometry calculation correctness
+- `tests/viewer/test_pydicom_backend_geometry.py` — geometry calculation correctness
 - `test_viewer_backend_config.py` — backend selection logic
 - `test_viewer_gpu_boost.py` — GPU acceleration configuration
 

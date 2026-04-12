@@ -270,6 +270,10 @@ class Lightweight2DPipeline(QObject):
             "total_wl_ms": 0.0,
         }
 
+        # FAST timeline: track first-render and filter-signature events
+        self._first_render_logged: bool = False
+        self._filter_first_slices: set = set()  # slice indices whose filter was first applied
+
         # Series state
         self._series_path: Optional[str] = None
         self._is_open: bool = False
@@ -314,7 +318,10 @@ class Lightweight2DPipeline(QObject):
                 self._slices[0].window_center,
                 treat_legacy_placeholder_as_missing=True,
             )
-            self._prefetch_around(0)
+            # NOTE: Do NOT prefetch around slice 0 here.  The caller will
+            # immediately call set_slice_index(mid) which triggers
+            # _prefetch_around(mid) — pre-fetching around 0 wastes CPU
+            # decoding slices far from the initial view.
 
         logger.info(
             "lw2d-pipeline open_series slices=%d path=%s",
@@ -334,6 +341,8 @@ class Lightweight2DPipeline(QObject):
         self._level = None
         self._series_path = None
         self._is_open = False
+        self._first_render_logged = False
+        self._filter_first_slices.clear()
 
     def get_file_paths(self) -> List[str]:
         return [s.path for s in self._slices]
@@ -414,10 +423,17 @@ class Lightweight2DPipeline(QObject):
         return len(self._slices)
 
     def set_window_level(self, window: Optional[float], level: Optional[float]) -> None:
+        old_frame_cache_size = len(self._frame_cache)
         self._window = float(window) if window is not None else None
         self._level = float(level) if level is not None else None
         # Invalidate rendered frame cache (pixel cache stays valid)
         self._frame_cache.clear()
+        if old_frame_cache_size > 0 and self._config.opencv_filter_enabled:
+            logger.debug(
+                "FAST:frame_cache_invalidated wl_change window=%.1f level=%.1f "
+                "purged=%d filter_will_recompute=True",
+                float(window or 0), float(level or 0), old_frame_cache_size,
+            )
         if self._is_open and self._slices:
             self._prefetch_around(self._current_index)
 
@@ -461,6 +477,14 @@ class Lightweight2DPipeline(QObject):
     def get_slice_meta(self, slice_index: int) -> SliceMeta:
         return self._slices[self._clamp(slice_index)]
 
+    def get_pixel_array(self, slice_index: int) -> Optional[np.ndarray]:
+        """Return raw decoded pixel array for *slice_index* (HU / stored values).
+
+        Used by ROI statistics computation in ToolController.
+        Returns None if decoding fails.
+        """
+        return self._get_pixel_array(self._clamp(slice_index))
+
     def image_xy_to_patient_xyz(
         self, x: float, y: float, slice_index: int
     ) -> Tuple[float, float, float]:
@@ -498,12 +522,24 @@ class Lightweight2DPipeline(QObject):
             qimg = self._frame_cache.pop(cache_key)
             self._frame_cache[cache_key] = qimg
             self._record_cache_hit()
+            logger.debug(
+                "FAST:frame_cache source=hit slice=%d ww=%.0f wc=%.0f filter=%s "
+                "cache_size=%d pixel_cache_size=%d",
+                idx, ww, wc, filter_enabled,
+                len(self._frame_cache), len(self._pixel_cache),
+            )
             return RenderedFrame(
                 qimage=qimg, width=qimg.width(), height=qimg.height(),
                 slice_index=idx, window_width=ww, window_center=wc,
                 photometric=sm.photometric, decode_ms=0.0, filter_ms=0.0,
                 wl_ms=0.0, total_ms=0.0,
             )
+        logger.debug(
+            "FAST:frame_cache source=miss slice=%d ww=%.0f wc=%.0f filter=%s "
+            "cache_size=%d pixel_cache_size=%d",
+            idx, ww, wc, filter_enabled,
+            len(self._frame_cache), len(self._pixel_cache),
+        )
         frame = self._render_frame_uncached(idx, ww, wc, filter_enabled, record_metrics=True)
         self._prefetch_around(idx)
         return frame
@@ -553,7 +589,9 @@ class Lightweight2DPipeline(QObject):
         wl_ms = (time.perf_counter() - t_wl) * 1000.0
 
         t_filter = time.perf_counter()
+        filter_is_first = False
         if filter_enabled:
+            filter_is_first = idx not in self._filter_first_slices
             disp = _apply_opencv_filter_uint8(
                 disp,
                 sigma_x=self._config.opencv_sigma_x,
@@ -563,12 +601,36 @@ class Lightweight2DPipeline(QObject):
                 small_threshold=self._config.opencv_small_threshold,
                 preserve_dimensions=self._config.opencv_preserve_dimensions,
             )
+            if filter_is_first:
+                self._filter_first_slices.add(idx)
         filter_ms = (time.perf_counter() - t_filter) * 1000.0
+
+        if filter_enabled and record_metrics:
+            _filter_sig = (
+                f"sigma={self._config.opencv_sigma_x:.2f} "
+                f"alpha={self._config.opencv_alpha:.2f} "
+                f"beta={self._config.opencv_beta:.2f} "
+                f"invert={self._config.opencv_invert} "
+                f"small_thresh={self._config.opencv_small_threshold}"
+            )
+            logger.debug(
+                "FAST:filter_apply slice=%d first=%s filter_ms=%.2f "
+                "wl_ms=%.2f decode_ms=%.2f sig=[%s]",
+                idx, filter_is_first, filter_ms, wl_ms, decode_ms, _filter_sig,
+            )
 
         qimg = _numpy_to_qimage_gray(disp, sm.cols, sm.rows)
         self._put_frame_cache(cache_key, qimg)
         if record_metrics:
             self._record_decode(decode_ms, filter_ms, wl_ms)
+            if not self._first_render_logged:
+                self._first_render_logged = True
+                logger.info(
+                    "FAST:first_renderable_frame slice=%d decode_ms=%.2f "
+                    "filter_ms=%.2f wl_ms=%.2f total_ms=%.2f filter_enabled=%s",
+                    idx, decode_ms, filter_ms, wl_ms,
+                    (time.perf_counter() - t_start) * 1000.0, filter_enabled,
+                )
         return RenderedFrame(
             qimage=qimg, width=qimg.width(), height=qimg.height(),
             slice_index=idx, window_width=ww, window_center=wc,
@@ -634,7 +696,15 @@ class Lightweight2DPipeline(QObject):
         if idx in self._pixel_cache:
             arr = self._pixel_cache.pop(idx)
             self._pixel_cache[idx] = arr
+            logger.debug(
+                "FAST:pixel_cache source=hit idx=%d cache_size=%d",
+                idx, len(self._pixel_cache),
+            )
             return arr
+        logger.debug(
+            "FAST:pixel_cache source=miss idx=%d cache_size=%d",
+            idx, len(self._pixel_cache),
+        )
         try:
             arr = self._decode_slice(idx)
             self._put_pixel_cache(idx, arr)

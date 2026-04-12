@@ -4,6 +4,8 @@
 >
 > See also: [VIEWER_BACKENDS_REFERENCE.md](VIEWER_BACKENDS_REFERENCE.md) for the
 > complete Advanced vs Fast backend pipeline documentation.
+>
+> Canonical architecture map: [docs/viewer/README.md](../viewer/README.md)
 
 ## Overview
 
@@ -128,8 +130,9 @@ wheelEvent (user scrolls)
 
 | Backend | Technology | Use Case |
 |---------|-----------|----------|
-| **VTK/SimpleITK** (default) | Full 3D volume, ITK filters, VTK render | Rich viewing, measurements, MPR |
-| **PyDicom 2D** (Phase 1) | Per-slice lazy decode, Qt 2D render | Lightweight browsing, download-time viewing |
+| **VTK/SimpleITK** (`vtk_simpleitk`) | Full 3D volume, ITK filters, VTK render | Rich viewing, measurements, MPR |
+| **PyDicom Qt** (`pydicom_qt`) | Per-slice decode + Qt/QPainter render | Lightweight browsing, fallback-safe mode |
+| **PyDicom 2D lazy** (`pydicom_2d`) | Per-slice lazy decode + VTK render path | Download-time progressive viewing, low-latency lazy decode |
 
 Backend selection: `resolve_viewer_backend(metadata, settings)` — single authority.
 
@@ -137,11 +140,14 @@ Backend selection: `resolve_viewer_backend(metadata, settings)` — single autho
 
 | File | Responsibility |
 |------|----------------|
-| `PacsClient/pacs/patient_tab/utils/image_io.py` | Series loading, file I/O |
-| `PacsClient/pacs/patient_tab/utils/image_filters.py` | ITK filter pipeline |
-| `tools/vtk/_base_vtk.py` | VTK widget base, scroll handling, GC management |
-| `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget.py` | Viewer container, series management |
-| `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` | Per-viewer logic |
+| `PacsClient/pacs/patient_tab/utils/image_io.py` | Series loading, backend-aware I/O path |
+| `PacsClient/pacs/patient_tab/utils/image_filters.py` | ITK filter pipeline (advanced path) |
+| `PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget/` | VTKWidget mixins (scroll, backend binding, lazy callbacks) |
+| `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` | Per-viewer orchestration, progressive lifecycle |
+| `modules/viewer/advanced/viewer_2d.py` | Advanced viewer render pipeline |
+| `modules/viewer/fast/qt_viewer_bridge.py` | FAST Qt bridge adapter |
+| `modules/viewer/fast/qt_slice_viewer.py` | FAST Qt render surface |
+| `modules/viewer/fast/pydicom_lazy_volume.py` | FAST lazy data source (`pydicom_2d`) |
 
 ## ZetaBoost Preload
 
@@ -198,7 +204,7 @@ on_series_images_progress()  [100ms per-series debounce]
 | Guard | Type | Purpose |
 |-------|------|---------|
 | `_progressive_display_inflight` | `set` | Prevents duplicate concurrent load tasks for same series |
-| `_progressive_display_done` | `set` | Marks series that completed initial display — routes to grow path |
+| `_progressive_display_done` | `set` | Lifecycle guard — routes subsequent signals to grow path |
 | Done-guard recovery | scan | If `sn` in done but no progressive viewer found, re-enters progressive mode |
 
 ### Critical Rules
@@ -206,6 +212,41 @@ on_series_images_progress()  [100ms per-series debounce]
 - `done.add(sn)` MUST run AFTER `_activate_progressive_mode_on_viewers()` completes on the main thread
 - Background threads MUST NOT add to `_progressive_display_done` directly — marshal via `QTimer.singleShot(0, callback)`
 - FAST mode only — the progressive path returns early for Advanced/VTK backends
+
+### Done-Guard Lifecycle Rule (v2.2.9.2 — H4 fix)
+
+**`_progressive_display_done` is a lifecycle guard, NOT a permanent cache.**
+
+When a download lifecycle completes (all expected files visible in the viewer), the
+series key MUST be discarded from `_progressive_display_done` so that a future re-open
+of the same series can start a fresh progressive display.
+
+**Why three discard sites are required:**  Download completion can be observed at three
+independent points depending on OS disk-flush latency.  All three must discard the key:
+
+| Layer | Method | When it fires |
+|-------|--------|---------------|
+| Layer 2b | `_on_series_download_fully_complete_impl` | Immediately on `seriesDownloadCompleted` signal |
+| Layer 3 | `_completion_verify_series` | 500ms deferred (OS-flush catch-up, up to 3 retries) |
+| Layer 4 | `_completion_sweep_tick_impl` | 3s periodic safety-net (handles any remaining stragglers) |
+
+**Invariant:** Every code path that calls `self._progressive_series.pop(sn, None)` as a
+lifecycle-close MUST also call `done.discard(sn)` immediately after.
+
+```python
+# Required pattern at each of the three pop sites:
+self._progressive_series.pop(sn, None)
+done = getattr(self, '_progressive_display_done', None)
+if done is not None:
+    done.discard(sn)   # idempotent — safe if Layer 2b already discarded
+```
+
+**Race safety:** `set.discard()` is idempotent.  If Layer 2b fires first and discards the
+key, Layers 3 and 4 calling `discard()` again is a silent no-op.  No locking required.
+
+**Failure mode if missing (H4):** After Cycle 1 completes, `sn` stays in `done`.  On
+Cycle 2 re-open, `sn in done` is True, the recovery scan finds no viewer (none loaded yet),
+and `_start_progressive_display` is silently skipped — viewer frozen forever.
 
 ### Stale OS-Flush Guard (v2.2.8.3)
 
@@ -321,7 +362,7 @@ fallback behavior avoids crash:
 
 ## Test Coverage
 
-Viewer pipeline tests: `tests/viewer/test_fast_viewer_pipeline.py` (11 tests)
+Viewer pipeline tests: `tests/viewer/test_fast_viewer_pipeline.py` (13 tests)
 
 | Test | What it validates |
 |------|-------------------|
@@ -335,6 +376,15 @@ Viewer pipeline tests: `tests/viewer/test_fast_viewer_pipeline.py` (11 tests)
 | `test_done_guard_recovery` | Recovery path re-activates progressive mode |
 | `test_threaded_done_add_ordering` | Background thread cannot race done.add |
 | + 2 additional | Edge cases and boundary conditions |
+| `test_done_guard_cleared_on_series_complete` | **H4 fix** — Layer 2b discards `done` key after completion |
+| `test_done_guard_allows_restart_after_completion` | **H4 fix** — cleared guard allows `_start_progressive_display` restart on re-open |
+
+Diagnostic scenarios:
+
+| Scenario | Role |
+|----------|------|
+| `s08_repeated_open` | Detection canary — H4 CONFIRMED **always expected** (tests detector logic, not production code) |
+| `s11_post_fix_repeated_open` | Post-fix health check — H4 NO_EVIDENCE **always expected** (tests real bound production methods) |
 
 FAST Viewer live-sync tests: `tests/viewer/test_fast_viewer_live_sync.py` (23 tests, L1–L23)
 

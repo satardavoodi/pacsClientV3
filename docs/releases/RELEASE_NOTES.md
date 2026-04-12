@@ -1,12 +1,162 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.3.0
-**Release Date:** 2026-04-04
+**Current Stable Version:** v2.3.1
+**Release Date:** 2026-04-13
 **Branch:** main  
 
 ---
 
-## v2.3.0 — Stable Release / Installer, Modules, and Cross-PC Delivery (2026-04-04)
+## v2.3.1 - Workspace Publication / Release Metadata Sync (2026-04-13)
+
+### Summary
+
+Publishes the current workspace as **v2.3.1** and aligns the application,
+package, build, installation, and release-tracking metadata with that version.
+
+### Highlights
+
+- Updated the application version in `main.py` to `2.3.1`
+- Updated the package version in `pyproject.toml` to `2.3.1`
+- Updated the Windows product version in `build_nuitka.py` to `2.3.1`
+- Updated the plugin package feed and package manifests under
+  `builder/plugin package/packages/` to `2.3.1`
+- Refreshed the build/install-facing docs and current-stable links for the
+  `2.3.1` publication
+- Included the current documentation, tests, and active plan documents in the
+  published workspace state
+
+### Notes
+
+- Historical `v2.3.0` release entries remain below as prior stable references.
+- This entry records the repository publication state; build artifact
+  regeneration should be verified from the current workspace before external
+  distribution.
+## Unreleased ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Thumbnail system stabilization (v2.3.1+thumb-stable)
+
+### Summary
+
+Fixed intermittent thumbnail not-showing bug and eliminated hot-path stdout I/O
+flood in `ThumbnailManager`.
+
+### Root Cause 1 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `set_server_series_info` double-call overwrites gRPC data
+
+`_hp_patient_open.py` calls `set_server_series_info` twice:
+1. **Line 268 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ main async thread**: from `study_data['series']` (server response at double-click)
+2. **Line 343 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ background `threading.Thread`**: from `right_panel_widget._current_series_info`
+   or a fresh `get_series_info_from_server()` call
+
+The old implementation unconditionally replaced `_server_series_info` on every call.
+The second call arrived after the gRPC thumbnail fetch had already enriched
+`image_count` per series.  This caused:
+- gRPC-fetched `image_count` values silently discarded (count badges show wrong value)
+- `_series_uid_to_number` mapping cleared mid-session ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ DM `_resolve_sn` falls back
+  to DM task list for all subsequent signals instead of the fast O(1) map
+- A redundant `_load_server_thumbnails` job queued even when thumbnails were
+  already on screen
+
+### Fix 1 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Merge instead of overwrite (`_pw_thumbnails.py`)
+
+`set_server_series_info` now distinguishes first vs subsequent calls:
+- **First call**: full replace (same as before)
+- **Subsequent calls**: merge-only ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ only adds genuinely new series (not in existing
+  `_server_series_info`); never overwrites `image_count` or `series_description`
+  that were already populated; only schedules a new `_load_server_thumbnails` if
+  there are new series AND the previous load is not still running.
+
+This preserves all enriched gRPC data across multiple `set_server_series_info`
+calls.
+
+### Root Cause 2 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Hot-path `print()` flood in `ThumbnailManager`
+
+`ThumbnailManager` had ~35 `print()` calls, several in very hot paths:
+- `start_series_download` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ called once per series download start
+- `update_series_progress` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ called on every single progress tick (potentially
+  hundreds of times per study)
+- `complete_series_download` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ called once per series completion
+- `apply_border_states_new` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ called after every state change
+
+`print()` is synchronous stdout I/O.  On Windows, each call acquires the console
+lock, blocking the calling thread for 0.1ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“2ms.  During a 6-series study with
+progress events every 100ms this adds up to dozens of ms of unnecessary blocking.
+
+### Fix 2 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Replace `print()` with `_tm_logger.debug()` / `.exception()`
+
+All 35 `print()` calls in `ThumbnailManager` converted to logger calls.  Debug
+messages are suppressed at the default `INFO` level (zero runtime cost).  Error
+handlers upgraded to `_tm_logger.exception()` so stack traces are preserved in
+log files without going to stdout.
+
+### Fix 3 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Memory leak in `_thumb_pipeline_start`
+
+`complete_series_download` now uses `.pop(series_key, None)` instead of `.get()`
+so completed per-series timing entries are cleaned up immediately.
+
+### Files Changed
+- `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_core/_pw_thumbnails.py`
+  ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `set_server_series_info` merge logic
+- `PacsClient/pacs/patient_tab/utils/thumbnail_manager.py`
+  ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ All print() ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ logger; memory leak fix
+- `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_core/_pw_panels.py`
+  ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Removed two debug-only prints from `add_thumbnail_to_thumbnail_layout`
+
+## Unreleased ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ pydicom_qt ITK pipeline bypass (v2.3.1)
+
+### Summary
+
+**Eliminated a 6ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“9 second wasted ITK stall every time a series was opened in FAST
+(pydicom_qt) mode.**
+
+### Root Cause
+
+`load_single_series_by_number` called `resolve_viewer_backend(metadata=None, ...)`.
+Because `metadata=None` means `instances=[]`, the `BACKEND_PYDICOM_QT` guard inside
+`resolve_viewer_backend` fell back to `BACKEND_VTK`, and the full ITK pipeline ran:
+
+| Step | Time (MR 11 slices) | Time (MR 25 slices) | Used? |
+|---|---|---|---|
+| SimpleITK read | ~170ms | ~170ms | **Wasted** |
+| `apply_filters()` SimpleITK | **6,884ms** | **9,437ms** | **Wasted** |
+| `convert_itk2vtk()` | 11ms | 24ms | **Wasted** |
+| Qt bridge `open_series` | ~60ms | ~80ms | ط£آ¢ط¥â€œأ¢â‚¬آ¦ Actual display |
+
+For every series click in FAST mode, 7ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“10 seconds of ITK work was discarded
+because `_bind_backend_from_metadata` (called by `switch_series`) selected
+`pydicom_qt` from the user's viewport setting, ignoring the VTK payload entirely.
+
+### Fix
+
+Added a `BACKEND_PYDICOM_QT` fast-path early exit in `load_single_series_by_number`
+**before** the `resolve_viewer_backend` call:
+
+1. Detected by: `allow_lazy_backend and viewer_backend == BACKEND_PYDICOM_QT`
+2. Builds series metadata only (from DB or DICOM headers) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ same data the Qt bridge
+   needs, taking ~0ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“5ms
+3. Creates a minimal stub `vtkImageData` (correct rowط·آ£أ¢â‚¬â€‌colط·آ£أ¢â‚¬â€‌slice dimensions, no pixel
+   data) so downstream `vtk_data is not None` cache-key checks continue working
+4. Annotates metadata with `viewer_backend=pydicom_qt` so `_bind_backend_from_metadata`
+   confirms the selection without ambiguity
+5. Yields and returns ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the full ITK+SimpleITK pipeline never runs
+6. Falls back to the ITK pipeline if metadata build fails (safe degradation)
+
+**Advanced mode (`vtk_simpleitk`) is completely unaffected** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the early exit only
+triggers when `viewer_backend == BACKEND_PYDICOM_QT` is passed explicitly.
+
+### Files changed
+
+- `PacsClient/pacs/patient_tab/utils/image_io.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `BACKEND_PYDICOM_QT` import +
+  fast-path early exit in `load_single_series_by_number`
+
+### Expected series-switch latency after fix
+
+| Modality | Before (FAST mode) | After (FAST mode) |
+|---|---|---|
+| MR 11 slices | ~7,200ms | ~300ms |
+| MR 25 slices | ~9,750ms | ~350ms |
+| CT 50+ slices | ~3,000ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“5,000ms | ~300ms |
+
+---
+
+## v2.3.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Stable Release / Installer, Modules, and Cross-PC Delivery (2026-04-04)
 
 ### Summary
 
@@ -29,7 +179,7 @@ This release publishes **v2.3.0** as the current stable AIPacs version and finis
 
 ---
 
-## Unreleased — Viewer Metadata Sync + Defensive W/L Bounds (v2.2.8.7)
+## Unreleased ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Viewer Metadata Sync + Defensive W/L Bounds (v2.2.8.7)
 
 ### Summary
 
@@ -38,7 +188,7 @@ When a series was opened during download (e.g. 22 slices on disk) and new slices
 via progressive grow (up to 135), the VTK viewer's `apply_default_window_level(n)` would
 crash with `IndexError` for any slice `n >= 22` because the viewer held a stale deep-copy
 of the metadata.  The exception was silently swallowed, leaving VTK's color mapper with
-the last-applied W/L — which clipped the different-anatomy slices to **white (255)** or
+the last-applied W/L ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ which clipped the different-anatomy slices to **white (255)** or
 rendered them with incorrect contrast.
 
 Also fixes the same IndexError crash paths in `set_window_level`, `update_corners_actors`,
@@ -50,29 +200,29 @@ and `load_bottom_left_actors` with defensive bounds-checking and auto-fallback.
 
 ```
                      Creation time (22 slices on disk)
-                     ┌─────────────────────────────┐
-lst_thumbnails_data  │ metadata["instances"] = [22] │  ◄── SOURCE OF TRUTH
-                     └──────────────┬──────────────┘
-                                    │ copy.deepcopy()
-                     ┌──────────────▼──────────────┐
-ImageViewer2D        │ self.metadata["instances"]   │  ◄── STALE COPY (never updated)
-                     │ = [22] (frozen at creation)  │
-                     └─────────────────────────────┘
+                     ط£آ¢أ¢â‚¬â€Œط¥â€™ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ¯
+lst_thumbnails_data  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ metadata["instances"] = [22] ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€‌أ¢â‚¬â€چط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ SOURCE OF TRUTH
+                     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¢آ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ©
+                                    ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ copy.deepcopy()
+                     ط£آ¢أ¢â‚¬â€Œط¥â€™ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€œط¢آ¼ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ¯
+ImageViewer2D        ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ self.metadata["instances"]   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€‌أ¢â‚¬â€چط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ STALE COPY (never updated)
+                     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ = [22] (frozen at creation)  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+                     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ©
 
                      After grow (135 slices on disk)
-                     ┌─────────────────────────────┐
-lst_thumbnails_data  │ metadata["instances"] = [135]│  ◄── Updated by _refresh_stored_metadata_instances
-                     └─────────────────────────────┘
-                     ┌──────────────────────────────┐
-ImageViewer2D        │ self.metadata["instances"]    │  ◄── STILL [22]!
-                     │ = [22] (never synced)         │
-                     └──────────────────────────────┘
+                     ط£آ¢أ¢â‚¬â€Œط¥â€™ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ¯
+lst_thumbnails_data  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ metadata["instances"] = [135]ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€‌أ¢â‚¬â€چط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ Updated by _refresh_stored_metadata_instances
+                     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ©
+                     ط£آ¢أ¢â‚¬â€Œط¥â€™ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ¯
+ImageViewer2D        ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ self.metadata["instances"]    ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€‌أ¢â‚¬â€چط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ STILL [22]!
+                     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ = [22] (never synced)         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+                     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ©
 
 When user scrolls to slice 23:
   apply_default_window_level(23)
-    → self.metadata['instances'][23]  ← IndexError! (only 22 entries)
-    → exception swallowed → VTK keeps last-applied W/L
-    → pixels clipped to white
+    ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ self.metadata['instances'][23]  ط£آ¢أ¢â‚¬آ ط¹آ¯ IndexError! (only 22 entries)
+    ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ exception swallowed ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ VTK keeps last-applied W/L
+    ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ pixels clipped to white
 ```
 
 The deep-copy happens in `create_new_vtk_widget()` at line 3553:
@@ -80,7 +230,7 @@ The deep-copy happens in `create_new_vtk_widget()` at line 3553:
 metadata = copy.deepcopy(thumbnail_item['metadata'])
 ```
 
-And in `_clone_metadata_for_switch()` (shallow clone, shares `instances` by reference —
+And in `_clone_metadata_for_switch()` (shallow clone, shares `instances` by reference ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
 but the creator path uses `deepcopy`):
 ```python
 cloned = dict(metadata)
@@ -88,49 +238,49 @@ cloned = dict(metadata)
 
 The `_refresh_stored_metadata_instances()` method correctly mutates the *source* dict in
 `lst_thumbnails_data` (in-place: `metadata["instances"] = new_instances`), and updates
-the series cache.  But the live `ImageViewer2D.metadata` — which is a separate object
-from `copy.deepcopy()` — was never patched.
+the series cache.  But the live `ImageViewer2D.metadata` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ which is a separate object
+from `copy.deepcopy()` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ was never patched.
 
 ### Metadata Object Graph
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                   lst_thumbnails_data[i]              │
-│  ┌─────────────────────────────────────────────┐     │
-│  │ "metadata" ──►  { "series": {...},          │     │
-│  │                   "instances": [0..N-1] }   │ ◄── _refresh_stored_metadata_instances
-│  └─────────────────────────────────────────────┘     │    mutates THIS dict
-│  ┌─────────────────────────────────────────────┐     │
-│  │ "vtk_image_data" ──► vtkImageData           │     │
-│  └─────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────┘
-                       │
-                       │ _series_cache[sn] = (vtk_data, metadata, idx)
-                       │   ↑ tuple points to SAME metadata object
-                       │
-                       ▼
-         ┌───────────────────────────────────────┐
-         │ copy.deepcopy(metadata)               │ ◄── create_new_vtk_widget
-         │   → SEPARATE dict with SEPARATE list  │
-         │   → passed to ImageViewer2D.__init__  │
-         └───────────────────────┬───────────────┘
-                                 │
-                                 ▼
-         ┌───────────────────────────────────────┐
-         │ ImageViewer2D.metadata                │
-         │   .instances = [0..21]  (frozen)      │ ◄── NEVER UPDATED until v2.2.8.7
-         │                                       │
-         │ Used by:                              │
-         │  • apply_default_window_level(idx)    │
-         │  • set_window_level (is_rgb check)    │
-         │  • update_corners_actors (rows/cols)  │
-         │  • load_bottom_left_actors (rows/cols) │
-         └───────────────────────────────────────┘
+ط£آ¢أ¢â‚¬â€Œط¥â€™ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ¯
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘                   lst_thumbnails_data[i]              ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€Œط¥â€™ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ¯     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ "metadata" ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€œط·â€؛  { "series": {...},          ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘                   "instances": [0..N-1] }   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ ط£آ¢أ¢â‚¬â€‌أ¢â‚¬â€چط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ _refresh_stored_metadata_instances
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ©     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘    mutates THIS dict
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€Œط¥â€™ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ¯     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ "vtk_image_data" ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€œط·â€؛ vtkImageData           ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ©     ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ©
+                       ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+                       ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ _series_cache[sn] = (vtk_data, metadata, idx)
+                       ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬آ أ¢â‚¬ع© tuple points to SAME metadata object
+                       ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+                       ط£آ¢أ¢â‚¬â€œط¢آ¼
+         ط£آ¢أ¢â‚¬â€Œط¥â€™ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ¯
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ copy.deepcopy(metadata)               ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ ط£آ¢أ¢â‚¬â€‌أ¢â‚¬â€چط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ create_new_vtk_widget
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ SEPARATE dict with SEPARATE list  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ passed to ImageViewer2D.__init__  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¢آ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ©
+                                 ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+                                 ط£آ¢أ¢â‚¬â€œط¢آ¼
+         ط£آ¢أ¢â‚¬â€Œط¥â€™ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ¯
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ ImageViewer2D.metadata                ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   .instances = [0..21]  (frozen)      ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ ط£آ¢أ¢â‚¬â€‌أ¢â‚¬â€چط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ NEVER UPDATED until v2.2.8.7
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘                                       ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘ Used by:                              ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â€ڑآ¬ط¢آ¢ apply_default_window_level(idx)    ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â€ڑآ¬ط¢آ¢ set_window_level (is_rgb check)    ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â€ڑآ¬ط¢آ¢ update_corners_actors (rows/cols)  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘  ط£آ¢أ¢â€ڑآ¬ط¢آ¢ load_bottom_left_actors (rows/cols) ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+         ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œط¹آ©
 ```
 
 ### Fixes
 
-**Fix 1 — `_sync_viewer_metadata_instances()` (NEW METHOD):**
+**Fix 1 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `_sync_viewer_metadata_instances()` (NEW METHOD):**
 
 New method in `ViewerController` that patches `ImageViewer2D.metadata['instances']`
 on all live viewers showing a given series.  Copies the reference from the freshly-updated
@@ -146,7 +296,7 @@ Called from **5 grow paths** (every path that calls `_refresh_stored_metadata_in
 | `_completion_verify_series` | Layer 3: 500ms deferred verification (up to 3 retries) |
 | `_completion_sweep_tick` | Layer 4: 3s periodic safety-net sweep |
 
-**Fix 2 — Defensive bounds-checking in `ImageViewer2D` (viewer_2d.py):**
+**Fix 2 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Defensive bounds-checking in `ImageViewer2D` (viewer_2d.py):**
 
 Four methods in `ImageViewer2D` directly indexed `self.metadata['instances'][slice_index]`
 without bounds checking.  If `slice_index >= len(instances)` (stale metadata), they threw
@@ -154,36 +304,36 @@ without bounds checking.  If `slice_index >= len(instances)` (stale metadata), t
 
 | Method | Before (crash) | After (fallback) |
 |--------|----------------|-------------------|
-| `apply_default_window_level(idx)` | `instances[idx]` → IndexError | Bounds-check; fall back to `GetScalarRange()` auto-calc |
-| `set_window_level(ww, wc)` | `instances[GetSlice()]['is_rgb']` → IndexError | Bounds-check; default `is_rgb=False` |
-| `update_corners_actors()` | `instances[current_slice]['rows']` → IndexError | Bounds-check; fall back to VTK `GetDimensions()` |
-| `load_bottom_left_actors()` | `instances[current_slice]['rows']` → IndexError | Bounds-check; fall back to VTK `GetDimensions()` |
+| `apply_default_window_level(idx)` | `instances[idx]` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ IndexError | Bounds-check; fall back to `GetScalarRange()` auto-calc |
+| `set_window_level(ww, wc)` | `instances[GetSlice()]['is_rgb']` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ IndexError | Bounds-check; default `is_rgb=False` |
+| `update_corners_actors()` | `instances[current_slice]['rows']` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ IndexError | Bounds-check; fall back to VTK `GetDimensions()` |
+| `load_bottom_left_actors()` | `instances[current_slice]['rows']` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ IndexError | Bounds-check; fall back to VTK `GetDimensions()` |
 
 The `GetScalarRange()` fallback computes W/L from the actual VTK volume data, which
-produces correct windowing for any slice — slightly less optimal than per-slice DICOM W/L
+produces correct windowing for any slice ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ slightly less optimal than per-slice DICOM W/L
 but visually correct (no white/black images).
 
 ### Signal Flow With Fix
 
 ```
 DM seriesProgressUpdated(sn, 50, 135)
-  │
-  ▼
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+  ط£آ¢أ¢â‚¬â€œط¢آ¼
 on_series_images_progress  [100ms debounce]
-  │
-  ▼
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+  ط£آ¢أ¢â‚¬â€œط¢آ¼
 _grow_progressive_fast(sn, 50, viewers)
-  │
-  ├─ loader.grow()                          → VTK volume: 50 slices
-  ├─ update_available_slice_count(50)
-  ├─ slider.setMaximum(49)
-  ├─ _refresh_stored_metadata_instances()   → lst_thumbnails_data: 50 instances ✅
-  ├─ _sync_viewer_metadata_instances()      → ImageViewer2D.metadata: 50 instances ✅ (NEW)
-  │
-  ▼
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ loader.grow()                          ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ VTK volume: 50 slices
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ update_available_slice_count(50)
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ slider.setMaximum(49)
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ _refresh_stored_metadata_instances()   ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ lst_thumbnails_data: 50 instances ط£آ¢ط¥â€œأ¢â‚¬آ¦
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ _sync_viewer_metadata_instances()      ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ ImageViewer2D.metadata: 50 instances ط£آ¢ط¥â€œأ¢â‚¬آ¦ (NEW)
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+  ط£آ¢أ¢â‚¬â€œط¢آ¼
 User scrolls to slice 35:
   apply_default_window_level(35)
-    → instances[35] exists (50 entries)     → per-slice W/L applied correctly ✅
+    ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ instances[35] exists (50 entries)     ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ per-slice W/L applied correctly ط£آ¢ط¥â€œأ¢â‚¬آ¦
 ```
 
 ### Files Changed
@@ -197,34 +347,34 @@ User scrolls to slice 35:
 
 ### Tests
 
-All existing tests pass (no new tests needed — the fix is structural):
-- 18 viewer pipeline tests ✅
-- 24 smoke import tests ✅
-- 27 DM scenarios (129 assertions) ✅
-- 1 module connection test ✅
+All existing tests pass (no new tests needed ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the fix is structural):
+- 18 viewer pipeline tests ط£آ¢ط¥â€œأ¢â‚¬آ¦
+- 24 smoke import tests ط£آ¢ط¥â€œأ¢â‚¬آ¦
+- 27 DM scenarios (129 assertions) ط£آ¢ط¥â€œأ¢â‚¬آ¦
+- 1 module connection test ط£آ¢ط¥â€œأ¢â‚¬آ¦
 
 ---
 
-## Unreleased — FAST Viewer Count Accuracy + Stale Exhaustion Fix (v2.2.8.4)
+## Unreleased ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ FAST Viewer Count Accuracy + Stale Exhaustion Fix (v2.2.8.4)
 
 ### Summary
 
 Fixes five production-observed bugs in the FAST Viewer progressive download path:
-1. **Series count/scroll mismatch** — viewer stuck at 30 of 40 downloaded images (Series 201 symptom)
-2. **Thumbnail image_count not updating** — thumbnail shows server-reported 20 instead of actual 40
-3. **Safety-net infinite loop** — stale-grow exhaustion caused `_flush_progressive_grow` to loop forever
-4. **In-place grow violated snapshot rule** — `backend.refresh_file_list()` was called before `loader.grow()`
-5. **Per-grow-tick `iterdir` lag** — expensive disk scan ran every 150ms even when disk count unchanged
+1. **Series count/scroll mismatch** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ viewer stuck at 30 of 40 downloaded images (Series 201 symptom)
+2. **Thumbnail image_count not updating** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ thumbnail shows server-reported 20 instead of actual 40
+3. **Safety-net infinite loop** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ stale-grow exhaustion caused `_flush_progressive_grow` to loop forever
+4. **In-place grow violated snapshot rule** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `backend.refresh_file_list()` was called before `loader.grow()`
+5. **Per-grow-tick `iterdir` lag** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ expensive disk scan ran every 150ms even when disk count unchanged
 
-Three new tests (L24–L26) added; total viewer test count: **57 tests** across 3 suites.
+Three new tests (L24ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“L26) added; total viewer test count: **57 tests** across 3 suites.
 
 ### Root Causes
 
-**Bug 1 (Series 201 — 20/40/30 mismatch):**
-When DM initially reported `total=30`, progressive mode exited at 30. When 10 more files arrived and DM sent a completion signal `(40, 40)`, the done-guard code hit a bare `return` for the `downloaded >= total` case — `_grow_progressive_fast` was never called. Viewer stuck at 30 (slider=29), but the `_total_expected_slices` counter showed 40 briefly during re-entry, causing the observed count mismatch.
+**Bug 1 (Series 201 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ 20/40/30 mismatch):**
+When DM initially reported `total=30`, progressive mode exited at 30. When 10 more files arrived and DM sent a completion signal `(40, 40)`, the done-guard code hit a bare `return` for the `downloaded >= total` case ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `_grow_progressive_fast` was never called. Viewer stuck at 30 (slider=29), but the `_total_expected_slices` counter showed 40 briefly during re-entry, causing the observed count mismatch.
 
-**Bug 2 (stale-grow exhaustion → infinite loop):**
-When `_stale_retry_count` reached 3 (max), the stale guard silently did nothing. The safety-net `_flush_progressive_grow` saw `pending_downloaded(40) > last_grow_count(30)` and restarted the timer — indefinitely. Each cycle: grow returns 30, stale guard does nothing, safety-net restarts. CPU was consumed but images never appeared.
+**Bug 2 (stale-grow exhaustion ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ infinite loop):**
+When `_stale_retry_count` reached 3 (max), the stale guard silently did nothing. The safety-net `_flush_progressive_grow` saw `pending_downloaded(40) > last_grow_count(30)` and restarted the timer ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ indefinitely. Each cycle: grow returns 30, stale guard does nothing, safety-net restarts. CPU was consumed but images never appeared.
 
 **Bug 3 (thumbnail shows 20 not 40):**
 `_refresh_stored_metadata_instances` updated `metadata["instances"]` but not `metadata["series"]["image_count"]`. The thumbnail widget reads `image_count` (server metadata), so it permanently showed the original server-reported count.
@@ -233,23 +383,23 @@ When `_stale_retry_count` reached 3 (max), the stale guard silently did nothing.
 `change_series_on_viewer`'s same-series in-place grow called `backend.refresh_file_list()` BEFORE `loader.grow()`. This pre-refreshed the backend's file-path index, poisoning the old-path snapshot that `grow()` uses for interleaved DICOM instance-number remap.
 
 **Bug 5 (per-grow-tick lag):**
-`_refresh_stored_metadata_instances` ran `Path.iterdir()` (full disk listing) every 150ms grow tick even when no new files had landed. With 200+ DICOM files, this added 2–10ms of main-thread I/O per tick.
+`_refresh_stored_metadata_instances` ran `Path.iterdir()` (full disk listing) every 150ms grow tick even when no new files had landed. With 200+ DICOM files, this added 2ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“10ms of main-thread I/O per tick.
 
 ### Fixes
 
-**Fix 1 — Done-guard completion one-shot (`on_series_images_progress`):**
+**Fix 1 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Done-guard completion one-shot (`on_series_images_progress`):**
 Added an `else:` branch to the `if sn in done:` + `if downloaded < total:` done-guard block. When `downloaded >= total`, scans for non-progressive viewers showing `sn` with fewer slices than `downloaded`, re-enters progressive mode on the viewer, and fires `_grow_progressive_fast` directly. This reliably recovers any viewer that was stuck at a lower count.
 
-**Fix 2 — Stale exhaustion handling + retry max 5 (`_grow_progressive_fast`):**
-Increased max stale retries from 3 → 5 (750ms window). Added an `else:` branch on exhaustion:
+**Fix 2 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Stale exhaustion handling + retry max 5 (`_grow_progressive_fast`):**
+Increased max stale retries from 3 ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ 5 (750ms window). Added an `else:` branch on exhaustion:
 - Logs `STALE-EXHAUSTED` error
 - Sets `info["pending_downloaded"] = new_count` (stops safety-net from looping)
 - Pops series from `_progressive_series`
 - Updates slider to `(new_count - 1)` so no empty positions are accessible
 - Calls `exit_progressive_mode()` on each viewer
-- Returns early — done-guard completion one-shot (Fix 1) recovers the remaining images when DM sends the final signal
+- Returns early ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ done-guard completion one-shot (Fix 1) recovers the remaining images when DM sends the final signal
 
-**Fix 3 — `_refresh_stored_metadata_instances` updates `series["image_count"]`:**
+**Fix 3 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `_refresh_stored_metadata_instances` updates `series["image_count"]`:**
 After `metadata["instances"] = new_instances`, also sets:
 ```python
 _series_meta = metadata.get("series")
@@ -257,13 +407,13 @@ if isinstance(_series_meta, dict):
     _series_meta["image_count"] = len(new_instances)
 ```
 
-**Fix 4 — In-place grow calls `loader.grow()` first (not `backend.refresh_file_list()`):**
+**Fix 4 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ In-place grow calls `loader.grow()` first (not `backend.refresh_file_list()`):**
 Restructured same-series in-place grow: `if _has_grow: new_count = loader.grow() elif _has_refresh: new_count = backend.refresh_file_list()`. Preserves snapshot integrity for interleaved DICOM.
 
-**Fix 5 — TTL pre-check in `_refresh_stored_metadata_instances`:**
-Added `_count_series_files_on_disk(sn)` (1s TTL cache) guard before the expensive `Path.iterdir()` scan. If the TTL-cached disk count ≤ existing instance count, returns immediately without running `iterdir`. Reduces per-150ms-tick I/O to max once per second.
+**Fix 5 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ TTL pre-check in `_refresh_stored_metadata_instances`:**
+Added `_count_series_files_on_disk(sn)` (1s TTL cache) guard before the expensive `Path.iterdir()` scan. If the TTL-cached disk count ط£آ¢أ¢â‚¬آ°ط¢آ¤ existing instance count, returns immediately without running `iterdir`. Reduces per-150ms-tick I/O to max once per second.
 
-**Bonus — Convert hot-path `print()` to `logger.debug()`:**
+**Bonus ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Convert hot-path `print()` to `logger.debug()`:**
 Converted all `print()` calls in `_refresh_stored_metadata_instances`, `change_series_on_viewer` same-series path, cache-invalidate, and switch-dedup to structured logger calls. Eliminates console noise and minor I/O overhead.
 
 ### New Tests
@@ -280,23 +430,23 @@ Converted all `print()` calls in `_refresh_stored_metadata_instances`, `change_s
 
 - `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py`
   - `on_series_images_progress`: done-guard completion one-shot (Fix 1)
-  - `_grow_progressive_fast`: stale exhaustion branch, max retries 3→5 (Fix 2)
-  - `_refresh_stored_metadata_instances`: `series["image_count"]` update (Fix 3), TTL pre-check (Fix 5), print→logger
-  - `change_series_on_viewer` in-place grow: `loader.grow()` first (Fix 4), print→logger
-  - Cache-invalidate, switch-fail, switch-dedup: print→logger
-- `tests/viewer/test_fast_viewer_live_sync.py` — L24, L25, L26 added (57 total tests)
+  - `_grow_progressive_fast`: stale exhaustion branch, max retries 3ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢5 (Fix 2)
+  - `_refresh_stored_metadata_instances`: `series["image_count"]` update (Fix 3), TTL pre-check (Fix 5), printط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢logger
+  - `change_series_on_viewer` in-place grow: `loader.grow()` first (Fix 4), printط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢logger
+  - Cache-invalidate, switch-fail, switch-dedup: printط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢logger
+- `tests/viewer/test_fast_viewer_live_sync.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ L24, L25, L26 added (57 total tests)
 
 ---
 
-## Unreleased — FAST Viewer Stale-Grow Robustness Fix + Test Suite (v2.2.8.3)
+## Unreleased ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ FAST Viewer Stale-Grow Robustness Fix + Test Suite (v2.2.8.3)
 
 ### Summary
 
 Fixes the "last N images stuck" stability bug in the FAST Viewer progressive display path.
 When `loader.grow()` returned a stale count (OS file-system flush delay), the single-shot
 `_progressive_grow_timer` would fire once, record the stale count as `last_grow_count`, and
-never fire again — permanently leaving the viewer showing fewer images than were available on
-disk. Three new tests (L21–L23) cover all stale-grow scenarios.
+never fire again ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ permanently leaving the viewer showing fewer images than were available on
+disk. Three new tests (L21ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“L23) cover all stale-grow scenarios.
 
 ### Root Cause
 
@@ -317,15 +467,15 @@ regardless of the stale count.
 
 **Files changed:** `patient_widget_viewer_controller.py`
 
-**Fix 1 — Stale-grow guard in `_grow_progressive_fast`:**
+**Fix 1 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Stale-grow guard in `_grow_progressive_fast`:**
 After each grow, if `new_count < pending_count` and fewer than 3 retries have been attempted:
 - Increment `info["_stale_retry_count"]`
 - Set `info["pending_downloaded"] = pending_count` so `_flush_progressive_grow` knows to retry
 - Call `enter_progressive_mode()` on any non-progressive viewer so `_find_progressive_viewers`
   can locate it on the retry tick (critical for the one-shot path)
-- Restart the single-shot timer — it exhausted after the first fire and needs to restart
+- Restart the single-shot timer ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ it exhausted after the first fire and needs to restart
 
-**Fix 2 — Safety-net restart in `_flush_progressive_grow`:**
+**Fix 2 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Safety-net restart in `_flush_progressive_grow`:**
 After the per-series for-loop, if any tracked series still has
 `pending_downloaded > last_grow_count`, restart the timer. This is an independent second
 protection layer; both layers must remain.
@@ -349,16 +499,16 @@ count. Fix 1 above also resolves this: `enter_progressive_mode()` is called on t
 
 ### Documentation Updated
 
-- `docs/pipelines/viewer-pipeline.md` — added "Stale OS-Flush Guard (v2.2.8.3)" section
-- `.github/copilot-instructions.md` — added three new critical rules
+- `docs/pipelines/viewer-pipeline.md` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ added "Stale OS-Flush Guard (v2.2.8.3)" section
+- `.github/copilot-instructions.md` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ added three new critical rules
 
 ---
 
-## Unreleased — Drag-Drop Progressive Display: Three-Bug Fix + Test Suite (2026-04-02)
+## Unreleased ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Drag-Drop Progressive Display: Three-Bug Fix + Test Suite (2026-04-02)
 
 ### Summary
 
-Fixes three independent bugs in the drag-and-drop → progressive display pipeline that caused the viewer to (A) never show the first downloaded batch, (B) never show the second batch even when the first appeared, and (C) keep the old image on screen instead of switching to a loading state. A new test suite (`test_dragdrop_progressive.py`, 16 scenarios) was added to lock in all three fixes.
+Fixes three independent bugs in the drag-and-drop ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ progressive display pipeline that caused the viewer to (A) never show the first downloaded batch, (B) never show the second batch even when the first appeared, and (C) keep the old image on screen instead of switching to a loading state. A new test suite (`test_dragdrop_progressive.py`, 16 scenarios) was added to lock in all three fixes.
 
 
 ### Summary
@@ -366,8 +516,8 @@ Fixes three independent bugs in the drag-and-drop → progressive display pipeli
 Fixes the "last N images stuck" stability bug in the FAST Viewer progressive display path.
 When `loader.grow()` returned a stale count (OS file-system flush delay), the single-shot
 `_progressive_grow_timer` would fire once, record the stale count as `last_grow_count`, and
-never fire again — permanently leaving the viewer showing fewer images than were available on
-disk. Three new tests (L21–L23) cover all stale-grow scenarios.
+never fire again ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ permanently leaving the viewer showing fewer images than were available on
+disk. Three new tests (L21ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“L23) cover all stale-grow scenarios.
 
 ### Root Cause
 
@@ -388,15 +538,15 @@ regardless of the stale count.
 
 **Files changed:** `patient_widget_viewer_controller.py`
 
-**Fix 1 — Stale-grow guard in `_grow_progressive_fast`:**
+**Fix 1 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Stale-grow guard in `_grow_progressive_fast`:**
 After each grow, if `new_count < pending_count` and fewer than 3 retries have been attempted:
 - Increment `info["_stale_retry_count"]`
 - Set `info["pending_downloaded"] = pending_count` so `_flush_progressive_grow` knows to retry
 - Call `enter_progressive_mode()` on any non-progressive viewer so `_find_progressive_viewers`
   can locate it on the retry tick (critical for the one-shot path)
-- Restart the single-shot timer — it exhausted after the first fire and needs to restart
+- Restart the single-shot timer ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ it exhausted after the first fire and needs to restart
 
-**Fix 2 — Safety-net restart in `_flush_progressive_grow`:**
+**Fix 2 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Safety-net restart in `_flush_progressive_grow`:**
 After the per-series for-loop, if any tracked series still has
 `pending_downloaded > last_grow_count`, restart the timer. This is an independent second
 protection layer; both layers must remain.
@@ -420,22 +570,22 @@ count. Fix 1 above also resolves this: `enter_progressive_mode()` is called on t
 
 ### Documentation Updated
 
-- `docs/pipelines/viewer-pipeline.md` — added "Stale OS-Flush Guard (v2.2.8.3)" section
-- `.github/copilot-instructions.md` — added three new critical rules
+- `docs/pipelines/viewer-pipeline.md` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ added "Stale OS-Flush Guard (v2.2.8.3)" section
+- `.github/copilot-instructions.md` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ added three new critical rules
 
 ---
 
-## Unreleased — Drag-Drop Progressive Display: Three-Bug Fix + Test Suite (2026-04-02)
+## Unreleased ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Drag-Drop Progressive Display: Three-Bug Fix + Test Suite (2026-04-02)
 
 ### Summary
 
-Fixes three independent bugs in the drag-and-drop → progressive display pipeline that caused the viewer to (A) never show the first downloaded batch, (B) never show the second batch even when the first appeared, and (C) keep the old image on screen instead of switching to a loading state. A new test suite (`test_dragdrop_progressive.py`, 16 scenarios) was added to lock in all three fixes.
+Fixes three independent bugs in the drag-and-drop ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ progressive display pipeline that caused the viewer to (A) never show the first downloaded batch, (B) never show the second batch even when the first appeared, and (C) keep the old image on screen instead of switching to a loading state. A new test suite (`test_dragdrop_progressive.py`, 16 scenarios) was added to lock in all three fixes.
 
 ### Bugs Found & Fixed
 
-#### Bug A — First batch (10 images) never populated the dragged-to viewer
+#### Bug A ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ First batch (10 images) never populated the dragged-to viewer
 
-**Root cause:** When a user drag-dropped a series that was not yet on disk, `change_series_on_viewer` failed the async load (`ok=False`) and returned early — but it never marked the viewer as "waiting" for that series. When the DM later emitted `seriesProgressUpdated(sn=5, downloaded=10)`, `on_series_images_progress` had no scan for an awaiting viewer. It found no progressive viewer and no existing viewer showing the series, so it fell into `_start_progressive_display` with `target_vtk_widget=None`. The loaded data was placed in the first available empty slot, which was often the wrong layout position or not displayed at all.
+**Root cause:** When a user drag-dropped a series that was not yet on disk, `change_series_on_viewer` failed the async load (`ok=False`) and returned early ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ but it never marked the viewer as "waiting" for that series. When the DM later emitted `seriesProgressUpdated(sn=5, downloaded=10)`, `on_series_images_progress` had no scan for an awaiting viewer. It found no progressive viewer and no existing viewer showing the series, so it fell into `_start_progressive_display` with `target_vtk_widget=None`. The loaded data was placed in the first available empty slot, which was often the wrong layout position or not displayed at all.
 
 **Fix (`patient_widget_viewer_controller.py`):**
 - In the `_finish_on_ui(ok=False)` path, set `vtk_widget._awaiting_series_number = str(series_number)` and keep the spinner visible with a "Downloading series N..." message instead of hiding it.
@@ -448,29 +598,29 @@ Fixes three independent bugs in the drag-and-drop → progressive display pipeli
           break
   ```
 - Extended `_start_progressive_display` signature with `target_vtk_widget=None, target_node=None`.
-- Added `_apply_progressive_to_target_viewer(series_number, total, vtk_widget, node)` — clears the marker, calls `_display_loaded_series` on that exact viewer, enters progressive mode, hides the spinner.
+- Added `_apply_progressive_to_target_viewer(series_number, total, vtk_widget, node)` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ clears the marker, calls `_display_loaded_series` on that exact viewer, enters progressive mode, hides the spinner.
 - `change_series_on_viewer` clears `vtk_widget._awaiting_series_number = None` at the start of every new switch (so old markers from prior drops don't linger).
 
-#### Bug B — Second batch (images 11–20) never triggered a grow
+#### Bug B ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Second batch (images 11ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“20) never triggered a grow
 
-**Root cause:** A race condition in the threaded fallback of `_start_progressive_display`. Before the fix, the background thread called `done.add(sn)` immediately after loading files — **before** `QTimer.singleShot(0, ...)` fired the activation callback. The next progress signal arrived, found `sn` in the done-set, scanned for a progressive viewer (found none because activation hadn't fired yet), and returned early from the done-guard. The grow timer was never started, permanently blocking all subsequent batches.
+**Root cause:** A race condition in the threaded fallback of `_start_progressive_display`. Before the fix, the background thread called `done.add(sn)` immediately after loading files ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ **before** `QTimer.singleShot(0, ...)` fired the activation callback. The next progress signal arrived, found `sn` in the done-set, scanned for a progressive viewer (found none because activation hadn't fired yet), and returned early from the done-guard. The grow timer was never started, permanently blocking all subsequent batches.
 
-**Fix (`patient_widget_viewer_controller.py` — threaded path of `_start_progressive_display`):**
+**Fix (`patient_widget_viewer_controller.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ threaded path of `_start_progressive_display`):**
 - Moved `done.add(sn)` **inside** the `QTimer.singleShot(0, _display_activate_and_mark_done)` callback, after both `_display_series_after_load` and `_activate_progressive_mode_on_viewers` complete.
 - The done-guard recovery path was strengthened: if `sn` is already in `done` but no progressive viewer is found, the guard scans for any non-progressive viewer showing that series and re-enters progressive mode, keeping the grow path alive.
 
-#### Bug C — Drag-drop showed old image instead of loading state
+#### Bug C ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Drag-drop showed old image instead of loading state
 
-**Root cause:** `change_series_on_viewer` always sent `request_critical_series()` to escalate priority, but when the async load failed (`ok=False`) it called `_hide_spinner_for_widget` — restoring the previous series image and providing no visual cue that a download was about to begin.
+**Root cause:** `change_series_on_viewer` always sent `request_critical_series()` to escalate priority, but when the async load failed (`ok=False`) it called `_hide_spinner_for_widget` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ restoring the previous series image and providing no visual cue that a download was about to begin.
 
 **Fix:** The `ok=False` branch now:
-1. Sets `vtk_widget._awaiting_series_number = str(series_number)` — visually marks the viewport.
-2. Calls `vtk_widget.viewport_spinner.show_loading("Downloading series N...")` — replaces the old image with a recognizable loading state.
+1. Sets `vtk_widget._awaiting_series_number = str(series_number)` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ visually marks the viewport.
+2. Calls `vtk_widget.viewport_spinner.show_loading("Downloading series N...")` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ replaces the old image with a recognizable loading state.
 3. Does **not** hide the spinner (the spinner persists until `_apply_progressive_to_target_viewer` completes).
 
 ### Related Coordinator Fix
 
-`negotiate_priority_change` in `series_intent_coordinator.py` was updated to attempt `_start_download_worker(study_uid)` immediately when `worker_pool.can_add_worker()` is True, falling back to the 50ms deferred path only if the immediate start fails. This reduces priority-escalation latency from ≥50ms to ~0ms in most cases.
+`negotiate_priority_change` in `series_intent_coordinator.py` was updated to attempt `_start_download_worker(study_uid)` immediately when `worker_pool.can_add_worker()` is True, falling back to the 50ms deferred path only if the immediate start fails. This reduces priority-escalation latency from ط£آ¢أ¢â‚¬آ°ط¢آ¥50ms to ~0ms in most cases.
 
 ### Test Suite Added
 
@@ -492,8 +642,8 @@ Fixes three independent bugs in the drag-and-drop → progressive display pipeli
 | S12 | Bug A regression: first batch populates awaiting viewer | Bug A |
 | S13 | Bug B regression: second batch takes grow path, not restart | Bug B |
 | S14 | Bug C regression: drag-drop replaces image AND escalates priority | Bug C |
-| S15 | Stability: 10 batches → 1 start + 9 grows (3 reps) | A+B |
-| S16 | Repeatability: full lifecycle × 5, timing < 5ms/rep | A+B+C |
+| S15 | Stability: 10 batches ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ 1 start + 9 grows (3 reps) | A+B |
+| S16 | Repeatability: full lifecycle ط·آ£أ¢â‚¬â€‌ 5, timing < 5ms/rep | A+B+C |
 
 **Run commands:**
 ```
@@ -508,15 +658,15 @@ Fixes three independent bugs in the drag-and-drop → progressive display pipeli
 | `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` | `_finish_on_ui(ok=False)` keeps spinner; `change_series_on_viewer` clears awaiting; `on_series_images_progress` awaiting scan; `_start_progressive_display` gets `target_*` params; new `_apply_progressive_to_target_viewer`; done.add ordering fix |
 | `modules/download_manager/coordinator/series_intent_coordinator.py` | `negotiate_priority_change` tries immediate worker start |
 | `tests/download_manager/test_download_manager.py` | S27 updated (accepts immediate-start path) |
-| `tests/viewer/test_dragdrop_progressive.py` | **New** — 16-scenario drag-drop + progressive display test suite |
+| `tests/viewer/test_dragdrop_progressive.py` | **New** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ 16-scenario drag-drop + progressive display test suite |
 
 ---
 
-## Unreleased — Critical Series Intent & Preemption Hardening (2026-04-01)
+## Unreleased ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Critical Series Intent & Preemption Hardening (2026-04-01)
 
 ### Summary
 
-Hardens the FAST Viewer ↔ Download Manager interaction when users drag-and-drop a not-yet-downloaded series during active study download. The system now handles repeated user intent reliably and avoids silent no-op paths.
+Hardens the FAST Viewer ط£آ¢أ¢â‚¬آ أ¢â‚¬â€Œ Download Manager interaction when users drag-and-drop a not-yet-downloaded series during active study download. The system now handles repeated user intent reliably and avoids silent no-op paths.
 
 ### Challenge
 
@@ -559,11 +709,11 @@ In real workflow, users repeatedly drag different series (or the same series mul
 
 - Better repeatability under high-frequency drag/drop interactions.
 - Reduced drift between UI intent and actual download execution.
-- Improved stability of Critical → High transition model in FAST workflow.
+- Improved stability of Critical ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ High transition model in FAST workflow.
 
 ---
 
-## v2.3.0 — Stable Release (2026-03-31)
+## v2.3.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Stable Release (2026-03-31)
 
 ### Summary
 
@@ -605,7 +755,7 @@ Reaffirms **v2.2.7** as the stable published line for this workspace and refresh
 
 ---
 
-## v2.2.7.4 — Non-Blocking Retry & Freeze Elimination (2026-03-28)
+## v2.2.7.4 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Non-Blocking Retry & Freeze Elimination (2026-03-28)
 
 ### Summary
 
@@ -613,18 +763,18 @@ Eliminates all UI freeze paths in the download manager retry/refresh flow. All b
 
 ### Problem
 
-Pressing the series refresh button (🔄) or download manager retry button caused the entire application to freeze for 2–90+ seconds, blocking all other modules (viewer, thumbnails, etc.). Three specific bottlenecks were identified:
+Pressing the series refresh button (ط¸â€¹ط¹ط›أ¢â‚¬â€Œأ¢â‚¬â€چ) or download manager retry button caused the entire application to freeze for 2ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“90+ seconds, blocking all other modules (viewer, thumbnails, etc.). Three specific bottlenecks were identified:
 
-- **F1 — `worker_pool.stop_all()`**: Called `worker.wait(5000)` per active worker on the main thread (5–15s freeze)
-- **F2 — `shutil.rmtree()`**: File deletion in retry methods on the main thread (2–30s freeze)
-- **F3 — `_reconstruct_task_from_database()`**: Synchronous gRPC call with 30s timeout × 3 retries (90s+ potential freeze)
+- **F1 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `worker_pool.stop_all()`**: Called `worker.wait(5000)` per active worker on the main thread (5ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“15s freeze)
+- **F2 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `shutil.rmtree()`**: File deletion in retry methods on the main thread (2ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“30s freeze)
+- **F3 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `_reconstruct_task_from_database()`**: Synchronous gRPC call with 30s timeout ط·آ£أ¢â‚¬â€‌ 3 retries (90s+ potential freeze)
 
 ### Fixes
 
 **Non-blocking worker preemption (F1):**
-- Added `cancel_all_non_blocking()` to `WorkerPool` — sets cancel flags without waiting
+- Added `cancel_all_non_blocking()` to `WorkerPool` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ sets cancel flags without waiting
 - `_pause_all_active_downloads()` now uses `cancel_all_non_blocking()` instead of `stop_all()`
-- Workers clean up asynchronously via their existing `finished` → `_remove_worker` signal chain
+- Workers clean up asynchronously via their existing `finished` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ `_remove_worker` signal chain
 
 **Non-blocking `_on_series_retry()` (F2 + F3):**
 - Fast path on main thread: state checks, series list reorder, priority promotion, state reset to PENDING
@@ -647,11 +797,11 @@ Each module in a DICOM Workstation must operate as an independent loop. Download
 
 ### Documentation
 
-- Created `docs/architecture/FREEZE_BOTTLENECK_ANALYSIS.md` — comprehensive analysis of all freeze paths
+- Created `docs/architecture/FREEZE_BOTTLENECK_ANALYSIS.md` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ comprehensive analysis of all freeze paths
 
 ---
 
-## v2.2.7.3 — R19b Verified Batch-Skip & Skip Count Fix (2026-03-27)
+## v2.2.7.3 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ R19b Verified Batch-Skip & Skip Count Fix (2026-03-27)
 
 ### Summary
 
@@ -663,10 +813,10 @@ Hardens R19b batch-skip to verify actual sequential file existence instead of tr
 - Previously, R19b computed `batch_start = (file_count // batch_size) * batch_size`, assuming the first N files filled leading batches sequentially
 - If files were non-sequential (e.g., gaps in batch 1 with files from batch 2 present), R19b would skip batches containing missing instances
 - Now R19b iterates leading batches and checks that every `Instance_{i:04d}.dcm` file exists before skipping. If any file is missing in a batch, the skip stops there
-- Falls back to file-level skip (R19) for any batch that isn’t fully verified
+- Falls back to file-level skip (R19) for any batch that isnط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢t fully verified
 
 **skipped_count Double-Counting Fix:**
-- `skipped_count` was initialized from `_scan_existing_files()` (e.g., 22 files → skipped=22)
+- `skipped_count` was initialized from `_scan_existing_files()` (e.g., 22 files ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ skipped=22)
 - During batch processing, per-instance `file_path.exists()` incremented `skipped_count` again for files already counted in the initial scan
 - This caused `downloaded + skipped > expected`, inflating progress and `SeriesDownloadResult.skipped`
 - Now uses an `existing_files_set` to track initial files; per-instance skip only increments for NEW files (created between scan and batch processing)
@@ -681,19 +831,19 @@ Hardens R19b batch-skip to verify actual sequential file existence instead of tr
 
 ### Bug Fixed: Series 202 Missing Last 10 Images on Redownload
 
-**Symptom:** When retrying a partially-downloaded series (e.g., 22/32 images), the last 10 images were not downloaded correctly. Logs showed ZERO download activity — R20 skipped the series entirely.
+**Symptom:** When retrying a partially-downloaded series (e.g., 22/32 images), the last 10 images were not downloaded correctly. Logs showed ZERO download activity ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ R20 skipped the series entirely.
 
-**Root Cause (1 — primary):** `_on_per_patient_retry()` reset download state (PENDING, cleared completed_series etc.) but **never deleted files from disk**. R20 `check_series_complete()` counts `.dcm` files and, finding `existing >= expected`, skipped the series. The download worker never called `download_series()` at all.
+**Root Cause (1 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ primary):** `_on_per_patient_retry()` reset download state (PENDING, cleared completed_series etc.) but **never deleted files from disk**. R20 `check_series_complete()` counts `.dcm` files and, finding `existing >= expected`, skipped the series. The download worker never called `download_series()` at all.
 
 **Root Cause (2):** R19b batch-skip used raw file count to skip leading batches. If existing files didn't fill exact sequential batch ranges, some batches with missing files were incorrectly skipped.
 
-**Root Cause (3):** `skipped_count` was double-counted — initial scan + per-instance skip for pre-existing files — causing inflated progress reports.
+**Root Cause (3):** `skipped_count` was double-counted ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ initial scan + per-instance skip for pre-existing files ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ causing inflated progress reports.
 
 **Fix:** `_on_per_patient_retry()` now iterates all series in the study before starting the download worker. For each series: if `existing_count < expected_count`, files are kept for incremental resume; if `existing_count >= expected_count` (or unknown), `shutil.rmtree()` deletes the directory to force a clean re-download. R19b also verifies sequential file existence per batch, and `skipped_count` uses a set to prevent double-counting.
 
 ---
 
-## v2.2.7.2 — Resume Batch-Skip & Retry Button Fix (2026-03-27)
+## v2.2.7.2 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Resume Batch-Skip & Retry Button Fix (2026-03-27)
 
 ### Summary
 
@@ -701,9 +851,9 @@ Optimizes partial series resume to skip already-downloaded batches instead of re
 
 ### Highlights
 
-**R19b — Batch-Skip on Resume:**
+**R19b ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Batch-Skip on Resume:**
 - `download_series()` in `socket_client.py` now advances `batch_start` past leading complete batches when existing files are found on disk
-- With 10 existing files and batch_size=10, batch 0 is skipped entirely — previously wasted ~87 seconds re-transferring data that was discarded on arrival
+- With 10 existing files and batch_size=10, batch 0 is skipped entirely ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ previously wasted ~87 seconds re-transferring data that was discarded on arrival
 - Individual files within the first re-downloaded batch are still checked via R19 file-level skip
 
 **Retry Button Incremental Resume:**
@@ -728,7 +878,7 @@ Optimizes partial series resume to skip already-downloaded batches instead of re
 
 ---
 
-## v2.2.7.1 — Download Resilience & Incomplete Resume (2026-03-26)
+## v2.2.7.1 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Download Resilience & Incomplete Resume (2026-03-26)
 
 ### Summary
 
@@ -740,11 +890,11 @@ This release adds robust retry/reconnection logic to the download manager, fixes
 - Added 10 configurable retry constants to `constants.py`
 - `connect_with_retry()` now uses exponential backoff with jitter, capped at 30s
 - `send_request()` refactored into retry wrapper (3 attempts, backoff + reconnect); Login is fail-fast (no retry)
-- Per-series retry loop in `series_downloader.py`: after main download loop, retries all failed series up to 3 rounds with backoff (3s→6s→12s) and socket reconnect between rounds
+- Per-series retry loop in `series_downloader.py`: after main download loop, retries all failed series up to 3 rounds with backoff (3sط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢6sط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢12s) and socket reconnect between rounds
 
 **Incomplete Download Resume (R17 validation fix):**
-- R17a (StateStore check): Was unconditionally blocking ANY existing download → Now allows resume for non-terminal states (PENDING, DOWNLOADING, PAUSED, FAILED); only COMPLETED/CANCELLED are truly blocked
-- R17b (DB check): Was blindly trusting DB "Completed" status → Now verifies actual `.dcm` file counts on disk per series directory; allows re-download if files are incomplete
+- R17a (StateStore check): Was unconditionally blocking ANY existing download ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ Now allows resume for non-terminal states (PENDING, DOWNLOADING, PAUSED, FAILED); only COMPLETED/CANCELLED are truly blocked
+- R17b (DB check): Was blindly trusting DB "Completed" status ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ Now verifies actual `.dcm` file counts on disk per series directory; allows re-download if files are incomplete
 - `start_priority_download_immediately()`: Added `should_resume` branch that falls through to STEP 3+ instead of returning False; resets progress counters for a fresh attempt
 
 **Progressive Viewer & COL NameError:**
@@ -764,7 +914,7 @@ This release adds robust retry/reconnection logic to the download manager, fixes
 | `PacsClient/pacs/workstation_ui/home_ui/home_ui.py` | `COL` import fix |
 | `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` | 250ms throttle, inflight dedup guard, finally cleanup |
 
-### Bug Fixed: Patient 35281 Series 201 — 35 images, only 10 downloaded
+### Bug Fixed: Patient 35281 Series 201 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ 35 images, only 10 downloaded
 
 **Symptom:** When reopening a patient whose download was incomplete, the system logged `"Cannot add download: Download already exists (Status: Pendding)"` and blocked all resume attempts. The viewer loaded only 10 of 35 images.
 
@@ -774,7 +924,7 @@ This release adds robust retry/reconnection logic to the download manager, fixes
 
 ---
 
-## v2.2.7 — Stable Release / Install and Build Alignment (2026-03-21)
+## v2.2.7 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Stable Release / Install and Build Alignment (2026-03-21)
 
 ### Summary
 
@@ -796,7 +946,7 @@ This release publishes the current stable workspace as **v2.2.7** and aligns the
 
 ---
 
-## v2.2.6.3 — GitHub Push / Package Metadata Alignment (2026-03-17)
+## v2.2.6.3 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ GitHub Push / Package Metadata Alignment (2026-03-17)
 
 ### Summary
 
@@ -815,26 +965,26 @@ This release packages the current working changes for GitHub publication under *
 
 ---
 
-## v2.2.6 — Stable Release (2026-03-15)
+## v2.2.6 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Stable Release (2026-03-15)
 
 ### Critical Bug Fix: Wheel Scroll Freeze
 
-**Symptom:** After using stack drag (left mouse), switching to wheel scroll caused the image to freeze — scrollbar moved but image stayed fixed. Neither scroll method worked after that.
+**Symptom:** After using stack drag (left mouse), switching to wheel scroll caused the image to freeze ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ scrollbar moved but image stayed fixed. Neither scroll method worked after that.
 
-**Root Cause:** The `wheelEvent` performance optimization (v2.2.3.4.0) called `reslice.SetInterpolationModeToNearestNeighbor()` + `reslice.Modified()` to degrade quality during fast scroll. However, the `vtkImageReslice` carries a non-identity direction-matrix transform (Y-flip from `convert_itk2vtk`). Dirtying the reslice caused VTK's `UpdateDisplayExtent()` to compute a wrong output extent, collapsing the slice range (e.g. `(0,24)` → `(14,14)`, `data_z` → 1). All subsequent `SetSlice()` calls were clamped to that single slice.
+**Root Cause:** The `wheelEvent` performance optimization (v2.2.3.4.0) called `reslice.SetInterpolationModeToNearestNeighbor()` + `reslice.Modified()` to degrade quality during fast scroll. However, the `vtkImageReslice` carries a non-identity direction-matrix transform (Y-flip from `convert_itk2vtk`). Dirtying the reslice caused VTK's `UpdateDisplayExtent()` to compute a wrong output extent, collapsing the slice range (e.g. `(0,24)` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ `(14,14)`, `data_z` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ 1). All subsequent `SetSlice()` calls were clamped to that single slice.
 
 **Fix:** Disabled NN interpolation degradation for ALL backends (`_skip_nn_degrade = True`). Made `_restore_reslice_quality()` a no-op. The performance gain from NN was negligible (<1ms) compared to the catastrophic freeze it caused.
 
 **Files Changed:**
-- `PacsClient/pacs/patient_tab/ui/patient_ui/widget_viewer.py` — `wheelEvent`, `_restore_reslice_quality`
-- `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` — study path exists() guard
+- `PacsClient/pacs/patient_tab/ui/patient_ui/widget_viewer.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `wheelEvent`, `_restore_reslice_quality`
+- `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ study path exists() guard
 
 ### Other Fixes
 - **Study path corruption:** Added `exists()` check before overwriting `import_folder_path` with stale legacy `source\` path from metadata
 - **Post-scroll sync render:** Added `_post_scroll_sync_render()` one-shot callback to force VTK + annotation sync after scroll settles
 
 ### New Documentation
-- `docs/pipelines/VIEWER_BACKENDS_REFERENCE.md` — Complete Advanced vs Fast backend pipeline reference
+- `docs/pipelines/VIEWER_BACKENDS_REFERENCE.md` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Complete Advanced vs Fast backend pipeline reference
 - Updated `docs/pipelines/viewer-pipeline.md` with reslice corruption warning
 
 ### GPU / Software OpenGL
@@ -842,11 +992,11 @@ This release packages the current working changes for GitHub publication under *
 - Both modes produce correct viewer rendering and scroll behavior
 
 ### Rule Added
-> **CRITICAL:** Never call `reslice.SetInterpolationMode*()` or `reslice.Modified()` during interactive scroll. See `VIEWER_BACKENDS_REFERENCE.md §4.6`.
+> **CRITICAL:** Never call `reslice.SetInterpolationMode*()` or `reslice.Modified()` during interactive scroll. See `VIEWER_BACKENDS_REFERENCE.md ط·آ¢ط¢آ§4.6`.
 
 ---
 
-## v2.2.3.4.0 — Performance Sprint (2026-02-27)
+## v2.2.3.4.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Performance Sprint (2026-02-27)
 
 **Commit:** `5215a89`
 
@@ -855,29 +1005,29 @@ This consolidated release note covers the performance optimization sprint from v
 
 ## Highlights (v2.2.3.4.0)
 
-### Scroll Performance (Mode B — during download)
-- **GIL contention eliminated:** DL_WARMUP moved to separate process with own GIL (v2.2.3.2.3). `queue_p95_ms` dropped from 200–510ms → **0.00ms**.
-- **Per-frame overhead reduced:** Camera zoom save/restore, interactor style update, and Lock Sync skipped during wheel scroll (v2.2.3.4.0). Saves 4–6ms per frame.
+### Scroll Performance (Mode B ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ during download)
+- **GIL contention eliminated:** DL_WARMUP moved to separate process with own GIL (v2.2.3.2.3). `queue_p95_ms` dropped from 200ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“510ms ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **0.00ms**.
+- **Per-frame overhead reduced:** Camera zoom save/restore, interactor style update, and Lock Sync skipped during wheel scroll (v2.2.3.4.0). Saves 4ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“6ms per frame.
 - **Subprocess priority:** IDLE_PRIORITY_CLASS for warmup subprocess (v2.2.3.4.0). Eliminates memory-bus contention during scroll.
 - **Reference line optimization:** Round-robin single-target repaint (v2.2.3.3.7). Caps ref-line blocking to ~20ms per tick.
 - **GC suppression hardened:** 2000ms re-enable timer + elevated thresholds kept (v2.2.3.3.2). Eliminates 660ms periodic lag.
 
-### Scroll Performance (Mode A — no download)
+### Scroll Performance (Mode A ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ no download)
 - **Adaptive throttle:** Replaced debounce with adaptive frame-gap throttle (v2.2.3.2.8). ~2x frame rate improvement.
 - **VTK render pipeline:** FXAA off, MSAA disabled, redundant color_mapper.Update() skipped (v2.2.3.2.5).
 - **Stale-event drain:** Skip render for events queued >500ms, render final position once (v2.2.3.2.1).
 
 ### Series Load Performance
-- **Parallel pydicom:** Instance create from 4.3s → 0.8s for 330-file CT (v2.2.3.1.9).
-- **Cast-once filter:** ITK filter 423ms → 151ms for MR 20sl (v2.2.3.1.6).
-- **Download DB insert:** batch_insert from 2217ms → 326ms (v2.2.3.2.0).
+- **Parallel pydicom:** Instance create from 4.3s ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ 0.8s for 330-file CT (v2.2.3.1.9).
+- **Cast-once filter:** ITK filter 423ms ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ 151ms for MR 20sl (v2.2.3.1.6).
+- **Download DB insert:** batch_insert from 2217ms ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ 326ms (v2.2.3.2.0).
 
 ## Version History (v2.2.3.x)
 
 | Version | Commit | Key Change |
 |---|---|---|
 | v2.2.3.4.0 | `5215a89` | Scroll fast-path: skip camera/style/locksync during wheel scroll; subprocess IDLE priority |
-| v2.2.3.3.9 | `af11baf` | Reduce Mode B subprocess contention: ITK 2→1 thread, defer poll, tighten notify |
+| v2.2.3.3.9 | `af11baf` | Reduce Mode B subprocess contention: ITK 2ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢1 thread, defer poll, tighten notify |
 | v2.2.3.3.8 | `125c00a` | Fix size-mismatch detection for incomplete downloads |
 | v2.2.3.3.7 | `f6c4dda` | Round-robin reference line repaint |
 | v2.2.3.3.6 | `f90b608` | Eliminate ref-line paint blocking from scroll loop |
@@ -898,7 +1048,7 @@ This consolidated release note covers the performance optimization sprint from v
 ## Known Issues
 - First-series load still runs in-process (~2.4s via asyncio.to_thread)
 - `update_corners_actors()` updates 6 VTK text actors per scroll (only 2 change)
-- `viewer_db_read` 38–88ms on series load (could be cached)
+- `viewer_db_read` 38ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“88ms on series load (could be cached)
 
 ## Documentation
 - Performance status: `docs/PERFORMANCE_STATUS.md`

@@ -23,6 +23,7 @@ from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_p
     update_study_counts_by_uid, get_connection_database, get_series_path_with_study_pk_and_series_number
 from modules.viewer.viewer_backend_config import (
     BACKEND_PYDICOM,
+    BACKEND_PYDICOM_QT,
     BACKEND_VTK,
     resolve_viewer_backend,
 )
@@ -629,9 +630,17 @@ def _get_cached_metadata(series_pk, instances):
     if cache_key in _series_metadata_cache:
         cached = _series_metadata_cache[cache_key]
         _normalize_metadata_instances(cached)
+        logger.info(
+            "FAST:meta_cache source=hit key=%s series_pk=%s cache_size=%d",
+            cache_key, series_pk, len(_series_metadata_cache),
+        )
         return cached
     
     # Generate metadata
+    logger.info(
+        "FAST:meta_cache source=miss key=%s series_pk=%s cache_size=%d",
+        cache_key, series_pk, len(_series_metadata_cache),
+    )
     metadata = read_series_instances_metadata(series_pk, instances)
     _normalize_metadata_instances(metadata)
     
@@ -1169,6 +1178,90 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
         return
     
     print(f"      Loading from: {series_path}")
+
+    # ─── FAST EARLY EXIT: pydicom_qt skips the entire ITK + SimpleITK pipeline ────
+    # When Qt viewer backend is active, Lightweight2DPipeline decodes slices
+    # on demand from the raw DICOM files — VTK image data is never used for
+    # rendering.  Running apply_filters() + convert_itk2vtk() (6-9s on MR)
+    # was a complete waste of CPU.  We build metadata only and yield a minimal
+    # stub vtkImageData so downstream cache-key checks (vtk is not None) keep
+    # working without changes.  Fixed in v2.3.1.
+    if allow_lazy_backend and viewer_backend == BACKEND_PYDICOM_QT:
+        _qt_meta = None
+        if study_pk:
+            try:
+                from PacsClient.utils.database import find_series_pk_by_number
+                _qt_series_pk = find_series_pk_by_number(series_number, study_pk)
+                if _qt_series_pk:
+                    _qt_instances = get_instances_by_series_pk(_qt_series_pk, group_id=0)
+                    if not _qt_instances:
+                        _, _qt_instances = _get_instances_from_best_group(_qt_series_pk)
+                    if _qt_instances:
+                        _qt_meta = _get_cached_metadata(_qt_series_pk, _qt_instances)
+                        try:
+                            _backfill_instance_orientation(_qt_meta.get('instances', []))
+                        except Exception:
+                            pass
+                        try:
+                            _normalize_metadata_instances(_qt_meta)
+                        except Exception:
+                            pass
+            except Exception as _qt_err:
+                logger.warning(
+                    "pydicom_qt fast-path DB metadata failed (%s); falling back to ITK pipeline",
+                    _qt_err,
+                )
+        if _qt_meta is None:
+            try:
+                _qt_meta = _build_metadata_headers_only(series_path, series_number)
+                try:
+                    _backfill_instance_orientation(_qt_meta.get('instances', []))
+                except Exception:
+                    pass
+                try:
+                    _normalize_metadata_instances(_qt_meta)
+                except Exception:
+                    pass
+            except Exception as _hdr_err:
+                logger.warning(
+                    "pydicom_qt fast-path header-only metadata failed (%s); falling back to ITK pipeline",
+                    _hdr_err,
+                )
+        if _qt_meta and _qt_meta.get('instances'):
+            _ensure_series_meta(_qt_meta).setdefault('series_path', str(series_path))
+            _annotate_backend_metadata(_qt_meta, BACKEND_PYDICOM_QT, '')
+            # Minimal stub vtkImageData — correct dimensions for logging; never rendered.
+            try:
+                _qt_first = (_qt_meta.get('instances') or [{}])[0]
+                _qt_rows = int(_qt_first.get('rows') or 1) or 1
+                _qt_cols = int(_qt_first.get('columns') or 1) or 1
+                _qt_n = len(_qt_meta.get('instances', []))
+                _qt_stub = vtk.vtkImageData()
+                _qt_stub.SetDimensions(_qt_cols, _qt_rows, _qt_n)
+                _qt_stub.AllocateScalars(vtk.VTK_SHORT, 1)
+            except Exception:
+                _qt_stub = None
+            log_stage_timing(
+                logger,
+                component="viewer",
+                function="image_io.load_single_series_by_number",
+                stage="load_single_series_total",
+                start_ms=t_total,
+                source="pydicom_qt_fast",
+            )
+            print(
+                f"      [pydicom_qt] Metadata-only path: ITK+VTK pipeline skipped "
+                f"(slices={len(_qt_meta.get('instances', []))})"
+            )
+            yield _qt_stub, _qt_meta, (patient_pk, study_pk)
+            return
+        logger.warning(
+            "pydicom_qt fast-path produced no instances for series %s; "
+            "falling back to ITK pipeline",
+            series_number,
+        )
+    # ─────────────────────────────────────────────────────────────────────────────
+
     selected_backend = BACKEND_VTK if not allow_lazy_backend else viewer_backend
     resolution = resolve_viewer_backend(metadata=None, settings=selected_backend)
     active_backend = str(resolution.get("backend", BACKEND_VTK))

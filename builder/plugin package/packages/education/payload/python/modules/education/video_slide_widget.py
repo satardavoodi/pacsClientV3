@@ -8,8 +8,6 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from pathlib import Path
 
-from PacsClient.utils.theme_manager import get_theme_manager
-
 
 class VideoSlideWidget(QWidget):
     """Widget for displaying video in presentation."""
@@ -20,16 +18,8 @@ class VideoSlideWidget(QWidget):
         super().__init__(parent)
         self.video_path = video_path
         self.autoplay = autoplay
-        self.theme_manager = get_theme_manager()
-        self._theme = self.theme_manager.current_theme()
-        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self.setup_ui()
         self.load_video()
-    
-    def _on_theme_changed(self, theme):
-        """Handle theme changes."""
-        self._theme = theme or self.theme_manager.current_theme()
-        self._apply_theme_styles()
     
     def setup_ui(self):
         """Setup the video player UI."""
@@ -39,7 +29,12 @@ class VideoSlideWidget(QWidget):
         
         # Video widget
         self.video_widget = QVideoWidget()
-        self.video_widget.storeVideoWidget = True
+        self.video_widget.setStyleSheet("""
+            QVideoWidget {
+                background-color: #000000;
+                border-radius: 5px;
+            }
+        """)
         layout.addWidget(self.video_widget, stretch=1)
         
         # Media player setup
@@ -55,8 +50,14 @@ class VideoSlideWidget(QWidget):
         self.player.errorOccurred.connect(self.handle_error)
         
         # Controls panel
-        self.controls_widget = QWidget()
-        controls_layout = QVBoxLayout(self.controls_widget)
+        controls_widget = QWidget()
+        controls_widget.setStyleSheet("""
+            QWidget {
+                background-color: #2d3748;
+                border-radius: 5px;
+            }
+        """)
+        controls_layout = QVBoxLayout(controls_widget)
         controls_layout.setContentsMargins(10, 5, 10, 5)
         controls_layout.setSpacing(5)
         
@@ -64,6 +65,25 @@ class VideoSlideWidget(QWidget):
         self.progress_slider = QSlider(Qt.Horizontal)
         self.progress_slider.setRange(0, 0)
         self.progress_slider.sliderMoved.connect(self.set_position)
+        self.progress_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                border: 1px solid #4a5568;
+                height: 6px;
+                background: #374151;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #3182ce;
+                border: 1px solid #2c5aa0;
+                width: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #3182ce;
+                border-radius: 3px;
+            }
+        """)
         controls_layout.addWidget(self.progress_slider)
         
         # Buttons and time display
@@ -75,6 +95,16 @@ class VideoSlideWidget(QWidget):
         self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
         self.play_pause_btn.setFixedSize(40, 40)
         self.play_pause_btn.clicked.connect(self.toggle_play_pause)
+        self.play_pause_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3182ce;
+                border: none;
+                border-radius: 20px;
+            }
+            QPushButton:hover {
+                background-color: #2c5aa0;
+            }
+        """)
         buttons_layout.addWidget(self.play_pause_btn)
         
         # Stop button
@@ -82,19 +112,32 @@ class VideoSlideWidget(QWidget):
         self.stop_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
         self.stop_btn.setFixedSize(40, 40)
         self.stop_btn.clicked.connect(self.stop_video)
+        self.stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e53e3e;
+                border: none;
+                border-radius: 20px;
+            }
+            QPushButton:hover {
+                background-color: #c53030;
+            }
+        """)
         buttons_layout.addWidget(self.stop_btn)
         
         # Time labels
         self.time_label = QLabel("00:00")
+        self.time_label.setStyleSheet("color: #e2e8f0; font-weight: bold;")
         buttons_layout.addWidget(self.time_label)
         
         self.duration_label = QLabel("/ 00:00")
+        self.duration_label.setStyleSheet("color: #a0aec0;")
         buttons_layout.addWidget(self.duration_label)
         
         buttons_layout.addStretch()
         
         # Volume slider
         volume_label = QLabel("Volume:")
+        volume_label.setStyleSheet("color: #e2e8f0;")
         buttons_layout.addWidget(volume_label)
         
         self.volume_slider = QSlider(Qt.Horizontal)
@@ -102,97 +145,11 @@ class VideoSlideWidget(QWidget):
         self.volume_slider.setValue(70)
         self.volume_slider.setFixedWidth(100)
         self.volume_slider.valueChanged.connect(self.change_volume)
+        self.volume_slider.setStyleSheet(self.progress_slider.styleSheet())
         buttons_layout.addWidget(self.volume_slider)
         
         controls_layout.addLayout(buttons_layout)
-        layout.addWidget(self.controls_widget)
-        
-        self._apply_theme_styles()
-    
-    def _apply_theme_styles(self):
-        """Apply theme-based styling to all UI elements."""
-        t = self._theme
-        
-        # Video widget - deep background
-        self.video_widget.setStyleSheet(f"""
-            QVideoWidget {{
-                background-color: {t['panel_deep_bg']};
-                border-radius: 5px;
-            }}
-        """)
-        
-        # Controls widget background
-        self.controls_widget.setStyleSheet(f"""
-            QWidget {{
-                background-color: {t['panel_alt_bg']};
-                border-radius: 5px;
-            }}
-        """)
-        
-        # Progress slider
-        self.progress_slider.setStyleSheet(f"""
-            QSlider::groove:horizontal {{
-                border: 1px solid {t['border']};
-                height: 6px;
-                background: {t['panel_bg']};
-                border-radius: 3px;
-            }}
-            QSlider::handle:horizontal {{
-                background: {t['accent']};
-                border: 1px solid {t['accent_hover']};
-                width: 14px;
-                margin: -5px 0;
-                border-radius: 7px;
-            }}
-            QSlider::sub-page:horizontal {{
-                background: {t['accent']};
-                border-radius: 3px;
-            }}
-        """)
-        
-        # Play/Pause button
-        self.play_pause_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {t['accent']};
-                border: none;
-                border-radius: 20px;
-                color: {t['button_text']};
-            }}
-            QPushButton:hover {{
-                background-color: {t['accent_hover']};
-            }}
-        """)
-        
-        # Stop button (danger/error color)
-        self.stop_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {t['danger']};
-                border: none;
-                border-radius: 20px;
-                color: {t['button_text']};
-            }}
-            QPushButton:hover {{
-                background-color: {t['warning']};
-            }}
-        """)
-        
-        # Time label
-        self.time_label.setStyleSheet(f"color: {t['text_primary']}; font-weight: bold;")
-        
-        # Duration label (muted)
-        self.duration_label.setStyleSheet(f"color: {t['text_secondary']};")
-        
-        # Volume label
-        volume_label = None
-        for widget in self.findChildren(QLabel):
-            if widget.text() == "Volume:":
-                volume_label = widget
-                break
-        if volume_label:
-            volume_label.setStyleSheet(f"color: {t['text_primary']};")
-        
-        # Volume slider
-        self.volume_slider.setStyleSheet(self.progress_slider.styleSheet())
+        layout.addWidget(controls_widget)
     
     def load_video(self):
         """Load the video file."""
@@ -255,18 +212,17 @@ class VideoSlideWidget(QWidget):
     
     def show_error(self, message):
         """Show error message."""
-        t = self._theme
         error_label = QLabel(message)
         error_label.setAlignment(Qt.AlignCenter)
-        error_label.setStyleSheet(f"""
-            QLabel {{
-                color: {t['danger']};
+        error_label.setStyleSheet("""
+            QLabel {
+                color: #e53e3e;
                 font-size: 12pt;
                 font-weight: bold;
-                background-color: {t['panel_alt_bg']};
+                background-color: #2d3748;
                 padding: 20px;
                 border-radius: 5px;
-            }}
+            }
         """)
         # Replace video widget with error label
         self.layout().replaceWidget(self.video_widget, error_label)
@@ -293,8 +249,6 @@ class SimpleVideoWidget(QWidget):
     def __init__(self, video_path, parent=None):
         super().__init__(parent)
         self.video_path = video_path
-        self.theme_manager = get_theme_manager()
-        self._theme = self.theme_manager.current_theme()
         self.setup_ui()
         self.load_video()
     
@@ -304,8 +258,7 @@ class SimpleVideoWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         
         self.video_widget = QVideoWidget()
-        t = self._theme
-        self.video_widget.setStyleSheet(f"background-color: {t['panel_deep_bg']};")
+        self.video_widget.setStyleSheet("background-color: #000000;")
         layout.addWidget(self.video_widget)
         
         self.player = QMediaPlayer()

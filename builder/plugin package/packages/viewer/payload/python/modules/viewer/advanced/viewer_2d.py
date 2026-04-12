@@ -1496,9 +1496,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.Render()
         return parallel_scale
 
-    def zoom_to_fit(self, skip_render=False):
+    def zoom_to_fit(self, skip_render=False, _deferred_retry: int = 0):
         try:
-            logger.debug(f"[ZOOM_TO_FIT] START - skip_render={skip_render}")
+            logger.debug(f"[ZOOM_TO_FIT] START - skip_render={skip_render} retry={_deferred_retry}")
             
             self.renderer.ResetCamera()
             camera = self.renderer.GetActiveCamera()
@@ -1516,6 +1516,30 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
             logger.debug(f"[ZOOM_TO_FIT]   Image dimensions: {image_width}x{image_height}")
             logger.debug(f"[ZOOM_TO_FIT]   Window dimensions: {window_width}x{window_height}")
+
+            # Guard: if window not yet sized (0×0), defer zoom to next event
+            # loop iteration so Qt layout has a chance to resolve dimensions.
+            if window_width <= 0 or window_height <= 0:
+                if _deferred_retry < 3:
+                    logger.warning(
+                        f"[ZOOM_TO_FIT] Window size {window_width}x{window_height} invalid "
+                        f"— deferring retry {_deferred_retry + 1}/3"
+                    )
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(
+                        50,
+                        lambda sr=skip_render, r=_deferred_retry + 1:
+                            self.zoom_to_fit(skip_render=sr, _deferred_retry=r),
+                    )
+                    return None
+                else:
+                    logger.error("[ZOOM_TO_FIT] Window still 0×0 after 3 retries — using fallback")
+                    # Fallback: use image physical height as parallel scale
+                    spacing = self.vtk_image_data.GetSpacing()
+                    fallback_scale = (image_height * spacing[1]) / 2.0
+                    if fallback_scale > 0:
+                        camera.SetParallelScale(fallback_scale)
+                    return fallback_scale
 
             spacing = self.vtk_image_data.GetSpacing()
 

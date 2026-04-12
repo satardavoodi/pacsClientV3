@@ -1,0 +1,120 @@
+[
+  {
+    "ts": 0.02568990000145277,
+    "wall_ts": 1775853002.656379,
+    "event_type": "SCENARIO_BEGIN",
+    "thread_name": "MainThread",
+    "seq": 0,
+    "scenario": "s01_small_mri",
+    "modality": "MR",
+    "slice_count": 25
+  },
+  {
+    "ts": 0.026206700000329874,
+    "wall_ts": 1775853002.6568947,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 1,
+    "label": "early_progress_batch"
+  },
+  {
+    "ts": 0.02707620000001043,
+    "wall_ts": 1775853002.6577642,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 2,
+    "series_number": "1",
+    "downloaded": 5,
+    "total": 25
+  },
+  {
+    "ts": 0.027317500003846362,
+    "wall_ts": 1775853002.6580043,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 3,
+    "label": "mid_progress_batches"
+  },
+  {
+    "ts": 0.02799840000079712,
+    "wall_ts": 1775853002.6586869,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 4,
+    "series_number": "1",
+    "downloaded": 5,
+    "total": 25
+  },
+  {
+    "ts": 0.02822040000319248,
+    "wall_ts": 1775853002.658907,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 5,
+    "series_number": "1",
+    "downloaded": 10,
+    "total": 25
+  },
+  {
+    "ts": 0.028390500003297348,
+    "wall_ts": 1775853002.6590772,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 6,
+    "series_number": "1",
+    "downloaded": 15,
+    "total": 25
+  },
+  {
+    "ts": 0.028518999999505468,
+    "wall_ts": 1775853002.6592057,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 7,
+    "label": "near_complete_progress"
+  },
+  {
+    "ts": 0.02862440000171773,
+    "wall_ts": 1775853002.659311,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 8,
+    "series_number": "1",
+    "downloaded": 23,
+    "total": 25
+  },
+  {
+    "ts": 0.028737100001308136,
+    "wall_ts": 1775853002.6594238,
+    "event_type": "SCENARIO_STEP",
+    "thread_name": "MainThread",
+    "seq": 9,
+    "label": "download_complete"
+  },
+  {
+    "ts": 0.028822000000218395,
+    "wall_ts": 1775853002.6595087,
+    "event_type": "SERIES_PROGRESS",
+    "thread_name": "MainThread",
+    "seq": 10,
+    "series_number": "1",
+    "downloaded": 25,
+    "total": 25
+  },
+  {
+    "ts": 0.02896070000133477,
+    "wall_ts": 1775853002.6596472,
+    "event_type": "SERIES_DOWNLOAD_COMPLETE",
+    "thread_name": "MainThread",
+    "seq": 11,
+    "series_number": "1"
+  },
+  {
+    "ts": 0.029235800000606105,
+    "wall_ts": 1775853002.6599226,
+    "event_type": "SCENARIO_END",
+    "thread_name": "MainThread",
+    "seq": 12,
+    "scenario": "s01_small_mri"
+  }
+]

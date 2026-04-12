@@ -6,11 +6,36 @@ Provides CD/DVD burning functionality using Windows IMAPI2 API
 import os
 import sys
 import logging
+import re
 from pathlib import Path
 from typing import List, Optional, Callable, Dict, Tuple
 import platform
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_fileset_label(label: Optional[str], default: str = "DICOM") -> str:
+    """Return a DICOM File-set ID safe label.
+
+    DICOM PS3.10 File-set IDs are limited to 16 characters and should use
+    uppercase letters, digits and underscore for maximum interoperability.
+    """
+    value = (label or "").strip().upper()
+    value = re.sub(r"[^A-Z0-9_]", "_", value)
+    value = re.sub(r"_+", "_", value).strip("_")
+    value = value[:16].strip("_")
+
+    return value or default
+
+
+def normalize_volume_label(label: Optional[str], default: str = "DICOM") -> str:
+    """Return a media volume label safe for broad Windows compatibility."""
+    value = (label or "").strip().upper()
+    value = re.sub(r"[^A-Z0-9_\- ]", "_", value)
+    value = re.sub(r"\s+", " ", value).strip(" _-")
+    value = value[:32].strip(" _-")
+
+    return value or default
 
 # Check if we're on Windows and can use IMAPI2
 IMAPI2_AVAILABLE = False
@@ -227,6 +252,9 @@ class CDBurner:
             source_path = Path(source_folder)
             if not source_path.exists():
                 return False, f"Source folder does not exist: {source_folder}"
+
+            normalized_label = normalize_fileset_label(disc_label)
+            volume_label = normalize_volume_label(disc_label, default=normalized_label)
             
             self._report_progress(0, "Preparing disc...")
             
@@ -249,8 +277,23 @@ class CDBurner:
             file_system = comtypes.client.CreateObject("IMAPI2FS.MsftFileSystemImage")
             
             # Set file system properties
-            file_system.VolumeName = disc_label[:32]  # Max 32 chars
-            file_system.FileSystemsToCreate = 3  # ISO9660 + Joliet
+            file_system.VolumeName = volume_label
+
+            media_type = None
+            try:
+                media_type = disc_format.CurrentPhysicalMediaType
+            except Exception:
+                media_type = None
+
+            # Prefer strict ISO9660 for CD media to stay closer to DICOM CD-R
+            # expectations. For other media we keep the previous ISO9660+Joliet
+            # behavior because UDF support requires more explicit handling.
+            cd_media_types = {1, 2, 3}
+            file_system.FileSystemsToCreate = 1 if media_type in cd_media_types else 3
+            try:
+                disc_format.ForceMediaToBeClosed = True
+            except Exception:
+                pass
             
             # Import existing session if not blank
             try:

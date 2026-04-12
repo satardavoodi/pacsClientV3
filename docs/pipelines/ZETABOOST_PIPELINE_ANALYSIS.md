@@ -718,6 +718,6 @@ def _on_series_partially_loaded(self, series_number, vtk_data, metadata, progres
 | `PacsClient/pacs/patient_tab/utils/image_filters.py` | 1407 | ITK filter chain |
 | `PacsClient/pacs/patient_tab/utils/utils.py` | ~300 | convert_itk2vtk + helpers |
 | `PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget.py` | ~950 | VTK render widget |
-| `PacsClient/pacs/patient_tab/viewers/viewer_2d.py` | ~1200 | 2D viewer with reslice |
+| `modules/viewer/advanced/viewer_2d.py` | ~1200 | 2D viewer with reslice |
 | `PacsClient/zeta_download_manager/download/executor.py` | ~500 | Download orchestration |
 | `PacsClient/pacs/workstation_ui/home_ui/home_ui.py` | ~4000 | Patient list + tab opening |

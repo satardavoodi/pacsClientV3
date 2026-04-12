@@ -70,7 +70,7 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
     )
     safe_backend_forced = bool(
         forced_backend in {BACKEND_PYDICOM, BACKEND_PYDICOM_QT}
-        and configured_backend == BACKEND_VTK
+        and configured_backend in {BACKEND_VTK, BACKEND_PYDICOM}
     )
     requested_backend = forced_backend if safe_backend_forced else configured_backend
 
@@ -107,15 +107,15 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
             backend = BACKEND_VTK
             metadata_complete = False
 
-    if safe_backend_forced and backend == BACKEND_VTK and instances:
+    if safe_backend_forced and backend in {BACKEND_VTK, BACKEND_PYDICOM} and instances:
         backend = BACKEND_PYDICOM_QT
         metadata_complete = True
 
-    # NOTE: pydicom_2d renders through VTK.  With VTK_DEFAULT_OPENGL_WINDOW
-    # no longer forced to vtkOSOpenGLRenderWindow (see aipacs_runtime.py),
-    # VTK software rendering via Mesa works correctly.  The previous
-    # auto-promotion to pydicom_qt is removed so that VTK-based tooling
-    # (toolbar, zoom, reference lines, measurements) remains functional.
+    # NOTE: pydicom_2d renders through VTK.  When Mesa software-rendering
+    # DLLs are present the VTK pipeline works correctly.  When they are
+    # missing, build_windows_graphics_environment() sets
+    # AIPACS_FORCE_SAFE_VIEWER_BACKEND=pydicom_qt and the guard above
+    # promotes pydicom_2d → pydicom_qt automatically (same as vtk_simpleitk).
 
     return {
         "backend": backend,

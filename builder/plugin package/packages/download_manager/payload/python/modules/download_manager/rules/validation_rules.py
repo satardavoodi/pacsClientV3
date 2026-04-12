@@ -63,11 +63,30 @@ class ValidationRules:
             if self.state.exists(task.study_uid):
                 existing_state = self.state.get(task.study_uid)
                 logger.info(f"R17a: Study exists in StateStore (Status: {existing_state.status.value})")
+
+                # Allow resume for incomplete downloads (non-terminal states)
+                # Terminal states: COMPLETED, CANCELLED — these should still block
+                if existing_state.status in (DownloadStatus.COMPLETED, DownloadStatus.CANCELLED):
+                    return RuleResult(
+                        allowed=False,
+                        reason=f"Download already exists (Status: {existing_state.status.value})",
+                        action="skip",
+                        metadata={'existing_state': existing_state}
+                    )
+
+                # Non-terminal (PENDING, DOWNLOADING, PAUSED, FAILED):
+                # Allow caller to resume / re-trigger the download
+                logger.info(
+                    f"R17a: Study incomplete (Status: {existing_state.status.value}) — allowing resume"
+                )
                 return RuleResult(
                     allowed=False,
                     reason=f"Download already exists (Status: {existing_state.status.value})",
-                    action="skip",
-                    metadata={'existing_state': existing_state}
+                    action="resume",
+                    metadata={
+                        'existing_state': existing_state,
+                        'should_resume': True,
+                    }
                 )
             
             # R17b: Check Database (persistent, completed downloads)
@@ -76,16 +95,42 @@ class ValidationRules:
                 try:
                     db_progress = get_download_progress(task.study_uid)
                     if db_progress and db_progress.get('status') == 'Completed':
-                        logger.info(f"R17b: Study already completed in database ({db_progress.get('progress_percent', 0)}%)")
-                        return RuleResult(
-                            allowed=False,
-                            reason=f"Study already downloaded (Database: Completed, {db_progress.get('downloaded_count', 0)} images)",
-                            action="skip",
-                            metadata={
-                                'database_state': db_progress,
-                                'should_load_local': True  # Signal to caller to load from local files
-                            }
-                        )
+                        # Verify files actually exist on disk for at least one series
+                        # before trusting the "Completed" status — guards against
+                        # data-integrity issues (DB says done but files are missing).
+                        files_actually_complete = True
+                        if task.output_dir and task.series_list:
+                            import os
+                            from pathlib import Path
+                            study_dir = Path(task.output_dir)
+                            for si in task.series_list:
+                                sdir = study_dir / str(si.series_number)
+                                if not sdir.exists():
+                                    files_actually_complete = False
+                                    break
+                                dcm_count = sum(
+                                    1 for f in os.listdir(sdir)
+                                    if f.lower().endswith('.dcm')
+                                )
+                                if dcm_count < si.image_count:
+                                    files_actually_complete = False
+                                    break
+
+                        if files_actually_complete:
+                            logger.info(f"R17b: Study already completed in database ({db_progress.get('progress_percent', 0)}%)")
+                            return RuleResult(
+                                allowed=False,
+                                reason=f"Study already downloaded (Database: Completed, {db_progress.get('downloaded_count', 0)} images)",
+                                action="skip",
+                                metadata={
+                                    'database_state': db_progress,
+                                    'should_load_local': True  # Signal to caller to load from local files
+                                }
+                            )
+                        else:
+                            logger.warning(
+                                "R17b: Database says Completed but files incomplete on disk — allowing re-download"
+                            )
                 except Exception as e:
                     logger.warning(f"R17b: Database check failed: {e} (continuing anyway)")
             

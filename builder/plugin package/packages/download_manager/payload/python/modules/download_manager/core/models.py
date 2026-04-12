@@ -208,6 +208,11 @@ class DownloadState:
     # Pause tracking
     is_auto_paused: bool = False  # True if paused by preemption, False if manual
     
+    # Series-level priority tracking
+    # When a specific series is being viewed, it becomes CRITICAL and should download first.
+    # The rest of the opened patient's series remain HIGH.
+    viewed_series_number: Optional[str] = None  # Series number currently viewed (CRITICAL)
+    
     @property
     def is_active(self) -> bool:
         """Check if download is active"""

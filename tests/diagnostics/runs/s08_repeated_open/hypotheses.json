@@ -1,0 +1,260 @@
+{
+  "hypotheses": [
+    {
+      "code": "H1",
+      "title": "Metadata scan stalls main thread (CT 400+ slices)",
+      "score": 0.15,
+      "verdict": "POSSIBLE",
+      "patch_allowed": false,
+      "blocking_reason": "Required evidence 'metadata_refresh_max_gt_200ms' not met: max=0.0ms (threshold=200ms)",
+      "patch_conditions": [
+        "metadata_refresh_max_ms > 200ms in ≥ 3 s03_large_ct runs",
+        "modality = CT confirmed",
+        "Fix: offload _refresh_stored_metadata_instances to background thread"
+      ],
+      "evidence": [
+        {
+          "name": "metadata_refresh_max_gt_200ms",
+          "met": false,
+          "weight": 0.35,
+          "required": true,
+          "details": "max=0.0ms (threshold=200ms)"
+        },
+        {
+          "name": "fs04_metadata_stall_detected",
+          "met": false,
+          "weight": 0.2,
+          "required": false,
+          "details": "FS-04 failure signature fired"
+        },
+        {
+          "name": "modality_is_ct",
+          "met": true,
+          "weight": 0.15,
+          "required": false,
+          "details": "modality=CT"
+        },
+        {
+          "name": "multiple_refresh_calls",
+          "met": false,
+          "weight": 0.1,
+          "required": false,
+          "details": "refresh_calls=0"
+        },
+        {
+          "name": "multi_run_confirmed",
+          "met": false,
+          "weight": 0.1,
+          "required": false,
+          "details": "run_count=1 (need ≥3 for confirmation)"
+        },
+        {
+          "name": "mean_refresh_gt_100ms",
+          "met": false,
+          "weight": 0.1,
+          "required": false,
+          "details": "mean=0.0ms"
+        }
+      ]
+    },
+    {
+      "code": "H2",
+      "title": "Teardown-decode race → UAF crash",
+      "score": 0.0,
+      "verdict": "NO_EVIDENCE",
+      "patch_allowed": false,
+      "blocking_reason": "Required evidence 'fs14_loader_outlives_viewer' not met: FS-14: loader still in registry after widget destroyed",
+      "patch_conditions": [
+        "FS-14 in ≥ 1 real run (AIPACS_DIAG_MODE=1)",
+        "Fix: weak-ref guard in _connect_lazy_loader_signals"
+      ],
+      "evidence": [
+        {
+          "name": "fs14_loader_outlives_viewer",
+          "met": false,
+          "weight": 0.4,
+          "required": true,
+          "details": "FS-14: loader still in registry after widget destroyed"
+        },
+        {
+          "name": "fs06_loader_released_early",
+          "met": false,
+          "weight": 0.25,
+          "required": false,
+          "details": "FS-06: grow called after loader release"
+        },
+        {
+          "name": "fs11_slice_ready_before_bind",
+          "met": false,
+          "weight": 0.2,
+          "required": false,
+          "details": "FS-11: decode_slice_ready arrived before backend bind"
+        },
+        {
+          "name": "decode_failed_signals",
+          "met": false,
+          "weight": 0.15,
+          "required": false,
+          "details": "decode_failed_count=0"
+        }
+      ]
+    },
+    {
+      "code": "H3",
+      "title": "Series-generation mismatch → wrong-series display",
+      "score": 0.3,
+      "verdict": "POSSIBLE",
+      "patch_allowed": false,
+      "blocking_reason": "Required evidence 'fs15_generation_mismatch' not met: FS-15: slice_ready for stale generation",
+      "patch_conditions": [
+        "FS-15 in ≥ 1 s06_tab_switch run",
+        "Fix: generation-id check in _on_lazy_slice_ready"
+      ],
+      "evidence": [
+        {
+          "name": "fs15_generation_mismatch",
+          "met": false,
+          "weight": 0.7,
+          "required": true,
+          "details": "FS-15: slice_ready for stale generation"
+        },
+        {
+          "name": "series_switch_calls",
+          "met": true,
+          "weight": 0.3,
+          "required": false,
+          "details": "series switches performed"
+        }
+      ]
+    },
+    {
+      "code": "H4",
+      "title": "Done-guard collision on re-open → progressive display dead on second open",
+      "score": 1.0,
+      "verdict": "CONFIRMED",
+      "patch_allowed": false,
+      "blocking_reason": null,
+      "patch_conditions": [
+        "FS-18 in s08_repeated_open ≥ 2/3 runs",
+        "_progressive_display_done not reset between tab re-opens",
+        "Fix: reset done-guard key on tab close / series eviction"
+      ],
+      "evidence": [
+        {
+          "name": "fs18_done_guard_false_positive",
+          "met": true,
+          "weight": 0.35,
+          "required": true,
+          "details": "FS-18: done-guard set before any grow"
+        },
+        {
+          "name": "fs02_done_never_reset",
+          "met": true,
+          "weight": 0.3,
+          "required": false,
+          "details": "FS-02: done-guard never reset between opens"
+        },
+        {
+          "name": "fs09_progressive_never_started",
+          "met": true,
+          "weight": 0.2,
+          "required": false,
+          "details": "FS-09: progressive never started despite signals"
+        },
+        {
+          "name": "repeated_open_scenario",
+          "met": true,
+          "weight": 0.15,
+          "required": false,
+          "details": "scenario=s08_repeated_open"
+        }
+      ]
+    },
+    {
+      "code": "H5",
+      "title": "Asyncio/thread inflight stuck permanently → viewer frozen indefinitely",
+      "score": 0.0,
+      "verdict": "NO_EVIDENCE",
+      "patch_allowed": false,
+      "blocking_reason": "Required evidence 'fs01_inflight_stuck' not met: FS-01: inflight flag set but never cleared",
+      "patch_conditions": [
+        "FS-01 in ≥ 1 real run",
+        "inflight flag confirmed stuck > 10s",
+        "Fix: timeout-based inflight release in _start_progressive_display thread path"
+      ],
+      "evidence": [
+        {
+          "name": "fs01_inflight_stuck",
+          "met": false,
+          "weight": 0.4,
+          "required": true,
+          "details": "FS-01: inflight flag set but never cleared"
+        },
+        {
+          "name": "fs16_inflight_task_orphan",
+          "met": false,
+          "weight": 0.25,
+          "required": false,
+          "details": "FS-16: switch done but inflight not cleared"
+        },
+        {
+          "name": "fs20_timer_never_fires",
+          "met": false,
+          "weight": 0.2,
+          "required": false,
+          "details": "FS-20: grow timer active but no grow calls for >5s"
+        },
+        {
+          "name": "fs08_signal_queue_overflow",
+          "met": false,
+          "weight": 0.15,
+          "required": false,
+          "details": "FS-08: 50+ progress signals queued before first grow"
+        }
+      ]
+    },
+    {
+      "code": "H6",
+      "title": "Completion layer miss → viewer stuck at N-5 slices",
+      "score": 0.0,
+      "verdict": "NO_EVIDENCE",
+      "patch_allowed": false,
+      "blocking_reason": "Required evidence 'fs13_completion_layer2_missed' not met: FS-13: download_complete but final grow < expected",
+      "patch_conditions": [
+        "FS-13 in ≥ 1 s05_scroll_during_completion or s03_large_ct run",
+        "viewer shows < expected slices after download_complete",
+        "Fix: strengthen Layer 2b final grow before exit_progressive_mode"
+      ],
+      "evidence": [
+        {
+          "name": "fs13_completion_layer2_missed",
+          "met": false,
+          "weight": 0.4,
+          "required": true,
+          "details": "FS-13: download_complete but final grow < expected"
+        },
+        {
+          "name": "fs03_stale_exhausted",
+          "met": false,
+          "weight": 0.25,
+          "required": false,
+          "details": "FS-03: stale retries exhausted before final signal"
+        },
+        {
+          "name": "fs19_progressive_mode_lost",
+          "met": false,
+          "weight": 0.2,
+          "required": false,
+          "details": "FS-19: progressive mode exited mid-download"
+        },
+        {
+          "name": "grow_count_lt_expected",
+          "met": false,
+          "weight": 0.15,
+          "required": false,
+          "details": "final grow count < expected total"
+        }
+      ]
+    }
+  ]
+}

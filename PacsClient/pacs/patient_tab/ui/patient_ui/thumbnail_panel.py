@@ -3,6 +3,7 @@ Thumbnail Panel Component
 کامپوننت جداگانه برای مدیریت تامب‌نیل‌ها
 """
 
+import logging
 import os
 import time
 from pathlib import Path
@@ -17,6 +18,9 @@ from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachmen
     check_and_get_thumbnails, get_name_file_from_path
 from modules.storage.thumbnail_store import ThumbnailStore, make_pixmap_from_bytes  # type: ignore
 from PacsClient.utils.theme_manager import get_theme_manager
+
+
+logger = logging.getLogger(__name__)
 
 
 class ThumbnailPanel(QWidget):
@@ -409,6 +413,7 @@ class ThumbnailPanel(QWidget):
 
         # Add to grid in single column layout
         self.thumb_grid.addWidget(thumb_widget, thumb_index, 0, 1, 1)
+        logger.info("[THUMB_READY] series=%s index=%d", series_name, thumb_index)
         
         # Update count label
         if hasattr(self, 'thumb_count_label'):
@@ -533,6 +538,7 @@ class ThumbnailPanel(QWidget):
                     print(f"Error processing thumbnail {idx}: {str(e)}")
             
             self.current_thumbnail_index = end_idx
+            logger.info("[THUMB_BATCH_FLUSH] flushed=%d total=%d", end_idx - start_idx, len(self.thumbnails_to_display))
             
             # Update progress count
             if hasattr(self, 'thumb_count_label'):
@@ -833,6 +839,7 @@ class ThumbnailPanel(QWidget):
                     print(f"Error processing cached thumbnail {idx}: {str(e)}")
             
             self.current_cached_index = end_idx
+            logger.info("[THUMB_BATCH_FLUSH] cached flushed=%d total=%d", end_idx - start_idx, len(self.cached_thumbnails_to_display))
             
             # Update progress count
             if hasattr(self, 'thumb_count_label'):

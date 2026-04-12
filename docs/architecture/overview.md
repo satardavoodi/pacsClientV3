@@ -1,6 +1,6 @@
 ﻿# Architecture Overview
 
-> **Version:** v2.3.0 | **Updated:** 2026-04-04
+> **Version:** v2.3.1 | **Updated:** 2026-04-13
 
 ## Purpose
 
@@ -29,7 +29,7 @@ The current architecture is serviceable, but the repository had drifted away fro
 
 This layer owns Qt widgets, tab management, user actions, and view composition.
 
-As of v2.3.0, `HomePanelWidget` follows a **Thin Controller + Service Layer**
+As of v2.3.1, `HomePanelWidget` follows a **Thin Controller + Service Layer**
 pattern.  See `docs/architecture/home-ui-services.md` for full details.
 
 ### Application and Orchestration Layer
@@ -43,7 +43,7 @@ This layer coordinates workflows, turns UI actions into tasks, and mediates acce
 
 ### Imaging and Domain Layer
 
-- `PacsClient/pacs/patient_tab/viewers/`
+- `modules/viewer/`
 - `PacsClient/pacs/patient_tab/orthogonal_mpr/`
 - `PacsClient/pacs/patient_tab/zeta mpr/`
 - `PacsClient/pacs/patient_tab/zeta_boost/`
@@ -96,8 +96,8 @@ connection pool rules and commit safety.
 
 ### Viewer Modules
 
-- Fast viewer: `lightweight_2d_pipeline.py` and related pydicom backends
-- Advanced viewer: `viewer_2d.py`, advanced rendering helpers, AI overlays, and heavy viewer controllers
+- Fast viewer: `modules/viewer/fast/` (`pydicom_qt`, `pydicom_2d`, bridge/pipeline)
+- Advanced viewer: `modules/viewer/advanced/` (`viewer_2d.py`, tools, 3D helpers)
 - Orthogonal MPR: `orthogonal_mpr/`
 - Zeta MPR: `zeta mpr/`
 
@@ -105,6 +105,8 @@ The practical rule is:
 
 - use the fast viewer for lightweight browsing and download-time interaction
 - use the advanced viewer and MPR stack for richer tools, measurements, and reconstruction workflows
+
+Canonical viewer architecture/debug docs: `docs/viewer/README.md`.
 
 ### Download and Cache Modules
 
@@ -114,7 +116,7 @@ The practical rule is:
 - thumbnail and study caches under `generated-files/`, `thumbnails/`, and database-backed state
 
 Download orchestration, progress tracking, resumability, priority management, and warmup caching are concentrated here.
-The download manager follows a **state machine + rule engine + thin coordinator** architecture (v2.3.0).
+The download manager follows a **state machine + rule engine + thin coordinator** architecture (v2.3.1).
 
 ### Education Module
 

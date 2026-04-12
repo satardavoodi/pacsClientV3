@@ -617,12 +617,14 @@ class ToolbarManager:
         self.tool_selected = None
         self.tools_button = {}
         self.measurement_tools = {
+            self.tool_access.RULER,
             self.tool_access.ANGLE,
             self.tool_access.TWO_LINE_ANGLE,
             self.tool_access.ARROW,
             self.tool_access.TEXT,
             self.tool_access.ROI,
             self.tool_access.CIRCLE_ROI,
+            self.tool_access.ERASER,
         }
         self.mpr_dropdown_tools = {
             self.tool_access.CURVED_MPR,

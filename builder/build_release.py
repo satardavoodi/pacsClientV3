@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -15,12 +16,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from aipacs_runtime import (
     APP_NAME,
+    CORE_COMPONENT_ID,
+    CORE_COMPONENT_TITLE,
     INSTALLATION_PROFILE_FILENAME,
     MODULE_CATALOG,
     MODULE_PACKAGE_FEED_FILENAME,
     MODULE_PACKAGE_FORMAT_VERSION,
     MODULE_PACKAGE_MANIFEST_FILENAME,
     MODULE_PACKAGE_PAYLOAD_DIRNAME,
+    UPDATE_FEED_FILENAME,
     advanced_mpr_runtime_root,
     detect_software_graphics_support,
     default_installation_profile,
@@ -34,6 +38,9 @@ STAGE_DIR = OUTPUT_DIR / "stage"
 MANIFEST_DIR = STAGE_DIR / "manifest"
 INSTALLER_OUTPUT_DIR = OUTPUT_DIR / "installer"
 PACKAGE_OUTPUT_DIR = OUTPUT_DIR / "packages"
+UPDATES_OUTPUT_DIR = OUTPUT_DIR / "updates"
+UPDATES_CORE_DIR = UPDATES_OUTPUT_DIR / "core"
+UPDATES_MODULES_DIR = UPDATES_OUTPUT_DIR / "modules"
 STAGED_PLUGIN_PACKAGE_DIR = STAGE_DIR / "plugin_packages"
 SPEC_FILE = BUILDER_DIR / "spec" / "appA_workstation.spec"
 INSTALLER_SCRIPT = BUILDER_DIR / "installer" / "AIPacs_Setup.iss"
@@ -93,7 +100,7 @@ def run_command(args: list[str], cwd: Path | None = None) -> None:
 
 def clean_outputs(preserve_dist: bool = False) -> None:
     print_step("Cleaning previous release outputs")
-    targets = [BUILD_DIR, STAGE_DIR, INSTALLER_OUTPUT_DIR, PACKAGE_OUTPUT_DIR]
+    targets = [BUILD_DIR, STAGE_DIR, INSTALLER_OUTPUT_DIR, PACKAGE_OUTPUT_DIR, UPDATES_OUTPUT_DIR]
     if not preserve_dist:
         targets.insert(0, DIST_DIR)
     for path in targets:
@@ -630,6 +637,105 @@ def write_installer_release_metadata(installer_artifacts: dict[str, str], versio
     (INSTALLER_OUTPUT_DIR / "SHA256_FA.txt").write_text(sha256_fa, encoding="utf-8")
 
 
+def publish_update_bundle(
+    version: str,
+    module_packages: list[dict[str, object]],
+    installer_artifacts: dict[str, str],
+) -> dict[str, object]:
+    print_step("Publishing update bundle")
+    UPDATES_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    UPDATES_CORE_DIR.mkdir(parents=True, exist_ok=True)
+    UPDATES_MODULES_DIR.mkdir(parents=True, exist_ok=True)
+
+    if (PACKAGE_OUTPUT_DIR / MODULE_PACKAGE_FEED_FILENAME).exists():
+        shutil.copy2(PACKAGE_OUTPUT_DIR / MODULE_PACKAGE_FEED_FILENAME, UPDATES_MODULES_DIR / MODULE_PACKAGE_FEED_FILENAME)
+
+    optional_index = {str(item.get("module_id") or ""): dict(item) for item in module_packages}
+    for package in module_packages:
+        module_id = str(package.get("module_id") or "").strip()
+        if not module_id or not bool(package.get("available")):
+            continue
+        package_format = str(package.get("package_format") or "")
+        if package_format == "directory":
+            staged_name = str(package.get("staged_package_path") or module_id)
+            source_dir = STAGED_PLUGIN_PACKAGE_DIR / staged_name
+            if source_dir.exists():
+                shutil.copytree(source_dir, UPDATES_MODULES_DIR / staged_name, dirs_exist_ok=True)
+        else:
+            archive_name = str(package.get("archive_name") or "").strip()
+            if archive_name and (PACKAGE_OUTPUT_DIR / archive_name).exists():
+                shutil.copy2(PACKAGE_OUTPUT_DIR / archive_name, UPDATES_MODULES_DIR / archive_name)
+
+    core_entry = {
+        "module_id": CORE_COMPONENT_ID,
+        "title": CORE_COMPONENT_TITLE,
+        "release_version": version,
+        "artifact_type": "installer",
+        "artifact_path": "",
+        "sha256": "",
+        "available": False,
+    }
+    if installer_artifacts:
+        for name in ("primary", "versioned"):
+            artifact_path = Path(installer_artifacts[name])
+            shutil.copy2(artifact_path, UPDATES_CORE_DIR / artifact_path.name)
+        for name in ("SHA256.txt", "SHA256_FA.txt", "INSTALL_NOTES.txt", "INSTALL_NOTES_FA.txt"):
+            source = INSTALLER_OUTPUT_DIR / name
+            if source.exists():
+                shutil.copy2(source, UPDATES_CORE_DIR / name)
+        versioned_name = Path(installer_artifacts["versioned"]).name
+        core_entry.update(
+            {
+                "artifact_path": f"core/{versioned_name}",
+                "sha256": _sha256_file(UPDATES_CORE_DIR / versioned_name),
+                "available": True,
+            }
+        )
+
+    components: list[dict[str, object]] = []
+    for definition in load_plugin_package_definitions(optional_only=False):
+        module_id = str(definition["module_id"])
+        tier = str(definition.get("tier") or "optional")
+        item = {
+            "module_id": module_id,
+            "title": str(definition.get("title") or module_id),
+            "tier": tier,
+            "package_kind": str(definition.get("package_kind") or ("core" if tier == "basic" else "bundled_unlock")),
+            "release_version": version,
+            "delivery": "core_bundle" if tier == "basic" else "package",
+            "artifact_type": "core_bundle" if tier == "basic" else "",
+            "artifact_path": "",
+            "sha256": "",
+            "available": True if tier == "basic" else False,
+        }
+        optional = optional_index.get(module_id)
+        if optional:
+            package_format = str(optional.get("package_format") or "")
+            artifact_name = str(optional.get("archive_name") or optional.get("staged_package_path") or "")
+            item.update(
+                {
+                    "artifact_type": "package_directory" if package_format == "directory" else "package_zip",
+                    "artifact_path": f"modules/{artifact_name}" if artifact_name else "",
+                    "sha256": str(optional.get("sha256") or ""),
+                    "available": bool(optional.get("available")),
+                }
+            )
+        components.append(item)
+
+    feed = {
+        "app_name": APP_NAME,
+        "channel": "stable",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "core": core_entry,
+        "components": components,
+    }
+    (UPDATES_OUTPUT_DIR / UPDATE_FEED_FILENAME).write_text(
+        json.dumps(feed, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return feed
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and stage the AIPacs Windows release bundle.")
     parser.add_argument("--skip-pyinstaller", action="store_true", help="Reuse the existing builder/output/dist/AIPacs bundle.")
@@ -668,10 +774,13 @@ def main() -> int:
             installer_artifacts = normalize_installer_artifacts(compiled_installer, version)
             write_installer_release_metadata(installer_artifacts, version)
 
+    publish_update_bundle(version, module_packages, installer_artifacts)
+
     print_step("Release staging complete")
     print(f"Core bundle: {core_dir}")
     print(f"Packages:    {PACKAGE_OUTPUT_DIR}")
     print(f"Stage root:  {STAGE_DIR}")
+    print(f"Updates:     {UPDATES_OUTPUT_DIR}")
     print(f"Version:     {version}")
     if installer_artifacts:
         print(f"Installer:   {installer_artifacts['primary']}")

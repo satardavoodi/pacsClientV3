@@ -195,3 +195,153 @@ def test_bootstrap_installer_selected_module_packages_disables_missing_bundled_s
     assert profile["modules"]["advanced_mpr"] is False
     assert profile["module_packages"]["advanced_mpr"]["status"] == "install_failed"
     assert "no package files were found" in profile["module_packages"]["advanced_mpr"]["warning"].lower()
+
+
+def test_update_source_defaults_load_from_config(monkeypatch, tmp_path):
+    _configure_frozen_runtime(monkeypatch, tmp_path)
+    config_path = Path(runtime.sys._MEIPASS) / "config" / runtime.UPDATE_SOURCES_FILENAME
+    config_path.write_text(
+        json.dumps(
+            {
+                "app_name": runtime.APP_NAME,
+                "active_source_id": "primary",
+                "sources": [
+                    {
+                        "id": "primary",
+                        "title": "Primary Update Source",
+                        "type": "file",
+                        "location": str(tmp_path / "updates"),
+                        "channel": "stable",
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    sources = runtime.load_update_sources()
+
+    assert sources["active_source_id"] == "primary"
+    assert sources["sources"][0]["location"] == str(tmp_path / "updates")
+
+
+def test_summarize_available_updates_reads_local_feed(monkeypatch, tmp_path):
+    _configure_frozen_runtime(monkeypatch, tmp_path)
+    install_profile = runtime.default_installation_profile()
+    install_profile["app_version"] = "2.3.0"
+    install_profile["module_packages"]["web_browser"]["installed_version"] = "2.3.0"
+    (Path(runtime.sys._MEIPASS) / "config" / runtime.INSTALLATION_PROFILE_FILENAME).write_text(
+        json.dumps(install_profile, indent=2),
+        encoding="utf-8",
+    )
+
+    updates_root = tmp_path / "updates"
+    updates_root.mkdir(parents=True, exist_ok=True)
+    (updates_root / runtime.UPDATE_FEED_FILENAME).write_text(
+        json.dumps(
+            {
+                "app_name": runtime.APP_NAME,
+                "channel": "stable",
+                "core": {
+                    "module_id": runtime.CORE_COMPONENT_ID,
+                    "title": runtime.CORE_COMPONENT_TITLE,
+                    "release_version": "2.3.1",
+                    "artifact_type": "installer",
+                    "artifact_path": "core/ai-pacs installer v2.3.1.exe",
+                },
+                "components": [
+                    {
+                        "module_id": "viewer",
+                        "title": "Viewer",
+                        "tier": "basic",
+                        "delivery": "core_bundle",
+                        "artifact_type": "core_bundle",
+                        "release_version": "2.3.1",
+                    },
+                    {
+                        "module_id": "web_browser",
+                        "title": "web_browser",
+                        "tier": "optional",
+                        "delivery": "package",
+                        "artifact_type": "package_zip",
+                        "artifact_path": "modules/web_browser-2.3.1.zip",
+                        "release_version": "2.3.1",
+                    },
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    runtime.save_update_sources(
+        {
+            "active_source_id": "primary",
+            "sources": [
+                {
+                    "id": "primary",
+                    "title": "Primary Update Source",
+                    "type": "file",
+                    "location": str(updates_root),
+                    "channel": "stable",
+                }
+            ],
+        }
+    )
+
+    summary = runtime.summarize_available_updates()
+
+    assert summary["core"]["status"] == "update_available"
+    assert any(item["component_id"] == "viewer" and item["status"] == "update_with_core" for item in summary["components"])
+    assert any(item["component_id"] == "web_browser" and item["status"] == "update_available" for item in summary["components"])
+
+
+def test_install_component_update_uses_feed_artifact(monkeypatch, tmp_path):
+    _configure_frozen_runtime(monkeypatch, tmp_path)
+    updates_root = tmp_path / "updates"
+    modules_root = updates_root / "modules"
+    modules_root.mkdir(parents=True, exist_ok=True)
+    archive = _create_package_archive(
+        modules_root,
+        "web_browser",
+        payload_files={"python/modules/web_browser/custom_marker.txt": "ok"},
+    )
+    (updates_root / runtime.UPDATE_FEED_FILENAME).write_text(
+        json.dumps(
+            {
+                "app_name": runtime.APP_NAME,
+                "core": {"release_version": "2.3.1"},
+                "components": [
+                    {
+                        "module_id": "web_browser",
+                        "title": "web_browser",
+                        "tier": "optional",
+                        "delivery": "package",
+                        "artifact_type": "package_zip",
+                        "artifact_path": f"modules/{archive.name}",
+                        "release_version": "2.3.1",
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    runtime.save_update_sources(
+        {
+            "active_source_id": "primary",
+            "sources": [
+                {
+                    "id": "primary",
+                    "title": "Primary Update Source",
+                    "type": "file",
+                    "location": str(updates_root),
+                }
+            ],
+        }
+    )
+
+    record = runtime.install_component_update("web_browser")
+
+    assert record["module_id"] == "web_browser"
+    assert (runtime.modules_runtime_root() / "web_browser" / "python" / "modules" / "web_browser" / "custom_marker.txt").exists()

@@ -12,6 +12,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 
 APP_NAME = "AIPacs"
@@ -34,6 +35,11 @@ MODULE_PACKAGE_FEED_FILENAME = "module_package_feed.json"
 MODULE_PACKAGE_PAYLOAD_DIRNAME = "payload"
 MODULE_PACKAGE_REGISTRY_DIRNAME = "module_registry"
 MODULE_PACKAGE_DOWNLOADS_DIRNAME = "module_packages"
+UPDATE_FEED_FILENAME = "update_feed.json"
+UPDATE_SOURCES_FILENAME = "update_sources.json"
+UPDATES_CACHE_DIRNAME = "updates"
+CORE_COMPONENT_ID = "core_app"
+CORE_COMPONENT_TITLE = "AIPacs Core"
 
 OPTIONAL_MODULE_PATH_HANDLES: list[Any] = []
 
@@ -80,6 +86,17 @@ MODULE_CATALOG: list[dict[str, Any]] = [
         "package_python_paths": ["python"],
         "package_sources": ["modules/stitching"],
         "healthcheck_import": "modules.stitching",
+    },
+    {
+        "id": "offline_cloud_server",
+        "title": "Offline Cloud Server",
+        "tier": "basic",
+        "default_enabled": True,
+        "component": "basic\\offline_cloud_server",
+        "package_kind": "core",
+        "package_python_paths": ["python"],
+        "package_sources": ["modules/offline_cloud_server"],
+        "healthcheck_import": "modules.offline_cloud_server.service",
     },
     {
         "id": "advanced_mpr",
@@ -258,6 +275,18 @@ def user_runtime_profile_path() -> Path:
     return bundle_root() / "generated-files" / USER_RUNTIME_PROFILE_FILENAME
 
 
+def update_sources_config_path() -> Path:
+    if is_frozen() and sys.platform == "win32":
+        return roaming_config_root() / UPDATE_SOURCES_FILENAME
+    return bundled_config_root() / UPDATE_SOURCES_FILENAME
+
+
+def updates_cache_root() -> Path:
+    if is_frozen() and sys.platform == "win32":
+        return local_state_root() / UPDATES_CACHE_DIRNAME
+    return bundle_root() / "generated-files" / UPDATES_CACHE_DIRNAME
+
+
 def module_defaults() -> dict[str, bool]:
     return {item["id"]: bool(item.get("default_enabled", False)) for item in MODULE_CATALOG}
 
@@ -332,6 +361,22 @@ def default_installation_profile() -> dict[str, Any]:
     }
 
 
+def default_update_sources() -> dict[str, Any]:
+    return {
+        "app_name": APP_NAME,
+        "active_source_id": "primary",
+        "sources": [
+            {
+                "id": "primary",
+                "title": "Primary Update Source",
+                "type": "file",
+                "location": "",
+                "channel": "stable",
+            }
+        ],
+    }
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(base)
     for key, value in (override or {}).items():
@@ -363,6 +408,22 @@ def save_json(path: Path, payload: dict[str, Any]) -> None:
 
 def load_installation_profile() -> dict[str, Any]:
     return _load_json(installation_profile_path(), default_installation_profile())
+
+
+def load_update_sources() -> dict[str, Any]:
+    primary_path = update_sources_config_path()
+    fallback_path = bundled_config_root() / UPDATE_SOURCES_FILENAME
+    if primary_path.exists():
+        return _load_json(primary_path, default_update_sources())
+    if fallback_path != primary_path and fallback_path.exists():
+        return _load_json(fallback_path, default_update_sources())
+    return deepcopy(default_update_sources())
+
+
+def save_update_sources(payload: dict[str, Any]) -> dict[str, Any]:
+    merged = _deep_merge(default_update_sources(), payload or {})
+    save_json(update_sources_config_path(), merged)
+    return merged
 
 
 def load_runtime_profile() -> dict[str, Any]:
@@ -547,11 +608,13 @@ def _package_record(
         "installed_version": str(
             effective_manifest.get("version")
             or package_state.get("installed_version")
+            or (current_app_version() if tier == "basic" else "")
             or ""
         ),
         "installed_from": str(
             effective_manifest.get("installed_from")
             or package_state.get("installed_from")
+            or ("core_bundle" if tier == "basic" else "")
             or ""
         ),
         "installed_at_utc": str(package_state.get("installed_at_utc") or ""),
@@ -589,6 +652,291 @@ def module_installation_statuses(profile: dict[str, Any] | None = None) -> list[
             )
         )
     return records
+
+
+def current_app_version(profile: dict[str, Any] | None = None) -> str:
+    effective_profile = profile or load_runtime_profile()
+    version = str(effective_profile.get("app_version") or "").strip()
+    if version:
+        return version
+
+    install_profile = load_installation_profile()
+    version = str(install_profile.get("app_version") or "").strip()
+    if version:
+        return version
+
+    pyproject_path = bundle_root() / "pyproject.toml"
+    if pyproject_path.exists():
+        try:
+            if sys.version_info >= (3, 11):
+                import tomllib
+            else:
+                import tomli as tomllib  # type: ignore
+
+            payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+            return str((payload.get("project") or {}).get("version") or "").strip()
+        except Exception:
+            return ""
+    return ""
+
+
+def compare_release_versions(left: str, right: str) -> int:
+    left_parts = [int(part) if part.isdigit() else 0 for part in str(left or "").strip().split(".") if part != ""]
+    right_parts = [int(part) if part.isdigit() else 0 for part in str(right or "").strip().split(".") if part != ""]
+    size = max(len(left_parts), len(right_parts), 1)
+    left_parts.extend([0] * (size - len(left_parts)))
+    right_parts.extend([0] * (size - len(right_parts)))
+    for left_part, right_part in zip(left_parts, right_parts):
+        if left_part < right_part:
+            return -1
+        if left_part > right_part:
+            return 1
+    return 0
+
+
+def active_update_source() -> dict[str, Any]:
+    payload = load_update_sources()
+    active_id = str(payload.get("active_source_id") or "").strip()
+    sources = payload.get("sources") or []
+    if isinstance(sources, list):
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            if str(source.get("id") or "").strip() == active_id:
+                return dict(source)
+        for source in sources:
+            if isinstance(source, dict):
+                return dict(source)
+    return {"id": "", "title": "", "type": "file", "location": "", "channel": "stable"}
+
+
+def _source_reference(source: str | Path | None = None) -> dict[str, Any]:
+    if source is None:
+        active = active_update_source()
+        return {
+            "id": str(active.get("id") or "").strip(),
+            "title": str(active.get("title") or "").strip(),
+            "type": str(active.get("type") or "file").strip().lower(),
+            "location": str(active.get("location") or "").strip(),
+            "channel": str(active.get("channel") or "stable").strip() or "stable",
+        }
+
+    location = str(source).strip()
+    parsed = urlparse(location)
+    source_type = "url" if parsed.scheme in {"http", "https"} else "file"
+    return {
+        "id": "manual",
+        "title": "Manual Update Source",
+        "type": source_type,
+        "location": location,
+        "channel": "manual",
+    }
+
+
+def _resolve_feed_location(location: str) -> tuple[str, str]:
+    reference = str(location or "").strip()
+    if not reference:
+        raise FileNotFoundError("No update source is configured.")
+
+    parsed = urlparse(reference)
+    if parsed.scheme in {"http", "https"}:
+        if parsed.path.lower().endswith(".json"):
+            base_location = reference.rsplit("/", 1)[0] + "/"
+            return reference, base_location
+        normalized = reference.rstrip("/") + "/"
+        return urljoin(normalized, UPDATE_FEED_FILENAME), normalized
+
+    path = Path(reference)
+    if path.is_dir():
+        feed_path = path / UPDATE_FEED_FILENAME
+        return str(feed_path), str(path)
+    if path.is_file():
+        if path.name.lower() == UPDATE_FEED_FILENAME.lower():
+            return str(path), str(path.parent)
+        raise FileNotFoundError(f"Unsupported update source file: {path}")
+    raise FileNotFoundError(str(path))
+
+
+def _load_json_from_reference(reference: str) -> dict[str, Any]:
+    parsed = urlparse(reference)
+    if parsed.scheme in {"http", "https"}:
+        with urllib.request.urlopen(reference, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8")) or {}
+    else:
+        payload = json.loads(Path(reference).read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        raise ValueError("Update feed must be a JSON object.")
+    return payload
+
+
+def load_update_feed(source: str | Path | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    reference = _source_reference(source)
+    feed_location, base_location = _resolve_feed_location(reference["location"])
+    feed = _load_json_from_reference(feed_location)
+    if str(feed.get("app_name") or APP_NAME) != APP_NAME:
+        raise ValueError(f"Update feed targets {feed.get('app_name')!r}, expected {APP_NAME!r}.")
+
+    feed.setdefault("app_name", APP_NAME)
+    feed.setdefault("channel", reference.get("channel") or "stable")
+    if not isinstance(feed.get("components"), list):
+        feed["components"] = []
+
+    core_entry = feed.get("core") or {}
+    if not isinstance(core_entry, dict):
+        core_entry = {}
+    core_entry.setdefault("module_id", CORE_COMPONENT_ID)
+    core_entry.setdefault("title", CORE_COMPONENT_TITLE)
+    core_entry.setdefault("release_version", str(feed.get("version") or ""))
+    feed["core"] = core_entry
+
+    context = {
+        "id": reference["id"],
+        "title": reference["title"],
+        "type": reference["type"],
+        "location": reference["location"],
+        "channel": reference["channel"],
+        "feed_location": feed_location,
+        "base_location": base_location,
+    }
+    return context, feed
+
+
+def resolve_update_artifact_source(
+    artifact_path: str,
+    *,
+    source: str | Path | None = None,
+    context: dict[str, Any] | None = None,
+) -> str:
+    relative = str(artifact_path or "").strip().replace("\\", "/")
+    if not relative:
+        raise FileNotFoundError("Update artifact path is empty.")
+
+    active_context = context
+    if active_context is None:
+        active_context, _ = load_update_feed(source)
+
+    if active_context.get("type") == "url":
+        return urljoin(str(active_context.get("base_location") or ""), relative)
+
+    base_path = Path(str(active_context.get("base_location") or ""))
+    return str((base_path / relative).resolve())
+
+
+def current_component_versions(profile: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+    effective_profile = profile or load_runtime_profile()
+    app_version = current_app_version(effective_profile)
+    components: dict[str, dict[str, Any]] = {
+        CORE_COMPONENT_ID: {
+            "component_id": CORE_COMPONENT_ID,
+            "title": CORE_COMPONENT_TITLE,
+            "current_version": app_version,
+            "installed": bool(app_version),
+            "delivery": "installer",
+        }
+    }
+
+    for record in module_installation_statuses(effective_profile):
+        module_id = str(record.get("module_id") or "")
+        current_version = str(record.get("installed_version") or "").strip()
+        if not current_version and str(record.get("tier") or "") == "basic":
+            current_version = app_version
+        components[module_id] = {
+            "component_id": module_id,
+            "title": str(record.get("title") or module_id),
+            "current_version": current_version,
+            "installed": bool(record.get("installed") or str(record.get("tier") or "") == "basic"),
+            "delivery": "core_bundle" if str(record.get("tier") or "") == "basic" else "package",
+            "record": record,
+        }
+    return components
+
+
+def _build_update_status(current_version: str, available_version: str, *, installed: bool) -> str:
+    if not available_version:
+        return "unknown"
+    if not current_version:
+        return "available" if not installed else "unknown"
+
+    comparison = compare_release_versions(current_version, available_version)
+    if comparison < 0:
+        return "update_available"
+    if comparison > 0:
+        return "newer_than_feed"
+    return "up_to_date"
+
+
+def summarize_available_updates(
+    source: str | Path | None = None,
+    profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    context, feed = load_update_feed(source)
+    current_versions = current_component_versions(profile)
+
+    core_feed = dict(feed.get("core") or {})
+    core_current = current_versions.get(CORE_COMPONENT_ID, {})
+    core_available_version = str(core_feed.get("release_version") or "")
+    core_status = _build_update_status(
+        str(core_current.get("current_version") or ""),
+        core_available_version,
+        installed=bool(core_current.get("installed")),
+    )
+    core_summary = {
+        "component_id": CORE_COMPONENT_ID,
+        "title": str(core_feed.get("title") or CORE_COMPONENT_TITLE),
+        "current_version": str(core_current.get("current_version") or ""),
+        "available_version": core_available_version,
+        "status": core_status,
+        "artifact_type": str(core_feed.get("artifact_type") or "installer"),
+        "artifact_path": str(core_feed.get("artifact_path") or ""),
+        "sha256": str(core_feed.get("sha256") or ""),
+        "installed": bool(core_current.get("installed")),
+    }
+
+    component_summaries: list[dict[str, Any]] = []
+    for component in feed.get("components") or []:
+        if not isinstance(component, dict):
+            continue
+        module_id = str(component.get("module_id") or "").strip()
+        if not module_id:
+            continue
+        current = current_versions.get(module_id, {})
+        available_version = str(component.get("release_version") or component.get("version") or "").strip()
+        installed = bool(current.get("installed"))
+        status = _build_update_status(
+            str(current.get("current_version") or ""),
+            available_version,
+            installed=installed,
+        )
+        if str(component.get("artifact_type") or "") == "core_bundle" and status == "update_available":
+            status = "update_with_core"
+        if not installed and status == "available":
+            status = "not_installed"
+        component_summaries.append(
+            {
+                "component_id": module_id,
+                "title": str(component.get("title") or module_id),
+                "tier": str(component.get("tier") or ""),
+                "delivery": str(component.get("delivery") or ""),
+                "current_version": str(current.get("current_version") or ""),
+                "available_version": available_version,
+                "status": status,
+                "artifact_type": str(component.get("artifact_type") or ""),
+                "artifact_path": str(component.get("artifact_path") or ""),
+                "sha256": str(component.get("sha256") or ""),
+                "installed": installed,
+            }
+        )
+
+    has_updates = core_summary["status"] == "update_available" or any(
+        item["status"] in {"update_available", "available", "not_installed"} for item in component_summaries
+    )
+
+    return {
+        "source": context,
+        "core": core_summary,
+        "components": component_summaries,
+        "has_updates": has_updates,
+    }
 
 
 def set_module_enabled(module_id: str, enabled: bool) -> dict[str, Any]:
@@ -774,6 +1122,67 @@ def install_module_package(
             shutil.rmtree(cleanup_dir, ignore_errors=True)
         if cleanup_file is not None:
             cleanup_file.unlink(missing_ok=True)
+
+
+def install_component_update(component_id: str, source: str | Path | None = None) -> dict[str, Any]:
+    target = str(component_id or "").strip()
+    if not target:
+        raise ValueError("component_id is required.")
+    if target == CORE_COMPONENT_ID:
+        raise RuntimeError("Core updates must be prepared with prepare_core_update_installer().")
+
+    context, feed = load_update_feed(source)
+    for component in feed.get("components") or []:
+        if not isinstance(component, dict):
+            continue
+        module_id = str(component.get("module_id") or "").strip()
+        if module_id != target:
+            continue
+        artifact_type = str(component.get("artifact_type") or "")
+        if artifact_type == "core_bundle":
+            raise RuntimeError(f"{component.get('title') or target} is updated through the core installer.")
+        artifact_path = str(component.get("artifact_path") or "").strip()
+        if not artifact_path:
+            raise FileNotFoundError(f"Update artifact path is missing for {target}.")
+        resolved_source = resolve_update_artifact_source(artifact_path, context=context)
+        return install_module_package(resolved_source, expected_module_id=target, enable_on_install=True)
+
+    raise FileNotFoundError(f"No update entry was found for {target}.")
+
+
+def prepare_core_update_installer(source: str | Path | None = None) -> Path:
+    context, feed = load_update_feed(source)
+    core = dict(feed.get("core") or {})
+    artifact_path = str(core.get("artifact_path") or "").strip()
+    if not artifact_path:
+        raise FileNotFoundError("The update feed does not contain a core installer artifact.")
+
+    resolved_source = resolve_update_artifact_source(artifact_path, context=context)
+    parsed = urlparse(resolved_source)
+    if parsed.scheme not in {"http", "https"}:
+        path = Path(resolved_source)
+        if not path.exists():
+            raise FileNotFoundError(str(path))
+        return path
+
+    target_root = updates_cache_root() / "core"
+    target_root.mkdir(parents=True, exist_ok=True)
+    filename = Path(parsed.path).name or "AIPacsUpdate.exe"
+    target_path = target_root / filename
+    with urllib.request.urlopen(resolved_source, timeout=60) as response, target_path.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+    return target_path
+
+
+def launch_core_update_installer(source: str | Path | None = None) -> Path:
+    installer_path = prepare_core_update_installer(source)
+    if sys.platform == "win32":
+        subprocess.Popen(
+            [str(installer_path)],
+            cwd=str(installer_path.parent),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    return installer_path
 
 
 def validate_module_installation(module_id: str) -> dict[str, Any]:

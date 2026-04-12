@@ -264,6 +264,31 @@ if __name__ == "__main__":
     configure_diagnostic_logging(process_role="main", force=True)
     logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
 
+    # â”€â”€ H5a: Global exception hook (v2.2.9.3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Captures the FULL Python traceback for any unhandled exception before
+    # Qt intercepts it with the generic "Qt has caught an exception" message.
+    # Without this, the throwing file/line is permanently lost.
+    _original_excepthook = sys.excepthook
+
+    def _aipacs_excepthook(exc_type, exc_value, exc_tb):
+        _crash_logger = logging.getLogger("aipacs.crash")
+        try:
+            import traceback
+            tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+            _crash_logger.critical(
+                "UNHANDLED EXCEPTION (will propagate to Qt):\n%s",
+                "".join(tb_lines),
+                extra={"component": "crash"},
+            )
+        except Exception:
+            pass
+        # Chain to original hook (prints to stderr)
+        if _original_excepthook is not None and _original_excepthook is not _aipacs_excepthook:
+            _original_excepthook(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _aipacs_excepthook
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
     # Migrate data from old flat layout to user_data/ (safe to call multiple times)
     try:
         from PacsClient.utils.data_paths import migrate_legacy_data
@@ -278,9 +303,83 @@ if __name__ == "__main__":
         QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)
     QApplication.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings, True)  # Better performance for detached tabs
     
+    # â”€â”€ H8/H9: QApplication.notify() override (v2.2.9.3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # PySide6/Shiboken swallows exceptions at the C++ boundary before
+    # sys.excepthook can fire.  Overriding notify() captures the FULL
+    # Python traceback for ANY exception thrown during Qt event dispatch
+    # (QTimer callbacks, signal slots, paint events, etc.).
+    class _AIPacsApplication(QApplication):
+        def notify(self, receiver, event):
+            try:
+                return super().notify(receiver, event)
+            except Exception:
+                _crash_logger = logging.getLogger("aipacs.crash")
+                try:
+                    import traceback as _tb_mod
+                    _crash_logger.critical(
+                        "EXCEPTION in Qt event dispatch (receiver=%s, event_type=%s):\n%s",
+                        type(receiver).__name__,
+                        int(event.type()) if event else "?",
+                        _tb_mod.format_exc(),
+                        extra={"component": "crash"},
+                    )
+                except Exception:
+                    pass
+                # [H10-SNAPSHOT] Compact state dump at crash time
+                try:
+                    _snap_parts = []
+                    for _tlw in QApplication.topLevelWidgets():
+                        _pw = None
+                        # Walk widget tree to find PatientWidget
+                        if hasattr(_tlw, 'findChildren'):
+                            for _child in _tlw.findChildren(type(_tlw).__mro__[0].__class__):
+                                if type(_child).__name__ == 'PatientWidget':
+                                    _pw = _child
+                                    break
+                        if _pw is None and type(_tlw).__name__ == 'PatientWidget':
+                            _pw = _tlw
+                        if _pw is None:
+                            continue
+                        # Extract viewer state from first active viewer
+                        _v_series = '?'
+                        _prog_mode = '?'
+                        _backend = '?'
+                        _gen_id = '?'
+                        _req_gen = '?'
+                        for _node in getattr(_pw, 'lst_nodes_viewer', []) or []:
+                            _vw = getattr(_node, 'vtk_widget', None)
+                            if _vw is None:
+                                continue
+                            try:
+                                _v_series = str(getattr(getattr(_vw, 'image_viewer', None), 'metadata', {}).get('series', {}).get('series_number', '?'))
+                                _prog_mode = getattr(_vw, '_progressive_mode', '?')
+                                _backend = getattr(_vw, '_active_backend', '?')
+                                _gen_id = getattr(_vw, '_series_generation_id', '?')
+                                _req_gen = getattr(_vw, '_lazy_requested_generation', '?')
+                            except Exception:
+                                pass
+                            break  # first viewer only
+                        _dm_active = getattr(_pw, '_h10_dm_active_series', '?')
+                        _prog_keys = list(getattr(_pw, '_progressive_series', {}).keys())
+                        _done_keys = list(getattr(_pw, '_progressive_display_done', set()))
+                        _completed = list(getattr(_pw, '_series_download_completed', set()))
+                        _crash_logger.critical(
+                            "[H10-SNAPSHOT] viewer_series=%s dm_active=%s prog_keys=%s "
+                            "done=%s completed=%s prog_mode=%s backend=%s gen_id=%s req_gen=%s",
+                            _v_series, _dm_active, _prog_keys,
+                            _done_keys, _completed, _prog_mode, _backend, _gen_id, _req_gen,
+                            extra={"component": "crash"},
+                        )
+                        _snap_parts.append(True)
+                        break  # first PatientWidget only
+                except Exception:
+                    pass
+                raise
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
     startup_import_folder = _extract_startup_import_folder()
 
-    app = QApplication(sys.argv)
+    app = _AIPacsApplication(sys.argv)
 
     # ========================================================================
     # SINGLE-INSTANCE LOCK: Ensure only one AIPacs instance can run at a time
@@ -303,7 +402,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("2.3.0")
+    app.setApplicationVersion("2.3.1")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -359,6 +458,18 @@ if __name__ == "__main__":
 
     window = AppHandler(startup_import_folder=startup_import_folder)
     window.show()
+
+    # â”€â”€ Diagnostic mode (AIPACS_DIAG_MODE=1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    if os.environ.get("AIPACS_DIAG_MODE") == "1":
+        try:
+            from diagnostic_hooks import hook_manager as _hm
+            _hm.attach_to_app(window)
+        except Exception as _diag_exc:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "DiagHooks: attach_to_app failed: %s", _diag_exc
+            )
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     # Global disk usage alert checks (modular service)
     app._disk_alert_service = DiskUsageAlertService(

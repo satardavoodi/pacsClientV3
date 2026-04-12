@@ -24,6 +24,7 @@ from pathlib import Path
 
 from ..core.models import SeriesInfo, SeriesDownloadResult
 from ..core.exceptions import NetworkError
+from ..core import constants as _dm_consts   # module ref for monkey-patchable defaults
 from ..core.constants import (
     DEFAULT_SOCKET_HOST,
     DEFAULT_SOCKET_PORT,
@@ -32,6 +33,13 @@ from ..core.constants import (
     BATCH_SIZE,
     MAX_RETRIES,
     RETRY_DELAY,
+    RECONNECT_MAX_RETRIES,
+    RECONNECT_BASE_DELAY,
+    RECONNECT_MAX_DELAY,
+    RECONNECT_BACKOFF_FACTOR,
+    RECONNECT_JITTER_MAX,
+    REQUEST_MAX_RETRIES,
+    REQUEST_RETRY_BASE_DELAY,
 )
 from .health_monitor import ConnectionHealthMonitor
 from PacsClient.utils.diagnostic_logging import DownloadProgressAggregator, set_log_context, now_ms, log_stage_timing
@@ -94,8 +102,9 @@ class SocketDicomClient:
             health_monitor: Connection health monitor (uses global if not provided)
             cancel_check: Callable that returns True if download should be cancelled (R25 preemption)
         """
-        self.host = host or DEFAULT_SOCKET_HOST
-        self.port = port or DEFAULT_SOCKET_PORT
+        # Read host/port from module object so subprocess constant-patching is visible
+        self.host = host or _dm_consts.DEFAULT_SOCKET_HOST
+        self.port = port or _dm_consts.DEFAULT_SOCKET_PORT
         self.timeout = timeout or CONNECTION_TIMEOUT
         
         # Use provided token_manager or fall back to global singleton
@@ -156,7 +165,7 @@ class SocketDicomClient:
                 return True
             
             except Exception as e:
-                logger.error(f"❌ Connection failed: {e}")
+                logger.error(f"❌ Connection failed to {self.host}:{self.port}: {e}")
                 self.connected = False
                 if self.socket:
                     try:
@@ -236,24 +245,39 @@ class SocketDicomClient:
         with self._cancel_lock:
             self._cancelled = False
     
-    def connect_with_retry(self, max_retries: int = 3, retry_delay: float = 1.0) -> bool:
+    def connect_with_retry(self, max_retries: int = None, retry_delay: float = None) -> bool:
         """
-        Connect to socket server with retry logic
+        Connect to socket server with exponential backoff retry logic
         
         Args:
-            max_retries: Maximum number of connection attempts
-            retry_delay: Delay between retries in seconds
+            max_retries: Maximum number of connection attempts (default: RECONNECT_MAX_RETRIES)
+            retry_delay: Base delay between retries in seconds (default: RECONNECT_BASE_DELAY)
             
         Returns:
             True if connected, False otherwise
         """
+        max_retries = max_retries if max_retries is not None else RECONNECT_MAX_RETRIES
+        base_delay = retry_delay if retry_delay is not None else RECONNECT_BASE_DELAY
+
         for attempt in range(max_retries):
             if self.connect():
+                if attempt > 0:
+                    logger.info(f"✅ Connected after {attempt + 1} attempts")
                 return True
             
             if attempt < max_retries - 1:
-                logger.warning(f"⚠️ Connection attempt {attempt + 1} failed, retrying in {retry_delay}s...")
-                time.sleep(retry_delay)
+                # Exponential backoff with jitter, capped at RECONNECT_MAX_DELAY
+                delay = min(
+                    base_delay * (RECONNECT_BACKOFF_FACTOR ** attempt),
+                    RECONNECT_MAX_DELAY,
+                )
+                jitter = random.uniform(0, RECONNECT_JITTER_MAX)
+                total_delay = delay + jitter
+                logger.warning(
+                    f"⚠️ Connection attempt {attempt + 1}/{max_retries} failed, "
+                    f"retrying in {total_delay:.1f}s (backoff={delay:.1f}s + jitter={jitter:.1f}s)..."
+                )
+                time.sleep(total_delay)
         
         logger.error(f"❌ Failed to connect after {max_retries} attempts")
         return False
@@ -391,7 +415,10 @@ class SocketDicomClient:
     
     def send_request(self, endpoint: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Send request to server with authentication
+        Send request to server with authentication and automatic retry on
+        connection errors.  Retries use exponential backoff with jitter.
+
+        Login requests are NOT retried (auth failures should surface immediately).
 
         Args:
             endpoint: Endpoint name
@@ -400,7 +427,50 @@ class SocketDicomClient:
         Returns:
             Response dict or None on error
         """
-        logger.debug(f"📤 send_request: {endpoint} - acquiring lock...")
+        # Login should not be retried automatically
+        max_attempts = 1 if endpoint == 'Login' else REQUEST_MAX_RETRIES
+
+        for attempt in range(max_attempts):
+            result = self._send_request_once(endpoint, params, attempt, max_attempts)
+            if result is not None:
+                return result
+
+            # If more attempts remain, wait with exponential backoff then reconnect
+            if attempt < max_attempts - 1:
+                # R25: never retry if download was cancelled (fast preemption path)
+                if self.is_cancelled():
+                    logger.info(
+                        f"⏸️ send_request({endpoint}) cancelled — skipping retry"
+                    )
+                    return None
+                jitter = random.uniform(0, RECONNECT_JITTER_MAX)
+                delay = min(
+                    REQUEST_RETRY_BASE_DELAY * (RECONNECT_BACKOFF_FACTOR ** attempt),
+                    RECONNECT_MAX_DELAY,
+                )
+                total_delay = delay + jitter
+                logger.warning(
+                    f"⚠️ send_request({endpoint}) attempt {attempt + 1}/{max_attempts} failed, "
+                    f"retrying in {total_delay:.1f}s..."
+                )
+                time.sleep(total_delay)
+
+                # Reconnect before next attempt
+                self.disconnect()
+                if not self.connect():
+                    logger.error(f"❌ Reconnect failed before retry {attempt + 2}")
+                    # Continue loop – connect() will be retried inside _send_request_once
+
+        if max_attempts > 1:
+            logger.error(f"❌ send_request({endpoint}) failed after {max_attempts} attempts")
+        return None
+
+    def _send_request_once(
+        self, endpoint: str, params: Dict[str, Any],
+        attempt: int = 0, max_attempts: int = 1,
+    ) -> Optional[Dict[str, Any]]:
+        """Single attempt of send_request (internal helper)."""
+        logger.debug(f"📤 send_request: {endpoint} attempt {attempt+1}/{max_attempts} - acquiring lock...")
         t_req_total = now_ms()
         t_lock_wait = now_ms()
         self.lock.acquire()
@@ -517,6 +587,18 @@ class SocketDicomClient:
                         f"{params.get('batch_index', 'na')}"
                     )
                     while len(response_data) < response_length:
+                        # R25: fast preemption — check cancel before every chunk so a
+                        # 37-second batch can be interrupted within a single chunk recv
+                        # instead of waiting for the entire batch to complete.
+                        if self.is_cancelled():
+                            try:
+                                if self.socket:
+                                    self.socket.close()
+                            except Exception:
+                                pass
+                            self.socket = None
+                            self.connected = False
+                            raise NetworkError("Download cancelled during receive (preemption)")
                         chunk_size = min(SOCKET_CHUNK_SIZE, response_length - len(response_data))
                         chunk = self._safe_recv(chunk_size)
                         if not chunk:
@@ -787,7 +869,37 @@ class SocketDicomClient:
         logger.info(f"✅ Socket connected")
         
         # Download in batches (adaptive batch size)
+        # R19b: Skip leading complete batches — avoids re-transferring data
+        # for images already on disk (e.g. resuming a partially-downloaded series).
+        # Verifies actual sequential file existence to avoid skipping batches
+        # that have gaps (v2.2.7.3 fix).
         batch_start = 0
+        if skipped_count >= batch_size:
+            # Verify leading batches by checking that sequential Instance files exist.
+            # Only skip a batch if ALL its expected instance files are on disk.
+            verified_batch_start = 0
+            while verified_batch_start + batch_size <= expected_count:
+                batch_end = verified_batch_start + batch_size
+                batch_complete = all(
+                    f"Instance_{i:04d}.dcm" in existing_files_set
+                    for i in range(verified_batch_start + 1, batch_end + 1)
+                )
+                if not batch_complete:
+                    break
+                verified_batch_start += batch_size
+            batch_start = verified_batch_start
+            if batch_start > 0:
+                remaining = expected_count - batch_start
+                total_batches = (remaining + batch_size - 1) // batch_size if remaining > 0 else 0
+                logger.info(
+                    f"⏩ Verified {batch_start // batch_size} complete leading batches "
+                    f"({batch_start} sequential instances on disk), {total_batches} batches remaining"
+                )
+            else:
+                logger.info(
+                    f"⚠️ {skipped_count} files on disk but leading batch incomplete — "
+                    f"downloading from batch 0 (file-level skip will handle existing files)"
+                )
         batch_idx = 0
         while batch_start < expected_count:
             # R25: Check for preemption between batches
@@ -1109,10 +1221,10 @@ class SocketDicomClient:
                     logger.info(f"⏳ Retrying in {delay:.1f}s...", extra={"component": "download"})
                     await asyncio.sleep(delay)
                     
-                    # Reconnect
+                    # Reconnect with backoff
                     logger.info(f"🔌 Reconnecting...", extra={"component": "download"})
                     self.disconnect()
-                    if not self.connect():
+                    if not self.connect_with_retry(max_retries=3):
                         logger.error(f"❌ Reconnection failed")
                         continue
                     logger.info(f"✅ Reconnected", extra={"component": "download"})

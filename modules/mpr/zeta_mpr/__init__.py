@@ -21,7 +21,7 @@ Version History:
 - v1.01: Input-level flip correction for anatomical orientation
 """
 
-from .standard_mpr_viewer import StandardMPRViewer
+from .mpr_viewer import StandardMPRViewer
 from .preset_manager import get_preset_manager, PresetCategory
 
 __all__ = [

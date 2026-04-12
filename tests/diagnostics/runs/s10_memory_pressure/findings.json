@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "code": "FS-09",
+      "title": "PROGRESSIVE_NEVER_STARTED",
+      "severity": "CRITICAL",
+      "hypothesis": "H4",
+      "evidence": {
+        "progress_signals": 45,
+        "progressive_starts": 0
+      }
+    }
+  ],
+  "count": 1
+}

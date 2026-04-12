@@ -1,6 +1,6 @@
 # Module Connections & Signal Map
 
-> **Version:** v2.3.0 | **Updated:** 2026-04-04
+> **Version:** v2.3.1 | **Updated:** 2026-04-13
 
 ## Purpose
 
@@ -226,7 +226,7 @@ PatientWidget._load_thumbnails()
 
 ---
 
-## Cross-Module Communication Rules (v2.3.0)
+## Cross-Module Communication Rules (v2.3.1)
 
 | Rule | Description |
 |------|-------------|
@@ -275,7 +275,7 @@ Printing         ──    ──       ──     ──    ──       uses  
 
 ---
 
-## Timer Inventory (v2.3.0)
+## Timer Inventory (v2.3.1)
 
 All timers that affect cross-module latency:
 

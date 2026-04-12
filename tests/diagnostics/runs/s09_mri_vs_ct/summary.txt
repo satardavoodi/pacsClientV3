@@ -1,0 +1,18 @@
+MR vs CT Comparison: MR ↔ CT
+──────────────────────────────────────────────────────────────────────
+KPI                                                 MR          CT    Ratio   !
+──────────────────────────────────────────────────────────────────────
+Metadata refresh max (ms)                          0.0         0.0      n/a    
+Metadata refresh mean (ms)                         0.0         0.0      n/a    
+grow() max duration (ms)                           0.0         0.0      n/a    
+grow() mean duration (ms)                          0.0         0.0      n/a    
+Progressive start (ms)                             0.0         0.0      n/a    
+First-progress → first-grow (ms)                  -1.0        -1.0      n/a    
+progressive_start() calls                            0           0      n/a    
+grow() calls                                         0           0      n/a    
+metadata refresh calls                               0           0      n/a    
+Peak RSS (MB)                                    200.6       200.6    1.00×    
+RSS delta (MB)                                     0.0         0.0    3.00×   ⚠
+──────────────────────────────────────────────────────────────────────
+Significant KPIs: 1
+Primary concern: M04_rss_delta_mb

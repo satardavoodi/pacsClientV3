@@ -1,5 +1,7 @@
 # Windows Release Flow
 
+Current release target: `v2.3.1` (`2026-04-13`)
+
 ## Commands
 
 ```powershell
@@ -52,6 +54,11 @@ If Inno Setup is not installed, release staging still succeeds but installer com
     - `ai-pacs installer v<version>.exe` (version-stamped copy)
     - `INSTALL_NOTES.txt` / `INSTALL_NOTES_FA.txt`
     - `SHA256.txt` / `SHA256_FA.txt`
+- `builder/output/updates/`
+  - Update-ready release contents:
+    - `update_feed.json` (top-level core + module update catalog)
+    - `core/` (installer copies + checksums + install notes)
+    - `modules/` (package updates for optional modules)
 
 ## Builder Plugin Workspace
 
@@ -64,6 +71,7 @@ If Inno Setup is not installed, release staging still succeeds but installer com
 
 - `Core` is always installed.
 - `Custom` setup can additionally copy selected optional plugin packages into `{app}\module_packages\`.
+- The release builder also emits a parallel update structure under `builder/output/updates/` so already-installed PCs can compare their current version with the latest published feed.
 - `Basic` modules are selected by default:
   - Viewer
   - Download Manager
@@ -108,6 +116,7 @@ The running application reads that profile and:
 - stores user data in `%LOCALAPPDATA%\AIPacs\user_data`,
 - probes GPU availability when the installer marked the workstation as GPU-capable,
 - keeps installer version metadata (`current_version`, detected previous version, install action, should-update flag) for support and audit purposes.
+- can read `update_sources.json`, compare the installed core/module versions against `update_feed.json`, and either launch the new installer or apply optional-module package updates.
 
 ## Install On Another PC
 
@@ -125,6 +134,9 @@ When sharing the build with an end user or another workstation:
    - if the PC has no supported GPU, leave CPU-safe mode selected
 6. After install, launch AIPacs once so `installation_profile.json` and the first-launch module bootstrap can complete.
 7. Validate that the selected modules appear and the graphics mode is usable on that machine.
+8. For update-enabled environments, point `config/update_sources.json` at either:
+   - a local folder containing `builder/output/updates/`
+   - a hosted URL serving `update_feed.json` and the related artifacts
 
 ## Advanced MPR Payload
 

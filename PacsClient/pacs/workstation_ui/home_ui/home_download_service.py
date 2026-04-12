@@ -13,6 +13,8 @@ Pattern: Service Layer
 from __future__ import annotations
 
 import asyncio
+import logging
+import time as _time
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +22,8 @@ from PySide6.QtWidgets import QTabWidget
 
 from PacsClient.utils.config import SOURCE_PATH
 from modules.download_manager.ui.main_widget import DownloadManagerWidget
+
+_logger = logging.getLogger(__name__)
 
 
 class HomeDownloadService:
@@ -189,6 +193,16 @@ class HomeDownloadService:
                 if uid != study_uid:
                     return
                 sn = _resolve_sn(series_uid)
+                _t_dl_start = _time.perf_counter()
+                _logger.info(
+                    "[FAST-SERIES-DOWNLOAD-START] study=%s series=%s desc=%s",
+                    uid, sn, series_desc,
+                )
+                _logger.info(
+                    "FAST:download_start study=%s series=%s series_uid=%s t_abs=%.6f"
+                    " note=delta_from_series_selected_not_available_here",
+                    uid, sn, series_uid, _t_dl_start,
+                )
                 w = widget_ref()
                 if w and hasattr(w, "thumbnail_manager"):
                     try:
@@ -200,14 +214,34 @@ class HomeDownloadService:
                 if uid != study_uid:
                     return
                 sn = _resolve_sn(series_uid)
+                pct = (current / total * 100) if total > 0 else 0
+                _logger.info(
+                    "[FAST-SERIES-DOWNLOAD-PROGRESS] study=%s series=%s percent=%.0f images=%d/%d",
+                    uid, sn, pct, current, total,
+                )
                 w = widget_ref()
                 if not w:
                     return
+                # [H10-3] Canonical DM active series — log on transition only
+                _prev_dm = getattr(w, '_h10_dm_active_series', None)
+                if _prev_dm != sn:
+                    _logger.info(
+                        "[H10-3] DM_SERIES_TRANSITION fn=on_series_progress prev=%s new=%s",
+                        _prev_dm, sn,
+                    )
+                    w._h10_dm_active_series = sn
                 # Update progressive viewer display via signal (the method
                 # lives on viewer_controller, not on PatientWidget directly).
                 if hasattr(w, "series_images_progress"):
                     try:
                         w.series_images_progress.emit(sn, int(current), int(total))
+                        # [H7-P8-RECV] DM progress signal received and forwarded
+                        _pip_st = getattr(getattr(w, 'pipeline', None), 'state', '?')
+                        _logger.info(
+                            "[H7-P8-RECV] series=%s downloaded=%d total=%d pipeline_state=%s",
+                            sn, int(current), int(total),
+                            _pip_st.name if hasattr(_pip_st, 'name') else _pip_st,
+                        )
                     except Exception:
                         pass
                 # Update thumbnail progress overlay (fixes 0% stuck bug)
@@ -223,6 +257,20 @@ class HomeDownloadService:
                 if uid != study_uid or not widget_ref():
                     return
                 sn = _resolve_sn(series_uid)
+                _logger.info(
+                    "[FAST-SERIES-DOWNLOAD-COMPLETE] study=%s series=%s",
+                    uid, sn,
+                )
+                # [H10-3] Canonical DM active series — log completion transition
+                w_c = widget_ref()
+                if w_c:
+                    _prev_dm = getattr(w_c, '_h10_dm_active_series', None)
+                    if _prev_dm != sn:
+                        _logger.info(
+                            "[H10-3] DM_SERIES_TRANSITION fn=on_series_completed prev=%s new=%s",
+                            _prev_dm, sn,
+                        )
+                    w_c._h10_dm_active_series = sn
                 if not _first_emitted["done"]:
                     _first_emitted["done"] = True
                     _flush_timer.stop()
@@ -248,6 +296,13 @@ class HomeDownloadService:
             dm.seriesDownloadCompleted.connect(on_series_completed)
 
             self._dm_widget_connections[connection_key] = True
+            # [H7-P8] DM signal wiring checkpoint
+            _has_workers = bool(getattr(dm, '_active_workers', None))
+            _logger.info(
+                "[H7-P8] study=%s wiring_complete=True dm_has_active_workers=%s "
+                "connection_key=%s",
+                study_uid, _has_workers, connection_key,
+            )
         except Exception as exc:
             print(f"[DM] Error connecting signals: {exc}")
 

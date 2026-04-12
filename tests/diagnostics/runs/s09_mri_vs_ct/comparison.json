@@ -1,0 +1,107 @@
+{
+  "mr_label": "MR",
+  "ct_label": "CT",
+  "significant_count": 1,
+  "primary_concern": "M04_rss_delta_mb",
+  "rows": [
+    {
+      "key": "T05_metadata_refresh_max_ms",
+      "label": "Metadata refresh max (ms)",
+      "mr_value": 0.0,
+      "ct_value": 0.0,
+      "ratio": null,
+      "delta": 0.0,
+      "significant": false
+    },
+    {
+      "key": "T06_metadata_refresh_mean_ms",
+      "label": "Metadata refresh mean (ms)",
+      "mr_value": 0.0,
+      "ct_value": 0.0,
+      "ratio": null,
+      "delta": 0.0,
+      "significant": false
+    },
+    {
+      "key": "T07_grow_max_ms",
+      "label": "grow() max duration (ms)",
+      "mr_value": 0.0,
+      "ct_value": 0.0,
+      "ratio": null,
+      "delta": 0.0,
+      "significant": false
+    },
+    {
+      "key": "T08_grow_mean_ms",
+      "label": "grow() mean duration (ms)",
+      "mr_value": 0.0,
+      "ct_value": 0.0,
+      "ratio": null,
+      "delta": 0.0,
+      "significant": false
+    },
+    {
+      "key": "T09_progressive_start_duration_ms",
+      "label": "Progressive start (ms)",
+      "mr_value": 0.0,
+      "ct_value": 0.0,
+      "ratio": null,
+      "delta": 0.0,
+      "significant": false
+    },
+    {
+      "key": "T01_first_progress_to_first_grow_ms",
+      "label": "First-progress → first-grow (ms)",
+      "mr_value": -1.0,
+      "ct_value": -1.0,
+      "ratio": null,
+      "delta": 0.0,
+      "significant": false
+    },
+    {
+      "key": "C01_progressive_start_calls",
+      "label": "progressive_start() calls",
+      "mr_value": 0,
+      "ct_value": 0,
+      "ratio": null,
+      "delta": 0.0,
+      "significant": false
+    },
+    {
+      "key": "C02_grow_calls",
+      "label": "grow() calls",
+      "mr_value": 0,
+      "ct_value": 0,
+      "ratio": null,
+      "delta": 0.0,
+      "significant": false
+    },
+    {
+      "key": "C04_metadata_refresh_calls",
+      "label": "metadata refresh calls",
+      "mr_value": 0,
+      "ct_value": 0,
+      "ratio": null,
+      "delta": 0.0,
+      "significant": false
+    },
+    {
+      "key": "M02_rss_mb_at_peak",
+      "label": "Peak RSS (MB)",
+      "mr_value": 200.55859375,
+      "ct_value": 200.57421875,
+      "ratio": 1.0000779074070467,
+      "delta": 0.015625,
+      "significant": false
+    },
+    {
+      "key": "M04_rss_delta_mb",
+      "label": "RSS delta (MB)",
+      "mr_value": 0.00390625,
+      "ct_value": 0.01171875,
+      "ratio": 3.0,
+      "delta": 0.0078125,
+      "significant": true
+    }
+  ]
+}

@@ -15,7 +15,13 @@ from pathlib import Path
 
 from .cd_burn_manager import CDBurnManager, get_available_drives, check_imapi2_available
 from .dicomdir_builder import check_pydicom_available
-from PacsClient.pacs.workstation_ui.settings_ui.lightviewer_settings import LightViewerSettingsWidget
+
+
+def _get_light_viewer_widget():
+    """Lazy import to avoid circular dependency with settings_ui package."""
+    from PacsClient.pacs.workstation_ui.settings_ui.lightviewer_settings import LightViewerSettingsWidget
+    return LightViewerSettingsWidget
+
 
 # CD icon path
 CD_ICON_PATH = Path(__file__).parent / "assets" / "cd_icon.png"
@@ -69,8 +75,7 @@ class CDBurnDialog(QDialog):
             # Check if study has DICOM files
             has_files = False
             if study_path and Path(study_path).exists():
-                dcm_files = list(Path(study_path).rglob("*.dcm"))
-                has_files = len(dcm_files) > 0
+                has_files = self._has_dicom_files(Path(study_path))
             
             if has_files:
                 downloaded.append(study)
@@ -78,6 +83,24 @@ class CDBurnDialog(QDialog):
                 not_downloaded.append(study)
         
         return downloaded, not_downloaded
+
+    def _has_dicom_files(self, study_path: Path) -> bool:
+        for suffix in ("*.dcm", "*.dicom"):
+            if any(study_path.rglob(suffix)):
+                return True
+
+        for candidate in study_path.rglob("*"):
+            if not candidate.is_file() or candidate.suffix:
+                continue
+
+            try:
+                from pydicom import dcmread
+                dcmread(str(candidate), stop_before_pixels=True)
+                return True
+            except Exception:
+                continue
+
+        return False
     
     def setup_ui(self):
         """Setup the dialog UI"""
@@ -251,25 +274,43 @@ class CDBurnDialog(QDialog):
         cd_layout.addRow("Drive:", self.drive_combo)
         
         # Disc label
-        disc_label = LightViewerSettingsWidget.get_disc_label()
+        disc_label = _get_light_viewer_widget().get_disc_label()
         self.disc_label_edit = QLineEdit(disc_label)
         self.disc_label_edit.setMaxLength(32)
         self.disc_label_edit.setPlaceholderText("DICOM_IMAGES")
         cd_layout.addRow("Disc Label:", self.disc_label_edit)
         
         # Include light viewer checkbox
-        light_viewer_path = LightViewerSettingsWidget.get_light_viewer_path()
+        light_viewer_path = _get_light_viewer_widget().get_light_viewer_path()
         self.include_viewer_cb = QCheckBox("Include DICOM Light Viewer")
         self.include_viewer_cb.setChecked(bool(light_viewer_path))
         if not light_viewer_path:
             self.include_viewer_cb.setEnabled(False)
             self.include_viewer_cb.setToolTip("Configure Light Viewer in Settings first")
         else:
-            self.include_viewer_cb.setToolTip(f"Will include: {os.path.basename(light_viewer_path)}")
+            analysis = self.burn_manager.inspect_viewer_portability(light_viewer_path)
+            tooltip_lines = [f"Will include: {os.path.basename(light_viewer_path)}"]
+            tooltip_lines.extend(analysis.get("details", []))
+            if analysis.get("warnings"):
+                tooltip_lines.append("Warnings:")
+                tooltip_lines.extend(f"- {warning}" for warning in analysis["warnings"])
+            self.include_viewer_cb.setToolTip("\n".join(tooltip_lines))
         cd_layout.addRow("", self.include_viewer_cb)
         
         cd_group.setLayout(cd_layout)
         main_layout.addWidget(cd_group)
+
+        portability_note = QLabel(
+            "For better compatibility on other Windows PCs, the export now includes "
+            "`START_HERE.txt`, `RUN_VIEWER.cmd`, and `OPEN_DICOM_FOLDER.cmd`. "
+            "AutoRun may be blocked by Windows, so users should start from those helper files."
+        )
+        portability_note.setWordWrap(True)
+        portability_note.setStyleSheet(
+            "font-size: 11px; color: #93c5fd; padding: 8px; "
+            "background: rgba(59, 130, 246, 0.12); border-radius: 6px;"
+        )
+        main_layout.addWidget(portability_note)
         
         # Status/Prerequisites
         self.status_group = QGroupBox("Status")
@@ -492,7 +533,13 @@ class CDBurnDialog(QDialog):
         light_viewer_path = None
         
         if self.include_viewer_cb.isChecked():
-            light_viewer_path = LightViewerSettingsWidget.get_light_viewer_path()
+            light_viewer_path = _get_light_viewer_widget().get_light_viewer_path()
+
+        viewer_warning_text = ""
+        if light_viewer_path:
+            analysis = self.burn_manager.inspect_viewer_portability(light_viewer_path)
+            if analysis.get("warnings"):
+                viewer_warning_text = "\nViewer portability warnings:\n- " + "\n- ".join(analysis["warnings"])
 
         viewer_launch_summary = self._get_viewer_launch_summary(light_viewer_path)
         
@@ -504,6 +551,8 @@ class CDBurnDialog(QDialog):
             f"Disc Label: {disc_label}\n"
             f"Light Viewer: {'Yes' if light_viewer_path else 'No'}\n\n"
             f"{viewer_launch_summary}\n\n"
+            "The media will include START_HERE.txt and Windows launcher helpers for use on other PCs.\n\n"
+            f"{viewer_warning_text}\n\n"
             "Make sure a blank CD/DVD is inserted and click Yes to continue.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
@@ -575,9 +624,16 @@ class CDBurnDialog(QDialog):
         light_viewer_path = None
         
         if self.include_viewer_cb.isChecked():
-            light_viewer_path = LightViewerSettingsWidget.get_light_viewer_path()
+            light_viewer_path = _get_light_viewer_widget().get_light_viewer_path()
 
         self.log_output.append(f"[info] {self._get_viewer_launch_summary(light_viewer_path)}")
+
+        if light_viewer_path:
+            analysis = self.burn_manager.inspect_viewer_portability(light_viewer_path)
+            if analysis.get("warnings"):
+                self.log_output.append("[info] Viewer portability warnings:")
+                for warning in analysis["warnings"]:
+                    self.log_output.append(f"[info] - {warning}")
         
         self.is_burning = True
         self.burn_btn.setEnabled(False)
@@ -628,7 +684,14 @@ class CDBurnDialog(QDialog):
             self.stage_label.setStyleSheet("font-size: 13px; font-weight: bold; color: #48bb78;")
             self.progress_bar.setValue(100)
             
-            QMessageBox.information(self, "Success", message)
+            success_message = message
+            if "prepared" in message.lower() or "burned successfully" in message.lower():
+                success_message += (
+                    "\n\nOn another PC, start with `START_HERE.txt` or `RUN_VIEWER.cmd`. "
+                    "If the bundled viewer cannot run on that machine, open `DICOMDIR` with any DICOM viewer."
+                )
+
+            QMessageBox.information(self, "Success", success_message)
         else:
             self.stage_label.setText("Failed")
             self.stage_label.setStyleSheet("font-size: 13px; font-weight: bold; color: #f56565;")

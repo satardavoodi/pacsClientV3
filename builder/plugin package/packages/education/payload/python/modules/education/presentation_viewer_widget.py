@@ -17,6 +17,7 @@ class SlideContentWidget(QWidget):
     
     def __init__(self, slide_data, course_pk, parent=None):
         super().__init__(parent)
+        self._theme = get_theme_manager().current_theme()
         self.slide_data = slide_data
         self.course_pk = course_pk
         self.dicom_widgets = []  # Keep references to prevent cleanup
@@ -25,6 +26,7 @@ class SlideContentWidget(QWidget):
     
     def setup_ui(self):
         """Setup the slide display."""
+        t = self._theme
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 40, 40, 40)
         layout.setSpacing(20)
@@ -36,7 +38,7 @@ class SlideContentWidget(QWidget):
             title_font.setPointSize(28)
             title_font.setBold(True)
             title.setFont(title_font)
-            title.setStyleSheet("color: #e2e8f0;")
+            title.setStyleSheet(f"color: {t['text_primary']};")
             title.setAlignment(Qt.AlignCenter)
             layout.addWidget(title)
         
@@ -71,7 +73,7 @@ class SlideContentWidget(QWidget):
                 widget = self.create_dicom_series_widget(content_data)
             else:
                 widget = QLabel(f"Unknown content type: {content_type}")
-                widget.setStyleSheet("color: #e53e3e;")
+                widget.setStyleSheet(f"color: {t['danger']};")
             
             if widget:
                 content_layout.addWidget(widget)
@@ -81,23 +83,25 @@ class SlideContentWidget(QWidget):
     
     def create_text_widget(self, content_data):
         """Create text display widget."""
+        t = self._theme
         text_browser = QTextBrowser()
         text_browser.setPlainText(content_data.get('text', ''))
-        text_browser.setStyleSheet("""
-            QTextBrowser {
-                background-color: #2d3748;
-                color: #e2e8f0;
-                border: 2px solid #4a5568;
+        text_browser.setStyleSheet(f"""
+            QTextBrowser {{
+                background-color: {t['panel_alt_bg']};
+                color: {t['text_primary']};
+                border: 2px solid {t['border']};
                 border-radius: 10px;
                 padding: 20px;
                 font-size: 14pt;
-            }
+            }}
         """)
         text_browser.setMinimumHeight(150)
         return text_browser
     
     def create_image_widget(self, content_data):
         """Create image display widget."""
+        t = self._theme
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setSpacing(10)
@@ -120,12 +124,12 @@ class SlideContentWidget(QWidget):
             # Caption
             if content_data.get('caption'):
                 caption = QLabel(content_data['caption'])
-                caption.setStyleSheet("color: #a0aec0; font-style: italic;")
+                caption.setStyleSheet(f"color: {t['text_muted']}; font-style: italic;")
                 caption.setAlignment(Qt.AlignCenter)
                 layout.addWidget(caption)
         else:
             error_label = QLabel(f"Image not found: {image_path}")
-            error_label.setStyleSheet("color: #e53e3e;")
+            error_label.setStyleSheet(f"color: {t['danger']};")
             error_label.setAlignment(Qt.AlignCenter)
             layout.addWidget(error_label)
         
@@ -133,6 +137,7 @@ class SlideContentWidget(QWidget):
     
     def create_video_widget(self, content_data):
         """Create video player widget."""
+        t = self._theme
         video_path = content_data.get('path', '')
         
         if Path(video_path).exists():
@@ -147,12 +152,13 @@ class SlideContentWidget(QWidget):
             return video_widget
         else:
             error_label = QLabel(f"Video not found: {video_path}")
-            error_label.setStyleSheet("color: #e53e3e; font-size: 14pt;")
+            error_label.setStyleSheet(f"color: {t['danger']}; font-size: 14pt;")
             error_label.setAlignment(Qt.AlignCenter)
             return error_label
     
     def create_dicom_study_widget(self, content_data):
         """Create DICOM study viewer widget."""
+        t = self._theme
         try:
             from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget import PatientWidget
             from PacsClient.utils import CallerTypes
@@ -162,7 +168,7 @@ class SlideContentWidget(QWidget):
             
             if not study_uid:
                 error_label = QLabel("Invalid DICOM study data")
-                error_label.setStyleSheet("color: #e53e3e;")
+                error_label.setStyleSheet(f"color: {t['danger']};")
                 return error_label
             
             # Create PatientWidget for DICOM viewing
@@ -183,12 +189,13 @@ class SlideContentWidget(QWidget):
             
         except Exception as e:
             error_label = QLabel(f"Failed to load DICOM study: {str(e)}")
-            error_label.setStyleSheet("color: #e53e3e; font-size: 12pt;")
+            error_label.setStyleSheet(f"color: {t['danger']}; font-size: 12pt;")
             error_label.setWordWrap(True)
             return error_label
     
     def create_dicom_series_widget(self, content_data):
         """Create DICOM series viewer widget."""
+        t = self._theme
         try:
             from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget import PatientWidget
             from PacsClient.pacs.patient_tab.utils.image_io import load_single_series_by_number
@@ -201,7 +208,7 @@ class SlideContentWidget(QWidget):
             
             if not study_uid or series_number is None:
                 error_label = QLabel("Invalid DICOM series data")
-                error_label.setStyleSheet("color: #e53e3e;")
+                error_label.setStyleSheet(f"color: {t['danger']};")
                 return error_label
             
             # Get study path
@@ -209,7 +216,7 @@ class SlideContentWidget(QWidget):
             
             if not study_path or not Path(study_path).exists():
                 error_label = QLabel(f"Study path not found for UID: {study_uid}")
-                error_label.setStyleSheet("color: #e53e3e; font-size: 12pt;")
+                error_label.setStyleSheet(f"color: {t['danger']}; font-size: 12pt;")
                 return error_label
             
             # Create PatientWidget
@@ -255,7 +262,7 @@ class SlideContentWidget(QWidget):
             
         except Exception as e:
             error_label = QLabel(f"Failed to load DICOM series: {str(e)}")
-            error_label.setStyleSheet("color: #e53e3e; font-size: 12pt;")
+            error_label.setStyleSheet(f"color: {t['danger']}; font-size: 12pt;")
             error_label.setWordWrap(True)
             return error_label
     
@@ -285,13 +292,13 @@ class PresentationViewerWidget(QWidget):
     
     def __init__(self, course_data, parent=None):
         super().__init__(parent)
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self.course_data = course_data
         self.slides = course_data.get('slides', [])
         self.current_slide_index = 0
         self.slide_widgets = []
-        self.theme_manager = get_theme_manager()
-        self._theme = self.theme_manager.current_theme()
-        self.theme_manager.themeChanged.connect(self._on_theme_changed)
         
         if not self.slides:
             QMessageBox.warning(self, "No Slides", "This course has no slides.")
@@ -301,43 +308,42 @@ class PresentationViewerWidget(QWidget):
         self.setup_ui()
         self.load_all_slides()
         self.show_slide(0)
-    
+
     def _on_theme_changed(self, theme):
-        """Handle theme changes."""
         self._theme = theme or self.theme_manager.current_theme()
-        self._apply_theme_styles()
-        # Clean up and reload slides to reapply theme
-        while self.slides_stack.count() > 0:
-            widget = self.slides_stack.widget(0)
-            self.slides_stack.removeWidget(widget)
-            widget.deleteLater()
-        self.slide_widgets = []
+        self.setup_ui()
         self.load_all_slides()
         self.show_slide(self.current_slide_index)
     
     def setup_ui(self):
         """Setup the presentation viewer UI."""
+        t = self._theme
+        while self.layout() is not None and self.layout().count():
+            item = self.layout().takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
         # Main content area (stacked widget for slides)
         self.slides_stack = QStackedWidget()
-        self.slides_stack.setStyleSheet("""
-            QStackedWidget {
-                background-color: #1a202c;
-            }
+        self.slides_stack.setStyleSheet(f"""
+            QStackedWidget {{
+                background-color: {t['panel_deep_bg']};
+            }}
         """)
         layout.addWidget(self.slides_stack, stretch=1)
         
         # Navigation controls
         controls_widget = QWidget()
         controls_widget.setFixedHeight(80)
-        controls_widget.setStyleSheet("""
-            QWidget {
-                background-color: #2d3748;
-                border-top: 2px solid #4a5568;
-            }
+        controls_widget.setStyleSheet(f"""
+            QWidget {{
+                background-color: {t['panel_alt_bg']};
+                border-top: 2px solid {t['border']};
+            }}
         """)
         controls_layout = QHBoxLayout(controls_widget)
         controls_layout.setContentsMargins(20, 15, 20, 15)
@@ -347,23 +353,23 @@ class PresentationViewerWidget(QWidget):
         self.prev_btn = QPushButton("◀ Previous")
         self.prev_btn.setFixedHeight(50)
         self.prev_btn.clicked.connect(self.previous_slide)
-        self.prev_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4a5568;
-                color: white;
+        self.prev_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t['panel_bg']};
+                color: {t['text_primary']};
                 border: none;
                 border-radius: 8px;
                 padding: 10px 20px;
                 font-weight: bold;
                 font-size: 12pt;
-            }
-            QPushButton:hover {
-                background-color: #6b7280;
-            }
-            QPushButton:disabled {
-                background-color: #374151;
-                color: #6b7280;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {t['menu_hover_bg']};
+            }}
+            QPushButton:disabled {{
+                background-color: {t['panel_deep_bg']};
+                color: {t['text_muted']};
+            }}
         """)
         controls_layout.addWidget(self.prev_btn)
         
@@ -371,12 +377,12 @@ class PresentationViewerWidget(QWidget):
         
         # Slide counter
         self.slide_counter = QLabel()
-        self.slide_counter.setStyleSheet("""
-            QLabel {
-                color: #e2e8f0;
+        self.slide_counter.setStyleSheet(f"""
+            QLabel {{
+                color: {t['text_primary']};
                 font-size: 16pt;
                 font-weight: bold;
-            }
+            }}
         """)
         controls_layout.addWidget(self.slide_counter)
         
@@ -386,23 +392,23 @@ class PresentationViewerWidget(QWidget):
         self.next_btn = QPushButton("Next ▶")
         self.next_btn.setFixedHeight(50)
         self.next_btn.clicked.connect(self.next_slide)
-        self.next_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3182ce;
-                color: white;
+        self.next_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
                 border: none;
                 border-radius: 8px;
                 padding: 10px 20px;
                 font-weight: bold;
                 font-size: 12pt;
-            }
-            QPushButton:hover {
-                background-color: #2c5aa0;
-            }
-            QPushButton:disabled {
-                background-color: #374151;
-                color: #6b7280;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {t['accent_hover']};
+            }}
+            QPushButton:disabled {{
+                background-color: {t['panel_deep_bg']};
+                color: {t['text_muted']};
+            }}
         """)
         controls_layout.addWidget(self.next_btn)
         
@@ -410,19 +416,19 @@ class PresentationViewerWidget(QWidget):
         self.exit_btn = QPushButton("Exit (Esc)")
         self.exit_btn.setFixedHeight(50)
         self.exit_btn.clicked.connect(self.close)
-        self.exit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #e53e3e;
-                color: white;
+        self.exit_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t['danger']};
+                color: {t['button_text']};
                 border: none;
                 border-radius: 8px;
                 padding: 10px 20px;
                 font-weight: bold;
                 font-size: 12pt;
-            }
-            QPushButton:hover {
-                background-color: #c53030;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {t['danger_hover']};
+            }}
         """)
         controls_layout.addWidget(self.exit_btn)
         
@@ -430,65 +436,15 @@ class PresentationViewerWidget(QWidget):
         
         # Set focus to enable keyboard navigation
         self.setFocusPolicy(Qt.StrongFocus)
-        
-        self._apply_theme_styles()
-    
-    def _apply_theme_styles(self):
-        """Apply theme-based styling to all UI elements."""
-        t = self._theme
-        
-        # Slides stack background
-        self.slides_stack.setStyleSheet(f"""
-            QStackedWidget {{
-                background-color: {t['panel_deep_bg']};
-            }}
-        """)
-        
-        # Controls widget
-        if hasattr(self, 'controls_widget'):
-            self.controls_widget.setStyleSheet(f"""
-                QWidget {{
-                    background-color: {t['panel_alt_bg']};
-                    border-top: 2px solid {t['border']};
-                }}
-            """)
-        
-        # Navigation buttons
-        nav_button_style = f"""
-            QPushButton {{
-                background-color: {t['border']};
-                color: {t['text_secondary']};
-                border: none;
-                border-radius: 5px;
-                padding: 8px 15px;
-            }}
-            QPushButton:hover {{
-                background-color: {t['accent_hover']};
-                color: {t['button_text']};
-            }}
-        """
-        
-        # Next/Previous buttons
-        for button in self.findChildren(QPushButton):
-            if button.text() in ["Previous", "Next"]:
-                if button.text() == "Next":
-                    button.setStyleSheet(f"""
-                        QPushButton {{
-                            background-color: {t['accent']};
-                            color: {t['button_text']};
-                            border: none;
-                            border-radius: 5px;
-                            padding: 8px 15px;
-                        }}
-                        QPushButton:hover {{
-                            background-color: {t['accent_hover']};
-                        }}
-                    """)
-                else:
-                    button.setStyleSheet(nav_button_style)
     
     def load_all_slides(self):
         """Load all slide widgets."""
+        self.slide_widgets = []
+        while self.slides_stack.count() > 0:
+            w = self.slides_stack.widget(0)
+            self.slides_stack.removeWidget(w)
+            w.deleteLater()
+
         for slide in self.slides:
             slide_widget = SlideContentWidget(slide, self.course_data['course_pk'])
             self.slides_stack.addWidget(slide_widget)

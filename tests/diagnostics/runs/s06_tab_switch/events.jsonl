@@ -1,0 +1,31 @@
+{"ts": 0.014260199997806922, "wall_ts": 1775853002.0883856, "event_type": "SCENARIO_BEGIN", "thread_name": "MainThread", "seq": 0, "scenario": "s06_tab_switch", "modality": "CT", "slice_count": 120}
+{"ts": 0.014719599996169563, "wall_ts": 1775853002.0888436, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 1, "label": "series_A_start"}
+{"ts": 0.01493540000228677, "wall_ts": 1775853002.0890589, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 2, "series_number": "1", "downloaded": 10, "total": 120}
+{"ts": 0.015145699995628092, "wall_ts": 1775853002.0892684, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 3, "series_number": "1", "downloaded": 40, "total": 120}
+{"ts": 0.015915099997073412, "wall_ts": 1775853002.090038, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 4, "label": "switch_to_series_B"}
+{"ts": 0.016070600002421997, "wall_ts": 1775853002.0901942, "event_type": "SERIES_SWITCH_BEGIN", "thread_name": "MainThread", "seq": 5, "from_series": "1", "to_series": "2"}
+{"ts": 0.016187299996090587, "wall_ts": 1775853002.0903103, "event_type": "GENERATION_INCR", "thread_name": "MainThread", "seq": 6, "series_number": "2", "new_generation": 2}
+{"ts": 0.016277299997454975, "wall_ts": 1775853002.0904002, "event_type": "BACKEND_BIND", "thread_name": "MainThread", "seq": 7, "series_number": "2", "generation": 2}
+{"ts": 0.016361699999833945, "wall_ts": 1775853002.0904844, "event_type": "SERIES_SWITCH_DONE", "thread_name": "MainThread", "seq": 8, "from_series": "1", "to_series": "2"}
+{"ts": 0.01644510000187438, "wall_ts": 1775853002.0905683, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 9, "label": "series_B_progress"}
+{"ts": 0.016533599999092985, "wall_ts": 1775853002.0906565, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 10, "series_number": "2", "downloaded": 20, "total": 80}
+{"ts": 0.016676999999617692, "wall_ts": 1775853002.0907998, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 11, "series_number": "2", "downloaded": 60, "total": 80}
+{"ts": 0.016777700002421625, "wall_ts": 1775853002.0909004, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 12, "label": "late_series_A_decodes"}
+{"ts": 0.01685600000200793, "wall_ts": 1775853002.090979, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 13, "series_number": "1", "slice_index": 41, "generation": 1}
+{"ts": 0.016934400002355687, "wall_ts": 1775853002.091057, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 14, "series_number": "1", "slice_index": 42, "generation": 1}
+{"ts": 0.01700429999618791, "wall_ts": 1775853002.0911267, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 15, "series_number": "1", "slice_index": 43, "generation": 1}
+{"ts": 0.017068699999072123, "wall_ts": 1775853002.0911913, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 16, "series_number": "1", "slice_index": 44, "generation": 1}
+{"ts": 0.0171321000016178, "wall_ts": 1775853002.0912547, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 17, "series_number": "1", "slice_index": 45, "generation": 1}
+{"ts": 0.017198399997141678, "wall_ts": 1775853002.091321, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 18, "series_number": "1", "slice_index": 46, "generation": 1}
+{"ts": 0.017263900001125876, "wall_ts": 1775853002.0913866, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 19, "series_number": "1", "slice_index": 47, "generation": 1}
+{"ts": 0.0173988999958965, "wall_ts": 1775853002.091522, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 20, "series_number": "1", "slice_index": 48, "generation": 1}
+{"ts": 0.017508500000985805, "wall_ts": 1775853002.0916317, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 21, "series_number": "1", "slice_index": 49, "generation": 1}
+{"ts": 0.01759219999803463, "wall_ts": 1775853002.091715, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 22, "series_number": "1", "slice_index": 50, "generation": 1}
+{"ts": 0.01782200000161538, "wall_ts": 1775853002.0919454, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 23, "series_number": "1", "slice_index": 51, "generation": 1}
+{"ts": 0.01793539999925997, "wall_ts": 1775853002.092059, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 24, "series_number": "1", "slice_index": 52, "generation": 1}
+{"ts": 0.01802499999757856, "wall_ts": 1775853002.0921478, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 25, "series_number": "1", "slice_index": 53, "generation": 1}
+{"ts": 0.018105600000126287, "wall_ts": 1775853002.0922284, "event_type": "DECODE_SLICE_READY", "thread_name": "MainThread", "seq": 26, "series_number": "1", "slice_index": 54, "generation": 1}
+{"ts": 0.018185900000389665, "wall_ts": 1775853002.0923088, "event_type": "SCENARIO_STEP", "thread_name": "MainThread", "seq": 27, "label": "series_B_complete"}
+{"ts": 0.01827469999989262, "wall_ts": 1775853002.0923975, "event_type": "SERIES_PROGRESS", "thread_name": "MainThread", "seq": 28, "series_number": "2", "downloaded": 80, "total": 80}
+{"ts": 0.01839990000007674, "wall_ts": 1775853002.0925229, "event_type": "SERIES_DOWNLOAD_COMPLETE", "thread_name": "MainThread", "seq": 29, "series_number": "2"}
+{"ts": 0.018503100000089034, "wall_ts": 1775853002.092626, "event_type": "SCENARIO_END", "thread_name": "MainThread", "seq": 30, "scenario": "s06_tab_switch"}

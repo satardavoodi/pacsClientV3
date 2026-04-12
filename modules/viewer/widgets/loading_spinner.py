@@ -159,6 +159,14 @@ class LoadingSpinner(QWidget):
         
     def wheelEvent(self, event):
         """Block wheel events from reaching underlying widgets"""
+        print(f"[DIAG-SPINNER-BLOCK] LoadingSpinner blocking wheelEvent! visible={self.isVisible()} parent={type(self.parent()).__name__ if self.parent() else 'None'}", flush=True)
+        import logging as _ls_logging
+        _ls_logger = _ls_logging.getLogger(__name__)
+        _ls_logger.info(
+            "[SPINNER] wheelEvent BLOCKED — spinner visible=%s parent=%s",
+            self.isVisible(),
+            type(self.parent()).__name__ if self.parent() else "None",
+        )
         event.accept()
         
     def keyPressEvent(self, event):

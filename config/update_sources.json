@@ -1,0 +1,13 @@
+{
+  "app_name": "AIPacs",
+  "active_source_id": "primary",
+  "sources": [
+    {
+      "id": "primary",
+      "title": "Primary Update Source",
+      "type": "file",
+      "location": "",
+      "channel": "stable"
+    }
+  ]
+}

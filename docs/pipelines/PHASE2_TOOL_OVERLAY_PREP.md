@@ -25,6 +25,6 @@ Decouple tool interaction/rendering from VTK so tool behavior is identical acros
 
 ## Entry Points
 - Viewport backend bind and lifecycle:
-  - `PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget.py`
+  - `PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget/`
 - Backend contracts:
-  - `PacsClient/pacs/patient_tab/viewers/backends/contracts.py`
+  - `modules/viewer/fast/contracts.py`

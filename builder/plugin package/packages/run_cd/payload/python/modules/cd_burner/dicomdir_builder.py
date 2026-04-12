@@ -48,7 +48,8 @@ class DicomDirBuilder:
         self, 
         study_folders: List[str], 
         output_folder: str,
-        copy_files: bool = True
+        copy_files: bool = True,
+        fileset_id: Optional[str] = None,
     ) -> bool:
         """
         Build DICOMDIR from multiple study folders
@@ -77,7 +78,7 @@ class DicomDirBuilder:
             for study_folder in study_folders:
                 study_path = Path(study_folder)
                 if study_path.exists():
-                    dicom_files = list(study_path.rglob("*.dcm"))
+                    dicom_files = self._find_dicom_files(study_path)
                     all_dicom_files.extend(dicom_files)
             
             if not all_dicom_files:
@@ -89,6 +90,8 @@ class DicomDirBuilder:
             
             # Create FileSet for DICOMDIR
             fs = FileSet()
+            if fileset_id:
+                fs.ID = fileset_id
             
             # Organize and copy files
             total_files = len(all_dicom_files)
@@ -148,6 +151,7 @@ class DicomDirBuilder:
             
             # Add all DICOM files to FileSet
             # pydicom's FileSet.write() will create the proper folder structure and DICOMDIR
+            expected_sop_instance_uids = set()
             for patient_key, patient_data in hierarchy.items():
                 for study_uid, series_dict in patient_data['studies'].items():
                     for series_uid, series_data in series_dict.items():
@@ -155,6 +159,7 @@ class DicomDirBuilder:
                             try:
                                 ds = dcmread(str(file_info['path']))
                                 fs.add(ds)
+                                expected_sop_instance_uids.add(str(ds.SOPInstanceUID))
                             except Exception as e:
                                 logger.warning(f"Could not add file to FileSet: {e}")
             
@@ -163,6 +168,9 @@ class DicomDirBuilder:
             # Write the FileSet - this creates DICOMDIR and copies files to standard structure
             # pydicom creates: PT000000/ST000000/SE000000/IM000001 format
             # This is the standard DICOMDIR format that all DICOM viewers understand
+            # Remove any pre-existing DICOMDIR so pydicom does not try to load it
+            # (loading an existing DICOMDIR triggers the deprecated DicomDir class in
+            # pydicom v3, which is raised as an exception under -W error environments).
             _existing = output_path / "DICOMDIR"
             if _existing.exists():
                 _existing.unlink()
@@ -170,6 +178,11 @@ class DicomDirBuilder:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
                 fs.write(output_path)
+
+            self._report_progress(90, "Validating generated DICOMDIR...")
+            if not self._validate_output_fileset(output_path, expected_sop_instance_uids):
+                logger.error("Generated DICOMDIR validation failed")
+                return False
             
             logger.info(f"DICOMDIR created with standard folder structure")
             
@@ -196,6 +209,68 @@ class DicomDirBuilder:
             True if successful, False otherwise
         """
         return self.build_from_study_folders([dicom_folder], output_folder, copy_files=True)
+
+    def _find_dicom_files(self, study_path: Path) -> List[Path]:
+        """Return DICOM files under `study_path`.
+
+        Prefer common DICOM suffixes and fall back to extension-less files if no
+        matches are found.
+        """
+        matches = []
+        for suffix in ("*.dcm", "*.dicom"):
+            matches.extend(study_path.rglob(suffix))
+
+        if matches:
+            return matches
+
+        fallback_matches: List[Path] = []
+        for candidate in study_path.rglob("*"):
+            if not candidate.is_file() or candidate.suffix:
+                continue
+
+            try:
+                dcmread(str(candidate), stop_before_pixels=True)
+                fallback_matches.append(candidate)
+            except Exception:
+                continue
+
+        return fallback_matches
+
+    def _validate_output_fileset(self, output_path: Path, expected_uids: set[str]) -> bool:
+        """Validate that the generated DICOMDIR exists and references all instances."""
+        try:
+            dicomdir_path = output_path / "DICOMDIR"
+            if not dicomdir_path.exists():
+                logger.error("DICOMDIR file was not created")
+                return False
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                validation_fs = FileSet(str(dicomdir_path))
+            actual_uids = {str(instance.SOPInstanceUID) for instance in validation_fs}
+
+            if actual_uids != expected_uids:
+                missing = len(expected_uids - actual_uids)
+                extra = len(actual_uids - expected_uids)
+                logger.error(
+                    "DICOMDIR validation mismatch: missing=%s extra=%s expected=%s actual=%s",
+                    missing,
+                    extra,
+                    len(expected_uids),
+                    len(actual_uids),
+                )
+                return False
+
+            for instance in validation_fs:
+                instance_path = Path(str(instance.path))
+                if not instance_path.exists():
+                    logger.error("Referenced file missing from generated File-set: %s", instance_path)
+                    return False
+
+            return True
+        except Exception as exc:
+            logger.error(f"Error validating generated File-set: {exc}")
+            return False
     
     def _sanitize_name(self, name: str, max_length: int = 8) -> str:
         """Sanitize a name for file system compatibility (8.3 format)"""

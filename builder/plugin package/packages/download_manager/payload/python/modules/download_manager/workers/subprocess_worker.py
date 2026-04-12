@@ -158,9 +158,13 @@ class SubprocessDownloadWorker(QThread):
             return
 
         base_output_dir = self._resolve_base_output_dir()
-        socket_host     = DEFAULT_SOCKET_HOST
-        socket_port     = DEFAULT_SOCKET_PORT
-        grpc_host       = DEFAULT_SOCKET_HOST
+        
+        # Read actual server host from SocketConfig (not the localhost default)
+        from modules.network.socket_config import get_socket_server_settings
+        _srv = get_socket_server_settings()
+        socket_host     = _srv.get("host") or DEFAULT_SOCKET_HOST
+        socket_port     = int(_srv.get("port", DEFAULT_SOCKET_PORT))
+        grpc_host       = _srv.get("host") or DEFAULT_SOCKET_HOST
         grpc_port       = DEFAULT_GRPC_PORT
         log_level       = _logging.getLogger().level or _logging.INFO
 
@@ -170,6 +174,16 @@ class SubprocessDownloadWorker(QThread):
             f"socket={socket_host}:{socket_port} | "
             f"grpc={grpc_host}:{grpc_port}"
         )
+
+        # ── Read viewed-series hint from main-process state_store ──────────
+        viewed_series_number = None
+        try:
+            if self._executor_ref and hasattr(self._executor_ref, 'state_store'):
+                _st = self._executor_ref.state_store.get(self.task.study_uid)
+                if _st:
+                    viewed_series_number = getattr(_st, 'viewed_series_number', None)
+        except Exception:
+            pass
 
         # ── Spawn the download subprocess ────────────────────────────────────
         mp_ctx = multiprocessing.get_context("spawn")
@@ -186,6 +200,7 @@ class SubprocessDownloadWorker(QThread):
                 self._progress_queue,
                 self._cancel_event,
                 log_level,
+                viewed_series_number,
             ),
             name=f"DLProc-{self.task.study_uid[:12]}",
             daemon=True,   # auto-killed if main process exits

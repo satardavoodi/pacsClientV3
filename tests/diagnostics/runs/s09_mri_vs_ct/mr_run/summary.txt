@@ -1,0 +1,30 @@
+========================================================================
+AIPacs FAST Viewer Diagnostic Report
+Scenario : s01_small_mri  (synthetic)
+Modality : MR  Slices: 25
+Started  : 2026-04-11 00:00:02
+Ended    : N/A
+Crash    : NO
+========================================================================
+
+── KPI Highlights ──
+  Metadata refresh max (ms)                 0.0
+  Grow max (ms)                             0.0
+  First-progress→first-grow (ms)            -1.0
+  Progressive start calls                   0
+  Grow calls                                0
+  Decode failures                           0
+  Exceptions swallowed                      0
+  Peak RSS (MB)                             200.55859375
+
+── Failure Signatures: NONE DETECTED ──
+
+── Hypothesis Results ──
+  H1: NO_EVIDENCE  (0.00)  Metadata scan stalls main thread (CT 400  
+  H2: NO_EVIDENCE  (0.00)  Teardown-decode race → UAF crash  
+  H3: POSSIBLE     (0.30)  Series-generation mismatch → wrong-serie  
+  H4: NO_EVIDENCE  (0.00)  Done-guard collision on re-open → progre  
+  H5: NO_EVIDENCE  (0.00)  Asyncio/thread inflight stuck permanentl  
+  H6: NO_EVIDENCE  (0.00)  Completion layer miss → viewer stuck at   
+
+========================================================================

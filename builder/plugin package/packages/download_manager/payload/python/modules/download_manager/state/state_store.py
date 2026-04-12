@@ -324,6 +324,7 @@ class DownloadStateStore:
                 failed_series=[],
                 skipped_series=[],
                 is_auto_paused=False,
+                viewed_series_number=None,
                 worker_id=None
             )
             

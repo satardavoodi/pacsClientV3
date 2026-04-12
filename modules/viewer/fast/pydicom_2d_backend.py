@@ -22,6 +22,13 @@ from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
 )
 
 from .contracts import FrameData, GeometryData
+from ._decode_guard import (
+    decode_serialisation_guard,
+    log_decode_entry,
+    log_decode_exit,
+    extract_codec_info,
+    thread_state_canary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +180,40 @@ class PyDicom2DBackend(QObject):
                 "stage": "open_series",
             },
         )
+        if logger.isEnabledFor(logging.DEBUG) and self._slices:
+            _n = len(self._slices)
+            _mid = _n // 2
+            _s0 = self._slices[0]
+            _sm = self._slices[_mid]
+            _sl = self._slices[-1]
+            _iop = _s0.iop
+            # Classify orientation from IOP normal (cross product of row × col)
+            try:
+                _row = (_iop[0], _iop[1], _iop[2])
+                _col = (_iop[3], _iop[4], _iop[5])
+                _nx = _row[1] * _col[2] - _row[2] * _col[1]
+                _ny = _row[2] * _col[0] - _row[0] * _col[2]
+                _nz = _row[0] * _col[1] - _row[1] * _col[0]
+                _abs = (abs(_nx), abs(_ny), abs(_nz))
+                _orient_class = ["Sagittal", "Coronal", "Axial"][_abs.index(max(_abs))]
+            except Exception:
+                _orient_class = "Unknown"
+            logger.debug(
+                "[GEOM] series=%s orient=%s slices=%d\n"
+                "  IOP          = %s\n"
+                "  IPP[0]       = %s\n"
+                "  IPP[mid=%d]  = %s\n"
+                "  IPP[-1]      = %s\n"
+                "  pixel_spacing= %s  slice_thickness=%s  spacing_between=%s\n"
+                "  rows=%s  cols=%s",
+                series_number, _orient_class, _n,
+                _iop,
+                _s0.ipp,
+                _mid, _sm.ipp,
+                _sl.ipp,
+                _s0.pixel_spacing, _s0.slice_thickness, _s0.spacing_between_slices,
+                _s0.rows, _s0.cols,
+            )
 
     def close_series(self) -> None:
         self._pixel_cache.clear()
@@ -277,6 +318,7 @@ class PyDicom2DBackend(QObject):
         if cache_key in self._frame_cache:
             img = self._frame_cache.pop(cache_key)
             self._frame_cache[cache_key] = img
+            logger.debug("[IMAGE_CACHE_HIT] idx=%d", idx)
             return FrameData(
                 image=img,
                 width=img.width(),
@@ -331,13 +373,26 @@ class PyDicom2DBackend(QObject):
     def _decode_slice(self, idx: int) -> np.ndarray:
         sm = self._slices[idx]
         t_total = time.perf_counter()
-        t_read = time.perf_counter()
-        ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
-        read_ms = (time.perf_counter() - t_read) * 1000.0
 
-        t_pixel = time.perf_counter()
-        arr = np.asarray(ds.pixel_array)
-        pixel_decode_ms = (time.perf_counter() - t_pixel) * 1000.0
+        thread_state_canary("lazy_backend", "pre_decode")
+        log_decode_entry("lazy_backend", idx, sm.path)
+
+        t_read = time.perf_counter()
+        with decode_serialisation_guard():
+            ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
+            read_ms = (time.perf_counter() - t_read) * 1000.0
+
+            t_pixel = time.perf_counter()
+            arr = np.asarray(ds.pixel_array)
+            pixel_decode_ms = (time.perf_counter() - t_pixel) * 1000.0
+
+        codec_info = extract_codec_info(ds)
+        log_decode_exit(
+            "lazy_backend", idx,
+            decode_ms=read_ms + pixel_decode_ms,
+            **codec_info,
+        )
+        thread_state_canary("lazy_backend", "post_decode")
 
         t_post = time.perf_counter()
         if arr.ndim == 3 and sm.samples_per_pixel < 3:
