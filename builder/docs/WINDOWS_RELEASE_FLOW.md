@@ -1,6 +1,6 @@
 # Windows Release Flow
 
-Current release target: `v2.3.1` (`2026-04-13`)
+Current release target: `v2.3.3` (`2026-04-14`)
 
 ## Commands
 
@@ -29,12 +29,17 @@ If you already have a runtime `.venv`, you can still build from that environment
 - Python environment with release dependencies.
 - Project runtime dependencies installed from `requirements-core.txt`.
 - PyInstaller available in the active environment.
+- Complete software-render fallback runtime in `graphics_runtime/`:
+  - `opengl32sw.dll`
+  - `osmesa.dll`
+  - `pipe_swrast.dll`
 - Inno Setup 6 installed to compile the final installer executable:
   - `C:\Program Files (x86)\Inno Setup 6\ISCC.exe` (or)
   - `C:\Program Files\Inno Setup 6\ISCC.exe`
   - `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`
 
 If Inno Setup is not installed, release staging still succeeds but installer compilation is skipped.
+If any required `graphics_runtime/` DLL is missing, `builder/build_release.py` stops before packaging because CPU-safe fallback would be broken on non-GPU systems.
 
 ## Output Layout
 

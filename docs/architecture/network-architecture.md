@@ -1,6 +1,6 @@
 # Network & Server Communication Architecture
 
-> **Version:** v2.3.1 | **Updated:** 2026-04-13
+> **Version:** v2.3.3 | **Updated:** 2026-04-14
 
 ## Purpose
 
@@ -161,7 +161,7 @@ Or broadcast (filtered/skipped by client):
 }
 ```
 
-### Safety guards (v2.3.1)
+### Safety guards (v2.3.3)
 
 | Guard | Purpose |
 |-------|---------|
@@ -194,7 +194,7 @@ Or broadcast (filtered/skipped by client):
 | `GetStudyThumbnails` | Unary | Study metadata + series thumbnail list |
 | `GetDicomImages` | Server streaming | Stream DICOM files for a series |
 
-### Client features (v2.3.1)
+### Client features (v2.3.3)
 
 | Feature | Implementation |
 |---------|---------------|
@@ -235,7 +235,7 @@ Login flow:
 
 Used by `PatientListSocketClient` for patient queries and report status.
 
-### Design (v2.3.1 — lazy creation)
+### Design (v2.3.3 — lazy creation)
 
 ```python
 pool = SocketConnectionPool(host, port, timeout, pool_size=3)

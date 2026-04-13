@@ -132,7 +132,7 @@ class _QtBridgeStyle:
         if tool in _MEASUREMENT_SET:
             qv.setCursor(_Qt.CursorShape.CrossCursor)
         elif tool == ta.ERASER:
-            qv.setCursor(_Qt.CursorShape.PointingHandCursor)
+            qv.setCursor(_Qt.CursorShape.ForbiddenCursor)  # matches set_tool_mode(TOOL_ERASER)
         elif tool == ta.PAN:
             qv.setCursor(_Qt.CursorShape.OpenHandCursor)
         elif tool == ta.ZOOM:
@@ -147,10 +147,36 @@ class _QtBridgeStyle:
         if qv is not None:
             qv.set_tool_mode(qv.TOOL_NONE)
             qv.setCursor(Qt.CursorShape.ArrowCursor)
+            qv._tool_completed_cb = None  # prevent stale callback after manual deactivation
             # Also deactivate ToolController if present
             if qv.tool_controller is not None:
                 qv.tool_controller.deactivate()
         self._active_tool = None
+
+    def _on_fast_tool_completed(self):
+        """Tool placement complete in FAST mode — mirrors Advanced auto_deactivate_tool().
+
+        Restores default interactor mode, clears toolbar.tool_selected, and
+        un-highlights the active tool button.
+        Called via QtSliceViewer._tool_completed_cb after PLACING→IDLE transition.
+        """
+        vw = self._vtk_widget
+        if vw is None:
+            return
+        try:
+            # Restore default interactor (sets qv._tool_mode = TOOL_NONE)
+            vw.restore_default_interactorstyle()
+            # Clear toolbar state and un-highlight button (same as auto_deactivate_tool)
+            pw = getattr(vw, 'patient_widget', None)
+            toolbar = getattr(pw, 'toolbar_manager', None) if pw is not None else None
+            if toolbar is not None:
+                toolbar.tool_selected = None
+                toolbar.handle_buttons_checked()
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(50, toolbar.handle_buttons_checked)
+                QTimer.singleShot(200, toolbar.handle_buttons_checked)
+        except Exception:
+            pass
 
     _TOOL_MODE_MAP = None  # lazily built
 
@@ -187,6 +213,11 @@ class _QtBridgeStyle:
             except Exception:
                 pass
 
+        # Wire auto-deactivation callback for placement tools (not eraser).
+        # Eraser stays active until the user manually clicks the button again.
+        if tool != ta.ERASER:
+            qv._tool_completed_cb = self._on_fast_tool_completed
+
     def zoom_to_fit(self):
         qv = self._qt_viewer
         if qv is not None:
@@ -197,7 +228,13 @@ class _QtBridgeStyle:
     def reset_events(self, *a, **kw):
         self.deactivate()
 
-    def delete_all_widgets(self, *a, **kw): pass
+    def delete_all_widgets(self, *a, **kw):
+        qv = self._qt_viewer
+        if qv is not None:
+            ctrl = qv.tool_controller
+            if ctrl is not None:
+                ctrl.clear_all()
+            qv.update()
     def check_status(self, *a, **kw): pass
 
     def _capture_qt(self):
@@ -507,7 +544,7 @@ class _VWInteractorMixin:
             self._set_target_cursor(True)
             qv = getattr(self, '_qt_viewer_widget', None)
             if qv is not None:
-                qv._sync_mode_active = True
+                qv.set_sync_mode(True)  # triggers repaint + cursor
             return
 
         if self._sync_prev_style is None:
@@ -544,7 +581,7 @@ class _VWInteractorMixin:
             self._sync_manager = None
             qv = getattr(self, '_qt_viewer_widget', None)
             if qv is not None:
-                qv._sync_mode_active = False
+                qv.set_sync_mode(False)  # triggers repaint + cursor restore
             return
 
         for obs_id in self._sync_observer_ids:

@@ -1,7 +1,12 @@
 # AIPacs Performance Status
-**Version:** v2.2.3.4.0 | **Branch:** DR.vahid | **Updated:** 2026-02-27
+**Version:** v2.3.3 | **Branch:** main | **Updated:** 2026-04-14
 
-> **Quick-start:** Start here. After reading this file, go to `METRICS_TRACKING_v2.2.3.x.md` for detailed measurements, or `docs/CROSS_PC_IMPROVEMENT_WORKFLOW.md` for the PC A/B validation process.
+> **2026-04-14 policy update (viewer interaction):**
+> - Wheel scroll is now strict precision mode (**±1 slice only**, no adaptive skip).
+> - Stack drag remains speed mode (adaptive threshold + bounded acceleration by stack size).
+> - FAST measurement tools now auto-return to default mode after completion (parity with Advanced lifecycle).
+
+> **Quick-start:** Start here. For the planning-first KPI program, continue with `FAST_VIEWER_PERFORMANCE_ROADMAP.md` → `FAST_VIEWER_KPI_CATALOG.md` → `FAST_VIEWER_TEST_SCENARIOS.md` → `CONCURRENCY_ANALYSIS_v2.3.3.md`.
 
 ---
 
@@ -83,6 +88,7 @@ User double-clicks study
 
 | Version | Symptom Fixed | How |
 |---|---|---|
+| **v2.3.3 (2026-04-14)** | Wheel felt jumpy due to adaptive skipping; stack/wheel intent mixed; FAST tools could stay latched after completion | Enforced wheel ±1 policy in `_vw_scroll.py`; added adaptive stack profiles in `qt_slice_viewer.py` and `abstract_interactorstyle.py`; wired FAST auto-deactivate callback chain to restore default mode and clear toolbar selection |
 | **v2.2.3.4.0** | 5-15ms per-frame overhead in set_slice during wheel scroll (camera save/restore, style update, Lock Sync) + subprocess warmup memory-bus contention | Wheel-scroll fast-path: skip camera zoom save/restore (~3-5ms), skip interactor style update (~1ms), throttle Lock Sync to 100ms; subprocess priority BELOW_NORMAL→IDLE |
 | **v2.2.3.3.9** | Mode B scroll lag from warmup subprocess contention (ITK 2 threads + unthrottled result poll + frequent notify) | Subprocess ITK threads 2→1; defer poll during scroll (idle<300ms); max 1 result/tick; notify throttle 500→250ms |
 | **v2.2.3.3.8** | Size-mismatch false positives during active downloads triggering warmup retries | Compare against DB expected count, not just cached data |

@@ -4152,6 +4152,26 @@ class ToolbarManager:
                 logger.info(f"   ✅ Found series {series_number} at list index {active_series_index}")
                 logger.info(f"   vtk_image_data dimensions: {vtk_image_data.GetDimensions()}")
 
+                # In FAST mode (pydicom_qt) the stored vtk_image_data is a stub
+                # (dimensions only, no pixel scalars). StandardMPRViewer needs real
+                # scalar data, so load the full VTK volume from disk if necessary.
+                if vtk_image_data.GetPointData().GetScalars() is None:
+                    logger.info("   ℹ️ [MPR OPEN] vtk_image_data is a FAST-mode stub — loading full VTK from disk")
+                    full_vtk = self._load_full_vtk_for_mpr(series_number=series_number)
+                    if full_vtk is None:
+                        logger.error("   ❌ [MPR OPEN] Failed to load full VTK data for MPR")
+                        QMessageBox.warning(
+                            self.patient_widget,
+                            "MPR Not Available",
+                            "Cannot load the full volume for MPR in FAST mode.\n\n"
+                            "Make sure the series is fully downloaded, then try again.\n\n"
+                            "Alternatively, switch to Advanced mode (VTK SimpleITK) and reload the series.",
+                        )
+                        selected_widget.setVisible(True)
+                        return
+                    vtk_image_data = full_vtk
+                    logger.info(f"   ✅ [MPR OPEN] Full VTK loaded: dims={vtk_image_data.GetDimensions()}")
+
                 # Remember which series spawned MPR so we can restore on close
                 # Store BOTH series_number (for display) and index (for data lookup)
                 selected_widget._mpr_source_series_number = series_number
@@ -5182,6 +5202,90 @@ class ToolbarManager:
             
         logger.info("Original viewer restored successfully")
 
+    def _load_full_vtk_for_mpr(self, series_number):
+        """
+        Resolve the full VTK volume that external modules (MPR, 3D, etc.) need.
+
+        Design contract (to be preserved for ALL external-module integrations):
+          1. Toolbar/coordinator resolves the study path using established utilities.
+          2. The existing image-I/O pipeline (load_vtk_from_dicom_paths) produces the
+             volume from the downloaded DICOM files — NO custom loading code here.
+          3. The resulting vtkImageData is handed to the module unchanged.
+          4. The module itself is never modified — it receives its expected input and
+             performs its own work with its own internal logic.
+
+        In FAST mode (pydicom_qt) the vtk_image_data stored in lst_thumbnails_data
+        is a stub (dimensions only, no pixel scalars).  External modules such as
+        StandardMPRViewer need the full scalar volume, so this bridge method resolves
+        the series folder and delegates to the shared image-I/O pipeline.
+
+        Returns vtkImageData with scalars, or None on failure.
+        """
+        import logging
+        from pathlib import Path
+        logger = logging.getLogger(__name__)
+
+        try:
+            from PacsClient.pacs.patient_tab.utils.image_io import load_vtk_from_dicom_paths
+            from PacsClient.pacs.patient_tab.utils.utils import (
+                find_series_folder_by_series_number,
+                get_study_source_path,
+            )
+            from natsort import natsorted
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtCore import Qt as _Qt
+
+            # ── Step 1: resolve the study path (same logic used across the toolbar) ──
+            study_path = getattr(self.patient_widget, 'import_folder_path', None)
+            if not study_path:
+                study_uid = getattr(self.patient_widget, 'study_uid', None)
+                if study_uid:
+                    resolved, _ = get_study_source_path(str(study_uid))
+                    study_path = str(resolved) if resolved else None
+            if not study_path:
+                logger.error("[MPR VTK LOAD] Cannot resolve study path — import_folder_path and study_uid both unavailable")
+                return None
+
+            sp = Path(study_path)
+
+            # ── Step 2: locate the series sub-folder ──
+            series_folder = sp / str(series_number)
+            if not series_folder.exists():
+                found_name = find_series_folder_by_series_number(sp, series_number)
+                if found_name:
+                    series_folder = sp / found_name
+            if not series_folder.exists():
+                logger.error(f"[MPR VTK LOAD] Series folder not found under {sp}")
+                return None
+
+            # ── Step 3: collect DICOM files ──
+            dcm_files = natsorted([str(f) for f in series_folder.glob('*.dcm')])
+            if not dcm_files:
+                dcm_files = natsorted([str(f) for f in series_folder.iterdir() if f.is_file()])
+            if not dcm_files:
+                logger.error(f"[MPR VTK LOAD] No DICOM files in {series_folder}")
+                return None
+
+            # ── Step 4: delegate to the shared image-I/O pipeline ──
+            logger.info(f"[MPR VTK LOAD] Loading {len(dcm_files)} files via image_io pipeline")
+            QApplication.setOverrideCursor(_Qt.CursorShape.WaitCursor)
+            QApplication.processEvents()
+            try:
+                vtk_data = load_vtk_from_dicom_paths(dcm_files)
+            finally:
+                QApplication.restoreOverrideCursor()
+
+            if vtk_data is None or vtk_data.GetPointData().GetScalars() is None:
+                logger.error("[MPR VTK LOAD] Pipeline returned empty/stub data")
+                return None
+
+            logger.info(f"[MPR VTK LOAD] ✓ dims={vtk_data.GetDimensions()}")
+            return vtk_data
+
+        except Exception as e:
+            logger.error(f"[MPR VTK LOAD] Exception: {e}", exc_info=True)
+            return None
+
 
     def handle_buttons_checked(self):
         def _is_tool_active(tool_name: str) -> bool:
@@ -5297,7 +5401,14 @@ class ToolbarManager:
 
         # when we switch between two tools and hasn't deactivated first tool
         elif self.tool_selected == self.tool_access.MPR:
-            self.toggle_zeta_mpr()  # deactivate Zeta MPR
+            # Only close MPR when the user is actually interacting with the MPR-hosting
+            # viewer (i.e. selected_widget IS the MPR host or the MPR widget itself).
+            # If selected_widget is a normal adjacent viewer, keep MPR open so the user
+            # can use tools on that viewer without unintentionally closing MPR.
+            sel = self.patient_widget.selected_widget
+            if sel is not None and self.is_mpr_viewer(sel):
+                self.toggle_zeta_mpr()  # deactivate Zeta MPR (on the active MPR viewer)
+            # else: keep MPR alive; tool_selected will be overridden by the caller
 
         elif self.tool_selected == self.tool_access.RULER:
             # self.toggle_ruler()  # deactivate ruler

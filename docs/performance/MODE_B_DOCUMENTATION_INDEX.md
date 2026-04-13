@@ -11,6 +11,10 @@
 | Document | Purpose | When to Use |
 |----------|---------|-------------|
 | **[PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)** | **One-page current state: what's fixed, what's open, key numbers** | **Start here every session** |
+| **[FAST_VIEWER_PERFORMANCE_ROADMAP.md](FAST_VIEWER_PERFORMANCE_ROADMAP.md)** | **Execution phases, bottleneck-first workflow, stop/go checkpoints** | **Before any optimization coding** |
+| **[FAST_VIEWER_KPI_CATALOG.md](FAST_VIEWER_KPI_CATALOG.md)** | **Canonical KPI definitions (component + system contention)** | **When designing measurements or reviewing deltas** |
+| **[FAST_VIEWER_TEST_SCENARIOS.md](FAST_VIEWER_TEST_SCENARIOS.md)** | **Scenario matrix for baseline and regression loops** | **Before baseline and after each optimization step** |
+| **[CONCURRENCY_ANALYSIS_v2.3.3.md](CONCURRENCY_ANALYSIS_v2.3.3.md)** | **Formal workload/contention model and scheduling classes** | **When selecting dominant bottleneck or designing scheduling changes** |
 | [METRICS_TRACKING_v2.2.3.x.md](METRICS_TRACKING_v2.2.3.x.md) | Phase-by-phase measurements and version history (v2.2.3.0.x → v2.2.3.2.2) | Review baseline vs current; fill in new measurements |
 | [PERFORMANCE_DECISION_LOG_2026-02-27.md](PERFORMANCE_DECISION_LOG_2026-02-27.md) | Decisions from 2026-02-26/27 session | Trace why recent changes were made |
 | [PERFORMANCE_DECISION_LOG_2026-02-24.md](PERFORMANCE_DECISION_LOG_2026-02-24.md) | Decisions from 2026-02-24 session | Historical context; log rotation, first B-mode diagnostics |

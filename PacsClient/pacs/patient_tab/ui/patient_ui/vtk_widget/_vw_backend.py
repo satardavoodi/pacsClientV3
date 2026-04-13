@@ -4,6 +4,7 @@ _bind_backend_from_metadata, _on_lazy_slice_ready, lazy loader lifecycle.
 """
 from __future__ import annotations
 import logging
+import os
 import threading
 import time
 from PySide6.QtCore import QTimer, Qt
@@ -697,6 +698,29 @@ class _VWBackendMixin:
         resolution = resolve_viewer_backend(metadata=metadata, settings=requested_backend)
         self._log_backend_resolution(source=source, resolution=resolution, metadata=metadata)
         chosen_backend = str(resolution.get("backend", BACKEND_VTK) or BACKEND_VTK)
+
+        # v2.3.3 Stage 2 hardening: if BACKEND_PYDICOM leaked through the
+        # resolver (should be impossible unless escape hatch is active),
+        # log a warning so it's visible in diagnostics.
+        if chosen_backend == BACKEND_PYDICOM and not force_vtk:
+            _escape = os.environ.get("AIPACS_FORCE_PYDICOM_2D", "").strip() == "1"
+            if not _escape:
+                logger.error(
+                    "[BACKEND_SWITCH] UNEXPECTED: BACKEND_PYDICOM leaked to binding "
+                    "viewer=%s series=%s — this should not happen without the escape hatch. "
+                    "Remapping to BACKEND_PYDICOM_QT.",
+                    getattr(self, "id_vtk_widget", "?"),
+                    self._extract_series_number(metadata) or "-",
+                )
+                chosen_backend = BACKEND_PYDICOM_QT
+
+        logger.info(
+            "[BACKEND_SWITCH] rebind viewer=%s series=%s resolved=%s force_vtk=%s",
+            getattr(self, "id_vtk_widget", "?"),
+            self._extract_series_number(metadata) or "-",
+            chosen_backend,
+            force_vtk,
+        )
         self._gpu_boost_plan = resolve_gpu_boost_plan(viewer_backend=chosen_backend)
         self._log_gpu_boost_plan(source=source, plan=self._gpu_boost_plan, metadata=metadata)
         lazy_key = str(resolution.get("lazy_loader_key", "") or "").strip()
@@ -827,6 +851,19 @@ class _VWBackendMixin:
         self._update_backend_badge()
         # [H11] Probe 3: exit VTK fallback
         self._h11_bind_snapshot("BIND_EXIT(vtk_fallback)", metadata)
+
+        # v2.3.3 Stage 2: post-bind sanity log — BACKEND_PYDICOM should
+        # never be the active backend at bind-exit unless the escape hatch
+        # (AIPACS_FORCE_PYDICOM_2D=1) is active.
+        if self._active_backend == BACKEND_PYDICOM:
+            _escape = os.environ.get("AIPACS_FORCE_PYDICOM_2D", "").strip() == "1"
+            if not _escape:
+                logger.error(
+                    "[BACKEND_SWITCH] POST-BIND VIOLATION: _active_backend == "
+                    "BACKEND_PYDICOM after binding viewer=%s — expected "
+                    "BACKEND_PYDICOM_QT or BACKEND_VTK",
+                    getattr(self, "id_vtk_widget", "?"),
+                )
 
     def _ensure_lazy_slice_loaded(self, slice_index, mark_current=True):
         loader = self._lazy_loader

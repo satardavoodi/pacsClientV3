@@ -1,6 +1,6 @@
-# Module Catalog
+﻿# Module Catalog
 
-> **Version:** v2.3.1 | **Updated:** 2026-04-13
+> **Version:** v2.3.3 | **Updated:** 2026-04-14
 
 ## Active Modules
 
@@ -10,7 +10,7 @@
 | Viewer, fast | Lightweight 2D viewing paths for responsiveness (`pydicom_qt`, `pydicom_2d`) | `modules/viewer/fast/` | Optimized for software rendering and active download/progressive scenarios |
 | Viewer, advanced | Full viewer path with richer tools and overlays (`vtk_simpleitk`) | `modules/viewer/advanced/` | VTK/SimpleITK rendering path |
 | Download Manager | Download queueing, resumability, priority, worker orchestration | `modules/download_manager/` | See `docs/pipelines/download-pipeline.md` |
-| Zeta Download Adapter | Legacy Zeta أ¢â€ â€‌ DM bridge, UI helpers | `PacsClient/zeta_download_manager/` | Local guide: `ZETA_DOWNLOAD_MANAGER_IMPLEMENTATION_GUIDE.md` |
+| Zeta Download Adapter | Legacy Zeta ط£آ¢أ¢â‚¬آ أ¢â‚¬â€Œ DM bridge, UI helpers | `PacsClient/zeta_download_manager/` | Local guide: `ZETA_DOWNLOAD_MANAGER_IMPLEMENTATION_GUIDE.md` |
 | Zeta MPR | Advanced MPR implementation | `PacsClient/pacs/patient_tab/zeta mpr/` | Local guide: `PacsClient/pacs/patient_tab/zeta mpr/README.md` |
 | Orthogonal MPR | Focused orthogonal MPR widget and helpers | `PacsClient/pacs/patient_tab/orthogonal_mpr/` | Used alongside toolbar workflows |
 | Advanced imaging and AI | Imaging tabs, service tabs, analysis workflows | `PacsClient/pacs/patient_tab/ui/ai_module_ui/` | Includes service-driven imaging workflows |
@@ -22,7 +22,7 @@
 
 ## Installer and Module Delivery Model
 
-For `v2.3.1`, the Windows installer is the canonical way to prepare AIPacs for another PC.
+For `v2.3.3`, the Windows installer is the canonical way to prepare AIPacs for another PC.
 
 - `Core` install always delivers the workstation shell plus the required basic modules.
 - `Custom` install asks the user which optional modules should be copied for that specific PC.
@@ -64,98 +64,98 @@ Optional modules selectable during setup:
 - Web Browser
 - EchoMind
 
-## Download Manager أ¢â‚¬â€‌ Internal Structure (v2.3.1)
+## Download Manager ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Internal Structure (v2.3.3)
 
 The download manager is the most architecturally complex module. It uses a
 **State Machine + Rule Engine + Thin Coordinator** pattern.
 
 ```
 modules/download_manager/
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ core/                           # Foundation types
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ constants.py                # Retry delays, batch sizes, timeouts
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ enums.py                    # DownloadStatus, DownloadPriority
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ models.py                   # DownloadTask, SeriesInfo dataclasses
-أ¢â€‌â€ڑ   أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ exceptions.py               # Custom exception hierarchy
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ state/                          # State management (thread-safe)
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ state_store.py              # DownloadStateStore أ¢â‚¬â€‌ in-memory dict + Lock
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ state_machine.py            # Status transition rules & guards
-أ¢â€‌â€ڑ   أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ observers.py                # UIObserver أ¢â‚¬â€‌ stateأ¢â€ â€™UI refresh bridge
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ coordinator/                    # Intent management
-أ¢â€‌â€ڑ   أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ series_intent_coordinator.py # Priority negotiation, series-interrupt,
-أ¢â€‌â€ڑ                                    # viewed-series tracking, retry scheduling
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ rules/                          # Business rules (pure functions)
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ rule_engine.py              # DownloadRuleEngine أ¢â‚¬â€‌ orchestrates rules
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ validation_rules.py         # R17a (StateStore), R17b (DB+filesystem)
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ priority_rules.py           # Priority ordering, preemption logic
-أ¢â€‌â€ڑ   أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ resume_rules.py             # Resume eligibility, batch-skip (R19b)
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ download/                       # Execution layer
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ executor.py                 # DownloadExecutor أ¢â‚¬â€‌ validateأ¢â€ â€™fetchأ¢â€ â€™download
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ series_downloader.py        # Per-series download with retry rounds
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ batch_processor.py          # Batch-level I/O, file-skip (R19)
-أ¢â€‌â€ڑ   أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ progress_tracker.py         # Progress aggregation and signal emission
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ network/                        # Server communication (download path)
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ socket_client.py            # SocketDicomClient أ¢â‚¬â€‌ resumable download
-أ¢â€‌â€ڑ   أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ health_monitor.py           # ConnectionHealthMonitor (R30-R34)
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ workers/                        # Subprocess workers
-أ¢â€‌â€ڑ   أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ worker.py                   # DownloadProcessWorker (own GIL, IDLE priority)
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ storage/                        # File management
-أ¢â€‌â€ڑ   أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ ...                         # Directory creation, validation, cleanup
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ ui/                             # Qt widgets
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ main_widget.py              # DownloadManagerWidget أ¢â‚¬â€‌ worker pool, timers
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ components/                 # Table rows, progress bars, buttons
-أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ dialogs/                    # Confirmation dialogs
-أ¢â€‌â€ڑ   أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ styles/                     # QSS stylesheets
-أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ utils/                          # Shared helpers
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ core/                           # Foundation types
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ constants.py                # Retry delays, batch sizes, timeouts
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ enums.py                    # DownloadStatus, DownloadPriority
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ models.py                   # DownloadTask, SeriesInfo dataclasses
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ exceptions.py               # Custom exception hierarchy
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ state/                          # State management (thread-safe)
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ state_store.py              # DownloadStateStore ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ in-memory dict + Lock
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ state_machine.py            # Status transition rules & guards
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ observers.py                # UIObserver ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ stateط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢UI refresh bridge
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ coordinator/                    # Intent management
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ series_intent_coordinator.py # Priority negotiation, series-interrupt,
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘                                    # viewed-series tracking, retry scheduling
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ rules/                          # Business rules (pure functions)
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ rule_engine.py              # DownloadRuleEngine ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ orchestrates rules
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ validation_rules.py         # R17a (StateStore), R17b (DB+filesystem)
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ priority_rules.py           # Priority ordering, preemption logic
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ resume_rules.py             # Resume eligibility, batch-skip (R19b)
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ download/                       # Execution layer
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ executor.py                 # DownloadExecutor ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ validateط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢fetchط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢download
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ series_downloader.py        # Per-series download with retry rounds
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ batch_processor.py          # Batch-level I/O, file-skip (R19)
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ progress_tracker.py         # Progress aggregation and signal emission
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ network/                        # Server communication (download path)
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ socket_client.py            # SocketDicomClient ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ resumable download
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ health_monitor.py           # ConnectionHealthMonitor (R30-R34)
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ workers/                        # Subprocess workers
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ worker.py                   # DownloadProcessWorker (own GIL, IDLE priority)
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ storage/                        # File management
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ ...                         # Directory creation, validation, cleanup
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ ui/                             # Qt widgets
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ main_widget.py              # DownloadManagerWidget ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ worker pool, timers
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ components/                 # Table rows, progress bars, buttons
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ dialogs/                    # Confirmation dialogs
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ styles/                     # QSS stylesheets
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ utils/                          # Shared helpers
 ```
 
 ### DM Signal Flow
 
 ```
 User opens study (HomePanelWidget)
-  أ¢â€‌â€ڑ
-  أ¢â€“آ¼
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+  ط£آ¢أ¢â‚¬â€œط¢آ¼
 HomeDownloadService.get_or_create_download_manager_tab()
-  أ¢â€‌â€ڑ
-  أ¢â€“آ¼
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+  ط£آ¢أ¢â‚¬â€œط¢آ¼
 DownloadManagerWidget.start_priority_download_immediately()
-  أ¢â€‌إ“أ¢â€‌â‚¬ RuleEngine.validate() أ¢â€ â€™ R17a/R17b
-  أ¢â€‌إ“أ¢â€‌â‚¬ gRPC metadata fetch
-  أ¢â€‌إ“أ¢â€‌â‚¬ StateStore.create() أ¢â€ â€™ state=PENDING
-  أ¢â€‌â€‌أ¢â€‌â‚¬ Worker pool أ¢â€ â€™ start DownloadProcessWorker (subprocess)
-      أ¢â€‌â€ڑ
-      أ¢â€‌إ“أ¢â€‌â‚¬ seriesProgressUpdated signal أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€“آ¶ ViewerController.on_series_images_progress()
-      أ¢â€‌â€ڑ                                        أ¢â€‌â€ڑ
-      أ¢â€‌â€ڑ                                        أ¢â€‌إ“أ¢â€‌â‚¬ First batch: _start_progressive_display()
-      أ¢â€‌â€ڑ                                        أ¢â€‌â€‌أ¢â€‌â‚¬ Subsequent: _grow_progressive_fast()
-      أ¢â€‌â€ڑ
-      أ¢â€‌إ“أ¢â€‌â‚¬ Worker completed أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€“آ¶ _on_worker_completed()
-      أ¢â€‌â€ڑ                            أ¢â€‌â€‌أ¢â€‌â‚¬ QTimer.singleShot(0, _start_next_pending)
-      أ¢â€‌â€ڑ
-      أ¢â€‌â€‌أ¢â€‌â‚¬ Worker error أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€“آ¶ _on_worker_error()
-                              أ¢â€‌â€‌أ¢â€‌â‚¬ QTimer.singleShot(0, _start_next_pending)
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ RuleEngine.validate() ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ R17a/R17b
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ gRPC metadata fetch
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ StateStore.create() ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ state=PENDING
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ Worker pool ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ start DownloadProcessWorker (subprocess)
+      ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+      ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ seriesProgressUpdated signal ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€œط¢آ¶ ViewerController.on_series_images_progress()
+      ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘                                        ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+      ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘                                        ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ First batch: _start_progressive_display()
+      ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘                                        ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ Subsequent: _grow_progressive_fast()
+      ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+      ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ Worker completed ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€œط¢آ¶ _on_worker_completed()
+      ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘                            ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ QTimer.singleShot(0, _start_next_pending)
+      ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+      ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ Worker error ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€œط¢آ¶ _on_worker_error()
+                              ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ QTimer.singleShot(0, _start_next_pending)
 ```
 
 ### Priority & Series-Interrupt Flow (v2.2.8.1)
 
 ```
 User drag-drops series S5 (while S3 is downloading)
-  أ¢â€‌â€ڑ
-  أ¢â€“آ¼
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+  ط£آ¢أ¢â‚¬â€œط¢آ¼
 ViewerController._notify_dm_viewed_series()  [deferred via QTimer.singleShot(0)]
-  أ¢â€‌â€ڑ                                           [500ms per-series cooldown]
-  أ¢â€“آ¼
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘                                           [500ms per-series cooldown]
+  ط£آ¢أ¢â‚¬â€œط¢آ¼
 DownloadManagerWidget.set_viewed_series()
-  أ¢â€‌â€ڑ
-  أ¢â€“آ¼
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘
+  ط£آ¢أ¢â‚¬â€œط¢آ¼
 SeriesIntentCoordinator.request_critical_series()
-  أ¢â€‌إ“أ¢â€‌â‚¬ StateStore.update(priority=CRITICAL, viewed_series='5')
-  أ¢â€‌إ“أ¢â€‌â‚¬ Same study, different series? أ¢â€ â€™ Cancel own worker (non-blocking)
-  أ¢â€‌â€ڑ                                  Set state=PENDING (not PAUSED)
-  أ¢â€‌إ“أ¢â€‌â‚¬ negotiate_priority_change()
-  أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬ Pause lower-priority peers (is_auto_paused=True)
-  أ¢â€‌â€ڑ   أ¢â€‌إ“أ¢â€‌â‚¬ defer _start_next_pending via QTimer.singleShot(50)
-  أ¢â€‌â€ڑ   أ¢â€‌â€‌أ¢â€‌â‚¬ schedule_priority_start_retry(200ms) as backup
-  أ¢â€‌â€‌أ¢â€‌â‚¬ UIObserver أ¢â€ â€™ refresh_table_order() [0ms, next tick]
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ StateStore.update(priority=CRITICAL, viewed_series='5')
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ Same study, different series? ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ Cancel own worker (non-blocking)
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘                                  Set state=PENDING (not PAUSED)
+  ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ negotiate_priority_change()
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ Pause lower-priority peers (is_auto_paused=True)
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ defer _start_next_pending via QTimer.singleShot(50)
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬ع‘   ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ schedule_priority_start_retry(200ms) as backup
+  ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ UIObserver ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ refresh_table_order() [0ms, next tick]
 ```
 
 ## Supporting Layers
@@ -194,69 +194,69 @@ SeriesIntentCoordinator.request_critical_series()
 - search service: `home_search_service.py`
 - See `docs/architecture/home-ui-services.md`
 
-## Viewer Module أ¢â‚¬â€‌ Internal Structure
+## Viewer Module ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Internal Structure
 
 The viewer has three rendering paths:
 
 ### Fast Viewer (primary for download-time browsing)
 ```
 modules/viewer/fast/
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ contracts.py                 # IViewer2DBackend (Protocol), FrameData, GeometryData
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ lightweight_2d_pipeline.py   # Lightweight2DPipeline أ¢â‚¬â€‌ main fast render
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ pydicom_2d_backend.py        # PyDicom2DBackend أ¢â‚¬â€‌ slice extraction from pydicom
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ pydicom_lazy_volume.py       # PyDicomLazyVolume أ¢â‚¬â€‌ progressive loading (grows on signal)
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ qt_slice_viewer.py           # QtSliceViewer أ¢â‚¬â€‌ Qt widget, no VTK dependency
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ qt_viewer_bridge.py          # QtViewerBridge أ¢â‚¬â€‌ adapts Qt viewer to VTK API
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ stale_frame_guard.py         # Detects stale cached frames vs disk
-أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ lazy_volume_registry.py      # Registry of loaded volumes
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ contracts.py                 # IViewer2DBackend (Protocol), FrameData, GeometryData
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ lightweight_2d_pipeline.py   # Lightweight2DPipeline ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ main fast render
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ pydicom_2d_backend.py        # PyDicom2DBackend ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ slice extraction from pydicom
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ pydicom_lazy_volume.py       # PyDicomLazyVolume ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ progressive loading (grows on signal)
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ qt_slice_viewer.py           # QtSliceViewer ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Qt widget, no VTK dependency
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ qt_viewer_bridge.py          # QtViewerBridge ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ adapts Qt viewer to VTK API
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ stale_frame_guard.py         # Detects stale cached frames vs disk
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ lazy_volume_registry.py      # Registry of loaded volumes
 ```
 
 ### Advanced Viewer (measurement tools, 3D)
 ```
 modules/viewer/advanced/
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ viewer_2d.py                 # Base advanced 2D viewer
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ viewer_2d_optimized.py       # Optimized variant
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ viewer_2d_with_tools.py      # Viewer2DWithTools أ¢â‚¬â€‌ adds ruler/angle/ROI
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ viewer_3d.py                 # Viewer3DWidget أ¢â‚¬â€‌ 3D volume rendering
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ vtk_3d_presets.py            # VolumePresetConfig أ¢â‚¬â€‌ bone, soft tissue, etc.
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ filter_config_widget.py      # FilterConfigWidget UI
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ image_filter_sidebar.py      # Filter sidebar
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ preset_manager.py            # User preset management
-أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ advanced_tools_panel.py      # Toolbar for advanced features
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ viewer_2d.py                 # Base advanced 2D viewer
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ viewer_2d_optimized.py       # Optimized variant
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ viewer_2d_with_tools.py      # Viewer2DWithTools ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ adds ruler/angle/ROI
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ viewer_3d.py                 # Viewer3DWidget ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ 3D volume rendering
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ vtk_3d_presets.py            # VolumePresetConfig ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ bone, soft tissue, etc.
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ filter_config_widget.py      # FilterConfigWidget UI
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ image_filter_sidebar.py      # Filter sidebar
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ preset_manager.py            # User preset management
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ advanced_tools_panel.py      # Toolbar for advanced features
 ```
 
 ### Pipeline Orchestration
 ```
 modules/viewer/pipeline/
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ orchestrator.py              # PipelineOrchestrator, PipelineState enum
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ load_coordinator.py          # LoadCoordinator أ¢â‚¬â€‌ dedup in-flight loads
-أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ preview_engine.py            # PreviewEngine أ¢â‚¬â€‌ quick preview before full load
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ orchestrator.py              # PipelineOrchestrator, PipelineState enum
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ load_coordinator.py          # LoadCoordinator ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ dedup in-flight loads
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ preview_engine.py            # PreviewEngine ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ quick preview before full load
 ```
 
 ### Widget Helpers
 ```
 modules/viewer/widgets/
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ loading_spinner.py           # LoadingSpinner, ViewportSpinner
-أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ medical_loading_overlay.py   # MedicalLoadingOverlay
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ loading_spinner.py           # LoadingSpinner, ViewportSpinner
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ medical_loading_overlay.py   # MedicalLoadingOverlay
 ```
 
 ### Interactor Styles (Measurement Tools)
 ```
 modules/viewer/interactor_styles/
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ abstract_interactorstyle.py     # AbstractInteractorStyle أ¢â‚¬â€‌ base class
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ ruler_interactorstyle.py        # Distance measurement
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ angle_interactorstyle.py        # Angle measurement
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ two_line_angle_interactorstyle.py # Cobb angle
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ arrow_interactorstyle.py        # Arrow annotation
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ text_interactorstyle.py         # Text annotation
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ roi_interactorstyle.py          # Region of interest with statistics
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ roi_with_segment.py             # ROI with AI segmentation overlay
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ eraser_interactorstyle.py       # Annotation eraser
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ default_interaction_interactorstyle.py # Default pan/zoom/scroll
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ rotate_interactorstyles.py      # Image rotation
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ ai_chat_interactorstyle.py      # AI click-on-image integration
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ tools_object_manager.py         # All tool data objects (RulerObject, etc.)
-أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ interactor_utils/               # Shared math helpers
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ abstract_interactorstyle.py     # AbstractInteractorStyle ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ base class
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ ruler_interactorstyle.py        # Distance measurement
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ angle_interactorstyle.py        # Angle measurement
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ two_line_angle_interactorstyle.py # Cobb angle
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ arrow_interactorstyle.py        # Arrow annotation
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ text_interactorstyle.py         # Text annotation
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ roi_interactorstyle.py          # Region of interest with statistics
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ roi_with_segment.py             # ROI with AI segmentation overlay
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ eraser_interactorstyle.py       # Annotation eraser
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ default_interaction_interactorstyle.py # Default pan/zoom/scroll
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ rotate_interactorstyles.py      # Image rotation
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ ai_chat_interactorstyle.py      # AI click-on-image integration
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ tools_object_manager.py         # All tool data objects (RulerObject, etc.)
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ interactor_utils/               # Shared math helpers
 ```
 
 ## ZetaSync Module
@@ -265,12 +265,12 @@ Cross-viewer synchronization (linked scroll, W/L sync):
 
 ```
 modules/zeta_sync/
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ sync_manager.py    # SyncManager أ¢â‚¬â€‌ orchestrates cross-viewer sync
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ sync_context.py    # Sync state context (active groups, modes)
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ sync_types.py      # Type definitions for sync messages
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ geometry_utils.py  # IPP-based position calculation
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ adapters.md        # Integration guide for new viewer types
-أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ README.md          # Module documentation
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ sync_manager.py    # SyncManager ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ orchestrates cross-viewer sync
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ sync_context.py    # Sync state context (active groups, modes)
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ sync_types.py      # Type definitions for sync messages
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ geometry_utils.py  # IPP-based position calculation
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ adapters.md        # Integration guide for new viewer types
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ README.md          # Module documentation
 ```
 
 ## Storage Module
@@ -279,11 +279,11 @@ Disk management and cleanup:
 
 ```
 modules/storage/
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ disk_alert_service.py                # Low disk space warnings
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ local_storage_cleanup_manager.py     # Automated DICOM cleanup
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ patient_cleanup_manager.py           # Per-patient file removal
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ storage_calculator.py                # Disk usage scanning
-أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ thumbnail_store.py                   # Thumbnail storage management
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ disk_alert_service.py                # Low disk space warnings
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ local_storage_cleanup_manager.py     # Automated DICOM cleanup
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ patient_cleanup_manager.py           # Per-patient file removal
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ storage_calculator.py                # Disk usage scanning
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ thumbnail_store.py                   # Thumbnail storage management
 ```
 
 ## Stitching Module
@@ -292,14 +292,14 @@ Long-bone / panorama image stitching:
 
 ```
 modules/stitching/
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ stitching_widget.py           # StitchingWidget أ¢â‚¬â€‌ main UI
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ stitch_controller.py          # StitchController أ¢â‚¬â€‌ orchestration
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ stitch_engine.py              # StitchEngine أ¢â‚¬â€‌ image composition
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ stitch_worker.py              # Background processing thread
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ blend_engine.py               # Multi-image blending
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ canvas_builder.py             # Output canvas construction
-أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ landmark_store.py             # LandmarkStore أ¢â‚¬â€‌ alignment points
-أ¢â€‌â€‌أ¢â€‌â‚¬أ¢â€‌â‚¬ landmark_interactor_style.py  # VTK interaction for placing landmarks
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ stitching_widget.py           # StitchingWidget ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ main UI
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ stitch_controller.py          # StitchController ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ orchestration
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ stitch_engine.py              # StitchEngine ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ image composition
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ stitch_worker.py              # Background processing thread
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ blend_engine.py               # Multi-image blending
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ canvas_builder.py             # Output canvas construction
+ط£آ¢أ¢â‚¬â€Œط¥â€œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ landmark_store.py             # LandmarkStore ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ alignment points
+ط£آ¢أ¢â‚¬â€Œأ¢â‚¬â€Œط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ landmark_interactor_style.py  # VTK interaction for placing landmarks
 ```
 
 ## Module-to-Database Contract
@@ -321,7 +321,7 @@ Each module reads config from `config/` JSON files:
 |--------|------------|-------------|
 | Viewer | `viewer_backend_settings.json` | Backend selection (fast vs advanced) |
 | ZetaBoost | `boostviewer_settings.json` | Cache sizes, thread counts, prefetch |
-| Grid layout | `modality_grid.json` | Default grid per modality (CT=1ط£â€”1, MR=2ط£â€”2) |
+| Grid layout | `modality_grid.json` | Default grid per modality (CT=1ط·آ£أ¢â‚¬â€‌1, MR=2ط·آ£أ¢â‚¬â€‌2) |
 | Filters | `filter_presets.json`, `filter_settings.json` | Filter chains and defaults |
 | Network | `socket_config.json` | Server host/port/timeout |
 | Printing | `printing_config.json` | Paper size, DPI, layout |
@@ -334,3 +334,4 @@ Each module reads config from `config/` JSON files:
 - Keep package-local docs only when they explain a package that is independently complex.
 - Prefer linking local docs from this catalog instead of duplicating architecture notes in multiple places.
 - Archive time-bound investigation notes under `docs/archive/` when they stop being operationally useful.
+

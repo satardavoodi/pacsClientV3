@@ -1,11 +1,11 @@
 # Home UI — Service Layer Architecture
 
-> **Version:** v2.3.1 | **Updated:** 2026-04-13
+> **Version:** v2.3.3 | **Updated:** 2026-04-14
 
 ## Purpose
 
 `HomePanelWidget` is the main patient-list screen and the hub for opening
-studies, launching downloads, and navigating to module tabs.  As of v2.3.1
+studies, launching downloads, and navigating to module tabs.  As of v2.3.3
 it follows a **Thin Controller + Service Layer** pattern: the widget class
 handles only UI composition and signal wiring, while domain logic lives in
 dedicated service modules.
@@ -147,7 +147,7 @@ delegate to services.
 | Anti-aliasing | Deferred | `QTimer.singleShot(0, ...)` after first paint |
 | Background jobs | Thread pool | `_run_background_job_with_progress()` via `QEventLoop` |
 
-## Performance Optimizations (v2.3.1)
+## Performance Optimizations (v2.3.3)
 
 1. **Lazy imports**: `PatientWidget` and `AiMainWindow` are loaded on first
    patient double-click, not at module import time.  This saves ~200ms on

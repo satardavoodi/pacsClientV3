@@ -1,6 +1,6 @@
 # Measurement Tool Layer — Design, Implementation & Results
 
-**Version:** v2.3.1  
+**Version:** v2.3.3  
 **Completed:** 2026-04-07  
 **Applies to:** AIPacs DICOM Workstation — FAST viewer mode (`pydicom_qt`)
 

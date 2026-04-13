@@ -1,6 +1,6 @@
 ﻿# Architecture Overview
 
-> **Version:** v2.3.1 | **Updated:** 2026-04-13
+> **Version:** v2.3.3 | **Updated:** 2026-04-14
 
 ## Purpose
 
@@ -29,7 +29,7 @@ The current architecture is serviceable, but the repository had drifted away fro
 
 This layer owns Qt widgets, tab management, user actions, and view composition.
 
-As of v2.3.1, `HomePanelWidget` follows a **Thin Controller + Service Layer**
+As of v2.3.3, `HomePanelWidget` follows a **Thin Controller + Service Layer**
 pattern.  See `docs/architecture/home-ui-services.md` for full details.
 
 ### Application and Orchestration Layer
@@ -116,7 +116,7 @@ Canonical viewer architecture/debug docs: `docs/viewer/README.md`.
 - thumbnail and study caches under `generated-files/`, `thumbnails/`, and database-backed state
 
 Download orchestration, progress tracking, resumability, priority management, and warmup caching are concentrated here.
-The download manager follows a **state machine + rule engine + thin coordinator** architecture (v2.3.1).
+The download manager follows a **state machine + rule engine + thin coordinator** architecture (v2.3.3).
 
 ### Education Module
 

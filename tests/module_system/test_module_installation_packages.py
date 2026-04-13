@@ -246,9 +246,9 @@ def test_summarize_available_updates_reads_local_feed(monkeypatch, tmp_path):
                 "core": {
                     "module_id": runtime.CORE_COMPONENT_ID,
                     "title": runtime.CORE_COMPONENT_TITLE,
-                    "release_version": "2.3.1",
+                    "release_version": "2.3.3",
                     "artifact_type": "installer",
-                    "artifact_path": "core/ai-pacs installer v2.3.1.exe",
+                    "artifact_path": "core/ai-pacs installer v2.3.3.exe",
                 },
                 "components": [
                     {
@@ -257,7 +257,7 @@ def test_summarize_available_updates_reads_local_feed(monkeypatch, tmp_path):
                         "tier": "basic",
                         "delivery": "core_bundle",
                         "artifact_type": "core_bundle",
-                        "release_version": "2.3.1",
+                        "release_version": "2.3.3",
                     },
                     {
                         "module_id": "web_browser",
@@ -265,8 +265,8 @@ def test_summarize_available_updates_reads_local_feed(monkeypatch, tmp_path):
                         "tier": "optional",
                         "delivery": "package",
                         "artifact_type": "package_zip",
-                        "artifact_path": "modules/web_browser-2.3.1.zip",
-                        "release_version": "2.3.1",
+                        "artifact_path": "modules/web_browser-2.3.3.zip",
+                        "release_version": "2.3.3",
                     },
                 ],
             },
@@ -310,7 +310,7 @@ def test_install_component_update_uses_feed_artifact(monkeypatch, tmp_path):
         json.dumps(
             {
                 "app_name": runtime.APP_NAME,
-                "core": {"release_version": "2.3.1"},
+                "core": {"release_version": "2.3.3"},
                 "components": [
                     {
                         "module_id": "web_browser",
@@ -319,7 +319,7 @@ def test_install_component_update_uses_feed_artifact(monkeypatch, tmp_path):
                         "delivery": "package",
                         "artifact_type": "package_zip",
                         "artifact_path": f"modules/{archive.name}",
-                        "release_version": "2.3.1",
+                        "release_version": "2.3.3",
                     }
                 ],
             },

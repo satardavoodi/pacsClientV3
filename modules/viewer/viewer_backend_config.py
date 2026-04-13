@@ -6,11 +6,14 @@ Stores the preferred 2D backend for patient-tab viewers.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
 from PacsClient.utils.config import SOCKET_CONFIG_PATH
 from aipacs_runtime import SAFE_VIEWER_BACKEND_DEFAULT, SAFE_VIEWER_BACKEND_ENV
+
+logger = logging.getLogger(__name__)
 
 
 BACKEND_VTK = "vtk_simpleitk"
@@ -73,6 +76,33 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
         and configured_backend in {BACKEND_VTK, BACKEND_PYDICOM}
     )
     requested_backend = forced_backend if safe_backend_forced else configured_backend
+
+    # v2.3.3 Stage 2: Emergency escape hatch — revert FAST to the old VTK
+    # lazy-hybrid backend without a code change.  Set the env var to "1"
+    # and restart the application.
+    _force_legacy = os.environ.get("AIPACS_FORCE_PYDICOM_2D", "").strip() == "1"
+    if _force_legacy and requested_backend in {BACKEND_PYDICOM_QT, BACKEND_PYDICOM}:
+        logger.warning(
+            "[BACKEND_SWITCH_V2.3.3] AIPACS_FORCE_PYDICOM_2D=1 — "
+            "overriding %s -> %s (emergency escape hatch)",
+            requested_backend, BACKEND_PYDICOM,
+        )
+        requested_backend = BACKEND_PYDICOM
+
+    # v2.3.3: PYDICOM (pydicom_2d) is deprecated for FAST mode.
+    # Remap to PYDICOM_QT unconditionally — the VTK lazy hybrid is no longer
+    # the default path.  This safety net ensures even stale config files
+    # or manual overrides resolve to the Qt-native path.
+    # Note: force_vtk_fallback from metadata is applied downstream and will
+    # override to BACKEND_VTK if set, so the alias is always safe here.
+    # Note: The escape hatch above intentionally bypasses this remap.
+    if requested_backend == BACKEND_PYDICOM and not _force_legacy:
+        logger.info(
+            "[BACKEND_SWITCH_V2.3.3] Remapping deprecated BACKEND_PYDICOM "
+            "(%s) -> BACKEND_PYDICOM_QT (%s) for FAST mode",
+            BACKEND_PYDICOM, BACKEND_PYDICOM_QT,
+        )
+        requested_backend = BACKEND_PYDICOM_QT
 
     series_meta = {}
     instances = []

@@ -1,6 +1,6 @@
 # Installer QA Checklist (PC A / PC B)
 
-Release target for this publication: `v2.3.1` (`2026-04-13`)
+Release target for this publication: `v2.3.3` (`2026-04-14`)
 
 Use this checklist for every Windows installer release to validate functionality and avoid regressions.
 
@@ -17,7 +17,8 @@ Use this checklist for every Windows installer release to validate functionality
 1. Confirm build completed without errors.
 2. Confirm both installer files exist and are non-zero size.
 3. Confirm `INSTALL_NOTES.txt` and `SHA256.txt` were regenerated for the same version.
-4. Record:
+4. Confirm the release bundle included the software-render fallback runtime (`opengl32sw.dll`, `osmesa.dll`, `pipe_swrast.dll`) so CPU-safe installs work on non-GPU systems.
+5. Record:
    - app version
    - commit hash
    - installer file sizes

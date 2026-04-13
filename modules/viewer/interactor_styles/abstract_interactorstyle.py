@@ -386,16 +386,28 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
         max_slice = self.image_viewer.get_count_of_slices()
         if max_slice <= 25:
             basic_slice_change = 10
-        elif 25 < max_slice <= 50:
+            max_step_per_event = 1
+        elif max_slice <= 50:
             basic_slice_change = 8
-        elif 50 < max_slice <= 75:
+            max_step_per_event = 2
+        elif max_slice <= 100:
             basic_slice_change = 7
+            max_step_per_event = 3
+        elif max_slice <= 200:
+            basic_slice_change = 6
+            max_step_per_event = 4
+        elif max_slice <= 500:
+            basic_slice_change = 5
+            max_step_per_event = 6
         else:
-            basic_slice_change = 5  # each 5 pixel on window
+            basic_slice_change = 4  # large stacks: faster gesture response
+            max_step_per_event = 8
 
         if abs(dy) >= basic_slice_change:  # Slice change criteria
-            # step = 1 if dy > 0 else -1 if dy < 0 else 0  # determine increase/decrease slice
-            step = round(dy / basic_slice_change)  # determine increase/decrease slice
+            step = int(dy / basic_slice_change)  # signed steps from drag distance
+            if step == 0:
+                return
+            step = max(-int(max_step_per_event), min(int(max_step_per_event), int(step)))
 
             base_slice = self.image_viewer.GetSlice() + self.image_viewer.skip_slices
             if hasattr(self, 'slider') and self.slider is not None:

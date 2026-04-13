@@ -264,6 +264,22 @@ if __name__ == "__main__":
     configure_diagnostic_logging(process_role="main", force=True)
     logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
 
+    # ── BACKEND_SWITCH v2.3.3: Startup banner ────────────────────────────
+    try:
+        from modules.viewer.viewer_backend_config import (
+            load_viewer_backend as _load_vb,
+            BACKEND_PYDICOM_QT as _BPQ,
+        )
+        _startup_backend = _load_vb()
+        _fast_label = 'Qt-native (pydicom_qt)' if _startup_backend == _BPQ else _startup_backend
+        logging.getLogger(__name__).info(
+            '[BACKEND_SWITCH] Startup: FAST backend=%s  Advanced=vtk_simpleitk',
+            _fast_label,
+        )
+    except Exception as _be_exc:
+        logging.getLogger(__name__).warning('[BACKEND_SWITCH] Could not read backend config: %s', _be_exc)
+    # ─────────────────────────────────────────────────────────────────────
+
     # â”€â”€ H5a: Global exception hook (v2.2.9.3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Captures the FULL Python traceback for any unhandled exception before
     # Qt intercepts it with the generic "Qt has caught an exception" message.

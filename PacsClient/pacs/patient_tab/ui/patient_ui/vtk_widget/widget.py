@@ -166,6 +166,12 @@ class VTKWidget(
         self._backend_badge.show()
         self._update_backend_badge()
         self._log_backend_resolution(source="widget_init", resolution=_initial_resolution, metadata=None)
+        logger.info(
+            "[BACKEND_SWITCH] __init__ viewer=%s selected=%s active=%s (metadata=None, expected VTK fallback)",
+            getattr(self, "id_vtk_widget", "?"),
+            self._selected_backend,
+            self._active_backend,
+        )
         
         # =====================================================
         # ANTI-FLICKERING: Disable widget updates during init
@@ -347,6 +353,7 @@ class VTKWidget(
             if self._qt_viewer_widget is not None:
                 try:
                     self._qt_viewer_widget.setGeometry(self.rect())
+                    self._qt_viewer_widget.raise_()
                     if self.slider is not None:
                         self.slider.raise_()
                 except Exception:
@@ -366,6 +373,7 @@ class VTKWidget(
         if self._qt_bridge_active and self._qt_viewer_widget is not None:
             try:
                 self._qt_viewer_widget.setGeometry(self.rect())
+                self._qt_viewer_widget.raise_()
                 # Keep slider on top of Qt viewer
                 if self.slider is not None:
                     self.slider.raise_()

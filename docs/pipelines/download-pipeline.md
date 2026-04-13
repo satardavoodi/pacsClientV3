@@ -1,12 +1,12 @@
 # Download Pipeline
 
-> **Version:** v2.3.1 | **Updated:** 2026-04-13
+> **Version:** v2.3.3 | **Updated:** 2026-04-14
 
 ## Overview
 
 The download pipeline handles fetching DICOM studies from the PACS server to local storage. It runs in a **separate subprocess** to avoid GIL contention with the viewer.
 
-In `v2.3.1`, the download manager remains part of the core workstation bundle, so every installed PC receives the same download engine even when optional modules differ.
+In `v2.3.3`, the download manager remains part of the core workstation bundle, so every installed PC receives the same download engine even when optional modules differ.
 
 ## Pipeline Stages
 

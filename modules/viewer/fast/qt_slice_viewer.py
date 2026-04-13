@@ -236,10 +236,26 @@ class QtSliceViewer(QWidget):
 
         # Sync point mode (forwarded to parent VTKWidget for cross-viewer sync)
         self._sync_mode_active: bool = False
+        # Sync-point dot marker (image coords; None = not visible)
+        self._sync_point_img: Optional[tuple] = None
+
+        # Button-state tracking for combined gestures (L+R = pan)
+        self._left_button_down: bool = False   # track left held for L+R pan detection
+        self._right_button_down: bool = False  # track right held for L+R pan detection
+        self._lr_pan_active: bool = False      # True while L+R simultaneous pan is active
+
+        # Modality hint for W/L sensitivity (set via set_modality_hint;
+        # radiography modalities MG/DX/CR/XR use 10x higher sensitivity)
+        self._modality_hint: str = ""
+
+        # Total-slices hint for adaptive stack-drag behavior.
+        # Set by QtViewerBridge; used to scale drag threshold/step limits.
+        self._total_slices_hint: int = 0
 
         # Measurement tool state
         self._tool_controller = None   # Optional[ToolController]
         self._coord_backend = None     # Optional backend for coord resolver
+        self._tool_completed_cb = None  # set by _QtBridgeStyle; fires when placement completes
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -319,43 +335,25 @@ class QtSliceViewer(QWidget):
         self.update()
 
     def widget_to_image_coords(self, widget_x: float, widget_y: float) -> Tuple[float, float]:
-        """Convert widget coordinates to image (pixel) coordinates."""
+        """Convert widget coordinates to image (pixel) coordinates.
+
+        Rotation- and flip-aware: delegates to CoordinateResolver so that
+        results are consistent with _paint_image and tool hit-testing.
+        """
         if self._image_width <= 0 or self._image_height <= 0:
             return 0.0, 0.0
-
-        # Widget center
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
-
-        # Image center in widget space (with zoom and pan)
-        img_cx = cx + self._pan_offset.x()
-        img_cy = cy + self._pan_offset.y()
-
-        # Image top-left in widget space
-        img_left = img_cx - (self._image_width * self._zoom) / 2.0
-        img_top = img_cy - (self._image_height * self._zoom) / 2.0
-
-        # Convert to image coordinates
-        img_x = (widget_x - img_left) / self._zoom
-        img_y = (widget_y - img_top) / self._zoom
-
-        return img_x, img_y
+        from modules.viewer.tools.coord_resolver import CoordinateResolver
+        return CoordinateResolver(self).widget_to_image(widget_x, widget_y)
 
     def image_to_widget_coords(self, img_x: float, img_y: float) -> Tuple[float, float]:
-        """Convert image coordinates to widget coordinates."""
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
+        """Convert image coordinates to widget coordinates.
 
-        img_cx = cx + self._pan_offset.x()
-        img_cy = cy + self._pan_offset.y()
-
-        img_left = img_cx - (self._image_width * self._zoom) / 2.0
-        img_top = img_cy - (self._image_height * self._zoom) / 2.0
-
-        wx = img_left + img_x * self._zoom
-        wy = img_top + img_y * self._zoom
-
-        return wx, wy
+        Rotation- and flip-aware: delegates to CoordinateResolver so that
+        overlay lines and reference lines are positioned consistently with
+        the rendered image in _paint_image.
+        """
+        from modules.viewer.tools.coord_resolver import CoordinateResolver
+        return CoordinateResolver(self).image_to_widget(img_x, img_y)
 
     def get_last_paint_ms(self) -> float:
         return self._last_paint_ms
@@ -371,6 +369,13 @@ class QtSliceViewer(QWidget):
     def set_tool_mode(self, mode: str) -> None:
         """Set the active tool mode (dispatches to ToolController)."""
         self._tool_mode = mode
+        # Update cursor to match the active tool
+        if mode == self.TOOL_ERASER:
+            self.setCursor(Qt.CursorShape.ForbiddenCursor)  # red-circle = "delete" visual
+        elif mode in self._MEASUREMENT_TOOLS:
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.unsetCursor()
 
     def get_tool_mode(self) -> str:
         return self._tool_mode
@@ -391,9 +396,132 @@ class QtSliceViewer(QWidget):
         self._flip_v = flip_v
         self.update()
 
+    def rotate_left(self) -> None:
+        """Rotate image 90° counter-clockwise."""
+        self._rotation_angle = (self._rotation_angle - 90) % 360
+        self.update()
+
+    def rotate_right(self) -> None:
+        """Rotate image 90° clockwise."""
+        self._rotation_angle = (self._rotation_angle + 90) % 360
+        self.update()
+
+    def flip_horizontal(self) -> None:
+        """Toggle horizontal flip."""
+        self._flip_h = not self._flip_h
+        self.update()
+
+    def flip_vertical(self) -> None:
+        """Toggle vertical flip."""
+        self._flip_v = not self._flip_v
+        self.update()
+
     def set_sync_mode(self, active: bool) -> None:
         self._sync_mode_active = active
+        if active:
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            # Restore cursor appropriate for the current tool
+            self.set_tool_mode(self._tool_mode)
+        self.update()
 
+    def set_sync_point(self, img_x: float, img_y: float) -> None:
+        """Show the cross-viewer sync-point red dot at the given image coordinates."""
+        self._sync_point_img = (float(img_x), float(img_y))
+        self.update()
+
+    def hide_sync_point(self) -> None:
+        """Remove the sync-point red dot marker."""
+        self._sync_point_img = None
+        self.update()
+
+    def set_modality_hint(self, modality: str) -> None:
+        """Set the modality for W/L sensitivity adjustment.
+
+        Radiography modalities (MG, DX, CR, XR) use 10x higher W/L sensitivity
+        to make adjustment practical for their large dynamic range.
+        Called by QtViewerBridge when loading or resetting a series.
+        """
+        self._modality_hint = str(modality).upper() if modality else ""
+
+    def set_total_slices_hint(self, total_slices: int) -> None:
+        """Set total slice count hint for adaptive stack-drag behavior."""
+        try:
+            self._total_slices_hint = max(0, int(total_slices))
+        except Exception:
+            self._total_slices_hint = 0
+
+    def _get_stack_drag_profile(self) -> tuple[float, int]:
+        """Return (threshold_px, max_steps_per_event) for stack drag.
+
+        UX policy:
+        - Wheel: always one slice per notch (no skipping).
+        - Stack drag: adaptive threshold + capped acceleration by stack size.
+        """
+        n = int(max(0, self._total_slices_hint))
+        if n <= 25:
+            return 10.0, 1
+        if n <= 50:
+            return 8.0, 2
+        if n <= 100:
+            return 7.0, 3
+        if n <= 200:
+            return 6.0, 4
+        if n <= 500:
+            return 5.0, 6
+        return 4.0, 8
+
+    def _emit_tool_completed(self) -> None:
+        """Auto-deactivate after a measurement tool placement completes.
+
+        Mirrors Advanced mode auto_deactivate_tool(): resets tool to TOOL_NONE,
+        deactivates ToolController, and fires the bridge callback so the toolbar
+        button un-highlights and tool_selected is cleared.
+        Called from mousePressEvent / mouseReleaseEvent on PLACING→IDLE transition.
+        """
+        cb = self._tool_completed_cb
+        self._tool_completed_cb = None  # clear before firing to prevent re-entrant calls
+        # Deactivate ToolController so _active_tool is None
+        if self._tool_controller is not None:
+            self._tool_controller.deactivate()
+        # Reset tool mode to default (free navigation)
+        self.set_tool_mode(self.TOOL_NONE)
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                pass
+
+    def _paint_sync_point(self, painter: 'QPainter') -> None:
+        """Paint a red dot at the sync-point image position (above the image layer)."""
+        if self._sync_point_img is None:
+            return
+        img_x, img_y = self._sync_point_img
+        wx, wy = self.image_to_widget_coords(img_x, img_y)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # White halo for contrast on any background
+        painter.setPen(QPen(QColor(255, 255, 255, 200), 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QPointF(wx, wy), 7.0, 7.0)
+        # Filled red dot
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(220, 40, 40, 220))
+        painter.drawEllipse(QPointF(wx, wy), 5.0, 5.0)
+        painter.restore()
+
+    # ── Overlay lines (reference lines) ───────────────────────────────
+
+    def set_overlay_lines(self, lines: list) -> None:
+        """Set reference line overlays. Each entry: (x1, y1, x2, y2, r, g, b, width) in image coords."""
+        self._overlay_lines = lines
+        self.update()
+
+    def clear_overlay_lines(self) -> None:
+        """Remove all reference line overlays."""
+        if self._overlay_lines:
+            self._overlay_lines = []
+            self.update()
 
     # ── Qt Event Handlers ─────────────────────────────────────────────
 
@@ -438,10 +566,19 @@ class QtSliceViewer(QWidget):
             if self._pixmap is not None and not self._pixmap.isNull():
                 self._paint_image(painter)
 
+            if self._overlay_lines:
+                self._paint_overlay_lines(painter)
+
             if self._show_annotations:
                 self._paint_annotations(painter)
             if self._tool_controller is not None and not self._in_wheel_scroll:
                 self._paint_tool_annotations(painter)
+
+            if self._sync_mode_active:
+                self._paint_sync_border(painter)
+
+            if self._sync_point_img is not None:
+                self._paint_sync_point(painter)
 
         finally:
             painter.end()
@@ -451,8 +588,18 @@ class QtSliceViewer(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         pos = event.position()
 
-        # Right button: Window/Level adjustment (always)
+        # Right button: Window/Level (default) — or pan when Left is also held (L+R pan)
         if event.button() == Qt.MouseButton.RightButton:
+            self._right_button_down = True
+            if self._left_button_down:
+                # L+R simultaneous → pan (matches Advanced mode)
+                self._wl_dragging = False
+                self._lr_pan_active = True
+                self._pan_dragging = True
+                self._pan_start_pos = pos
+                self._pan_start_offset = QPointF(self._pan_offset)
+                event.accept()
+                return
             self._wl_dragging = True
             self._wl_start_pos = pos
             self._wl_start_window = self._current_window
@@ -460,21 +607,32 @@ class QtSliceViewer(QWidget):
             event.accept()
             return
 
-        # Middle button: Pan (always)
+        # Middle button: Zoom (matches Advanced VTK behavior — middle = zoom)
         if event.button() == Qt.MouseButton.MiddleButton:
-            self._pan_dragging = True
-            self._pan_start_pos = pos
-            self._pan_start_offset = QPointF(self._pan_offset)
+            self._zoom_dragging = True
+            self._zoom_start_pos = pos
+            self._zoom_start_zoom = self._zoom
             event.accept()
             return
 
         # Left button: behavior depends on tool mode
         if event.button() == Qt.MouseButton.LeftButton:
+            self._left_button_down = True
             # Sync point mode: forward to parent VTKWidget
             if self._sync_mode_active:
                 p = self.parent()
                 if p is not None:
                     p.mousePressEvent(event)
+                return
+
+            # L+R simultaneous → pan (matches Advanced mode)
+            if self._right_button_down:
+                self._wl_dragging = False
+                self._lr_pan_active = True
+                self._pan_dragging = True
+                self._pan_start_pos = pos
+                self._pan_start_offset = QPointF(self._pan_offset)
+                event.accept()
                 return
 
             # Ctrl+Left always → pan
@@ -519,10 +677,26 @@ class QtSliceViewer(QWidget):
                 from modules.viewer.tools.coord_resolver import CoordinateResolver
                 cr = CoordinateResolver(self, self._coord_backend)
                 ix, iy = cr.widget_to_image(pos.x(), pos.y())
+                _was_placing = self._tool_controller.get_preview_state() is not None
+                _is_text_tool = (self._tool_mode == self.TOOL_TEXT)
                 if self._tool_controller.on_mouse_press(ix, iy, self._current_slice_index, cr):
                     self.update()
+                    # Auto-deactivate when placement completes (matches Advanced auto_deactivate_tool).
+                    # Eraser stays active until the user manually clicks the button again.
+                    if self._tool_mode != self.TOOL_ERASER:
+                        _now_placing = self._tool_controller.get_preview_state() is not None
+                        if _is_text_tool or (_was_placing and not _now_placing):
+                            self._emit_tool_completed()
                     event.accept()
                     return
+
+            # Default left-drag (no tool active): stacked scroll (matches Advanced mode)
+            if self._tool_mode == self.TOOL_NONE:
+                self._stacked_dragging = True
+                self._stacked_last_y = pos.y()
+                self._stacked_accum = 0.0
+                event.accept()
+                return
 
         super().mousePressEvent(event)
 
@@ -554,7 +728,11 @@ class QtSliceViewer(QWidget):
         if self._wl_dragging:
             dx = pos.x() - self._wl_start_pos.x()
             dy = pos.y() - self._wl_start_pos.y()
-            sensitivity = max(1.0, self._current_window / 500.0)
+            # Radiography modalities (MG, DX, CR, XR) use 10x W/L sensitivity
+            # for their large dynamic range (matches Advanced mode MG boost)
+            _HIGH_SENS_MOD = frozenset({"MG", "DX", "CR", "XR"})
+            modality_mult = 10.0 if self._modality_hint in _HIGH_SENS_MOD else 1.0
+            sensitivity = max(1.0, self._current_window / 500.0) * modality_mult
             new_window = max(1.0, self._wl_start_window + dx * sensitivity)
             new_level = self._wl_start_level - dy * sensitivity
             self._current_window = new_window
@@ -587,12 +765,15 @@ class QtSliceViewer(QWidget):
             dy = pos.y() - self._stacked_last_y
             self._stacked_last_y = pos.y()
             self._stacked_accum += dy
-            while self._stacked_accum >= 10.0:
-                self._stacked_accum -= 10.0
-                self.slice_scroll_requested.emit(1)
-            while self._stacked_accum <= -10.0:
-                self._stacked_accum += 10.0
-                self.slice_scroll_requested.emit(-1)
+            threshold_px, max_steps = self._get_stack_drag_profile()
+            if threshold_px > 0.0:
+                steps = int(self._stacked_accum / threshold_px)
+                if steps != 0:
+                    emit_steps = max(-int(max_steps), min(int(max_steps), int(steps)))
+                    self._stacked_accum -= float(emit_steps) * float(threshold_px)
+                    direction = 1 if emit_steps > 0 else -1
+                    for _ in range(abs(int(emit_steps))):
+                        self.slice_scroll_requested.emit(direction)
             event.accept()
             return
 
@@ -637,22 +818,46 @@ class QtSliceViewer(QWidget):
                 p.mouseReleaseEvent(event)
             return
 
-        if event.button() == Qt.MouseButton.RightButton and self._wl_dragging:
-            self._wl_dragging = False
-            event.accept()
-            return
-        if (event.button() == Qt.MouseButton.MiddleButton or event.button() == Qt.MouseButton.LeftButton) and self._pan_dragging:
-            self._pan_dragging = False
-            event.accept()
-            return
-        if event.button() == Qt.MouseButton.LeftButton and self._zoom_dragging:
+        if event.button() == Qt.MouseButton.RightButton:
+            self._right_button_down = False
+            if self._lr_pan_active:
+                # L+R pan ended — clear combined-gesture state
+                self._lr_pan_active = False
+                self._pan_dragging = False
+                self._wl_dragging = False
+                event.accept()
+                return
+            if self._wl_dragging:
+                self._wl_dragging = False
+                event.accept()
+                return
+        if event.button() == Qt.MouseButton.MiddleButton and self._zoom_dragging:
             self._zoom_dragging = False
             event.accept()
             return
-        if event.button() == Qt.MouseButton.LeftButton and self._stacked_dragging:
-            self._stacked_dragging = False
-            event.accept()
-            return
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._left_button_down = False
+            if self._lr_pan_active:
+                # L+R pan ended — clear all drag state
+                self._lr_pan_active = False
+                self._pan_dragging = False
+                self._wl_dragging = False
+                self._stacked_dragging = False
+                self._zoom_dragging = False
+                event.accept()
+                return
+            if self._pan_dragging:
+                self._pan_dragging = False
+                event.accept()
+                return
+            if self._zoom_dragging:
+                self._zoom_dragging = False
+                event.accept()
+                return
+            if self._stacked_dragging:
+                self._stacked_dragging = False
+                event.accept()
+                return
         # Finalize annotation drag
         if event.button() == Qt.MouseButton.LeftButton and self._tool_controller is not None and self._tool_controller.is_dragging:
             from modules.viewer.tools.coord_resolver import CoordinateResolver
@@ -667,8 +872,14 @@ class QtSliceViewer(QWidget):
             from modules.viewer.tools.coord_resolver import CoordinateResolver
             cr = CoordinateResolver(self, self._coord_backend)
             ix, iy = cr.widget_to_image(event.position().x(), event.position().y())
+            _was_placing = self._tool_controller.get_preview_state() is not None
             if self._tool_controller.on_mouse_release(ix, iy, self._current_slice_index):
                 self.update()
+                # Detect ROI drag-release completion (press-drag-release gesture)
+                if self._tool_mode != self.TOOL_ERASER:
+                    _now_placing = self._tool_controller.get_preview_state() is not None
+                    if _was_placing and not _now_placing:
+                        self._emit_tool_completed()
                 event.accept()
                 return
         super().mouseReleaseEvent(event)
@@ -718,25 +929,62 @@ class QtSliceViewer(QWidget):
     # ── Private: painting ─────────────────────────────────────────────
 
     def _paint_image(self, painter: QPainter) -> None:
-        """Paint the medical image centered with zoom and pan."""
+        """Paint the medical image centered with zoom, pan, rotation and flip.
+
+        Transform order is consistent with CoordinateResolver.image_to_widget:
+          flip (in image space) → rotate (around image centre) → translate to widget centre.
+
+        QPainter pre-multiplies each successive call, so to achieve
+          screen = Translate * Rotate * Scale(flip) * local
+        the CODE order must be: scale/flip first, rotate second, translate last.
+        """
         if self._pixmap is None:
             return
 
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, self._zoom > 1.0)
 
-        # Calculate centered position with zoom + pan
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
+        # Widget centre (rotation anchor) accounting for pan
+        cx = self.width() / 2.0 + self._pan_offset.x()
+        cy = self.height() / 2.0 + self._pan_offset.y()
         scaled_w = self._image_width * self._zoom
         scaled_h = self._image_height * self._zoom
-
-        dest_x = cx - scaled_w / 2.0 + self._pan_offset.x()
-        dest_y = cy - scaled_h / 2.0 + self._pan_offset.y()
-
-        dest_rect = QRectF(dest_x, dest_y, scaled_w, scaled_h)
         src_rect = QRectF(0, 0, self._image_width, self._image_height)
 
+        if self._rotation_angle == 0 and not self._flip_h and not self._flip_v:
+            # Fast path: no transform needed
+            dest_rect = QRectF(cx - scaled_w / 2.0, cy - scaled_h / 2.0, scaled_w, scaled_h)
+            painter.drawPixmap(dest_rect, self._pixmap, src_rect)
+            return
+
+        # Transform path (QPainter post-multiplies each call):
+        #   CODE order  : translate → rotate → scale(flip)
+        #   APPLIED order (to drawn points): scale(flip) → rotate → translate
+        # Effect on image-space origin (0,0): always maps to (cx, cy) in widget coords.
+        # Flip is applied first (in image space), rotate is about the image centre,
+        # then the result is placed at the widget centre — matches CoordinateResolver.
+        painter.save()
+        painter.translate(cx, cy)
+        painter.rotate(float(self._rotation_angle))
+        if self._flip_h:
+            painter.scale(-1.0, 1.0)
+        if self._flip_v:
+            painter.scale(1.0, -1.0)
+        dest_rect = QRectF(-scaled_w / 2.0, -scaled_h / 2.0, scaled_w, scaled_h)
         painter.drawPixmap(dest_rect, self._pixmap, src_rect)
+        painter.restore()
+
+    def _paint_overlay_lines(self, painter: QPainter) -> None:
+        """Paint reference line overlays in widget coordinates."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        for entry in self._overlay_lines:
+            # (x1_img, y1_img, x2_img, y2_img, r, g, b, width)
+            x1i, y1i, x2i, y2i, r, g, b, w = entry
+            wx1, wy1 = self.image_to_widget_coords(x1i, y1i)
+            wx2, wy2 = self.image_to_widget_coords(x2i, y2i)
+            pen = QPen(QColor.fromRgbF(r, g, b), max(1.0, w))
+            painter.setPen(pen)
+            painter.drawLine(QPointF(wx1, wy1), QPointF(wx2, wy2))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
     def _paint_annotations(self, painter: QPainter) -> None:
         """Paint corner text annotations."""
@@ -827,14 +1075,19 @@ class QtSliceViewer(QWidget):
             painter.drawText(int(text_x), int(text_y + fm.ascent()), text)
 
     def _calculate_fit_zoom(self) -> float:
-        """Calculate zoom factor to fit image in widget."""
+        """Calculate zoom factor to fit image in widget, accounting for rotation."""
         if self._image_width <= 0 or self._image_height <= 0:
             return 1.0
         widget_w = max(1, self.width())
         widget_h = max(1, self.height())
-        zoom_x = widget_w / float(self._image_width)
-        zoom_y = widget_h / float(self._image_height)
-        return min(zoom_x, zoom_y) * 0.95  # 5% margin
+        # For 90°/270° rotations the image occupies transposed dimensions on screen
+        if self._rotation_angle in (90, 270):
+            fit_w = float(self._image_height)
+            fit_h = float(self._image_width)
+        else:
+            fit_w = float(self._image_width)
+            fit_h = float(self._image_height)
+        return min(widget_w / fit_w, widget_h / fit_h) * 0.95  # 5% margin
 
     def _on_scroll_stopped(self) -> None:
         """Called 200ms after last wheel event — re-enable tool annotations."""
@@ -866,4 +1119,13 @@ class QtSliceViewer(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         cr = CoordinateResolver(self, self._coord_backend)
         self._tool_controller.render(painter, self._current_slice_index, cr)
+        painter.restore()
+
+    def _paint_sync_border(self, painter: QPainter) -> None:
+        """Draw a coloured border when sync-point mode is active."""
+        painter.save()
+        pen = QPen(QColor(0, 200, 255, 200), 3)   # cyan, 3 px
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
         painter.restore()

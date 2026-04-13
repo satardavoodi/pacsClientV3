@@ -82,6 +82,19 @@ class _VWScrollMixin:
         # Modified() + Render() that would needlessly dirty the pipeline.
         return
 
+    def _on_qt_scroll_stop(self):
+        """Called 200ms after the last Qt bridge wheelEvent.
+
+        Re-renders the current frame with OpenCV filter applied and updates
+        annotations. This is the scroll-stop counterpart for the Qt fast-path
+        (the VTK path uses _reenable_gc instead).  v2.3.3-perf.
+        """
+        try:
+            if self.image_viewer is not None and hasattr(self.image_viewer, 'end_fast_interaction'):
+                self.image_viewer.end_fast_interaction()
+        except Exception as exc:
+            logger.warning("[QT_SCROLL_STOP] end_fast_interaction failed: %s", exc)
+
     def _should_log_timing(self, duration_ms: float, stage: str) -> bool:
         """Rate-limit very high-frequency timing logs while keeping slow spikes.
 
@@ -555,10 +568,11 @@ class _VWScrollMixin:
 
         # ظ¤ظ¤ Qt bridge fast path: delegate entirely, skip VTK pipeline ظ¤ظ¤
         if self._qt_bridge_active:
-            logger.debug(  # CP4 [FAST-DIAG]
-                "[FAST-DIAG] set_slice Qt bridge entry idx=%s backend=%s",
-                slice_index, getattr(self, '_active_backend', 'N/A'),
-            )
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(  # CP4 [FAST-DIAG]
+                    "[FAST-DIAG] set_slice Qt bridge entry idx=%s backend=%s",
+                    slice_index, getattr(self, '_active_backend', 'N/A'),
+                )
             try:
                 _wheel = bool(getattr(self, "_in_wheel_scroll", False))
                 _stack_drag = bool(getattr(self, "_in_stack_scroll", False))
@@ -967,7 +981,6 @@ class _VWScrollMixin:
                 id(self),
             )
         if self._qt_bridge_active and self.image_viewer is not None and self.slider is not None:
-            logger.debug("[FAST-DIAG] wheelEvent Qt fast path backend=%s", getattr(self, '_active_backend', 'N/A'))  # CP3
             delta = event.angleDelta().y()
             if delta == 0:
                 event.accept()
@@ -981,7 +994,7 @@ class _VWScrollMixin:
             new_idx = max(0, min(current + step, max_s - 1))
             if new_idx != current:
                 try:
-                    self.image_viewer.set_slice(new_idx)
+                    self.image_viewer.set_slice(new_idx, fast_interaction=True)
                     self.image_viewer.last_index_slice_saved = int(new_idx)
                 except Exception as _e:
                     import logging as _lg
@@ -1003,6 +1016,16 @@ class _VWScrollMixin:
                         _pw._schedule_reference_line_update()
                 except Exception:
                     pass
+            # Arm the scroll-stop timer to re-render with filter after 200ms
+            # of no wheel events (v2.3.3-perf)
+            _qt_stop = getattr(self, '_qt_scroll_stop_timer', None)
+            if _qt_stop is None:
+                self._qt_scroll_stop_timer = QTimer(self)
+                self._qt_scroll_stop_timer.setSingleShot(True)
+                self._qt_scroll_stop_timer.setInterval(200)
+                self._qt_scroll_stop_timer.timeout.connect(self._on_qt_scroll_stop)
+                _qt_stop = self._qt_scroll_stop_timer
+            _qt_stop.start()  # Restart the 200ms countdown
             event.accept()
             return
 
@@ -1103,23 +1126,12 @@ class _VWScrollMixin:
                 event.accept()
                 return
             
-            # Calculate adaptive step based on number of slices
-            N = max_slice
-            
-            if N < 50:
-                step = 1
-            elif N < 300:
-                # Linear interpolation: step = 1 + (N - 50) / 250 * 4
-                step = max(1, int(1 + (N - 50) / 250 * 4))
-            else:
-                # Large stacks: target ~300 visible slices
-                step = max(1, int(N / 300))
-            
-            # Invert direction for natural scrolling
+            # Wheel policy: ALWAYS move one slice per notch (no skipping).
+            # Stack-drag has its own adaptive acceleration path.
             if delta > 0:
-                step = -step
+                step = -1
             elif delta < 0:
-                step = step
+                step = 1
             else:
                 step = 0
             
@@ -1146,8 +1158,7 @@ class _VWScrollMixin:
                     current_slice = int(self._last_flushed_target)
                 except Exception:
                     pass
-            skip_slices = getattr(self.image_viewer, 'skip_slices', 0)
-            next_slice = current_slice + skip_slices + step
+            next_slice = current_slice + step
             
             # Clamp to valid range [0, N-1]
             next_slice = max(0, min(next_slice, max_slice - 1))

@@ -266,6 +266,13 @@ class QtViewerBridge:
         self.vtk_widget = vtk_widget
         self.metadata = metadata or {}
         self.metadata_fixed = metadata_fixed or {}
+        # Propagate modality so W/L sensitivity adapts for radiography series
+        try:
+            _mod = str((metadata or {}).get('series', {}).get('modality', '') or '')
+            if _mod:
+                qt_viewer.set_modality_hint(_mod)
+        except Exception:
+            pass
 
         # Mock VTK objects
         self.renderer = _MockRenderer()
@@ -341,6 +348,10 @@ class QtViewerBridge:
         """Build a mock vtkImageData from pipeline state."""
         n_slices = self.pipeline.slice_count
         self._slice_count = n_slices
+        try:
+            self.qt_viewer.set_total_slices_hint(self._slice_count)
+        except Exception:
+            pass
 
         if n_slices > 0:
             sm = self.pipeline.get_slice_meta(0)
@@ -409,28 +420,33 @@ class QtViewerBridge:
         Main set_slice called from vtk_widget._call_image_viewer_set_slice.
 
         Renders the specified slice via the Qt pipeline and updates the viewer.
+
+        When *fast_interaction* is True (wheel scroll / stack drag), the
+        pipeline skips the OpenCV filter for lower latency.  The filter is
+        re-applied on scroll-stop via ``end_fast_interaction()``.
         """
         t_start = time.perf_counter()
         idx = max(0, min(int(slice_index), self._slice_count - 1))
         self._current_slice = idx
         self.qt_viewer._current_slice_index = idx
         self.pipeline.set_slice_index(idx)
-        logger.debug("[FAST-DIAG] QtBridge.set_slice ENTER idx=%d suppress=%s", idx, self._suppress_render)  # CP5
+
+        # Set fast-interaction mode on pipeline
+        self.pipeline.set_fast_interaction(fast_interaction)
 
         if self._suppress_render:
             return
 
-        # Get rendered frame
+        # Get rendered frame (filter skipped during fast interaction)
         frame = self.pipeline.get_rendered_frame(idx)
-        logger.debug("[FAST-DIAG] QtBridge.set_slice FRAME_READY wl_ms=%.1f", getattr(frame, 'wl_ms', -1.0))  # CP5
 
         # Display
         self.qt_viewer.set_image(frame.qimage)
-        logger.debug("[FAST-DIAG] QtBridge.set_slice COMMIT done (set_image+update called)")  # CP5
         self.qt_viewer.set_window_level_values(frame.window_width, frame.window_center)
 
-        # Update annotations
-        self._update_annotations(idx, frame.window_width, frame.window_center)
+        # Skip annotation update during fast scroll for lower latency
+        if not fast_interaction:
+            self._update_annotations(idx, frame.window_width, frame.window_center)
 
         total_ms = (time.perf_counter() - t_start) * 1000.0
         self.last_wl_convert_ms = frame.wl_ms
@@ -452,12 +468,10 @@ class QtViewerBridge:
                 frame.decode_ms, frame.filter_ms, frame.wl_ms, total_ms,
                 _filter_status, _frame_cached,
             )
-            # Legacy alias kept for existing log parsers
             logger.info(
                 "[UX_FIRST_IMAGE_VISIBLE] series=%s slice=%d decode_ms=%.1f total_ms=%.1f",
                 _series_no, idx, frame.decode_ms, total_ms,
             )
-            # viewer-interactive-ready fires immediately after first paint
             logger.info(
                 "FAST:viewer_interactive_ready series=%s slice=%d total_ms=%.1f",
                 _series_no, idx, total_ms,
@@ -468,6 +482,22 @@ class QtViewerBridge:
                 "qt-viewer-bridge set_slice idx=%d total_ms=%.1f decode=%.1f filter=%.1f wl=%.1f",
                 idx, total_ms, frame.decode_ms, frame.filter_ms, frame.wl_ms,
             )
+
+    def end_fast_interaction(self) -> None:
+        """Called when scroll/drag stops. Re-renders current slice with filter.
+
+        Restores the pipeline to normal mode and re-renders the current
+        slice with the full OpenCV filter applied. Also updates annotations
+        that were skipped during fast scroll.
+        """
+        self.pipeline.set_fast_interaction(False)
+        filtered = self.pipeline.rerender_current_filtered()
+        if filtered is not None:
+            self.qt_viewer.set_image(filtered.qimage)
+        self._update_annotations(
+            self._current_slice, self._window, self._level
+        )
+        self.qt_viewer.update()
 
     def apply_default_window_level(self, slice_index: int = 0) -> None:
         """Apply default W/L for the given slice."""
@@ -547,6 +577,12 @@ class QtViewerBridge:
         may be a mock or real VTK data — we only use metadata.
         """
         self.metadata = metadata or {}
+        try:
+            _mod = str((metadata or {}).get('series', {}).get('modality', '') or '')
+            if _mod:
+                self.qt_viewer.set_modality_hint(_mod)
+        except Exception:
+            pass
         self._build_mock_vtk_data()
         self._current_slice = 0
         self._wl_scroll_cache_ww = None
@@ -736,6 +772,10 @@ class QtViewerBridge:
 
         if new_count > self._slice_count:
             self._slice_count = new_count
+            try:
+                self.qt_viewer.set_total_slices_hint(self._slice_count)
+            except Exception:
+                pass
             # Update mock vtk_image_data slice dimension so callers that
             # inspect GetDimensions() see the correct z-count.
             if self.vtk_image_data is not None:

@@ -56,6 +56,7 @@ from modules.viewer.boost_viewer_config import load_boost_viewer_enabled
 from modules.viewer.viewer_backend_config import (
     BACKEND_VTK,
     BACKEND_PYDICOM,
+    BACKEND_PYDICOM_QT,
     load_viewer_backend,
     resolve_viewer_backend,
 )
@@ -374,7 +375,7 @@ class ViewerController(
         In Fast mode, series-level warmup (Plan A/B) is skipped.
         The local ±20 ImageSliceBooster still runs normally."""
         try:
-            return load_viewer_backend() in (BACKEND_PYDICOM, "pydicom_qt")
+            return load_viewer_backend() in (BACKEND_PYDICOM, BACKEND_PYDICOM_QT)
         except Exception:
             return False
 
