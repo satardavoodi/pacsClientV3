@@ -632,7 +632,18 @@ class _VWBackendMixin:
             )
             self._lazy_drop_log_counter = 0
         except Exception as e:
-            logger.debug("Lazy frame render failed idx=%s: %s", slice_index, e)
+            logger.warning(
+                "[H13-S5] Lazy frame render exception idx=%s viewer=%s backend=%s "
+                "gen=%s/%s progressive=%s: %s",
+                slice_index,
+                getattr(self, 'id_vtk_widget', '?'),
+                getattr(self, '_active_backend', '?'),
+                getattr(self, '_series_generation_id', '?'),
+                getattr(self, '_lazy_requested_generation', '?'),
+                bool(getattr(self, '_is_progressive_active', False)),
+                e,
+                exc_info=True,
+            )
 
         self._log_lazy_metrics_if_due()
 

@@ -853,6 +853,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.dicom_tags_actors.im_hospital_name_actor.SetPosition(right, bottom)
 
     def update_corners_actors(self, update_just_zoom=False, window_height=None):
+        try:
+            self._update_corners_actors_impl(update_just_zoom, window_height)
+        except Exception:
+            logger.warning(
+                "[H13-S5] update_corners_actors exception zoom_only=%s",
+                update_just_zoom,
+                exc_info=True,
+            )
+
+    def _update_corners_actors_impl(self, update_just_zoom=False, window_height=None):
         if update_just_zoom:
             if self.vtk_image_data is None:
                 return
@@ -1330,6 +1340,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
           3) Update corner text
           4) Sync all overlay actors to this slice
         """
+        try:
+            self._set_slice_impl(slice_index, fast_interaction, force_annotations)
+        except Exception:
+            logger.warning(
+                "[H13-S5] ImageViewer2D.set_slice exception slice=%s fast=%s",
+                slice_index, fast_interaction,
+                exc_info=True,
+            )
+
+    def _set_slice_impl(self, slice_index, fast_interaction=False, force_annotations=False):
         _t0 = time.perf_counter_ns()
         _fast = bool(fast_interaction)
         _now_ms = _t0 / 1_000_000.0
@@ -1406,6 +1426,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.Render()
 
     def apply_default_window_level(self, slice_index):
+        try:
+            self._apply_default_window_level_impl(slice_index)
+        except Exception:
+            logger.warning(
+                "[H13-S5] apply_default_window_level exception slice=%s",
+                slice_index,
+                exc_info=True,
+            )
+
+    def _apply_default_window_level_impl(self, slice_index):
         instances = self.metadata.get('instances') or []
         if slice_index < len(instances):
             instance_metadata = instances[slice_index]

@@ -284,6 +284,14 @@ class _VWScrollMixin:
             self.image_viewer.set_slice(int(slice_index), fast_interaction=bool(fast_interaction))
         except TypeError:
             self.image_viewer.set_slice(int(slice_index))
+        except Exception:
+            logger.warning(
+                "[H13-S5] _call_image_viewer_set_slice exception slice=%s viewer=%s backend=%s",
+                slice_index,
+                getattr(self, 'id_vtk_widget', '?'),
+                getattr(self, '_active_backend', '?'),
+                exc_info=True,
+            )
 
     def queue_interactive_slice_target(
         self,
@@ -669,8 +677,8 @@ class _VWScrollMixin:
                     if self._protected_parallel_scale is None or abs(saved_scale - self._protected_parallel_scale) > 0.01:
                         self._protected_parallel_scale = saved_scale
                     logger.debug(f"[set_slice] Protected scale={self._protected_parallel_scale}")
-            except:
-                pass
+            except Exception:
+                logger.warning("[H13-S5] Camera scale save failed in set_slice", exc_info=True)
         
         # PyDicom lazy race guard:
         # mark the requested/current slice before decode is queued so a fast
@@ -729,7 +737,7 @@ class _VWScrollMixin:
                         # image_reslice), so VTK's trivial producer detects the MTime change on
                         # Render() and re-reads the numpy-backed scalars. No reslice call needed.
                     except Exception:
-                        pass
+                        logger.warning("[H13-S5] mark_vtk_modified failed in set_slice", exc_info=True)
                 self._call_image_viewer_set_slice(slice_index, fast_interaction=_fast_scroll)
             finally:
                 if _h13_gate_held:
@@ -815,8 +823,8 @@ class _VWScrollMixin:
                                 stage="render_complete",
                                 start_ms=t_render,
                             )
-            except:
-                pass
+            except Exception:
+                logger.warning("[H13-S5] Camera zoom restore failed in set_slice", exc_info=True)
 
         # Notify interactor style if it's a ruler style
         # v2.2.3.4.0: Skip during wheel scroll ├تظéشظإ ruler tools are not

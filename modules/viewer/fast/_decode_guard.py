@@ -194,6 +194,12 @@ logger.info(
     "[H13-INIT] toggles: deep_copy=%s render_gate=%s keepalive=%s stale_render_abort=%s",
     _H13_DEEP_COPY, _H13_RENDER_GATE, _H13_KEEPALIVE, _H13_STALE_RENDER_ABORT,
 )
+if _H13_DEEP_COPY:
+    logger.info(
+        "[H13-T3] DEEP COPY ACTIVE — mark_vtk_modified() will snapshot the numpy backing "
+        "store into an independent array before every VTK Render(). This breaks shared-memory "
+        "coupling between lazy worker writes and VTK render reads."
+    )
 
 # --- H13-BUILD: one-time VTK / Python / NumPy build provenance log ---
 try:

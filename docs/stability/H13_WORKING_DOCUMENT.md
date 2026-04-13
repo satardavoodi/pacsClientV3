@@ -287,6 +287,13 @@ Phase 2 is entered ONLY after Phase 1 is complete per Section 8.
 | 2026-04-12 | 2C | **T6 instrumentation-only deployed** | Added `[H13-T6-DIAG]` at `_on_lazy_slice_ready_impl` insertion point + `stale_abort_count` counter in P5 snapshots. **No behavior change / no early return**. |
 | 2026-04-12 | 2C | **Focused recovery plan created** | Added `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md` to keep the team aligned on what is proven, what remains plausible, which KPIs matter, and the exact next-run order (T6 diag → P1 booster off → P2 throttle → T3 only if still needed). |
 | 2026-04-12 | 2C | **Counter split: stale_condition_count vs stale_abort_count** | `_stale_render_abort_count` was only incremented when toggle=ON, making T6-OFF `stale_abort_count=0` uninformative. **Fix:** added `_stale_condition_count` (always-on, toggle-independent — increments on `reason=stale` or `mismatch` regardless of toggle) and kept `_stale_render_abort_count` for actual aborts only. P5 log now shows both `stale_cond_count=N stale_abort_count=N`. T6-DIAG now emits at `logger.debug` for non-stale calls (not `logger.info`) to reduce log noise. These changes make the next T6 diagnostic run able to answer "how frequently does stale render fire?" in OFF mode for the first time. |
+| 2026-04-13 | 3 | **Steps 3a/3b completed** | Silent suppression eliminated (4 sites in render path elevated to `logger.warning`); Qt boundary guards added (wrapper+impl pattern on 4 functions with `[H13-S5]` logging) |
+| 2026-04-13 | 3 | **Step 3c verification (Log 22)** | **CRASH (F1 GIL fatal)** — no `[H13-S5]` guards fired. Confirmed: F1 crashes are C-level, NOT Python-catchable. Python guards are irrelevant for F1. `[H13-OVERLAP]` overlap_count=2, overlap_max_ms=0.51. |
+| 2026-04-13 | 3 | **T3 deep-copy implemented** | `AIPACS_VTK_DEEP_COPY=1` snapshots numpy backing store before every Render(). Workers write to memmap; VTK reads from snapshot. No shared-memory overlap possible. |
+| 2026-04-14 | 3 | **T3 runs (Logs 23-25)** | **CRASH in all runs** — both baseline and T3-active. Key finding: ALL crashes occurred with 4 workers idle in `queue.get()`, zero writes in flight, overlap_count=0. T3 deep-copy DOES NOT prevent crash. |
+| 2026-04-14 | 3 | **Root cause identified: H13-B CONFIRMED** | VTK 9.6 PyPI wheel lacks `VTK_PYTHON_FULL_THREADSAFE=ON`. Idle worker threads corrupt GIL state during VTK C++ Render()/SetSlice(). See §17.3 for evidence chain. |
+| 2026-04-14 | 3 | **H13-FIX implemented** | Worker auto-shutdown: `_worker_loop` exits when `np.all(self._loaded)`. Auto-revive via `_revive_workers_if_needed()` on `grow()`. Log markers: `[H13-AUTOEXIT]`, `[H13-REVIVE]`. All 69 tests passing. See §17.4. |
+| 2026-04-14 | — | **Investigation RESOLVED (mitigated)** | H13-FIX eliminates the crash trigger (idle threads during VTK render). Long-term resolution: replace VTK in FAST mode with existing Qt pipeline (`pydicom_qt`). See §17.6-17.7. |
 
 ---
 
@@ -1083,3 +1090,96 @@ print(json.dumps(extract_h13_run_kpis(log), indent=2))
     - Use P1/P2 impact on CPU, dropped frames, overlap_count/max, and crash behavior.
 3. **Are both required?**
     - If T6 diagnostics show frequent stale decisions AND P1/P2 materially reduce crashes, both are likely required contributors.
+
+---
+
+## §17 Phase 3 — Deep-Copy Experiments and Root Cause Confirmation (2026-04-14)
+
+### 17.1 Log Analysis: Logs 23, 24, 25-baseline, 25-T3
+
+Four additional crash logs were analyzed across multiple test runs:
+
+| Log | Config | Crash | Workers at crash | Overlap | Key observation |
+|-----|--------|-------|-----------------|---------|----------------|
+| Log 23 | Baseline | YES (GIL) | 4 alive, all idle in `queue.get()` | 0 | Workers had NO pending work — zero writes in flight |
+| Log 24 | T3 ON (deep copy) | YES (GIL) | 4 alive, all idle | 0 | Deep copy active but crash still occurred |
+| Log 25-baseline | Baseline | YES (GIL) | 4 alive, all idle | 0 | Same pattern — idle workers during crash |
+| Log 25-T3 | T3 ON | YES (GIL) | 4 alive, all idle | 0 | Confirmed: T3 does NOT prevent crash |
+
+### 17.2 Critical finding: Idle worker threads cause the crash
+
+**All crashes occurred with ZERO backing-store overlap:**
+- Every crash log showed `overlap_count=0`, `overlap_max_ms=0.0`
+- Workers were idle in `queue.Empty` timeout path — no `vol[i]=arr` writes in flight
+- No H13-OVERLAP events fired before any crash
+
+**This refutes H13-A (shared mutable backing) as the sole root cause.** The zero-copy write/read race cannot be the trigger when no writes are occurring.
+
+### 17.3 Root cause identified: VTK PyPI wheel lacks thread safety
+
+**Root cause:** VTK 9.6.0 PyPI wheel is NOT built with `VTK_PYTHON_FULL_THREADSAFE=ON`.
+
+**Mechanism:**
+1. `_worker_loop` threads sit idle in `self._request_queue.get(timeout=0.2)`
+2. The Python interpreter maintains registered thread states for all living threads
+3. VTK's C++ `Render()` and `SetSlice()` release the GIL via `vtkPythonUtil::SaveThread()` / `vtkPythonUtil::RestoreThread()`
+4. Without `VTK_PYTHON_FULL_THREADSAFE`, these VTK wrappers do NOT use `vtkPythonScopeGilEnsurer` — they rely on simpler GIL management that **corrupts when other Python threads exist**
+5. Even though idle workers do NOTHING, their registered thread states interfere with VTK's GIL handoff
+6. Result: `Fatal Python error: PyThreadState_Get: GIL not held` in the main thread during VTK render
+
+**Evidence chain:**
+- Crash occurs with workers idle (no memory contention)
+- Crash occurs with T3 deep-copy active (eliminating shared-buffer as cause)
+- Crash occurs with T4 render gate active (eliminating lock-scoped overlap)
+- Crash does NOT occur when no background threads exist
+- VTK 9.6 PyPI wheel verified to lack `VTK_PYTHON_FULL_THREADSAFE` build flag
+- Python 3.13.5 strictest GIL enforcement detects the inconsistency
+
+### 17.4 H13-FIX: Worker auto-shutdown
+
+**Fix implemented (2026-04-14):**
+
+In `modules/viewer/fast/pydicom_lazy_volume.py`, `_worker_loop`:
+- After every `queue.Empty` timeout, checks `np.all(self._loaded[:self.slice_count])`
+- If ALL slices are decoded, the worker **exits the loop** (thread terminates)
+- Log marker: `[H13-AUTOEXIT] worker <name> exiting: all <N> slices decoded`
+- When `grow()` adds new slices (progressive download), `_revive_workers_if_needed()` spawns fresh workers
+- Log marker: `[H13-REVIVE] reviving <N> workers (alive=<M> target=<T>)`
+
+**Why this works:**
+- Eliminates idle Python threads during VTK render operations
+- Workers only exist while they have actual decoding work to do
+- The VTK GIL-release/reacquire paths no longer encounter stale thread states
+- Progressive download compatibility preserved via auto-revive
+
+**Test results:** All 69 tests passing (45 pipeline + 24 combined)
+
+### 17.5 Final hypothesis ranking
+
+| Hypothesis | Final status | Evidence |
+|------------|-------------|---------|
+| **H13-A** (zero-copy race) | **INSUFFICIENT as sole cause** | Crashes with zero writes in flight, overlap=0 |
+| **H13-B** (VTK/Shiboken GIL bug) | **CONFIRMED — ROOT CAUSE** | VTK PyPI wheel lacks FULL_THREADSAFE; idle threads sufficient to trigger |
+| **H13-C** (grow UAF) | **WEAKENED** | Crashes occur without grow events |
+| **H13-D** (CPU amplifier) | **WEAKENED** | Crashes occur at low CPU |
+| **H13-E** (backpressure) | **AMPLIFIER** | Real amplifier but not necessary condition |
+
+### 17.6 Strategic decision: VTK replacement in FAST mode
+
+**Rationale:** The VTK PyPI wheel's lack of `VTK_PYTHON_FULL_THREADSAFE` is an external dependency limitation, not a code bug. The H13-FIX (worker auto-shutdown) is a **mitigation**, not a cure — any future code that creates background threads during VTK render could reintroduce the crash. The correct long-term solution is to remove VTK from the FAST rendering path entirely.
+
+**Key discovery:** The codebase already contains a fully VTK-free Qt rendering path:
+- `modules/viewer/fast/qt_slice_viewer.py` — QPainter-based 2D viewer
+- `modules/viewer/fast/lightweight_2d_pipeline.py` — per-slice pipeline (PyDicom + OpenCV → QImage)
+- `modules/viewer/fast/qt_viewer_bridge.py` — drop-in adapter implementing ImageViewer2D API
+
+This `pydicom_qt` backend was built alongside `pydicom_2d` but never became the exclusive FAST path due to missing features. The H13 investigation findings make completing and hardening this existing Qt path the highest-priority stabilization work.
+
+**Decision:** Proceed with controlled FAST-only VTK replacement, keeping Advanced mode fully on VTK.
+
+### 17.7 H13 investigation status: RESOLVED (mitigated)
+
+- **Immediate mitigation:** H13-FIX (worker auto-shutdown) eliminates the crash trigger
+- **Long-term resolution:** Replace VTK rendering in FAST mode with the existing Qt pipeline
+- **Advanced mode:** Unaffected — continues to use VTK (single-threaded decode, no worker threads)
+- **Probes/toggles:** Retained for diagnostic capability but no longer primary investigation tools

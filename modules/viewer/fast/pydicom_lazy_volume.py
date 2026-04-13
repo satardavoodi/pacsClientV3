@@ -295,6 +295,7 @@ class PyDicomLazyVolume(QObject):
         self._requested_slice_idx = 0
         self._last_requested_slice_idx = 0
         self._scroll_direction = 0
+        self._t3_snapshot = None  # H13-T3: keeps render-time numpy snapshot alive
 
         try:
             if hasattr(self.backend, "set_prefetch_radius"):
@@ -508,8 +509,36 @@ class PyDicomLazyVolume(QObject):
         except Exception:
             pass
 
+        # 7. Revive workers that auto-exited after all-decoded (H13-FIX)
+        self._revive_workers_if_needed()
+
         logger.info("pydicom-lazy grow: complete, now %d slices", self.slice_count)
         return self.slice_count
+
+    def _revive_workers_if_needed(self) -> None:
+        """Re-start workers that auto-exited after all slices were decoded.
+
+        Called by ``grow()`` when new slices arrive from progressive download
+        and workers need to resume decoding.
+        """
+        if self._closing.is_set():
+            return
+        living = [w for w in self._workers if w.is_alive()]
+        needed = self._worker_count - len(living)
+        if needed <= 0:
+            return
+        logger.info(
+            "[H13-REVIVE] reviving %d workers (alive=%d target=%d)",
+            needed, len(living), self._worker_count,
+        )
+        for i in range(needed):
+            worker = threading.Thread(
+                target=self._worker_loop,
+                daemon=True,
+                name=f"PyDicomLazyVolumeWorker-revived-{i + 1}",
+            )
+            worker.start()
+            self._workers.append(worker)
 
     def close(self) -> None:
         """Stop workers and release this loader's reference to the volume.
@@ -717,13 +746,52 @@ class PyDicomLazyVolume(QObject):
         return cache_hit
 
     def mark_vtk_modified(self) -> None:
+        _cnt = getattr(self, '_t3_render_count', 0) + 1
+        self._t3_render_count = _cnt
         try:
-            scalars = self.vtk_image_data.GetPointData().GetScalars()
-            if scalars is not None:
-                scalars.Modified()
-            self.vtk_image_data.Modified()
-        except Exception:
-            pass
+            if _H13_DEEP_COPY:
+                # ── H13-T3: Render-time snapshot ──────────────────────────
+                # Copy the current volume state into an independent numpy
+                # array and re-link VTK scalars to the copy.  This breaks
+                # the shared-memory coupling: workers continue writing to
+                # self._volume (memmap) while VTK Render() reads from the
+                # snapshot.  The snapshot is kept alive by self._t3_snapshot
+                # until the next frame replaces it.
+                if _cnt == 1 or _cnt % 100 == 0:
+                    logger.info(
+                        "[H13-T3-RENDER] deep_copy=True frame=%d slices=%d",
+                        _cnt, self.slice_count,
+                    )
+                vol = self._volume
+                if vol is not None:
+                    flat = (
+                        vol.reshape(-1, self.components).copy()
+                        if self.components > 1
+                        else vol.ravel(order="C").copy()
+                    )
+                    self._t3_snapshot = flat          # prevent GC
+                    vtk_arr = numpy_support.numpy_to_vtk(
+                        num_array=flat,
+                        deep=False,                   # flat is already a copy
+                        array_type=_vtk_array_type_for(self.dtype),
+                    )
+                    self.vtk_image_data.GetPointData().SetScalars(vtk_arr)
+                self.vtk_image_data.Modified()
+            else:
+                if _cnt == 1:
+                    logger.info(
+                        "[H13-T3-RENDER] deep_copy=False frame=%d slices=%d",
+                        _cnt, self.slice_count,
+                    )
+                scalars = self.vtk_image_data.GetPointData().GetScalars()
+                if scalars is not None:
+                    scalars.Modified()
+                self.vtk_image_data.Modified()
+        except Exception as exc:
+            logger.warning(
+                "[H13-T3-RENDER] mark_vtk_modified FAILED frame=%d deep_copy=%s: %s",
+                _cnt, _H13_DEEP_COPY, exc, exc_info=True,
+            )
 
     def _enqueue_slice(self, idx: int, high_priority: bool = False) -> None:
         if self._closing.is_set():
@@ -974,6 +1042,26 @@ class PyDicomLazyVolume(QObject):
             try:
                 item = self._request_queue.get(timeout=0.2)
             except queue.Empty:
+                # ── H13-FIX: Auto-shutdown idle workers ──────────────────
+                # Workers idle in queue.get() keep their Python thread state
+                # registered in the interpreter.  VTK 9.6 PyPI wheel lacks
+                # VTK_PYTHON_FULL_THREADSAFE — its C++ Render()/SetSlice()
+                # release the GIL without proper vtkPythonScopeGilEnsurer.
+                # When idle workers exist, the GIL handoff corrupts thread
+                # state → Fatal "PyThreadState_Get: GIL is released".
+                # Fix: once ALL slices are decoded, workers have no more
+                # useful work — exit the loop to eliminate the thread.  If
+                # grow() adds new slices, it revives workers on demand.
+                if not self._closing.is_set() and self.slice_count > 0:
+                    try:
+                        if bool(np.all(self._loaded[:self.slice_count])):
+                            logger.info(
+                                "[H13-AUTOEXIT] worker %s exiting: all %d slices decoded",
+                                threading.current_thread().name, self.slice_count,
+                            )
+                            break
+                    except Exception:
+                        pass
                 continue
             except Exception:
                 continue

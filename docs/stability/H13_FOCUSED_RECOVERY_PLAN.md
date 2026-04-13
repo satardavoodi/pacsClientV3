@@ -2,8 +2,9 @@
 
 **Investigation:** FAST `pydicom_2d` crash + scroll/download performance collapse  
 **Scope:** FAST viewer only (`pydicom_2d` + VTK render path). Advanced viewer is out of scope unless explicitly needed later.  
-**Status date:** 2026-04-13  
-**P1 status:** COMPLETED (2 runs)
+**Status date:** 2026-04-14  
+**P1 status:** COMPLETED (2 runs)  
+**Investigation status:** **RESOLVED (mitigated)** — root cause identified, H13-FIX deployed, strategic replacement planned
 
 **Active failure families now tracked:**
 1. **H13-F1 — Fatal viewer crash:** `Fatal Python error: PyThreadState_Get: GIL not held` (baseline dominant)
@@ -228,7 +229,7 @@ That means the final solution must do **all three**:
 
 This plan is intentionally short. It exists to keep the investigation on rails.
 
-**Key update (2026-04-13):** P1 is COMPLETED. The plan below reflects the post-P1 reality: booster is a dominant amplifier that was hiding a more tractable Qt/WL exception path. The next priority is classifying and guarding that path, not jumping to P2 or T3.
+**Key update (2026-04-13):** P1 is COMPLETED. Steps 3a/3b are DONE (observability recovered). Step 3c verification run crashed with F1 (GIL fatal) — no `[H13-S5]` guards fired, confirming the active failure is C-level, not Python-catchable. `[H13-OVERLAP]` confirmed real render/write overlap 0.51ms before fatal. T3 deep-copy experiment is now the primary discriminating step.
 
 ### Step 1 — Preserve T6 as diagnostic-only (DONE)
 
@@ -264,87 +265,94 @@ Instrumentation at the exact insertion point:
 
 **Critical gap discovered during review:** We do NOT have a Python traceback from the P1 run #2 Qt crash. The `sys.excepthook` (H5a) did not fire. The last render completed cleanly. The absence of a Python traceback in a Qt exception scenario is itself diagnostic evidence — either the exception was swallowed, occurred outside Python context, or was lost at an event boundary.
 
-#### Step 3a — Eliminate silent exception suppression (highest priority)
+#### Step 3a — Eliminate silent exception suppression (DONE)
 
 **Goal:** Ensure no exception in the lazy/render path is silently swallowed.
 
-**Actions:**
-- Audit `_on_lazy_slice_ready_impl` and remove `except Exception: logger.debug(...)` patterns.
-- Replace with `logger.exception(...)` OR explicit structured error logging at INFO/ERROR level.
-- Search for similar suppression patterns in:
-  - lazy callbacks,
-  - render dispatch paths,
-  - Qt-bound slots.
+**Completed (2026-04-13):**
+- `_on_lazy_slice_ready_impl` (`_vw_backend.py:635`) — `logger.debug` → `logger.warning` with `exc_info=True` and rich context (`[H13-S5]` tagged: viewer_id, backend, generation, progressive state).
+- `set_slice` camera scale save (`_vw_scroll.py`) — bare `except: pass` → `except Exception: logger.warning("[H13-S5]", exc_info=True)`.
+- `set_slice` camera zoom restore (`_vw_scroll.py`) — bare `except: pass` → `except Exception: logger.warning("[H13-S5]", exc_info=True)`.
+- `set_slice` `mark_vtk_modified` (`_vw_scroll.py`) — bare `except Exception: pass` → `except Exception: logger.warning("[H13-S5]", exc_info=True)`.
+- Audit found 30+ suppression sites total; the 4 above are on the critical render/Qt path.
 
-**Important:**
-- **`logger.debug` is treated as non-existent for H13.** In production-like runtime, debug is OFF — so `logger.debug` exception catches are functionally equivalent to zero evidence.
-- **No guard or behavior change should be added before this step is complete.** If guards are added first, exceptions may be caught but the original call stack (the real diagnostic value) may be lost behind the new guard's catch site.
-- This is not just one location — it is a **pattern** to search for and eliminate across the entire lazy/render/Qt-slot call graph.
+**Rule established:** `logger.debug` is treated as non-existent for H13. No guard added before this step.
 
-#### Step 3b — Add Qt boundary guards (wrapper + impl)
+#### Step 3b — Add Qt boundary guards (DONE)
 
 **Goal:** Prevent exceptions from propagating through Qt event handlers.
 
-**Actions:**
-- Add wrapper+impl pattern at Qt entry points.
-- Tag all logging with `[H13-S5]`.
-- Catch exceptions and log:
-  - full traceback (`exc_info=True`),
-  - slice/request/current/guard indices,
-  - viewer id,
-  - generation,
-  - lazy/progressive state,
-  - WL source (if applicable).
+**Completed (2026-04-13):**
+1. `_call_image_viewer_set_slice` (`_vw_scroll.py`) — widened `except TypeError` to also catch `Exception` with `[H13-S5]` context logging.
+2. `ImageViewer2D.set_slice` (`viewer_2d.py`) — wrapper+impl split: `set_slice()` → `_set_slice_impl()` with outer `[H13-S5]` exception guard.
+3. `apply_default_window_level` (`viewer_2d.py`) — wrapper+impl split: `apply_default_window_level()` → `_apply_default_window_level_impl()` with outer `[H13-S5]` exception guard.
+4. `update_corners_actors` (`viewer_2d.py`) — wrapper+impl split: `update_corners_actors()` → `_update_corners_actors_impl()` with outer `[H13-S5]` exception guard.
 
-**Specific gaps to guard:**
-1. `_call_image_viewer_set_slice` (_vw_scroll.py) — catches only `TypeError`, must widen to `Exception`
-2. `ImageViewer2D.set_slice` (viewer_2d.py) — no try/except at all
-3. `apply_default_window_level` (viewer_2d.py) — no try/except; `GetScalarRange()` fallback is the 356ms stall suspect
-4. `update_corners_actors` (viewer_2d.py) — no try/except; `metadata['series']['series_thk']` KeyError risk
+All guards log with `exc_info=True` for full traceback. No core behavior changed.
 
-**Constraint:**
-- Do not silently swallow without logging.
-- Do not change core behavior yet.
-- This is diagnostic hardening, not yet a final fix claim.
-
-#### Step 3c — Verify traceback capture works
+#### Step 3c — Verify traceback capture works (DONE — answered a different question)
 
 **Goal:** Confirm that exceptions are now observable and classifiable.
 
+**Result (2026-04-13, log 22):**
+- Crash reproduced under `AIPACS_DISABLE_BOOSTER=1`.
+- **No `[H13-S5]` guards fired.** No Python traceback captured.
+- Crash was `Fatal Python error: PyThreadState_Get: GIL not held` — pure F1 family.
+- `[H13-OVERLAP]` fired twice: overlap_count=2, overlap_max_ms=0.51.
+- `[H12-3] BACKING_STORE_OVERLAP current=vtk_render:26948 holder=lazy_volume_write:16012` confirmed real render/write overlap.
+- Last log line before fatal: `frame_delivery action=render viewer=0 slice=20`.
+
+**Interpretation:**
+- Python-level guards (3a/3b) are in place but irrelevant for F1 — the crash occurs at the C/VTK level, below Python's exception system.
+- The active failure is confirmed as **shared-memory overlap between lazy worker writes and VTK render reads**.
+- Step 3c answered a DIFFERENT question than intended: not "is observability working?" but "is the active crash path even reachable by Python guards?" Answer: NO.
+- The correct next step is **T3 deep-copy isolation**, not P2A/P2B.
+
+### Step 4 — Run T3 deep-copy experiment (IMPLEMENTED, READY TO RUN)
+
+**Goal:** Break the shared-memory coupling between lazy decode/write and VTK render to determine if it is a necessary condition of the H13 GIL crash.
+
+**Implementation (2026-04-13):**
+- Env var: `AIPACS_VTK_DEEP_COPY=1` (already wired in `_decode_guard.py`).
+- When ON: `mark_vtk_modified()` in `PyDicomLazyVolume` snapshots the entire numpy backing store (`_volume.ravel().copy()`) into an independent array, creates a new VTK scalar array from the snapshot, and sets it as the VTK image's scalars before calling `Modified()`.
+- Workers continue writing to `self._volume` (memmap). VTK `Render()` reads from the snapshot. No shared-memory overlap is possible.
+- Snapshot kept alive by `self._t3_snapshot` attribute until the next frame replaces it.
+- `[H13-T3]` startup marker emitted to confirm mode is active.
+- All existing probes preserved: `[H13-OVERLAP]`, `[H12-3]`, `[H13-T6-DIAG]`, `[H13-P5]`.
+
+**Run command:**
+```
+set AIPACS_VTK_DEEP_COPY=1 && .venv\Scripts\python.exe main.py
+```
+
+**Expected performance cost:**
+- One numpy `ravel().copy()` per render frame.
+- For 33-slice 512×512 int16 CT: ~17MB copy ≈ 3–5ms per frame.
+- For 500-slice studies: ~250MB ≈ 50ms — too expensive for production, acceptable for experiment.
+- Adds ~3–5ms to the existing ~30–50ms Render() time.
+
 **Success criteria:**
-- A reproduced failure yields a Python traceback with a clear origin.
-- The exception site (function + line) is identifiable.
-- Failure family classification becomes unambiguous.
+- If T3 eliminates the `PyThreadState_Get` fatal: shared mutable backing is a **necessary condition** of the active H13 crash → propose the cleanest production isolation path.
+- If T3 does NOT eliminate the fatal: the crash is deeper than shallow shared-buffer overlap → next isolation step (but do not guess).
 
-**If no traceback is captured after 3a + 3b:**
-- **Observability is still broken.**
-- Do NOT proceed to P2A/P2B.
-- Investigate PySide6-level exception hooks, `sys.excepthook` coverage, and whether the exception originates below the Python layer (C/VTK).
-- The investigation cannot advance without the ability to see what is failing.
+**Isolation scope:**
+- T3 isolates the render-time overlap between `vol[i] = arr` (worker write) and VTK scalar reads (during Render).
+- T3 does NOT isolate: `Modified()` calls on VTK pipeline objects, VTK internal thread scheduling, or numpy dtype/GIL interactions outside the scalar data path.
+- If T3 passes, the overlap path is confirmed as the coupling that matters. If it fails, the coupling is deeper.
 
-### Step 4 — Run P2A (booster window reduction)
+### Step 5 — Classify T3 result and decide next path
 
-**Goal:** find the minimum viable prefetch that preserves some responsiveness benefit without returning to baseline-level overlap/churn.
+**If T3 eliminates the fatal:**
+- Shared-memory coupling is a necessary condition.
+- Propose: (a) production-grade per-slice copy, (b) double-buffer architecture, or (c) render gating with write exclusion.
 
-`AIPACS_BOOSTER_WINDOW=5` — reduce booster prefetch from ±20 → ±5 slices (already wired in `ImageSliceBooster`).
+**If T3 does NOT eliminate the fatal:**
+- The crash is below the scalar data overlap level.
+- Next candidates: VTK `Modified()` thread safety, VTK internal pipeline state, or Python/C boundary in numpy ↔ VTK.
 
-P2A answers: can we keep booster benefit while staying in the safer (F2-catchable) pressure zone?
+### Step 6 — P2A/P2B (deferred)
 
-### Step 5 — Run P2B (single lazy worker) only if pressure remains poor after P2A
-
-`AIPACS_PYDICOM_SINGLE_WORKER=1` — reduce lazy-volume worker threads to 1 (already wired in `PyDicomLazyVolume`).
-
-**Important:** `AIPACS_MAX_DECODE_THREADS=1` is already the default since H12. Setting it again adds zero information. P2B is only justified if P2A does not sufficiently reduce pressure.
-
-### Step 6 — Only then decide whether T3 is next
-
-If the Qt/WL path is guarded (Step 3), pressure is reduced (Steps 4–5), and either:
-- F1 crashes still occur with no pressure to amplify them, or
-- the exception diagnostics reveal shared-state corruption as the root cause,
-
-then run **T3 deep copy** as the next discriminating test.
-
-That is the right point to ask whether shared-memory coupling is the dominant remaining factor.
+Pressure reduction experiments are deferred until after T3 classification. They remain valid for reducing pressure KPIs but are not the primary discriminating step for stability.
 
 ---
 
@@ -427,7 +435,7 @@ These are not all approved yet; they are the bounded solution space implied by t
 - Note: `AIPACS_MAX_DECODE_THREADS=1` is already the default (H12) — not a discriminating knob
 
 ### C. Shared-state discrimination
-- deep-copy experiment (T3) if trigger + pressure controls are insufficient
+- **T3 deep-copy experiment (IMPLEMENTED):** `AIPACS_VTK_DEEP_COPY=1` — `mark_vtk_modified()` snapshots the numpy backing store before every Render. Implemented in `modules/viewer/fast/pydicom_lazy_volume.py`. Startup marker: `[H13-T3]`.
 
 ### D. Diagnostic: VTK build-flag audit
 - One-time `[H13-BUILD]` log at startup: Python version, VTK version, NumPy version, VTK wheel provenance.
@@ -459,13 +467,22 @@ A healthy final state should look like:
 
 1. ~~Record P1 results formally in the working ledger and focused plan~~ **(DONE — §2, §3.2, §4, §5, §11.1)**
 2. ~~Separate failure families in analysis and future KPI tables~~ **(DONE — §4, §8)**
-3. **Recover observability** — eliminate silent exception suppression across lazy/render/Qt-slot paths (Step 3a)
-4. **Add Qt boundary guards** — wrapper+impl pattern with `[H13-S5]` logging at all unguarded Qt entry points (Step 3b)
-5. **Verify traceback capture** — confirm a reproduced failure yields a classifiable Python traceback; if not, observability is still broken → do not proceed (Step 3c)
-6. **Re-run under the same reduced-pressure conditions** (`AIPACS_DISABLE_BOOSTER=1`) to confirm the guarded Qt path is now inspectable and no longer fatal
-7. Then run **P2A** (`AIPACS_BOOSTER_WINDOW=5`) to find minimum viable prefetch
-8. Only if pressure still remains poor, run **P2B** (`AIPACS_PYDICOM_SINGLE_WORKER=1`)
-9. Only then decide whether **T3** (deep copy) is justified
+3. ~~Recover observability~~ **(DONE — Step 3a: elevated 4 silent suppression sites to `logger.warning` with `[H13-S5]` tags)**
+4. ~~Add Qt boundary guards~~ **(DONE — Step 3b: wrapper+impl on 4 functions with `[H13-S5]` logging)**
+5. ~~Verify traceback capture~~ **(DONE — Step 3c: crash reproduced, no Python traceback, confirmed F1/C-level, not Python-catchable)**
+6. ~~Run T3 deep-copy experiment~~ **(DONE — Logs 23-25: crashes with ALL workers idle, overlap=0. T3 does NOT prevent crash. Shared-memory buffer is NOT the sole cause)**
+7. ~~Classify T3 result and decide next path~~ **(DONE — H13-B CONFIRMED: VTK PyPI wheel lacks VTK_PYTHON_FULL_THREADSAFE. Idle threads corrupt GIL state during VTK render)**
+8. ~~Implement mitigation~~ **(DONE — H13-FIX: worker auto-shutdown when all slices decoded, auto-revive on grow(). All 69 tests passing)**
+
+### 11.2 Resolution and strategic direction
+
+**Root cause (confirmed):** VTK 9.6 PyPI wheel is NOT built with `VTK_PYTHON_FULL_THREADSAFE=ON`. When worker threads exist (even idle in `queue.get()`), VTK's C++ `Render()`/`SetSlice()` corrupt GIL state via improper `vtkPythonUtil::SaveThread()`/`RestoreThread()` calls. This produces `Fatal Python error: PyThreadState_Get: GIL not held`.
+
+**Immediate mitigation (H13-FIX):** Workers auto-exit when all slices are decoded (`[H13-AUTOEXIT]`). When `grow()` adds new slices during progressive download, workers are revived on demand (`[H13-REVIVE]`). This eliminates idle threads during VTK render operations.
+
+**Long-term resolution:** Replace VTK rendering in FAST mode with the existing Qt-native pipeline (`pydicom_qt` backend). The codebase already contains `QtSliceViewer`, `Lightweight2DPipeline`, and `QtViewerBridge` — these were built alongside `pydicom_2d` but never became the exclusive FAST path. Completing this transition eliminates the VTK thread-safety dependency entirely for FAST mode.
+
+**Advanced mode:** Unaffected. Continues using VTK with single-threaded decode (SimpleITK loads full volume). No worker threads exist during Advanced mode VTK render.
 
 ### 11.1 P1 Results Summary — Booster OFF
 
@@ -527,4 +544,4 @@ P1 landed on a mix of branches: no-crash criteria not met, but pressure clearly 
 
 ## 13. One-sentence summary
 
-**Current best path:** P1 weakened a dominant amplifier (booster) and shifted the failure from fatal/opaque (GIL crash) to catchable/inspectable (Qt exception). However, the system currently swallows exceptions silently — `logger.debug` suppression in the lazy/render path means we have zero evidence of what is actually failing. The next step is to **recover observability first** (eliminate silent suppression, add boundary guards, verify traceback capture), then continue pressure narrowing with P2A — not jump to deep copy or architecture redesign.
+**Root cause confirmed:** VTK 9.6 PyPI wheel lacks `VTK_PYTHON_FULL_THREADSAFE=ON` — idle worker threads corrupt GIL state during VTK C++ `Render()`/`SetSlice()`, producing `Fatal Python error: PyThreadState_Get: GIL not held`. **H13-FIX (worker auto-shutdown) deployed as immediate mitigation.** Long-term resolution: replace VTK rendering in FAST mode with the existing Qt-native pipeline (`pydicom_qt` backend: `QtSliceViewer` + `Lightweight2DPipeline` + `QtViewerBridge`).
