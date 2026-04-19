@@ -121,6 +121,8 @@ between **FAST mode** (`pydicom_qt` → `QtSliceViewer` + QPainter) and **Advanc
 | **Gesture** | Left-drag vertical, adaptive threshold | Left-drag vertical, adaptive threshold | ✅ Fixed parity |
 | **Step threshold** | Adaptive by stack size (10→4 px tiers) | Adaptive by stack size (10→4 px tiers) | ✅ Fixed parity |
 | **Step size** | Adaptive, bounded acceleration (cap by stack size) | Adaptive, bounded acceleration (cap by stack size) | ✅ Fixed parity |
+| **Top→bottom traversal model** | Drag distance mapped to stack progression | Drag distance mapped to stack progression | ✅ Added (FAST) |
+| **Out-of-bounds handling** | Toolkit-bound interaction lifecycle | Stack stops immediately outside viewer/image area | ✅ Added (FAST) |
 | **Via queue** | `queue_interactive_slice_target()` (coalesced) | `slice_scroll_requested.emit(step)` | ✅ Both coalesced |
 
 ---

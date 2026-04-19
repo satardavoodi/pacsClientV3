@@ -17,6 +17,50 @@ from PacsClient.pacs.patient_tab.utils import check_and_get_thumbnails
 class _PWThumbnailsMixin:
     """Server thumbnails, series info, series resolution."""
 
+    def _log_open_thumbnail_trace(self, phase: str, level: str = 'info', **fields) -> None:
+        study_uid = getattr(self, 'study_uid', None)
+        parent_widget = getattr(self, 'parent_widget', None)
+        if study_uid and parent_widget is not None and hasattr(parent_widget, '_log_open_trace'):
+            try:
+                parent_widget._log_open_trace(study_uid, phase, level=level, **fields)
+                return
+            except Exception:
+                pass
+        logger = getattr(self, 'logger', None)
+        if logger is not None and study_uid:
+            details = ' '.join(f"{key}={fields[key]}" for key in sorted(fields) if fields[key] is not None)
+            message = f"[FAST-OPEN-TRACE] study={study_uid} phase={phase}"
+            if details:
+                message = f"{message} {details}"
+            getattr(logger, level, logger.info)(message)
+
+    def _reset_thumbnail_retry_state(self) -> None:
+        self._thumbnail_retry_pending = False
+        self._thumbnail_retry_attempts = 0
+
+    @Slot()
+    def _retry_deferred_server_thumbnail_load(self):
+        self._thumbnail_retry_pending = False
+        self._load_server_thumbnails()
+
+    @Slot()
+    def _schedule_deferred_server_thumbnail_retry(self):
+        max_retries = 12
+        if getattr(self, '_thumbnail_retry_pending', False):
+            return
+        attempts = int(getattr(self, '_thumbnail_retry_attempts', 0) or 0)
+        if attempts >= max_retries:
+            self._log_open_thumbnail_trace('patient_tab_thumb_retry_exhausted', attempts=attempts)
+            return
+        self._thumbnail_retry_pending = True
+        self._thumbnail_retry_attempts = attempts + 1
+        self._log_open_thumbnail_trace(
+            'patient_tab_thumb_retry_scheduled',
+            attempts=self._thumbnail_retry_attempts,
+            delay_ms=700,
+        )
+        QTimer.singleShot(700, self._retry_deferred_server_thumbnail_load)
+
     def set_method_open_ai_module_tab(self, method_add_new_tab):
         self.method_add_new_tab = method_add_new_tab
 
@@ -117,6 +161,8 @@ class _PWThumbnailsMixin:
 
             thumbnails = check_and_get_thumbnails(self.import_folder_path, self.study_uid)
             if thumbnails:
+                self._reset_thumbnail_retry_state()
+                self._log_open_thumbnail_trace('patient_tab_thumb_cache_hit', thumbnail_count=len(thumbnails))
                 # Store result then dispatch to main thread via QMetaObject.
                 # QTimer.singleShot from a non-Qt thread has no Qt event loop
                 # and is silently dropped; QueuedConnection always routes to
@@ -125,6 +171,26 @@ class _PWThumbnailsMixin:
                 QMetaObject.invokeMethod(self, "_render_thumbnails_from_files_slot", Qt.QueuedConnection)
                 return
 
+            try:
+                from modules.viewer.fast.ui_throttle import should_defer_noncritical_open_network
+
+                if should_defer_noncritical_open_network(
+                    first_series_visible=bool(getattr(self, '_first_series_displayed', False))
+                ):
+                    self._log_open_thumbnail_trace(
+                        'patient_tab_thumb_deferred',
+                        retry=int(getattr(self, '_thumbnail_retry_attempts', 0) or 0) + 1,
+                        first_series_visible=bool(getattr(self, '_first_series_displayed', False)),
+                    )
+                    QMetaObject.invokeMethod(
+                        self,
+                        "_schedule_deferred_server_thumbnail_retry",
+                        Qt.QueuedConnection,
+                    )
+                    return
+            except Exception:
+                pass
+
             from modules.network.grpc_client import DicomGrpcClient
             from modules.network.socket_config import get_socket_server_settings
             from PacsClient.pacs.patient_tab.utils import save_thumbnail_with_bytes
@@ -132,8 +198,11 @@ class _PWThumbnailsMixin:
             server = get_socket_server_settings() or {}
             host = server.get('host') or server.get('socket_host')
             if not host:
+                self._log_open_thumbnail_trace('patient_tab_thumb_no_host')
                 self.logger.debug("No server host available for thumbnails")
                 return
+
+            self._log_open_thumbnail_trace('patient_tab_thumb_grpc_start', host=host)
 
             def _fetch():
                 grpc_client = DicomGrpcClient(host=host, port=50051)
@@ -143,6 +212,7 @@ class _PWThumbnailsMixin:
 
             result = await asyncio.to_thread(_fetch)
             if not result or 'thumbnails' not in result:
+                self._log_open_thumbnail_trace('patient_tab_thumb_grpc_empty')
                 return
 
             series_entries = []
@@ -156,9 +226,12 @@ class _PWThumbnailsMixin:
                 series_entries.append(series)
 
             if series_entries:
+                self._reset_thumbnail_retry_state()
+                self._log_open_thumbnail_trace('patient_tab_thumb_grpc_done', thumbnail_count=len(series_entries))
                 self._pending_thumbnails_entries = series_entries
                 QMetaObject.invokeMethod(self, "_render_thumbnails_from_entries_slot", Qt.QueuedConnection)
         except Exception as e:
+            self._log_open_thumbnail_trace('patient_tab_thumb_error', level='error', error=str(e))
             self.logger.debug(f"Error loading server thumbnails: {e}")
 
     def _render_thumbnails_from_files(self, thumbnails):
@@ -189,6 +262,7 @@ class _PWThumbnailsMixin:
         thumbnails = getattr(self, '_pending_thumbnails_files', None)
         if thumbnails:
             self._pending_thumbnails_files = None
+            self._log_open_thumbnail_trace('patient_tab_thumb_render_files', thumbnail_count=len(thumbnails))
             self._render_thumbnails_from_files(thumbnails)
 
     @Slot()
@@ -197,6 +271,7 @@ class _PWThumbnailsMixin:
         entries = getattr(self, '_pending_thumbnails_entries', None)
         if entries:
             self._pending_thumbnails_entries = None
+            self._log_open_thumbnail_trace('patient_tab_thumb_render_entries', thumbnail_count=len(entries))
             self._render_thumbnails_from_entries(entries)
 
     def _render_thumbnails_from_entries(self, series_entries: list):

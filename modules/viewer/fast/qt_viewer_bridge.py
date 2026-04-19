@@ -29,8 +29,10 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from modules.viewer.fast.perf_metrics import PerfMetrics
+
 import numpy as np
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 
 from modules.viewer.fast.lightweight_2d_pipeline import (
     Lightweight2DPipeline,
@@ -40,9 +42,13 @@ from modules.viewer.fast.lightweight_2d_pipeline import (
 from modules.viewer.fast.qt_slice_viewer import (
     QtSliceViewer,
 )
+from modules.viewer.fast.ui_throttle import record_fast_interaction, record_ui_heartbeat
 from modules.viewer.tools.coord_resolver import CoordinateResolver
 
 logger = logging.getLogger(__name__)
+
+
+_SET_SLICE_STAGE_LOG_THRESHOLD_MS = 16.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -266,6 +272,11 @@ class QtViewerBridge:
         self.vtk_widget = vtk_widget
         self.metadata = metadata or {}
         self.metadata_fixed = metadata_fixed or {}
+        self._debug_bridge_id = f"b{id(self) & 0xFFFFF:05x}"
+        self._debug_viewer_id = f"q{id(qt_viewer) & 0xFFFFF:05x}"
+        self._scroll_event_seq: int = 0
+        self._settle_arm_seq: int = 0
+        self._last_settle_reason: str = 'init'
         # Propagate modality so W/L sensitivity adapts for radiography series
         try:
             _mod = str((metadata or {}).get('series', {}).get('modality', '') or '')
@@ -315,6 +326,19 @@ class QtViewerBridge:
         # Connect Qt viewer signals
         self.qt_viewer.window_level_changed.connect(self._on_qt_wl_changed)
         self.qt_viewer.slice_scroll_requested.connect(self._on_qt_scroll)
+        self.qt_viewer.stack_drag_state_changed.connect(self._on_stack_drag_state)
+
+        # B3.4: unified interaction state + settle timer (replaces B3.3 stack-only timer)
+        # Any scroll event (wheel or stack-drag) sets fast_interaction=True.
+        # Single 200ms settle timer fires end_fast_interaction() after last event.
+        self._stack_drag_active: bool = False  # context flag for mode-differentiated policy
+        self._last_stack_sync_ms: float = 0.0
+        self._last_stack_reference_ms: float = 0.0
+        self._last_stack_target_slice: Optional[int] = None
+        self._interaction_settle_timer = QTimer()
+        self._interaction_settle_timer.setSingleShot(True)
+        self._interaction_settle_timer.setInterval(200)
+        self._interaction_settle_timer.timeout.connect(self._on_interaction_settled)
 
         # Initialize ToolController for measurement annotations
         self._init_tool_controller()
@@ -324,7 +348,9 @@ class QtViewerBridge:
         self.qt_viewer._coord_backend = self.pipeline
 
         logger.info(
-            "qt-viewer-bridge created slices=%d",
+            "qt-viewer-bridge created bridge=%s viewer=%s slices=%d",
+            self._debug_bridge_id,
+            self._debug_viewer_id,
             self._slice_count,
         )
 
@@ -348,10 +374,7 @@ class QtViewerBridge:
         """Build a mock vtkImageData from pipeline state."""
         n_slices = self.pipeline.slice_count
         self._slice_count = n_slices
-        try:
-            self.qt_viewer.set_total_slices_hint(self._slice_count)
-        except Exception:
-            pass
+        self._sync_interaction_slice_count_hint()
 
         if n_slices > 0:
             sm = self.pipeline.get_slice_meta(0)
@@ -415,41 +438,173 @@ class QtViewerBridge:
     def get_count_of_slices(self) -> int:
         return self._slice_count
 
-    def set_slice(self, slice_index: int, fast_interaction: bool = False) -> None:
+    def _get_interaction_slice_count_hint(self) -> int:
+        """Return the slice count the user can currently navigate."""
+        count = int(max(0, self._slice_count))
+        try:
+            vtk_widget = getattr(self, 'vtk_widget', None)
+            if vtk_widget is not None and hasattr(vtk_widget, '_get_interactive_slice_count'):
+                hinted = int(vtk_widget._get_interactive_slice_count() or 0)
+                if hinted > 0:
+                    count = min(count, hinted)
+            elif vtk_widget is not None and bool(getattr(vtk_widget, '_progressive_mode', False)):
+                available = int(getattr(vtk_widget, '_available_slice_count', 0) or 0)
+                if available > 0:
+                    count = min(count, available)
+        except Exception:
+            pass
+        return max(0, count)
+
+    def _sync_interaction_slice_count_hint(self) -> int:
+        """Push the current interactive slice count into drag/cache policy."""
+        count = self._get_interaction_slice_count_hint()
+        try:
+            self.qt_viewer.set_total_slices_hint(count)
+        except Exception:
+            pass
+        try:
+            if hasattr(self.pipeline, 'set_interaction_slice_count_hint'):
+                self.pipeline.set_interaction_slice_count_hint(count)
+        except Exception:
+            pass
+        return count
+
+    # ── B3.6: booster interaction gate ──────────────────────────────────
+    _booster_paused: bool = False
+
+    def _get_booster(self):
+        """Traverse to ImageSliceBooster (may be None)."""
+        try:
+            vw = self.vtk_widget
+            if vw is None:
+                return None
+            pw = getattr(vw, 'patient_widget', None)
+            if pw is None:
+                return None
+            vc = getattr(pw, 'viewer_controller', None)
+            if vc is None:
+                return None
+            return getattr(vc, '_image_slice_booster', None)
+        except Exception:
+            return None
+
+    def _pause_booster(self) -> None:
+        """Pause booster during fast interaction (idempotent)."""
+        if self._booster_paused:
+            return
+        booster = self._get_booster()
+        if booster is not None:
+            booster.pause_for_interaction()
+            self._booster_paused = True
+
+    def _resume_booster(self) -> None:
+        """Resume booster after interaction ends (idempotent)."""
+        if not self._booster_paused:
+            return
+        booster = self._get_booster()
+        if booster is not None:
+            booster.resume_from_interaction()
+        self._booster_paused = False
+
+    def _set_thumbnail_scroll_active(self, active: bool) -> None:
+        """Tell thumbnail manager to defer repaint-heavy work during scroll."""
+        try:
+            vw = self.vtk_widget
+            if vw is None:
+                return
+            pw = getattr(vw, 'patient_widget', None)
+            tm = getattr(pw, 'thumbnail_manager', None)
+            if tm is not None and hasattr(tm, 'set_scroll_active'):
+                tm.set_scroll_active(bool(active))
+        except Exception:
+            pass
+
+    def set_slice(self, slice_index: int, fast_interaction: bool = False, *, interaction_type: str = '') -> None:
         """
         Main set_slice called from vtk_widget._call_image_viewer_set_slice.
 
         Renders the specified slice via the Qt pipeline and updates the viewer.
 
-        When *fast_interaction* is True (wheel scroll / stack drag), the
-        pipeline skips the OpenCV filter for lower latency.  The filter is
-        re-applied on scroll-stop via ``end_fast_interaction()``.
+        When *fast_interaction* is True, the pipeline uses the interaction
+        class to balance latency versus visual consistency:
+
+        - wheel: keep exact filtered appearance for precision browsing
+        - drag: skip the OpenCV filter for lower latency
+
+        Any remaining drag-time approximation is re-applied exactly on
+        scroll-stop via ``end_fast_interaction()``.
+
+        B4.1 *interaction_type*:
+          - 'wheel': precision browsing — always render exact slice (no surrogate)
+          - 'drag': fast navigation — surrogate from nearby cache allowed
+          - '' (default): non-interactive call
         """
         t_start = time.perf_counter()
         idx = max(0, min(int(slice_index), self._slice_count - 1))
         self._current_slice = idx
         self.qt_viewer._current_slice_index = idx
-        self.pipeline.set_slice_index(idx)
+        self._sync_interaction_slice_count_hint()
 
         # Set fast-interaction mode on pipeline
-        self.pipeline.set_fast_interaction(fast_interaction)
+        t_stage = time.perf_counter()
+        try:
+            self.pipeline.set_fast_interaction(
+                fast_interaction,
+                interaction_type=interaction_type,
+            )
+        except TypeError:
+            self.pipeline.set_fast_interaction(fast_interaction)
+        record_fast_interaction(bool(fast_interaction))
+        ui_lag_ms = record_ui_heartbeat()
+        self._set_thumbnail_scroll_active(bool(fast_interaction))
+
+        # B3.6: Pause/resume booster to eliminate stale background decode
+        # during active user interaction (scroll / drag).
+        if fast_interaction:
+            self._pause_booster()
+        else:
+            self._resume_booster()
+        interaction_prep_ms = (time.perf_counter() - t_stage) * 1000.0
+
+        # IMPORTANT: set fast-interaction BEFORE set_slice_index() so the
+        # prefetch kicked off by set_slice_index() uses the correct radius /
+        # frame-prefetch policy during active wheel/drag interaction.
+        t_stage = time.perf_counter()
+        self.pipeline.set_slice_index(idx)
+        prepare_ms = (time.perf_counter() - t_stage) * 1000.0
 
         if self._suppress_render:
             return
 
         # Get rendered frame (filter skipped during fast interaction)
-        frame = self.pipeline.get_rendered_frame(idx)
+        # B4.1: pass interaction_type so pipeline knows whether surrogate is allowed
+        t_stage = time.perf_counter()
+        frame = self.pipeline.get_rendered_frame(idx, interaction_type=interaction_type)
+        frame_ms = (time.perf_counter() - t_stage) * 1000.0
 
         # Display
+        t_stage = time.perf_counter()
         self.qt_viewer.set_image(frame.qimage)
         self.qt_viewer.set_window_level_values(frame.window_width, frame.window_center)
+        display_ms = (time.perf_counter() - t_stage) * 1000.0
 
         # Skip annotation update during fast scroll for lower latency
+        annotation_ms = 0.0
         if not fast_interaction:
+            t_stage = time.perf_counter()
             self._update_annotations(idx, frame.window_width, frame.window_center)
+            annotation_ms = (time.perf_counter() - t_stage) * 1000.0
 
+        t_stage = time.perf_counter()
         total_ms = (time.perf_counter() - t_start) * 1000.0
         self.last_wl_convert_ms = frame.wl_ms
+
+        # B2.5: record set_slice timing + first image
+        _pm = PerfMetrics.get()
+        _pm.record_set_slice(total_ms)
+        _pm.record_first_image(total_ms)
+        _pm.record_longest_ui_gap(ui_lag_ms)
+        metrics_ms = (time.perf_counter() - t_stage) * 1000.0
 
         if not self._first_image_logged:
             self._first_image_logged = True
@@ -477,10 +632,54 @@ class QtViewerBridge:
                 _series_no, idx, total_ms,
             )
 
+        # B3.8a: Periodic per-frame scroll metrics for KPI tracking.
+        # Log every 20 frames during fast interaction so production logs
+        # contain measurable decode / surrogate / cache-hit data.
+        if fast_interaction:
+            self._scroll_frame_count = getattr(self, '_scroll_frame_count', 0) + 1
+            if self._scroll_frame_count % 20 == 0:
+                _is_surrogate = (frame.decode_ms == 0.0 and frame.wl_ms > 0.0)
+                _is_full_hit = (frame.decode_ms == 0.0 and frame.wl_ms == 0.0)
+                _src = 'hit' if _is_full_hit else ('surrogate' if _is_surrogate else 'decode')
+                logger.info(
+                    "[B3.8_SCROLL] frame=%d slice=%d total_ms=%.1f "
+                    "decode_ms=%.1f wl_ms=%.1f src=%s px_cache=%d fr_cache=%d",
+                    self._scroll_frame_count, idx, total_ms,
+                    frame.decode_ms, frame.wl_ms, _src,
+                    len(self.pipeline._pixel_cache),
+                    len(self.pipeline._frame_cache),
+                )
+        else:
+            # Reset counter on non-fast calls so next scroll session
+            # starts counting from 1.
+            self._scroll_frame_count = 0
+
         if total_ms > 20.0:
             logger.info(
                 "qt-viewer-bridge set_slice idx=%d total_ms=%.1f decode=%.1f filter=%.1f wl=%.1f",
                 idx, total_ms, frame.decode_ms, frame.filter_ms, frame.wl_ms,
+            )
+
+        if total_ms >= _SET_SLICE_STAGE_LOG_THRESHOLD_MS:
+            logger.info(
+                "[FAST_SET_SLICE_STAGE] idx=%d total_ms=%.1f prepare_ms=%.1f "
+                "interaction_prep_ms=%.1f frame_ms=%.1f display_ms=%.1f "
+                "annotation_ms=%.1f metrics_ms=%.1f ui_lag_ms=%.1f fast=%s "
+                "interaction=%s decode_ms=%.1f filter_ms=%.1f wl_ms=%.1f",
+                idx,
+                total_ms,
+                prepare_ms,
+                interaction_prep_ms,
+                frame_ms,
+                display_ms,
+                annotation_ms,
+                metrics_ms,
+                ui_lag_ms,
+                bool(fast_interaction),
+                interaction_type or "none",
+                frame.decode_ms,
+                frame.filter_ms,
+                frame.wl_ms,
             )
 
     def end_fast_interaction(self) -> None:
@@ -489,15 +688,36 @@ class QtViewerBridge:
         Restores the pipeline to normal mode and re-renders the current
         slice with the full OpenCV filter applied. Also updates annotations
         that were skipped during fast scroll.
+
+        B3.7: During fast interaction the pipeline may serve a nearest-cached
+        surrogate frame (a neighboring slice) instead of the exact slice.
+        We must always re-render the exact final slice here, not just when
+        filter is enabled.
         """
+        logger.info("[B3.4_DIAG] END_FAST_INTERACTION slice=%d", self._current_slice)
         self.pipeline.set_fast_interaction(False)
-        filtered = self.pipeline.rerender_current_filtered()
-        if filtered is not None:
-            self.qt_viewer.set_image(filtered.qimage)
+        record_fast_interaction(False)
+        self._set_thumbnail_scroll_active(False)
+
+        # B3.6: Resume booster — it will decode around the final position
+        self._resume_booster()
+
+        # B3.7: Always render the exact current slice to replace any
+        # surrogate frame that was shown during fast scroll.
+        frame = self.pipeline.get_rendered_frame(self._current_slice)
+        self.qt_viewer.set_image(frame.qimage)
+        self.qt_viewer.set_window_level_values(frame.window_width, frame.window_center)
         self._update_annotations(
-            self._current_slice, self._window, self._level
+            self._current_slice, frame.window_width, frame.window_center
         )
         self.qt_viewer.update()
+        logger.info(
+            "[B3.4_DIAG] END_FAST_INTERACTION_RENDER slice=%d decode_ms=%.1f filter_ms=%.1f wl_ms=%.1f",
+            self._current_slice,
+            frame.decode_ms,
+            frame.filter_ms,
+            frame.wl_ms,
+        )
 
     def apply_default_window_level(self, slice_index: int = 0) -> None:
         """Apply default W/L for the given slice."""
@@ -571,7 +791,7 @@ class QtViewerBridge:
             return float(dims[1]) / (2.0 * zoom) if zoom > 0 else float(dims[1]) / 2.0
         return 256.0
 
-    def reset_image_viewer(self, vtk_image_data, metadata) -> None:
+    def reset_image_viewer(self, vtk_image_data, metadata, preserve_slice: Optional[int] = None) -> None:
         """
         Reset with new image data.  In Qt bridge mode, vtk_image_data
         may be a mock or real VTK data — we only use metadata.
@@ -584,7 +804,12 @@ class QtViewerBridge:
         except Exception:
             pass
         self._build_mock_vtk_data()
-        self._current_slice = 0
+        if preserve_slice is None:
+            target_slice = 0
+        else:
+            target_slice = max(0, min(int(preserve_slice), max(0, self._slice_count - 1)))
+        self._current_slice = target_slice
+        self.qt_viewer._current_slice_index = target_slice
         self._wl_scroll_cache_ww = None
         self._wl_scroll_cache_wc = None
 
@@ -615,11 +840,53 @@ class QtViewerBridge:
 
     def cleanup(self) -> None:
         """Clean up resources."""
+        _settle_active = False
+        try:
+            _settle_active = QtViewerBridge._timer_is_active(getattr(self, '_interaction_settle_timer', None))
+        except Exception:
+            _settle_active = False
+        try:
+            self._interaction_settle_timer.stop()
+        except Exception:
+            pass
+        _scroll_active = False
+        try:
+            scroll_timer = getattr(self.qt_viewer, '_scroll_stop_timer', None)
+            _scroll_active = QtViewerBridge._timer_is_active(scroll_timer)
+        except Exception:
+            _scroll_active = False
+        logger.info(
+            "[B3.4_DIAG] BRIDGE_CLEANUP bridge=%s viewer=%s slice=%d last_target=%s "
+            "settle_active=%s scroll_active=%s settle_seq=%d reason=%s",
+            getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}"),
+            getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}"),
+            int(getattr(self, '_current_slice', 0) or 0),
+            getattr(self, '_last_stack_target_slice', None),
+            _settle_active,
+            _scroll_active,
+            int(getattr(self, '_settle_arm_seq', 0) or 0),
+            getattr(self, '_last_settle_reason', 'unknown'),
+        )
+        try:
+            self._disconnect_viewer_signals()
+        except Exception:
+            pass
+        try:
+            scroll_timer = getattr(self.qt_viewer, '_scroll_stop_timer', None)
+            if scroll_timer is not None:
+                scroll_timer.stop()
+        except Exception:
+            pass
+        self._stack_drag_active = False
+        self._last_stack_target_slice = None
         try:
             self.pipeline.shutdown()
         except Exception:
             pass
-        self.qt_viewer.clear()
+        try:
+            self.qt_viewer.clear()
+        except Exception:
+            pass
 
     # ── Sync point (Qt overlay) ──────────────────────────────────────
 
@@ -772,10 +1039,7 @@ class QtViewerBridge:
 
         if new_count > self._slice_count:
             self._slice_count = new_count
-            try:
-                self.qt_viewer.set_total_slices_hint(self._slice_count)
-            except Exception:
-                pass
+            self._sync_interaction_slice_count_hint()
             # Update mock vtk_image_data slice dimension so callers that
             # inspect GetDimensions() see the correct z-count.
             if self.vtk_image_data is not None:
@@ -828,37 +1092,198 @@ class QtViewerBridge:
         self.qt_viewer.set_image(frame.qimage)
         self._update_annotations(self._current_slice, window, level)
 
+    def _disconnect_viewer_signals(self) -> None:
+        """Disconnect Qt viewer signals owned by this bridge.
+
+        Replacing a Qt bridge without disconnecting these slots leaves stale
+        settle timers and scroll handlers alive. Those orphan listeners can
+        continue firing after a newer bridge is active, which shows up as
+        duplicate or out-of-order INTERACTION_SETTLED callbacks.
+        """
+        qt_viewer = getattr(self, 'qt_viewer', None)
+        if qt_viewer is None:
+            return
+
+        for signal_name, handler in (
+            ('window_level_changed', getattr(self, '_on_qt_wl_changed', None)),
+            ('slice_scroll_requested', getattr(self, '_on_qt_scroll', None)),
+            ('stack_drag_state_changed', getattr(self, '_on_stack_drag_state', None)),
+        ):
+            if handler is None:
+                continue
+            try:
+                getattr(qt_viewer, signal_name).disconnect(handler)
+            except (RuntimeError, TypeError):
+                pass
+            except Exception:
+                pass
+
+    @staticmethod
+    def _timer_is_active(timer: Any) -> bool:
+        """Best-effort timer active probe that also works with test doubles."""
+        if timer is None:
+            return False
+        try:
+            return bool(timer.isActive())
+        except Exception:
+            return bool(getattr(timer, '_active', False))
+
+    def _on_stack_drag_state(self, active: bool) -> None:
+        """B3.4: Track stack-drag state for context-aware policy."""
+        self._stack_drag_active = active
+        if active:
+            self._last_settle_reason = 'drag_active'
+            self._last_stack_sync_ms = 0.0
+            self._last_stack_reference_ms = 0.0
+            self._last_stack_target_slice = None
+            # Drag resumed — cancel settle timer (drag owns the interaction)
+            self._interaction_settle_timer.stop()
+            try:
+                if hasattr(self.pipeline, 'notify_drag_started'):
+                    self.pipeline.notify_drag_started(self._current_slice)
+            except Exception:
+                pass
+            try:
+                policy = getattr(self.qt_viewer, '_stack_drag_policy', 'unknown')
+                threshold_px, max_steps = self.qt_viewer._get_stack_drag_profile()
+            except Exception:
+                policy = 'unknown'
+                threshold_px, max_steps = 0.0, 0
+            logger.info(
+                "[B3.4_DIAG] STACK_DRAG_START bridge=%s viewer=%s slice=%d policy=%s "
+                "threshold_px=%.1f max_steps=%d settle_seq=%d",
+                getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}"),
+                getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}"),
+                self._current_slice,
+                policy,
+                threshold_px,
+                max_steps,
+                int(getattr(self, '_settle_arm_seq', 0) or 0),
+            )
+        else:
+            # Drag stopped — start settle timer for quality re-render
+            self._settle_arm_seq = int(getattr(self, '_settle_arm_seq', 0) or 0) + 1
+            self._last_settle_reason = 'stack_drag_stop'
+            self._interaction_settle_timer.start()
+            logger.info(
+                "[B3.4_DIAG] STACK_DRAG_STOP bridge=%s viewer=%s slice=%d settle_seq=%d "
+                "timer_active=%s (settle in 200ms)",
+                getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}"),
+                getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}"),
+                self._current_slice,
+                self._settle_arm_seq,
+                QtViewerBridge._timer_is_active(getattr(self, '_interaction_settle_timer', None)),
+            )
+
+    def _on_interaction_settled(self) -> None:
+        """B3.4: Unified settle — 200ms after last scroll/drag event."""
+        self._stack_drag_active = False
+        self._last_stack_target_slice = None
+        logger.info(
+            "[B3.4_DIAG] INTERACTION_SETTLED bridge=%s viewer=%s slice=%d settle_seq=%d "
+            "reason=%s → end_fast_interaction",
+            getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}"),
+            getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}"),
+            self._current_slice,
+            int(getattr(self, '_settle_arm_seq', 0) or 0),
+            getattr(self, '_last_settle_reason', 'unknown'),
+        )
+        self.end_fast_interaction()
+
     def _on_qt_scroll(self, delta: int) -> None:
-        """Handle scroll from Qt viewer — render directly + update slider."""
+        """Handle scroll from Qt viewer — render directly + update slider.
+
+        B3.4: ALL scroll events (wheel and stack-drag) use fast_interaction=True.
+        The unified settle timer fires end_fast_interaction() 200ms after the
+        last event from either source.
+        """
+        t_total = time.perf_counter()
+        nav_limit = int(self._slice_count)
+        try:
+            vtk_widget = getattr(self, 'vtk_widget', None)
+            if vtk_widget is not None and bool(getattr(vtk_widget, '_progressive_mode', False)):
+                available = int(getattr(vtk_widget, '_available_slice_count', 0) or 0)
+                if available > 0:
+                    nav_limit = min(nav_limit, available)
+        except Exception:
+            pass
+        if nav_limit <= 0:
+            return
+        self._sync_interaction_slice_count_hint()
+
         new_val = self._current_slice + delta
-        new_val = max(0, min(self._slice_count - 1, new_val))
+        new_val = max(0, min(nav_limit - 1, new_val))
         if new_val == self._current_slice:
             return  # at boundary
 
-        # ── Direct render: bypass slider→set_slice chain ──
-        self.set_slice(new_val)
+        now_ms = time.perf_counter() * 1000.0
+        if self._stack_drag_active:
+            if self._last_stack_target_slice == new_val:
+                return
+            self._last_stack_target_slice = new_val
+
+        # B3.4: restart settle timer on every scroll event (wheel or drag)
+        # During active stack-drag, timer is stopped by _on_stack_drag_state(True)
+        # and only starts on _on_stack_drag_state(False). For wheel, it restarts here.
+        if not self._stack_drag_active:
+            self._settle_arm_seq = int(getattr(self, '_settle_arm_seq', 0) or 0) + 1
+            self._last_settle_reason = 'wheel_scroll'
+            self._interaction_settle_timer.stop()
+            self._interaction_settle_timer.start()
+
+        # B3.4: ALWAYS fast_interaction=True during active scroll
+        # B4.1: Set interaction_type to distinguish precision wheel from
+        # fast navigation (stack drag).  Wheel precision path never uses
+        # surrogate frames — always renders the exact requested slice.
+        _itype = 'drag' if self._stack_drag_active else 'wheel'
+        if self._stack_drag_active:
+            self._scroll_event_seq = int(getattr(self, '_scroll_event_seq', 0) or 0) + 1
+            logger.info(
+                "[B3.4_DIAG] STACK_DRAG_SCROLL bridge=%s viewer=%s event=%d delta=%d from=%d to=%d "
+                "nav_limit=%d settle_seq=%d timer_active=%s",
+                getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}"),
+                getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}"),
+                self._scroll_event_seq,
+                int(delta),
+                self._current_slice,
+                new_val,
+                nav_limit,
+                int(getattr(self, '_settle_arm_seq', 0) or 0),
+                QtViewerBridge._timer_is_active(getattr(self, '_interaction_settle_timer', None)),
+            )
+        t_stage = time.perf_counter()
+        self.set_slice(new_val, fast_interaction=True, interaction_type=_itype)
+        set_slice_ms = (time.perf_counter() - t_stage) * 1000.0
         self.last_index_slice_saved = new_val
 
         # ── Update slider display (blocked to prevent re-entry) ──
+        slider_ms = 0.0
         if self.vtk_widget is not None:
             slider = getattr(self.vtk_widget, 'slider', None)
             if slider is not None:
+                t_stage = time.perf_counter()
                 slider.blockSignals(True)
                 slider.setValue(new_val)
                 slider.blockSignals(False)
+                slider_ms = (time.perf_counter() - t_stage) * 1000.0
             # Keep vtk_widget's saved index in sync
             self.vtk_widget.image_viewer = self  # should already be, but ensure
 
         # ── Lock sync (throttled to 100ms) ──
+        sync_ms = 0.0
         try:
             _cb = getattr(self.vtk_widget, '_on_slice_changed_cb', None)
             if _cb is not None:
-                import time as _time
-                _now = _time.perf_counter() * 1000.0
-                _last = getattr(self, '_last_sync_ms', 0.0)
-                if _now - _last >= 100.0:
-                    self._last_sync_ms = _now
+                _last = self._last_stack_sync_ms if self._stack_drag_active else getattr(self, '_last_sync_ms', 0.0)
+                _interval = 160.0 if self._stack_drag_active else 100.0
+                if now_ms - _last >= _interval:
+                    if self._stack_drag_active:
+                        self._last_stack_sync_ms = now_ms
+                    else:
+                        self._last_sync_ms = now_ms
+                    t_stage = time.perf_counter()
                     _cb(self.vtk_widget)
+                    sync_ms = (time.perf_counter() - t_stage) * 1000.0
         except Exception:
             pass
 
@@ -867,12 +1292,33 @@ class QtViewerBridge:
         # calls _schedule_reference_line_update() after every slice change.
         # Without this, reference lines on other viewers never update when the
         # user scrolls directly inside the Qt viewer widget.
+        reference_ms = 0.0
         try:
             _pw = getattr(self.vtk_widget, 'patient_widget', None)
             if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):
-                _pw._schedule_reference_line_update()
+                if not self._stack_drag_active or (now_ms - self._last_stack_reference_ms) >= 160.0:
+                    if self._stack_drag_active:
+                        self._last_stack_reference_ms = now_ms
+                    t_stage = time.perf_counter()
+                    _pw._schedule_reference_line_update()
+                    reference_ms = (time.perf_counter() - t_stage) * 1000.0
         except Exception:
             pass
+
+        total_ms = (time.perf_counter() - t_total) * 1000.0
+        if total_ms >= _SET_SLICE_STAGE_LOG_THRESHOLD_MS:
+            logger.info(
+                "[FAST_QT_SCROLL_STAGE] target=%d total_ms=%.1f set_slice_ms=%.1f "
+                "slider_ms=%.1f sync_ms=%.1f reference_ms=%.1f drag=%s interaction=%s",
+                new_val,
+                total_ms,
+                set_slice_ms,
+                slider_ms,
+                sync_ms,
+                reference_ms,
+                bool(self._stack_drag_active),
+                _itype,
+            )
 
 
 class _CurvedMPRStub:

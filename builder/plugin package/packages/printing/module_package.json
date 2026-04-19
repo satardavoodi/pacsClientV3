@@ -4,7 +4,7 @@
   "module_id": "printing",
   "title": "Printing Module",
   "tier": "optional",
-  "version": "2.3.3",
+  "version": "2.3.5",
   "package_kind": "bundled_unlock",
   "payload_dir": "payload",
   "python_paths": [

@@ -30,14 +30,138 @@ from modules.zeta_boost import ZetaBoostEngine, ImageSliceBooster
 from modules.viewer.pipeline import PipelineOrchestrator, PipelineState, LoadCoordinator, PreviewEngine
 from PacsClient.utils.config import SOCKET_CONFIG_PATH as _SOCKET_CONFIG_PATH
 from pathlib import Path as _Path
+import logging as _logging
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Redirect print() to logger to avoid synchronous console I/O on Windows.
+_print_logger = _logging.getLogger(__name__)
+def print(*args, **_kw):  # noqa: A001
+    _print_logger.debug(' '.join(str(a) for a in args))
 GRID_CONFIG_PATH = _Path(_SOCKET_CONFIG_PATH) / 'modality_grid.json'
 
 
 class _VCLoadMixin:
     """Auto-split mixin — see patient_widget_viewer_controller.py for history."""
+
+    def _viewer_has_series_fully_visible(self, series_number: str, expected_count: int = 0) -> bool:
+        """Return True when any viewer already shows the requested series at count.
+
+        This is used to suppress redundant post-completion reloads after the
+        progressive final-grow path has already caught a viewer up to disk.
+        """
+        sn = str(series_number)
+        try:
+            expected = int(expected_count or 0)
+        except Exception:
+            expected = 0
+
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, 'vtk_widget', None)
+            if vtk_w is None:
+                continue
+            try:
+                viewer_sn = str(
+                    getattr(vtk_w.image_viewer, 'metadata', {})
+                    .get('series', {}).get('series_number', '')
+                )
+            except Exception:
+                viewer_sn = ''
+            if viewer_sn != sn:
+                continue
+            try:
+                visible_count = int(vtk_w.get_count_of_slices() or 0)
+            except Exception:
+                visible_count = 0
+            if expected <= 0:
+                if visible_count > 0:
+                    return True
+            elif visible_count >= expected:
+                return True
+        return False
+
+    def _is_viewer_fast_interacting(self, vtk_widget) -> bool:
+        """True when a target viewer is actively wheel/stack interacting."""
+        try:
+            if vtk_widget is None:
+                return False
+            if bool(getattr(vtk_widget, '_in_fast_slice_interaction', False)):
+                return True
+            last_scroll_ms = getattr(vtk_widget, '_last_scroll_event_ms', None)
+            if last_scroll_ms is None:
+                return False
+            idle_window_ms = max(
+                60.0,
+                float(getattr(vtk_widget, '_fast_interaction_idle_window_ms', 220.0) or 220.0),
+            )
+            return max(0.0, now_ms() - float(last_scroll_ms)) <= idle_window_ms
+        except Exception:
+            return False
+
+    def _schedule_deferred_viewer_refresh(
+        self,
+        *,
+        series_number,
+        vtk_widget,
+        metadata,
+        vtk_image_data,
+        series_idx,
+        slider,
+        allow_paired: bool,
+        expected_token=None,
+        attempt: int = 1,
+    ):
+        """Re-try a refresh after fast interaction settles, with a bounded retry budget."""
+        try:
+            delay_ms = max(
+                80,
+                min(
+                    250,
+                    int(getattr(vtk_widget, '_fast_interaction_idle_window_ms', 220) or 220),
+                ),
+            )
+        except Exception:
+            delay_ms = 180
+
+        def _retry():
+            try:
+                if expected_token is not None and not self._is_request_current(vtk_widget, expected_token):
+                    logger.debug(f"[APPLY STALE] deferred refresh skipped series={series_number} viewer={getattr(vtk_widget, 'id_vtk_widget', '?')}")
+                    return
+                if self._is_viewer_fast_interacting(vtk_widget) and attempt < 6:
+                    self._schedule_deferred_viewer_refresh(
+                        series_number=series_number,
+                        vtk_widget=vtk_widget,
+                        metadata=metadata,
+                        vtk_image_data=vtk_image_data,
+                        series_idx=series_idx,
+                        slider=slider,
+                        allow_paired=allow_paired,
+                        expected_token=expected_token,
+                        attempt=attempt + 1,
+                    )
+                    return
+                self._perform_series_switch_optimized(
+                    vtk_widget,
+                    metadata,
+                    vtk_image_data,
+                    series_idx,
+                    slider,
+                    allow_paired=allow_paired,
+                    expected_token=expected_token,
+                )
+            except Exception:
+                pass
+
+        logger.debug(
+            "[APPLY DEFER] series=%s viewer=%s attempt=%d delay_ms=%d",
+            series_number,
+            getattr(vtk_widget, 'id_vtk_widget', '?'),
+            int(attempt),
+            int(delay_ms),
+        )
+        QTimer.singleShot(int(delay_ms), _retry)
 
     def _load_single_series_on_demand(self, series_number: int, study_path: str = None,
                                       target_vtk_widget: VTKWidget = None,
@@ -248,16 +372,18 @@ class _VCLoadMixin:
             max_itk_threads, max_pydicom_workers = self._get_interactive_load_limits(effective_viewer_backend)
             _gate_wait_start = time.perf_counter()
             self.logger.info("[UX_SERIES_LOAD_START] series=%s backend=%s", series_key, effective_viewer_backend)
-            self._interactive_full_load_semaphore.acquire()
-            _gate_wait_ms = (time.perf_counter() - _gate_wait_start) * 1000.0
+            _use_serialized_gate = self._requires_serialized_interactive_load(effective_viewer_backend)
+            _gate_wait_ms = 0.0
+            if _use_serialized_gate:
+                self._interactive_full_load_semaphore.acquire()
+                _gate_wait_ms = (time.perf_counter() - _gate_wait_start) * 1000.0
             try:
                 if target_vtk_widget is not None and not self._is_request_current(target_vtk_widget, expected_token):
                     return False
 
                 # Load full series with correct path (preview path disabled by design).
-                # A global gate prevents multiple full ITK pipelines from
-                # overlapping, which otherwise causes severe VTK scroll
-                # contention on software GL.
+                # Only heavyweight VTK/SimpleITK paths are serialized; FAST lazy/
+                # metadata-first backends bypass the gate to preserve first-image speed.
                 _dicom_t = time.perf_counter()
                 result = load_single_series_by_number(
                     study_path=study_path,  # Pass correct study path, not series path
@@ -271,16 +397,18 @@ class _VCLoadMixin:
                     allow_lazy_backend=(effective_viewer_backend != BACKEND_VTK),
                 )
             finally:
-                self._interactive_full_load_semaphore.release()
+                if _use_serialized_gate:
+                    self._interactive_full_load_semaphore.release()
             _dicom_ms = (time.perf_counter() - _dicom_t) * 1000
             logger.debug(f"ًں“ٹ [LOAD] DICOM+ITK for series={series_number} took {_dicom_ms:.0f}ms files~={estimated_file_count} (thread={threading.current_thread().name})")
             self.logger.info(
-                "viewer-data stage=itk_pipeline_total duration_ms=%.2f files=%d gate_wait_ms=%.2f itk_threads=%d pydicom_workers=%d",
+                "viewer-data stage=itk_pipeline_total duration_ms=%.2f files=%d gate_wait_ms=%.2f itk_threads=%d pydicom_workers=%d serialized_gate=%s",
                 _dicom_ms,
                 estimated_file_count,
                 _gate_wait_ms,
                 int(max_itk_threads),
                 int(max_pydicom_workers),
+                str(_use_serialized_gate),
                 extra={"component": "viewer", "function": "ViewerController._load_single_series_on_demand", "stage": "itk_pipeline"},
             )
 
@@ -415,6 +543,16 @@ class _VCLoadMixin:
         try:
             _t_apply_start = time.perf_counter()
             dims = vtk_image_data.GetDimensions() if vtk_image_data else (0, 0, 0)
+            incoming_count = 0
+            try:
+                incoming_count = len((metadata or {}).get('instances', []) or [])
+            except Exception:
+                incoming_count = 0
+            if incoming_count <= 0:
+                try:
+                    incoming_count = int(dims[2]) if dims and len(dims) > 2 else 0
+                except Exception:
+                    incoming_count = 0
             logger.debug(f"ًں”„ [APPLY] series={series_number} refresh={refresh_viewer} dims={dims}")
 
             # Stale-request guard: if this apply was tied to a specific viewer request
@@ -484,7 +622,53 @@ class _VCLoadMixin:
                     if current_idx is not None and current_idx == series_idx:
                         try:
                             slider = getattr(node_viewer, 'slider', None)
+                            viewer_meta = getattr(getattr(vtk_w, 'image_viewer', None), 'metadata', {}) or {}
+                            viewer_series = str(viewer_meta.get('series', {}).get('series_number', '') or '')
+                            viewer_backend = str(getattr(vtk_w, '_active_backend', BACKEND_VTK) or BACKEND_VTK)
+                            incoming_is_preview = bool((metadata or {}).get('preview_only', False))
+                            viewer_is_preview = bool(viewer_meta.get('preview_only', False))
+                            if (
+                                viewer_series == str(series_number)
+                                and viewer_backend != BACKEND_VTK
+                                and not incoming_is_preview
+                                and not viewer_is_preview
+                                and (
+                                    bool(getattr(vtk_w, '_progressive_mode', False))
+                                    or str(series_number) in getattr(self, '_progressive_series', {})
+                                )
+                            ):
+                                self._update_vtk_slice_range(vtk_w, node_viewer, incoming_count, slider=slider)
+                                self._refresh_and_sync_metadata(series_number, incoming_count)
+                                self._hide_spinner_for_widget(vtk_w)
+                                logger.info(
+                                    "[PERF] apply_loaded series=%s replace_series_data=%.1fms "
+                                    "perform_switch=0.0ms apply_total=%.1fms action=inplace_fast_sync",
+                                    series_number,
+                                    _t_rsd_ms,
+                                    (time.perf_counter() - _t_apply_start) * 1000,
+                                )
+                                logger.debug(
+                                    "[APPLY] same-series FAST sync only series=%s viewer=%s "
+                                    "incoming_count=%s progressive=%s",
+                                    series_number,
+                                    getattr(vtk_w, 'id_vtk_widget', '?'),
+                                    incoming_count,
+                                    bool(getattr(vtk_w, '_progressive_mode', False)),
+                                )
+                                continue
                             logger.debug(f"   âœ… Refreshing viewer[{vi}] with full data (dims={dims})")
+                            if self._is_viewer_fast_interacting(vtk_w):
+                                self._schedule_deferred_viewer_refresh(
+                                    series_number=series_number,
+                                    vtk_widget=vtk_w,
+                                    metadata=metadata,
+                                    vtk_image_data=vtk_image_data,
+                                    series_idx=series_idx,
+                                    slider=slider,
+                                    allow_paired=allow_paired,
+                                    expected_token=expected_token,
+                                )
+                                continue
                             _t0_pso = time.perf_counter()
                             self._perform_series_switch_optimized(
                                 vtk_w, metadata, vtk_image_data, series_idx, slider,
@@ -1069,8 +1253,19 @@ class _VCLoadMixin:
                 # 0. Stop per-series download warmup (normal warmup takes over).
                 self._stop_download_warmup()
                 # 1. Unlock ZetaBoost warmup/background lanes.
+                #    NOTE: In FAST mode (pydicom_qt), ZetaBoost RAM cache is
+                #    architecturally empty (entries=0) because Lightweight2DPipeline
+                #    decodes directly from DICOM files — no VTK put() ever runs.
+                #    The unlock is still issued for correctness (Advanced mode uses it),
+                #    but warmup lanes will find zero work items.
                 self.zeta_boost.set_study_download_complete(True)
                 self.zeta_boost.set_download_active(False)
+                _zb_entries = len(getattr(self.zeta_boost, '_cache', {}))
+                if _zb_entries == 0:
+                    logger.debug(
+                        "[Pipeline] POST_DOWNLOAD ZetaBoost entries=0 "
+                        "(expected in FAST/pydicom_qt — RAM cache unused)"
+                    )
                 # 2. Exit Mode B: re-enable series-level RAM caching.
                 self.zeta_boost.set_image_boost_mode(False)
                 if not self._zeta_slice_focus_mode:
@@ -1277,7 +1472,20 @@ class _VCLoadMixin:
         try:
             # Active-tab policy: heavy on-demand loading should happen only for active patient tab.
             if not self._tab_active:
-                self.logger.debug(f"Skip load_series_on_demand for inactive tab: series {series_number}")
+                try:
+                    series_number_str = self.parent_widget.resolve_series_key(series_number)
+                except Exception:
+                    series_number_str = str(series_number)
+                deferred = getattr(self, '_deferred_series_load_on_activation', None)
+                if deferred is None:
+                    deferred = []
+                    self._deferred_series_load_on_activation = deferred
+                if series_number_str not in deferred:
+                    deferred.append(series_number_str)
+                self.logger.info(
+                    "Deferred load_series_on_demand until tab activation: series=%s",
+                    series_number_str,
+                )
                 return
 
             # Check if widget is still valid
@@ -1288,6 +1496,41 @@ class _VCLoadMixin:
                 return  # Widget was deleted
 
             series_number_str = self.parent_widget.resolve_series_key(series_number)
+
+            def _mark_series_ready_only() -> None:
+                try:
+                    if hasattr(self.parent_widget, 'thumbnail_manager') and self.parent_widget.thumbnail_manager:
+                        self.parent_widget.thumbnail_manager.set_series_ready(str(series_number_str))
+                        self.parent_widget.thumbnail_manager.apply_border_states_new()
+                except Exception:
+                    pass
+
+            def _has_awaiting_viewer() -> bool:
+                for node in self.lst_nodes_viewer or []:
+                    vtk_w = getattr(node, 'vtk_widget', None)
+                    if vtk_w is None:
+                        continue
+                    if getattr(vtk_w, '_awaiting_series_number', None) == series_number_str:
+                        return True
+                return False
+
+            def _has_series_viewer_interest() -> bool:
+                for node in self.lst_nodes_viewer or []:
+                    vtk_w = getattr(node, 'vtk_widget', None)
+                    if vtk_w is None:
+                        continue
+                    if getattr(vtk_w, '_progressive_series_number', None) == series_number_str:
+                        return True
+                    try:
+                        viewer_sn = str(
+                            getattr(vtk_w.image_viewer, 'metadata', {})
+                            .get('series', {}).get('series_number', '')
+                        )
+                    except Exception:
+                        viewer_sn = ''
+                    if viewer_sn == series_number_str:
+                        return True
+                return False
 
             # [H7-P5] Pipeline guard in load_series_on_demand
             _pipeline_state = self.pipeline.state
@@ -1316,8 +1559,50 @@ class _VCLoadMixin:
                 self.pipeline.on_series_download_completed(series_number_str)
                 self._mark_download_active()
 
+            _skip_untargeted_background_completion = (
+                self._is_fast_viewer_mode()
+                and bool(getattr(self, '_first_series_displayed', False))
+                and not _has_awaiting_viewer()
+                and not self._any_viewer_empty()
+                and not _has_series_viewer_interest()
+            )
+
+            if _skip_untargeted_background_completion:
+                try:
+                    self._finalize_progressive_series(
+                        series_number_str,
+                        final_count=0,
+                        source='load_series_on_demand_background_skip',
+                    )
+                except Exception:
+                    pass
+                _mark_series_ready_only()
+                self.logger.info(
+                    'load_series_on_demand: series=%s background-complete skip '
+                    '-- no awaiting/empty/displayed viewer in FAST mode',
+                    series_number_str,
+                )
+                return
+
             # Exit progressive mode for this series (fully downloaded now)
             self.on_series_download_fully_complete(series_number_str)
+
+            try:
+                _completed_disk_count = int(self._count_series_files_on_disk(series_number_str) or 0)
+            except Exception:
+                _completed_disk_count = 0
+            if _completed_disk_count > 0 and self._viewer_has_series_fully_visible(
+                series_number_str,
+                _completed_disk_count,
+            ):
+                _mark_series_ready_only()
+                self.logger.info(
+                    "load_series_on_demand: series=%s already fully visible "
+                    "(viewer_count>=%d) -- skipping redundant post-complete reload",
+                    series_number_str,
+                    _completed_disk_count,
+                )
+                return
 
             # â”€â”€ Dedup guard: prevent multiple concurrent loads of same series â”€â”€
             if series_number_str in getattr(self, '_first_series_loading', set()):
@@ -1487,6 +1772,10 @@ class _VCLoadMixin:
                                         self.parent_widget.metadata_fixed.get('study_pk', None),
                                         refresh_viewer=False,
                                     )
+                                    if (not self._first_series_displayed) or self._any_viewer_empty():
+                                        self._queue_on_ui_thread(
+                                            lambda sn=series_number_str: self._display_series_after_load(sn)
+                                        )
                                     logger.debug(f"ًں“؛ [PREVIEW] displayed for series={series_number_str}")
                                 except Exception as e:
                                     logger.error(f"âڑ ï¸ڈ [PREVIEW_APPLY] error: {e}")
@@ -1891,31 +2180,13 @@ class _VCLoadMixin:
                 logger.debug(f"âڈ­ï¸ڈ Series {series_number} already loaded")
                 return
 
-            # Load the series
+            # Phase 4: route first-series auto-display through the centralized
+            # preview-first path instead of forcing a synchronous full-series load.
             try:
-                success = self._load_single_series_on_demand(int(series_number))
-
-                # Warmup worker currently owns the lock â€” retry via QTimer.
-                if not success and str(int(series_number)) in self._loading_series_numbers:
-                    logger.debug(f"ًں”پ [FIRST-SERIES] Series {series_number} being cached by warmup â€” retrying in 250 ms")
-                    QTimer.singleShot(250, lambda fp=folder_path, sn=series_number: self.load_first_series_only(fp, sn))
-                    return
-
-                if success:
-                    self.parent_widget.lst_series_name.add(series_key)
-                    logger.debug(f"âœ… Series {series_number} loaded successfully")
-
-                    # Display in viewer if it's the first series
-                    if len(self.parent_widget.lst_series_name) == 1:
-                        self._display_first_series_in_viewer()
-
-                        # Hide any loading spinner
-                        self._hide_loading_spinner()
-                else:
-                    logger.error(f"âڑ ï¸ڈ Failed to load series {series_number}")
-
+                self.load_series_on_demand(str(series_number))
+                logger.debug(f"âœ… First-series load queued via preview-first path: {series_number}")
             except Exception as load_error:
-                logger.error(f"â‌Œ Error loading series {series_number}: {load_error}")
+                logger.error(f"â‌Œ Error queueing first series {series_number}: {load_error}")
 
         except Exception as e:
             logger.error(f"â‌Œ Error in load_first_series_only: {e}")
@@ -1972,31 +2243,11 @@ class _VCLoadMixin:
                     logger.debug(f"â‌Œ Cannot determine series number from UID {series_number} or directory {series_path.name}")
                     return
 
-            # Load the series
-            success = self._load_single_series_on_demand(series_int)
-            if not success:
-                # Warmup worker currently owns the load lock for this series.
-                # Retry in 250 ms so the main thread is never blocked.
-                if str(series_int) in self._loading_series_numbers:
-                    logger.debug(f"ًں”پ [PRIORITY LOAD] Series {series_int} being cached by warmup â€” retrying in 250 ms")
-                    QTimer.singleShot(250, lambda sn=series_number, sd=series_dir: self.load_series_immediately(sn, sd))
-                    return
-                logger.error(f"â‌Œ Failed to load series {series_int}")
-                return
-
-            # Auto-display in viewers
-            if (not self._first_series_displayed) or self._any_viewer_empty():
-                if self._display_first_series_in_all_viewers(str(series_int)):
-                    self._mark_first_series_displayed()
-            else:
-                self.parent_widget.change_series_on_viewer(series_int, flag_change_selected_widget=True)
-
-            # Mark as ready
-            if hasattr(self.parent_widget, 'thumbnail_manager'):
-                self.parent_widget.thumbnail_manager.set_series_ready(str(series_number))
-                self.parent_widget.thumbnail_manager.apply_border_states_new()
-
-            logger.debug(f"âœ… Series {series_int} loaded and displayed.")
+            # Phase 4: delegate to the centralized preview-first path so
+            # auto-display downloads get the same fast first-image behavior as
+            # interactive switching instead of blocking on a synchronous full load.
+            self.load_series_on_demand(str(series_int))
+            logger.debug(f"âœ… Series {series_int} queued for preview-first auto-display.")
         except Exception as e:
             logger.error(f"â‌Œ CRITICAL ERROR in load_series_immediately: {e}")
             import traceback

@@ -267,6 +267,7 @@ def _make_vtk_widget(
     vtk_w = SimpleNamespace(
         _progressive_mode=progressive_mode,
         _progressive_series_number=series_number if progressive_mode else None,
+        _total_expected_slices=0,
         _lazy_loader=loader,
         _qt_bridge_active=qt_bridge_active,
         _active_backend="BACKEND_PYDICOM" if not qt_bridge_active else "BACKEND_PYDICOM_QT",
@@ -402,18 +403,19 @@ def test_grow_updates_available_slice_count_each_batch():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  L3: slider.setMaximum set to new_count - 1 each batch
+#  L3: slider.setMaximum stays at total expected during progressive download
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_grow_updates_slider_max_each_batch():
     """
-    L3: The slider maximum must be updated to match the newly available slice
-    count after each batch so the user can navigate to the new slices.
+    L3: The slider maximum must stay at the final expected series total during
+    progressive download, even though only a subset of slices is currently
+    available.
 
-    If slider.setMaximum is not updated, the slider clamps at the old limit
-    even though the counter says more images are available — inconsistent UX.
+    Availability is enforced separately by the progressive slice guard; the UI
+    range itself should not shrink/grow from batch to batch.
     """
-    scenario = "L3: slider.setMaximum = new_count - 1 each batch"
+    scenario = "L3: slider.setMaximum = total_expected - 1 during progressive download"
 
     c = _build_controller()
     c._progressive_series = {"7": {"total": 30, "last_grow_count": 10, "last_signal_ms": 0}}
@@ -422,20 +424,21 @@ def test_grow_updates_slider_max_each_batch():
     reslice, _ = _make_mock_reslice(vtk_image_data=loader.vtk_image_data)
     slider = _make_slider()
     vtk_w = _make_vtk_widget(series_number="7", loader=loader, reslice=reslice)
+    vtk_w._total_expected_slices = 30
     node = _make_node(vtk_w, slider=slider)
 
     c._grow_progressive_fast("7", 20, [(vtk_w, node)])
 
     assert len(slider._set_max_calls) >= 1, "setMaximum must be called at least once"
-    # The max must be new_count - 1 = 19
-    assert slider._set_max_calls[-1] == 19, (
-        f"Expected setMaximum(19), got {slider._set_max_calls}"
+    # The max must stay at total_expected - 1 = 29
+    assert slider._set_max_calls[-1] == 29, (
+        f"Expected setMaximum(29), got {slider._set_max_calls}"
     )
 
     _kpi.record(scenario, "setMaximum calls", len(slider._set_max_calls),
                 passed=(len(slider._set_max_calls) >= 1))
     _kpi.record(scenario, "setMaximum value", slider._set_max_calls[-1] if slider._set_max_calls else -1,
-                passed=(bool(slider._set_max_calls) and slider._set_max_calls[-1] == 19))
+                passed=(bool(slider._set_max_calls) and slider._set_max_calls[-1] == 29))
     print(f"✅ L3 passed  (set_max_calls={slider._set_max_calls})")
 
 
@@ -1720,7 +1723,7 @@ def test_flush_progressive_grow_safety_net_restarts_timer():
 
     # Mock _grow_progressive_fast: stale — only sets last_grow_count to 20 (not 25)
     grow_calls: List[Any] = []
-    def _mock_stale_grow(series_number, pending, viewers):
+    def _mock_stale_grow(series_number, pending, viewers, **kwargs):
         grow_calls.append((series_number, pending))
         c._progressive_series[series_number]["last_grow_count"] = 20  # stale
 
@@ -1824,7 +1827,7 @@ def test_done_guard_completion_triggers_one_shot_grow():
 
     # Mock _grow_progressive_fast to capture calls
     grow_calls: List[Any] = []
-    c._grow_progressive_fast = lambda sn_, dl_, vwrs_: grow_calls.append((sn_, dl_))
+    c._grow_progressive_fast = lambda sn_, dl_, vwrs_, **kwargs: grow_calls.append((sn_, dl_))
 
     c.on_series_images_progress(sn, 40, 40)
 

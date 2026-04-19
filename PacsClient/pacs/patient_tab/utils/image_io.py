@@ -358,6 +358,88 @@ def _normalize_metadata_instances(metadata):
     return changed
 
 
+def _build_instance_header_stub(dicom_file: Path, fallback_index: int):
+    try:
+        dcm = utils._safe_dcmread(str(dicom_file), stop_before_pixels=True)
+        if dcm is None:
+            return None
+
+        ww = dcm.get("WindowWidth", None)
+        wc = dcm.get("WindowCenter", None)
+        iop = dcm.get("ImageOrientationPatient", None)
+        ipp = dcm.get("ImagePositionPatient", None)
+        ps = dcm.get("PixelSpacing", None)
+
+        return {
+            "instance_number": int(dcm.get("InstanceNumber", fallback_index) or fallback_index),
+            "instance_path": str(dicom_file),
+            "rows": int(dcm.get("Rows", 0) or 0),
+            "columns": int(dcm.get("Columns", 0) or 0),
+            "window_width": _safe_float(ww),
+            "window_center": _safe_float(wc),
+            "is_rgb": str(dcm.get("PhotometricInterpretation", "")).upper() in {"RGB", "YBR_FULL", "YBR_FULL_422"},
+            "sop_uid": str(dcm.get("SOPInstanceUID", "")),
+            "image_orientation_patient": [float(v) for v in iop] if iop is not None else None,
+            "image_position_patient": [float(v) for v in ipp] if ipp is not None else None,
+            "pixel_spacing": [float(v) for v in ps] if ps is not None else None,
+            "slice_thickness": _safe_float(dcm.get("SliceThickness", None)),
+            "spacing_between_slices": _safe_float(dcm.get("SpacingBetweenSlices", None)),
+            "rescale_slope": _safe_float(dcm.get("RescaleSlope", None), 1.0),
+            "rescale_intercept": _safe_float(dcm.get("RescaleIntercept", None), 0.0),
+            "bits_allocated": int(dcm.get("BitsAllocated", 16) or 16),
+            "pixel_representation": int(dcm.get("PixelRepresentation", 1) or 1),
+        }
+    except Exception:
+        return None
+
+
+def _reconcile_db_instances_with_disk(series_path: Path, instances):
+    """Return disk-ordered instances, filling only missing files from headers.
+
+    The pydicom_qt metadata-only fast path should not pay for a full header-only
+    rebuild when the DB is merely a few instances behind the filesystem during an
+    active download. Keep existing DB metadata for known files and read headers
+    only for the missing on-disk files.
+    """
+    if not isinstance(instances, list) or not instances:
+        return None, False
+
+    dicom_files = _list_unique_dicom_files(series_path)
+    if not dicom_files:
+        return list(instances), False
+
+    instance_by_path = {}
+    for inst in instances:
+        path_value = inst.get("instance_path")
+        if not path_value:
+            continue
+        try:
+            instance_by_path[str(Path(path_value).resolve()).lower()] = inst
+        except Exception:
+            instance_by_path[str(path_value).lower()] = inst
+
+    merged = []
+    changed = False
+    for idx, dicom_file in enumerate(dicom_files, 1):
+        key = str(dicom_file.resolve()).lower()
+        inst = instance_by_path.get(key)
+        if inst is None:
+            inst = _build_instance_header_stub(dicom_file, idx)
+            if inst is None:
+                continue
+            changed = True
+        merged.append(inst)
+
+    if len(merged) != len(instances):
+        changed = True
+    return merged, changed
+
+
+def _metadata_needs_geometry_backfill(metadata) -> bool:
+    ok, _reason = _validate_lazy_geometry(metadata)
+    return not ok
+
+
 def _build_metadata_headers_only(series_path: Path, series_number):
     dicom_files = _list_unique_dicom_files(series_path)
     if not dicom_files:
@@ -372,34 +454,9 @@ def _build_metadata_headers_only(series_path: Path, series_number):
                 continue
             if first_dcm is None:
                 first_dcm = dcm
-
-            ww = dcm.get("WindowWidth", None)
-            wc = dcm.get("WindowCenter", None)
-            iop = dcm.get("ImageOrientationPatient", None)
-            ipp = dcm.get("ImagePositionPatient", None)
-            ps = dcm.get("PixelSpacing", None)
-
-            instances.append(
-                {
-                    "instance_number": int(dcm.get("InstanceNumber", i) or i),
-                    "instance_path": str(dicom_file),
-                    "rows": int(dcm.get("Rows", 0) or 0),
-                    "columns": int(dcm.get("Columns", 0) or 0),
-                    "window_width": _safe_float(ww),
-                    "window_center": _safe_float(wc),
-                    "is_rgb": str(dcm.get("PhotometricInterpretation", "")).upper() in {"RGB", "YBR_FULL", "YBR_FULL_422"},
-                    "sop_uid": str(dcm.get("SOPInstanceUID", "")),
-                    "image_orientation_patient": [float(v) for v in iop] if iop is not None else None,
-                    "image_position_patient": [float(v) for v in ipp] if ipp is not None else None,
-                    "pixel_spacing": [float(v) for v in ps] if ps is not None else None,
-                    "slice_thickness": _safe_float(dcm.get("SliceThickness", None)),
-                    "spacing_between_slices": _safe_float(dcm.get("SpacingBetweenSlices", None)),
-                    "rescale_slope": _safe_float(dcm.get("RescaleSlope", None), 1.0),
-                    "rescale_intercept": _safe_float(dcm.get("RescaleIntercept", None), 0.0),
-                    "bits_allocated": int(dcm.get("BitsAllocated", 16) or 16),
-                    "pixel_representation": int(dcm.get("PixelRepresentation", 1) or 1),
-                }
-            )
+            stub = _build_instance_header_stub(dicom_file, i)
+            if stub is not None:
+                instances.append(stub)
         except Exception:
             continue
 
@@ -1198,10 +1255,22 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                         _, _qt_instances = _get_instances_from_best_group(_qt_series_pk)
                     if _qt_instances:
                         _qt_meta = _get_cached_metadata(_qt_series_pk, _qt_instances)
-                        try:
-                            _backfill_instance_orientation(_qt_meta.get('instances', []))
-                        except Exception:
-                            pass
+                        _qt_instances_merged, _qt_instances_changed = _reconcile_db_instances_with_disk(
+                            series_path, _qt_meta.get('instances', [])
+                        )
+                        if _qt_instances_merged:
+                            if _qt_instances_changed:
+                                _qt_meta = {
+                                    **_qt_meta,
+                                    'series': dict((_qt_meta.get('series') or {})),
+                                    'instances': _qt_instances_merged,
+                                }
+                            _ensure_series_meta(_qt_meta)['image_count'] = len(_qt_instances_merged)
+                        if _metadata_needs_geometry_backfill(_qt_meta):
+                            try:
+                                _backfill_instance_orientation(_qt_meta.get('instances', []))
+                            except Exception:
+                                pass
                         try:
                             _normalize_metadata_instances(_qt_meta)
                         except Exception:
@@ -1214,10 +1283,6 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
         if _qt_meta is None:
             try:
                 _qt_meta = _build_metadata_headers_only(series_path, series_number)
-                try:
-                    _backfill_instance_orientation(_qt_meta.get('instances', []))
-                except Exception:
-                    pass
                 try:
                     _normalize_metadata_instances(_qt_meta)
                 except Exception:

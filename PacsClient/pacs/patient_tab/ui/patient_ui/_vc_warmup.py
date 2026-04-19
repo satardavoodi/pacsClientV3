@@ -8,6 +8,10 @@ import threading
 import time
 import gc
 import traceback
+from modules.viewer.fast.ui_throttle import (
+    clear_active_orchestrator as _clear_active_orchestrator,
+    should_admit as _ui_should_admit,
+)
 from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QSlider
@@ -19,6 +23,17 @@ from modules.zeta_boost import ZetaBoostEngine, ImageSliceBooster
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _should_admit_warmup(obj, work_key: str) -> bool:
+    """Admission front door for warmup-lane entry points."""
+    return bool(_ui_should_admit(
+        "cache_warm",
+        {
+            "key": f"warmup:{id(obj)}:{work_key}",
+            "series_key": str(work_key),
+        },
+    ))
 
 
 class _VCWarmupMixin:
@@ -52,6 +67,12 @@ class _VCWarmupMixin:
                     f"[WARMUP] Skipped â€” pipeline={self.pipeline.state.name} "
                     f"(warmup only allowed in POST_DOWNLOAD/READY)"
                 )
+                return
+
+            if not _should_admit_warmup(self, "open_tab"):
+                if self._open_warmup_retry_count < 10:
+                    self._open_warmup_retry_count += 1
+                    QTimer.singleShot(350, self._start_open_tab_warmup)
                 return
 
             # Let first visible series settle before warmup to keep tab-open responsive.
@@ -354,6 +375,12 @@ class _VCWarmupMixin:
             if not self._deferred_heavy_warmup_series:
                 return
 
+            if not _should_admit_warmup(self, "deferred_heavy"):
+                if self._deferred_heavy_warmup_retry_count < 12:
+                    self._deferred_heavy_warmup_retry_count += 1
+                    QTimer.singleShot(800, self._start_deferred_heavy_warmup)
+                return
+
             # Viewer-first guard: wait for a short idle window before heavy warmup.
             if self._plan_a_viewer_first:
                 idle_sec = max(0.0, time.time() - float(self._last_user_interaction_ts or 0.0))
@@ -623,19 +650,36 @@ class _VCWarmupMixin:
                     return
 
             # âڑ، FAST PAIRED SERIES LOOKUP: O(1)
+            # Keep first-display pairing rules aligned with the main switch path:
+            # only MG series may be paired/combined by shared series_name.
             vtk_widget_data_2 = None
             metadata_2 = None
-            
+
             series_name = str(metadata.get('series', {}).get('series_name', ''))
-            if series_name in self._paired_series_map:
+            current_modality = str(metadata.get('series', {}).get('modality', '') or '').upper()
+            is_mg_modality = current_modality == 'MG'
+
+            if is_mg_modality and series_name in self._paired_series_map:
                 paired_list = self._paired_series_map[series_name]
                 for paired_num in paired_list:
                     if str(paired_num) != str(series_number):
                         vtk_data, meta, _ = self._get_series_by_number_fast(str(paired_num))
                         if vtk_data is not None and meta is not None:
-                            vtk_widget_data_2 = vtk_data
-                            metadata_2 = meta
-                            break
+                            paired_modality = str(meta.get('series', {}).get('modality', '') or '').upper()
+                            if paired_modality == 'MG':
+                                vtk_widget_data_2 = vtk_data
+                                if hasattr(self, '_clone_metadata_for_switch'):
+                                    metadata_2 = self._clone_metadata_for_switch(meta)
+                                else:
+                                    metadata_2 = meta
+                                break
+
+            if (not is_mg_modality) and series_name in self._paired_series_map:
+                logger.debug(
+                    "[PAIRED SKIP] first-display series=%s modality=%s - skipping paired lookup (MG only)",
+                    series_number,
+                    current_modality or 'UNKNOWN',
+                )
 
             # Perform switch
             target_widget = self.selected_widget if flag_change_selected_widget else vtk_widget
@@ -780,9 +824,23 @@ class _VCWarmupMixin:
             except Exception:
                 pass
 
+            # Stop live block telemetry heartbeat before tearing down shared state.
+            try:
+                timer = getattr(self, '_block_diag_timer', None)
+                if timer is not None:
+                    timer.stop()
+            except Exception:
+                pass
+
             # Ensure stale nodes are cleared after cleanup
             try:
                 self.lst_nodes_viewer.clear()
+            except Exception:
+                pass
+
+            # Unregister orchestrator from the shared throttle facade
+            try:
+                _clear_active_orchestrator(getattr(self, 'pipeline', None))
             except Exception:
                 pass
 
@@ -804,23 +862,30 @@ class _VCWarmupMixin:
             # ط³ط±غŒط¹ ظ…ط­ط§ط³ط¨ظ‡: ط¢غŒط§ ظ‚ط¨ظ„ط§ظ‹ ط«ط§ط¨طھ ع©ط§ط´ ط¯ط§ط±غŒظ…طں
             try:
                 vtk_full, meta_full, _ = self._get_series_by_number_fast(str(series_number))
-                if vtk_full is not None and isinstance(meta_full, dict):
-                    dims = vtk_full.GetDimensions() if hasattr(vtk_full, 'GetDimensions') else (0, 0, 0)
-                    if int(dims[2]) > 1:  # full volume ظ…ظˆط¬ظˆط¯
-                        _ms = (time.perf_counter() - _preview_start) * 1000
-                        logger.debug(f"âڑ، [PREVIEW] series={series_number} cached_full {_ms:.0f}ms")
-                        return vtk_full, meta_full
+                if self._is_full_volume_cache_candidate(str(series_number), vtk_full, meta_full):
+                    _ms = (time.perf_counter() - _preview_start) * 1000
+                    logger.debug(f"âڑ، [PREVIEW] series={series_number} cached_full {_ms:.0f}ms")
+                    return vtk_full, meta_full
             except Exception:
                 pass
             
             # ط³ط±غŒط² ط§ط² disk ع©ط´ غŒط§ source ط¨ط§ط±ع¯ط°ط§ط±غŒ ع©ظ†
             from PacsClient.pacs.patient_tab.utils.image_io import load_series_preview
-            
-            vtk_preview, metadata = load_series_preview(
+
+            preview = load_series_preview(
                 study_path=study_path,
                 series_number=int(series_number),
-                max_slices=8  # max 8 slice ط¨ط±ط§غŒ preview
+                patient_pk=self.parent_widget.metadata_fixed.get('patient_pk', None),
+                study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
+                max_files=(self._interactive_preview_file_cap() if hasattr(self, '_interactive_preview_file_cap') else 8),
             )
+
+            if not preview:
+                _elapsed = (time.perf_counter() - _preview_start) * 1000
+                logger.error(f"âڑ ï¸ڈ [PREVIEW] series={series_number} failed {_elapsed:.0f}ms")
+                return None, None
+
+            vtk_preview, metadata, _patient_info, _total_files = preview
             
             _elapsed = (time.perf_counter() - _preview_start) * 1000
             if vtk_preview is not None:

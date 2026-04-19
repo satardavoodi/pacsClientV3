@@ -32,6 +32,27 @@ logger = logging.getLogger(__name__)
 class _VWScrollMixin:
     """Scroll hot-path: wheelEvent, set_slice, adaptive throttle, GC suppression."""
 
+    def _get_interactive_slice_count(self) -> int:
+        """Return the slice count user navigation may actually reach.
+
+        In progressive mode, ``get_count_of_slices()`` intentionally exposes
+        the total expected slice count so the slider range stays stable.
+        Wheel/drag navigation must instead clamp to the loaded slice count,
+        otherwise the Qt fast path can request unloaded indices and appear
+        visually frozen on the first available frames.
+        """
+        try:
+            if bool(getattr(self, '_progressive_mode', False)):
+                available = int(getattr(self, '_available_slice_count', 0) or 0)
+                if available > 0:
+                    return available
+        except Exception:
+            pass
+        try:
+            return int(self.get_count_of_slices())
+        except Exception:
+            return 0
+
     def _reenable_gc(self):
         """Re-enable garbage collection after scroll burst ends.
 
@@ -315,7 +336,7 @@ class _VWScrollMixin:
     ) -> None:
         if self.image_viewer is None:
             return
-        max_slice = self.get_count_of_slices()
+        max_slice = self._get_interactive_slice_count()
         if max_slice <= 0:
             return
 
@@ -577,7 +598,9 @@ class _VWScrollMixin:
                 _wheel = bool(getattr(self, "_in_wheel_scroll", False))
                 _stack_drag = bool(getattr(self, "_in_stack_scroll", False))
                 _fast = bool(_wheel or _stack_drag)
-                self.image_viewer.set_slice(slice_index, fast_interaction=_fast)
+                # B4.1: distinguish precision wheel from fast stack-drag
+                _itype = 'drag' if _stack_drag else ('wheel' if _wheel else '')
+                self.image_viewer.set_slice(slice_index, fast_interaction=_fast, interaction_type=_itype)
                 self.image_viewer.last_index_slice_saved = int(slice_index)
                 # Update slider
                 if self.slider is not None:
@@ -985,7 +1008,7 @@ class _VWScrollMixin:
             if delta == 0:
                 event.accept()
                 return
-            max_s = self.get_count_of_slices()
+            max_s = self._get_interactive_slice_count()
             if max_s <= 1:
                 event.accept()
                 return
@@ -994,11 +1017,11 @@ class _VWScrollMixin:
             new_idx = max(0, min(current + step, max_s - 1))
             if new_idx != current:
                 try:
-                    self.image_viewer.set_slice(new_idx, fast_interaction=True)
+                    # B4.1: wheel event — precision browsing, no surrogates
+                    self.image_viewer.set_slice(new_idx, fast_interaction=True, interaction_type='wheel')
                     self.image_viewer.last_index_slice_saved = int(new_idx)
                 except Exception as _e:
-                    import logging as _lg
-                    _lg.getLogger(__name__).warning("Qt fast-scroll set_slice failed: %s", _e)
+                    logger.warning("Qt fast-scroll set_slice failed: %s", _e)
                 # Update slider without triggering valueChanged
                 self.slider.blockSignals(True)
                 self.slider.setValue(new_idx)
@@ -1016,16 +1039,11 @@ class _VWScrollMixin:
                         _pw._schedule_reference_line_update()
                 except Exception:
                     pass
-            # Arm the scroll-stop timer to re-render with filter after 200ms
-            # of no wheel events (v2.3.3-perf)
-            _qt_stop = getattr(self, '_qt_scroll_stop_timer', None)
-            if _qt_stop is None:
-                self._qt_scroll_stop_timer = QTimer(self)
-                self._qt_scroll_stop_timer.setSingleShot(True)
-                self._qt_scroll_stop_timer.setInterval(200)
-                self._qt_scroll_stop_timer.timeout.connect(self._on_qt_scroll_stop)
-                _qt_stop = self._qt_scroll_stop_timer
-            _qt_stop.start()  # Restart the 200ms countdown
+            # B4.4: settle timer unification
+            # Do NOT arm a second VTK-side 200ms timer here.
+            # QtViewerBridge._interaction_settle_timer is the single source of
+            # truth for "scroll/drag settled" and already calls
+            # end_fast_interaction() after 200ms of inactivity.
             event.accept()
             return
 
@@ -1112,7 +1130,7 @@ class _VWScrollMixin:
                 return
             
             delta = event.angleDelta().y()
-            max_slice = self.get_count_of_slices()
+            max_slice = self._get_interactive_slice_count()
             
             logger.debug(f"[WHEEL] delta={delta}, max_slice={max_slice}")
             

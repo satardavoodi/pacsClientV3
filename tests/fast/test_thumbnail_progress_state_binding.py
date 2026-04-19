@@ -5,6 +5,8 @@ progress border without altering the ready or downloading flags.
 The [FAST-THUMB-STATE] log emitted in ThumbnailManager.update_series_progress
 confirms this in production; this suite validates the state contract in isolation.
 """
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -72,3 +74,24 @@ def test_progress_monotonically_increasing_scenario(tm):
             f"_is_ready must be False at progress={p}"
         )
     assert tm.series_widgets["42"].progress_border._progress == pytest.approx(100.0)
+
+
+def test_real_thumbnail_manager_progress_is_deferred_until_admitted(monkeypatch):
+    from PacsClient.pacs.patient_tab.utils import thumbnail_manager as _tm_mod
+
+    scheduled = []
+    fake_tm = SimpleNamespace(
+        _resolve_series_key=lambda sn: str(sn),
+        _progress_update_last_ts={},
+        _progress_update_pending={},
+        _progress_update_timer_active=False,
+        _progress_update_interval_ms=lambda: 500.0,
+        _schedule_progress_flush=lambda delay_ms: scheduled.append(delay_ms),
+    )
+
+    monkeypatch.setattr(_tm_mod, "_ui_should_admit", lambda *a, **kw: False)
+
+    _tm_mod.ThumbnailManager.update_series_progress(fake_tm, 7, 42.0, "5/10")
+
+    assert fake_tm._progress_update_pending == {"7": (7, 42.0, "5/10")}
+    assert scheduled == [500.0]

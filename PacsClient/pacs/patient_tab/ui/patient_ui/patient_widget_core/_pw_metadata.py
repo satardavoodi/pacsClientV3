@@ -5,15 +5,20 @@ Extracted from patient_widget.py during Phase 1 refactoring (v2.2.9.1).
 This is a mixin class — do NOT instantiate directly.
 """
 
-
 import asyncio
 import copy
 import json
+import logging as _logging
 import time
 import traceback
 import vtk
 from PySide6.QtCore import QTimer
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk
+
+# Redirect print() to logger to avoid synchronous console I/O on Windows.
+_print_logger = _logging.getLogger(__name__)
+def print(*args, **_kw):  # noqa: A001
+    _print_logger.debug(' '.join(str(a) for a in args))
 
 
 class _PWMetadataMixin:

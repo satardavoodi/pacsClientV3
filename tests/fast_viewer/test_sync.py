@@ -642,8 +642,11 @@ class TestQtViewerAsSyncSource:
             _VWInteractorMixin,
         )
         src = inspect.getsource(_VWInteractorMixin.enable_sync_point)
-        assert 'qv._sync_mode_active = True' in src, (
-            'enable_sync_point Qt branch must set qv._sync_mode_active = True'
+        assert (
+            'qv.set_sync_mode(True)' in src
+            or 'qv._sync_mode_active = True' in src
+        ), (
+            'enable_sync_point Qt branch must set sync mode (prefer set_sync_mode(True))'
         )
 
     def test_disable_sync_point_clears_flag_in_interactor_source(self):
@@ -656,8 +659,11 @@ class TestQtViewerAsSyncSource:
             _VWInteractorMixin,
         )
         src = inspect.getsource(_VWInteractorMixin.disable_sync_point)
-        assert 'qv._sync_mode_active = False' in src, (
-            'disable_sync_point Qt branch must set qv._sync_mode_active = False'
+        assert (
+            'qv.set_sync_mode(False)' in src
+            or 'qv._sync_mode_active = False' in src
+        ), (
+            'disable_sync_point Qt branch must clear sync mode (prefer set_sync_mode(False))'
         )
 
     def test_map_sync_dicom_qt_source_uses_current_slice_metadata(self):

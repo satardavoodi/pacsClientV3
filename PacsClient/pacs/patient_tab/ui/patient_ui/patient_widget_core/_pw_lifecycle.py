@@ -5,16 +5,21 @@ Extracted from patient_widget.py during Phase 1 refactoring (v2.2.9.1).
 This is a mixin class — do NOT instantiate directly.
 """
 
-
 import copy
 import gc
 import logging
+import logging as _logging
 import time
 import traceback
 import vtk
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
 from PacsClient.pacs.patient_tab.utils import NodeViewer
 logger = logging.getLogger(__name__)
+
+# Redirect print() to logger to avoid synchronous console I/O on Windows.
+_print_logger = _logging.getLogger(__name__)
+def print(*args, **_kw):  # noqa: A001
+    _print_logger.debug(' '.join(str(a) for a in args))
 
 
 class _PWLifecycleMixin:

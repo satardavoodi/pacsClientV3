@@ -37,6 +37,18 @@ from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
     window_to_uint8,
 )
 from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import PooyanFilterParams, pooyan_filter_center
+from modules.viewer.fast.perf_metrics import PerfMetrics
+from modules.viewer.fast.disk_pixel_cache import get_disk_pixel_cache
+from modules.viewer.fast.decode_service import get_decode_service
+from modules.viewer.fast.stack_cache_profile import build_stack_cache_profile
+from modules.viewer.fast.system_load_controller import WorkClass
+from modules.viewer.fast.ui_throttle import (
+    cap_prefetch_radius,
+    is_heavy_download_active,
+    is_viewed_series_complete,
+    should_admit,
+)
+from modules.zeta_boost.cache_engine import _zb_globals
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +268,7 @@ class Lightweight2DPipeline(QObject):
         # a "draft" frame from a separate unfiltered cache.  The filter is
         # re-applied on scroll-stop via rerender_current_filtered().
         self._fast_interaction: bool = False
+        self._fast_interaction_mode: str = ""
 
         # Caches (LRU via OrderedDict)
         self._pixel_cache: "OrderedDict[int, np.ndarray]" = OrderedDict()
@@ -273,6 +286,14 @@ class Lightweight2DPipeline(QObject):
             max_workers=max(2, min(4, int(self._config.prefetch_workers))),
             thread_name_prefix="LW2D-Frame",
         )
+
+        # B3.2: Generation-gated adaptive prefetch state
+        self._prefetch_generation: int = 0           # monotonic generation counter
+        self._prefetch_request_epoch: int = 0        # latest admitted neighborhood
+        self._active_prefetch_targets: set[int] = set()
+        self._scroll_history: List[Tuple[float, int]] = []  # (timestamp, slice_index) ring
+        self._scroll_history_max: int = 12           # keep last N events
+        self._last_prefetch_center: int = -1         # dedup: skip if same center
 
         # Metrics
         self._metrics_lock = threading.Lock()
@@ -292,6 +313,8 @@ class Lightweight2DPipeline(QObject):
         # Series state
         self._series_path: Optional[str] = None
         self._is_open: bool = False
+        self._interaction_slice_count_hint: int = 0
+        self._drag_start_boost_until: float = 0.0
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -315,6 +338,13 @@ class Lightweight2DPipeline(QObject):
         """Open a DICOM series from metadata instances or by scanning directory."""
         self.close_series()
         self._series_path = str(series_path)
+        # v2.3.5: cache series_number for series-level readiness queries
+        self._series_number: Optional[str] = None
+        if metadata:
+            try:
+                self._series_number = str(metadata.get("series", {}).get("series_number", "") or "")
+            except Exception:
+                pass
 
         if metadata and metadata.get("instances"):
             self._slices = self._from_metadata_instances(metadata["instances"])
@@ -350,14 +380,49 @@ class Lightweight2DPipeline(QObject):
         with self._prefetch_lock:
             self._prefetch_pending.clear()
             self._frame_prefetch_pending.clear()
+            self._prefetch_generation += 1  # invalidate any in-flight tasks
+            self._prefetch_request_epoch += 1
+            self._active_prefetch_targets.clear()
         self._slices.clear()
         self._current_index = 0
         self._window = None
         self._level = None
         self._series_path = None
         self._is_open = False
+        self._interaction_slice_count_hint = 0
+        self._drag_start_boost_until = 0.0
         self._first_render_logged = False
         self._filter_first_slices.clear()
+        self._scroll_history.clear()
+        self._last_prefetch_center = -1
+
+    def notify_drag_started(self, center: Optional[int] = None) -> None:
+        """Warm the current neighborhood when a new stack-drag begins.
+
+        This is a targeted Block C startup assist: the first part of a drag can
+        still feel sticky when the viewed region has not been warmed yet,
+        especially just after a series switch or during progressive fill.
+
+        We arm a short-lived surrogate boost and immediately prefetch around the
+        current slice before the first drag delta arrives.  The steady-state
+        drag policy is unchanged.
+        """
+        if not self._slices:
+            return
+        try:
+            idx = self._clamp(self._current_index if center is None else center)
+        except Exception:
+            return
+
+        self._drag_start_boost_until = time.perf_counter() + 0.35
+        self._last_prefetch_center = -1
+        logger.debug(
+            "FAST:drag_start_warmup center=%d slice_count=%d boost_ms=%d",
+            idx,
+            len(self._slices),
+            350,
+        )
+        self._prefetch_around(idx, direction=0)
 
     def get_file_paths(self) -> List[str]:
         return [s.path for s in self._slices]
@@ -450,6 +515,13 @@ class Lightweight2DPipeline(QObject):
                 float(window or 0), float(level or 0), old_frame_cache_size,
             )
         if self._is_open and self._slices:
+            # W/L change: bump generation to invalidate stale W/L frames,
+            # and reset dedup so _prefetch_around re-submits.
+            with self._prefetch_lock:
+                self._prefetch_generation += 1
+                self._prefetch_request_epoch += 1
+                self._active_prefetch_targets.clear()
+            self._last_prefetch_center = -1
             self._prefetch_around(self._current_index)
 
     def get_window_level(self) -> Tuple[Optional[float], Optional[float]]:
@@ -523,26 +595,69 @@ class Lightweight2DPipeline(QObject):
         sy = float(sm.pixel_spacing[0]) or 1.0
         return float(np.dot(d, row) / sx), float(np.dot(d, col) / sy)
 
-    def get_rendered_frame(self, slice_index: int) -> RenderedFrame:
+    def get_rendered_frame(self, slice_index: int, *, interaction_type: str = '') -> RenderedFrame:
         """
         Get a fully-rendered frame for display (decode + filter + W/L + QImage).
         Uses cache when available.
 
-        During fast interaction (_fast_interaction=True), the OpenCV filter is
-        skipped to reduce per-frame cost by 3-5ms.  The unfiltered frame is
-        served from the same cache (keyed with filter_enabled=False).
-        Call rerender_current_filtered() on scroll-stop to refine.
+        During fast interaction (_fast_interaction=True), filtering is
+        interaction-class aware:
+
+        - wheel: keep the filtered appearance for precision browsing
+        - drag: skip the OpenCV filter to reduce per-frame cost by 3-5ms
+
+        Drag-time approximation is refined on scroll-stop.
+
+        B4.1 interaction_type:
+          - 'wheel': precision browsing — NEVER serve surrogate (always exact slice)
+          - 'drag': fast navigation — surrogate allowed (B3.7 nearest-cached)
+          - '' (default): non-interactive call — no surrogate
         """
         idx = self._clamp(slice_index)
         sm = self._slices[idx]
         ww, wc = self._resolve_window_level(idx)
-        # During fast scroll, skip filter for lower latency
-        filter_enabled = self._config.opencv_filter_enabled and not self._fast_interaction
+        # During fast interaction, wheel keeps the exact filtered appearance
+        # while drag skips the filter for lower latency.
+        _keep_filter_during_fast = self._fast_interaction and interaction_type == 'wheel'
+        filter_enabled = self._config.opencv_filter_enabled and (
+            not self._fast_interaction or _keep_filter_during_fast
+        )
         cache_key = self._frame_cache_key(idx, ww, wc, filter_enabled)
+        # B2.5: sample queue depths on every frame request
+        _pm = PerfMetrics.get()
+        if _pm.enabled:
+            with self._prefetch_lock:
+                _pm.record_queue_depths(len(self._prefetch_pending), len(self._frame_prefetch_pending))
+
+        # During fast interaction, prefer an exact filtered cached frame when
+        # available so the scrolling image matches the settled image appearance.
+        # Fall back to the exact unfiltered cache only when the filtered frame
+        # is not already available.
+        if self._fast_interaction and self._config.opencv_filter_enabled and not filter_enabled:
+            full_key = self._frame_cache_key(idx, ww, wc, True)
+            if full_key in self._frame_cache:
+                qimg = self._frame_cache.pop(full_key)
+                self._frame_cache[full_key] = qimg
+                self._record_cache_hit()
+                _pm.record_cache_hit()
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "FAST:frame_cache source=hit_filtered_fast slice=%d ww=%.0f wc=%.0f "
+                        "cache_size=%d pixel_cache_size=%d",
+                        idx, ww, wc,
+                        len(self._frame_cache), len(self._pixel_cache),
+                    )
+                return RenderedFrame(
+                    qimage=qimg, width=qimg.width(), height=qimg.height(),
+                    slice_index=idx, window_width=ww, window_center=wc,
+                    photometric=sm.photometric, decode_ms=0.0, filter_ms=0.0,
+                    wl_ms=0.0, total_ms=0.0,
+                )
         if cache_key in self._frame_cache:
             qimg = self._frame_cache.pop(cache_key)
             self._frame_cache[cache_key] = qimg
             self._record_cache_hit()
+            _pm.record_cache_hit()
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
                     "FAST:frame_cache source=hit slice=%d ww=%.0f wc=%.0f filter=%s "
@@ -556,20 +671,6 @@ class Lightweight2DPipeline(QObject):
                 photometric=sm.photometric, decode_ms=0.0, filter_ms=0.0,
                 wl_ms=0.0, total_ms=0.0,
             )
-        # Also check the filtered cache when we're in fast mode —
-        # a fully filtered frame is always acceptable.
-        if self._fast_interaction and self._config.opencv_filter_enabled:
-            full_key = self._frame_cache_key(idx, ww, wc, True)
-            if full_key in self._frame_cache:
-                qimg = self._frame_cache.pop(full_key)
-                self._frame_cache[full_key] = qimg
-                self._record_cache_hit()
-                return RenderedFrame(
-                    qimage=qimg, width=qimg.width(), height=qimg.height(),
-                    slice_index=idx, window_width=ww, window_center=wc,
-                    photometric=sm.photometric, decode_ms=0.0, filter_ms=0.0,
-                    wl_ms=0.0, total_ms=0.0,
-                )
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "FAST:frame_cache source=miss slice=%d ww=%.0f wc=%.0f filter=%s "
@@ -577,13 +678,116 @@ class Lightweight2DPipeline(QObject):
                 idx, ww, wc, filter_enabled,
                 len(self._frame_cache), len(self._pixel_cache),
             )
+
+        # ── B3.7: Cache-first fast scroll ─────────────────────────────
+        # During fast interaction (wheel/drag), avoid blocking the main
+        # thread for 17-45ms of pydicom decode.  Instead show the nearest
+        # cached pixel (0ms decode, ~2ms W/L) as a surrogate.  Background
+        # prefetch workers continue filling the cache; scroll-stop
+        # (end_fast_interaction) re-renders the exact slice.
+        #
+        # B4.1: Surrogate is ONLY used for stack-drag navigation.
+        # Wheel precision browsing always renders the exact requested
+        # slice — a clinical requirement.  Wheel moves ±1 slice so the
+        # adjacent slice is almost always already in pixel_cache (cache
+        # hit, 0ms decode).  On the rare miss, synchronous decode (≤17ms)
+        # is acceptable for precision reading.
+        _allow_surrogate = (interaction_type == 'drag')
+        surrogate_distance = self._get_drag_surrogate_max_distance()
+        if _allow_surrogate and self._fast_interaction:
+            nearest_frame = self._find_nearest_cached_frame(
+                idx,
+                ww,
+                wc,
+                filter_enabled,
+                max_distance=surrogate_distance,
+            )
+            if nearest_frame is not None:
+                nearest_idx, qimg = nearest_frame
+                frame = RenderedFrame(
+                    qimage=qimg,
+                    width=qimg.width(),
+                    height=qimg.height(),
+                    slice_index=idx,
+                    window_width=ww,
+                    window_center=wc,
+                    photometric=sm.photometric,
+                    decode_ms=0.0,
+                    filter_ms=0.0,
+                    wl_ms=0.0,
+                    total_ms=0.0,
+                )
+                _pm.record_cache_hit()
+                _pm.record_frame_render(0.0)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "FAST:nearest_cached_frame idx=%d nearest=%d dist=%d",
+                        idx, nearest_idx, abs(idx - nearest_idx),
+                    )
+                if idx in self._pixel_cache:
+                    self._submit_frame_prefetch(idx)
+                else:
+                    self._prefetch_around(idx)
+                return frame
+
+        if _allow_surrogate and self._fast_interaction and idx not in self._pixel_cache:
+            nearest_idx = self._find_nearest_cached_pixel(
+                idx,
+                max_distance=surrogate_distance,
+            )
+            if nearest_idx is not None:
+                t_surr = time.perf_counter()
+                surrogate = self._render_frame_uncached(
+                    nearest_idx, ww, wc, filter_enabled, record_metrics=False,
+                )
+                surr_ms = (time.perf_counter() - t_surr) * 1000.0
+                frame = RenderedFrame(
+                    qimage=surrogate.qimage,
+                    width=surrogate.width,
+                    height=surrogate.height,
+                    slice_index=idx,
+                    window_width=ww,
+                    window_center=wc,
+                    photometric=sm.photometric,
+                    decode_ms=0.0,
+                    filter_ms=surrogate.filter_ms,
+                    wl_ms=surrogate.wl_ms,
+                    total_ms=surr_ms,
+                )
+                _pm.record_cache_hit()  # surrogate counts as cache-assisted
+                _pm.record_frame_render(surr_ms)
+                if surr_ms > 0:
+                    _pm.record_wl(surrogate.wl_ms)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "FAST:nearest_cached idx=%d nearest=%d dist=%d surr_ms=%.1f",
+                        idx, nearest_idx, abs(idx - nearest_idx), surr_ms,
+                    )
+                self._prefetch_around(idx)
+                return frame
+        # ── End B3.7 ──────────────────────────────────────────────────
+
+        _pm.record_cache_miss()
         frame = self._render_frame_uncached(idx, ww, wc, filter_enabled, record_metrics=True)
+        # B2.5: record foreground wait (main-thread decode on cache miss)
+        if frame.decode_ms > 0:
+            _pm.record_foreground_wait(frame.decode_ms)
+        _pm.record_frame_render(frame.total_ms)
+        if frame.decode_ms > 0:
+            _pm.record_decode(frame.decode_ms)
+        if frame.wl_ms > 0:
+            _pm.record_wl(frame.wl_ms)
+        if frame.filter_ms > 0:
+            _pm.record_filter(frame.filter_ms)
         self._prefetch_around(idx)
         return frame
 
-    def set_fast_interaction(self, fast: bool) -> None:
+    def set_fast_interaction(self, fast: bool, interaction_type: str = '') -> None:
         """Set fast-interaction mode. When True, filter is skipped during scroll."""
         self._fast_interaction = bool(fast)
+        self._fast_interaction_mode = str(interaction_type or '') if fast else ''
+        if not fast:
+            self._drag_start_boost_until = 0.0
 
     def rerender_current_filtered(self) -> Optional[RenderedFrame]:
         """Re-render current slice with filter enabled (called on scroll-stop).
@@ -706,6 +910,13 @@ class Lightweight2DPipeline(QObject):
         self._prefetch_around(self._current_index, direction=direction)
         return cached
 
+    def set_interaction_slice_count_hint(self, slice_count: int) -> None:
+        """Set the slice count that current interaction policy should follow."""
+        try:
+            self._interaction_slice_count_hint = max(0, int(slice_count or 0))
+        except Exception:
+            self._interaction_slice_count_hint = 0
+
     def get_pixel_value_at(self, slice_index: int, x: int, y: int) -> Optional[float]:
         """Get raw pixel value at (x, y) in image coordinates."""
         arr = self._get_pixel_array(self._clamp(slice_index))
@@ -774,6 +985,9 @@ class Lightweight2DPipeline(QObject):
     def _decode_slice(self, idx: int) -> np.ndarray:
         """Decode a single DICOM slice using pydicom.
 
+        B3.12: Checks disk pixel cache first.  On miss, decodes via pydicom
+        and stores the result to disk cache for future re-opens.
+
         Performance note (v2.3.3-perf): For typical CT/MR data (slope=1,
         int intercept, MONOCHROME2), keeps data as int16 instead of
         converting to float32.  The downstream W/L function uses a LUT
@@ -782,6 +996,17 @@ class Lightweight2DPipeline(QObject):
         MONOCHROME1 inversion needs float arithmetic.
         """
         sm = self._slices[idx]
+
+        # B3.12: Disk cache lookup (L2 cache)
+        disk_cache = get_disk_pixel_cache()
+        study_uid = self._series_path or ""
+        cached = disk_cache.get(
+            sop_instance_uid=sm.path,
+            study_uid=study_uid,
+            expected_shape=(sm.rows, sm.cols),
+        )
+        if cached is not None:
+            return cached
 
         ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
         arr = np.asarray(ds.pixel_array)
@@ -794,7 +1019,9 @@ class Lightweight2DPipeline(QObject):
                 arr = arr[0]
             if arr.dtype != np.uint8:
                 arr = np.clip(arr, 0, 255).astype(np.uint8)
-            return np.ascontiguousarray(arr)
+            result = np.ascontiguousarray(arr)
+            disk_cache.put(sm.path, study_uid, result)
+            return result
 
         # Apply rescale slope/intercept
         slope = _safe_float(getattr(ds, "RescaleSlope", sm.slope), 1.0) or 1.0
@@ -823,7 +1050,9 @@ class Lightweight2DPipeline(QObject):
                     arr = arr + float(intercept)
             elif arr.dtype not in (np.int16, np.uint16, np.float32):
                 arr = arr.astype(np.int16, copy=False)
-            return np.ascontiguousarray(arr)
+            result = np.ascontiguousarray(arr)
+            disk_cache.put(sm.path, study_uid, result)
+            return result
 
         # Slow path: fractional slope or MONOCHROME1 — use float32
         arr = arr.astype(np.float32, copy=False)
@@ -833,9 +1062,97 @@ class Lightweight2DPipeline(QObject):
         if not _is_monochrome2:
             arr = float(arr.max()) + float(arr.min()) - arr
 
-        return np.ascontiguousarray(arr)
+        result = np.ascontiguousarray(arr)
+        disk_cache.put(sm.path, study_uid, result)
+        return result
 
     # ── Private: cache management ─────────────────────────────────────
+
+    def _find_nearest_cached_pixel(self, idx: int, max_distance: int = 10) -> Optional[int]:
+        """Find the nearest slice index in pixel_cache within *max_distance*.
+
+        B3.7: Used during fast interaction to locate a surrogate slice that
+        can be rendered without a blocking pydicom decode.  Returns None if
+        no cached pixel is within range.
+        """
+        best: Optional[int] = None
+        best_dist = max_distance + 1
+        for cached_idx in self._pixel_cache:
+            dist = abs(cached_idx - idx)
+            if dist < best_dist:
+                best_dist = dist
+                best = cached_idx
+                if dist <= 1:
+                    break  # can't do better than adjacent
+        return best
+
+    def _find_nearest_cached_frame(
+        self,
+        idx: int,
+        ww: float,
+        wc: float,
+        filter_enabled: bool,
+        max_distance: int = 10,
+    ) -> Optional[Tuple[int, QImage]]:
+        """Find the nearest rendered-frame cache entry within *max_distance*."""
+        best_idx: Optional[int] = None
+        best_key: Optional[Tuple[int, float, float, bool]] = None
+        best_dist = max_distance + 1
+        for key in self._frame_cache.keys():
+            try:
+                cached_idx, cached_ww, cached_wc, cached_filter = key
+            except Exception:
+                continue
+            if bool(cached_filter) != bool(filter_enabled):
+                continue
+            if float(cached_ww) != float(ww) or float(cached_wc) != float(wc):
+                continue
+            dist = abs(int(cached_idx) - idx)
+            if dist >= best_dist or dist > max_distance:
+                continue
+            best_dist = dist
+            best_idx = int(cached_idx)
+            best_key = key
+            if dist <= 1:
+                break
+        if best_key is None or best_idx is None:
+            return None
+        qimg = self._frame_cache.pop(best_key)
+        self._frame_cache[best_key] = qimg
+        return best_idx, qimg
+
+    def _get_drag_surrogate_max_distance(self) -> int:
+        """Return the surrogate search window for drag navigation.
+
+        Default drag navigation stays at ±10 slices. During active overlap
+        (heavy download + incomplete viewed series), widen the search window to
+        ±20 so fast drag can prefer a nearby cached surrogate over a blocking
+        foreground decode when the cache is still sparse. Very high-speed drag
+        may also widen to ±20 even for completed viewed series so transient
+        cache gaps still resolve to surrogate instead of an exact foreground
+        decode spike.
+        """
+        profile = build_stack_cache_profile(self._effective_policy_slice_count())
+
+        if not self._fast_interaction:
+            return int(profile.surrogate_distance)
+
+        if (
+            getattr(self, '_fast_interaction_mode', '') == 'drag'
+            and time.perf_counter() < float(getattr(self, '_drag_start_boost_until', 0.0) or 0.0)
+        ):
+            return int(profile.widened_surrogate_distance)
+
+        series_number = getattr(self, '_series_number', None)
+        viewed_complete = bool(
+            series_number is not None and is_viewed_series_complete(series_number)
+        )
+        velocity = self._estimate_scroll_velocity()
+        if velocity >= 25.0:
+            return int(profile.widened_surrogate_distance)
+        if is_heavy_download_active() and not viewed_complete:
+            return int(profile.widened_surrogate_distance)
+        return int(profile.surrogate_distance)
 
     def _put_pixel_cache(self, idx: int, arr: np.ndarray) -> None:
         self._pixel_cache[idx] = arr
@@ -847,29 +1164,215 @@ class Lightweight2DPipeline(QObject):
         while len(self._frame_cache) > self._config.frame_cache_size:
             self._frame_cache.popitem(last=False)
 
+    def _effective_policy_slice_count(self) -> int:
+        """Return the slice count the current drag/cache policy should use."""
+        actual = len(self._slices)
+        try:
+            hinted = int(getattr(self, '_interaction_slice_count_hint', 0) or 0)
+        except Exception:
+            hinted = 0
+        if hinted > 0:
+            return max(1, min(actual, hinted))
+        return max(0, actual)
+
     # ── Private: prefetch ─────────────────────────────────────────────
 
+    # -- B3.2: velocity estimation ---
+
+    def _record_scroll_event(self, idx: int) -> None:
+        """Record a scroll position sample for velocity estimation."""
+        now = time.perf_counter()
+        self._scroll_history.append((now, idx))
+        # trim to max size
+        if len(self._scroll_history) > self._scroll_history_max:
+            self._scroll_history = self._scroll_history[-self._scroll_history_max:]
+
+    def _estimate_scroll_velocity(self) -> float:
+        """Estimate scroll velocity in slices/second from recent history.
+
+        Returns 0.0 when there are fewer than 2 samples or all samples
+        are older than 300ms.
+        """
+        if len(self._scroll_history) < 2:
+            return 0.0
+        now = time.perf_counter()
+        # only consider events in the last 300ms
+        cutoff = now - 0.3
+        recent = [(t, i) for t, i in self._scroll_history if t >= cutoff]
+        if len(recent) < 2:
+            return 0.0
+        dt = recent[-1][0] - recent[0][0]
+        if dt < 1e-6:
+            return 0.0
+        d_slices = abs(recent[-1][1] - recent[0][1])
+        return d_slices / dt
+
+    def _compute_adaptive_radius(self, velocity: float) -> int:
+        """Compute prefetch radius based on scroll velocity and series size.
+
+        Policy (B3.2-i1):
+        - Small series (≤30 slices): always full series → max radius
+        - Fast scroll (≥20 sl/s):   radius 3  (direction-only)
+        - Medium scroll (8-19 sl/s): radius 8  (3 during heavy download)
+        - Slow/idle (<8 sl/s):       radius 15 (3 during heavy download)
+        - Clamped to series_size // 2 for safety
+
+        During active download, idle/medium radii are capped to 5 to
+        reduce background decode worker CPU that competes with the
+        download subprocess and Qt event loop.
+        """
+        n = self._effective_policy_slice_count()
+        if n <= 30:
+            # Small series: cache everything
+            return max(n, 1)
+        profile = build_stack_cache_profile(n)
+        dl_active = is_heavy_download_active()
+        # v2.3.5 Fix 2: relax download throttle for viewed series whose
+        # individual download is complete, even if the study is still going.
+        if dl_active and self._series_number:
+            from modules.viewer.fast.ui_throttle import is_viewed_series_complete
+            if is_viewed_series_complete(self._series_number):
+                dl_active = False
+        if velocity >= 20.0:
+            r = profile.fast_prefetch_radius
+        elif velocity >= 8.0:
+            r = min(profile.medium_prefetch_radius, 3) if dl_active else profile.medium_prefetch_radius
+        else:
+            r = min(profile.medium_prefetch_radius, 3) if dl_active else profile.idle_prefetch_radius
+        r = cap_prefetch_radius(
+            r,
+            fast_interaction_active=self._fast_interaction,
+            interaction_mode=getattr(self, '_fast_interaction_mode', ''),
+            series_number=getattr(self, '_series_number', None),
+        )
+        return min(r, max(n // 2, 1))
+
+    # -- B3.2: adaptive prefetch entry point ---
+
     def _prefetch_around(self, center: int, direction: int = 0) -> None:
+        """Submit prefetch tasks with adaptive window and deduplication.
+
+        B3.2 policy (v2 — generation stays stable during scroll):
+        1. Dedup: skip if already prefetching around this exact center.
+        2. Record scroll event and estimate velocity.
+        3. Compute adaptive radius based on velocity + series size.
+        4. During fast/medium scroll, prefetch ONLY in movement direction.
+        5. During slow/idle, prefetch bidirectionally.
+        6. Generation only bumps on context changes (series close, W/L).
+           Position-based invalidation uses pre-decode distance check.
+        """
         if self._config.prefetch_radius <= 0:
             return
-        for offset in range(1, self._config.prefetch_radius + 1):
-            if direction < 0:
-                candidates = (center - offset, center + offset)
-            else:
-                candidates = (center + offset, center - offset)
-            for idx in candidates:
-                if 0 <= idx < len(self._slices):
-                    if idx not in self._pixel_cache:
-                        self._submit_prefetch(idx)
-                    else:
-                        self._submit_frame_prefetch(idx)
 
-    def _submit_prefetch(self, idx: int) -> None:
+        # Dedup: skip if we already prefetched around this exact center.
+        # Reset by close_series(), set_window_level(), direction changes.
+        if center == self._last_prefetch_center:
+            return
+        self._last_prefetch_center = center
+
+        # Record scroll event and estimate velocity
+        self._record_scroll_event(center)
+        velocity = self._estimate_scroll_velocity()
+        adaptive_radius = self._compute_adaptive_radius(velocity)
+
+        # B3.4→B3.7: Interaction-aware prefetch — during fast scroll, cap radius.
+        # B3.7 raised the cap from 1 to 3: the main thread no longer blocks
+        # for foreground decode (nearest-cached surrogate), so background
+        # workers have more CPU headroom to fill the cache ahead of scroll.
+        interaction_mode = self._fast_interaction
+        if interaction_mode:
+            profile = build_stack_cache_profile(self._effective_policy_slice_count())
+            adaptive_radius = min(adaptive_radius, int(profile.fast_prefetch_radius))
+
+        # B3.4 diagnostic: log prefetch decisions periodically (every 20 slices)
+        if center % 20 == 0:
+            logger.info(
+                "[B3.4_DIAG] PREFETCH center=%d velocity=%.1f radius=%d fast=%s dir=%d",
+                center, velocity, adaptive_radius, self._fast_interaction, direction,
+            )
+
+        # Use current generation (only bumped on W/L or series change)
+        gen = self._prefetch_generation
+        series_key = str(
+            getattr(self, '_series_number', None)
+            or getattr(self, '_series_path', None)
+            or 'prefetch'
+        )
+
+        # Determine direction scope
+        # Fast/medium scroll: unidirectional (scroll direction only)
+        # Slow/idle: bidirectional
+        go_forward = True
+        go_backward = True
+        if velocity >= 8.0 and direction != 0:
+            if direction > 0:
+                go_backward = False
+            else:
+                go_forward = False
+
+        n = len(self._slices)
+        target_indices: set[int] = set()
+        for offset in range(1, adaptive_radius + 1):
+            if go_forward:
+                fwd = center + offset
+                if 0 <= fwd < n:
+                    target_indices.add(fwd)
+            if go_backward:
+                bwd = center - offset
+                if 0 <= bwd < n:
+                    target_indices.add(bwd)
+
+        with self._prefetch_lock:
+            active_targets = set(getattr(self, '_active_prefetch_targets', set()))
+            request_epoch = int(getattr(self, '_prefetch_request_epoch', 0))
+            if target_indices != active_targets:
+                request_epoch += 1
+                self._active_prefetch_targets = set(target_indices)
+                self._prefetch_request_epoch = request_epoch
+
+        for offset in range(1, adaptive_radius + 1):
+            # Forward
+            if go_forward:
+                fwd = center + offset
+                if 0 <= fwd < n:
+                    if fwd not in self._pixel_cache:
+                        if should_admit(
+                            WorkClass.PREFETCH,
+                            {
+                                "key": f"{series_key}:prefetch:{center}:{direction}",
+                                "series_key": series_key,
+                                "distance": offset,
+                                "interaction_mode": getattr(self, '_fast_interaction_mode', ''),
+                            },
+                        ):
+                            self._submit_prefetch(fwd, gen, request_epoch=request_epoch)
+                    elif not interaction_mode:
+                        self._submit_frame_prefetch(fwd)
+            # Backward
+            if go_backward:
+                bwd = center - offset
+                if 0 <= bwd < n:
+                    if bwd not in self._pixel_cache:
+                        if should_admit(
+                            WorkClass.PREFETCH,
+                            {
+                                "key": f"{series_key}:prefetch:{center}:{direction}",
+                                "series_key": series_key,
+                                "distance": offset,
+                                "interaction_mode": getattr(self, '_fast_interaction_mode', ''),
+                            },
+                        ):
+                            self._submit_prefetch(bwd, gen, request_epoch=request_epoch)
+                    elif not interaction_mode:
+                        self._submit_frame_prefetch(bwd)
+
+    def _submit_prefetch(self, idx: int, generation: int = 0, *, request_epoch: int = 0) -> None:
         with self._prefetch_lock:
             if idx in self._pixel_cache or idx in self._prefetch_pending:
                 return
             self._prefetch_pending.add(idx)
-        self._decode_executor.submit(self._decode_into_cache, idx)
+        PerfMetrics.get().record_prefetch_submitted()
+        self._decode_executor.submit(self._decode_into_cache, idx, generation, request_epoch)
 
     def _submit_frame_prefetch(self, idx: int) -> None:
         with self._prefetch_lock:
@@ -878,20 +1381,129 @@ class Lightweight2DPipeline(QObject):
             self._frame_prefetch_pending.add(idx)
         self._frame_executor.submit(self._render_into_cache, idx)
 
-    def _decode_into_cache(self, idx: int) -> None:
+    def _decode_into_cache(self, idx: int, generation: int = 0, request_epoch: int = 0) -> None:
+        # B3.2: generation gate — check BEFORE the expensive pydicom.dcmread.
+        # Only fires on true context changes (series close, W/L change).
+        if generation > 0 and generation != self._prefetch_generation:
+            with self._prefetch_lock:
+                self._prefetch_pending.discard(idx)
+            _pm = PerfMetrics.get()
+            _pm.record_prefetch_completed()
+            _pm.record_cancelled_task()
+            return
+
+        # C3: request-identity gate — only the newest admitted prefetch
+        # neighborhood should continue to burn background decode work.
+        with self._prefetch_lock:
+            active_epoch = self._prefetch_request_epoch
+            active_targets = set(self._active_prefetch_targets)
+        if request_epoch > 0 and request_epoch != active_epoch and idx not in active_targets:
+            with self._prefetch_lock:
+                self._prefetch_pending.discard(idx)
+            _pm = PerfMetrics.get()
+            _pm.record_prefetch_completed()
+            _pm.record_cancelled_task()
+            return
+
+        # B3.2: pre-decode position relevance — skip if user has scrolled
+        # far past this slice.  Saves GIL time for the decode.
+        # B4.x follow-up: keep a modest slack window during fast interaction.
+        # The admitted prefetch neighborhood is now radius 3, and under heavy
+        # overlap a queued +2/+3 task may not begin immediately.  A hard ±3
+        # reject cancels the exact next-wheel warm band too aggressively,
+        # leaving precision wheel scroll to fall back to foreground decode.
+        # Allow one extra neighborhood of slack (±6) so nearby admitted work
+        # survives short scheduler delays without reopening wide stale decode.
+        current = self._current_index
+        _max_distance = 6 if self._fast_interaction else self._config.prefetch_radius
+        if abs(idx - current) > _max_distance:
+            with self._prefetch_lock:
+                self._prefetch_pending.discard(idx)
+            _pm = PerfMetrics.get()
+            _pm.record_prefetch_completed()
+            _pm.record_cancelled_task()
+            return
+
         if idx in self._pixel_cache:
             with self._prefetch_lock:
                 self._prefetch_pending.discard(idx)
             return
         try:
-            arr = self._decode_slice(idx)
-            self._put_pixel_cache(idx, arr)
-            self._submit_frame_prefetch(idx)
+            # B3.11: Try subprocess decode first (GIL isolation for prefetch)
+            # EXCEPTION: during active download overlap on an incomplete viewed
+            # series, background prefetch may probe files that are still being
+            # flushed to disk. Those per-file failures are not user-visible
+            # errors, but they can poison the subprocess health counters and
+            # trigger restart/disable churn right as the first series is coming
+            # on-screen. In that overlap window, keep prefetch decode local and
+            # deterministic; foreground decode is already in-process by design.
+            arr = None
+            use_subprocess_prefetch = True
+            if is_heavy_download_active() and self._series_number:
+                try:
+                    if not is_viewed_series_complete(self._series_number):
+                        use_subprocess_prefetch = False
+                except Exception:
+                    use_subprocess_prefetch = False
+
+            sm = self._slices[idx] if idx < len(self._slices) else None
+            if sm is not None:
+                disk_cache = get_disk_pixel_cache()
+                study_uid = self._series_path or ""
+                arr = disk_cache.get(
+                    sop_instance_uid=sm.path,
+                    study_uid=study_uid,
+                    expected_shape=(sm.rows, sm.cols),
+                )
+
+            svc = get_decode_service() if use_subprocess_prefetch else None
+            if arr is None and svc is not None and svc.is_available and sm is not None:
+                arr = svc.decode(
+                    file_path=sm.path,
+                    rows=sm.rows,
+                    cols=sm.cols,
+                    slope=sm.slope,
+                    intercept=sm.intercept,
+                    photometric=sm.photometric or "MONOCHROME2",
+                    samples_per_pixel=sm.samples_per_pixel,
+                )
+                if arr is not None:
+                    # Save to disk cache (B3.12)
+                    disk_cache.put(sm.path, study_uid, arr)
+            # Fallback to in-process decode
+            if arr is None:
+                arr = self._decode_slice(idx)
+            # B3.2: cache pollution guard — check relevance AFTER decode
+            # If the user has scrolled far away during our decode, discard
+            # the result instead of polluting the cache.
+            current = self._current_index
+            distance = abs(idx - current)
+            # Use a generous relevance window (2× adaptive or minimum 20)
+            # to avoid discarding useful nearby results
+            profile = build_stack_cache_profile(self._effective_policy_slice_count())
+            relevance_limit = max(
+                int(profile.decode_relevance_window),
+                self._compute_adaptive_radius(self._estimate_scroll_velocity()) * 2,
+            )
+            if distance <= relevance_limit:
+                self._put_pixel_cache(idx, arr)
+                self._submit_frame_prefetch(idx)
+            else:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "B3.2:discard_stale_decode idx=%d current=%d dist=%d limit=%d",
+                        idx, current, distance, relevance_limit,
+                    )
         except Exception:
             pass
         finally:
             with self._prefetch_lock:
                 self._prefetch_pending.discard(idx)
+            _pm = PerfMetrics.get()
+            _pm.record_prefetch_completed()
+            # B2.5: stale detection — task completed for a slice far from current view
+            if _pm.enabled and abs(idx - self._current_index) > self._config.prefetch_radius:
+                _pm.record_stale_task()
 
     def _render_into_cache(self, idx: int) -> None:
         try:

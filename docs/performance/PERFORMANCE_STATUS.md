@@ -1,12 +1,58 @@
 # AIPacs Performance Status
-**Version:** v2.3.3 | **Branch:** main | **Updated:** 2026-04-14
+**Version:** v2.3.4 | **Branch:** main | **Updated:** 2026-04-18
 
-> **2026-04-14 policy update (viewer interaction):**
+> **2026-04-18 current KPI extract (latest live-overlap artifact):**
+> - Captured current artifact: `generated-files/benchmarks/aipacs_live_overlap_fresh.json`
+> - Block summary artifact: `generated-files/benchmarks/aipacs_live_overlap_blocks_fresh.json`
+> - Current overlap KPIs: `first_image_visible_ms=196.76`, `set_slice_present_p95_ms=155.48`, `set_slice_present_max_ms=385.82`, `decode_p95_ms=208.4`, `frame_render_p95_ms=187.49`, `cache_hit_ratio_pct=52.6`, `slow_frame_count_16ms=114`, `cpu_p95_pct=139.18`, `rss_peak_mb=221.42`, `thread_count_p95=36.0`.
+> - Interpretation: startup is now fast enough to look healthy on the first image, but sustained heavy-stack interaction is still not healthy; the remaining bottleneck is no longer first-image startup but large-stack interaction under overlap.
+> - Block diagnosis from the current summary: **Block 1** remains mostly healthy as a producer plane, **Block 2** still spikes when foreground decode/render is exposed, and **Block 3** remains the primary remaining bottleneck because cache/scroll/orchestration is still allowing large-stack interaction to fall into expensive paths.
+
+> **2026-04-18 policy update (viewer interaction):**
 > - Wheel scroll is now strict precision mode (**±1 slice only**, no adaptive skip).
-> - Stack drag remains speed mode (adaptive threshold + bounded acceleration by stack size).
+> - Stack drag now follows a **shared slice-count-aware profile**: small stacks stay deliberate, medium stacks stay balanced, and large stacks allow faster bounded traversal without changing wheel precision.
+> - Stack drag overflow is now **bounded, not queued**: capped drag events keep only a sub-threshold tail, and reversal clears stale pending drag immediately.
+> - The same slice-count profile now also drives FAST drag-side Block C behavior (prefetch cap, surrogate window, decode relevance window) so stack speed and cache aggressiveness stay aligned instead of being tuned independently.
+> - During progressive/download growth, the drag/cache profile now follows the **current interactive slice count**, so policy shifts only when the currently reachable stack changes.
 > - FAST measurement tools now auto-return to default mode after completion (parity with Advanced lifecycle).
 
 > **Quick-start:** Start here. For the planning-first KPI program, continue with `FAST_VIEWER_PERFORMANCE_ROADMAP.md` → `FAST_VIEWER_KPI_CATALOG.md` → `FAST_VIEWER_TEST_SCENARIOS.md` → `CONCURRENCY_ANALYSIS_v2.3.3.md`.
+
+> **2026-04-15 runtime alignment update (scroll + download):**
+> - Current logs show cache-hot FAST scroll is typically ~2-5ms with `decode_ms=0`.
+> - Remaining spikes during concurrent download are orchestration/UI event pressure, not decode.
+> - Progressive and thumbnail update paths now coalesce to a protected 2 Hz cadence during active interaction or heavy download.
+> - Restart-after-DONE is fixed in the integrated progressive pipeline while stale terminal callbacks remain guarded.
+> - `log 37` showed the next remaining storm source clearly: duplicate terminal completion/cache-warm activity for the same series before the definitive completion layer closed the cycle.
+> - B4.x-i5 now blocks those duplicate late terminal callbacks before they can recreate tracking or re-fire one-shot grow; fresh runtime capture is still required to measure the live KPI delta.
+> - B4.x-i6/i7 now route existing cadence and prefetch-cap decisions through a shared `SystemLoadController`, with a callback-gap-based `ui_event_loop_lag_ms` probe feeding protected-mode decisions.
+> - B4.x-i8 now lets that same controller defer non-terminal progressive grow and post-completion cache warm during protected UI intervals; runtime recapture is still pending before claiming mixed-load lag is fixed.
+> - 2026-04-17 follow-up: fast interaction now prefers an exact **filtered** cached frame over an exact unfiltered cache hit when both already exist, reducing the subtle scroll-stop image appearance pop without reintroducing decode/filter work.
+> - 2026-04-17 follow-up: progressive slider range now stays anchored to the known total slice count while availability gating remains separate, eliminating the visible `200 → 20 → 40` scrollbar shrink/grow churn.
+> - 2026-04-17 follow-up: slider max growth now explicitly preserves the current viewed position if the underlying slider implementation tries to snap to the new max during progressive range expansion.
+> - 2026-04-17 follow-up: FAST stack drag for larger series is now materially more responsive (smaller per-step threshold + higher bounded per-event cap) so a full-height drag covers a much more useful span without reverting wheel precision or forcing every skipped slice through immediate render.
+> - 2026-04-18 follow-up: FAST stack drag now uses a monotonic backlog-free standard — capped overflow no longer queues momentum, reversal clears stale pending drag immediately, and the active drag/cache profile rebases to the current interactive slice count during progressive growth.
+
+> **2026-04-18 measured-state update (latest current artifact):**
+> - First-image KPI is now materially stronger than the older overlap headless captures (`196.76ms` vs `1103.79-1382.48ms` class in older benchmark sets), so the old “overlap startup is the dominant pain” story is no longer sufficient on its own.
+> - The remaining problem is sustained heavy-stack viewing quality: `set_slice_present_p95_ms=155.48`, `set_slice_present_max_ms=385.82`, `decode_p95_ms=208.4`, and `slow_frame_count_16ms=114` are still far from the interactive target.
+> - `stale_task_ratio=0.0` is a meaningful control-plane improvement versus older headless captures, but `cache_hit_ratio_pct=52.6` shows the active series is still falling out of the cheap path too often during overlap.
+> - Current execution priority should therefore remain conservative and heavy-stack-specific: protect the good `<200`-image behavior, stabilize Block 3 for large active stacks first, and only then broaden series-load refactoring.
+
+> **2026-04-17 benchmark capture update (headless, real dataset):**
+> - Captured AI-PACS FAST artifacts in `generated-files/benchmarks/run_001/` using dataset `user_data/patients/dicom/1.2.840.1.99.1.47.1.1772527236103.85188/202` (342 slices).
+> - Common local baseline: `first_image_visible_ms=327.72`, `set_slice_present_p95_ms=24.85`, `cpu_p95_pct=132.2`, `stale_task_ratio=0.9537`.
+> - AI-PACS overlap: `first_image_visible_ms=1382.48`, `set_slice_present_p95_ms=30.04`, `cpu_p95_pct=166.08`, `stale_task_ratio=0.99`.
+> - Interpretation: overlap regression is primarily orchestration/admission pressure, not raw decode (`decode_p95_ms` improved from `62.34` to `27.45` while user-visible latency worsened).
+> - Limitation: this headless run does **not** validate live Qt-event-loop lag or duplicate terminal log markers; those still require a runtime app log capture.
+
+> **2026-04-15 stabilization pass recapture (headless, run_002):**
+> - Landed a bounded control-plane pass: coalesced DM progress fan-out, single progressive terminal finalizer, shared admission gating for progress/prefetch.
+> - Captured fresh artifacts in `generated-files/benchmarks/run_002/` on the same 342-slice dataset.
+> - Common local baseline improved modestly: `first_image_visible_ms=227.61`, `set_slice_present_p95_ms=23.33`, `cpu_p95_pct=85.0`, `stale_task_ratio=0.9538`.
+> - Overlap headless latency improved strongly: `first_image_visible_ms=1103.79`, `set_slice_present_p95_ms=6.45`, `slow_frame_count_16ms=0`.
+> - But the primary orchestration targets are still open: `stale_task_ratio=0.9899` and overlap `cpu_p95_pct=189.4` remain unacceptable.
+> - Interpretation: the admission hardening clearly helped the headless frame path, but the requested KPI gate is **not yet achieved** and still needs live app/runtime-log validation.
 
 ---
 
@@ -88,6 +134,11 @@ User double-clicks study
 
 | Version | Symptom Fixed | How |
 |---|---|---|
+| **Unreleased (2026-04-19)** | FAST stack drag still treated 20/100/200-slice series too similarly, so drag speed, skip allowance, and Block C cache behavior could fall out of sync | Added a shared slice-count-aware policy (`stack_cache_profile`) used by both `QtSliceViewer` and `Lightweight2DPipeline`: drag threshold/fullscreen span/max-step cap now scale by slice count, while drag-side prefetch radius, surrogate search distance, and decode relevance window scale from the same profile. Heavy-download admission caps remain the final authority, so Block C stays protected under overlap. |
+| **Unreleased (2026-04-16)** | Fast internal-network download bursts could still land in the viewer as one large progressive jump even after signal coalescing; concern remained that a gate might only move complexity into the background | Added a non-terminal **progressive admission gate**: backend may know all downloaded files, but viewer-visible `available_slice_count` now advances in bounded batches via `_progressive_admit_batch_size`; terminal completion remains uncapped. After one-knob sweep results on series `202`, tuned the default admission batch **10 → 8** because it improved overlap P95/max, kept >16ms slow frames at zero, and beat both `5` and `12` on the balance score across overlap + common-path KPIs. Added `test_progressive_admission_storm.py` to prove lower burst shock, bounded drain complexity, and a CPU-pressure storm harness so the stress test is genuinely hot rather than just callback-dense |
+| **Unreleased (2026-04-16)** | Even with the admission gate, protected UI could still wake the progressive grow retry loop every **150ms** while non-terminal viewer admission was being deferred, adding avoidable control-plane churn during download overlap | Added a protected-mode **progressive grow retry cadence**: non-terminal viewer admission now re-arms at **500ms** during active download and **750ms** during active download + fast interaction, while terminal completion remains immediate/uncapped. This makes the visible viewer behave like it currently has only the admitted slice count while the background continues preparing later batches. |
+| **v2.3.3-stability B4.x (2026-04-15)** | Scroll+download spikes with `decode_ms=0`; thumbnail/progressive/log event bursts; integrated restart-after-completion rejected new same-series cycles | Added shared UI throttle/download activity helper; progressive callbacks and thumbnail progress/log updates coalesce to 2 Hz during scroll/heavy download; `set_slice()` marks viewer interaction so thumbnail repaints defer; `Lightweight2DPipeline` reads the live download-active flag; lifecycle re-entry from `DONE` can clear completed-series guard for verified new partial cycles |
+| **v2.3.3-perf B3.7** | 100% foreground pydicom decode (17-45ms) during fast scroll; CPU 150-220%; P95 set_slice 35-50ms | Cache-first fast scroll: `_find_nearest_cached_pixel(±10)` returns surrogate from pixel_cache (0ms decode, ~2ms W/L). Falls through to sync decode only on first frame of new region. During heavy-download overlap on an incomplete viewed series, drag navigation may widen the surrogate window to **±20** and still re-arm the existing prefetch path; admission policy and radius caps remain in force so overlap cache fill stays tiny instead of fully suppressed. Separately, very high-speed drag may also widen to **±20** for completed viewed series so transient cache gaps resolve to surrogate instead of a 15–20ms foreground decode spike. Follow-up: drag now probes the **nearest cached rendered frame** before rerendering a nearby cached pixel, removing remaining `decode_ms=0 / wl_ms≈10–16ms` spikes caused by UI-thread W/L recomputation on surrogate frames. Prefetch radius raised 1→3 during fast interaction. Expected: set_slice P95 <5ms during fast scroll, CPU ~50-70% |
 | **v2.3.3 (2026-04-14)** | Wheel felt jumpy due to adaptive skipping; stack/wheel intent mixed; FAST tools could stay latched after completion | Enforced wheel ±1 policy in `_vw_scroll.py`; added adaptive stack profiles in `qt_slice_viewer.py` and `abstract_interactorstyle.py`; wired FAST auto-deactivate callback chain to restore default mode and clear toolbar selection |
 | **v2.2.3.4.0** | 5-15ms per-frame overhead in set_slice during wheel scroll (camera save/restore, style update, Lock Sync) + subprocess warmup memory-bus contention | Wheel-scroll fast-path: skip camera zoom save/restore (~3-5ms), skip interactor style update (~1ms), throttle Lock Sync to 100ms; subprocess priority BELOW_NORMAL→IDLE |
 | **v2.2.3.3.9** | Mode B scroll lag from warmup subprocess contention (ITK 2 threads + unthrottled result poll + frequent notify) | Subprocess ITK threads 2→1; defer poll during scroll (idle<300ms); max 1 result/tick; notify throttle 500→250ms |
@@ -161,6 +212,125 @@ User double-clicks study
 ### ✅ Resolved — Debounce latency (was P0 in v2.2.3.2.7)
 - Every wheel event restarted 16ms timer → added 16ms latency to every frame
 - v2.2.3.2.8 replaced with adaptive throttle: 0ms first-scroll, paced subsequent renders
+---
+
+## 4.1 Concurrent Download Behavior
+
+Runtime evidence from `log 36 .txt` and `log 37 .txt` now shows three simultaneous truths:
+- The FAST frame path is cache-hot and fast (`[B3.8_SCROLL]` commonly ~0.6-5.2ms with `decode_ms=0`; one sampled frame in `log 37` reached 10.9ms but not the old 50-100ms class).
+- CPU still climbs hard during mixed load (`cpu=153.6%`, `169.8%`, `186.2%`, `221.2%` in `log 37`).
+- The remaining storm is not mainly decode and not mainly thumbnail cadence. The clearest repeated waste is duplicate terminal progressive work on the same series before the final completion layer closes the lifecycle.
+
+`log 37` specifically shows series 303 hitting:
+- repeated `progressive-fast: ... COMPLETE (123 slices)`
+- repeated `cache-warm dispatched ...`
+- repeated lifecycle bounce `COMPLETING -> AWAITING -> COMPLETING -> PROGRESSIVE`
+
+That pattern means late terminal progress callbacks are still able to re-enter the grow path after `_grow_progressive_fast()` has already reached the full count, but before Layer 2b/cleanup writes the final `DONE` state and closes the cycle.
+
+The current stabilization already does the following:
+- Viewer priority: `set_slice()` stays synchronous and marks fast interaction immediately.
+- UI protection: thumbnail progress/border work defers while scrolling and coalesces to max 2 Hz under scroll/heavy download.
+- Progressive signal control: progressive callbacks remain normal 10 Hz when idle, but widen to 2 Hz during heavy download or active interaction.
+- Download awareness: `is_heavy_download_active()` uses the live global download flag plus a short grace window after bursts.
+- Prefetch pressure: idle/medium prefetch radius is capped more aggressively while heavy download is active.
+- Per-series state: `PipelineOrchestrator` now exposes active-series download queries so future routing can distinguish unrelated downloads from the viewed series.
+
+What has now been shipped on top of that diagnosis:
+- **Terminal idempotence bridge:** once `_grow_progressive_fast()` observes terminal completion for a cycle, a compatibility guard blocks duplicate late terminal progress callbacks before they recreate `_progressive_series` or re-fire one-shot grow.
+- **Restart compatibility preserved:** a verified `DONE -> partial new cycle` still clears the completed-series and terminal-complete guards so restart-after-DONE remains functional.
+- **Shared policy point:** cadence/radius decisions now flow through `SystemLoadController` instead of scattered direct timing checks.
+- **UI lag probe:** the Qt bridge records a lightweight callback-gap estimate for `ui_event_loop_lag_ms`; fresh lag above 50ms now activates the same protected cadence path used by heavy download / active interaction.
+- **Policy-driven shedding:** that controller now also front-doors defer decisions for non-terminal progressive grow and post-completion cache warm, so those background actions step aside during protected UI windows instead of contributing more burst pressure.
+- **Viewer admission gate:** non-terminal progressive growth no longer exposes the full `pending_downloaded` count in one tick. The backend can know all files are present, but the viewer admits them in bounded steps via `_progressive_admit_batch_size`. This targets the remaining LAN-speed “burst jump” problem without slowing the downloader or delaying terminal completion.
+- **Storm proof harness:** `tests/viewer/test_progressive_admission_storm.py` now compares ungated vs gated burst shock, verifies bounded extra grow ticks, and includes a CPU-saturation proxy storm so the harness reflects a real hot-path stress class rather than a toy event-count model.
+
+### 4.1.1 Stack path vs gating vs other solutions
+
+The current direction is intentionally split by work class:
+
+- **Stack/wheel/drag path** stays direct and low-latency. That is the user’s sacred path; adding gating there would trade one kind of jank for another.
+- **Progressive growth** now uses a bounded admission gate because it is background, viewer-facing, and burst-sensitive.
+- **Other non-interactive work** (prefetch, cache warm, thumbnail/progress fan-out, refresh/apply after load) is still handled by coalescing, protected-mode deferral, and terminal-idempotence guards.
+
+So the strategy is not “gate everything.” It is:
+
+1. keep the stack path immediate,
+2. gate only non-interactive viewer admission,
+3. keep terminal completion visible,
+4. continue reducing duplicate/background follow-up work elsewhere.
+
+What still needs to happen next:
+- **Runtime recapture:** the live mixed-load session must be rerun to confirm that duplicate `COMPLETE` / cache-warm bursts disappear in production logs and that `[B3.8_SCROLL]` stays in the target class under mixed load.
+- **Helper-authority closure:** once runtime behavior is confirmed, the next cleanup step is retiring compatibility writes/reads that are now shadowed by helper-driven lifecycle and controller policy paths.
+
+This status does not claim the storm is fully solved yet. The specific duplicate terminal re-entry path is now guarded in code and tests, and the shared policy shell is in place, while the broader mixed-load orchestration work remains open.
+
+### 4.1.2 Headless benchmark recapture (`run_001`, 2026-04-17)
+
+Dataset used:
+- `user_data/patients/dicom/1.2.840.1.99.1.47.1.1772527236103.85188/202`
+- 342-slice series from local patient data
+
+Artifacts:
+- `generated-files/benchmarks/run_001/aipacs_common.json`
+- `generated-files/benchmarks/run_001/aipacs_overlap.json`
+- `generated-files/benchmarks/run_001/aipacs_overlap_vs_common.md`
+
+Measured results:
+
+| KPI | Common local baseline | AI-PACS overlap | Interpretation |
+|---|---:|---:|---|
+| `first_image_visible_ms` | 327.72 | 1382.48 | overlap open path is 4.2× slower |
+| `set_slice_present_p50_ms` | 0.05 | 14.41 | overlap loses the near-free cache-hot feel |
+| `set_slice_present_p95_ms` | 24.85 | 30.04 | both runs still miss the 16ms target |
+| `decode_p95_ms` | 62.34 | 27.45 | overlap regression is not decode-dominated |
+| `frame_render_p95_ms` | 46.82 | 29.93 | render path is not the main offender |
+| `cache_hit_ratio_pct` | 56.2 | 48.0 | overlap reduces useful cache locality |
+| `slow_frame_count_16ms` | 63 / 296 | 124 / 248 | overlap roughly doubles missed frames |
+| `stale_task_ratio` | 0.9537 | 0.99 | background admission is still extremely noisy |
+| `cpu_p95_pct` | 132.2 | 166.08 | overlap adds substantial control-plane load |
+| `thread_count_p95` | 31 | 33 | overlap keeps more workers/actors alive |
+
+What this run proves:
+- The FAST path is **not** healthy enough yet even in common local viewing; the baseline still has too much stale work and too many missed frames.
+- The overlap regression is **not** explained by slower decode. The decode path got cheaper while the UX KPIs got worse.
+- The best current explanation remains: admitted non-interactive work is still too eager, and one DM progress event still fans out into too many UI-side consumers.
+
+What this run does **not** prove:
+- It does not measure live Qt event-loop callback gaps in the real app.
+- It does not confirm whether duplicate terminal `COMPLETE` / cache-warm log markers are gone in production runtime.
+- It does not isolate multi-view redraw/sync tails; those require live runtime capture, not headless harness only.
+
+### 4.1.2 Headless stabilization recapture (`run_002`, 2026-04-15)
+
+Artifacts:
+- `generated-files/benchmarks/run_002/aipacs_common.json`
+- `generated-files/benchmarks/run_002/aipacs_overlap.json`
+- `generated-files/benchmarks/run_002/aipacs_overlap_vs_common.md`
+
+Measured results:
+
+| KPI | `run_001` common | `run_002` common | `run_001` overlap | `run_002` overlap |
+|---|---:|---:|---:|---:|
+| `first_image_visible_ms` | 327.72 | 227.61 | 1382.48 | 1103.79 |
+| `set_slice_present_p95_ms` | 24.85 | 23.33 | 30.04 | 6.45 |
+| `slow_frame_count_16ms` | 63 / 296 | 109 / 296 | 124 / 248 | 0 / 248 |
+| `stale_task_ratio` | 0.9537 | 0.9538 | 0.99 | 0.9899 |
+| `cpu_p95_pct` | 132.2 | 85.0 | 166.08 | 189.4 |
+
+What `run_002` shows:
+- The shared admission changes helped headless slice-present latency materially under overlap.
+- The control-plane goals that motivated this pass are still NOT achieved in benchmark terms:
+        - `stale_task_ratio` did not move meaningfully.
+        - overlap `cpu_p95_pct` regressed further.
+- Therefore this pass should be treated as a **partial stabilization** rather than a completed KPI fix.
+
+Why the mismatch is believable:
+- `run-aipacs-headless` strongly exercises `Lightweight2DPipeline` and simulated mixed-load decode pressure.
+- It does **not** fully exercise live Qt/UI fan-out, `HomeDownloadService` signal cadence, or real-app terminal duplicate logs.
+- So the code changes are real and the tests are green, but the remaining KPI question now depends on a live runtime capture, not headless-only evidence.
+
 ---
 
 ## 5. Key Files

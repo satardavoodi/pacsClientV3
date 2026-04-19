@@ -1,0 +1,87 @@
+{
+  "viewer": "AI-PACS FAST",
+  "mode": "headless-aipacs-fast",
+  "dataset": "c:\\AI-Pacs codes\\aipacs-pydicom2d\\user_data\\patients\\dicom\\1.2.840.1.99.1.47.1.1772527236103.85188\\202",
+  "scenario_id": "aipacs_live_download_overlap",
+  "scenario_title": "AI-PACS Live Download Overlap",
+  "kpis": {
+    "first_image_visible_ms": 5323.57,
+    "set_slice_present_p50_ms": 5.26,
+    "set_slice_present_p95_ms": 13.57,
+    "set_slice_present_max_ms": 20.06,
+    "decode_p95_ms": 10.24,
+    "frame_render_p95_ms": 13.21,
+    "cache_hit_ratio_pct": 48.2,
+    "slow_frame_count_16ms": 6,
+    "longest_ui_gap_ms": 0.0,
+    "stale_task_ratio": 0.0,
+    "cpu_p95_pct": 160.14,
+    "rss_peak_mb": 294.81,
+    "thread_count_p95": 33.0
+  },
+  "raw_perf_metrics": {
+    "set_slice_p50_ms": 5.26,
+    "set_slice_p95_ms": 13.57,
+    "set_slice_p99_ms": 16.79,
+    "set_slice_max_ms": 20.06,
+    "decode_p50_ms": 5.21,
+    "decode_p95_ms": 10.24,
+    "frame_render_p50_ms": 7.18,
+    "frame_render_p95_ms": 13.21,
+    "wl_p50_ms": 2.92,
+    "wl_p95_ms": 4.66,
+    "filter_p50_ms": 0.0,
+    "paint_p95_ms": 0.0,
+    "decode_queue_depth_max": 13,
+    "decode_queue_depth_p95": 3,
+    "frame_queue_depth_max": 4,
+    "frame_queue_depth_p95": 0,
+    "stale_task_ratio": 0.0,
+    "cancelled_task_ratio": 0.9873,
+    "stale_task_count": 0,
+    "cancelled_task_count": 390,
+    "prefetch_submitted": 395,
+    "prefetch_completed": 395,
+    "cache_hit_ratio_pct": 48.2,
+    "cache_hits": 119,
+    "cache_misses": 128,
+    "foreground_wait_p50_ms": 5.21,
+    "foreground_wait_p95_ms": 10.24,
+    "foreground_wait_max_ms": 5253.81,
+    "slow_frame_count_16ms": 6,
+    "slow_frame_count_33ms": 0,
+    "total_frames": 248,
+    "first_image_ms": 5323.57,
+    "longest_ui_gap_ms": 0.0,
+    "effective_fps": 19.5,
+    "capture_duration_s": 12.69
+  },
+  "process_summary": {
+    "sample_count": 3,
+    "cpu_p50_pct": 150.6,
+    "cpu_p95_pct": 160.14,
+    "cpu_max_pct": 161.2,
+    "rss_peak_mb": 294.81,
+    "thread_count_p95": 33.0,
+    "thread_count_max": 33,
+    "read_mb_delta": 378.88,
+    "write_mb_delta": 0.0,
+    "steps": {
+      "rapid_burst": {
+        "cpu_p95_pct": 161.2,
+        "rss_peak_mb": 291.39,
+        "thread_count_max": 33
+      },
+      "direction_reversal": {
+        "cpu_p95_pct": 99.0,
+        "rss_peak_mb": 293.93,
+        "thread_count_max": 33
+      },
+      "idle_settle": {
+        "cpu_p95_pct": 150.6,
+        "rss_peak_mb": 294.81,
+        "thread_count_max": 33
+      }
+    }
+  }
+}

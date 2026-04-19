@@ -1,15 +1,19 @@
 ﻿"""Patient double-click: tab open, loading states, close/cleanup"""
 # Auto-generated from home_ui.py — Phase 3 split
 
-
-
 import asyncio
 import logging
+import logging as _logging
 import time as _time
 import threading
 import traceback
 
 _logger = logging.getLogger(__name__)
+
+# Redirect print() to logger to avoid synchronous console I/O on Windows.
+_print_logger = _logging.getLogger(__name__)
+def print(*args, **_kw):  # noqa: A001
+    _print_logger.debug(' '.join(str(a) for a in args))
 
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QSize
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QGridLayout, QLineEdit, QTableWidget, QAbstractItemView, QHeaderView, QCheckBox, QScrollArea, QToolButton, QTableWidgetItem, QMessageBox, QApplication, QProgressDialog, QTabWidget, QLabel, QFileDialog, QProgressBar, QStatusBar, QSplitter, QDialog, QGraphicsDropShadowEffect, QSizePolicy, QWidget
@@ -26,6 +30,209 @@ from .widget import SourceOfPatientLoad
 
 class _HPPatientOpenMixin:
     """Patient double-click: tab open, loading states, close/cleanup"""
+
+    def _ensure_open_trace_context(self, study_uid, **extra):
+        contexts = getattr(self, '_open_trace_contexts', None)
+        if contexts is None:
+            contexts = {}
+            self._open_trace_contexts = contexts
+        study_key = str(study_uid or '')
+        ctx = contexts.get(study_key)
+        if ctx is None:
+            ctx = {'t0': _time.perf_counter()}
+            contexts[study_key] = ctx
+        for key, value in extra.items():
+            if value is not None:
+                ctx[key] = value
+        return ctx
+
+    def _open_trace_elapsed_ms(self, study_uid) -> float:
+        ctx = self._ensure_open_trace_context(study_uid)
+        return (_time.perf_counter() - float(ctx.get('t0', _time.perf_counter()))) * 1000.0
+
+    def _log_open_trace(self, study_uid, phase: str, level: str = 'info', **fields) -> None:
+        ctx = self._ensure_open_trace_context(study_uid)
+        base = {
+            'patient_id': ctx.get('patient_id'),
+            'is_local': ctx.get('is_local'),
+            'source': ctx.get('source'),
+        }
+        merged = {}
+        for source in (base, fields):
+            for key, value in source.items():
+                if value is not None:
+                    merged[key] = value
+        details = ' '.join(f"{key}={merged[key]}" for key in sorted(merged))
+        log_message = (
+            f"[FAST-OPEN-TRACE] study={study_uid} phase={phase} "
+            f"t_ms={self._open_trace_elapsed_ms(study_uid):.1f}"
+        )
+        if details:
+            log_message = f"{log_message} {details}"
+        getattr(_logger, level, _logger.info)(log_message)
+
+    def _pending_deferred_counts(self, study_uid) -> tuple[int, int, int]:
+        study_key = str(study_uid or '')
+        pending_studies = getattr(self, '_deferred_patient_studies_refresh', None) or {}
+        pending_series_info = getattr(self, '_deferred_series_info_refresh', None) or {}
+        pending_attachments = getattr(self, '_deferred_attachment_downloads', None) or set()
+        right_panel = 1 if study_key and study_key in pending_studies else 0
+        series_info = 1 if study_key and study_key in pending_series_info else 0
+        attachments = 1 if study_key and study_key in pending_attachments else 0
+        return right_panel, series_info, attachments
+
+    def _is_first_series_visible_for_study(self, study_uid) -> bool:
+        try:
+            study_uid = str(study_uid or '')
+            active_widget = getattr(self, '_double_click_loading_widget', None)
+            if (
+                getattr(self, '_double_click_first_series_loaded', False)
+                and active_widget is not None
+                and str(getattr(active_widget, 'study_uid', '')) == study_uid
+            ):
+                return True
+            widget = self._find_widget_by_study_uid(study_uid)
+            return bool(getattr(widget, '_first_series_displayed', False)) if widget else False
+        except Exception:
+            return False
+
+    def _defer_patient_studies_refresh(self, patient_info: dict) -> None:
+        pending = getattr(self, '_deferred_patient_studies_refresh', None)
+        if pending is None:
+            pending = {}
+            self._deferred_patient_studies_refresh = pending
+        study_uid = str(patient_info.get('StudyInstanceUID', '') or '')
+        if study_uid:
+            pending[study_uid] = dict(patient_info)
+            self._log_open_trace(
+                study_uid,
+                'right_panel_deferred',
+                pending_right_panel=1,
+                first_series_visible=self._is_first_series_visible_for_study(study_uid),
+            )
+
+    def _defer_series_info_refresh(self, patient_id: str, patient_name: str, study_uid: str) -> None:
+        pending = getattr(self, '_deferred_series_info_refresh', None)
+        if pending is None:
+            pending = {}
+            self._deferred_series_info_refresh = pending
+        study_key = str(study_uid or '')
+        if not study_key:
+            return
+        pending[study_key] = {
+            'patient_id': patient_id,
+            'patient_name': patient_name,
+            'study_uid': study_key,
+        }
+        self._log_open_trace(
+            study_key,
+            'series_info_deferred',
+            pending_series_info=1,
+            first_series_visible=self._is_first_series_visible_for_study(study_key),
+        )
+
+    def _start_attachment_download_in_background(self, study_uid: str, trigger: str = 'immediate') -> None:
+        def _worker():
+            _t0 = _time.perf_counter()
+            self._log_open_trace(study_uid, 'attachments_start', trigger=trigger)
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(download_attachments_for_study_async(study_uid))
+                finally:
+                    loop.close()
+                self._log_open_trace(
+                    study_uid,
+                    'attachments_done',
+                    trigger=trigger,
+                    worker_ms=round((_time.perf_counter() - _t0) * 1000.0, 1),
+                )
+            except Exception as e:
+                self._log_open_trace(
+                    study_uid,
+                    'attachments_error',
+                    level='error',
+                    trigger=trigger,
+                    worker_ms=round((_time.perf_counter() - _t0) * 1000.0, 1),
+                    error=str(e),
+                )
+                print(f"⚠️ [THREAD] Error downloading attachments: {e}")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _defer_attachment_download(self, study_uid: str) -> None:
+        pending = getattr(self, '_deferred_attachment_downloads', None)
+        if pending is None:
+            pending = set()
+            self._deferred_attachment_downloads = pending
+        study_key = str(study_uid)
+        pending.add(study_key)
+        self._log_open_trace(
+            study_key,
+            'attachments_deferred',
+            pending_attachments=1,
+            first_series_visible=self._is_first_series_visible_for_study(study_key),
+        )
+
+    def _run_deferred_patient_open_tasks(self, study_uid: str | None = None) -> None:
+        study_key = str(study_uid or '')
+        try:
+            pending_series_info = getattr(self, '_deferred_series_info_refresh', None) or {}
+            if study_key:
+                info_args = pending_series_info.pop(study_key, None)
+                if info_args:
+                    self._log_open_trace(study_key, 'series_info_replay_start', replay_reason='first_series_visible')
+                    asyncio.create_task(
+                        self._load_and_display_series_info_async(
+                            info_args['patient_id'],
+                            info_args['patient_name'],
+                            info_args['study_uid'],
+                        )
+                    )
+            else:
+                for pending_uid, info_args in list(pending_series_info.items()):
+                    self._log_open_trace(pending_uid, 'series_info_replay_start', replay_reason='global_flush')
+                    asyncio.create_task(
+                        self._load_and_display_series_info_async(
+                            info_args['patient_id'],
+                            info_args['patient_name'],
+                            info_args['study_uid'],
+                        )
+                    )
+                pending_series_info.clear()
+        except Exception:
+            pass
+
+        try:
+            pending_studies = getattr(self, '_deferred_patient_studies_refresh', None) or {}
+            if study_key:
+                patient_info = pending_studies.pop(study_key, None)
+                if patient_info:
+                    self._log_open_trace(study_key, 'right_panel_replay_start', replay_reason='first_series_visible')
+                    asyncio.create_task(self.show_patient_studies(patient_info))
+            else:
+                for pending_uid, patient_info in list(pending_studies.items()):
+                    self._log_open_trace(pending_uid, 'right_panel_replay_start', replay_reason='global_flush')
+                    asyncio.create_task(self.show_patient_studies(patient_info))
+                pending_studies.clear()
+        except Exception:
+            pass
+
+        try:
+            pending_attachments = getattr(self, '_deferred_attachment_downloads', None) or set()
+            if study_key:
+                if study_key in pending_attachments:
+                    pending_attachments.discard(study_key)
+                    self._log_open_trace(study_key, 'attachments_replay_start', replay_reason='first_series_visible')
+                    self._start_attachment_download_in_background(study_key, trigger='replay')
+            else:
+                for pending_uid in list(pending_attachments):
+                    pending_attachments.discard(pending_uid)
+                    self._log_open_trace(pending_uid, 'attachments_replay_start', replay_reason='global_flush')
+                    self._start_attachment_download_in_background(pending_uid, trigger='replay')
+        except Exception:
+            pass
 
     def open_patient_widget(self, patient_id, patient_name, study_uid):
         if self.loading_message:
@@ -65,10 +272,19 @@ class _HPPatientOpenMixin:
 
         _t0_double_click = _time.perf_counter()
         _logger.info("[FAST-UX] double_click_t0 study=%s patient=%s", study_uid, patient_id)
+        self._ensure_open_trace_context(
+            study_uid,
+            t0=_t0_double_click,
+            patient_id=str(patient_id),
+            patient_name=str(patient_name),
+            source=str(getattr(self, 'source_of_patient_load', None)),
+        )
+        self._log_open_trace(study_uid, 'open_request', report_status=report_status)
 
         try:
             # Prevent duplicate open requests for the same study (double-trigger / re-entrancy)
             if study_uid in self._opening_studies:
+                self._log_open_trace(study_uid, 'duplicate_open_blocked')
                 print(f"⚠️ Duplicate open prevented for study {study_uid}")
                 return
 
@@ -97,8 +313,10 @@ class _HPPatientOpenMixin:
                             self._double_click_first_series_loaded = True
                             self._maybe_hide_double_click_loading()
                             self.patient_table_widget.update_visited_status(study_uid, status='opened')
+                            self._log_open_trace(study_uid, 'existing_tab_focused')
                             return
                 except Exception as e:
+                    self._log_open_trace(study_uid, 'existing_tab_focus_error', level='error', error=str(e))
                     print(f"⚠️ Error switching to existing tab: {e}")
                     # Continue with normal flow if tab switching fails
 
@@ -117,6 +335,12 @@ class _HPPatientOpenMixin:
             study_data = get_study_by_study_uid(study_uid=study_uid)
             output_dir = None
             is_local = self.source_of_patient_load in (SourceOfPatientLoad.DB, SourceOfPatientLoad.OFFLINE_CLOUD)
+            self._ensure_open_trace_context(
+                study_uid,
+                is_local=is_local,
+                is_offline_cloud=is_offline_cloud,
+                selected_server_type=selected_server.get('server_type') or 'server',
+            )
 
             if study_data:
                 output_dir = study_data.get('study_path')
@@ -132,6 +356,7 @@ class _HPPatientOpenMixin:
                     study_uid,
                 )
                 if not sync_result.get("ok"):
+                    self._log_open_trace(study_uid, 'offline_cloud_sync_failed', level='error')
                     QMessageBox.warning(
                         self,
                         "Offline Cloud",
@@ -141,6 +366,14 @@ class _HPPatientOpenMixin:
                     self._maybe_hide_double_click_loading()
                     return
                 output_dir = sync_result.get("study_path") or output_dir
+
+            self._log_open_trace(
+                study_uid,
+                'study_path_ready',
+                is_local=is_local,
+                is_offline_cloud=is_offline_cloud,
+                output_dir=output_dir,
+            )
 
             # --- STEP 3: Open tab immediately (UI first) ---
             caller = CallerTypes.IMPORT if is_local else CallerTypes.SERVER
@@ -159,6 +392,7 @@ class _HPPatientOpenMixin:
                 self._trace_action_done(action_id, phase='open_widget_failed', extra={'study_uid': str(study_uid)})
                 self._double_click_first_series_loaded = True
                 self._maybe_hide_double_click_loading()
+                self._log_open_trace(study_uid, 'tab_create_failed', level='error')
                 return
 
             if is_offline_cloud:
@@ -187,6 +421,7 @@ class _HPPatientOpenMixin:
                 "[H7-P1] study=%s tab_created=True is_local=%s t_since_open_ms=%.1f",
                 study_uid, is_local, (_time.perf_counter() - _t0_double_click) * 1000.0,
             )
+            self._log_open_trace(study_uid, 'tab_created', is_local=is_local)
 
             # Ensure lifecycle hook runs for initial open even if currentChanged is not emitted.
             try:
@@ -206,6 +441,7 @@ class _HPPatientOpenMixin:
                 self._double_click_loading_widget = widget
                 if hasattr(widget, 'loading_complete'):
                     widget.loading_complete.connect(self._on_first_series_loaded)
+                    self._log_open_trace(study_uid, 'waiting_for_first_series_signal')
             except Exception:
                 pass
 
@@ -277,6 +513,11 @@ class _HPPatientOpenMixin:
                                     study_uid, len(series_list),
                                     (_time.perf_counter() - _t0_double_click) * 1000.0,
                                 )
+                                self._log_open_trace(
+                                    study_uid,
+                                    'thumbnail_stubs_scheduled',
+                                    series_count=len(series_list),
+                                )
                             except Exception:
                                 pass
 
@@ -310,36 +551,59 @@ class _HPPatientOpenMixin:
                             "[H7-P1] study=%s dm_started=True dm_wired=True t_since_open_ms=%.1f",
                             study_uid, (_time.perf_counter() - _t0_double_click) * 1000.0,
                         )
+                        self._log_open_trace(study_uid, 'download_manager_wired', series_count=len(series_list))
                 except Exception as e:
+                    self._log_open_trace(study_uid, 'download_manager_error', level='error', error=str(e))
                     print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
 
             # --- STEP 3.6: UI-bound async tasks must run on main thread/event loop ---
             try:
-                asyncio.create_task(self._load_and_display_series_info_async(patient_id, patient_name, study_uid))
                 patient_info = {
                     "PatientID": patient_id,
                     "PatientName": patient_name,
                     "StudyInstanceUID": study_uid,
                 }
-                asyncio.create_task(self.show_patient_studies(patient_info))
+                from modules.viewer.fast.ui_throttle import should_defer_noncritical_open_network
+
+                if should_defer_noncritical_open_network(
+                    first_series_visible=self._is_first_series_visible_for_study(study_uid)
+                ):
+                    self._defer_series_info_refresh(patient_id, patient_name, study_uid)
+                    self._defer_patient_studies_refresh(patient_info)
+                    self._log_open_trace(
+                        study_uid,
+                        'ui_tasks_deferred',
+                        right_panel_requested=True,
+                        series_info_requested=True,
+                    )
+                else:
+                    asyncio.create_task(self._load_and_display_series_info_async(patient_id, patient_name, study_uid))
+                    asyncio.create_task(self.show_patient_studies(patient_info))
+                    self._log_open_trace(study_uid, 'ui_tasks_scheduled', right_panel_requested=True, series_info_requested=True)
             except Exception as e:
+                self._log_open_trace(study_uid, 'ui_task_schedule_error', level='error', error=str(e))
                 print(f"⚠️ [UI] Error scheduling UI tasks: {e}")
 
             # --- STEP 4: Background tasks (non-blocking via threading to avoid async conflicts) ---
             def _background_setup_thread():
                 """Run background setup in a separate thread to avoid async conflicts"""
                 try:
+                    self._log_open_trace(study_uid, 'background_setup_started')
                     # Download attachments in background (non-blocking)
                     if not is_local:
                         try:
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            try:
-                                loop.run_until_complete(
-                                    download_attachments_for_study_async(study_uid)
+                            from modules.viewer.fast.ui_throttle import should_defer_noncritical_open_network
+
+                            if should_defer_noncritical_open_network(
+                                first_series_visible=self._is_first_series_visible_for_study(study_uid)
+                            ):
+                                self._defer_attachment_download(study_uid)
+                                _logger.info(
+                                    "[FAST-OPEN-GATE] deferred attachments study=%s until first series visible",
+                                    study_uid,
                                 )
-                            finally:
-                                loop.close()
+                            else:
+                                self._start_attachment_download_in_background(study_uid, trigger='immediate')
                         except Exception as e:
                             print(f"⚠️ [THREAD] Error downloading attachments: {e}")
 
@@ -350,7 +614,7 @@ class _HPPatientOpenMixin:
 
                     if not series_list and not is_local:
                         try:
-                            study_info = self.get_series_info_from_server(study_uid, patient_id)
+                            study_info = self._get_or_fetch_series_info(study_uid, patient_id)
                             if study_info:
                                 series_list = study_info.get('series', [])
                         except Exception:
@@ -359,12 +623,14 @@ class _HPPatientOpenMixin:
                     # Pass series info to widget
                     if widget and series_list:
                         widget.set_server_series_info(series_list)
+                        self._log_open_trace(study_uid, 'background_series_info_pushed', series_count=len(series_list))
 
                     # Download is already started by add_study_downloads(start_immediately=True)
                     # in Step 3.5 above. No need to start again here.
                     # The Download Manager handles progress tracking and priority ordering.
 
                 except Exception as e:
+                    self._log_open_trace(study_uid, 'background_setup_error', level='error', error=str(e))
                     print(f"⚠️ [BACKGROUND] Error in background setup: {e}")
 
             # Start background tasks in a separate thread (no async conflicts)
@@ -376,10 +642,12 @@ class _HPPatientOpenMixin:
 
             # Auto-hide patient widget overlay after 3 seconds as fallback
             QTimer.singleShot(3000, lambda: widget._hide_init_overlay() if hasattr(widget, '_hide_init_overlay') else None)
+            self._log_open_trace(study_uid, 'open_hot_path_complete')
 
             # Everything is handled in the fast path above
         except Exception as e:
             print(f"Error in patient double-click handler: {str(e)}")
+            self._log_open_trace(study_uid, 'open_error', level='error', error=str(e))
             self._trace_action_done(action_id, phase='double_click_error', extra={'study_uid': str(study_uid), 'error': str(e)})
             # Hide loading on error
             self.hide_loading()
@@ -404,6 +672,21 @@ class _HPPatientOpenMixin:
 
     def _on_first_series_loaded(self):
         self._double_click_first_series_loaded = True
+        try:
+            active_widget = getattr(self, '_double_click_loading_widget', None)
+            active_study_uid = getattr(active_widget, 'study_uid', None) if active_widget else None
+            if active_study_uid:
+                pending_right_panel, pending_series_info, pending_attachments = self._pending_deferred_counts(active_study_uid)
+                self._log_open_trace(
+                    active_study_uid,
+                    'first_series_visible',
+                    pending_right_panel=pending_right_panel,
+                    pending_series_info=pending_series_info,
+                    pending_attachments=pending_attachments,
+                )
+            self._run_deferred_patient_open_tasks(active_study_uid)
+        except Exception:
+            pass
         self._maybe_hide_double_click_loading()
 
     def remove_from_opening_studies(self, study_uid):
@@ -496,6 +779,13 @@ class _HPPatientOpenMixin:
                     for task in list(self._download_tasks):
                         if task and not task.done():
                             task.cancel()
+
+            # Disconnect DM signals for this widget to prevent stale callbacks
+            if widget and hasattr(self, 'download_service'):
+                try:
+                    self.download_service.disconnect_widget(widget)
+                except Exception:
+                    pass
             
             # Remove from dict_tabs_widget
             if hasattr(widget, 'study_uid') and widget.study_uid in self.dict_tabs_widget:
@@ -531,6 +821,12 @@ class _HPPatientOpenMixin:
                 if not task.done():
                     task.cancel()
             self._background_tasks.clear()
+
+        if hasattr(self, 'download_service') and self.download_service is not None:
+            try:
+                self.download_service.cleanup()
+            except Exception:
+                pass
 
     def _safe_emit_series_downloaded(self, widget_ref_weak, series_number):
         """Safely emit series_downloaded signal, checking if widget exists"""

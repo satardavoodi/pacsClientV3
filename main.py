@@ -264,7 +264,7 @@ if __name__ == "__main__":
     configure_diagnostic_logging(process_role="main", force=True)
     logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
 
-    # ── BACKEND_SWITCH v2.3.3: Startup banner ────────────────────────────
+    # ── BACKEND_SWITCH v2.3.5: Startup banner ────────────────────────────
     try:
         from modules.viewer.viewer_backend_config import (
             load_viewer_backend as _load_vb,
@@ -418,7 +418,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("2.3.3")
+    app.setApplicationVersion("2.3.5")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -469,8 +469,13 @@ if __name__ == "__main__":
             sys.exit(0)
     
     # Integrate asyncio with Qt event loop
+    app.setQuitOnLastWindowClosed(True)
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
+    try:
+        app.aboutToQuit.connect(loop.stop)
+    except Exception:
+        pass
 
     window = AppHandler(startup_import_folder=startup_import_folder)
     window.show()
@@ -506,3 +511,9 @@ if __name__ == "__main__":
         # Clean up single-instance lock on shutdown
         instance_lock.release()
         logging.getLogger(__name__).info("Application shutdown: instance lock released")
+        # B3.11: Shutdown decode service subprocess
+        try:
+            from modules.viewer.fast.decode_service import shutdown_decode_service
+            shutdown_decode_service()
+        except Exception:
+            pass

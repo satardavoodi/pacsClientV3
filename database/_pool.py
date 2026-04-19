@@ -272,4 +272,4 @@ def cleanup_connection_pools() -> None:
                 except Exception:
                     pass
         _connection_pool.clear()
-        print("✅ All pooled database connections closed")
+        logger.info("All pooled database connections closed")

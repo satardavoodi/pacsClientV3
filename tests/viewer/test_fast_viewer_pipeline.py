@@ -1,11 +1,15 @@
 from types import SimpleNamespace
 import threading
+import asyncio
 
 from PacsClient.pacs.patient_tab.ui.patient_ui import patient_widget_viewer_controller as controller_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_backend as _vc_backend_mod
+from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_cache as _vc_cache_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_load as _vc_load_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_layout as _vc_layout_mod
+from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _vc_progressive_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_warmup as _vc_warmup_mod
+from PacsClient.pacs.patient_tab.utils import image_io as image_io_mod
 
 
 class _DummyVtkImage:
@@ -34,11 +38,14 @@ def _build_controller():
     controller._series_number_to_index = {}
     controller.zeta_boost = SimpleNamespace(invalidate_series=lambda *a, **kw: None)
     controller._disk_count_cache = {}
+    controller._deferred_series_load_on_activation = []
     # v2.2.9.2 — progressive tracking used by Layer 3/4 cleanup
     controller._progressive_series = {}
     controller.parent_widget = SimpleNamespace(
         lst_thumbnails_data=[],
         thumbnail_manager=SimpleNamespace(update_series_image_count=lambda *a: None),
+        isVisible=lambda: True,
+        resolve_series_key=lambda value: str(value),
     )
     return controller
 
@@ -79,6 +86,397 @@ def test_apply_loaded_series_data_rehydrates_parent_cache_without_refresh(tmp_pa
     assert controller.parent_widget.import_folder_path == str(series_dir.parent)
 
 
+def test_start_progressive_display_defers_untargeted_background_series(monkeypatch):
+    controller = _build_controller()
+    controller._progressive_display_inflight = {"203"}
+    controller._progressive_display_done = set()
+    controller._progressive_lifecycle_state = {}
+    controller._first_series_displayed = True
+    controller._any_viewer_empty = lambda: False
+    controller._ensure_import_folder_path = lambda: "C:/study"
+    controller.parent_widget = SimpleNamespace(
+        _background_tasks=set(),
+    )
+
+    scheduled = []
+    monkeypatch.setattr(_vc_progressive_mod.asyncio, "create_task", lambda coro: scheduled.append(coro))
+    monkeypatch.setattr(_vc_progressive_mod.asyncio, "get_running_loop", lambda: object())
+
+    controller._start_progressive_display("203", 11, 135)
+
+    assert scheduled == []
+    assert "203" not in controller._progressive_display_inflight
+
+
+def test_on_series_images_progress_skips_repeated_untargeted_background_retry():
+    controller = _build_controller()
+    controller._progressive_display_done = set()
+    controller._progressive_display_inflight = set()
+    controller._progressive_lifecycle_state = {}
+    controller._progressive_series = {}
+    controller._first_series_displayed = True
+    controller._any_viewer_empty = lambda: False
+    controller._is_fast_viewer_mode = lambda: True
+    controller._find_progressive_viewers = lambda sn: []
+    controller._progressive_grow_batch_size = 10
+    controller.lst_nodes_viewer = []
+
+    start_calls = []
+    controller._start_progressive_display = lambda *a, **kw: start_calls.append((a, kw))
+
+    _vc_progressive_mod._mark_progressive_untargeted_deferred(controller, "203")
+
+    controller.on_series_images_progress("203", 20, 135)
+
+    assert start_calls == []
+    assert "203" not in controller._progressive_display_inflight
+
+
+def test_on_series_images_progress_skips_terminal_untargeted_background_completion():
+    controller = _build_controller()
+    controller._progressive_display_done = set()
+    controller._progressive_display_inflight = set()
+    controller._progressive_lifecycle_state = {}
+    controller._progressive_series = {}
+    controller._first_series_displayed = True
+    controller._any_viewer_empty = lambda: False
+    controller._is_fast_viewer_mode = lambda: True
+    controller._find_progressive_viewers = lambda sn: []
+    controller._progressive_grow_batch_size = 10
+    controller.lst_nodes_viewer = [
+        SimpleNamespace(
+            vtk_widget=SimpleNamespace(
+                _awaiting_series_number=None,
+                _progressive_series_number=None,
+                image_viewer=SimpleNamespace(metadata={"series": {"series_number": "101"}}),
+            )
+        )
+    ]
+
+    start_calls = []
+    controller._start_progressive_display = lambda *a, **kw: start_calls.append((a, kw))
+
+    controller.on_series_images_progress("203", 135, 135)
+
+    assert start_calls == []
+    assert controller._progressive_series == {}
+    assert _vc_progressive_mod._is_progressive_terminal_complete_guard_active(controller, "203")
+
+
+def test_on_series_images_progress_retries_deferred_background_series_when_viewer_empty():
+    controller = _build_controller()
+    controller._progressive_display_done = set()
+    controller._progressive_display_inflight = set()
+    controller._progressive_lifecycle_state = {}
+    controller._progressive_series = {}
+    controller._first_series_displayed = True
+    controller._any_viewer_empty = lambda: True
+    controller._is_fast_viewer_mode = lambda: True
+    controller._find_progressive_viewers = lambda sn: []
+    controller._progressive_grow_batch_size = 10
+    controller.lst_nodes_viewer = []
+
+    start_calls = []
+    controller._start_progressive_display = lambda *a, **kw: start_calls.append((a, kw))
+
+    _vc_progressive_mod._mark_progressive_untargeted_deferred(controller, "203")
+
+    controller.on_series_images_progress("203", 20, 135)
+
+    assert len(start_calls) == 1
+    assert not _vc_progressive_mod._is_progressive_untargeted_deferred(controller, "203")
+
+
+def test_on_series_images_progress_defers_until_admitted(monkeypatch):
+    controller = _build_controller()
+    controller._progressive_display_done = set()
+    controller._progressive_display_inflight = set()
+    controller._progressive_lifecycle_state = {}
+    controller._progressive_series = {}
+    controller._first_series_displayed = False
+    controller._any_viewer_empty = lambda: True
+    controller._is_fast_viewer_mode = lambda: True
+    controller._find_progressive_viewers = lambda sn: []
+    controller._progressive_grow_batch_size = 10
+    controller.lst_nodes_viewer = []
+
+    start_calls = []
+    controller._start_progressive_display = lambda *a, **kw: start_calls.append((a, kw))
+
+    monkeypatch.setattr(
+        _vc_progressive_mod,
+        "_should_admit_progressive_signal",
+        lambda obj, series_number, *, terminal=False: False,
+    )
+
+    controller.on_series_images_progress("203", 20, 135)
+
+    assert start_calls == []
+    assert controller._progressive_series == {}
+
+
+def test_is_viewer_fast_interacting_uses_active_flag():
+    controller = _build_controller()
+
+    viewer = SimpleNamespace(
+        _in_fast_slice_interaction=True,
+        _last_scroll_event_ms=None,
+        _fast_interaction_idle_window_ms=220.0,
+    )
+
+    assert controller._is_viewer_fast_interacting(viewer) is True
+
+
+def test_viewer_has_series_fully_visible_requires_expected_count():
+    controller = _build_controller()
+    viewer = SimpleNamespace(
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "202"}}),
+        get_count_of_slices=lambda: 135,
+    )
+    controller.lst_nodes_viewer = [SimpleNamespace(vtk_widget=viewer)]
+
+    assert controller._viewer_has_series_fully_visible("202", 135) is True
+    assert controller._viewer_has_series_fully_visible("202", 136) is False
+
+
+def test_load_series_on_demand_skips_redundant_post_complete_reload(monkeypatch):
+    controller = _build_controller()
+    ready_calls = []
+    finalize_calls = []
+    load_calls = []
+
+    viewer = SimpleNamespace(
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "202"}}),
+        get_count_of_slices=lambda: 135,
+    )
+    controller.lst_nodes_viewer = [SimpleNamespace(vtk_widget=viewer)]
+    controller._tab_active = True
+    controller._first_series_displayed = True
+    controller._any_viewer_empty = lambda: False
+    controller.parent_widget = SimpleNamespace(
+        isVisible=lambda: True,
+        resolve_series_key=lambda s: str(s),
+        thumbnail_manager=SimpleNamespace(
+            set_series_ready=lambda sn: ready_calls.append(("ready", sn)),
+            apply_border_states_new=lambda: ready_calls.append(("apply", None)),
+        ),
+        _background_tasks=set(),
+    )
+    controller.pipeline = SimpleNamespace(
+        state=_vc_load_mod.PipelineState.DOWNLOADING,
+        on_series_download_completed=lambda sn: None,
+    )
+    controller._mark_download_active = lambda: None
+    controller.on_series_download_fully_complete = lambda sn: finalize_calls.append(sn)
+    controller._count_series_files_on_disk = lambda sn: 135
+    controller._load_single_series_on_demand = lambda *a, **kw: load_calls.append((a, kw)) or True
+    controller.zeta_boost = SimpleNamespace(is_active=lambda: False)
+
+    monkeypatch.setattr(_vc_load_mod.logger, "info", lambda *a, **kw: None)
+
+    controller.load_series_on_demand("202")
+
+    assert finalize_calls == ["202"]
+    assert load_calls == []
+    assert ready_calls == [("ready", "202"), ("apply", None)]
+
+
+def test_load_series_on_demand_skips_untargeted_background_completion_in_fast_mode(monkeypatch):
+    controller = _build_controller()
+    ready_calls = []
+    finalize_calls = []
+    complete_calls = []
+    load_calls = []
+
+    other_viewer = SimpleNamespace(
+        _awaiting_series_number=None,
+        _progressive_series_number=None,
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "101"}}),
+        get_count_of_slices=lambda: 40,
+    )
+    controller.lst_nodes_viewer = [SimpleNamespace(vtk_widget=other_viewer)]
+    controller._tab_active = True
+    controller._first_series_displayed = True
+    controller._any_viewer_empty = lambda: False
+    controller._is_fast_viewer_mode = lambda: True
+    controller.parent_widget = SimpleNamespace(
+        isVisible=lambda: True,
+        resolve_series_key=lambda s: str(s),
+        thumbnail_manager=SimpleNamespace(
+            set_series_ready=lambda sn: ready_calls.append(("ready", sn)),
+            apply_border_states_new=lambda: ready_calls.append(("apply", None)),
+        ),
+        _background_tasks=set(),
+    )
+    controller.pipeline = SimpleNamespace(
+        state=_vc_load_mod.PipelineState.DOWNLOADING,
+        on_series_download_completed=lambda sn: complete_calls.append(sn),
+    )
+    controller._mark_download_active = lambda: None
+    controller.on_series_download_fully_complete = lambda sn: finalize_calls.append(("layer2b", sn))
+    controller._finalize_progressive_series = lambda sn, **kw: finalize_calls.append(("finalize", sn, kw)) or True
+    controller._load_single_series_on_demand = lambda *a, **kw: load_calls.append((a, kw)) or True
+    controller.zeta_boost = SimpleNamespace(is_active=lambda: False)
+
+    monkeypatch.setattr(_vc_load_mod.logger, "info", lambda *a, **kw: None)
+
+    controller.load_series_on_demand("203")
+
+    assert complete_calls == ["203"]
+    assert finalize_calls == [
+        ("finalize", "203", {"final_count": 0, "source": "load_series_on_demand_background_skip"})
+    ]
+    assert load_calls == []
+    assert ready_calls == [("ready", "203"), ("apply", None)]
+
+
+def test_load_series_on_demand_does_not_skip_when_viewer_is_awaiting(monkeypatch):
+    controller = _build_controller()
+    ready_calls = []
+    finalize_calls = []
+
+    awaiting_viewer = SimpleNamespace(
+        _awaiting_series_number="203",
+        _progressive_series_number=None,
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "101"}}),
+        get_count_of_slices=lambda: 40,
+    )
+    controller.lst_nodes_viewer = [SimpleNamespace(vtk_widget=awaiting_viewer)]
+    controller._tab_active = True
+    controller._first_series_displayed = True
+    controller._any_viewer_empty = lambda: False
+    controller._is_fast_viewer_mode = lambda: True
+    controller.parent_widget = SimpleNamespace(
+        isVisible=lambda: True,
+        resolve_series_key=lambda s: str(s),
+        thumbnail_manager=SimpleNamespace(
+            set_series_ready=lambda sn: ready_calls.append(("ready", sn)),
+            apply_border_states_new=lambda: ready_calls.append(("apply", None)),
+        ),
+        _background_tasks=set(),
+    )
+    controller.pipeline = SimpleNamespace(
+        state=_vc_load_mod.PipelineState.DOWNLOADING,
+        on_series_download_completed=lambda sn: None,
+    )
+    controller._mark_download_active = lambda: None
+    controller.on_series_download_fully_complete = lambda sn: finalize_calls.append(sn)
+    controller._count_series_files_on_disk = lambda sn: 0
+    controller._load_single_series_on_demand = lambda *a, **kw: False
+    controller.zeta_boost = SimpleNamespace(is_active=lambda: False)
+    controller.parent_widget._pending_series_loads = set()
+    controller.parent_widget.lst_series_name = set()
+
+    monkeypatch.setattr(_vc_load_mod.logger, "info", lambda *a, **kw: None)
+
+    controller.load_series_on_demand("203")
+
+    assert finalize_calls == ["203"]
+    assert ready_calls == []
+
+
+def test_apply_loaded_series_data_defers_refresh_when_viewer_is_interacting(monkeypatch, tmp_path):
+    controller = _build_controller()
+    series_dir = tmp_path / "study" / "7"
+    series_dir.mkdir(parents=True)
+
+    deferred = []
+    switched = []
+    viewer = SimpleNamespace(
+        id_vtk_widget=77,
+        last_series_show=2,
+        _in_fast_slice_interaction=True,
+        _last_scroll_event_ms=None,
+        _fast_interaction_idle_window_ms=220.0,
+    )
+    node = SimpleNamespace(vtk_widget=viewer, slider="slider")
+    controller.lst_nodes_viewer = [node]
+    controller._perform_series_switch_optimized = lambda *args, **kwargs: switched.append((args, kwargs))
+
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+        replace_series_data=lambda **kwargs: 2,
+        import_folder_path="",
+    )
+
+    monkeypatch.setattr(_vc_load_mod.QTimer, "singleShot", lambda delay, fn: deferred.append(delay))
+
+    controller._apply_loaded_series_data(
+        series_number="7",
+        vtk_image_data=_DummyVtkImage(),
+        metadata={
+            "series": {
+                "thumbnail_path": "thumb.png",
+                "series_path": str(series_dir),
+            },
+            "instances": [],
+        },
+        patient_pk=10,
+        study_pk=20,
+        refresh_viewer=True,
+        target_viewer_id=77,
+    )
+
+    assert switched == []
+    assert len(deferred) == 1
+
+
+def test_apply_loaded_series_data_skips_same_series_fast_progressive_rebind(tmp_path):
+    controller = _build_controller()
+    series_dir = tmp_path / "study" / "202"
+    series_dir.mkdir(parents=True)
+
+    switched = []
+    range_updates = []
+    metadata_sync = []
+    spinner_hides = []
+
+    viewer = SimpleNamespace(
+        id_vtk_widget=77,
+        last_series_show=2,
+        _active_backend=_vc_load_mod.BACKEND_PYDICOM,
+        _progressive_mode=True,
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "202"}}),
+        get_count_of_slices=lambda: 20,
+    )
+    node = SimpleNamespace(vtk_widget=viewer, slider="slider")
+    controller.lst_nodes_viewer = [node]
+    controller._perform_series_switch_optimized = lambda *args, **kwargs: switched.append((args, kwargs))
+    controller._update_vtk_slice_range = lambda vtk_w, node_viewer, new_count, slider=None, available_count=None: range_updates.append((vtk_w, new_count, slider, available_count))
+    controller._refresh_and_sync_metadata = lambda sn, count: metadata_sync.append((sn, count))
+    controller._hide_spinner_for_widget = lambda vtk_w: spinner_hides.append(vtk_w)
+    controller._progressive_series = {"202": {"downloaded": 20, "total": 132}}
+
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+        replace_series_data=lambda **kwargs: 2,
+        import_folder_path="",
+    )
+
+    controller._apply_loaded_series_data(
+        series_number="202",
+        vtk_image_data=_DummyVtkImage((160, 160, 132)),
+        metadata={
+            "series": {
+                "series_number": "202",
+                "thumbnail_path": "thumb.png",
+                "series_path": str(series_dir),
+            },
+            "instances": [{} for _ in range(132)],
+        },
+        patient_pk=10,
+        study_pk=20,
+        refresh_viewer=True,
+        target_viewer_id=77,
+    )
+
+    assert switched == []
+    assert metadata_sync == [("202", 132)]
+    assert len(range_updates) == 1
+    assert range_updates[0][1] == 132
+    assert spinner_hides == [viewer]
+
+
 def test_get_series_by_number_fast_rehydrates_from_full_cache(monkeypatch):
     controller = _build_controller()
     captured = {}
@@ -116,6 +514,7 @@ def test_get_series_by_number_fast_rehydrates_from_full_cache(monkeypatch):
 def test_load_single_series_on_demand_uses_requested_fast_backend_when_backend_is_none(tmp_path, monkeypatch):
     controller = _build_controller()
     captured = {}
+    acquire_calls = []
     study_root = tmp_path / "study"
     (study_root / "1").mkdir(parents=True)
 
@@ -137,7 +536,10 @@ def test_load_single_series_on_demand_uses_requested_fast_backend_when_backend_i
     controller._series_load_lock = threading.Lock()
     controller._loading_series_numbers = set()
     controller._series_load_events = {}
-    controller._interactive_full_load_semaphore = threading.BoundedSemaphore(1)
+    controller._interactive_full_load_semaphore = SimpleNamespace(
+        acquire=lambda: acquire_calls.append("acquire"),
+        release=lambda: acquire_calls.append("release"),
+    )
     controller._apply_loaded_series_data_threadsafe = lambda *args, **kwargs: None
     controller._prefetch_loaded = set()
 
@@ -151,6 +553,514 @@ def test_load_single_series_on_demand_uses_requested_fast_backend_when_backend_i
     assert result is False
     assert captured["viewer_backend"] == controller_mod.BACKEND_PYDICOM
     assert captured["allow_lazy_backend"] is True
+    assert acquire_calls == []
+
+
+def test_requires_serialized_interactive_load_only_for_vtk():
+    controller = _build_controller()
+
+    assert controller._requires_serialized_interactive_load(controller_mod.BACKEND_VTK) is True
+    assert controller._requires_serialized_interactive_load(controller_mod.BACKEND_PYDICOM) is False
+
+
+def test_load_single_series_on_demand_uses_gate_for_vtk_backend(tmp_path, monkeypatch):
+    controller = _build_controller()
+    acquire_calls = []
+    study_root = tmp_path / "study"
+    (study_root / "1").mkdir(parents=True)
+
+    def _load_single_series_by_number(**kwargs):
+        return None
+
+    controller.parent_widget = SimpleNamespace(
+        import_folder_path=str(study_root),
+        metadata_fixed={"patient_pk": None, "study_pk": None},
+        ordering_by_instances_number=None,
+    )
+    controller._get_requested_viewer_backend = lambda: controller_mod.BACKEND_VTK
+    controller._tab_active = True
+    controller._interactive_load_in_progress = False
+    controller.zeta_boost = SimpleNamespace(invalidate_series=lambda *args, **kwargs: None)
+    controller._full_cache_get = lambda *args, **kwargs: None
+    controller._get_series_by_number_fast = lambda *args, **kwargs: (None, None, -1)
+    controller._series_load_lock = threading.Lock()
+    controller._loading_series_numbers = set()
+    controller._series_load_events = {}
+    controller._interactive_full_load_semaphore = SimpleNamespace(
+        acquire=lambda: acquire_calls.append("acquire"),
+        release=lambda: acquire_calls.append("release"),
+    )
+    controller._apply_loaded_series_data_threadsafe = lambda *args, **kwargs: None
+    controller._prefetch_loaded = set()
+
+    monkeypatch.setattr(controller_mod, "load_single_series_by_number", _load_single_series_by_number)
+    monkeypatch.setattr(controller_mod, "log_stage_timing", lambda *args, **kwargs: None)
+    monkeypatch.setattr(_vc_load_mod, "load_single_series_by_number", _load_single_series_by_number)
+    monkeypatch.setattr(_vc_load_mod, "log_stage_timing", lambda *args, **kwargs: None)
+
+    result = controller._load_single_series_on_demand(series_number=1, viewer_backend=None)
+
+    assert result is False
+    assert acquire_calls == ["acquire", "release"]
+
+
+def test_load_first_series_only_delegates_to_preview_first_path(tmp_path):
+    controller = _build_controller()
+    study_root = tmp_path / "study"
+    study_root.mkdir(parents=True)
+    requested = []
+
+    controller.parent_widget.import_folder_path = None
+    controller.parent_widget.lst_series_name = set()
+    controller.load_series_on_demand = lambda series_number: requested.append(series_number)
+    controller._load_single_series_on_demand = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("sync loader should not be used"))
+
+    controller.load_first_series_only(str(study_root), "7")
+
+    assert controller.parent_widget.import_folder_path == str(study_root)
+    assert requested == ["7"]
+
+
+def test_load_series_immediately_delegates_to_preview_first_path(tmp_path):
+    controller = _build_controller()
+    series_dir = tmp_path / "study" / "7"
+    series_dir.mkdir(parents=True)
+    (series_dir / "Instance_0001.dcm").write_bytes(b"dcm")
+    requested = []
+
+    controller.parent_widget.import_folder_path = None
+    controller.parent_widget.lst_series_name = set()
+    controller.load_series_on_demand = lambda series_number: requested.append(series_number)
+    controller._load_single_series_on_demand = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("sync loader should not be used"))
+
+    controller.load_series_immediately("7", str(series_dir))
+
+    assert controller.parent_widget.import_folder_path == str(series_dir.parent)
+    assert requested == ["7"]
+
+
+def test_load_series_preview_async_uses_current_preview_contract(monkeypatch):
+    controller = _build_controller()
+    preview_vtk = _DummyVtkImage((32, 32, 8))
+    preview_meta = {"series": {"series_number": "7"}, "instances": [{}]}
+    captured = {}
+
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 11, "study_pk": 22},
+    )
+    controller._get_series_by_number_fast = lambda sn: (None, None, -1)
+    controller._interactive_preview_max_slices = 6
+    controller._interactive_preview_file_cap = lambda: 6
+
+    def _fake_load_series_preview(**kwargs):
+        captured.update(kwargs)
+        return preview_vtk, preview_meta, (11, 22), 48
+
+    monkeypatch.setattr(image_io_mod, "load_series_preview", _fake_load_series_preview)
+
+    vtk_preview, metadata = controller._load_series_preview_async("7", "C:/study")
+
+    assert vtk_preview is preview_vtk
+    assert metadata is preview_meta
+    assert captured == {
+        "study_path": "C:/study",
+        "series_number": 7,
+        "patient_pk": 11,
+        "study_pk": 22,
+        "max_files": 6,
+    }
+
+
+def test_load_series_preview_async_does_not_treat_preview_only_cache_as_full(monkeypatch):
+    controller = _build_controller()
+    preview_vtk = _DummyVtkImage((32, 32, 8))
+    preview_meta = {
+        "series": {"series_number": "7"},
+        "instances": [{}],
+        "preview_only": True,
+        "preview_total_instances": 120,
+    }
+    loaded = []
+
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 11, "study_pk": 22},
+    )
+    controller._get_series_by_number_fast = lambda sn: (preview_vtk, preview_meta, 0)
+    controller._interactive_preview_file_cap = lambda: 5
+    controller._is_full_volume_cache_candidate = lambda sn, vtk_data, meta: False
+
+    def _fake_load_series_preview(**kwargs):
+        loaded.append(kwargs)
+        return _DummyVtkImage((32, 32, 5)), {"series": {"series_number": "7"}, "instances": [{}]}, (11, 22), 120
+
+    monkeypatch.setattr(image_io_mod, "load_series_preview", _fake_load_series_preview)
+
+    vtk_preview, metadata = controller._load_series_preview_async("7", "C:/study")
+
+    assert vtk_preview is not preview_vtk
+    assert loaded == [{
+        "study_path": "C:/study",
+        "series_number": 7,
+        "patient_pk": 11,
+        "study_pk": 22,
+        "max_files": 5,
+    }]
+    assert metadata["series"]["series_number"] == "7"
+
+
+def test_should_use_interactive_preview_includes_large_series():
+    controller = _build_controller()
+    controller._interactive_preview_enabled = True
+
+    assert controller._should_use_interactive_preview(180) is True
+    assert controller._should_use_interactive_preview(0) is True
+
+
+def test_should_use_interactive_preview_skips_single_slice_and_honors_disable():
+    controller = _build_controller()
+    controller._interactive_preview_enabled = True
+    assert controller._should_use_interactive_preview(1) is False
+
+    controller._interactive_preview_enabled = False
+    assert controller._should_use_interactive_preview(180) is False
+
+
+def test_interactive_preview_file_cap_is_bounded():
+    controller = _build_controller()
+
+    controller._interactive_preview_max_slices = 64
+    assert controller._interactive_preview_file_cap() == 8
+
+    controller._interactive_preview_max_slices = 3
+    assert controller._interactive_preview_file_cap() == 3
+
+
+def test_load_series_on_demand_preview_displays_before_full_load(monkeypatch):
+    controller = _build_controller()
+    preview_calls = []
+    display_calls = []
+    full_load_calls = []
+
+    controller._tab_active = True
+    controller._first_series_displayed = False
+    controller._any_viewer_empty = lambda: True
+    controller._is_fast_viewer_mode = lambda: False
+    controller._mark_download_active = lambda: None
+    controller.on_series_download_fully_complete = lambda sn: None
+    controller._count_series_files_on_disk = lambda sn: 0
+    controller._queue_on_ui_thread = lambda func: func()
+    controller._display_series_after_load = lambda sn, progressive_total=0: display_calls.append((sn, progressive_total))
+
+    async def _fake_full_load(series_number, progressive_total=0):
+        full_load_calls.append((series_number, progressive_total))
+
+    controller._async_load_and_display_series = _fake_full_load
+    controller._load_series_preview_async = lambda sn, study_path: (_DummyVtkImage((32, 32, 1)), {"series": {"series_number": sn}, "instances": [{}]})
+    controller._apply_loaded_series_data_threadsafe = lambda *args, **kwargs: preview_calls.append((args, kwargs))
+    controller.zeta_boost = SimpleNamespace(is_active=lambda: False)
+    controller.pipeline = SimpleNamespace(
+        state=_vc_load_mod.PipelineState.DOWNLOADING,
+        on_series_download_completed=lambda sn: None,
+    )
+    controller.parent_widget = SimpleNamespace(
+        isVisible=lambda: True,
+        resolve_series_key=lambda s: str(s),
+        import_folder_path="C:/study",
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+        _background_tasks=set(),
+        _pending_series_loads=set(),
+        lst_series_name=set(),
+        thumbnail_manager=None,
+    )
+
+    async def _run():
+        controller.load_series_on_demand("204")
+        await asyncio.gather(*list(controller.parent_widget._background_tasks))
+
+    asyncio.run(_run())
+
+    assert len(preview_calls) == 1
+    preview_args, preview_kwargs = preview_calls[0]
+    assert preview_args[0] == "204"
+    assert preview_kwargs["refresh_viewer"] is False
+    assert display_calls == [("204", 0)]
+    assert full_load_calls == [("204", 0)]
+
+
+def test_progressive_download_flow_displays_initial_batch_then_grows_and_completes(monkeypatch):
+    """Exercise the FAST progressive flow from first display through later slice admission."""
+    controller = _build_controller()
+    controller._progressive_display_done = set()
+    controller._progressive_display_inflight = set()
+    controller._progressive_lifecycle_state = {}
+    controller._progressive_untargeted_defer = set()
+    controller._progressive_finalized_series = set()
+    controller._progressive_terminal_complete_guard = set()
+    controller._series_download_completed = set()
+    controller._layer2b_complete_guard = set()
+    controller._first_series_displayed = False
+    controller._progressive_grow_batch_size = 10
+    controller._progressive_admit_batch_size = 20
+    controller._is_fast_viewer_mode = lambda: True
+    controller._any_viewer_empty = lambda: True
+    controller._ensure_import_folder_path = lambda: "C:/study"
+    controller._refresh_and_sync_metadata = lambda *args, **kwargs: None
+    controller._invalidate_series_caches = lambda *args, **kwargs: None
+    controller._update_thumbnail_count = lambda *args, **kwargs: None
+    cache_warm_calls = []
+    controller._dispatch_post_completion_cache_warm = (
+        lambda *args, **kwargs: cache_warm_calls.append((args, kwargs))
+    )
+    controller._progressive_grow_timer = SimpleNamespace(
+        isActive=lambda: False,
+        start=lambda: None,
+        stop=lambda: None,
+        interval=lambda: 150,
+    )
+
+    controller.parent_widget = SimpleNamespace(
+        _background_tasks=set(),
+        lst_thumbnails_data=[],
+        thumbnail_manager=SimpleNamespace(update_series_image_count=lambda *a: None),
+        isVisible=lambda: True,
+        resolve_series_key=lambda value: str(value),
+        import_folder_path="C:/study",
+    )
+
+    display_calls = []
+    booster_calls = []
+    enter_calls = []
+    exit_calls = []
+    available_updates = []
+    slider_updates = []
+    slice_updates = []
+    state = {"slice_count": 0}
+    grow_results = iter([15, 20])
+
+    class _ImmediateThread:
+        def __init__(self, *, target=None, name=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            if self._target is not None:
+                self._target()
+
+    class _FakeBackend:
+        def get_file_paths(self):
+            return [f"/fake/{idx}.dcm" for idx in range(state["slice_count"])]
+
+    class _FakeLoader:
+        def __init__(self):
+            self.backend = _FakeBackend()
+            self.vtk_image_data = None
+
+        def grow(self):
+            new_count = next(grow_results)
+            state["slice_count"] = new_count
+            return new_count
+
+    loader = _FakeLoader()
+
+    def _enter_progressive_mode(total, sn):
+        enter_calls.append((total, sn))
+        viewer._progressive_mode = True
+        viewer._progressive_series_number = str(sn)
+        viewer._total_expected_slices = total
+
+    def _update_available_slice_count(count):
+        available_updates.append(count)
+        viewer._available_slice_count = count
+
+    def _exit_progressive_mode():
+        exit_calls.append(state["slice_count"])
+        viewer._progressive_mode = False
+        viewer._progressive_series_number = None
+
+    viewer = SimpleNamespace(
+        image_viewer=SimpleNamespace(
+            metadata={"series": {"series_number": ""}},
+            update_corners_actors=lambda **kw: None,
+        ),
+        _progressive_mode=False,
+        _progressive_series_number=None,
+        _progressive_grow_pending=False,
+        _available_slice_count=0,
+        _total_expected_slices=0,
+        _lazy_loader=loader,
+        _qt_bridge_active=False,
+        id_vtk_widget=1,
+    )
+    viewer.get_count_of_slices = lambda: state["slice_count"]
+    viewer._get_loaded_slice_count_for_progressive_sync = lambda: state["slice_count"]
+    viewer.enter_progressive_mode = _enter_progressive_mode
+    viewer.update_available_slice_count = _update_available_slice_count
+    viewer.exit_progressive_mode = _exit_progressive_mode
+
+    node = SimpleNamespace(
+        vtk_widget=viewer,
+        slider=SimpleNamespace(
+            blockSignals=lambda value: None,
+            setMaximum=lambda value: slider_updates.append(value),
+        ),
+    )
+    controller.lst_nodes_viewer = [node]
+
+    controller._image_slice_booster = SimpleNamespace(
+        set_active=lambda *args, **kwargs: booster_calls.append((args, kwargs)),
+        active_series=None,
+        update_paths=lambda *args, **kwargs: None,
+    )
+    controller._load_single_series_on_demand = lambda series_number, study_path=None: True
+
+    def _display_series_after_load(series_number, progressive_total=0):
+        display_calls.append((series_number, progressive_total))
+        state["slice_count"] = 10
+        viewer.image_viewer.metadata["series"]["series_number"] = str(series_number)
+        controller._first_series_displayed = True
+
+    controller._display_series_after_load = _display_series_after_load
+    controller._update_vtk_slice_range = lambda vtk_w, current_node, new_count, *, slider=None, available_count=None: (
+        slice_updates.append((new_count, available_count)),
+        state.__setitem__("slice_count", new_count),
+        setattr(vtk_w, "_available_slice_count", available_count if available_count is not None else new_count),
+    )
+
+    monkeypatch.setattr(_vc_progressive_mod, "_should_admit_progressive_signal", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_vc_progressive_mod, "_should_defer_progressive_grow", lambda *args, **kwargs: False)
+    monkeypatch.setattr(_vc_progressive_mod, "_progressive_signal_interval_ms", lambda: 0)
+    monkeypatch.setattr(_vc_progressive_mod.QTimer, "singleShot", lambda _delay, callback: callback())
+    monkeypatch.setattr(threading, "Thread", _ImmediateThread)
+
+    controller.on_series_images_progress("301", 10, 20)
+
+    assert display_calls == [("301", 20)]
+    assert enter_calls == [(20, "301")]
+    assert available_updates == [10]
+    assert slider_updates == [19]
+    assert booster_calls == [(("301", [f"/fake/{idx}.dcm" for idx in range(10)]), {"center_slice": 0})]
+    assert "301" in controller._progressive_display_done
+    assert viewer._progressive_mode is True
+
+    controller.on_series_images_progress("301", 15, 20)
+    controller._flush_progressive_grow_impl()
+
+    assert slice_updates == [(15, 15)]
+    assert controller._progressive_series["301"]["last_grow_count"] == 15
+    assert viewer._available_slice_count == 15
+    assert viewer._progressive_mode is True
+
+    controller.on_series_images_progress("301", 20, 20)
+    controller._flush_progressive_grow_impl()
+
+    assert slice_updates == [(15, 15), (20, 20)]
+    assert exit_calls == [20]
+    assert cache_warm_calls == [(("301", [(viewer, node)]), {})]
+    assert "301" not in controller._progressive_series
+    assert viewer._progressive_mode is False
+
+
+def test_load_series_on_demand_defers_when_tab_inactive():
+    controller = _build_controller()
+    controller._tab_active = False
+
+    controller.load_series_on_demand("204")
+
+    assert controller._deferred_series_load_on_activation == ["204"]
+
+
+def test_replay_deferred_series_loads_after_activation(monkeypatch):
+    controller = _build_controller()
+    controller._tab_active = True
+    controller._deferred_series_load_on_activation = ["204", "205"]
+
+    replayed = []
+    controller.load_series_on_demand = lambda sn: replayed.append(sn)
+    monkeypatch.setattr(_vc_cache_mod.QTimer, "singleShot", lambda _ms, func: func())
+
+    controller._replay_deferred_series_loads_after_activation()
+
+    assert replayed == ["204", "205"]
+    assert controller._deferred_series_load_on_activation == []
+
+
+def test_display_loaded_series_skips_paired_lookup_for_non_mg_same_name():
+    controller = _build_controller()
+    switch_calls = []
+    paired_fetches = []
+
+    target_widget = SimpleNamespace(
+        switch_series=lambda *args, **kwargs: switch_calls.append((args, kwargs)) or True,
+        image_viewer=None,
+    )
+
+    controller.selected_widget = None
+    controller.lst_nodes_viewer = [SimpleNamespace(vtk_widget=target_widget, slider="slider-1")]
+    controller._paired_series_map = {"Shared Name": ["201", "202"]}
+    controller._get_series_by_number_fast = lambda sn: paired_fetches.append(sn) or (_DummyVtkImage(), {"series": {"series_number": sn, "modality": "CT"}}, 0)
+    controller.parent_widget = SimpleNamespace(
+        slider="slider-1",
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+        reset_slider=lambda *args, **kwargs: None,
+        toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+        manage_reference_line=lambda: None,
+    )
+
+    controller._display_loaded_series(
+        series_number="201",
+        series_idx=0,
+        vtk_image_data=_DummyVtkImage(),
+        metadata={"series": {"series_number": "201", "series_name": "Shared Name", "modality": "CT"}},
+        flag_change_selected_widget=False,
+        vtk_widget=target_widget,
+        slider="slider-1",
+        progressive_total=0,
+    )
+
+    assert paired_fetches == []
+    args, kwargs = switch_calls[0]
+    assert args[3] is None
+    assert args[4] is None
+
+
+def test_display_loaded_series_pairs_only_mg_same_name():
+    controller = _build_controller()
+    switch_calls = []
+    paired_fetches = []
+
+    target_widget = SimpleNamespace(
+        switch_series=lambda *args, **kwargs: switch_calls.append((args, kwargs)) or True,
+        image_viewer=None,
+    )
+
+    controller.selected_widget = None
+    controller.lst_nodes_viewer = [SimpleNamespace(vtk_widget=target_widget, slider="slider-1")]
+    controller._paired_series_map = {"MG Pair": ["301", "302"]}
+    controller._get_series_by_number_fast = lambda sn: paired_fetches.append(sn) or (_DummyVtkImage(), {"series": {"series_number": sn, "modality": "MG"}}, 0)
+    controller._clone_metadata_for_switch = lambda meta: {**meta, "cloned": True}
+    controller.parent_widget = SimpleNamespace(
+        slider="slider-1",
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+        reset_slider=lambda *args, **kwargs: None,
+        toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+        manage_reference_line=lambda: None,
+    )
+
+    controller._display_loaded_series(
+        series_number="301",
+        series_idx=0,
+        vtk_image_data=_DummyVtkImage(),
+        metadata={"series": {"series_number": "301", "series_name": "MG Pair", "modality": "MG"}},
+        flag_change_selected_widget=False,
+        vtk_widget=target_widget,
+        slider="slider-1",
+        progressive_total=0,
+    )
+
+    assert paired_fetches == ["302"]
+    args, kwargs = switch_calls[0]
+    assert args[3] is not None
+    assert args[4]["series"]["series_number"] == "302"
+    assert args[4]["cloned"] is True
 
 
 def test_get_requested_viewer_backend_prefers_parent_override(monkeypatch):
@@ -393,6 +1303,43 @@ def test_done_guard_recovery_reactivates_progressive_mode():
     assert calls[0] == (100, "5"), f"Unexpected args: {calls[0]}"
 
 
+def test_activate_progressive_mode_on_viewers_uses_raw_loaded_slice_count(monkeypatch):
+    """Activation must preserve the loaded-slice window instead of the progressive total."""
+    controller = _build_controller()
+    controller._is_fast_viewer_mode = lambda: True
+    controller._image_slice_booster = SimpleNamespace(set_active=lambda *a, **kw: None)
+
+    available_updates = []
+    viewer = SimpleNamespace(
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "201"}}),
+        get_count_of_slices=lambda: 34,
+        _get_loaded_slice_count_for_progressive_sync=lambda: 20,
+        enter_progressive_mode=lambda total, sn: None,
+        update_available_slice_count=lambda count: available_updates.append(count),
+        _lazy_loader=None,
+    )
+    slider_updates = []
+    node = SimpleNamespace(
+        vtk_widget=viewer,
+        slider=SimpleNamespace(
+            blockSignals=lambda value: None,
+            setMaximum=lambda value: slider_updates.append(value),
+        ),
+    )
+    controller.lst_nodes_viewer = [node]
+
+    monkeypatch.setattr(
+        _vc_progressive_mod,
+        "_set_progressive_lifecycle_state",
+        lambda *args, **kwargs: None,
+    )
+
+    controller._activate_progressive_mode_on_viewers("201", 34)
+
+    assert available_updates == [20]
+    assert slider_updates == [33]
+
+
 def test_threaded_progressive_done_add_after_activation():
     """
     In the threaded fallback of _start_progressive_display:
@@ -554,6 +1501,108 @@ def test_on_series_download_fully_complete_exits_progressive():
         controller.on_series_download_fully_complete("5")
 
     assert len(exit_calls) == 1, "exit_progressive_mode must be called exactly once"
+
+
+def test_on_series_download_fully_complete_routes_terminal_close_through_finalize_owner():
+    """Layer 2b should delegate terminal close to the shared finalizer."""
+    controller = _build_controller()
+    controller._progressive_series = {
+        "31": {"total": 50, "last_grow_count": 40},
+    }
+    controller._completion_sweep_series_set = set()
+    controller._completion_sweep_timer = SimpleNamespace(
+        isActive=lambda: False, start=lambda: None, stop=lambda: None,
+    )
+
+    exit_calls = []
+    finalize_calls = []
+
+    class _FakeLoader:
+        def grow(self):
+            return 50
+
+    viewer = SimpleNamespace(
+        _progressive_mode=True,
+        _progressive_series_number="31",
+        image_viewer=SimpleNamespace(
+            metadata={"series": {"series_number": "31"}},
+            update_corners_actors=lambda: None,
+        ),
+        _lazy_loader=_FakeLoader(),
+        _qt_bridge_active=False,
+        get_count_of_slices=lambda: 50,
+        update_available_slice_count=lambda c: None,
+        exit_progressive_mode=lambda: exit_calls.append("exit"),
+        id_vtk_widget="v31",
+    )
+    node = SimpleNamespace(
+        vtk_widget=viewer,
+        slider=SimpleNamespace(blockSignals=lambda b: None, setMaximum=lambda v: None),
+    )
+    controller.lst_nodes_viewer = [node]
+
+    controller._update_vtk_slice_range = lambda *a, **kw: None
+    controller._refresh_and_sync_metadata = lambda *a, **kw: None
+    controller._invalidate_series_caches = lambda *a, **kw: None
+    controller._update_thumbnail_count = lambda *a, **kw: None
+    controller._is_fast_viewer_mode = lambda: False
+    import unittest.mock
+    with unittest.mock.patch.object(controller_mod, "QTimer", create=True), \
+         unittest.mock.patch.object(_vc_progressive_mod, "_finalize_progressive_series", lambda *args, **kwargs: finalize_calls.append((args, kwargs)) or True):
+        controller.on_series_download_fully_complete("31")
+
+    assert len(finalize_calls) == 1
+    args, kwargs = finalize_calls[0]
+    assert args[:2] == (controller, "31")
+    assert kwargs == {"final_count": 50, "viewers": [(viewer, node)], "source": "layer2b_complete"}
+    assert exit_calls == []
+
+
+def test_completion_verify_does_not_duplicate_finalize_followup_calls():
+    """Layer 3 should rely on the shared finalizer for corner/thumbnail follow-up."""
+    controller = _build_controller()
+    finalize_calls = []
+    corner_calls = []
+    thumb_calls = []
+
+    class _FakeLoader:
+        def grow(self):
+            return 135
+
+    viewer = SimpleNamespace(
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "10"}}),
+        _progressive_mode=False,
+        _lazy_loader=_FakeLoader(),
+        get_count_of_slices=lambda: 120,
+        update_available_slice_count=lambda c: None,
+        exit_progressive_mode=lambda: None,
+        id_vtk_widget="v10",
+    )
+    node = SimpleNamespace(
+        vtk_widget=viewer,
+        slider=SimpleNamespace(blockSignals=lambda b: None, setMaximum=lambda v: None),
+    )
+    controller.lst_nodes_viewer = [node]
+    controller._count_series_files_on_disk = lambda sn: 135
+    controller._update_vtk_slice_range = lambda *a, **kw: None
+    controller._refresh_and_sync_metadata = lambda *a, **kw: None
+    controller._refresh_corner_text = lambda *a, **kw: corner_calls.append(a)
+    controller._update_thumbnail_count = lambda *a, **kw: thumb_calls.append(a)
+    import unittest.mock
+    with unittest.mock.patch.object(_vc_progressive_mod, "QTimer", create=True), \
+         unittest.mock.patch.object(_vc_progressive_mod, "_finalize_progressive_series", lambda *args, **kwargs: finalize_calls.append((args, kwargs)) or True):
+        controller._completion_verify_series("10", expected_total=135)
+
+    assert len(finalize_calls) == 1
+    args, kwargs = finalize_calls[0]
+    assert args[:2] == (controller, "10")
+    assert kwargs == {
+        "final_count": 135,
+        "viewers": [(viewer, node)],
+        "source": "layer3_verify",
+    }
+    assert corner_calls == []
+    assert thumb_calls == []
 
 
 def test_completion_verify_grows_stale_viewer(tmp_path):
@@ -749,7 +1798,7 @@ def test_flush_progressive_grow_survives_grow_exception():
     controller = _build_progressive_controller(sn="10", total=50, pending=20)
 
     # Make _grow_progressive_fast raise unconditionally
-    controller._grow_progressive_fast = lambda sn, pending, viewers: (_ for _ in ()).throw(
+    controller._grow_progressive_fast = lambda sn, pending, viewers, **kwargs: (_ for _ in ()).throw(
         RuntimeError("simulated VTK C++ object deleted")
     )
     # _flush_progressive_grow_impl is the inner method; _flush_progressive_grow
@@ -784,7 +1833,7 @@ def test_flush_progressive_grow_error_logged_once():
     controller = _build_progressive_controller(sn="11", total=60, pending=25)
     raise_count = [0]
 
-    def _always_raise(sn, pending, viewers):
+    def _always_raise(sn, pending, viewers, **kwargs):
         raise_count[0] += 1
         raise ValueError("persistent failure")
 
@@ -803,6 +1852,235 @@ def test_flush_progressive_grow_error_logged_once():
     assert len(controller._logged_warnings) == 2, (
         f"Expected 2 warning logs, got {len(controller._logged_warnings)}"
     )
+
+
+def test_flush_progressive_grow_defers_nonterminal_work_during_protected_ui(monkeypatch):
+    """Non-terminal grow should yield and re-arm the timer under protected UI."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _prog_mod
+
+    controller = _build_progressive_controller(sn="12", total=50, pending=20)
+    timer_starts = []
+    timer_intervals = []
+    timer_active = {"value": False}
+    controller._progressive_grow_timer = SimpleNamespace(
+        isActive=lambda: timer_active["value"],
+        start=lambda: (timer_starts.append("start"), timer_active.__setitem__("value", True)),
+        setInterval=lambda value: timer_intervals.append(value),
+        stop=lambda: None,
+    )
+    controller._progressive_grow_timer_default_interval_ms = 150
+    grow_calls = []
+    controller._grow_progressive_fast = lambda sn, pending, viewers, **kwargs: grow_calls.append(
+        (sn, pending, viewers, kwargs)
+    )
+
+    monkeypatch.setattr(
+        _prog_mod,
+        "_ui_should_defer_progressive_grow",
+        lambda *, terminal=False: not terminal,
+    )
+    monkeypatch.setattr(
+        _prog_mod,
+        "_ui_progressive_grow_interval_ms",
+        lambda: 750.0,
+    )
+
+    controller._flush_progressive_grow_impl()
+
+    assert grow_calls == []
+    assert timer_starts == ["start"]
+    assert timer_intervals == [750]
+    assert controller._progressive_series["12"]["pending_downloaded"] == 20
+
+
+def test_flush_progressive_grow_allows_terminal_work_under_protected_ui(monkeypatch):
+    """Terminal grow should still run so completion is not hidden by deferral."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _prog_mod
+
+    controller = _build_progressive_controller(sn="13", total=20, pending=20)
+    grow_calls = []
+    controller._grow_progressive_fast = lambda sn, pending, viewers, **kwargs: grow_calls.append(
+        (sn, pending, viewers, kwargs)
+    )
+
+    monkeypatch.setattr(
+        _prog_mod,
+        "_ui_should_defer_progressive_grow",
+        lambda *, terminal=False: not terminal,
+    )
+
+    controller._flush_progressive_grow_impl()
+
+    assert len(grow_calls) == 1
+    assert grow_calls[0][0:2] == ("13", 20)
+    assert grow_calls[0][3]["visible_count"] == 20
+
+
+def test_flush_progressive_grow_caps_nonterminal_visible_window():
+    """Non-terminal progressive grow should admit only one viewer batch per tick."""
+    controller = _build_progressive_controller(sn="14", total=100, pending=52)
+    controller._progressive_series["14"]["last_grow_count"] = 20
+    controller._progressive_admit_batch_size = 10
+
+    grow_calls = []
+
+    def _capture(sn, pending, viewers, *, visible_count=None):
+        grow_calls.append((sn, pending, visible_count, viewers))
+
+    controller._grow_progressive_fast = _capture
+
+    controller._flush_progressive_grow_impl()
+
+    assert len(grow_calls) == 1
+    sn, pending, visible_count, _viewers = grow_calls[0]
+    assert (sn, pending) == ("14", 52)
+    assert visible_count == 30, (
+        "Viewer admission should advance by one batch from last_grow_count, "
+        f"got visible_count={visible_count}"
+    )
+
+
+def test_flush_progressive_grow_keeps_terminal_visible_window_uncapped():
+    """Terminal progressive grow should still expose the full completed series."""
+    controller = _build_progressive_controller(sn="15", total=52, pending=52)
+    controller._progressive_series["15"]["last_grow_count"] = 20
+    controller._progressive_admit_batch_size = 10
+
+    grow_calls = []
+
+    def _capture(sn, pending, viewers, *, visible_count=None):
+        grow_calls.append((sn, pending, visible_count, viewers))
+
+    controller._grow_progressive_fast = _capture
+
+    controller._flush_progressive_grow_impl()
+
+    assert len(grow_calls) == 1
+    sn, pending, visible_count, _viewers = grow_calls[0]
+    assert (sn, pending) == ("15", 52)
+    assert visible_count == 52
+
+
+def test_get_progressive_admit_batch_size_defaults_to_eight():
+    """Admission gate default should stay independently tuned unless overridden."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _prog_mod
+
+    controller = SimpleNamespace(
+        _progressive_grow_batch_size=10,
+    )
+
+    assert _prog_mod._get_progressive_admit_batch_size(controller) == 8
+
+
+def test_grow_progressive_fast_uses_visible_cap_for_viewer_availability():
+    """Backend may see all downloaded files, but viewer availability should be capped."""
+    controller = _build_controller()
+    controller.logger = SimpleNamespace(
+        info=lambda *args, **kwargs: None,
+        debug=lambda *args, **kwargs: None,
+        warning=lambda *args, **kwargs: None,
+        error=lambda *args, **kwargs: None,
+    )
+    controller._progressive_series = {
+        "21": {"total": 100, "last_grow_count": 20, "last_signal_ms": 0}
+    }
+    controller._image_slice_booster = SimpleNamespace(
+        active_series=None,
+        update_paths=lambda *args, **kwargs: None,
+    )
+    controller._refresh_and_sync_metadata = lambda *args, **kwargs: None
+    controller._invalidate_series_caches = lambda *args, **kwargs: None
+    controller._update_thumbnail_count = lambda *args, **kwargs: None
+
+    slice_updates = []
+    controller._update_vtk_slice_range = (
+        lambda vtk_w, node, new_count, *, slider=None, available_count=None:
+            slice_updates.append((new_count, available_count))
+    )
+
+    loader = SimpleNamespace(
+        grow=lambda: 52,
+        backend=SimpleNamespace(get_file_paths=lambda: []),
+        vtk_image_data=None,
+    )
+    vtk_w = SimpleNamespace(
+        _lazy_loader=loader,
+        _qt_bridge_active=False,
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "21"}}),
+    )
+    node = SimpleNamespace(slider=None)
+
+    controller._grow_progressive_fast(
+        "21",
+        52,
+        [(vtk_w, node)],
+        visible_count=30,
+    )
+
+    assert slice_updates == [(52, 30)]
+    assert controller._progressive_series["21"]["last_grow_count"] == 30
+
+
+def test_post_completion_cache_warm_defers_then_dispatches(monkeypatch):
+    """Cache warm should defer briefly under protected UI, then still dispatch."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _prog_mod
+
+    controller = _build_progressive_controller(sn="14", total=50, pending=50)
+    prefetch_calls = []
+    pipeline = SimpleNamespace(
+        _last_prefetch_center=11,
+        _prefetch_around=lambda idx, direction=0: prefetch_calls.append((idx, direction)),
+    )
+    bridge = SimpleNamespace(_current_slice=7, pipeline=pipeline)
+    viewer = SimpleNamespace(image_viewer=bridge)
+    node = SimpleNamespace(slider=None)
+    scheduled = []
+
+    monkeypatch.setattr(_prog_mod, "_should_defer_cache_warm", lambda: True)
+    monkeypatch.setattr(
+        _prog_mod.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
+
+    controller._dispatch_post_completion_cache_warm("14", [(viewer, node)])
+
+    assert prefetch_calls == []
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == 750
+
+    controller._dispatch_post_completion_cache_warm("14", [(viewer, node)], _retry=3)
+
+    assert prefetch_calls == [(7, 0)]
+    assert pipeline._last_prefetch_center == -1
+
+
+def test_open_tab_warmup_defers_until_admitted(monkeypatch):
+    controller = _build_controller()
+    controller._zeta_slice_focus_mode = False
+    controller._boostviewer_enabled = True
+    controller._is_fast_viewer_mode = lambda: False
+    controller._tab_active = True
+    controller.zeta_boost = SimpleNamespace(is_active=lambda: True)
+    controller._global_downloads_active = lambda: False
+    controller.pipeline = SimpleNamespace(is_warmup_allowed=True, state=SimpleNamespace(name="READY"))
+    controller._first_series_displayed = True
+    controller._is_user_interaction_hot = lambda: False
+    controller.parent_widget = SimpleNamespace(
+        _thumbnails_shown=True,
+        thumbnail_manager=SimpleNamespace(series_widgets={"1": object()}),
+    )
+    controller._open_warmup_retry_count = 0
+    controller._warmup_gather_running = False
+
+    scheduled = []
+    monkeypatch.setattr(_vc_warmup_mod, "_should_admit_warmup", lambda obj, work_key: False)
+    monkeypatch.setattr(_vc_warmup_mod.QTimer, "singleShot", lambda delay, fn: scheduled.append(delay))
+
+    controller._start_open_tab_warmup()
+
+    assert controller._warmup_gather_running is False
+    assert scheduled == [350]
 
 
 def test_update_vtk_slice_range_survives_deleted_widget():
@@ -848,6 +2126,120 @@ def test_update_vtk_slice_range_survives_deleted_widget():
     assert any(str(new_count) in str(m) for m in debug_msgs), (
         "new_count must appear in the debug log"
     )
+
+
+def test_update_vtk_slice_range_skips_duplicate_available_count():
+    """Repeated sync with the same visible count should be a no-op."""
+    controller = _build_controller()
+
+    available_updates = []
+    slider_updates = []
+    vtk_w = SimpleNamespace(
+        id_vtk_widget="v_same",
+        _available_slice_count=30,
+        update_available_slice_count=lambda c: available_updates.append(c),
+    )
+    slider = SimpleNamespace(
+        maximum=lambda: 29,
+        blockSignals=lambda v: None,
+        setMaximum=lambda v: slider_updates.append(v),
+    )
+
+    controller._update_vtk_slice_range(
+        vtk_w,
+        SimpleNamespace(slider=slider),
+        new_count=52,
+        available_count=30,
+    )
+
+    assert available_updates == []
+    assert slider_updates == []
+
+
+def test_update_vtk_slice_range_preserves_slider_value_across_max_growth():
+    """Growing the slider range must not jump the current viewed slice."""
+    controller = _build_controller()
+
+    slider_updates = []
+    slider_state = {"value": 19, "maximum": 19}
+
+    def _set_maximum(v):
+        slider_state["maximum"] = int(v)
+        slider_updates.append(("max", int(v)))
+        # Simulate a slider implementation that snaps to the new maximum.
+        slider_state["value"] = int(v)
+
+    def _set_value(v):
+        slider_state["value"] = int(v)
+        slider_updates.append(("value", int(v)))
+
+    vtk_w = SimpleNamespace(
+        id_vtk_widget="v_preserve",
+        _available_slice_count=20,
+        update_available_slice_count=lambda c: None,
+        _progressive_mode=True,
+        _total_expected_slices=40,
+    )
+    slider = SimpleNamespace(
+        maximum=lambda: slider_state["maximum"],
+        value=lambda: slider_state["value"],
+        blockSignals=lambda v: None,
+        setMaximum=_set_maximum,
+        setValue=_set_value,
+    )
+
+    controller._update_vtk_slice_range(
+        vtk_w,
+        SimpleNamespace(slider=slider),
+        new_count=28,
+        available_count=28,
+    )
+
+    assert slider_state["maximum"] == 39
+    assert slider_state["value"] == 19
+    assert slider_updates == [("max", 39), ("value", 19)]
+
+
+def test_sync_viewer_metadata_instances_extends_in_place_for_append_only_growth():
+    """Append-only growth should extend the viewer list instead of replacing it."""
+    controller = _build_controller()
+    series_number = "10"
+    source_instances = [
+        {"instance_number": i, "instance_path": f"/fake/{i}.dcm"}
+        for i in range(5)
+    ]
+    viewer_instances = [dict(item) for item in source_instances[:3]]
+    viewer_metadata = {
+        "series": {"series_number": series_number, "image_count": 3},
+        "instances": viewer_instances,
+    }
+    controller._series_number_to_index = {series_number: 0}
+    controller.parent_widget = SimpleNamespace(
+        lst_thumbnails_data=[
+            {
+                "metadata": {
+                    "series": {"series_number": series_number, "image_count": 5},
+                    "instances": source_instances,
+                }
+            }
+        ],
+        thumbnail_manager=SimpleNamespace(update_series_image_count=lambda *a: None),
+    )
+    controller.lst_nodes_viewer = [
+        SimpleNamespace(
+            vtk_widget=SimpleNamespace(
+                image_viewer=SimpleNamespace(metadata=viewer_metadata),
+            )
+        )
+    ]
+
+    before_list = viewer_metadata["instances"]
+
+    controller._sync_viewer_metadata_instances(series_number)
+
+    assert viewer_metadata["instances"] is before_list
+    assert len(viewer_metadata["instances"]) == 5
+    assert viewer_metadata["series"]["image_count"] == 5
 
 
 def test_progressive_grow_does_not_break_scroll_after_exception():
@@ -1409,6 +2801,37 @@ def test_completion_verify_series_survives_loader_exception():
     )
     assert sn in str(controller._logged_errors[0]), (
         "series number must appear in the error log"
+    )
+
+
+def test_on_series_download_fully_complete_recreates_missing_disk_count_cache():
+    """Completion handling must survive if the disk-count cache attribute is absent.
+
+    This matches the runtime failure seen in fresh logs where Layer 2b tried to
+    invalidate ``_disk_count_cache`` and hit ``AttributeError`` instead.
+    """
+    controller = _build_signal_boundary_controller()
+    sn = "101"
+    controller._progressive_series = {sn: {"total": 0, "last_grow_count": 0}}
+    controller._completion_verify_series = lambda *a, **kw: None
+    controller._completion_sweep_register = lambda *a, **kw: None
+
+    if hasattr(controller, "_disk_count_cache"):
+        delattr(controller, "_disk_count_cache")
+
+    try:
+        controller.on_series_download_fully_complete(sn)
+    except Exception as exc:
+        raise AssertionError(
+            f"on_series_download_fully_complete must not propagate: {exc}"
+        ) from exc
+
+    assert hasattr(controller, "_disk_count_cache"), (
+        "completion handling must recreate the missing disk-count cache"
+    )
+    assert isinstance(controller._disk_count_cache, dict)
+    assert controller._logged_errors == [], (
+        "missing disk-count cache should not be logged as an unhandled error"
     )
 
 
@@ -2279,6 +3702,73 @@ def test_h6_guard_scoped_to_series():
         "Completed series 201 must not gain new tracking"
 
 
+def test_b4x_duplicate_terminal_progress_ignored_after_complete_guard():
+    """Late terminal callbacks must not recreate tracking or fire one-shot grow."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _prog_mod
+
+    sn = "303"
+    ctrl = _build_h6_controller()
+    ctrl._progressive_series = {}
+
+    viewer = SimpleNamespace(
+        image_viewer=SimpleNamespace(
+            metadata={"series": {"series_number": sn}},
+            get_count_of_slices=lambda: 123,
+        ),
+        _progressive_mode=False,
+        _progressive_series_number=None,
+        _available_slice_count=123,
+        enter_progressive_mode=lambda *a, **kw: None,
+        exit_progressive_mode=lambda: None,
+        get_count_of_slices=lambda: 123,
+        update_available_slice_count=lambda c: None,
+        id_vtk_widget="test-v303",
+    )
+    node = SimpleNamespace(vtk_widget=viewer, slider=None)
+    ctrl.lst_nodes_viewer = [node]
+
+    _prog_mod._set_progressive_lifecycle_state(
+        ctrl,
+        sn,
+        _prog_mod._PROGRESSIVE_STATE_COMPLETING,
+        source="test",
+        reason="first_complete_already_observed",
+    )
+    _prog_mod._mark_progressive_terminal_complete_guard(ctrl, sn)
+
+    grow_calls = []
+    ctrl._grow_progressive_fast = lambda *a, **kw: grow_calls.append((a, kw))
+
+    ctrl._on_series_images_progress_impl(sn, 123, 123)
+
+    assert grow_calls == [], "duplicate terminal callback must not fire one-shot grow"
+    assert sn not in ctrl._progressive_series, "duplicate terminal callback must not recreate tracking"
+
+
+def test_b4x_restart_after_done_clears_terminal_complete_guard():
+    """A verified new partial cycle must clear the terminal-complete compatibility guard."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _prog_mod
+
+    sn = "303"
+    ctrl = _build_h6_controller()
+    ctrl.lst_nodes_viewer = []
+    ctrl._series_download_completed.add(sn)
+    _prog_mod._set_progressive_lifecycle_state(
+        ctrl,
+        sn,
+        _prog_mod._PROGRESSIVE_STATE_DONE,
+        source="test",
+        reason="prior_cycle_complete",
+    )
+    _prog_mod._mark_progressive_terminal_complete_guard(ctrl, sn)
+
+    ctrl._on_series_images_progress_impl(sn, 20, 40)
+
+    assert _prog_mod._is_progressive_terminal_complete_guard_active(ctrl, sn) is False
+    assert len(ctrl._start_progressive_display_spy) == 1, \
+        "verified restart_after_done partial cycle must re-enter first-display path"
+
+
 # ────────────────────────────────────────────────────────────────
 #  B1.1: ToolController.clear_all() and _QtBridgeStyle.delete_all_widgets()
 # ────────────────────────────────────────────────────────────────
@@ -2537,4 +4027,879 @@ def test_sync_mode_visual_toggle():
     ctrl = ToolController(store, renderer)
     # Just confirm the sync-mode flag exists and toggles cleanly via the state
     assert ctrl._state is not None  # sanity — controller initialised
+
+
+# ════════════════════════════════════════════════════════════════════
+#  B3.7: Cache-first fast scroll — nearest-cached fallback
+# ════════════════════════════════════════════════════════════════════
+
+def test_b37_find_nearest_cached_pixel_returns_closest():
+    """_find_nearest_cached_pixel returns the closest cached index."""
+    from collections import OrderedDict
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+    import numpy as np
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._pixel_cache = OrderedDict()
+    # Populate cache with a few entries
+    for i in [10, 20, 30, 50]:
+        pipe._pixel_cache[i] = np.zeros((2, 2), dtype=np.int16)
+
+    # Exact match — should prefer it
+    assert pipe._find_nearest_cached_pixel(20, max_distance=10) == 20
+    # Between 20 and 30, closer to 20
+    assert pipe._find_nearest_cached_pixel(22, max_distance=10) == 20
+    # Between 20 and 30, closer to 30
+    assert pipe._find_nearest_cached_pixel(28, max_distance=10) == 30
+    # Just outside max_distance — nothing found
+    assert pipe._find_nearest_cached_pixel(62, max_distance=10) is None
+    # Edge: within range of 50
+    assert pipe._find_nearest_cached_pixel(55, max_distance=10) == 50
+
+
+def test_b37_find_nearest_cached_pixel_empty_cache():
+    """Returns None when pixel cache is empty."""
+    from collections import OrderedDict
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._pixel_cache = OrderedDict()
+    assert pipe._find_nearest_cached_pixel(50, max_distance=10) is None
+
+
+def test_b37_get_rendered_frame_uses_surrogate_during_fast_interaction(monkeypatch):
+    """During fast_interaction with interaction_type='drag', frame_cache miss
+    + pixel_cache miss triggers nearest-cached surrogate instead of synchronous
+    decode.  B4.1: surrogate is only allowed for drag navigation."""
+    from collections import OrderedDict
+    from modules.viewer.fast.lightweight_2d_pipeline import (
+        Lightweight2DPipeline, PipelineConfig, SliceMeta, RenderedFrame,
+    )
+    from PySide6.QtGui import QImage
+    import numpy as np
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._config = PipelineConfig(opencv_filter_enabled=False)
+    pipe._fast_interaction = True
+    pipe._pixel_cache = OrderedDict()
+    pipe._frame_cache = OrderedDict()
+    pipe._prefetch_pending = set()
+    pipe._frame_prefetch_pending = set()
+    pipe._prefetch_lock = __import__("threading").Lock()
+    pipe._scroll_history = []
+    pipe._scroll_history_max = 12
+    pipe._last_prefetch_center = -1
+    pipe._prefetch_generation = 0
+    pipe._current_index = 0
+    pipe._metrics_lock = __import__("threading").Lock()
+    pipe._metrics = {"decode_count": 0, "cache_hits": 0, "cache_misses": 0,
+                     "total_decode_ms": 0.0, "total_filter_ms": 0.0, "total_wl_ms": 0.0}
+    pipe._first_render_logged = True
+    pipe._filter_first_slices = set()
+    pipe._is_open = True
+
+    # Create 100 dummy slices
+    slices = []
+    for i in range(100):
+        slices.append(SliceMeta(
+            path=f"/tmp/dummy_{i}.dcm", rows=4, cols=4,
+            pixel_spacing=(1.0, 1.0), iop=(1, 0, 0, 0, 1, 0),
+            ipp=(0, 0, float(i)), slice_thickness=1.0,
+            spacing_between_slices=1.0, photometric="MONOCHROME2",
+            bits_allocated=16, pixel_representation=1,
+            samples_per_pixel=1, window_width=400.0, window_center=40.0,
+            slope=1.0, intercept=0.0, instance_number=i, is_rgb=False,
+        ))
+    pipe._slices = slices
+    pipe._window = 400.0
+    pipe._level = 40.0
+
+    # Put one cached pixel at index 48
+    cached_pixel = np.zeros((4, 4), dtype=np.int16)
+    pipe._pixel_cache[48] = cached_pixel
+
+    # Track if _decode_slice is called (should NOT be called for surrogate)
+    decode_calls = []
+    original_decode = None
+
+    def _mock_decode(idx):
+        decode_calls.append(idx)
+        return np.zeros((4, 4), dtype=np.int16)
+
+    monkeypatch.setattr(pipe, "_decode_slice", _mock_decode)
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: None)
+
+    # Monkeypatch PerfMetrics to no-op
+    class _FakePM:
+        enabled = False
+        def record_queue_depths(self, *a): pass
+        def record_cache_hit(self): pass
+        def record_cache_miss(self): pass
+        def record_foreground_wait(self, ms): pass
+        def record_frame_render(self, ms): pass
+        def record_decode(self, ms): pass
+        def record_wl(self, ms): pass
+        def record_filter(self, ms): pass
+        def record_prefetch_submitted(self): pass
+
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+    monkeypatch.setattr(pipe_mod, "PerfMetrics", SimpleNamespace(get=lambda: _FakePM()))
+
+    # Request slice 50 (not in cache) — should use surrogate from 48
+    # B4.1: must pass interaction_type='drag' for surrogate to be allowed
+    frame = pipe.get_rendered_frame(50, interaction_type='drag')
+
+    # Assertions
+    assert frame.slice_index == 50, "slice_index must be requested idx, not surrogate"
+    assert frame.decode_ms == 0.0, "no foreground decode should occur"
+    assert 48 not in decode_calls, "surrogate (cached) pixel should not trigger _decode_slice"
+    # 50 was NOT decoded synchronously (it goes through surrogate path)
+    assert 50 not in decode_calls, "target idx should not be decoded synchronously"
+
+
+def test_b37_get_rendered_frame_falls_through_when_no_nearby_cache(monkeypatch):
+    """When no cached pixel is within max_distance, falls through to
+    synchronous decode (existing behavior)."""
+    from collections import OrderedDict
+    from modules.viewer.fast.lightweight_2d_pipeline import (
+        Lightweight2DPipeline, PipelineConfig, SliceMeta,
+    )
+    import numpy as np
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._config = PipelineConfig(opencv_filter_enabled=False)
+    pipe._fast_interaction = True
+    pipe._pixel_cache = OrderedDict()
+    pipe._frame_cache = OrderedDict()
+    pipe._prefetch_pending = set()
+    pipe._frame_prefetch_pending = set()
+    pipe._prefetch_lock = __import__("threading").Lock()
+    pipe._scroll_history = []
+    pipe._scroll_history_max = 12
+    pipe._last_prefetch_center = -1
+    pipe._prefetch_generation = 0
+    pipe._current_index = 0
+    pipe._metrics_lock = __import__("threading").Lock()
+    pipe._metrics = {"decode_count": 0, "cache_hits": 0, "cache_misses": 0,
+                     "total_decode_ms": 0.0, "total_filter_ms": 0.0, "total_wl_ms": 0.0}
+    pipe._first_render_logged = True
+    pipe._filter_first_slices = set()
+    pipe._is_open = True
+
+    slices = []
+    for i in range(100):
+        slices.append(SliceMeta(
+            path=f"/tmp/dummy_{i}.dcm", rows=4, cols=4,
+            pixel_spacing=(1.0, 1.0), iop=(1, 0, 0, 0, 1, 0),
+            ipp=(0, 0, float(i)), slice_thickness=1.0,
+            spacing_between_slices=1.0, photometric="MONOCHROME2",
+            bits_allocated=16, pixel_representation=1,
+            samples_per_pixel=1, window_width=400.0, window_center=40.0,
+            slope=1.0, intercept=0.0, instance_number=i, is_rgb=False,
+        ))
+    pipe._slices = slices
+    pipe._window = 400.0
+    pipe._level = 40.0
+
+    # Cache a pixel far away (index 5, requesting 50 → distance 45 > 10)
+    pipe._pixel_cache[5] = np.zeros((4, 4), dtype=np.int16)
+
+    decode_calls = []
+
+    def _mock_decode(idx):
+        decode_calls.append(idx)
+        return np.zeros((4, 4), dtype=np.int16)
+
+    monkeypatch.setattr(pipe, "_decode_slice", _mock_decode)
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: None)
+
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+    class _FakePM:
+        enabled = False
+        def record_queue_depths(self, *a): pass
+        def record_cache_hit(self): pass
+        def record_cache_miss(self): pass
+        def record_foreground_wait(self, ms): pass
+        def record_frame_render(self, ms): pass
+        def record_decode(self, ms): pass
+        def record_wl(self, ms): pass
+        def record_filter(self, ms): pass
+        def record_prefetch_submitted(self): pass
+        def record_first_image(self, ms): pass
+
+    monkeypatch.setattr(pipe_mod, "PerfMetrics", SimpleNamespace(get=lambda: _FakePM()))
+
+    # Request slice 50 — no nearby cache → must decode synchronously
+    frame = pipe.get_rendered_frame(50)
+
+    assert 50 in decode_calls, "should fall through to synchronous decode"
+    assert frame.decode_ms >= 0.0
+
+
+def test_b37_surrogate_not_used_outside_fast_interaction(monkeypatch):
+    """In normal (non-fast) mode, pixel_cache miss always decodes synchronously."""
+    from collections import OrderedDict
+    from modules.viewer.fast.lightweight_2d_pipeline import (
+        Lightweight2DPipeline, PipelineConfig, SliceMeta,
+    )
+    import numpy as np
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._config = PipelineConfig(opencv_filter_enabled=False)
+    pipe._fast_interaction = False  # NOT fast mode
+    pipe._pixel_cache = OrderedDict()
+    pipe._frame_cache = OrderedDict()
+    pipe._prefetch_pending = set()
+    pipe._frame_prefetch_pending = set()
+    pipe._prefetch_lock = __import__("threading").Lock()
+    pipe._scroll_history = []
+    pipe._scroll_history_max = 12
+    pipe._last_prefetch_center = -1
+    pipe._prefetch_generation = 0
+    pipe._current_index = 0
+    pipe._metrics_lock = __import__("threading").Lock()
+    pipe._metrics = {"decode_count": 0, "cache_hits": 0, "cache_misses": 0,
+                     "total_decode_ms": 0.0, "total_filter_ms": 0.0, "total_wl_ms": 0.0}
+    pipe._first_render_logged = True
+    pipe._filter_first_slices = set()
+    pipe._is_open = True
+
+    slices = []
+    for i in range(100):
+        slices.append(SliceMeta(
+            path=f"/tmp/dummy_{i}.dcm", rows=4, cols=4,
+            pixel_spacing=(1.0, 1.0), iop=(1, 0, 0, 0, 1, 0),
+            ipp=(0, 0, float(i)), slice_thickness=1.0,
+            spacing_between_slices=1.0, photometric="MONOCHROME2",
+            bits_allocated=16, pixel_representation=1,
+            samples_per_pixel=1, window_width=400.0, window_center=40.0,
+            slope=1.0, intercept=0.0, instance_number=i, is_rgb=False,
+        ))
+    pipe._slices = slices
+    pipe._window = 400.0
+    pipe._level = 40.0
+
+    # Put cached pixel at index 48 (close to 50)
+    pipe._pixel_cache[48] = np.zeros((4, 4), dtype=np.int16)
+
+    decode_calls = []
+
+    def _mock_decode(idx):
+        decode_calls.append(idx)
+        return np.zeros((4, 4), dtype=np.int16)
+
+    monkeypatch.setattr(pipe, "_decode_slice", _mock_decode)
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: None)
+
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+    class _FakePM:
+        enabled = False
+        def record_queue_depths(self, *a): pass
+        def record_cache_hit(self): pass
+        def record_cache_miss(self): pass
+        def record_foreground_wait(self, ms): pass
+        def record_frame_render(self, ms): pass
+        def record_decode(self, ms): pass
+        def record_wl(self, ms): pass
+        def record_filter(self, ms): pass
+        def record_prefetch_submitted(self): pass
+        def record_first_image(self, ms): pass
+
+    monkeypatch.setattr(pipe_mod, "PerfMetrics", SimpleNamespace(get=lambda: _FakePM()))
+
+    # Request slice 50 in non-fast mode — must decode even though 48 is cached
+    frame = pipe.get_rendered_frame(50)
+
+    assert 50 in decode_calls, "non-fast mode must always decode the exact slice"
+
+
+# ---------------------------------------------------------------------------
+# B4.1  Interaction-Class-Aware Rendering Policy
+# ---------------------------------------------------------------------------
+
+def _make_b41_pipeline(monkeypatch):
+    """Shared fixture for B4.1 tests: pipeline with cached pixel at 48, target 50."""
+    import numpy as np
+    from collections import OrderedDict
+    from modules.viewer.fast.lightweight_2d_pipeline import (
+        Lightweight2DPipeline, PipelineConfig, SliceMeta,
+    )
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._config = PipelineConfig(opencv_filter_enabled=False)
+    pipe._fast_interaction = False
+    pipe._pixel_cache = OrderedDict()
+    pipe._frame_cache = OrderedDict()
+    pipe._prefetch_pending = set()
+    pipe._frame_prefetch_pending = set()
+    pipe._prefetch_lock = __import__("threading").Lock()
+    pipe._scroll_history = []
+    pipe._scroll_history_max = 12
+    pipe._last_prefetch_center = -1
+    pipe._prefetch_generation = 0
+    pipe._current_index = 0
+    pipe._metrics_lock = __import__("threading").Lock()
+    pipe._metrics = {"decode_count": 0, "cache_hits": 0, "cache_misses": 0,
+                     "total_decode_ms": 0.0, "total_filter_ms": 0.0, "total_wl_ms": 0.0}
+    pipe._first_render_logged = True
+    pipe._filter_first_slices = set()
+    pipe._is_open = True
+
+    slices = []
+    for i in range(100):
+        slices.append(SliceMeta(
+            path=f"/tmp/dummy_{i}.dcm", rows=4, cols=4,
+            pixel_spacing=(1.0, 1.0), iop=(1, 0, 0, 0, 1, 0),
+            ipp=(0, 0, float(i)), slice_thickness=1.0,
+            spacing_between_slices=1.0, photometric="MONOCHROME2",
+            bits_allocated=16, pixel_representation=1,
+            samples_per_pixel=1, window_width=400.0, window_center=40.0,
+            slope=1.0, intercept=0.0, instance_number=i, is_rgb=False,
+        ))
+    pipe._slices = slices
+    pipe._window = 400.0
+    pipe._level = 40.0
+    pipe._pixel_cache[48] = np.zeros((4, 4), dtype=np.int16)
+
+    decode_calls = []
+
+    def _mock_decode(idx):
+        decode_calls.append(idx)
+        return np.zeros((4, 4), dtype=np.int16)
+
+    monkeypatch.setattr(pipe, "_decode_slice", _mock_decode)
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: None)
+
+    class _FakePM:
+        enabled = False
+        def record_queue_depths(self, *a): pass
+        def record_cache_hit(self): pass
+        def record_cache_miss(self): pass
+        def record_foreground_wait(self, ms): pass
+        def record_frame_render(self, ms): pass
+        def record_decode(self, ms): pass
+        def record_wl(self, ms): pass
+        def record_filter(self, ms): pass
+        def record_prefetch_submitted(self): pass
+        def record_first_image(self, ms): pass
+
+    monkeypatch.setattr(pipe_mod, "PerfMetrics", SimpleNamespace(get=lambda: _FakePM()))
+    return pipe, decode_calls
+
+
+def test_b41_wheel_precision_never_uses_surrogate(monkeypatch):
+    """B4.1: wheel interaction_type MUST always decode the exact slice, never surrogate."""
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+
+    frame = pipe.get_rendered_frame(50, interaction_type='wheel')
+
+    assert frame is not None
+    assert 50 in decode_calls, "wheel must decode exact slice even when neighbor is cached"
+    assert frame.decode_ms > 0.0, "wheel decode_ms must be >0 (real decode, not surrogate)"
+
+
+def test_b41_drag_navigation_can_use_surrogate(monkeypatch):
+    """B4.1: drag interaction_type may use surrogate when exact slice is not cached."""
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+
+    frame = pipe.get_rendered_frame(50, interaction_type='drag')
+
+    assert frame is not None
+    assert 50 not in decode_calls, "drag should use surrogate, not decode exact slice"
+    assert frame.decode_ms == 0.0, "surrogate decode_ms must be 0.0"
+
+
+def test_b41_default_interaction_type_no_surrogate(monkeypatch):
+    """B4.1: empty/default interaction_type MUST decode exact slice (non-interactive)."""
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+
+    frame = pipe.get_rendered_frame(50, interaction_type='')
+
+    assert frame is not None
+    assert 50 in decode_calls, "default interaction_type must decode exact slice"
+    assert frame.decode_ms > 0.0
+
+
+def test_b41_drag_during_heavy_download_keeps_tiny_prefetch(monkeypatch):
+    """Drag under active download still re-arms prefetch; admission policy keeps it tiny."""
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+
+    prefetch_calls = []
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: prefetch_calls.append((a, kw)))
+    monkeypatch.setattr(pipe_mod, "is_heavy_download_active", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "is_viewed_series_complete", lambda series_number: False)
+
+    frame = pipe.get_rendered_frame(50, interaction_type='drag')
+
+    assert frame is not None
+    assert 50 not in decode_calls
+    assert len(prefetch_calls) == 1
+
+
+def test_b41_drag_during_heavy_download_widens_surrogate_window(monkeypatch):
+    """Incomplete viewed series may widen drag surrogate search to avoid foreground decode."""
+    import numpy as np
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._series_number = "202"
+    pipe._pixel_cache.clear()
+    pipe._pixel_cache[35] = np.zeros((4, 4), dtype=np.int16)  # distance 15 from idx 50
+
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: None)
+    monkeypatch.setattr(pipe_mod, "is_heavy_download_active", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "is_viewed_series_complete", lambda series_number: False)
+
+    frame = pipe.get_rendered_frame(50, interaction_type='drag')
+
+    assert frame is not None
+    assert frame.decode_ms == 0.0
+    assert 50 not in decode_calls
+
+
+def test_b41_drag_complete_series_keeps_standard_surrogate_window(monkeypatch):
+    """Completed viewed series should keep the tighter default drag surrogate window."""
+    import numpy as np
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._series_number = "202"
+    pipe._pixel_cache.clear()
+    pipe._pixel_cache[35] = np.zeros((4, 4), dtype=np.int16)  # distance 15 from idx 50
+
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: None)
+    monkeypatch.setattr(pipe_mod, "is_heavy_download_active", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "is_viewed_series_complete", lambda series_number: True)
+
+    frame = pipe.get_rendered_frame(50, interaction_type='drag')
+
+    assert frame is not None
+    assert 50 in decode_calls
+    assert frame.decode_ms >= 0.0
+
+
+def test_b41_drag_complete_series_high_velocity_can_widen_surrogate_window(monkeypatch):
+    """Very fast drag may widen the surrogate window even for completed series."""
+    import numpy as np
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._series_number = "202"
+    pipe._pixel_cache.clear()
+    pipe._pixel_cache[35] = np.zeros((4, 4), dtype=np.int16)  # distance 15 from idx 50
+
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: None)
+    monkeypatch.setattr(pipe, "_estimate_scroll_velocity", lambda: 35.0)
+    monkeypatch.setattr(pipe_mod, "is_heavy_download_active", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "is_viewed_series_complete", lambda series_number: True)
+
+    frame = pipe.get_rendered_frame(50, interaction_type='drag')
+
+    assert frame is not None
+    assert frame.decode_ms == 0.0
+    assert 50 not in decode_calls
+
+
+def test_b41_drag_reuses_nearest_cached_frame_before_rewindowing(monkeypatch):
+    """Drag should reuse a nearby rendered frame before recomputing W/L on the UI thread."""
+    from PySide6.QtGui import QImage
+
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._pixel_cache[50] = pipe._pixel_cache[48]
+
+    cached_frame = QImage(4, 4, QImage.Format.Format_Grayscale8)
+    cached_frame.fill(77)
+    pipe._frame_cache[(48, 400.0, 40.0, False)] = cached_frame
+
+    prefetch_calls = []
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: prefetch_calls.append(idx))
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: None)
+
+    frame = pipe.get_rendered_frame(50, interaction_type='drag')
+
+    assert frame is not None
+    assert frame.qimage is cached_frame
+    assert frame.decode_ms == 0.0
+    assert frame.wl_ms == 0.0
+    assert decode_calls == []
+    assert prefetch_calls == [50]
+
+
+def test_b41_drag_prefers_cached_frame_over_pixel_surrogate_rerender(monkeypatch):
+    """When both are available, drag should prefer a cached rendered frame over rerendering a surrogate pixel."""
+    from PySide6.QtGui import QImage
+
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+
+    cached_frame = QImage(4, 4, QImage.Format.Format_Grayscale8)
+    cached_frame.fill(91)
+    pipe._frame_cache[(48, 400.0, 40.0, False)] = cached_frame
+
+    render_calls = []
+    original_render_uncached = pipe._render_frame_uncached
+
+    def _tracking_render_uncached(*args, **kwargs):
+        render_calls.append(args[0])
+        return original_render_uncached(*args, **kwargs)
+
+    monkeypatch.setattr(pipe, "_render_frame_uncached", _tracking_render_uncached)
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: None)
+
+    frame = pipe.get_rendered_frame(50, interaction_type='drag')
+
+    assert frame is not None
+    assert frame.qimage is cached_frame
+    assert frame.decode_ms == 0.0
+    assert frame.wl_ms == 0.0
+    assert 50 not in decode_calls
+    assert render_calls == []
+
+
+def test_b41_fast_interaction_prefers_exact_filtered_frame_cache(monkeypatch):
+    """Fast interaction should reuse an exact filtered cached frame before an exact unfiltered one."""
+    from PySide6.QtGui import QImage
+    from modules.viewer.fast.lightweight_2d_pipeline import PipelineConfig
+
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._config = PipelineConfig(opencv_filter_enabled=True)
+
+    filtered_frame = QImage(4, 4, QImage.Format.Format_Grayscale8)
+    filtered_frame.fill(123)
+    unfiltered_frame = QImage(4, 4, QImage.Format.Format_Grayscale8)
+    unfiltered_frame.fill(45)
+
+    pipe._frame_cache[(50, 400.0, 40.0, False)] = unfiltered_frame
+    pipe._frame_cache[(50, 400.0, 40.0, True)] = filtered_frame
+
+    frame = pipe.get_rendered_frame(50, interaction_type='drag')
+
+    assert frame is not None
+    assert frame.qimage.pixel(0, 0) == filtered_frame.pixel(0, 0)
+    assert frame.qimage.pixel(0, 0) != unfiltered_frame.pixel(0, 0)
+    assert frame.decode_ms == 0.0
+    assert frame.wl_ms == 0.0
+    assert decode_calls == []
+
+
+def test_b41_wheel_fast_interaction_keeps_filter_enabled(monkeypatch):
+    """Wheel precision browsing should keep filtered appearance even in fast mode."""
+    from modules.viewer.fast.lightweight_2d_pipeline import PipelineConfig
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._config = PipelineConfig(opencv_filter_enabled=True)
+
+    frame = pipe.get_rendered_frame(50, interaction_type='wheel')
+
+    assert frame is not None
+    assert frame.filter_ms > 0.0
+
+
+def test_b41_drag_fast_interaction_still_skips_filter(monkeypatch):
+    """Drag keeps the low-latency draft path; settle restores the exact final look."""
+    from modules.viewer.fast.lightweight_2d_pipeline import PipelineConfig
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._config = PipelineConfig(opencv_filter_enabled=True)
+
+    frame = pipe.get_rendered_frame(50, interaction_type='drag')
+
+    assert frame is not None
+    assert frame.filter_ms < 0.5
+
+
+def test_b41_wheel_during_heavy_download_keeps_prefetch(monkeypatch):
+    """Wheel keeps its existing behavior; only drag gets overlap-specific shedding."""
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+
+    prefetch_calls = []
+    monkeypatch.setattr(pipe, "_prefetch_around", lambda *a, **kw: prefetch_calls.append((a, kw)))
+    monkeypatch.setattr(pipe_mod, "is_heavy_download_active", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "is_viewed_series_complete", lambda series_number: False)
+
+    frame = pipe.get_rendered_frame(50, interaction_type='wheel')
+
+    assert frame is not None
+    assert len(prefetch_calls) == 1
+
+
+def test_prefetch_request_epoch_cancels_superseded_targets(monkeypatch):
+    """Older admitted prefetch neighborhoods should be cancelled before decode."""
+    from collections import OrderedDict
+    import threading
+    import numpy as np
+    from modules.viewer.fast.lightweight_2d_pipeline import (
+        Lightweight2DPipeline, PipelineConfig, SliceMeta,
+    )
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._config = PipelineConfig(opencv_filter_enabled=False)
+    pipe._fast_interaction = True
+    pipe._pixel_cache = OrderedDict()
+    pipe._frame_cache = OrderedDict()
+    pipe._prefetch_pending = {40}
+    pipe._frame_prefetch_pending = set()
+    pipe._prefetch_lock = threading.Lock()
+    pipe._decode_executor = None
+    pipe._frame_executor = None
+    pipe._prefetch_generation = 0
+    pipe._prefetch_request_epoch = 2
+    pipe._active_prefetch_targets = {50, 51, 52}
+    pipe._scroll_history = []
+    pipe._scroll_history_max = 12
+    pipe._last_prefetch_center = -1
+    pipe._current_index = 50
+    pipe._metrics_lock = threading.Lock()
+    pipe._metrics = {"decode_count": 0, "cache_hits": 0, "cache_misses": 0,
+                     "total_decode_ms": 0.0, "total_filter_ms": 0.0, "total_wl_ms": 0.0}
+    pipe._first_render_logged = True
+    pipe._filter_first_slices = set()
+    pipe._is_open = True
+    pipe._series_path = None
+    pipe._series_number = "101"
+
+    pipe._slices = []
+    for i in range(100):
+        pipe._slices.append(SliceMeta(
+            path=f"/tmp/dummy_{i}.dcm", rows=4, cols=4,
+            pixel_spacing=(1.0, 1.0), iop=(1, 0, 0, 0, 1, 0),
+            ipp=(0, 0, float(i)), slice_thickness=1.0,
+            spacing_between_slices=1.0, photometric="MONOCHROME2",
+            bits_allocated=16, pixel_representation=1,
+            samples_per_pixel=1, window_width=400.0, window_center=40.0,
+            slope=1.0, intercept=0.0, instance_number=i, is_rgb=False,
+        ))
+
+    decode_calls = []
+
+    def _mock_decode(idx):
+        decode_calls.append(idx)
+        return np.zeros((4, 4), dtype=np.int16)
+
+    class _FakePM:
+        enabled = True
+
+        def __init__(self):
+            self.prefetch_completed = 0
+            self.cancelled = 0
+            self.stale = 0
+
+        def record_prefetch_completed(self):
+            self.prefetch_completed += 1
+
+        def record_cancelled_task(self):
+            self.cancelled += 1
+
+        def record_stale_task(self):
+            self.stale += 1
+
+    fake_pm = _FakePM()
+
+    monkeypatch.setattr(pipe_mod, "PerfMetrics", SimpleNamespace(get=lambda: fake_pm))
+    monkeypatch.setattr(pipe, "_decode_slice", _mock_decode)
+
+    pipe._decode_into_cache(40, 0, 1)
+
+    assert decode_calls == []
+    assert fake_pm.prefetch_completed == 1
+    assert fake_pm.cancelled == 1
+    assert fake_pm.stale == 0
+    assert 40 not in pipe._prefetch_pending
+
+
+def test_decode_into_cache_skips_subprocess_decode_for_incomplete_series_during_download(monkeypatch):
+    """Incomplete viewed series should not poison decode-service health during overlap."""
+    from collections import OrderedDict
+    import threading
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline, PipelineConfig, SliceMeta
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._config = PipelineConfig(opencv_filter_enabled=False)
+    pipe._fast_interaction = False
+    pipe._pixel_cache = OrderedDict()
+    pipe._frame_cache = OrderedDict()
+    pipe._prefetch_pending = {3}
+    pipe._frame_prefetch_pending = set()
+    pipe._prefetch_lock = threading.Lock()
+    pipe._decode_executor = None
+    pipe._frame_executor = None
+    pipe._prefetch_generation = 0
+    pipe._prefetch_request_epoch = 1
+    pipe._active_prefetch_targets = {3}
+    pipe._scroll_history = []
+    pipe._scroll_history_max = 12
+    pipe._last_prefetch_center = -1
+    pipe._current_index = 3
+    pipe._metrics_lock = threading.Lock()
+    pipe._metrics = {"decode_count": 0, "cache_hits": 0, "cache_misses": 0,
+                     "total_decode_ms": 0.0, "total_filter_ms": 0.0, "total_wl_ms": 0.0}
+    pipe._first_render_logged = True
+    pipe._filter_first_slices = set()
+    pipe._is_open = True
+    pipe._series_path = "study-1"
+    pipe._series_number = "201"
+    pipe._slices = [
+        SliceMeta(
+            path=f"/tmp/dummy_{i}.dcm", rows=4, cols=4,
+            pixel_spacing=(1.0, 1.0), iop=(1, 0, 0, 0, 1, 0),
+            ipp=(0, 0, float(i)), slice_thickness=1.0,
+            spacing_between_slices=1.0, photometric="MONOCHROME2",
+            bits_allocated=16, pixel_representation=1,
+            samples_per_pixel=1, window_width=400.0, window_center=40.0,
+            slope=1.0, intercept=0.0, instance_number=i, is_rgb=False,
+        )
+        for i in range(10)
+    ]
+
+    decode_calls = []
+    disk_get_calls = []
+
+    class _FakeDiskCache:
+        def get(self, *args, **kwargs):
+            disk_get_calls.append((args, kwargs))
+            return None
+
+        def put(self, *args, **kwargs):
+            raise AssertionError("disk_cache.put should not be used without subprocess result")
+
+    class _FakeSvc:
+        is_available = True
+
+        def decode(self, *args, **kwargs):
+            raise AssertionError("subprocess decode should be skipped for incomplete series overlap")
+
+    class _FakePM:
+        enabled = False
+
+        def record_prefetch_completed(self):
+            pass
+
+        def record_cancelled_task(self):
+            pass
+
+        def record_stale_task(self):
+            pass
+
+    monkeypatch.setattr(pipe_mod, "PerfMetrics", SimpleNamespace(get=lambda: _FakePM()))
+    monkeypatch.setattr(pipe_mod, "get_disk_pixel_cache", lambda: _FakeDiskCache())
+    monkeypatch.setattr(pipe_mod, "get_decode_service", lambda: _FakeSvc())
+    monkeypatch.setattr(pipe_mod, "is_heavy_download_active", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "is_viewed_series_complete", lambda series_number: False)
+    monkeypatch.setattr(pipe, "_decode_slice", lambda idx: decode_calls.append(idx) or np.zeros((4, 4), dtype=np.int16))
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: None)
+    monkeypatch.setattr(pipe, "_compute_adaptive_radius", lambda velocity: 20)
+    monkeypatch.setattr(pipe, "_estimate_scroll_velocity", lambda: 0.0)
+
+    pipe._decode_into_cache(3, 0, 1)
+
+    assert decode_calls == [3]
+    assert len(disk_get_calls) == 1
+    assert 3 not in pipe._prefetch_pending
+
+
+def test_decode_into_cache_uses_subprocess_decode_for_completed_series(monkeypatch):
+    """Completed viewed series should keep the decode-service fast path."""
+    from collections import OrderedDict
+    import threading
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline, PipelineConfig, SliceMeta
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._config = PipelineConfig(opencv_filter_enabled=False)
+    pipe._fast_interaction = False
+    pipe._pixel_cache = OrderedDict()
+    pipe._frame_cache = OrderedDict()
+    pipe._prefetch_pending = {3}
+    pipe._frame_prefetch_pending = set()
+    pipe._prefetch_lock = threading.Lock()
+    pipe._decode_executor = None
+    pipe._frame_executor = None
+    pipe._prefetch_generation = 0
+    pipe._prefetch_request_epoch = 1
+    pipe._active_prefetch_targets = {3}
+    pipe._scroll_history = []
+    pipe._scroll_history_max = 12
+    pipe._last_prefetch_center = -1
+    pipe._current_index = 3
+    pipe._metrics_lock = threading.Lock()
+    pipe._metrics = {"decode_count": 0, "cache_hits": 0, "cache_misses": 0,
+                     "total_decode_ms": 0.0, "total_filter_ms": 0.0, "total_wl_ms": 0.0}
+    pipe._first_render_logged = True
+    pipe._filter_first_slices = set()
+    pipe._is_open = True
+    pipe._series_path = "study-1"
+    pipe._series_number = "201"
+    pipe._slices = [
+        SliceMeta(
+            path=f"/tmp/dummy_{i}.dcm", rows=4, cols=4,
+            pixel_spacing=(1.0, 1.0), iop=(1, 0, 0, 0, 1, 0),
+            ipp=(0, 0, float(i)), slice_thickness=1.0,
+            spacing_between_slices=1.0, photometric="MONOCHROME2",
+            bits_allocated=16, pixel_representation=1,
+            samples_per_pixel=1, window_width=400.0, window_center=40.0,
+            slope=1.0, intercept=0.0, instance_number=i, is_rgb=False,
+        )
+        for i in range(10)
+    ]
+
+    svc_calls = []
+    class _FakeDiskCache:
+        def get(self, *args, **kwargs):
+            return None
+
+        def put(self, *args, **kwargs):
+            return None
+
+    class _FakeSvc:
+        is_available = True
+
+        def decode(self, *args, **kwargs):
+            svc_calls.append((args, kwargs))
+            return np.ones((4, 4), dtype=np.int16)
+
+    class _FakePM:
+        enabled = False
+
+        def record_prefetch_completed(self):
+            pass
+
+        def record_cancelled_task(self):
+            pass
+
+        def record_stale_task(self):
+            pass
+
+    monkeypatch.setattr(pipe_mod, "PerfMetrics", SimpleNamespace(get=lambda: _FakePM()))
+    monkeypatch.setattr(pipe_mod, "get_disk_pixel_cache", lambda: _FakeDiskCache())
+    monkeypatch.setattr(pipe_mod, "get_decode_service", lambda: _FakeSvc())
+    monkeypatch.setattr(pipe_mod, "is_heavy_download_active", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "is_viewed_series_complete", lambda series_number: True)
+    monkeypatch.setattr(pipe, "_decode_slice", lambda idx: (_ for _ in ()).throw(AssertionError("in-process fallback should not run")))
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: None)
+    monkeypatch.setattr(pipe, "_compute_adaptive_radius", lambda velocity: 20)
+    monkeypatch.setattr(pipe, "_estimate_scroll_velocity", lambda: 0.0)
+
+    pipe._decode_into_cache(3, 0, 1)
+
+    assert len(svc_calls) == 1
+    assert 3 not in pipe._prefetch_pending
 

@@ -14,6 +14,9 @@ from PacsClient.utils.theme_manager import get_theme_manager
 from .shortcut_manager import ShortcutManager
 import qtawesome as qta
 import sys
+import logging
+
+logger = logging.getLogger(__name__)
 
 IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
@@ -87,7 +90,7 @@ class MainWindowWidget(QWidget):
 
         # Initialize shortcut manager BEFORE adding AIPacs tab
         self.shortcut_manager = ShortcutManager(self)
-        print("✓ Shortcut Manager initialized")
+        logger.info("Shortcut Manager initialized")
 
         # Now add AIPacs tab (which will connect to shortcut manager)
         self.add_AIPacs_tab()
@@ -248,7 +251,6 @@ class MainWindowWidget(QWidget):
         for w in self.findChildren(QWidget):
             try:
                 w.setMouseTracking(True)
-                w.setAttribute(Qt.WA_Hover, True)
             except Exception:
                 pass
 
@@ -909,9 +911,18 @@ class MainWindowWidget(QWidget):
 
         if hasattr(self, 'shortcut_manager'):
             self.shortcut_manager.set_control_panel(self.control_panel)
-            print("✓ Shortcut Manager connected to Control Panel")
+            logger.info("Shortcut Manager connected to Control Panel")
 
-        self._enable_mouse_tracking_recursive()
+        # Only set mouse tracking on the newly added control_panel subtree.
+        # _init_frameless_resize() already processed the pre-existing widgets;
+        # re-scanning the entire tree would be O(all_widgets) redundant work.
+        if IS_WINDOWS:
+            self.control_panel.setMouseTracking(True)
+            for w in self.control_panel.findChildren(QWidget):
+                try:
+                    w.setMouseTracking(True)
+                except Exception:
+                    pass
         self._ensure_home_tab_pinned()
 
     # ---------------- Window buttons ----------------
@@ -1074,6 +1085,9 @@ class MainWindowWidget(QWidget):
         import gc
         gc.collect()
         event.accept()
+        app = QApplication.instance()
+        if app is not None:
+            QTimer.singleShot(0, app.quit)
 
     # ------------------------------------------------------------------
     # Lifecycle resource registration
@@ -1100,9 +1114,17 @@ class MainWindowWidget(QWidget):
             from PacsClient.pacs.patient_tab.utils.cache import (
                 _thumbnail_cache, _metadata_cache, _image_cache,
             )
+            from PacsClient.pacs.patient_tab.utils.utils import clear_study_cache
+            from modules.viewer.fast.disk_pixel_cache import get_disk_pixel_cache
             for cache in (_thumbnail_cache, _metadata_cache, _image_cache):
-                if cache is not None and hasattr(cache, 'stop_auto_cleanup'):
+                if cache is None:
+                    continue
+                if hasattr(cache, 'stop_auto_cleanup'):
                     cache.stop_auto_cleanup()
+                if hasattr(cache, 'clear'):
+                    cache.clear()
+            clear_study_cache()
+            get_disk_pixel_cache().clear()
 
         lifecycle_manager.register("cache.auto_cleanup_threads", _shutdown_caches, timeout=3.0)
 
@@ -1132,7 +1154,31 @@ class MainWindowWidget(QWidget):
 
         lifecycle_manager.register("patient_tabs.exit_all", _shutdown_patient_tabs, timeout=10.0)
 
-        # 5. Socket service (highest-level – shuts down last)
+        # 5. Download Manager widget / worker pool teardown
+        def _shutdown_download_manager():
+            from modules.download_manager.ui.main_widget import DownloadManagerWidget
+
+            if hasattr(self, 'control_panel') and hasattr(self.control_panel, 'home_widget'):
+                hw = self.control_panel.home_widget
+                if hasattr(hw, 'download_service') and hw.download_service is not None:
+                    try:
+                        hw.download_service.cleanup()
+                    except Exception as exc:
+                        print(f"Warning: download_service.cleanup(): {exc}")
+
+            if not hasattr(self, 'tab_widget'):
+                return
+            for i in range(self.tab_widget.count()):
+                widget = self.tab_widget.widget(i)
+                if isinstance(widget, DownloadManagerWidget) and hasattr(widget, 'cleanup'):
+                    try:
+                        widget.cleanup()
+                    except Exception as exc:
+                        print(f"Warning: DownloadManagerWidget.cleanup() tab {i}: {exc}")
+
+        lifecycle_manager.register("download_manager.cleanup", _shutdown_download_manager, timeout=10.0)
+
+        # 6. Socket service (highest-level – shuts down last)
         def _shutdown_socket():
             from modules.network.socket_service import get_socket_service
             socket_service = get_socket_service()

@@ -53,6 +53,7 @@ class AppHandler(QDialog):
         # Set window properties for better taskbar integration
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         
         # Initialize socket service for authentication
         self.socket_service = SocketService()
@@ -986,7 +987,8 @@ class AppHandler(QDialog):
                 startup_import_folder=self.startup_import_folder,
             )
             self.main_page.showMaximized()
-            self.close()
+            self.hide()
+            self.deleteLater()
         except Exception as e:
             print(f"Error opening main window: {e}")
             import traceback

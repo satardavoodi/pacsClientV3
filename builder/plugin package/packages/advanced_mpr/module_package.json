@@ -4,7 +4,7 @@
   "module_id": "advanced_mpr",
   "title": "Advanced MPR",
   "tier": "optional",
-  "version": "2.3.3",
+  "version": "2.3.5",
   "package_kind": "runtime_payload",
   "payload_dir": "",
   "python_paths": [],

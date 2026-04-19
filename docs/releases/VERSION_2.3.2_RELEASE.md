@@ -39,7 +39,7 @@ This release resolves the H13 FAST viewer crash investigation and prepares the c
 ### Documentation
 
 - `H13_WORKING_DOCUMENT.md` updated with §17 (Phase 3 results, root cause, fix, final hypothesis ranking)
-- `H13_FOCUSED_RECOVERY_PLAN.md` updated with resolution status and strategic direction
+- `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md` updated with resolution status and strategic direction
 
 ## Files modified
 
@@ -51,7 +51,7 @@ This release resolves the H13 FAST viewer crash investigation and prepares the c
 | `PacsClient/.../vtk_widget/_vw_backend.py` | Silent suppression elimination, P5 enhancements |
 | `PacsClient/.../vtk_widget/_vw_scroll.py` | Silent suppression elimination, Qt boundary widening |
 | `docs/stability/H13_WORKING_DOCUMENT.md` | Full experiment history through resolution |
-| `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md` | Resolution status and strategic direction |
+| `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md` | Resolution status and strategic direction |
 
 ## Test status
 

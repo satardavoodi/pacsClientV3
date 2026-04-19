@@ -31,6 +31,12 @@ from PacsClient.pacs.patient_tab.utils.image_io import load_single_series_by_num
 from modules.viewer.pipeline import (
     PipelineOrchestrator, PipelineState, LoadCoordinator, PreviewEngine,
 )
+from modules.viewer.fast.ui_throttle import (
+    set_active_orchestrator as _set_active_orchestrator,
+    clear_active_orchestrator as _clear_active_orchestrator,
+    emit_live_block_telemetry as _emit_live_block_telemetry,
+    get_live_block_telemetry_snapshot as _get_live_block_telemetry_snapshot,
+)
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, CallerTypes
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget, grow_vtk_inplace
 from modules.viewer.widgets import ViewportSpinner
@@ -71,8 +77,14 @@ from PacsClient.pacs.patient_tab.ui.patient_ui._vc_layout import _VCLayoutMixin
 from PacsClient.pacs.patient_tab.ui.patient_ui._vc_switch import _VCSwitchMixin
 from PacsClient.pacs.patient_tab.ui.patient_ui._vc_warmup import _VCWarmupMixin
 from PacsClient.pacs.patient_tab.ui.patient_ui._vc_load import _VCLoadMixin
+import logging as _logging
 
 GRID_CONFIG_PATH = Path(SOCKET_CONFIG_PATH) / "modality_grid.json"
+
+# Redirect print() to logger to avoid synchronous console I/O on Windows.
+_print_logger = _logging.getLogger(__name__)
+def print(*args, **_kw):  # noqa: A001
+    _print_logger.debug(' '.join(str(a) for a in args))
 
 # SliceTickSlider extracted to _slice_tick_slider.py (v2.2.9.0) to avoid
 # circular imports between the hub and _vc_layout.py.
@@ -151,6 +163,10 @@ class ViewerController(
         
         # OPTIMIZATION: Fast metadata access without nested dict lookups
         self._metadata_flat_cache = {}  # series_number -> flattened metadata dict
+        # 1s TTL disk file-count cache (series_number -> (count, monotonic_ts))
+        # Must exist from init because progressive completion paths may invalidate
+        # it before any call to _count_series_files_on_disk() lazily creates it.
+        self._disk_count_cache = {}
         
         # OPTIMIZATION: Recently accessed series for quick re-access
         self._hot_series_cache = {}  # Most recently accessed (limited size)
@@ -190,6 +206,7 @@ class ViewerController(
 
         self._prefetch_delay_ms = 120
         self._interactive_load_in_progress = False
+        self._deferred_series_load_on_activation = []
 
         # â”€â”€ Dynamic capacity: scale limits to system RAM â”€â”€
         _cap = self._compute_dynamic_capacity()
@@ -208,7 +225,12 @@ class ViewerController(
         self._viewer_interaction_pause_ms = int(os.getenv("AIPACS_VIEWER_INTERACTION_PAUSE_MS", "350") or "350")
         self._open_warmup_min_idle_sec = max(0.0, float(os.getenv("AIPACS_OPEN_WARMUP_MIN_IDLE_SEC", "1.2") or "1.2"))
         self._interaction_release_token = 0
-        self._interactive_preview_enabled = os.getenv("AIPACS_INTERACTIVE_PREVIEW_ENABLED", "0") == "1"
+        # Phase 4: preview-first is now the default interactive policy for
+        # uncached series loads. Keep the env var as an emergency off switch.
+        self._interactive_preview_enabled = os.getenv("AIPACS_INTERACTIVE_PREVIEW_ENABLED", "1") == "1"
+        # Compatibility note: this env var originally gated whether preview
+        # was allowed for a series size. It now caps how many preview slices
+        # we read for the first-image path while keeping the legacy name.
         self._interactive_preview_max_slices = max(1, int(os.getenv("AIPACS_INTERACTIVE_PREVIEW_MAX_SLICES", "64") or "64"))
         # Slice-focused architecture (default ON): keep Zeta focused on
         # active-series slice window (±20) instead of whole-series warmup.
@@ -268,6 +290,18 @@ class ViewerController(
             on_state_changed=self._on_pipeline_state_changed,
             logger=self.logger,
         )
+        _set_active_orchestrator(self.pipeline)
+        self._block_diag_enabled = os.getenv("AIPACS_BLOCK_DIAG_ENABLED", "1") == "1"
+        self._block_diag_interval_ms = max(
+            500,
+            int(os.getenv("AIPACS_BLOCK_DIAG_INTERVAL_MS", "2000") or "2000"),
+        )
+        self._last_block_diag_snapshot = {}
+        self._block_diag_timer = QTimer()
+        self._block_diag_timer.setInterval(self._block_diag_interval_ms)
+        self._block_diag_timer.timeout.connect(self._emit_block_diag_heartbeat)
+        if self._block_diag_enabled:
+            self._block_diag_timer.start()
         self._load_coordinator = LoadCoordinator()
         self._preview_engine = PreviewEngine(logger=self.logger)
 
@@ -290,6 +324,10 @@ class ViewerController(
         self._image_slice_booster: ImageSliceBooster = ImageSliceBooster(
             logger=self.logger
         )
+        # B4.2: disable booster for FAST mode — the pipeline's own
+        # pixel_cache + disk_cache + prefetch fully supersede it.
+        if self._is_fast_viewer_mode():
+            self._image_slice_booster.disabled = True
         try:
             print(
                 f"ℹ️ [ZetaBoost] slice_focus_mode={self._zeta_slice_focus_mode} "
@@ -319,10 +357,22 @@ class ViewerController(
         self._series_download_completed: set = set()
         self._progressive_grow_timer = QTimer()
         self._progressive_grow_timer.setSingleShot(True)
-        self._progressive_grow_timer.setInterval(150)   # was 500 — tightened for live feel
+        self._progressive_grow_timer_default_interval_ms = 150
+        self._progressive_grow_timer.setInterval(self._progressive_grow_timer_default_interval_ms)   # was 500 — tightened for live feel
         self._progressive_grow_timer.timeout.connect(self._flush_progressive_grow)
         self._progressive_grow_batch_size = max(
             5, int(os.getenv("AIPACS_PROGRESSIVE_GROW_BATCH", "10") or "10")
+        )
+        self._progressive_admit_batch_size_default = 8
+        self._progressive_admit_batch_size = max(
+            1,
+            int(
+                os.getenv(
+                    "AIPACS_PROGRESSIVE_ADMIT_BATCH",
+                    str(self._progressive_admit_batch_size_default),
+                )
+                or str(self._progressive_admit_batch_size_default)
+            ),
         )
 
         # -- Completion sweep safety-net timer (Layer 4) --
@@ -333,6 +383,36 @@ class ViewerController(
         self._completion_sweep_timer = QTimer()
         self._completion_sweep_timer.setInterval(3000)   # 3 seconds
         self._completion_sweep_timer.timeout.connect(self._completion_sweep_tick)
+
+    def _block_diag_label(self) -> str:
+        try:
+            study_uid = str(getattr(self.parent_widget, 'study_uid', '') or '')
+            patient_pk = str(getattr(self.parent_widget, 'patient_pk', '') or '')
+            parts = []
+            if study_uid:
+                parts.append(f"study={study_uid[:24]}")
+            if patient_pk:
+                parts.append(f"patient={patient_pk}")
+            return ' '.join(parts)
+        except Exception:
+            return ""
+
+    def _emit_block_diag_heartbeat(self):
+        """QTimer wrapper: never let telemetry exceptions escape into Qt."""
+        try:
+            self._emit_block_diag_heartbeat_impl()
+        except Exception:
+            self.logger.error("Block telemetry heartbeat failed", exc_info=True)
+
+    def _emit_block_diag_heartbeat_impl(self):
+        snapshot = _get_live_block_telemetry_snapshot(label=self._block_diag_label())
+        self._last_block_diag_snapshot = snapshot
+        if self._block_diag_enabled:
+            _emit_live_block_telemetry(
+                self.logger,
+                label=self._block_diag_label(),
+                snapshot=snapshot,
+            )
 
     def _ensure_grid_config_exists(self):
         """Create the modality grid config if missing."""

@@ -542,10 +542,10 @@ class DataAnalysisDashboard(QWidget):
         self._kpi_labels: dict[str, QLabel] = {}
         self._auto_refresh_timer = QTimer(self)
         self._auto_refresh_timer.setInterval(30000)
-        self._auto_refresh_timer.timeout.connect(self.refresh_data)
+        self._auto_refresh_timer.timeout.connect(lambda: self.refresh_data(force_storage_refresh=False))
 
         self._build_ui()
-        self.refresh_data()
+        self.refresh_data(force_storage_refresh=False)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -570,7 +570,7 @@ class DataAnalysisDashboard(QWidget):
         top_row = QHBoxLayout()
         self.generated_at_label = QLabel("Last update: -")
         self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.clicked.connect(self.refresh_data)
+        self.refresh_btn.clicked.connect(lambda: self.refresh_data(force_storage_refresh=True))
         top_row.addWidget(self.generated_at_label)
         top_row.addWidget(self.refresh_btn)
 
@@ -745,13 +745,15 @@ class DataAnalysisDashboard(QWidget):
         else:
             self._auto_refresh_timer.stop()
 
-    def refresh_data(self) -> None:
-        self._snapshot = self._service.build_snapshot(self._auth_user, self._current_service_filters())
+    def refresh_data(self, force_storage_refresh: bool = False) -> None:
+        filters = self._current_service_filters()
+        filters["force_storage_refresh"] = bool(force_storage_refresh)
+        self._snapshot = self._service.build_snapshot(self._auth_user, filters)
         self._populate_filter_options()
         self._apply_filters()
 
     def _on_data_filter_changed(self) -> None:
-        self.refresh_data()
+        self.refresh_data(force_storage_refresh=False)
 
     def _current_service_filters(self) -> dict[str, str]:
         return {

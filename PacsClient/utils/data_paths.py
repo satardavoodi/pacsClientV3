@@ -190,45 +190,43 @@ def _migrate_study_paths_in_db() -> None:
         if not db_file.exists():
             return
 
-        conn = sqlite3.connect(str(db_file))
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+        with sqlite3.connect(str(db_file)) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
 
-        cur.execute("SELECT study_pk, study_uid, study_path FROM studies")
-        rows = cur.fetchall()
+            cur.execute("SELECT study_pk, study_uid, study_path FROM studies")
+            rows = cur.fetchall()
 
-        fixed = 0
-        for row in rows:
-            study_pk = row["study_pk"]
-            study_uid = row["study_uid"]
-            old_path = row["study_path"] or ""
+            fixed = 0
+            for row in rows:
+                study_pk = row["study_pk"]
+                study_uid = row["study_uid"]
+                old_path = row["study_path"] or ""
 
-            if not study_uid:
-                continue
-
-            correct_path = DICOM_IMAGES_DIR / study_uid
-
-            # Skip if already pointing to the correct location
-            try:
-                if Path(old_path) == correct_path:
+                if not study_uid:
                     continue
-            except Exception:
-                pass
 
-            # Only rewrite if the correct directory actually exists on disk
-            if not correct_path.exists():
-                continue
+                correct_path = DICOM_IMAGES_DIR / study_uid
 
-            cur.execute(
-                "UPDATE studies SET study_path = ? WHERE study_pk = ?",
-                (str(correct_path), study_pk),
-            )
-            fixed += 1
+                # Skip if already pointing to the correct location
+                try:
+                    if Path(old_path) == correct_path:
+                        continue
+                except Exception:
+                    pass
 
-        if fixed:
-            conn.commit()
-            logger.info("Migrated %d stale study_path entries → %s", fixed, DICOM_IMAGES_DIR)
+                # Only rewrite if the correct directory actually exists on disk
+                if not correct_path.exists():
+                    continue
 
-        conn.close()
+                cur.execute(
+                    "UPDATE studies SET study_path = ? WHERE study_pk = ?",
+                    (str(correct_path), study_pk),
+                )
+                fixed += 1
+
+            if fixed:
+                conn.commit()
+                logger.info("Migrated %d stale study_path entries → %s", fixed, DICOM_IMAGES_DIR)
     except Exception as exc:
         logger.warning("DB study_path migration skipped: %s", exc)

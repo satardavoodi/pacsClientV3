@@ -4,6 +4,7 @@
 
 
 import asyncio
+import logging
 import traceback
 
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QGridLayout, QLineEdit, QTableWidget, QAbstractItemView, QHeaderView, QCheckBox, QScrollArea, QToolButton, QTableWidgetItem, QMessageBox, QApplication, QProgressDialog, QTabWidget, QLabel, QFileDialog, QProgressBar, QStatusBar, QSplitter, QDialog, QGraphicsDropShadowEffect, QSizePolicy, QWidget
@@ -15,6 +16,8 @@ from PacsClient.utils import get_connection_database, get_all_patients, search_p
 from aipacs_runtime import is_module_enabled
 
 from .widget import _ensure_patient_widget, _ensure_ai_main_window, PRIORITY_MANAGER_AVAILABLE
+
+logger = logging.getLogger(__name__)
 
 class _HPModulesMixin:
     """Module launchers: DM, web browser, education, printing, NPR, CD burn, tabs"""
@@ -412,7 +415,7 @@ Study UID: {study_uid}
                 "StudyInstanceUID": study_uid
             }
 
-            print('plussssss')
+            logger.debug("on_plus_button_clicked: starting study thumbnail display")
             await self.show_patient_studies(patient_info)
 
         except Exception as e:

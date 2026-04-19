@@ -1,6 +1,11 @@
 from modules.network.grpc_client import DicomGrpcClient
 from modules.network.dicom_downloader import DicomDownloader
 from modules.network.socket_service import get_socket_service, SocketService
+# NOTE: This is the *module-system* PipelineOrchestrator (multi-pipeline cache
+# mgmt).  The *viewer* PipelineOrchestrator lives in
+# modules.viewer.pipeline.orchestrator and is a separate download→warmup FSM.
+# Only archived docs reference this export; active viewer code imports directly
+# from modules.viewer.pipeline.
 from modules.module_system.pipeline_orchestrator import PipelineOrchestrator
 from modules.module_system.module_manager import ModuleManager, BaseModule, ModuleContext, ModuleResult, ModuleStatus
 

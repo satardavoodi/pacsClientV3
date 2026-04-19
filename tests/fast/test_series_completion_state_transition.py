@@ -64,12 +64,25 @@ def test_complete_for_unregistered_series_does_not_raise(tm):
     assert "999" in tm.ready_series  # still added to set even without widget
 
 
+def test_register_after_complete_replays_ready_state(tm):
+    """A thumbnail created after completion must immediately bind to ready state."""
+    tm.complete_series_download(999, total_images=12)
+
+    widget = tm.register_series(999)
+
+    assert widget.progress_border._is_ready
+    assert not widget.progress_border._downloading
+    assert widget.count_label_text == "12/12"
+
+
 def test_complete_is_idempotent(tm):
     """Calling complete_series_download twice must not crash or flip state."""
     tm.register_series(1)
     tm.complete_series_download(1)
+    apply_count = tm._apply_count
     tm.complete_series_download(1)
     assert tm.series_widgets["1"].progress_border._is_ready
+    assert tm._apply_count == apply_count
 
 
 # ─── multi-series isolation ───────────────────────────────────────────────────
@@ -109,3 +122,21 @@ def test_all_completed_series_in_ready_set(tm):
         tm.complete_series_download(sn)
 
     assert tm.ready_series == {str(k) for k in keys}
+
+
+def test_complete_uses_stable_total_for_final_label(tm):
+    tm.register_series(42)
+    tm.start_series_download(42, total_images=145)
+    tm.complete_series_download(42, total_images=999)
+
+    assert tm.series_widgets["42"].count_label_text == "145/145"
+
+
+def test_start_after_complete_begins_new_projection_cycle(tm):
+    tm.register_series(9)
+    tm.complete_series_download(9, total_images=10)
+
+    tm.start_series_download(9, total_images=10)
+
+    assert not tm.series_widgets["9"].progress_border._is_ready
+    assert tm.series_widgets["9"].progress_border._downloading

@@ -1,0 +1,229 @@
+{
+  "version": "2026-04-17",
+  "purpose": "FAST performance KPIs grouped by functional Block 1/2/3 ownership.",
+  "blocks": [
+    {
+      "id": "block_1_data_services",
+      "label": "Block 1 - Data services",
+      "role": "Download, thumbnail/right-panel projection, DICOM/header persistence, DB/storage writes, and deferred external metadata.",
+      "position": "Upstream producer feeding data/state into Block 2 through Block 3 scheduling.",
+      "preferred_worker_model": {
+        "main_process": "Orchestrator decisions and lightweight UI projection only.",
+        "background": [
+          "download subprocesses",
+          "database/storage background work",
+          "warmup subprocess"
+        ],
+        "rule": "Do not let thumbnail UI or cosmetic work compete with download correctness."
+      },
+      "metrics": [
+        {
+          "key": "cpu_p95_pct",
+          "label": "CPU p95",
+          "goal": "<80 primary overlap target; <50 stretch",
+          "source": "process_summary",
+          "status": "existing"
+        },
+        {
+          "key": "thread_count_p95",
+          "label": "Thread count p95",
+          "goal": "Stable; detect worker explosion during overlap",
+          "source": "process_summary",
+          "status": "existing"
+        },
+        {
+          "key": "read_mb_delta",
+          "label": "Read MB delta",
+          "goal": "Track storage/network pressure by scenario",
+          "source": "process_summary",
+          "status": "existing"
+        },
+        {
+          "key": "write_mb_delta",
+          "label": "Write MB delta",
+          "goal": "Track persistence churn by scenario",
+          "source": "process_summary",
+          "status": "existing"
+        },
+        {
+          "key": "download_preemption_fail_count",
+          "label": "Download preemption fail count",
+          "goal": "0",
+          "source": "planned log/process metric",
+          "status": "planned"
+        },
+        {
+          "key": "thumbnail_start_count",
+          "label": "Thumbnail start transitions",
+          "goal": "1 per series",
+          "source": "planned UI projection metric",
+          "status": "planned"
+        },
+        {
+          "key": "thumbnail_complete_count",
+          "label": "Thumbnail complete transitions",
+          "goal": "1 per series",
+          "source": "planned UI projection metric",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "id": "block_2_viewer_hot_path",
+      "label": "Block 2 - Viewer hot path",
+      "role": "Decode, filter, render, and present the FAST viewer image.",
+      "position": "Latency-critical visible path consuming the smallest possible image-ready payload.",
+      "preferred_worker_model": {
+        "main_process": "Direct present path in QtViewerBridge.set_slice().",
+        "background": [
+          "background prefetch threads",
+          "decode subprocess only where it removes real GIL contention"
+        ],
+        "rule": "Visible interaction must never queue behind non-interactive work."
+      },
+      "metrics": [
+        {
+          "key": "first_image_visible_ms",
+          "label": "First image visible",
+          "goal": "<800ms overlap target",
+          "source": "kpis/log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "set_slice_present_p95_ms",
+          "label": "set_slice present p95",
+          "goal": "<16ms ideal; <24ms local; <30ms overlap",
+          "source": "kpis/log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "set_slice_present_max_ms",
+          "label": "set_slice present max",
+          "goal": "Track visible hitch spikes",
+          "source": "kpis/log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "decode_p95_ms",
+          "label": "Decode p95",
+          "goal": "Trend downward without harming correctness",
+          "source": "kpis",
+          "status": "existing"
+        },
+        {
+          "key": "frame_render_p95_ms",
+          "label": "Frame render p95",
+          "goal": "<15ms warm path target",
+          "source": "kpis",
+          "status": "existing"
+        },
+        {
+          "key": "slow_frame_count_16ms",
+          "label": "Slow frame count >16ms",
+          "goal": "Approach 0 in controlled scenarios",
+          "source": "kpis",
+          "status": "existing"
+        },
+        {
+          "key": "stack_drag_decode_hitch_count",
+          "label": "Stack-drag decode hitch count",
+          "goal": "0 preferred",
+          "source": "log_metrics",
+          "status": "existing"
+        }
+      ]
+    },
+    {
+      "id": "block_3_cache_scroll_orchestration",
+      "label": "Block 3 - Cache, scroll, orchestration",
+      "role": "Admission control, progressive lifecycle, cache/scroll policy, redraw ordering, and inter-block scheduling.",
+      "position": "Control plane between Block 1 and Block 2.",
+      "preferred_worker_model": {
+        "main_process": "Policy, scheduling, lifecycle ownership, and redraw sequencing.",
+        "background": [
+          "timers",
+          "coalesced deferred work only after admission"
+        ],
+        "rule": "Own the when, not the heavy compute."
+      },
+      "metrics": [
+        {
+          "key": "stale_task_ratio",
+          "label": "Stale task ratio",
+          "goal": "<0.50 first; <0.35 strong target",
+          "source": "kpis",
+          "status": "existing"
+        },
+        {
+          "key": "cache_hit_ratio_pct",
+          "label": "Cache hit ratio",
+          "goal": "High enough to suppress foreground decode during interaction",
+          "source": "kpis",
+          "status": "existing"
+        },
+        {
+          "key": "terminal_completion_duplicate_count",
+          "label": "Terminal completion duplicate count",
+          "goal": "0",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "cache_warm_duplicate_count",
+          "label": "Cache warm duplicate count",
+          "goal": "0",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "stack_drag_nondecode_hitch_count",
+          "label": "Stack-drag non-decode hitch count",
+          "goal": "0 preferred",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "longest_ui_gap_ms",
+          "label": "Longest UI gap",
+          "goal": "Trend toward <20ms p95 equivalent",
+          "source": "kpis",
+          "status": "existing"
+        },
+        {
+          "key": "ui_event_loop_lag_ms_p95",
+          "label": "UI event loop lag p95",
+          "goal": "<20ms",
+          "source": "planned controller metric",
+          "status": "planned"
+        }
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "common_local_viewing",
+      "primary_blocks": [
+        "block_2_viewer_hot_path",
+        "block_3_cache_scroll_orchestration"
+      ],
+      "intent": "Viewer-first local benchmark with minimal Block 1 pressure."
+    },
+    {
+      "id": "aipacs_live_download_overlap",
+      "primary_blocks": [
+        "block_1_data_services",
+        "block_2_viewer_hot_path",
+        "block_3_cache_scroll_orchestration"
+      ],
+      "intent": "Full overlap scenario where all three blocks compete and must be scheduled by the orchestrator."
+    },
+    {
+      "id": "aipacs_stack_drag_policy_compare",
+      "primary_blocks": [
+        "block_2_viewer_hot_path",
+        "block_3_cache_scroll_orchestration"
+      ],
+      "intent": "Scroll/cache policy stress where Block 3 protects Block 2 during rapid navigation."
+    }
+  ]
+}

@@ -1,0 +1,354 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "common_local_viewing",
+      "title": "Common Local Viewing Baseline",
+      "applies_to": [
+        "aipacs",
+        "clearcanvas"
+      ],
+      "description": "Use the same fully local DICOM series in both viewers. This is the clean apples-to-apples benchmark.",
+      "kpi_targets": {
+        "common": {
+          "first_image_visible_ms": {
+            "goal": "lower is better",
+            "reason": "Open-to-first-frame responsiveness is directly user-visible in both apps."
+          },
+          "set_slice_present_p95_ms": {
+            "goal": "<=16 preferred, <=25 acceptable",
+            "reason": "Tail latency during browsing determines whether the stack feels clinically usable."
+          },
+          "cpu_p95_pct": {
+            "goal": "lower is better",
+            "reason": "Higher CPU under the same scripted steps usually means orchestration overhead."
+          },
+          "rss_peak_mb": {
+            "goal": "lower is better",
+            "reason": "Peak memory reflects cache discipline and unnecessary retention."
+          },
+          "thread_count_p95": {
+            "goal": "lower is better",
+            "reason": "More live actors often means more coordination overhead and less calm ownership."
+          },
+          "read_mb_delta": {
+            "goal": "context only",
+            "reason": "Useful for understanding warm reopen and on-demand retrieval behavior."
+          },
+          "write_mb_delta": {
+            "goal": "context only",
+            "reason": "Useful for understanding cache persistence and extra churn."
+          }
+        },
+        "aipacs_internal": {
+          "decode_p95_ms": {
+            "goal": "observe only",
+            "reason": "Internal FAST path metric available from headless AI-PACS runs."
+          },
+          "frame_render_p95_ms": {
+            "goal": "observe only",
+            "reason": "Internal FAST path metric available from headless AI-PACS runs."
+          },
+          "cache_hit_ratio_pct": {
+            "goal": "higher is better",
+            "reason": "Measures whether FAST prefetch and cache policy help the actual browsing path."
+          },
+          "slow_frame_count_16ms": {
+            "goal": "0 preferred",
+            "reason": "Counts interactive frames that miss the 16ms budget."
+          },
+          "longest_ui_gap_ms": {
+            "goal": "lower is better",
+            "reason": "Tracks event-loop instability under the scripted run."
+          },
+          "stale_task_ratio": {
+            "goal": "<0.30 preferred",
+            "reason": "High stale work means the system is decoding work the user no longer needs."
+          }
+        }
+      },
+      "pipeline_config": {
+        "prefetch_workers": 4,
+        "prefetch_radius": 12,
+        "pixel_cache_size": 96,
+        "frame_cache_size": 96
+      },
+      "steps": [
+        {
+          "id": "open_dataset",
+          "phase": "A",
+          "kind": "initial_frame",
+          "duration_s": 10,
+          "instruction": "Launch the viewer and open the target series. Wait until the first image is visible."
+        },
+        {
+          "id": "steady_forward",
+          "phase": "C",
+          "kind": "forward_scan",
+          "count": 80,
+          "fast_interaction": true,
+          "duration_s": 15,
+          "instruction": "Scroll forward steadily through the stack."
+        },
+        {
+          "id": "rapid_burst",
+          "phase": "C",
+          "kind": "rapid_burst",
+          "count": 120,
+          "fast_interaction": true,
+          "duration_s": 10,
+          "instruction": "Do one fast wheel burst through a dense part of the series."
+        },
+        {
+          "id": "direction_reversal",
+          "phase": "C",
+          "kind": "direction_reversal",
+          "cycles": 12,
+          "segment": 8,
+          "fast_interaction": true,
+          "duration_s": 12,
+          "instruction": "Reverse direction repeatedly so stale work and redraw discipline are stressed."
+        },
+        {
+          "id": "idle_settle",
+          "phase": "E",
+          "kind": "settle",
+          "duration_s": 5,
+          "instruction": "Stop all input and let the viewer settle."
+        },
+        {
+          "id": "reopen_same_series",
+          "phase": "E",
+          "kind": "reopen_series",
+          "duration_s": 8,
+          "instruction": "Close and reopen the same series to measure warm reopen behavior."
+        }
+      ]
+    },
+    {
+      "id": "aipacs_live_download_overlap",
+      "title": "AI-PACS Live Download Overlap",
+      "applies_to": [
+        "aipacs"
+      ],
+      "description": "AI-PACS-only stress run. Use the real app with active study download, or the headless runner with simulated download workers.",
+      "kpi_targets": {
+        "aipacs_overlap": {
+          "set_slice_present_p95_ms": {
+            "goal": "<=25 preferred",
+            "reason": "This is the core overlap smoothness KPI for the user."
+          },
+          "stack_drag_decode_hitch_count": {
+            "goal": "0 preferred",
+            "reason": "Foreground exact decode during active stack drag is a direct signature of cache-horizon misses."
+          },
+          "stack_drag_nondecode_hitch_count": {
+            "goal": "0 preferred",
+            "reason": "Separates main-thread/UI hitches from lazy decode misses during stack drag."
+          },
+          "cpu_p95_pct": {
+            "goal": "trend down from current baseline",
+            "reason": "Overlap storms are visible today as CPU-heavy control-plane churn."
+          },
+          "terminal_completion_duplicate_count": {
+            "goal": "0",
+            "reason": "Terminal completion should be one-shot per series epoch."
+          },
+          "cache_warm_duplicate_count": {
+            "goal": "0",
+            "reason": "Post-completion cache warm must not fan out repeatedly."
+          },
+          "stale_task_ratio": {
+            "goal": "<0.30 preferred",
+            "reason": "High stale work means overlap logic is doing unnecessary background work."
+          },
+          "longest_ui_gap_ms": {
+            "goal": "<50 preferred",
+            "reason": "Large UI gaps are the best direct symptom of the workstation storm."
+          }
+        }
+      },
+      "pipeline_config": {
+        "prefetch_workers": 4,
+        "prefetch_radius": 12,
+        "pixel_cache_size": 96,
+        "frame_cache_size": 96
+      },
+      "simulated_download_workers": 4,
+      "steps": [
+        {
+          "id": "open_during_download",
+          "phase": "D",
+          "kind": "initial_frame",
+          "duration_s": 10,
+          "instruction": "Start a study download, then open the target series while the download is still active."
+        },
+        {
+          "id": "rapid_burst",
+          "phase": "D",
+          "kind": "rapid_burst",
+          "count": 120,
+          "fast_interaction": true,
+          "duration_s": 12,
+          "instruction": "Scroll aggressively while download progress, thumbnails, and progressive growth are active."
+        },
+        {
+          "id": "direction_reversal",
+          "phase": "D",
+          "kind": "direction_reversal",
+          "cycles": 16,
+          "segment": 8,
+          "fast_interaction": true,
+          "duration_s": 16,
+          "instruction": "Reverse direction repeatedly during the same overlap window."
+        },
+        {
+          "id": "idle_settle",
+          "phase": "E",
+          "kind": "settle",
+          "duration_s": 6,
+          "instruction": "Stop input and wait for settle, completion, and any post-completion cache warm to fire."
+        }
+      ]
+    },
+    {
+      "id": "aipacs_stack_drag_policy_compare",
+      "title": "AI-PACS Stack Drag Policy Comparison",
+      "applies_to": [
+        "aipacs"
+      ],
+      "description": "Compare adaptive versus ClearCanvas-style stack drag using the real QtSliceViewer and QtViewerBridge path.",
+      "kpi_targets": {
+        "aipacs_stack_drag": {
+          "set_slice_present_p95_ms": {
+            "goal": "lower is better, but interpret alongside traversal amount",
+            "reason": "Tail latency matters, but a policy that traverses fewer slices can look artificially faster."
+          },
+          "stack_drag_decode_hitch_count": {
+            "goal": "0 preferred",
+            "reason": "A stack policy that drives repeated foreground decode misses is not clinically smooth even if average latency looks acceptable."
+          },
+          "stack_drag_nondecode_hitch_count": {
+            "goal": "0 preferred",
+            "reason": "Distinguishes cache misses from UI/main-thread stalls while using the real Qt drag path."
+          },
+          "set_slice_present_max_ms": {
+            "goal": "lower is better",
+            "reason": "Highlights occasional hitching during drag."
+          },
+          "cpu_p95_pct": {
+            "goal": "lower is better",
+            "reason": "Shows the cost of the policy while using the actual Qt drag path."
+          }
+        }
+      },
+      "pipeline_config": {
+        "prefetch_workers": 4,
+        "prefetch_radius": 12,
+        "pixel_cache_size": 96,
+        "frame_cache_size": 96
+      },
+      "steps": [
+        {
+          "id": "open_dataset",
+          "phase": "A",
+          "kind": "initial_frame",
+          "duration_s": 6,
+          "instruction": "Open the target series and render the first image."
+        },
+        {
+          "id": "medium_drag",
+          "phase": "C",
+          "kind": "stack_drag",
+          "events": 48,
+          "total_dy": 420.0,
+          "duration_s": 8,
+          "instruction": "Simulate a medium stack drag using the real Qt viewer path."
+        },
+        {
+          "id": "fast_drag",
+          "phase": "C",
+          "kind": "stack_drag",
+          "events": 28,
+          "total_dy": 620.0,
+          "duration_s": 8,
+          "instruction": "Simulate a faster stack drag using the real Qt viewer path."
+        },
+        {
+          "id": "idle_settle",
+          "phase": "E",
+          "kind": "settle",
+          "duration_s": 3,
+          "instruction": "Stop input and let the viewer settle to the exact final slice."
+        }
+      ]
+    },
+    {
+      "id": "clearcanvas_background_copy_pressure_approx",
+      "title": "ClearCanvas Background Copy Pressure Approximation",
+      "applies_to": [
+        "clearcanvas"
+      ],
+      "description": "Approximate stress-only scenario for ClearCanvas. Open the same fully local dataset while a separate staged DICOM copy creates external disk and CPU pressure. This is not equivalent to AI-PACS live progressive growth.",
+      "kpi_targets": {
+        "common": {
+          "first_image_visible_ms": {
+            "goal": "lower is better",
+            "reason": "Measure cold-open behavior under external disk pressure."
+          },
+          "set_slice_present_p95_ms": {
+            "goal": "context only",
+            "reason": "Used as a stress comparison, not a direct progressive-download equivalent."
+          },
+          "cpu_p95_pct": {
+            "goal": "lower is better",
+            "reason": "Shows how much process cost appears under external pressure."
+          },
+          "rss_peak_mb": {
+            "goal": "lower is better",
+            "reason": "Shows retained working set under stress."
+          },
+          "thread_count_p95": {
+            "goal": "lower is better",
+            "reason": "Shows concurrent actor count under stress."
+          }
+        }
+      },
+      "steps": [
+        {
+          "id": "open_under_copy_pressure",
+          "phase": "D",
+          "kind": "initial_frame",
+          "duration_s": 10,
+          "instruction": "Start the background staged copy, then open the target series in ClearCanvas."
+        },
+        {
+          "id": "rapid_burst",
+          "phase": "D",
+          "kind": "rapid_burst",
+          "count": 120,
+          "fast_interaction": true,
+          "duration_s": 12,
+          "instruction": "Run a fast scroll burst while the background copy is still active."
+        },
+        {
+          "id": "direction_reversal",
+          "phase": "D",
+          "kind": "direction_reversal",
+          "cycles": 16,
+          "segment": 8,
+          "fast_interaction": true,
+          "duration_s": 16,
+          "instruction": "Reverse direction repeatedly while the background copy remains active."
+        },
+        {
+          "id": "idle_settle",
+          "phase": "E",
+          "kind": "settle",
+          "duration_s": 6,
+          "instruction": "Stop input and wait for the background copy and UI activity to settle."
+        }
+      ]
+    }
+  ]
+}

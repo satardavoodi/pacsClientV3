@@ -1,6 +1,6 @@
 ﻿# AIPacs Documentation
 
-> **Current Stable Version:** v2.3.3 (2026-04-14)
+> **Current Stable Version:** v2.3.5 (2026-04-19)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -44,7 +44,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - [Multi-Pipeline Concurrent Architecture](pipelines/MULTI_PIPELINE_CONCURRENT_ARCHITECTURE.md) أ¢â‚¬â€‌ Concurrent pipeline design (proposed)
 - [PyDicom 2D Backend](pipelines/PYDICOM_2D_BACKEND.md) أ¢â‚¬â€‌ Lazy per-slice backend (Phase 1)
 - [Phase 2: Tool Overlay Prep](pipelines/PHASE2_TOOL_OVERLAY_PREP.md) أ¢â‚¬â€‌ Backend-independent tool overlay (planned)
-- [Fast Mode Download-Viewing Plan](pipelines/FAST_MODE_DOWNLOAD_VIEWING_PLAN.md) أ¢â‚¬â€‌ Progressive viewing during download
+- [Fast Mode Download-Viewing Plan](plans/pipelines/FAST_MODE_DOWNLOAD_VIEWING_PLAN.md) أ¢â‚¬â€‌ Progressive viewing during download
 - [Pipeline Optimization Research](pipelines/PIPELINE_OPTIMIZATION_RESEARCH_REPORT.md) أ¢â‚¬â€‌ Filter alternatives and optimization analysis
 
 ### Stability & Reliability
@@ -53,7 +53,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 
 ### Performance
 - [Performance Status](performance/PERFORMANCE_STATUS.md) أ¢â‚¬â€‌ **Start here** أ¢â‚¬â€‌ current metrics, open issues, key files
-- [FAST Viewer Performance Roadmap](performance/FAST_VIEWER_PERFORMANCE_ROADMAP.md) أ¢â‚¬â€‌ ordered KPI-driven phases, dependencies, stop/go checkpoints
+- [FAST Viewer Performance Roadmap](plans/performance/FAST_VIEWER_PERFORMANCE_ROADMAP.md) أ¢â‚¬â€‌ ordered KPI-driven phases, dependencies, stop/go checkpoints
 - [FAST Viewer KPI Catalog](performance/FAST_VIEWER_KPI_CATALOG.md) أ¢â‚¬â€‌ component vs system KPI definitions and capture rules
 - [FAST Viewer Test Scenarios](performance/FAST_VIEWER_TEST_SCENARIOS.md) أ¢â‚¬â€‌ scenario matrix, setup, pass/fail signals
 - [Concurrent Execution Analysis](performance/CONCURRENCY_ANALYSIS_v2.3.3.md) أ¢â‚¬â€‌ workload classes, contention map, queue and cancellation boundaries
@@ -72,10 +72,15 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - [Tools Governance & Roadmap](development/tools-governance-and-roadmap.md) أ¢â‚¬â€‌ Rules, lifecycle, and 90-day plan for `tools/`
 - [GapGPT API Usage](development/GAPGPT_API_USAGE.md) أ¢â‚¬â€‌ External AI API reference
 
+### Plans
+- [Plans Index](plans/README.md) أ¢â‚¬â€‌ canonical home for active planning documents and roadmaps
+- [Master Plan](plans/plan.md) أ¢â‚¬â€‌ current top-level FAST/workstation planning ledger
+
 ### Releases
 - [Release Notes](releases/RELEASE_NOTES.md) أ¢â‚¬â€‌ Current consolidated release history
-- [Version 2.3.3 Release](releases/VERSION_2.3.3_RELEASE.md) أ¢â‚¬â€‌ Stable release notes for the current published version
-- [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) أ¢â‚¬â€‌ Previous stable release snapshot
+- [Version 2.3.5 Release](releases/VERSION_2.3.5_RELEASE.md) أ¢â‚¬â€‌ Stable release notes for the current published version
+- [Version 2.3.4 Release](releases/VERSION_2.3.4_RELEASE.md) أ¢â‚¬â€‌ Previous stable release snapshot
+- [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) أ¢â‚¬â€‌ Earlier stable release snapshot
 
 ### Deployment
 - [Windows Release Flow](../builder/docs/WINDOWS_RELEASE_FLOW.md) أ¢â‚¬â€‌ Build, stage, and install workflow for shipping to another PC
@@ -98,6 +103,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 ```
 docs/
 أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ README.md                  أ¢â€ ع¯ You are here
+أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ plans/                     أ¢â€ ع¯ Canonical home for planning docs and roadmaps
 أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ architecture/              أ¢â€ ع¯ System design, layers, lifecycle
 أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ pipelines/                 أ¢â€ ع¯ Data flow pipelines (image, download, viewer)
 أ¢â€‌إ“أ¢â€‌â‚¬أ¢â€‌â‚¬ stability/                 أ¢â€ ع¯ Resource lifecycle, cache management, loop patterns
@@ -114,6 +120,7 @@ docs/
 | Directory | Contents | Freshness |
 |-----------|----------|-----------|
 | `architecture/` | Source-of-truth architecture and structure | Keep current with code |
+| `plans/` | Active planning docs, recovery plans, and roadmaps | Put new plans here |
 | `pipelines/` | Data flow references and pipeline design | Update when pipeline changes |
 | `stability/` | Reliability patterns and lifecycle management | Update when patterns change |
 | `performance/` | Benchmarks and optimization decisions | Update every optimization session |

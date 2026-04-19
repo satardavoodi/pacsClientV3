@@ -260,7 +260,7 @@ Phase 2 is entered ONLY after Phase 1 is complete per Section 8.
 | `PacsClient/.../vtk_widget/_vw_scroll.py:710-740` | `set_slice` scroll path P1/P3/T4 |
 | `tests/viewer/test_fast_download_scroll_cpu_repro.py` | Test harness: timer-storm, signature parser, callback-storm model, Phase 2A pre-screening (19 tests) |
 | `docs/stability/H13_WORKING_DOCUMENT.md` | This document |
-| `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md` | Focused companion: distilled findings, current priorities, pressure/stability run order |
+| `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md` | Focused companion: distilled findings, current priorities, pressure/stability run order |
 
 ---
 
@@ -285,7 +285,7 @@ Phase 2 is entered ONLY after Phase 1 is complete per Section 8.
 | 2026-04-12 | 2C | **T6 ON run (Log 21-A)** | **CRASH (early)** — same family (`PyThreadState_Get`). Crash occurred ~1.0s from first scroll activity. P5: workers=4, qsize=10→3, pending=14→6, overlap_count=0 in this short window. Classify T6 as **B: valid hypothesis, invalid/untested implementation** (no behavior-safe instrumentation existed yet). |
 | 2026-04-12 | 2C | **T6 OFF run (Log 21-B)** | **NO crash in this run**, but severe pressure: CPU peak 140.9%, dropped up to 1538, probe p95=83.78ms, P5 overlap_count up to 329 and overlap_max_ms up to 39256.77. Confirms strong H13-E amplifier behavior. |
 | 2026-04-12 | 2C | **T6 instrumentation-only deployed** | Added `[H13-T6-DIAG]` at `_on_lazy_slice_ready_impl` insertion point + `stale_abort_count` counter in P5 snapshots. **No behavior change / no early return**. |
-| 2026-04-12 | 2C | **Focused recovery plan created** | Added `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md` to keep the team aligned on what is proven, what remains plausible, which KPIs matter, and the exact next-run order (T6 diag → P1 booster off → P2 throttle → T3 only if still needed). |
+| 2026-04-12 | 2C | **Focused recovery plan created** | Added `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md` to keep the team aligned on what is proven, what remains plausible, which KPIs matter, and the exact next-run order (T6 diag → P1 booster off → P2 throttle → T3 only if still needed). |
 | 2026-04-12 | 2C | **Counter split: stale_condition_count vs stale_abort_count** | `_stale_render_abort_count` was only incremented when toggle=ON, making T6-OFF `stale_abort_count=0` uninformative. **Fix:** added `_stale_condition_count` (always-on, toggle-independent — increments on `reason=stale` or `mismatch` regardless of toggle) and kept `_stale_render_abort_count` for actual aborts only. P5 log now shows both `stale_cond_count=N stale_abort_count=N`. T6-DIAG now emits at `logger.debug` for non-stale calls (not `logger.info`) to reduce log noise. These changes make the next T6 diagnostic run able to answer "how frequently does stale render fire?" in OFF mode for the first time. |
 | 2026-04-13 | 3 | **Steps 3a/3b completed** | Silent suppression eliminated (4 sites in render path elevated to `logger.warning`); Qt boundary guards added (wrapper+impl pattern on 4 functions with `[H13-S5]` logging) |
 | 2026-04-13 | 3 | **Step 3c verification (Log 22)** | **CRASH (F1 GIL fatal)** — no `[H13-S5]` guards fired. Confirmed: F1 crashes are C-level, NOT Python-catchable. Python guards are irrelevant for F1. `[H13-OVERLAP]` overlap_count=2, overlap_max_ms=0.51. |

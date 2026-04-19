@@ -5,9 +5,10 @@ Extracted from patient_widget.py during Phase 1 refactoring (v2.2.9.1).
 This is a mixin class — do NOT instantiate directly.
 """
 
-
 import asyncio
 import contextlib
+import logging
+import logging as _logging
 import threading
 import time
 import traceback
@@ -17,7 +18,11 @@ from PySide6.QtWidgets import QApplication
 from PacsClient.pacs.patient_tab.utils import check_and_get_thumbnails, get_quickly_series_info, load_images, load_images_from_server, save_image_as_png
 from PacsClient.pacs.patient_tab.utils.image_io import load_single_series_by_number
 from PacsClient.utils import CallerTypes
-import logging
+
+# Redirect print() to logger to avoid synchronous console I/O on Windows.
+_print_logger = _logging.getLogger(__name__)
+def print(*args, **_kw):  # noqa: A001
+    _print_logger.debug(' '.join(str(a) for a in args))
 logger = logging.getLogger(__name__)
 
 

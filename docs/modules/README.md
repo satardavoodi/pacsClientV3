@@ -1,6 +1,6 @@
 ﻿# Module Catalog
 
-> **Version:** v2.3.3 | **Updated:** 2026-04-14
+> **Version:** v2.3.4 | **Updated:** 2026-04-18
 
 ## Active Modules
 
@@ -22,7 +22,7 @@
 
 ## Installer and Module Delivery Model
 
-For `v2.3.3`, the Windows installer is the canonical way to prepare AIPacs for another PC.
+For `v2.3.4`, the Windows installer is the canonical way to prepare AIPacs for another PC.
 
 - `Core` install always delivers the workstation shell plus the required basic modules.
 - `Custom` install asks the user which optional modules should be copied for that specific PC.
@@ -64,7 +64,7 @@ Optional modules selectable during setup:
 - Web Browser
 - EchoMind
 
-## Download Manager ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Internal Structure (v2.3.3)
+## Download Manager ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Internal Structure (v2.3.4)
 
 The download manager is the most architecturally complex module. It uses a
 **State Machine + Rule Engine + Thin Coordinator** pattern.

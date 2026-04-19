@@ -16,6 +16,8 @@ Resolver and metadata:
 
 In `load_single_series_by_number(...)` (`image_io.py`):
 - For `BACKEND_PYDICOM_QT`: early exit path, metadata-focused, minimal VTK stub, skips heavy ITK/filter chain.
+  - If DB metadata is slightly behind the filesystem during active download, the fast path reconciles DB instances with on-disk `.dcm` files and reads headers only for the missing files instead of rebuilding metadata for the entire series.
+  - Geometry backfill is only attempted when sampled metadata is incomplete; complete DB/header metadata should not pay a full per-instance backfill pass on interactive opens.
 - For lazy `pydicom_2d`: creates lazy backend state and keys for on-demand decode.
 
 ## 3) Viewer switch and startup

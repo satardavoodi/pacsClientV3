@@ -3,9 +3,14 @@ Shortcut Manager for AIPacs Application
 Manages keyboard shortcuts for quick navigation and actions
 """
 
+import logging
+
 from PySide6.QtCore import Qt, QObject
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import QWidget
+
+
+logger = logging.getLogger(__name__)
 
 
 class ShortcutManager(QObject):
@@ -70,29 +75,27 @@ class ShortcutManager(QObject):
         self.arrow_right_shortcut.setContext(Qt.ApplicationShortcut)
         self.arrow_right_shortcut.activated.connect(self._on_arrow_right_pressed)
         
-        print("✓ Shortcuts initialized: F5 (Home), F6 (Chatbot), F7 (Recording), F8 (Report)")
-        print("✓ Arrow shortcuts: Up/Down (Slice), Left/Right (Series)")
-        print("✓ All shortcuts set to ApplicationShortcut (work everywhere)")
+        logger.info("Shortcuts initialized: F5/F6/F7/F8 and arrow navigation")
     
     def set_control_panel(self, control_panel):
         """Set the control panel reference for navigation"""
-        print(f"[DEBUG] set_control_panel called with: {control_panel}")
-        print(f"[DEBUG] Has 'ui' attr: {hasattr(control_panel, 'ui')}")
-        
         self.control_panel = control_panel
         if hasattr(control_panel, 'ui'):
             ui = control_panel.ui
-            print(f"[DEBUG] ui = {ui}")
-            print(f"[DEBUG] Has 'home_widget' attr: {hasattr(ui, 'home_widget')}")
-            print(f"[DEBUG] Has 'mainPages' attr: {hasattr(ui, 'mainPages')}")
+            logger.debug(
+                "ShortcutManager.set_control_panel ui=%s has_home_widget=%s has_mainPages=%s",
+                ui,
+                hasattr(ui, 'home_widget'),
+                hasattr(ui, 'mainPages'),
+            )
             
             if hasattr(ui, 'home_widget'):
                 self.home_widget = ui.home_widget
-                print(f"✓ Home widget connected to shortcut manager: {self.home_widget}")
+                logger.info("Home widget connected to shortcut manager")
             else:
-                print("✗ home_widget NOT found in ui")
+                logger.warning("ShortcutManager could not find home_widget on control_panel.ui")
         else:
-            print("✗ control_panel does NOT have 'ui' attribute")
+            logger.warning("ShortcutManager received control_panel without ui attribute")
     
     def _get_chatbot_widget(self):
         """Get or find the chatbot widget"""

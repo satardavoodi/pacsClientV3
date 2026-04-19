@@ -43,8 +43,20 @@ def _create_qt_viewer_bridge(vtk_widget, metadata, metadata_fixed):
     )
     from modules.viewer.fast.qt_slice_viewer import QtSliceViewer
     from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
+    from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import (
+        load_pooyan_filter_params_from_json,
+    )
 
-    config = PipelineConfig()
+    pooyan_params = load_pooyan_filter_params_from_json()
+    config = PipelineConfig(
+        opencv_filter_enabled=bool(pooyan_params.enabled),
+        opencv_sigma_x=float(pooyan_params.sigma_x),
+        opencv_alpha=float(pooyan_params.alpha),
+        opencv_beta=float(pooyan_params.beta),
+        opencv_invert=bool(pooyan_params.invert),
+        opencv_small_threshold=int(pooyan_params.small_threshold),
+        opencv_preserve_dimensions=bool(pooyan_params.preserve_dimensions),
+    )
     pipeline = Lightweight2DPipeline(config=config)
 
     # Open series from metadata

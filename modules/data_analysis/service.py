@@ -103,7 +103,8 @@ class DataAnalysisService:
 
         snapshot["servers"] = self._collect_servers()
         snapshot["storage"] = self._collect_storage_stats()
-        snapshot["storage_cleanup"] = self._collect_storage_cleanup_info()
+        force_storage_refresh = bool(filters.get("force_storage_refresh", False))
+        snapshot["storage_cleanup"] = self._collect_storage_cleanup_info(force_refresh=force_storage_refresh)
 
         server_options = ["All Servers"]
         for s in snapshot["servers"]:
@@ -492,10 +493,10 @@ class DataAnalysisService:
             stats.append({"name": label, "path": str(path), "size_bytes": size_bytes, "files": files})
         return stats
 
-    def _collect_storage_cleanup_info(self) -> dict[str, list[dict[str, Any]]]:
+    def _collect_storage_cleanup_info(self, force_refresh: bool = False) -> dict[str, list[dict[str, Any]]]:
         cleanup = LocalStorageCleanupManager()
         drives = cleanup.get_drive_usage_info()
-        folder_usage = cleanup.get_folder_usage_breakdown(force_refresh=True)
+        folder_usage = cleanup.get_folder_usage_breakdown(force_refresh=force_refresh)
         folder_map = cleanup.get_folder_map()
 
         current_drive_anchor = str(Path(USER_DATA_ROOT).anchor or "").upper()

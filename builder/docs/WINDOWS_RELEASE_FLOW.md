@@ -1,6 +1,6 @@
 # Windows Release Flow
 
-Current release target: `v2.3.3` (`2026-04-14`)
+Current release target: `v2.3.5` (`2026-04-19`)
 
 ## Commands
 

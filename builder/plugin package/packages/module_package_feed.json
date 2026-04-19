@@ -1,11 +1,11 @@
 ﻿{
   "app_name": "AIPacs",
-  "version": "2.3.3",
+  "version": "2.3.5",
   "packages": [
     {
       "module_id": "advanced_mpr",
       "title": "Advanced MPR",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "runtime_payload",
       "available": false,
       "materialized_payload": false,
@@ -15,7 +15,7 @@
     {
       "module_id": "download_manager",
       "title": "Download Manager",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "core",
       "available": true,
       "materialized_payload": true,
@@ -25,7 +25,7 @@
     {
       "module_id": "echomind",
       "title": "EchoMind Module",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "bundled_unlock",
       "available": true,
       "materialized_payload": true,
@@ -35,7 +35,7 @@
     {
       "module_id": "education",
       "title": "Education Module",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "core",
       "available": true,
       "materialized_payload": true,
@@ -45,7 +45,7 @@
     {
       "module_id": "offline_cloud_server",
       "title": "Offline Cloud Server",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "core",
       "available": true,
       "materialized_payload": true,
@@ -55,7 +55,7 @@
     {
       "module_id": "printing",
       "title": "Printing Module",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "bundled_unlock",
       "available": true,
       "materialized_payload": true,
@@ -65,7 +65,7 @@
     {
       "module_id": "run_cd",
       "title": "Run CD Module",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "bundled_unlock",
       "available": true,
       "materialized_payload": true,
@@ -75,7 +75,7 @@
     {
       "module_id": "stitching",
       "title": "Stitching Module",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "core",
       "available": true,
       "materialized_payload": true,
@@ -85,7 +85,7 @@
     {
       "module_id": "viewer",
       "title": "Viewer",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "core",
       "available": true,
       "materialized_payload": true,
@@ -95,7 +95,7 @@
     {
       "module_id": "web_browser",
       "title": "Web Browser Module",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "bundled_unlock",
       "available": true,
       "materialized_payload": true,
@@ -105,7 +105,7 @@
     {
       "module_id": "zeta_boost",
       "title": "ZetaBoost",
-      "version": "2.3.3",
+      "version": "2.3.5",
       "package_kind": "core",
       "available": true,
       "materialized_payload": true,

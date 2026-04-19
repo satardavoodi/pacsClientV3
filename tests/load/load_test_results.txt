@@ -1,0 +1,165 @@
+
+==============================================================================================================
+  AIPACS LOAD TEST — MULTI-PATIENT MULTI-MODALITY KPI REPORT
+==============================================================================================================
+
+  ┌── Scenario: L1: Open 6 Patients (2CT+3XR+1MRI)
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ Task creation time (6 patients)                                  0.374 ms        ── info
+  │ State store create (6 patients)                                  1.413 ms        ✅ PASS
+  │ Total images across all patients                                  5464 images    ── info
+  │ Total series across all patients                                    22 series    ── info
+  │ Transition all to DOWNLOADING                                    0.075 ms        ✅ PASS
+  │ All 6 patients in state store                                     True           ✅ PASS
+  │ CT total images (2 studies)                                       4000 images    ── info
+  │ XR total images (3 studies)                                         24 images    ── info
+  │ MRI total images (1 study)                                        1440 images    ── info
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: L2: CT Progressive Download (2×2000 slices)
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ Total progress updates                                             400 updates   ── info
+  │ Concurrent download time                                         5.204 ms        ── info
+  │ Update P50 latency                                               0.006 ms        ── info
+  │ Update P95 latency                                               0.013 ms        ✅ PASS
+  │ Update P99 latency                                               0.044 ms        ✅ PASS
+  │ Observer notifications                                             804 count     ── info
+  │ Update errors                                                        0 errors    ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: L3: 3 Radiography Downloads (large files)
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ 3 XR downloads total time                                       14.819 ms        ── info
+  │ State update P95                                                 0.052 ms        ✅ PASS
+  │ File write P95                                                   3.754 ms        ── info
+  │ File write P99                                                   3.986 ms        ── info
+  │ State update errors                                                  0 errors    ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: L4: Priority Preemption (6 patients)
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ Negotiations completed                                              22 ops       ── info
+  │ Negotiate P50                                                    0.034 ms        ── info
+  │ Negotiate P95                                                    0.083 ms        ✅ PASS
+  │ Negotiate P99                                                    0.085 ms        ✅ PASS
+  │ Paused study count                                                 110 studies   ── info
+  │ start_next_pending calls                                            22 calls     ── info
+  │ refresh_table_order calls                                           22 calls     ── info
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: L5: Cache Eviction Storm (24 series)
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ Cache fill time (24 series)                                      0.053 ms        ── info
+  │ Cache put P95                                                    0.006 ms        ✅ PASS
+  │ Entries in cache                                                    21 entries   ── info
+  │ Cache memory used                                             1190.000 MB        ── info
+  │ Evictions during fill                                                1 evictions ── info
+  │ Access pattern time                                              0.167 ms        ── info
+  │ Cache get P95                                                    0.002 ms        ✅ PASS
+  │ Hit rate after access                                           90.196 %         ── info
+  │ Total evictions                                                      1 evictions ── info
+  │ Thrash phase time (100 ops)                                      0.288 ms        ── info
+  │ Thrash P95                                                       0.003 ms        ✅ PASS
+  │ Final evictions                                                     91 evictions ── info
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: L6: Scroll During Download (frame budget)
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ Scroll frames simulated                                            500 frames    ── info
+  │ Total scroll time                                                0.658 ms        ── info
+  │ Frame P50                                                        0.001 ms        ── info
+  │ Frame P95                                                        0.001 ms        ✅ PASS
+  │ Frame P99                                                        0.001 ms        ✅ PASS
+  │ Max frame time                                                   0.034 ms        ✅ PASS
+  │ Observer notifications during scroll                               804 count     ── info
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: L7: Series Switch Storm (100 switches)
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ 100 series switches total                                        5.957 ms        ✅ PASS
+  │ Switch P50                                                       0.052 ms        ── info
+  │ Switch P95                                                       0.100 ms        ✅ PASS
+  │ Switch P99                                                       0.180 ms        ✅ PASS
+  │ start_next_pending calls                                           100 calls     ── info
+  │ Paused downloads                                                   500 count     ── info
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: L8: Combined Full Workload
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ Total combined workload time                                    19.779 ms        ── info
+  │ Total workload < 30s                                              True           ✅ PASS
+  │ Progress updates                                                   547 updates   ── info
+  │ Progress P95                                                     0.019 ms        ✅ PASS
+  │ Progress P99                                                     0.059 ms        ✅ PASS
+  │ Download errors                                                      0 errors    ✅ PASS
+  │ Preemptions                                                          1 ops       ── info
+  │ Preemption P95                                                   0.128 ms        ✅ PASS
+  │ Scroll frames                                                      200 frames    ── info
+  │ Scroll P95                                                       0.001 ms        ✅ PASS
+  │ Scroll max                                                       0.036 ms        ✅ PASS
+  │ Cache entries                                                       22 entries   ── info
+  │ Cache evictions                                                      0 evictions ── info
+  │ Cache hit rate                                                   0.000 %         ── info
+  │ Observer notifications                                            1109 count     ── info
+  │ Coordinator start calls                                              1 calls     ── info
+  │ Coordinator paused                                                   5 studies   ── info
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: L9: Memory + GC Pressure
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ 10K updates time                                                67.140 ms        ── info
+  │ Updates/second                                              148943.174 ops/s     ── info
+  │ Memory before                                                   34.719 MB        ── info
+  │ Memory after                                                    35.176 MB        ── info
+  │ Memory growth                                                    0.457 MB        ✅ PASS
+  │ GC collection time                                               4.285 ms        ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: L10: Progressive Grow Under Contention
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ Total progressive pipeline time                                524.840 ms        ── info
+  │ Batches produced (CT-1)                                             50 batches   ── info
+  │ Batches consumed (CT-1)                                             35 batches   ── info
+  │ Batches produced (CT-2)                                             50 batches   ── info
+  │ Batches consumed (CT-2)                                             35 batches   ── info
+  │ Batch availability → visible P50                                84.925 ms        ── info
+  │ Batch availability → visible P95                               165.257 ms        ── info
+  │ Batch availability → visible P99                               170.280 ms        ── info
+  │ Batch availability → visible max                               170.280 ms        ── info
+  │ CT-1 viewer caught up                                             True           ✅ PASS
+  │ CT-2 viewer caught up                                             True           ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: L11: Pool-Freed Callback & Retry
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ Pool free + callback latency                                     0.004 ms        ✅ PASS
+  │ Callback fired                                                    True           ✅ PASS
+  │ start_next_pending called                                         True           ✅ PASS
+  │ Retry budget (max_retries)                                          90 attempts  ✅ PASS
+  │ 50 pool-free cycles P50                                          0.000 ms        ── info
+  │ 50 pool-free cycles P95                                          0.001 ms        ✅ PASS
+  │ 50 pool-free cycles P99                                          0.004 ms        ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+  ┌── Scenario: OVERALL
+  │Metric                                                            Value Unit         Status
+  │──────────────────────────────────────────────────────────────────────────────────────────
+  │ Total load test time                                           728.877 ms        ── info
+  │ Scenarios executed                                                  11           ── info
+  │ Scenarios with exceptions                                            0           ✅ PASS
+  └──────────────────────────────────────────────────────────────────────────────────────────
+
+==============================================================================================================
+  TOTALS:  ✅ 37 passed   ❌ 0 failed   ── 60 info
+==============================================================================================================

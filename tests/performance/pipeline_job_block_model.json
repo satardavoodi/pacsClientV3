@@ -1,0 +1,317 @@
+{
+  "version": "2026-04-17",
+  "purpose": "Explicit ownership map for pipeline jobs involved in opening a new patient and stack/scroll image interaction. No listed job may remain orphaned.",
+  "blocks": {
+    "block_1_data_services": {
+      "label": "Block 1 - Data services"
+    },
+    "block_2_viewer_hot_path": {
+      "label": "Block 2 - Viewer hot path"
+    },
+    "block_3_cache_scroll_orchestration": {
+      "label": "Block 3 - Cache, scroll, orchestration"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "open_new_patient",
+      "label": "Open new patient",
+      "jobs": [
+        {
+          "id": "open_request_guard",
+          "block_id": "block_1_data_services",
+          "owner_file": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+          "trigger": "patient table double-click",
+          "worker_model": "main thread async entry",
+          "orphan_allowed": false,
+          "notes": "duplicate-open guard and existing-tab fast focus"
+        },
+        {
+          "id": "study_path_resolution",
+          "block_id": "block_1_data_services",
+          "owner_file": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+          "trigger": "patient open",
+          "worker_model": "main thread + background sync helper",
+          "orphan_allowed": false,
+          "notes": "resolve output folder and offline-cloud sync path"
+        },
+        {
+          "id": "tab_create_activate",
+          "block_id": "block_1_data_services",
+          "owner_file": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+          "trigger": "patient open hot path",
+          "worker_model": "main thread",
+          "orphan_allowed": false,
+          "notes": "create patient tab and activate it immediately"
+        },
+        {
+          "id": "download_manager_start_priority",
+          "block_id": "block_1_data_services",
+          "owner_file": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+          "trigger": "server-backed patient open",
+          "worker_model": "download manager subprocess path",
+          "orphan_allowed": false,
+          "notes": "start High-priority study download on patient open"
+        },
+        {
+          "id": "download_signal_wiring",
+          "block_id": "block_1_data_services",
+          "owner_file": "PacsClient/pacs/workstation_ui/home_ui/home_download_service.py",
+          "trigger": "download manager attached to widget",
+          "worker_model": "Qt signal/slot fan-out",
+          "orphan_allowed": false,
+          "notes": "bridge DM progress and completion into patient widget"
+        },
+        {
+          "id": "server_series_info_push",
+          "block_id": "block_1_data_services",
+          "owner_file": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+          "trigger": "study info available",
+          "worker_model": "main thread + background fetch fallback",
+          "orphan_allowed": false,
+          "notes": "push series info into widget / thumbnail overview"
+        },
+        {
+          "id": "right_panel_series_info_schedule",
+          "block_id": "block_1_data_services",
+          "owner_file": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+          "trigger": "patient open noncritical network tasks",
+          "worker_model": "main loop task or deferred replay",
+          "orphan_allowed": false,
+          "notes": "schedule or defer right-panel and series info tasks"
+        },
+        {
+          "id": "attachment_download_background",
+          "block_id": "block_1_data_services",
+          "owner_file": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+          "trigger": "patient open background setup",
+          "worker_model": "background thread",
+          "orphan_allowed": false,
+          "notes": "download attachments immediately or defer until first series visible"
+        },
+        {
+          "id": "thumbnail_ready_projection",
+          "block_id": "block_1_data_services",
+          "owner_file": "PacsClient/pacs/patient_tab/utils/thumbnail_manager.py",
+          "trigger": "series ready / series completion",
+          "worker_model": "main thread UI projection",
+          "orphan_allowed": false,
+          "notes": "set series ready and apply border/count states"
+        },
+        {
+          "id": "pending_series_dedup",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_load.py",
+          "trigger": "load_series_on_demand",
+          "worker_model": "main thread coordination",
+          "orphan_allowed": false,
+          "notes": "prevent duplicate load queueing for same series"
+        },
+        {
+          "id": "first_series_preview_load",
+          "block_id": "block_2_viewer_hot_path",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_load.py",
+          "trigger": "first async load path",
+          "worker_model": "async to_thread preview load",
+          "orphan_allowed": false,
+          "notes": "load and display preview before full volume"
+        },
+        {
+          "id": "full_series_async_load",
+          "block_id": "block_2_viewer_hot_path",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_load.py",
+          "trigger": "async full load after preview",
+          "worker_model": "async to_thread full load",
+          "orphan_allowed": false,
+          "notes": "run _load_single_series_on_demand off the UI thread"
+        },
+        {
+          "id": "single_series_full_load",
+          "block_id": "block_2_viewer_hot_path",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_load.py",
+          "trigger": "single series on-demand load",
+          "worker_model": "main-thread coordination + serialized load semaphore + worker thread",
+          "orphan_allowed": false,
+          "notes": "full DICOM/ITK or FAST metadata-backed load path"
+        },
+        {
+          "id": "display_series_after_load",
+          "block_id": "block_2_viewer_hot_path",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_load.py",
+          "trigger": "load success",
+          "worker_model": "UI thread",
+          "orphan_allowed": false,
+          "notes": "display first series or mark thumbnail ready"
+        },
+        {
+          "id": "activate_progressive_mode",
+          "block_id": "block_2_viewer_hot_path",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_progressive.py",
+          "trigger": "progressive first display",
+          "worker_model": "UI thread",
+          "orphan_allowed": false,
+          "notes": "enter progressive mode with raw loaded slice count"
+        },
+        {
+          "id": "progressive_start",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_progressive.py",
+          "trigger": "series_images_progress first batch",
+          "worker_model": "UI thread + threaded fallback",
+          "orphan_allowed": false,
+          "notes": "first progressive display lifecycle admission"
+        },
+        {
+          "id": "progressive_grow",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_progressive.py",
+          "trigger": "subsequent progress updates",
+          "worker_model": "UI thread timer cadence",
+          "orphan_allowed": false,
+          "notes": "incremental viewer-visible growth under admission rules"
+        },
+        {
+          "id": "deferred_viewer_refresh",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_load.py",
+          "trigger": "viewer fast-interacting during apply",
+          "worker_model": "QTimer retry on UI thread",
+          "orphan_allowed": false,
+          "notes": "retry switch after fast interaction settles"
+        },
+        {
+          "id": "background_completion_skip_gate",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_load.py",
+          "trigger": "series completion with no awaiting/empty viewer",
+          "worker_model": "main thread control-plane gate",
+          "orphan_allowed": false,
+          "notes": "avoid useless full reload for untargeted background completion"
+        },
+        {
+          "id": "terminal_completion_finalize",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "PacsClient/pacs/patient_tab/ui/patient_ui/_vc_progressive.py",
+          "trigger": "series terminal completion",
+          "worker_model": "UI thread shared finalizer",
+          "orphan_allowed": false,
+          "notes": "single terminal owner for lifecycle close"
+        }
+      ]
+    },
+    {
+      "id": "stack_scroll_image",
+      "label": "Stack and scroll image",
+      "jobs": [
+        {
+          "id": "stack_drag_policy_resolution",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "stack-drag mode",
+          "worker_model": "UI thread policy selection",
+          "orphan_allowed": false,
+          "notes": "wheel vs drag interaction type and stack drag context"
+        },
+        {
+          "id": "fast_interaction_record",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "every scroll event",
+          "worker_model": "UI thread metrics/policy",
+          "orphan_allowed": false,
+          "notes": "record fast interaction state and UI heartbeat"
+        },
+        {
+          "id": "booster_pause_resume",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "enter/exit fast interaction",
+          "worker_model": "UI thread control over background booster",
+          "orphan_allowed": false,
+          "notes": "pause background booster during interaction, resume after settle"
+        },
+        {
+          "id": "pipeline_slice_index_prepare",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "set_slice",
+          "worker_model": "UI thread direct call",
+          "orphan_allowed": false,
+          "notes": "set fast-interaction mode and update pipeline slice index before render"
+        },
+        {
+          "id": "rendered_frame_fetch",
+          "block_id": "block_2_viewer_hot_path",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "set_slice",
+          "worker_model": "UI thread direct render request into pipeline",
+          "orphan_allowed": false,
+          "notes": "get_rendered_frame for exact or surrogate frame"
+        },
+        {
+          "id": "qt_set_slice_present",
+          "block_id": "block_2_viewer_hot_path",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "set_slice",
+          "worker_model": "UI thread visible present path",
+          "orphan_allowed": false,
+          "notes": "main visible image present path, must not be deferred"
+        },
+        {
+          "id": "display_qimage",
+          "block_id": "block_2_viewer_hot_path",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "post frame fetch",
+          "worker_model": "UI thread",
+          "orphan_allowed": false,
+          "notes": "qt_viewer.set_image and annotation update when allowed"
+        },
+        {
+          "id": "slider_sync",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "scroll event",
+          "worker_model": "UI thread blocked-signal slider update",
+          "orphan_allowed": false,
+          "notes": "keep viewport slider aligned with direct scroll path"
+        },
+        {
+          "id": "lock_sync_callback",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "scroll event with sync callback present",
+          "worker_model": "UI thread throttled callback",
+          "orphan_allowed": false,
+          "notes": "cross-viewer lock sync throttled during interaction"
+        },
+        {
+          "id": "reference_line_schedule",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "scroll event",
+          "worker_model": "UI thread deferred follow-up",
+          "orphan_allowed": false,
+          "notes": "schedule/update reference lines after slice change"
+        },
+        {
+          "id": "interaction_settle_timer",
+          "block_id": "block_3_cache_scroll_orchestration",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "wheel stop or stack-drag stop",
+          "worker_model": "QTimer on UI thread",
+          "orphan_allowed": false,
+          "notes": "single settle owner for fast interaction end"
+        },
+        {
+          "id": "settled_exact_rerender",
+          "block_id": "block_2_viewer_hot_path",
+          "owner_file": "modules/viewer/fast/qt_viewer_bridge.py",
+          "trigger": "interaction settled",
+          "worker_model": "UI thread exact re-render",
+          "orphan_allowed": false,
+          "notes": "replace any surrogate / filter-skipped frame with exact settled image"
+        }
+      ]
+    }
+  ]
+}

@@ -37,6 +37,141 @@ logger = logging.getLogger(__name__)
 class _VWSeriesMixin:
     """Series lifecycle: start_process_series, switch_series, reset, cleanup."""
 
+    def _sync_qt_viewer_presentation(self, *, refit_view: bool = False) -> None:
+        """Keep the FAST Qt child viewer aligned with the host widget.
+
+        Drag-drop and layout churn can resize/reflow the parent viewer without
+        necessarily going through a clean same-series recreation path. In FAST
+        mode the Qt child widget is an overlay, so stale child geometry or stale
+        fit state shows up as an image that occupies only a fraction of the
+        target layout.
+
+        This helper centralizes the safe presentation sync steps:
+        - resize the Qt child to the current host rect
+        - keep the child and slider stacked correctly
+        - optionally re-apply zoom-to-fit and refresh the protected scale
+        """
+        qt_viewer = getattr(self, '_qt_viewer_widget', None)
+        if qt_viewer is None:
+            return
+        try:
+            qt_viewer.setGeometry(self.rect())
+            qt_viewer.raise_()
+            if self.slider is not None:
+                self.slider.raise_()
+        except Exception:
+            pass
+
+        if not refit_view:
+            return
+
+        try:
+            new_scale = self.image_viewer.zoom_to_fit()
+            if new_scale:
+                self._protected_parallel_scale = float(new_scale)
+                logger.info("[QT_PRESENTATION] zoom_to_fit scale=%.2f", float(new_scale))
+        except Exception as exc:
+            logger.debug("[QT_PRESENTATION] zoom_to_fit failed: %s", exc)
+
+    def _refresh_qt_series_inplace(self, vtk_image_data, metadata, series_index) -> bool:
+        """Refresh an already-visible Qt series without resetting to the midpoint.
+
+        This is used when the same series is rebound with a different slice count
+        (for example partial-download -> fuller on-disk series). Recreating the
+        Qt bridge would re-center at the middle slice, which feels like a forward
+        or backward jump during active stack drag.
+        """
+        bridge = getattr(self, 'image_viewer', None)
+        if not (self._qt_bridge_active and bridge is not None and hasattr(bridge, 'reset_image_viewer')):
+            return False
+
+        try:
+            current_slice = int(bridge.GetSlice())
+        except Exception:
+            current_slice = 0
+
+        try:
+            bridge.reset_image_viewer(vtk_image_data, metadata, preserve_slice=current_slice)
+            target_slice = max(0, min(current_slice, max(0, self.get_count_of_slices() - 1)))
+            if self.slider is not None:
+                try:
+                    self.slider.blockSignals(True)
+                    self.slider.setValue(target_slice)
+                finally:
+                    self.slider.blockSignals(False)
+            bridge.apply_default_window_level(target_slice)
+            bridge.set_slice(target_slice)
+            self.last_series_show = series_index
+            self._sync_progressive_available_after_switch()
+            self._sync_qt_viewer_presentation(refit_view=False)
+            self.save_status_camera(bridge)
+            logger.info(
+                "[SERIES SWITCH] COMPLETE (Qt refresh) - preserved slice=%d/%d",
+                target_slice,
+                self.get_count_of_slices(),
+            )
+            return True
+        except Exception as exc:
+            logger.warning("[SERIES SWITCH] Qt in-place refresh failed: %s", exc)
+            return False
+
+    def _get_loaded_slice_count_for_progressive_sync(self) -> int:
+        """Return the currently loaded slice count without progressive-total overrides."""
+        image_viewer = getattr(self, 'image_viewer', None)
+        if image_viewer is not None:
+            for attr_name in ('_slice_count', 'slice_count'):
+                try:
+                    raw_count = int(getattr(image_viewer, attr_name, 0) or 0)
+                except Exception:
+                    raw_count = 0
+                if raw_count > 0:
+                    return raw_count
+
+            try:
+                raw_count = int(image_viewer.get_count_of_slices())
+            except Exception:
+                raw_count = 0
+            if raw_count > 0:
+                return raw_count
+
+            try:
+                vtk_image_data = getattr(image_viewer, 'vtk_image_data', None)
+                dims = vtk_image_data.GetDimensions() if vtk_image_data is not None else None
+                raw_count = int(dims[2]) if dims and len(dims) > 2 else 0
+            except Exception:
+                raw_count = 0
+            if raw_count > 0:
+                return raw_count
+
+        try:
+            raw_count = int(getattr(self._lazy_loader, 'slice_count', 0) or 0)
+        except Exception:
+            raw_count = 0
+        if raw_count > 0:
+            return raw_count
+
+        return 0
+
+    def _sync_progressive_available_after_switch(self) -> None:
+        """Seed progressive availability from slices already loaded on disk."""
+        if not bool(getattr(self, '_progressive_mode', False)):
+            return
+        try:
+            available = int(self._get_loaded_slice_count_for_progressive_sync())
+        except Exception:
+            available = 0
+        if available <= 0:
+            return
+        try:
+            self.update_available_slice_count(available)
+        except Exception as exc:
+            logger.debug(
+                "[SERIES SWITCH] progressive availability sync failed viewer=%s available=%s: %s",
+                getattr(self, 'id_vtk_widget', '?'),
+                available,
+                exc,
+            )
+
     def _h7_p6_log(self, path_label: str) -> None:
         """[H7-P6] Viewer state snapshot after switch_series completes."""
         try:
@@ -121,6 +256,7 @@ class _VWSeriesMixin:
             # ظ¤ظ¤ Qt Backend Path (VTK-free 2D) ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤
             if self._active_backend == BACKEND_PYDICOM_QT:
                 self._start_qt_viewer(metadata, metadata_fixed)
+                self._sync_progressive_available_after_switch()
                 self.last_series_show = series_index
                 self.id_vtk_widget = id_vtk_widget
                 logger.info("[SERIES INIT] COMPLETE (Qt backend) - slices=%d", self.get_count_of_slices())
@@ -193,6 +329,10 @@ class _VWSeriesMixin:
     def _start_qt_viewer(self, metadata, metadata_fixed):
         """Create and show the Qt-based 2D viewer (VTK-free path)."""
         try:
+            if self._qt_bridge_active or self._qt_viewer_widget is not None:
+                logger.info("qt-viewer replacing existing bridge before restart")
+                self.cleanup_image_viewer(preserve_bound_backend=True)
+
             bridge, qt_viewer = _create_qt_viewer_bridge(self, metadata, metadata_fixed)
             self.image_viewer = bridge
             self._qt_viewer_widget = qt_viewer
@@ -230,18 +370,14 @@ class _VWSeriesMixin:
                 logger.warning("could not hide VTK render window: %s", _e)
 
             # Show Qt viewer over the VTK render window
-            qt_viewer.setGeometry(self.rect())
             qt_viewer.show()
-            qt_viewer.raise_()
-
-            # Keep slider on top of Qt viewer
-            if self.slider is not None:
-                self.slider.raise_()
+            self._sync_qt_viewer_presentation(refit_view=False)
 
             # Render the first slice
             mid_slice = bridge.get_count_of_slices() // 2
-            bridge.set_slice(mid_slice)
             bridge.apply_default_window_level(mid_slice)
+            bridge.set_slice(mid_slice)
+            self._sync_qt_viewer_presentation(refit_view=True)
 
             logger.info(
                 "qt-viewer started slices=%d mid=%d",
@@ -260,9 +396,20 @@ class _VWSeriesMixin:
         """Hide and cleanup the Qt viewer widget if it exists."""
         if self._qt_viewer_widget is not None:
             try:
+                _scroll_timer = getattr(self._qt_viewer_widget, '_scroll_stop_timer', None)
+                if _scroll_timer is not None:
+                    _scroll_timer.stop()
+            except Exception:
+                pass
+            try:
                 self._qt_viewer_widget.hide()
             except Exception:
                 pass
+            try:
+                self._qt_viewer_widget.deleteLater()
+            except Exception:
+                pass
+            self._qt_viewer_widget = None
         # Restore VTK render window and WA_PaintOnScreen for VTK path
         try:
             from PySide6.QtCore import Qt as _Qt
@@ -289,6 +436,7 @@ class _VWSeriesMixin:
                     self.slider.setValue(mid_slice)
                 self.image_viewer.apply_default_window_level(mid_slice)
                 self.image_viewer.set_slice(mid_slice)
+                self._sync_qt_viewer_presentation(refit_view=True)
                 logger.info("[IMAGE RESET] COMPLETE (Qt backend) - mid=%d", mid_slice)
             except Exception as e:
                 logger.error("[IMAGE RESET] Qt path failed: %s", e)
@@ -552,17 +700,21 @@ class _VWSeriesMixin:
         if self._active_backend == BACKEND_PYDICOM_QT and not is_combined:
             self.viewport_spinner.show_loading("Switching series...")
             try:
-                self._start_qt_viewer(metadata, metadata_fixed)
-                self.last_series_show = series_index
-                # Apply zoom-to-fit and capture the scale so the scroll-restore
-                # logic in set_slice has a valid reference from the very first frame.
+                _same_series_refresh = False
                 try:
-                    _qt_scale = self.image_viewer.zoom_to_fit()
-                    if _qt_scale:
-                        self._protected_parallel_scale = float(_qt_scale)
-                        logger.info("[SERIES SWITCH] Qt zoom_to_fit scale=%.2f", _qt_scale)
+                    _current_meta = getattr(getattr(self, 'image_viewer', None), 'metadata', {}) or {}
+                    _current_sn = str(_current_meta.get('series', {}).get('series_number', ''))
+                    _incoming_sn = str((metadata or {}).get('series', {}).get('series_number', ''))
+                    _same_series_refresh = bool(self._qt_bridge_active and _current_sn and _current_sn == _incoming_sn)
                 except Exception:
+                    _same_series_refresh = False
+
+                if _same_series_refresh and self._refresh_qt_series_inplace(vtk_image_data, metadata, series_index):
                     pass
+                else:
+                    self._start_qt_viewer(metadata, metadata_fixed)
+                self._sync_progressive_available_after_switch()
+                self.last_series_show = series_index
                 self.save_status_camera(self.image_viewer)
                 logger.info(
                     "[SERIES SWITCH] COMPLETE (Qt backend) - slices=%d",
@@ -682,6 +834,7 @@ class _VWSeriesMixin:
                                 logger.warning(f"[SERIES SWITCH]   Failed to update protected scale")
                             
                             self.last_series_show = series_index
+                            self._sync_progressive_available_after_switch()
                             self.save_status_camera(self.image_viewer)
                             
                             # Log final camera state
@@ -833,6 +986,7 @@ class _VWSeriesMixin:
                 logger.warning("[SERIES SWITCH]   Failed to update protected scale (SLOW)")
 
             self.last_series_show = series_index
+            self._sync_progressive_available_after_switch()
             self.save_status_camera(self.image_viewer)
 
             # Log final camera state

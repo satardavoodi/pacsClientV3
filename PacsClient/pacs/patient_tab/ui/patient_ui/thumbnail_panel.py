@@ -12,15 +12,19 @@ from PySide6.QtWidgets import (
     QLabel, QScrollArea, QApplication
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPixmap, QImage
+from PySide6.QtGui import QImage
 
-from PacsClient.pacs.patient_tab.utils import ThumbnailManager, create_attachment_folder, open_folder, \
+from PacsClient.pacs.patient_tab.utils import ThumbnailBatchRunner, ThumbnailManager, ThumbnailImageSourceService, ThumbnailProjectionService, create_attachment_folder, open_folder, \
     check_and_get_thumbnails, get_name_file_from_path
-from modules.storage.thumbnail_store import ThumbnailStore, make_pixmap_from_bytes  # type: ignore
 from PacsClient.utils.theme_manager import get_theme_manager
 
 
 logger = logging.getLogger(__name__)
+
+
+def print(*args, **_kw):  # noqa: A001
+    """Route legacy debug prints to logger to avoid stdout blocking in hot paths."""
+    logger.debug(' '.join(str(a) for a in args))
 
 
 class ThumbnailPanel(QWidget):
@@ -35,19 +39,29 @@ class ThumbnailPanel(QWidget):
         # Initialize thumbnail data
         self.lst_thumbnails_data = []
         self._series_index = {}  # map: series_key -> index in lst_thumbnails_data
+        self._thumbnail_series_names = set()
+        self._thumbnail_file_paths = set()
         self.unique_elements_index = 0
         
         # Thumbnail management
         self.first_thumbnail_path = None
         self.thumbnail_manager = None
+        self.thumbnail_image_source_service = ThumbnailImageSourceService()
+        self.thumbnail_projection_service = ThumbnailProjectionService()
         self.thumb_grid = None
         self.thumb_count_label = None
         
         # Timer management
-        self.thumbnail_timer = None
-        self.cached_thumbnail_timer = None
+        self.thumbnail_runner = ThumbnailBatchRunner(self, interval_ms=20, batch_size=3)
+        self.cached_thumbnail_runner = ThumbnailBatchRunner(self, interval_ms=15, batch_size=4)
+        self.thumbnail_timer = self.thumbnail_runner.timer
+        self.cached_thumbnail_timer = self.cached_thumbnail_runner.timer
         self.current_thumbnail_index = 0
+        self.current_cached_index = 0
+        self._last_progressive_batch_index = 0
+        self._last_cached_batch_index = 0
         self.thumbnails_to_display = []
+        self.cached_thumbnails_to_display = []
         
         # Theme support
         self.theme_manager = get_theme_manager()
@@ -315,41 +329,24 @@ class ThumbnailPanel(QWidget):
             print('series_name 2:', series_name)
 
 
-        if series_name in self.thumbnail_manager.lst_buttons_name:
+        if self._is_series_already_added(series_name):
             print('Finish at second if')
             return thumb_index  # we don't add new thumbnail
 
         print('file_path_thumbnail:', file_path_thumbnail)
-        # ── ThumbnailStore fast path: probe in-memory cache before disk read ──
-        # The download executor populates the store when thumbnails arrive from
-        # the server.  A cache hit here means zero disk I/O on the main thread.
-        pixmap = None
-        try:
-            study_uid = str(getattr(self.parent_widget, 'study_uid', '') or '')
-            if study_uid:
-                thumb_bytes = ThumbnailStore.instance().get_bytes(study_uid, series_name)
-                if thumb_bytes:
-                    pixmap = make_pixmap_from_bytes(thumb_bytes)
-        except Exception:
-            pixmap = None
-        if pixmap is None or (hasattr(pixmap, 'isNull') and pixmap.isNull()):
-            # Fallback: synchronous disk read (original behaviour).
-            pixmap = QPixmap(file_path_thumbnail)
+        pixmap = self.thumbnail_image_source_service.load_pixmap(
+            self.parent_widget,
+            series_name,
+            file_path_thumbnail,
+        )
         
         # Extract series info from metadata or database
         series_info = None
         if metadata:
-            series_info = {
-                'series': {
-                    'series_number': metadata['series'].get('series_number', series_name),
-                    'modality': metadata['series'].get('modality', 'Unknown'),
-                    'series_description': metadata['series'].get('series_description', ''),
-                    'protocol_name': metadata['series'].get('protocol_name', ''),
-                    'body_part_examined': metadata['series'].get('body_part_examined', '')
-                },
-                'series_number': metadata['series'].get('series_number', series_name),
-                'image_count': len(metadata.get('instances', [])),
-            }
+            series_info = self.thumbnail_projection_service.build_series_info_from_loaded_metadata(
+                metadata,
+                fallback_series_number=series_name,
+            )
         else:
             # For cached thumbnails, try to get series info from database
             print(f"🔍 DEBUG: Processing cached thumbnail for series {series_name}")
@@ -357,44 +354,20 @@ class ThumbnailPanel(QWidget):
                 cached_info = self.get_cached_series_metadata(series_name)
                 print(f"🔍 DEBUG: Got cached_info from database: {cached_info}")
                 if cached_info:  # If database lookup succeeds
-                    series_info = {
-                        'series': {
-                            'series_number': cached_info.get('series_number', series_name),
-                            'modality': cached_info.get('modality', 'Unknown'),
-                            'series_description': cached_info.get('series_description', ''),
-                            'protocol_name': cached_info.get('protocol_name', ''),
-                            'body_part_examined': cached_info.get('body_part_examined', '')
-                        },
-                        'series_number': cached_info.get('series_number', series_name),
-                        'image_count': cached_info.get('image_count', 0),
-                    }
+                    series_info = cached_info
                 else:
                     print(f"🔍 DEBUG: Database lookup failed, creating fallback info")
-                    series_info = {
-                        'series': {
-                            'series_number': series_name,
-                            'modality': 'Unknown',
-                            'series_description': f'Series {series_name}',
-                            'protocol_name': '',
-                            'body_part_examined': ''
-                        },
-                        'series_number': series_name,
-                        'image_count': 0,
-                    }
+                    series_info = self.thumbnail_projection_service.get_cached_series_info(
+                        self.parent_widget,
+                        series_name,
+                    )
             except Exception as e:
                 print(f"Error getting cached series info: {str(e)}")
                 # Fallback to basic info
-                series_info = {
-                    'series': {
-                        'series_number': series_name,
-                        'modality': 'Unknown', 
-                        'series_description': f'Series {series_name}',
-                        'protocol_name': '',
-                        'body_part_examined': ''
-                    },
-                    'series_number': series_name,
-                    'image_count': 0,
-                }
+                series_info = self.thumbnail_projection_service.get_cached_series_info(
+                    self.parent_widget,
+                    series_name,
+                )
 
         print('After if')
         # Determine if this is a new download (show progress) or existing (no progress)
@@ -413,6 +386,7 @@ class ThumbnailPanel(QWidget):
 
         # Add to grid in single column layout
         self.thumb_grid.addWidget(thumb_widget, thumb_index, 0, 1, 1)
+        self._register_thumbnail_identity(series_name, file_path_thumbnail, thumb_index)
         logger.info("[THUMB_READY] series=%s index=%d", series_name, thumb_index)
         
         # Update count label
@@ -459,133 +433,113 @@ class ThumbnailPanel(QWidget):
     def display_thumbnails_progressively(self, thumbnails_data):
         """Display thumbnails one by one with a small delay for better UX"""
         try:
-            # توقف timer قبلی اگر وجود دارد
-            if hasattr(self, 'thumbnail_timer') and self.thumbnail_timer:
-                self.thumbnail_timer.stop()
-                self.thumbnail_timer.deleteLater()
-            
-            self.current_thumbnail_index = 0
             self.thumbnails_to_display = thumbnails_data
-            
-            # Update thumbnail count if available
-            if hasattr(self, 'thumb_count_label'):
-                self.thumb_count_label.setText(f"Loading 0/{len(thumbnails_data)} series...")
-            
-            # Create a timer to display thumbnails progressively
-            self.thumbnail_timer = QTimer()
-            self.thumbnail_timer.timeout.connect(self.display_next_thumbnail_patient)
-            self.thumbnail_timer.start(20)  # 20ms delay - much faster loading
+            self._last_progressive_batch_index = 0
+            self.thumbnail_runner.start(
+                thumbnails_data,
+                on_item=self._process_progressive_thumbnail_item,
+                on_progress=self._on_progressive_runner_progress,
+                on_finished=self._on_progressive_runner_finished,
+                on_error=self._on_progressive_runner_error,
+            )
             
         except Exception as e:
             print(f"Error in display_thumbnails_progressively: {str(e)}")
     
     def display_next_thumbnail_patient(self):
-        """Display the next thumbnail(s) in the patient tab queue - OPTIMIZED: batch rendering"""
-        try:
-            # بررسی وجود timer و داده‌ها
-            if not hasattr(self, 'thumbnail_timer') or not self.thumbnail_timer:
-                return
-                
-            if not hasattr(self, 'thumbnails_to_display') or not self.thumbnails_to_display:
-                return
-            
-            if self.current_thumbnail_index >= len(self.thumbnails_to_display):
-                # All thumbnails displayed, stop the timer
-                self.thumbnail_timer.stop()
-                self.thumbnail_timer.deleteLater()
-                self.thumbnail_timer = None
-                
-                # Update final count
-                if hasattr(self, 'thumb_count_label'):
-                    self.thumb_count_label.setText(f"{len(self.thumbnails_to_display)} series")
-                return
-            
-            # OPTIMIZED: Process 3 thumbnails per tick for faster loading
-            batch_size = 3
-            start_idx = self.current_thumbnail_index
-            end_idx = min(start_idx + batch_size, len(self.thumbnails_to_display))
-            
-            for idx in range(start_idx, end_idx):
-                thumb_data = self.thumbnails_to_display[idx]
-                
-                try:
-                    file_path = thumb_data.get('file_path')
-                    if file_path and os.path.exists(file_path):
-                        # بررسی اینکه آیا این تامب‌نیل قبلاً اضافه شده یا نه
-                        if not self.is_thumbnail_already_added(file_path):
-                            # Create standardized metadata for immediate display
-                            from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
-                            metadata = ThumbnailManager.create_standard_metadata(
-                                series_number=thumb_data.get('series_number', f'Series {idx + 1}'),
-                                modality=thumb_data.get('modality', 'Unknown'),
-                                series_description=thumb_data.get('series_description', ''),
-                                image_count=thumb_data.get('image_count', 1),
-                                protocol_name=thumb_data.get('protocol_name', ''),
-                                body_part_examined=thumb_data.get('body_part_examined', ''),
-                                is_downloading=False  # Mark as completed download
-                            )
-                            
-                            # Add thumbnail to layout
-                            thumb_index = self.add_thumbnail_to_thumbnail_layout(
-                                thumb_index=idx,
-                                file_path_thumbnail=file_path,
-                                metadata=metadata
-                            )
-                            
-                            print(f"✅ Added thumbnail {idx + 1}/{len(self.thumbnails_to_display)}")
-                        
-                except Exception as e:
-                    print(f"Error processing thumbnail {idx}: {str(e)}")
-            
-            self.current_thumbnail_index = end_idx
-            logger.info("[THUMB_BATCH_FLUSH] flushed=%d total=%d", end_idx - start_idx, len(self.thumbnails_to_display))
-            
-            # Update progress count
-            if hasattr(self, 'thumb_count_label'):
-                self.thumb_count_label.setText(f"{self.current_thumbnail_index}/{len(self.thumbnails_to_display)} series")
-            
-        except Exception as e:
-            print(f"Error in display_next_thumbnail_patient: {str(e)}")
-            # Stop timer on error
-            if hasattr(self, 'thumbnail_timer'):
-                self.thumbnail_timer.stop()
+        """Backward-compatible wrapper; scheduling is now owned by ThumbnailBatchRunner."""
+        self.thumbnail_runner._tick()
+
+    def _process_progressive_thumbnail_item(self, idx, thumb_data):
+        file_path = thumb_data.get('file_path')
+        if file_path and os.path.exists(file_path):
+            if not self.is_thumbnail_already_added(file_path):
+                metadata = self.thumbnail_projection_service.create_standard_metadata(
+                    series_number=thumb_data.get('series_number', f'Series {idx + 1}'),
+                    modality=thumb_data.get('modality', 'Unknown'),
+                    series_description=thumb_data.get('series_description', ''),
+                    image_count=thumb_data.get('image_count', 1),
+                    protocol_name=thumb_data.get('protocol_name', ''),
+                    body_part_examined=thumb_data.get('body_part_examined', ''),
+                    is_downloading=False,
+                )
+                self.add_thumbnail_to_thumbnail_layout(
+                    thumb_index=idx,
+                    file_path_thumbnail=file_path,
+                    metadata=metadata,
+                )
+
+    def _on_progressive_runner_progress(self, current, total):
+        self.current_thumbnail_index = current
+        flushed = max(0, current - self._last_progressive_batch_index)
+        self._last_progressive_batch_index = current
+        logger.info("[THUMB_BATCH_FLUSH] flushed=%d total=%d", flushed, total)
+        if hasattr(self, 'thumb_count_label'):
+            self.thumb_count_label.setText(f"{current}/{total} series")
+
+    def _on_progressive_runner_finished(self, total):
+        if hasattr(self, 'thumb_count_label'):
+            self.thumb_count_label.setText(f"{total} series")
+
+    def _on_progressive_runner_error(self, exc):
+        print(f"Error in display_next_thumbnail_patient: {exc}")
     
     def is_thumbnail_already_added(self, file_path):
         """
         بررسی اینکه آیا تامب‌نیل قبلاً اضافه شده یا نه
         """
         try:
+            normalized = self._normalize_thumbnail_file_path(file_path)
+            if normalized and normalized in self._thumbnail_file_paths:
+                return True
+
             if not hasattr(self, 'thumbnail_manager') or not self.thumbnail_manager:
                 return False
-            
-            # بررسی در لیست دکمه‌های موجود
-            for btn in self.thumbnail_manager.buttons:
-                if hasattr(btn, 'file_path') and btn.file_path == file_path:
-                    return True
-                # بررسی در parent widget
-                parent = btn.parentWidget()
-                if parent and hasattr(parent, 'file_path') and parent.file_path == file_path:
-                    return True
-            
             return False
             
         except Exception as e:
             print(f"❌ Error checking thumbnail existence: {e}")
             return False
+
+    @staticmethod
+    def _normalize_thumbnail_file_path(file_path):
+        try:
+            return str(Path(file_path)) if file_path else ""
+        except Exception:
+            return str(file_path or "")
+
+    def _is_series_already_added(self, series_name):
+        try:
+            series_key = str(series_name)
+            if series_key in self._thumbnail_series_names:
+                return True
+            if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+                return series_key in self.thumbnail_manager.lst_buttons_name
+            return False
+        except Exception:
+            return False
+
+    def _register_thumbnail_identity(self, series_name, file_path_thumbnail, thumb_index):
+        try:
+            series_key = str(series_name)
+            self._thumbnail_series_names.add(series_key)
+            self._series_index[series_key] = thumb_index
+
+            normalized_file_path = self._normalize_thumbnail_file_path(file_path_thumbnail)
+            if normalized_file_path:
+                self._thumbnail_file_paths.add(normalized_file_path)
+        except Exception:
+            pass
     
     def clear_thumbnails(self):
         """Clear existing thumbnails from the layout - OPTIMIZED for speed"""
         try:
             # توقف timerها
-            if hasattr(self, 'thumbnail_timer') and self.thumbnail_timer:
-                self.thumbnail_timer.stop()
-                self.thumbnail_timer.deleteLater()
-                self.thumbnail_timer = None
+            if hasattr(self, 'thumbnail_runner') and self.thumbnail_runner:
+                self.thumbnail_runner.stop()
             
-            if hasattr(self, 'cached_thumbnail_timer') and self.cached_thumbnail_timer:
-                self.cached_thumbnail_timer.stop()
-                self.cached_thumbnail_timer.deleteLater()
-                self.cached_thumbnail_timer = None
+            if hasattr(self, 'cached_thumbnail_runner') and self.cached_thumbnail_runner:
+                self.cached_thumbnail_runner.stop()
             
             # پاک کردن grid layout - OPTIMIZED: direct deletion
             if hasattr(self, 'thumb_grid') and self.thumb_grid:
@@ -606,6 +560,10 @@ class ThumbnailPanel(QWidget):
                             btn.deleteLater()
                     self.thumbnail_manager.buttons.clear()
                     self.thumbnail_manager.lst_buttons_name.clear()
+
+                self._series_index.clear()
+                self._thumbnail_series_names.clear()
+                self._thumbnail_file_paths.clear()
                 
                 print("✅ Thumbnails cleared successfully")
                 
@@ -616,21 +574,19 @@ class ThumbnailPanel(QWidget):
         """DEPRECATED: No longer needed - use direct deletion"""
         pass
     
-    def get_cached_series_metadata(self, series_name):
-        """Get cached series metadata from database"""
+    def get_cached_series_metadata(self, series_number):
+        """Get cached series info via the thumbnail projection service."""
         try:
-            if not self.parent_widget:
-                return None
-                
-            # Try to get from parent widget's database
-            if hasattr(self.parent_widget, 'get_cached_series_metadata'):
-                return self.parent_widget.get_cached_series_metadata(series_name)
-            
-            return None
-            
+            return self.thumbnail_projection_service.get_cached_series_info(
+                self.parent_widget,
+                str(series_number),
+            )
         except Exception as e:
             print(f"Error getting cached series metadata: {e}")
-            return None
+            return self.thumbnail_projection_service.get_cached_series_info(
+                None,
+                str(series_number),
+            )
     
     def cleanup_timers(self):
         """
@@ -638,16 +594,12 @@ class ThumbnailPanel(QWidget):
         """
         try:
             # توقف و پاک کردن thumbnail timer
-            if hasattr(self, 'thumbnail_timer') and self.thumbnail_timer:
-                self.thumbnail_timer.stop()
-                self.thumbnail_timer.deleteLater()
-                self.thumbnail_timer = None
+            if hasattr(self, 'thumbnail_runner') and self.thumbnail_runner:
+                self.thumbnail_runner.stop()
             
             # توقف و پاک کردن cached thumbnail timer
-            if hasattr(self, 'cached_thumbnail_timer') and self.cached_thumbnail_timer:
-                self.cached_thumbnail_timer.stop()
-                self.cached_thumbnail_timer.deleteLater()
-                self.cached_thumbnail_timer = None
+            if hasattr(self, 'cached_thumbnail_runner') and self.cached_thumbnail_runner:
+                self.cached_thumbnail_runner.stop()
             
             print("✅ All timers cleaned up")
             
@@ -682,29 +634,11 @@ class ThumbnailPanel(QWidget):
             # Sort files by name for consistent ordering
             image_files.sort(key=lambda x: x.name)
             
-            # OPTIMIZED: Batch fetch all metadata at once
-            series_names = [img.stem for img in image_files]
-            all_metadata = self.get_batch_cached_series_metadata(series_names)
-            
-            # Prepare cached thumbnails data for progressive display with database metadata
-            cached_thumbnails_data = []
-            for image_file in image_files:
-                # Extract series info from filename if possible
-                series_name = image_file.stem
-                
-                # Get metadata from batch result
-                series_metadata = all_metadata.get(series_name, {})
-                
-                cached_thumbnails_data.append({
-                    'file_path': str(image_file),
-                    'series_number': series_metadata.get('series_number', series_name),
-                    'modality': series_metadata.get('modality', 'Unknown'),
-                    'series_description': series_metadata.get('series_description', f'Series {series_name}'),
-                    'image_count': series_metadata.get('image_count', 0),
-                    'protocol_name': series_metadata.get('protocol_name', ''),
-                    'body_part_examined': series_metadata.get('body_part_examined', ''),
-                    'is_cached': True
-                })
+            # OPTIMIZED: Build cached projection payloads in one helper call
+            cached_thumbnails_data = self.thumbnail_projection_service.build_cached_thumbnail_entries(
+                self.parent_widget,
+                image_files,
+            )
             
             # Display cached thumbnails progressively
             self.display_cached_thumbnails_progressively(cached_thumbnails_data)
@@ -712,144 +646,56 @@ class ThumbnailPanel(QWidget):
         except Exception as e:
             print(f"Error in load_thumbnails_from_cache: {str(e)}")
     
-    def get_cached_series_metadata(self, series_number):
-        """Get series metadata from database for cached thumbnails"""
-        try:
-            if not self.parent_widget:
-                return {}
-                
-            # Get study_uid from parent widget or extract from import_folder_path
-            study_uid = None
-            
-            # First try to get from parent widget's study_uid
-            if hasattr(self.parent_widget, 'study_uid') and self.parent_widget.study_uid:
-                study_uid = self.parent_widget.study_uid
-                print(f"🔍 DEBUG: Using parent study_uid = {study_uid}")
-            # If not available, extract from import_folder_path
-            elif hasattr(self.parent_widget, 'import_folder_path') and self.parent_widget.import_folder_path:
-                from pathlib import Path
-                study_uid = Path(self.parent_widget.import_folder_path).name
-                print(f"🔍 DEBUG: Extracted study_uid from path = {study_uid}")
-            
-            if not study_uid:
-                print(f"🔍 DEBUG: No study_uid available, returning empty dict")
-                return {}
-            
-            # Import database functions
-            from PacsClient.utils.db_manager import get_series_by_study_and_number
-            
-            # Get series metadata from database
-            print(f"🔍 DEBUG: Querying database for study_uid={study_uid}, series_number={series_number}")
-            series_data = get_series_by_study_and_number(study_uid, series_number)
-            print(f"🔍 DEBUG: Database returned: {series_data}")
-            
-            if series_data:
-                return {
-                    'series_number': series_data.get('series_number', series_number),
-                    'modality': series_data.get('modality', 'Unknown'),
-                    'series_description': series_data.get('series_description', ''),
-                    'image_count': series_data.get('image_count', 0),
-                    'protocol_name': series_data.get('protocol_name', ''),
-                    'body_part_examined': series_data.get('body_part_examined', ''),
-                    'manufacturer': series_data.get('manufacturer', ''),
-                    'institution_name': series_data.get('institution_name', '')
-                }
-            else:
-                # Fallback if no database data found
-                return {
-                    'series_number': series_number,
-                    'modality': 'Unknown',
-                    'series_description': f'Series {series_number}',
-                    'image_count': 0
-                }
-                
-        except Exception as e:
-            print(f"Error getting cached series metadata: {str(e)}")
-            # Return fallback metadata
-            return {
-                'series_number': series_number,
-                'modality': 'Unknown', 
-                'series_description': f'Series {series_number}',
-                'image_count': 0
-            }
-    
     def display_cached_thumbnails_progressively(self, cached_thumbnails_data):
         """Display cached thumbnails one by one with a small delay for better UX"""
         try:
-            # توقف timer قبلی اگر وجود دارد
-            if hasattr(self, 'cached_thumbnail_timer') and self.cached_thumbnail_timer:
-                self.cached_thumbnail_timer.stop()
-                self.cached_thumbnail_timer.deleteLater()
-            
-            self.current_cached_index = 0
             self.cached_thumbnails_to_display = cached_thumbnails_data
-            
-            # Update thumbnail count if available
-            if hasattr(self, 'thumb_count_label'):
-                self.thumb_count_label.setText(f"Loading 0/{len(cached_thumbnails_data)} cached series...")
-            
-            # Create a timer to display cached thumbnails progressively
-            self.cached_thumbnail_timer = QTimer()
-            self.cached_thumbnail_timer.timeout.connect(self.display_next_cached_thumbnail)
-            self.cached_thumbnail_timer.start(15)  # 15ms delay - much faster cached loading
+            self._last_cached_batch_index = 0
+            self.cached_thumbnail_runner.start(
+                cached_thumbnails_data,
+                on_item=self._process_cached_thumbnail_item,
+                on_progress=self._on_cached_runner_progress,
+                on_finished=self._on_cached_runner_finished,
+                on_error=self._on_cached_runner_error,
+            )
             
         except Exception as e:
             print(f"Error in display_cached_thumbnails_progressively: {str(e)}")
     
     def display_next_cached_thumbnail(self):
-        """Display the next cached thumbnail(s) in the queue - OPTIMIZED: batch rendering"""
-        try:
-            if self.current_cached_index >= len(self.cached_thumbnails_to_display):
-                # All cached thumbnails displayed, stop the timer
-                self.cached_thumbnail_timer.stop()
-                # Update final count
-                if hasattr(self, 'thumb_count_label'):
-                    self.thumb_count_label.setText(f"{len(self.cached_thumbnails_to_display)} cached series")
-                return
-            
-            # OPTIMIZED: Process 4 thumbnails per tick for even faster cached loading
-            batch_size = 4
-            start_idx = self.current_cached_index
-            end_idx = min(start_idx + batch_size, len(self.cached_thumbnails_to_display))
-            
-            for idx in range(start_idx, end_idx):
-                thumb_data = self.cached_thumbnails_to_display[idx]
-                
-                try:
-                    file_path = thumb_data.get('file_path')
-                    if file_path and os.path.exists(file_path):
-                        # Create standardized metadata for cached images
-                        from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
-                        metadata = ThumbnailManager.create_standard_metadata(
-                            series_number=thumb_data.get('series_number', f'Series {idx + 1}'),
-                            modality=thumb_data.get('modality', 'Cached'),
-                            series_description=thumb_data.get('series_description', ''),
-                            image_count=thumb_data.get('image_count', 1),
-                            is_downloading=False  # Mark as existing/cached - no progress
-                        )
-                        
-                        # Add to layout
-                        thumb_index = self.add_thumbnail_to_thumbnail_layout(
-                            thumb_index=idx,
-                            file_path_thumbnail=file_path,
-                            metadata=metadata
-                        )
-                        
-                except Exception as e:
-                    print(f"Error processing cached thumbnail {idx}: {str(e)}")
-            
-            self.current_cached_index = end_idx
-            logger.info("[THUMB_BATCH_FLUSH] cached flushed=%d total=%d", end_idx - start_idx, len(self.cached_thumbnails_to_display))
-            
-            # Update progress count
-            if hasattr(self, 'thumb_count_label'):
-                self.thumb_count_label.setText(f"{self.current_cached_index}/{len(self.cached_thumbnails_to_display)} cached series")
-            
-        except Exception as e:
-            print(f"Error in display_next_cached_thumbnail: {str(e)}")
-            # Stop timer on error
-            if hasattr(self, 'cached_thumbnail_timer'):
-                self.cached_thumbnail_timer.stop()
+        """Backward-compatible wrapper; scheduling is now owned by ThumbnailBatchRunner."""
+        self.cached_thumbnail_runner._tick()
+
+    def _process_cached_thumbnail_item(self, idx, thumb_data):
+        file_path = thumb_data.get('file_path')
+        if file_path and os.path.exists(file_path):
+            metadata = self.thumbnail_projection_service.create_standard_metadata(
+                series_number=thumb_data.get('series_number', f'Series {idx + 1}'),
+                modality=thumb_data.get('modality', 'Cached'),
+                series_description=thumb_data.get('series_description', ''),
+                image_count=thumb_data.get('image_count', 1),
+                is_downloading=False,
+            )
+            self.add_thumbnail_to_thumbnail_layout(
+                thumb_index=idx,
+                file_path_thumbnail=file_path,
+                metadata=metadata,
+            )
+
+    def _on_cached_runner_progress(self, current, total):
+        self.current_cached_index = current
+        flushed = max(0, current - self._last_cached_batch_index)
+        self._last_cached_batch_index = current
+        logger.info("[THUMB_BATCH_FLUSH] cached flushed=%d total=%d", flushed, total)
+        if hasattr(self, 'thumb_count_label'):
+            self.thumb_count_label.setText(f"{current}/{total} cached series")
+
+    def _on_cached_runner_finished(self, total):
+        if hasattr(self, 'thumb_count_label'):
+            self.thumb_count_label.setText(f"{total} cached series")
+
+    def _on_cached_runner_error(self, exc):
+        print(f"Error in display_next_cached_thumbnail: {exc}")
     
     def show_loading_indicator(self, message="Loading..."):
         """Show loading indicator with message"""
@@ -948,45 +794,10 @@ class ThumbnailPanel(QWidget):
         OPTIMIZED: Batch fetch metadata for multiple series at once
         """
         try:
-            if not self.parent_widget or not series_numbers:
-                return {}
-            
-            # Get study_uid from parent widget or extract from import_folder_path
-            study_uid = None
-            
-            if hasattr(self.parent_widget, 'study_uid') and self.parent_widget.study_uid:
-                study_uid = self.parent_widget.study_uid
-            elif hasattr(self.parent_widget, 'import_folder_path') and self.parent_widget.import_folder_path:
-                from pathlib import Path
-                study_uid = Path(self.parent_widget.import_folder_path).name
-            
-            if not study_uid:
-                return {}
-            
-            # Import database functions
-            from PacsClient.utils.db_manager import get_series_by_study_uid
-            
-            # Get all series for this study in one query
-            all_series = get_series_by_study_uid(study_uid)
-            
-            if not all_series:
-                return {}
-            
-            # Build a lookup dictionary by series_number
-            metadata_map = {}
-            for series_data in all_series:
-                series_num = str(series_data.get('series_number', ''))
-                metadata_map[series_num] = {
-                    'series_number': series_data.get('series_number', series_num),
-                    'modality': series_data.get('modality', 'Unknown'),
-                    'series_description': series_data.get('series_description', ''),
-                    'image_count': series_data.get('image_count', 0),
-                    'protocol_name': series_data.get('protocol_name', ''),
-                    'body_part_examined': series_data.get('body_part_examined', ''),
-                    'manufacturer': series_data.get('manufacturer', ''),
-                    'institution_name': series_data.get('institution_name', '')
-                }
-            
+            metadata_map = self.thumbnail_projection_service.get_batch_cached_series_metadata(
+                self.parent_widget,
+                series_numbers,
+            )
             print(f"✅ Batch loaded metadata for {len(metadata_map)} series")
             return metadata_map
                 

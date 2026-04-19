@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import pydicom
 from pathlib import Path
 from PySide6.QtCore import QTimer
@@ -18,6 +19,31 @@ logger = logging.getLogger(__name__)
 
 class _VCCacheMixin:
     """Auto-split mixin — see patient_widget_viewer_controller.py for history."""
+
+    def _replay_deferred_series_loads_after_activation(self):
+        """Replay series-complete loads that arrived while the tab was inactive."""
+        try:
+            deferred = list(getattr(self, '_deferred_series_load_on_activation', []) or [])
+            if not deferred or not self._tab_active:
+                return
+            self._deferred_series_load_on_activation.clear()
+
+            def _replay():
+                if not self._tab_active:
+                    return
+                for series_number in deferred:
+                    try:
+                        self.load_series_on_demand(str(series_number))
+                    except Exception as exc:
+                        logger.debug(
+                            "deferred activation replay failed for series=%s: %s",
+                            series_number,
+                            exc,
+                        )
+
+            QTimer.singleShot(0, _replay)
+        except Exception:
+            pass
 
     def on_tab_activated(self):
         """Mark this patient tab as active and allow predictive prefetching."""
@@ -74,6 +100,7 @@ class _VCCacheMixin:
                 QTimer.singleShot(120, self.parent_widget._check_and_load_local_first_series)
             except Exception:
                 pass
+        self._replay_deferred_series_loads_after_activation()
         # Start warmup shortly after tab-open bootstrap to avoid competing with first render.
         try:
             # Mode A detection: only if all series are pre-downloaded (study complete)
@@ -346,6 +373,65 @@ class _VCCacheMixin:
                 except (TypeError, ValueError, StopIteration):
                     pass
 
+    def _schedule_background_header_fill(self, series_number: str,
+                                          stubs: list) -> None:
+        """B3.5: Fill DICOM headers on a background thread, then sync to viewers.
+
+        Reads per-slice geometry (IPP, IOP, pixel_spacing, W/L overrides) from
+        DICOM file headers via pydicom.dcmread(stop_before_pixels=True).  Each
+        stub dict is mutated in-place on the background thread — this is safe
+        because the main thread does not read IPP/IOP fields during the gap
+        (reference lines degrade gracefully to skip-mode when IPP is None).
+
+        After all headers are read, a QTimer.singleShot(0) marshals back to
+        the main thread to sync viewer metadata instances.
+        """
+        # Lazy-init a single-thread executor for header reads.
+        # Single thread avoids GIL contention from concurrent dcmread calls.
+        pool = getattr(self, '_header_fill_executor', None)
+        if pool is None:
+            self._header_fill_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="dicom-header-fill"
+            )
+            pool = self._header_fill_executor
+
+        sn = str(series_number)
+
+        def _bg_fill():
+            for stub in stubs:
+                try:
+                    self._fill_stub_from_dicom_header(stub)
+                except Exception:
+                    pass
+            # Marshal back to main thread to sync viewer metadata
+            try:
+                QTimer.singleShot(0, lambda: self._on_headers_filled(sn))
+            except Exception:
+                pass
+
+        try:
+            pool.submit(_bg_fill)
+        except RuntimeError:
+            # Executor shut down — fill synchronously as fallback
+            for stub in stubs:
+                try:
+                    self._fill_stub_from_dicom_header(stub)
+                except Exception:
+                    pass
+
+    def _on_headers_filled(self, series_number: str) -> None:
+        """B3.5: Called on main thread after background header fill completes.
+
+        Re-syncs viewer metadata so reference lines see the newly-filled
+        IPP/IOP fields.
+        """
+        try:
+            self._sync_viewer_metadata_instances(series_number)
+        except Exception as exc:
+            self.logger.debug(
+                "_on_headers_filled sync failed for %s: %s", series_number, exc
+            )
+
     def _refresh_stored_metadata_instances(self, series_number: str,
                                            current_disk_count: int):
         """Sync lst_thumbnails_data metadata['instances'] with actual files on disk.
@@ -424,6 +510,7 @@ class _VCCacheMixin:
                     break
 
             new_instances = list(existing_instances)  # shallow copy
+            stubs_needing_headers = []
             for dcm_file in all_dcm:
                 if str(dcm_file).lower() in existing_paths:
                     continue
@@ -432,12 +519,13 @@ class _VCCacheMixin:
                     "instance_path": str(dcm_file),
                 }
                 stub.update(template_fields)
-                # Read per-slice DICOM geometry (IPP, IOP, pixel_spacing,
-                # window_width/center) from the header.  Without this,
-                # reference lines fail for new slices (IPP is None) and
-                # per-slice W/L falls back to scalar-range auto-calc.
-                # Reading is ~1-3ms per file (header only, no pixel data).
-                self._fill_stub_from_dicom_header(stub)
+                # B3.5: DICOM header reads (IPP, IOP, per-slice W/L) are
+                # deferred to a background thread to eliminate 15-40ms of
+                # blocking pydicom.dcmread I/O from the main thread every
+                # 150ms grow tick.  Template fields (series-level W/L, rows,
+                # columns) are already populated — display works immediately.
+                # Per-slice geometry is backfilled asynchronously.
+                stubs_needing_headers.append(stub)
                 new_instances.append(stub)
 
             if len(new_instances) <= existing_count:
@@ -462,6 +550,13 @@ class _VCCacheMixin:
                 "metadata-refresh: series=%s instances %d → %d",
                 sn, existing_count, len(new_instances),
             )
+
+            # B3.5: Schedule background header fill for new stubs.
+            # Per-slice geometry (IPP, IOP) will be backfilled asynchronously
+            # so reference lines appear within ~50-200ms of grow, without
+            # blocking the main thread.
+            if stubs_needing_headers:
+                self._schedule_background_header_fill(sn, stubs_needing_headers)
         except Exception as exc:
             self.logger.debug("_refresh_stored_metadata_instances failed for %s: %s", sn, exc)
 
@@ -489,6 +584,16 @@ class _VCCacheMixin:
             source_instances = source_metadata.get("instances")
             if not source_instances:
                 return
+            source_count = len(source_instances)
+            src_series = source_metadata.get("series")
+            src_image_count = None
+            if isinstance(src_series, dict):
+                src_image_count = src_series.get("image_count")
+
+            def _instance_identity(inst):
+                if not isinstance(inst, dict):
+                    return None
+                return inst.get("instance_path") or inst.get("instance_number")
 
             for node in self.lst_nodes_viewer or []:
                 vtk_w = getattr(node, "vtk_widget", None)
@@ -508,60 +613,116 @@ class _VCCacheMixin:
                     viewer_sn = ""
                 if viewer_sn != sn:
                     continue
-                old_count = len(iv_meta.get("instances", []) or [])
-                new_count = len(source_instances)
-                if new_count >= old_count:
+                target_instances = iv_meta.get("instances") or []
+                old_count = len(target_instances)
+                iv_series = iv_meta.get("series")
+                current_image_count = iv_series.get("image_count") if isinstance(iv_series, dict) else None
+
+                if source_count == old_count and current_image_count == src_image_count:
+                    continue
+
+                did_incremental_extend = False
+                if (
+                    isinstance(target_instances, list)
+                    and 0 < old_count < source_count
+                    and _instance_identity(target_instances[-1])
+                    == _instance_identity(source_instances[old_count - 1])
+                ):
+                    target_instances.extend(source_instances[old_count:source_count])
+                    did_incremental_extend = True
+                else:
                     # Shallow copy — prevents cross-viewer mutation if any code
                     # later appends/pops on the list.  The dict *values* (per-
                     # instance metadata dicts) are still shared by reference,
                     # which is fine since they are read-only after creation.
                     iv_meta["instances"] = list(source_instances)
-                    # Also sync series-level image_count
-                    src_series = source_metadata.get("series")
-                    iv_series = iv_meta.get("series")
-                    if isinstance(src_series, dict) and isinstance(iv_series, dict):
-                        ic = src_series.get("image_count")
-                        if ic is not None:
-                            iv_series["image_count"] = ic
-                    self.logger.debug(
-                        "viewer-metadata-sync: series=%s viewer instances %d → %d",
-                        sn, old_count, new_count,
-                    )
+
+                # Also sync series-level image_count
+                if isinstance(iv_series, dict) and src_image_count is not None:
+                    iv_series["image_count"] = src_image_count
+
+                self.logger.debug(
+                    "viewer-metadata-sync: series=%s viewer instances %d → %d mode=%s",
+                    sn,
+                    old_count,
+                    source_count,
+                    "extend" if did_incremental_extend else "replace",
+                )
         except Exception as exc:
             self.logger.debug("_sync_viewer_metadata_instances failed for %s: %s", sn, exc)
 
     # ── Grow helpers ───────────────────────────────────────────────────────
 
-    def _update_vtk_slice_range(self, vtk_w, node, new_count: int, *, slider=None):
+    def _update_vtk_slice_range(
+        self,
+        vtk_w,
+        node,
+        new_count: int,
+        *,
+        slider=None,
+        available_count: int | None = None,
+    ):
         """Update VTK widget slice count and slider maximum after a grow.
 
         *slider* can be passed explicitly when the caller has it directly
         (e.g. ``change_series_on_viewer``).  Otherwise it is obtained from
-        *node*.  Skips the Qt call when the maximum is already correct to
-        avoid redundant work (~4000 calls/download otherwise).
+        *node*.  When *available_count* is provided, it caps the slices exposed
+        to the viewer while still allowing the backend to know about more files
+        already present on disk.  During progressive display the slider range
+        should remain anchored to the total expected slices; availability is
+        enforced separately by the progressive slice guard.  Skips the Qt call
+        when the maximum is already correct to avoid redundant work (~4000
+        calls/download otherwise).
         """
-        try:
-            vtk_w.update_available_slice_count(new_count)
-        except Exception as _uasc_exc:
-            self.logger.debug(
-                "_update_vtk_slice_range: update_available_slice_count failed "
-                "viewer_id=%s new_count=%d: %s",
-                getattr(vtk_w, "id_vtk_widget", id(vtk_w)),
-                new_count,
-                _uasc_exc,
-            )
+        visible_count = max(
+            0,
+            int(new_count if available_count is None else available_count),
+        )
+        current_visible_count = getattr(vtk_w, "_available_slice_count", None)
+        if current_visible_count != visible_count:
+            try:
+                vtk_w.update_available_slice_count(visible_count)
+            except Exception as _uasc_exc:
+                self.logger.debug(
+                    "_update_vtk_slice_range: update_available_slice_count failed "
+                    "viewer_id=%s new_count=%d visible_count=%d: %s",
+                    getattr(vtk_w, "id_vtk_widget", id(vtk_w)),
+                    new_count,
+                    visible_count,
+                    _uasc_exc,
+                )
         if slider is None:
             slider = getattr(node, "slider", None)
         if slider is not None:
-            new_max = max(0, new_count - 1)
+            total_expected = 0
+            try:
+                if bool(getattr(vtk_w, "_progressive_mode", False)):
+                    total_expected = int(getattr(vtk_w, "_total_expected_slices", 0) or 0)
+            except Exception:
+                total_expected = 0
+            slider_count = total_expected if total_expected > 0 else visible_count
+            new_max = max(0, slider_count - 1)
             try:
                 current_max = slider.maximum()
             except Exception:
                 current_max = None
             if current_max != new_max:
+                current_value = None
+                try:
+                    current_value = int(slider.value())
+                except Exception:
+                    current_value = None
                 try:
                     slider.blockSignals(True)
                     slider.setMaximum(new_max)
+                    if current_value is not None:
+                        desired_value = max(0, min(int(current_value), int(new_max)))
+                        try:
+                            current_after = int(slider.value())
+                        except Exception:
+                            current_after = desired_value
+                        if current_after != desired_value:
+                            slider.setValue(desired_value)
                     slider.blockSignals(False)
                 except Exception:
                     pass
@@ -575,6 +736,35 @@ class _VCCacheMixin:
         self._refresh_stored_metadata_instances(series_number, new_count)
         self._sync_viewer_metadata_instances(series_number)
 
+    def _get_disk_count_cache(self):
+        """Return the 1-second TTL disk-count cache, recreating it if needed.
+
+        Some signal-boundary and teardown-adjacent code paths can reach the
+        progressive completion logic on partially constructed controller test
+        doubles or after unexpected state loss. Recreating the cache here keeps
+        those paths non-fatal and matches the lazy behavior of
+        ``_count_series_files_on_disk``.
+        """
+        cache = getattr(self, '_disk_count_cache', None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._disk_count_cache = cache
+            try:
+                self.logger.debug(
+                    "disk-count-cache: recreated missing cache dict on demand"
+                )
+            except Exception:
+                pass
+        return cache
+
+    def _invalidate_disk_count_cache(self, series_number: str | None = None):
+        """Invalidate one series entry or clear the whole disk-count cache."""
+        cache = self._get_disk_count_cache()
+        if series_number is None:
+            cache.clear()
+            return
+        cache.pop(str(series_number), None)
+
     def _count_series_files_on_disk(self, series_number: str) -> int:
         """Return the number of .dcm files on disk for *series_number*.
 
@@ -584,10 +774,7 @@ class _VCCacheMixin:
         """
         try:
             # 1-second TTL cache per series
-            cache = getattr(self, '_disk_count_cache', None)
-            if cache is None:
-                self._disk_count_cache = {}
-                cache = self._disk_count_cache
+            cache = self._get_disk_count_cache()
             _now = time.monotonic()
             key = str(series_number)
             entry = cache.get(key)

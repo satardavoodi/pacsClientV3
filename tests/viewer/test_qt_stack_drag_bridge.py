@@ -1,0 +1,474 @@
+from __future__ import annotations
+
+import types
+from types import SimpleNamespace
+import importlib
+
+from PySide6.QtCore import QPointF, QSize, Qt
+from PySide6.QtGui import QMouseEvent, QResizeEvent
+from PySide6.QtWidgets import QApplication, QWidget
+
+import PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_interactor as _vw_interactor
+from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_series import _VWSeriesMixin
+from modules.viewer.fast.qt_slice_viewer import QtSliceViewer
+
+
+def _build_reset_bridge_stub(slice_count: int, current_slice: int = 0):
+    bridge = SimpleNamespace()
+    bridge.metadata = {}
+    bridge._slice_count = slice_count
+    bridge._current_slice = current_slice
+    bridge._wl_scroll_cache_ww = 111.0
+    bridge._wl_scroll_cache_wc = 22.0
+    bridge.qt_viewer = SimpleNamespace(
+        _current_slice_index=current_slice,
+        set_modality_hint=lambda _mod: None,
+    )
+
+    def _build_mock_vtk_data():
+        bridge._slice_count = int((bridge.metadata or {}).get("series", {}).get("image_count", bridge._slice_count) or 0)
+
+    bridge._build_mock_vtk_data = _build_mock_vtk_data
+
+    from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
+    bridge.reset_image_viewer = types.MethodType(QtViewerBridge.reset_image_viewer, bridge)
+    return bridge
+
+
+class _FakeTimer:
+    def __init__(self):
+        self._active = False
+        self.start_count = 0
+        self.stop_count = 0
+
+    def stop(self):
+        self._active = False
+        self.stop_count += 1
+
+    def start(self):
+        self._active = True
+        self.start_count += 1
+
+
+class _FakeSignal:
+    def __init__(self):
+        self.disconnected = []
+
+    def disconnect(self, handler):
+        self.disconnected.append(handler)
+
+
+def _build_bridge_stub(slice_count: int = 200):
+    bridge = SimpleNamespace()
+    bridge._current_slice = 0
+    bridge._slice_count = slice_count
+    bridge._stack_drag_active = True
+    bridge._last_stack_sync_ms = 0.0
+    bridge._last_stack_reference_ms = 0.0
+    bridge._last_stack_target_slice = None
+    bridge._interaction_settle_timer = _FakeTimer()
+    bridge._set_slice_calls = []
+    bridge._slice_hint_calls = []
+    bridge.last_index_slice_saved = 0
+    bridge.vtk_widget = None
+    bridge.qt_viewer = SimpleNamespace(
+        set_total_slices_hint=lambda count: bridge._slice_hint_calls.append(("qt", int(count))),
+    )
+    bridge.pipeline = SimpleNamespace(
+        set_interaction_slice_count_hint=lambda count: bridge._slice_hint_calls.append(("pipe", int(count))),
+    )
+
+    def _set_slice(idx, fast_interaction=False, *, interaction_type=''):
+        bridge._current_slice = idx
+        bridge._set_slice_calls.append((idx, fast_interaction, interaction_type))
+
+    bridge.set_slice = _set_slice
+
+    from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
+    bridge._on_qt_scroll = types.MethodType(QtViewerBridge._on_qt_scroll, bridge)
+    bridge._get_interaction_slice_count_hint = types.MethodType(QtViewerBridge._get_interaction_slice_count_hint, bridge)
+    bridge._sync_interaction_slice_count_hint = types.MethodType(QtViewerBridge._sync_interaction_slice_count_hint, bridge)
+    return bridge
+
+
+def _build_cleanup_bridge_stub():
+    bridge = SimpleNamespace()
+    bridge.qt_viewer = SimpleNamespace(
+        window_level_changed=_FakeSignal(),
+        slice_scroll_requested=_FakeSignal(),
+        stack_drag_state_changed=_FakeSignal(),
+        _scroll_stop_timer=_FakeTimer(),
+        cleared=False,
+    )
+    bridge._interaction_settle_timer = _FakeTimer()
+    bridge._stack_drag_active = True
+    bridge._last_stack_target_slice = 9
+
+    def _clear():
+        bridge.qt_viewer.cleared = True
+
+    bridge.qt_viewer.clear = _clear
+    bridge.pipeline = SimpleNamespace(shutdown_called=False)
+
+    def _shutdown():
+        bridge.pipeline.shutdown_called = True
+
+    bridge.pipeline.shutdown = _shutdown
+
+    from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
+    bridge._on_qt_wl_changed = types.MethodType(QtViewerBridge._on_qt_wl_changed, bridge)
+    bridge._on_qt_scroll = types.MethodType(QtViewerBridge._on_qt_scroll, bridge)
+    bridge._on_stack_drag_state = types.MethodType(QtViewerBridge._on_stack_drag_state, bridge)
+    bridge._disconnect_viewer_signals = types.MethodType(QtViewerBridge._disconnect_viewer_signals, bridge)
+    bridge.cleanup = types.MethodType(QtViewerBridge.cleanup, bridge)
+    return bridge
+
+
+class _FakeRenderWindow:
+    def SetOffScreenRendering(self, _flag):
+        pass
+
+    def SetSize(self, *_args):
+        pass
+
+    def SetShowWindow(self, _flag):
+        pass
+
+
+class _FakeQtViewer:
+    def __init__(self):
+        self.geometry = None
+        self.shown = False
+        self.raised = False
+
+    def setGeometry(self, rect):
+        self.geometry = rect
+
+    def show(self):
+        self.shown = True
+
+    def raise_(self):
+        self.raised = True
+
+
+class _FakeBridge:
+    def __init__(self, slice_count=12):
+        self._slice_count = slice_count
+        self.slice_calls = []
+        self.default_calls = []
+        self.events = []
+        self.zoom_to_fit_calls = 0
+
+    def get_count_of_slices(self):
+        return self._slice_count
+
+    def set_slice(self, idx):
+        self.slice_calls.append(idx)
+        self.events.append(("slice", idx))
+
+    def apply_default_window_level(self, idx):
+        self.default_calls.append(idx)
+        self.events.append(("wl", idx))
+
+    def zoom_to_fit(self):
+        self.zoom_to_fit_calls += 1
+        self.events.append(("fit", self._slice_count))
+        return 321.0
+
+
+class _FakeQtBridgeStyle:
+    def __init__(self, vtk_widget):
+        self.vtk_widget = vtk_widget
+
+
+class _FakeSeriesWidget(_VWSeriesMixin):
+    def __init__(self, old_bridge=None, old_qt_viewer=None):
+        self._qt_bridge_active = old_bridge is not None or old_qt_viewer is not None
+        self._qt_viewer_widget = old_qt_viewer
+        self.image_viewer = old_bridge
+        self._pending_tool_style_cls = None
+        self.slider = None
+        self.render_window = _FakeRenderWindow()
+        self.cleanup_calls = []
+        self.saved_status_camera = None
+        self.current_style = None
+        self._protected_parallel_scale = None
+
+    def cleanup_image_viewer(self, preserve_bound_backend=False):
+        self.cleanup_calls.append(bool(preserve_bound_backend))
+        if self.image_viewer is not None and hasattr(self.image_viewer, 'cleanup'):
+            self.image_viewer.cleanup()
+        self.image_viewer = None
+        self._qt_viewer_widget = None
+        self._qt_bridge_active = False
+
+    def setAttribute(self, *_args, **_kwargs):
+        pass
+
+    def rect(self):
+        return (0, 0, 128, 128)
+
+    def save_status_camera(self, image_viewer):
+        self.saved_status_camera = image_viewer
+
+
+class TestQtPresentationSync:
+    def test_sync_qt_viewer_presentation_refits_and_updates_scale(self):
+        widget = _FakeSeriesWidget()
+        widget.slider = SimpleNamespace(raise_=lambda: setattr(widget, "slider_raised", True))
+        widget.slider_raised = False
+        widget._qt_viewer_widget = _FakeQtViewer()
+        widget.image_viewer = _FakeBridge(slice_count=9)
+
+        widget._sync_qt_viewer_presentation(refit_view=True)
+
+        assert widget._qt_viewer_widget.geometry == (0, 0, 128, 128)
+        assert widget._qt_viewer_widget.raised is True
+        assert widget.slider_raised is True
+        assert widget.image_viewer.zoom_to_fit_calls == 1
+        assert widget._protected_parallel_scale == 321.0
+
+
+class _SelectionParent(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.selection_calls = 0
+
+    def change_container_border(self):
+        self.selection_calls += 1
+
+
+class TestQtSelectionForwarding:
+    def test_mouse_press_notifies_parent_view_selection(self):
+        app = QApplication.instance() or QApplication([])
+        parent = _SelectionParent()
+        viewer = QtSliceViewer(parent=parent)
+
+        press_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(10.0, 10.0),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+        viewer.mousePressEvent(press_event)
+
+        assert app is not None
+        assert parent.selection_calls == 1
+
+    def test_resize_keeps_fit_to_viewport_until_manual_interaction(self):
+        app = QApplication.instance() or QApplication([])
+        viewer = QtSliceViewer()
+        viewer._image_width = 512
+        viewer._image_height = 512
+        viewer._zoom = 0.5
+        viewer._pan_offset = QPointF(12.0, 8.0)
+        viewer._fit_to_viewport = True
+        viewer._calculate_fit_zoom = lambda: 1.75
+
+        resize_event = QResizeEvent(QSize(300, 300), QSize(150, 150))
+
+        viewer.resizeEvent(resize_event)
+
+        assert app is not None
+        assert viewer._zoom == 1.75
+        assert viewer._pan_offset == QPointF(0.0, 0.0)
+
+
+class TestQtViewerFactoryConfig:
+    def test_factory_uses_pooyan_filter_json_settings(self, monkeypatch):
+        vw_globals = importlib.import_module(
+            'PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals'
+        )
+
+        captured = {}
+
+        class _FakePipeline:
+            def __init__(self, config=None):
+                captured['config'] = config
+
+            def open_series(self, series_path, metadata=None):
+                captured['series_path'] = series_path
+                captured['metadata'] = metadata
+
+        class _FakeQtViewerFactory:
+            def __init__(self, parent=None):
+                self.parent = parent
+                self.geometry = None
+
+            def setGeometry(self, rect):
+                self.geometry = rect
+
+        class _FakeBridgeFactory:
+            def __init__(self, qt_viewer=None, pipeline=None, metadata=None, metadata_fixed=None, vtk_widget=None):
+                captured['qt_viewer'] = qt_viewer
+                captured['pipeline'] = pipeline
+                captured['metadata_fixed'] = metadata_fixed
+                captured['vtk_widget'] = vtk_widget
+
+        monkeypatch.setattr(
+            'PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline.load_pooyan_filter_params_from_json',
+            lambda: SimpleNamespace(
+                enabled=True,
+                sigma_x=1.25,
+                alpha=1.6,
+                beta=-0.4,
+                invert=True,
+                small_threshold=300,
+                preserve_dimensions=False,
+            ),
+        )
+        monkeypatch.setattr(
+            'modules.viewer.fast.lightweight_2d_pipeline.Lightweight2DPipeline',
+            _FakePipeline,
+        )
+        monkeypatch.setattr(
+            'modules.viewer.fast.qt_slice_viewer.QtSliceViewer',
+            _FakeQtViewerFactory,
+        )
+        monkeypatch.setattr(
+            'modules.viewer.fast.qt_viewer_bridge.QtViewerBridge',
+            _FakeBridgeFactory,
+        )
+
+        fake_widget = SimpleNamespace(rect=lambda: (0, 0, 200, 100))
+        metadata = {
+            'instances': [
+                {'instance_path': 'C:/tmp/study/201/Instance_0001.dcm'}
+            ]
+        }
+
+        bridge, qt_viewer = vw_globals._create_qt_viewer_bridge(fake_widget, metadata, {'fixed': True})
+
+        cfg = captured['config']
+        assert cfg.opencv_filter_enabled is True
+        assert cfg.opencv_sigma_x == 1.25
+        assert cfg.opencv_alpha == 1.6
+        assert cfg.opencv_beta == -0.4
+        assert cfg.opencv_invert is True
+        assert cfg.opencv_small_threshold == 300
+        assert cfg.opencv_preserve_dimensions is False
+        assert captured['series_path'].replace('\\', '/').endswith('/study/201')
+        assert captured['metadata'] is metadata
+        assert captured['metadata_fixed'] == {'fixed': True}
+        assert qt_viewer.geometry == (0, 0, 200, 100)
+        assert captured['qt_viewer'] is qt_viewer
+        assert isinstance(bridge, _FakeBridgeFactory)
+
+
+class TestQtStackDragBridge:
+    def test_stack_drag_applies_atomic_multi_slice_delta(self):
+        bridge = _build_bridge_stub()
+
+        bridge._on_qt_scroll(4)
+
+        assert bridge._current_slice == 4
+        assert bridge._set_slice_calls == [(4, True, 'drag')]
+
+    def test_stack_drag_does_not_drop_followup_small_delta(self):
+        bridge = _build_bridge_stub()
+
+        bridge._on_qt_scroll(4)
+        bridge._on_qt_scroll(1)
+        bridge._on_qt_scroll(1)
+
+        assert [call[0] for call in bridge._set_slice_calls] == [4, 5, 6]
+        assert all(call[1] is True for call in bridge._set_slice_calls)
+        assert all(call[2] == 'drag' for call in bridge._set_slice_calls)
+
+    def test_stack_drag_clamps_to_progressive_available_slices(self):
+        bridge = _build_bridge_stub(slice_count=200)
+        bridge.vtk_widget = SimpleNamespace(
+            _progressive_mode=True,
+            _available_slice_count=2,
+        )
+
+        bridge._on_qt_scroll(4)
+        bridge._on_qt_scroll(1)
+
+        assert bridge._current_slice == 1
+        assert bridge._set_slice_calls == [(1, True, 'drag')]
+
+    def test_stack_drag_syncs_interactive_slice_hint_to_qt_and_pipeline(self):
+        bridge = _build_bridge_stub(slice_count=200)
+        bridge.vtk_widget = SimpleNamespace(
+            _progressive_mode=True,
+            _available_slice_count=40,
+        )
+
+        bridge._on_qt_scroll(4)
+
+        assert ("qt", 40) in bridge._slice_hint_calls
+        assert ("pipe", 40) in bridge._slice_hint_calls
+
+    def test_reset_image_viewer_preserves_requested_slice_when_series_grows(self):
+        bridge = _build_reset_bridge_stub(slice_count=20, current_slice=7)
+
+        bridge.reset_image_viewer(None, {
+            "series": {"image_count": 132, "modality": "CT"},
+        }, preserve_slice=7)
+
+        assert bridge._slice_count == 132
+        assert bridge._current_slice == 7
+        assert bridge.qt_viewer._current_slice_index == 7
+        assert bridge._wl_scroll_cache_ww is None
+        assert bridge._wl_scroll_cache_wc is None
+
+    def test_reset_image_viewer_clamps_preserved_slice_to_new_range(self):
+        bridge = _build_reset_bridge_stub(slice_count=20, current_slice=18)
+
+        bridge.reset_image_viewer(None, {
+            "series": {"image_count": 5, "modality": "CT"},
+        }, preserve_slice=18)
+
+        assert bridge._slice_count == 5
+        assert bridge._current_slice == 4
+        assert bridge.qt_viewer._current_slice_index == 4
+
+    def test_cleanup_disconnects_qt_viewer_signals_and_stops_timers(self):
+        bridge = _build_cleanup_bridge_stub()
+
+        bridge.cleanup()
+
+        assert bridge._interaction_settle_timer.stop_count == 1
+        assert bridge.qt_viewer._scroll_stop_timer.stop_count == 1
+        assert bridge.pipeline.shutdown_called is True
+        assert bridge.qt_viewer.cleared is True
+        assert bridge._stack_drag_active is False
+        assert bridge._last_stack_target_slice is None
+        assert bridge.qt_viewer.window_level_changed.disconnected == [bridge._on_qt_wl_changed]
+        assert bridge.qt_viewer.slice_scroll_requested.disconnected == [bridge._on_qt_scroll]
+        assert bridge.qt_viewer.stack_drag_state_changed.disconnected == [bridge._on_stack_drag_state]
+
+    def test_start_qt_viewer_cleans_existing_bridge_before_replacement(self, monkeypatch):
+        old_bridge = SimpleNamespace(cleanup_called=False)
+
+        def _cleanup_old_bridge():
+            old_bridge.cleanup_called = True
+
+        old_bridge.cleanup = _cleanup_old_bridge
+        widget = _FakeSeriesWidget(old_bridge=old_bridge, old_qt_viewer=SimpleNamespace())
+        new_bridge = _FakeBridge(slice_count=12)
+        new_viewer = _FakeQtViewer()
+
+        monkeypatch.setattr(
+            'PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_series._create_qt_viewer_bridge',
+            lambda vtk_widget, metadata, metadata_fixed: (new_bridge, new_viewer),
+        )
+        monkeypatch.setattr(_vw_interactor, '_QtBridgeStyle', _FakeQtBridgeStyle)
+
+        widget._start_qt_viewer(metadata={}, metadata_fixed={})
+
+        assert widget.cleanup_calls == [True]
+        assert old_bridge.cleanup_called is True
+        assert widget.image_viewer is new_bridge
+        assert widget._qt_viewer_widget is new_viewer
+        assert widget._qt_bridge_active is True
+        assert new_bridge.slice_calls == [6]
+        assert new_bridge.default_calls == [6]
+        assert new_bridge.events[:2] == [("wl", 6), ("slice", 6)]
+        assert new_bridge.zoom_to_fit_calls == 1
+        assert widget._protected_parallel_scale == 321.0
+        assert new_viewer.geometry == (0, 0, 128, 128)
+        assert new_viewer.raised is True

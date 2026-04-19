@@ -1,8 +1,184 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.3.3
-**Release Date:** 2026-04-14
+**Current Stable Version:** v2.3.5
+**Release Date:** 2026-04-19
 **Branch:** main  
+
+---
+
+## v2.3.5 - Stable Workspace Snapshot / Backup / GitHub Sync (2026-04-19)
+
+### Summary
+
+Publishes the current workspace as **v2.3.5** and marks this repository state as
+the new local stable checkpoint before the next development round.
+
+### Highlights
+
+- Updated the application version in `main.py` to `2.3.5`
+- Updated the package version in `pyproject.toml` to `2.3.5`
+- Updated the Windows product version in `build_nuitka.py` to `2.3.5`
+- Updated builder package feed and module package manifests under
+  `builder/plugin package/packages/` to `2.3.5`
+- Refreshed current stable references in `README.md`, `docs/README.md`,
+  `builder/docs/WINDOWS_RELEASE_FLOW.md`, and
+  `builder/docs/INSTALLER_QA_CHECKLIST.md`
+- Recorded `v2.3.5` as the current stable release note and local backup target
+
+### Validation
+
+- Version metadata updated consistently across app, package, builder, and
+  release-tracking files
+- Local backup target prepared under `backups/v2.3.5_2026-04-19/`
+- GitHub connectivity/push readiness checked from the current workspace
+
+### Notes
+
+- This entry records the repository publication state for the `v2.3.5` stable
+  checkpoint.
+- Existing earlier unreleased entries remain below as historical context for
+  work that may also be included in this checkpoint.
+
+---
+
+## Unreleased — Download preemption backoff hardening (2026-04-18)
+
+### Summary
+
+Reduced Block-1 preemption latency by making socket retry/reconnect backoff waits
+cancellation-aware and by classifying cancelled reconnects as auto-pause/preemption
+instead of ordinary series failure.
+
+### What changed
+
+- `modules/download_manager/network/socket_client.py`
+  - added sliced sleep helpers for sync/async retry waits
+  - `send_request()` now aborts retry backoff immediately when cancellation is requested
+  - `connect_with_retry()` now aborts reconnect backoff immediately when cancellation is requested
+  - batch retry backoff/reconnect now exits early on cancellation instead of walking the full retry ladder
+- `modules/download_manager/download/series_downloader.py`
+  - reconnect failures caused by cancellation/preemption now return the standard auto-paused/preemption result
+  - added `_build_preempted_result(...)` helper so preemption exits stay consistent across early-return paths
+- added focused regressions in `tests/download_manager/test_socket_client_cancellation.py`
+
+### Why this matters
+
+Before this change, a preempted download could still be stuck sleeping inside reconnect
+or retry backoff. The worker pool slot remained occupied until that stale retry path
+finished, which could delay the next critical start enough to trigger
+`[INTENT] Priority start retry exhausted ...` in live runs.
+
+### Validation
+
+- `python -m pytest tests/download_manager/test_priority_retry_dedup.py tests/download_manager/test_socket_client_cancellation.py -v`
+  - Result: **8 passed, 3 warnings**
+- `python tests/download_manager/run_dm_test.py`
+  - Result: **exit code 0**
+
+---
+
+## v2.3.4 - FAST Protected-UI Deadlock Fix / Stable Checkpoint (2026-04-18)
+
+### Summary
+
+Publishes the current workspace as **v2.3.4** and records the FAST viewer
+stability fix that removed the protected-UI deadlock behind the “first series
+loads, second viewer stalls/crashes” startup failure.
+
+### Highlights
+
+- Fixed a self-deadlock in `modules/viewer/fast/system_load_controller.py`
+  triggered by protected-UI prefetch admission deferrals
+- Restored stable second-viewer startup for FAST `pydicom_qt` layouts where the
+  second series previously stalled during `QtViewerBridge.set_slice(...)`
+- Added a targeted regression in
+  `tests/viewer/test_system_load_controller.py` covering repeated protected-UI
+  `PREFETCH` admissions for the same key
+- Updated release docs, app metadata, builder metadata, and package manifests
+  to publish `v2.3.4` as the current stable workspace version
+
+### Validation
+
+- `python -m pytest tests/viewer/test_system_load_controller.py -q`
+  - Result: **21 passed**
+- Offscreen two-viewer reproduction using series `4` then series `7`
+  - Result: second viewer completed `set_slice(mid)` and
+    `apply_default_window_level(mid)` without hanging
+
+### Notes
+
+- Historical `v2.3.3`, `v2.3.2`, `v2.3.1`, and earlier release entries remain
+  below as prior stable references.
+- This release is the new local stable checkpoint before further heavy-series
+  lag investigation.
+
+---
+
+## Unreleased — FAST execution plan Phase 1/2 package updates (2026-04-16)
+
+### Summary
+
+Recorded the two most recent FAST overlap execution-plan packages in the workspace:
+
+- **Phase 1** thumbnail/progress projection cleanup
+- **Phase 2** shared progressive terminal-owner cleanup
+
+Together these changes reduce low-value thumbnail churn and remove duplicate progressive terminal follow-up around the shared finalizer.
+
+### Phase 1 — thumbnail/progress projection cleanup
+
+- `ThumbnailManager` now keeps stable per-series projection state and stable total-count memory
+- repeated start/complete transitions are idempotent and skip redundant overlay/border/count-label writes
+- `_hp_priority.py` no longer injects direct thumbnail per-progress updates during priority flow; the thumbnail contract is now projection-style `start → stable total → complete`
+- active download count stays stable as `N images`; completion finalizes as `N/N`
+
+### Phase 2 — shared progressive terminal owner cleanup
+
+- Layer 2b, Layer 3, and Layer 4 now rely on `_finalize_progressive_series(...)` as the single terminal close owner
+- Layer 2b final close now passes matched viewers into the shared finalizer instead of doing duplicate close/update work around it
+- Layer 3 and Layer 4 no longer add duplicate post-finalize corner/thumbnail follow-up after the shared finalizer runs
+- added regressions proving Layer 2b delegates terminal close through the shared finalizer and Layer 3 does not duplicate finalize follow-up work
+
+### Validation
+
+- Phase 1 focused validation:
+  - `tests/fast/test_fast_thumbnail_vs_download_separation.py`
+  - `tests/fast/test_thumbnail_progress_state_binding.py`
+  - `tests/fast/test_series_completion_state_transition.py`
+  - `tests/fast/test_series_download_order_top_to_bottom.py`
+  - `tests/ui_services/test_lifecycle_hygiene.py`
+  - Result: **61 passed**
+- Phase 2 focused validation:
+  - `tests/viewer/test_fast_viewer_pipeline.py`
+  - `tests/viewer/test_b43_progressive_lifecycle_state.py`
+  - `tests/viewer/test_dragdrop_progressive.py`
+  - Result: **128 passed, 3 warnings**
+
+---
+
+## Unreleased — FAST overlap layout churn guard (2026-04-16)
+
+### Summary
+
+Reduced the “new series inserted into layout” hitch during simultaneous download + viewing by preventing two redundant viewer-side actions:
+
+- an untargeted background series starting a first progressive display load while all viewers were already occupied
+- a completed series being reloaded again after Layer 2b had already grown the active viewer to the final disk count
+
+### Fixes
+
+- `_start_progressive_display()` now defers untargeted first-display work once a first series is already visible and there is no empty or explicitly awaiting viewer
+- untargeted background first-display deferral is now sticky until layout eligibility changes, so later progress pulses do not keep retrying the same blocked `_start_progressive_display()` path
+- `load_series_on_demand()` now skips the redundant post-completion reload when any viewer already shows the completed series at the current disk count
+- `load_series_on_demand()` now also short-circuits untargeted FAST-mode background completions when no viewer is empty, awaiting that series, or already showing it; the series is marked ready and progressive lifecycle state is finalized without running the viewer-completion/reload path
+- viewer/sidebar sync now avoids redundant state writes: unchanged available-slice counts are skipped, append-only metadata grows extend in place, and thumbnail overlay/border/count-label updates no-op when already current
+- added focused regressions in `tests/viewer/test_fast_viewer_pipeline.py`
+
+### Validation
+
+- `python -m pytest tests/viewer/test_fast_viewer_pipeline.py -q`
+- `python -m pytest tests/fast/test_thumbnail_progress_state_binding.py -q`
+- Result: **87 passed, 3 warnings** (`test_fast_viewer_pipeline.py`) and **13 passed** (`test_thumbnail_progress_state_binding.py`)
 
 ---
 

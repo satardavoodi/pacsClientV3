@@ -1,0 +1,88 @@
+{
+  "viewer": "AI-PACS FAST overlap",
+  "mode": "headless-aipacs-fast",
+  "dataset": "generated-files\\benchmarks\\tmp_series_overlap",
+  "scenario_id": "aipacs_live_download_overlap",
+  "scenario_title": "AI-PACS Live Download Overlap",
+  "stack_drag_policy": "",
+  "kpis": {
+    "first_image_visible_ms": 196.76,
+    "set_slice_present_p50_ms": 0.11,
+    "set_slice_present_p95_ms": 155.48,
+    "set_slice_present_max_ms": 385.82,
+    "decode_p95_ms": 208.4,
+    "frame_render_p95_ms": 187.49,
+    "cache_hit_ratio_pct": 52.6,
+    "slow_frame_count_16ms": 114,
+    "longest_ui_gap_ms": 0.0,
+    "stale_task_ratio": 0.0,
+    "cpu_p95_pct": 139.18,
+    "rss_peak_mb": 221.42,
+    "thread_count_p95": 36.0
+  },
+  "raw_perf_metrics": {
+    "set_slice_p50_ms": 0.11,
+    "set_slice_p95_ms": 155.48,
+    "set_slice_p99_ms": 315.23,
+    "set_slice_max_ms": 385.82,
+    "decode_p50_ms": 49.5,
+    "decode_p95_ms": 208.4,
+    "frame_render_p50_ms": 26.91,
+    "frame_render_p95_ms": 187.49,
+    "wl_p50_ms": 0.65,
+    "wl_p95_ms": 7.56,
+    "filter_p50_ms": 0.0,
+    "paint_p95_ms": 0.0,
+    "decode_queue_depth_max": 15,
+    "decode_queue_depth_p95": 4,
+    "frame_queue_depth_max": 2,
+    "frame_queue_depth_p95": 0,
+    "stale_task_ratio": 0.0,
+    "cancelled_task_ratio": 0.9831,
+    "stale_task_count": 0,
+    "cancelled_task_count": 350,
+    "prefetch_submitted": 356,
+    "prefetch_completed": 356,
+    "cache_hit_ratio_pct": 52.6,
+    "cache_hits": 131,
+    "cache_misses": 118,
+    "foreground_wait_p50_ms": 49.5,
+    "foreground_wait_p95_ms": 208.4,
+    "foreground_wait_max_ms": 384.06,
+    "slow_frame_count_16ms": 114,
+    "slow_frame_count_33ms": 84,
+    "total_frames": 248,
+    "first_image_ms": 196.76,
+    "longest_ui_gap_ms": 0.0,
+    "effective_fps": 15.8,
+    "capture_duration_s": 15.67
+  },
+  "process_summary": {
+    "sample_count": 3,
+    "cpu_p50_pct": 120.1,
+    "cpu_p95_pct": 139.18,
+    "cpu_max_pct": 141.3,
+    "rss_peak_mb": 221.42,
+    "thread_count_p95": 36.0,
+    "thread_count_max": 36,
+    "read_mb_delta": 52.27,
+    "write_mb_delta": 0.03,
+    "steps": {
+      "rapid_burst": {
+        "cpu_p95_pct": 120.1,
+        "rss_peak_mb": 220.81,
+        "thread_count_max": 36
+      },
+      "direction_reversal": {
+        "cpu_p95_pct": 99.1,
+        "rss_peak_mb": 221.42,
+        "thread_count_max": 36
+      },
+      "idle_settle": {
+        "cpu_p95_pct": 141.3,
+        "rss_peak_mb": 221.4,
+        "thread_count_max": 35
+      }
+    }
+  }
+}

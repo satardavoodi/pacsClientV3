@@ -63,8 +63,10 @@ def test_start_download_twice_is_idempotent(tm):
     """Calling start_series_download twice for the same series must not crash."""
     tm.register_series(1)
     tm.start_series_download(1)
+    apply_count = tm._apply_count
     tm.start_series_download(1)  # second call — must not raise
     assert tm.series_widgets["1"].progress_border._downloading
+    assert tm._apply_count == apply_count
 
 
 def test_five_series_deferred_all_applied(tm):
@@ -79,3 +81,11 @@ def test_five_series_deferred_all_applied(tm):
         assert tm.series_widgets[str(sn)].progress_border._downloading, (
             f"Series {sn} deferred state not applied"
         )
+
+
+def test_start_persists_stable_total_count_label(tm):
+    tm.register_series(7)
+    tm.start_series_download(7, total_images=145)
+    tm.start_series_download(7, total_images=999)
+
+    assert tm.series_widgets["7"].count_label_text == "145 images"

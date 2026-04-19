@@ -11,7 +11,38 @@ from modules.zeta_boost import ImageSliceBooster
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 import logging
 
+try:
+    from modules.viewer.fast.ui_throttle import (
+        progressive_grow_interval_ms as _ui_progressive_grow_interval_ms,
+        progressive_signal_interval_ms as _ui_progressive_signal_interval_ms,
+        should_admit as _ui_should_admit,
+        should_defer_cache_warm as _ui_should_defer_cache_warm,
+        should_defer_progressive_grow as _ui_should_defer_progressive_grow,
+    )
+except Exception:  # pragma: no cover - defensive for stripped test envs
+    def _ui_progressive_grow_interval_ms() -> float:
+        return 150.0
+
+    def _ui_progressive_signal_interval_ms() -> float:
+        return 100.0
+
+    def _ui_should_defer_progressive_grow(*, terminal: bool = False) -> bool:
+        return False
+
+    def _ui_should_defer_cache_warm() -> bool:
+        return False
+
+    def _ui_should_admit(task_type, context=None) -> bool:
+        return True
+
 logger = logging.getLogger(__name__)
+
+
+_PROGRESSIVE_STATE_NO_VIEWER = "NO_VIEWER"
+_PROGRESSIVE_STATE_AWAITING = "AWAITING"
+_PROGRESSIVE_STATE_PROGRESSIVE = "PROGRESSIVE"
+_PROGRESSIVE_STATE_COMPLETING = "COMPLETING"
+_PROGRESSIVE_STATE_DONE = "DONE"
 
 
 def _h10_log_progressive_mutation(obj, fn_name: str, mutated_sn: str, action: str):
@@ -32,6 +63,433 @@ def _h10_log_progressive_mutation(obj, fn_name: str, mutated_sn: str, action: st
         )
     except Exception:
         pass
+
+
+def _cleanup_progressive_lifecycle_state(obj, series_number: str, source: str) -> None:
+    """B4.3: centralized cleanup for progressive lifecycle guards.
+
+    Module-level helper (not mixin method) so unit tests that bind selected
+    mixin methods onto lightweight SimpleNamespace controllers do not need to
+    bind an additional helper method.
+    """
+    sn = str(series_number)
+
+    getattr(obj, '_progressive_series', {}).pop(sn, None)
+    _h10_log_progressive_mutation(obj, '_cleanup_progressive_lifecycle_state', sn, f'pop_{source}')
+
+    _clear_progressive_done_guard(obj, sn)
+    _h10_log_progressive_mutation(obj, '_cleanup_progressive_lifecycle_state', sn, f'done_discard_{source}')
+    _clear_layer2b_complete_guard(obj, sn)
+
+    _set_progressive_lifecycle_state(
+        obj,
+        sn,
+        _PROGRESSIVE_STATE_DONE,
+        source="cleanup",
+        reason=source,
+    )
+
+
+def _get_progressive_lifecycle_map(obj):
+    """Return or lazily create lifecycle-state mapping on the controller."""
+    state_map = getattr(obj, '_progressive_lifecycle_state', None)
+    if state_map is None:
+        state_map = {}
+        setattr(obj, '_progressive_lifecycle_state', state_map)
+    return state_map
+
+
+def _get_progressive_lifecycle_state(obj, series_number: str) -> str:
+    """Get lifecycle state for a series, defaulting to NO_VIEWER."""
+    sn = str(series_number)
+    state_map = _get_progressive_lifecycle_map(obj)
+    return str(state_map.get(sn, _PROGRESSIVE_STATE_NO_VIEWER))
+
+
+def _set_progressive_lifecycle_state(
+    obj,
+    series_number: str,
+    new_state: str,
+    *,
+    source: str,
+    reason: str = "",
+) -> str:
+    """Set lifecycle state for a series and emit a low-noise transition log."""
+    sn = str(series_number)
+    state_map = _get_progressive_lifecycle_map(obj)
+    old_state = str(state_map.get(sn, _PROGRESSIVE_STATE_NO_VIEWER))
+    state_map[sn] = str(new_state)
+
+    if old_state != new_state:
+        try:
+            logger.info(
+                "progressive-state: series=%s %s -> %s source=%s reason=%s",
+                sn, old_state, new_state, source, reason,
+            )
+        except Exception:
+            pass
+    return old_state
+
+
+def _get_progressive_done_set(obj):
+    """Return or lazily create legacy done-guard set (compatibility)."""
+    done = getattr(obj, '_progressive_display_done', None)
+    if done is None:
+        done = set()
+        setattr(obj, '_progressive_display_done', done)
+    return done
+
+
+def _is_progressive_done_guard_active(obj, series_number: str) -> bool:
+    """Unified done-guard check via legacy set + lifecycle state-map."""
+    sn = str(series_number)
+    if sn in _get_progressive_done_set(obj):
+        return True
+    return _get_progressive_lifecycle_state(obj, sn) in {
+        _PROGRESSIVE_STATE_PROGRESSIVE,
+        _PROGRESSIVE_STATE_COMPLETING,
+    }
+
+
+def _mark_progressive_done_guard(obj, series_number: str):
+    """Mark done-guard set for compatibility checks."""
+    _get_progressive_done_set(obj).add(str(series_number))
+
+
+def _clear_progressive_done_guard(obj, series_number: str):
+    """Clear done-guard set for a series (idempotent)."""
+    _get_progressive_done_set(obj).discard(str(series_number))
+
+
+def _get_progressive_inflight_set(obj):
+    """Return or lazily create legacy inflight guard set (compatibility)."""
+    inflight = getattr(obj, '_progressive_display_inflight', None)
+    if inflight is None:
+        inflight = set()
+        setattr(obj, '_progressive_display_inflight', inflight)
+    return inflight
+
+
+def _get_progressive_untargeted_defer_set(obj):
+    """Return or lazily create the untargeted-background defer guard set."""
+    deferred = getattr(obj, '_progressive_untargeted_defer', None)
+    if deferred is None:
+        deferred = set()
+        setattr(obj, '_progressive_untargeted_defer', deferred)
+    return deferred
+
+
+def _is_progressive_untargeted_deferred(obj, series_number: str) -> bool:
+    """True when untargeted first-display was previously deferred for this series."""
+    return str(series_number) in _get_progressive_untargeted_defer_set(obj)
+
+
+def _mark_progressive_untargeted_deferred(obj, series_number: str) -> None:
+    """Mark a series as deferred until layout eligibility changes."""
+    _get_progressive_untargeted_defer_set(obj).add(str(series_number))
+
+
+def _clear_progressive_untargeted_deferred(obj, series_number: str) -> None:
+    """Clear the untargeted-deferred guard for a series."""
+    _get_progressive_untargeted_defer_set(obj).discard(str(series_number))
+
+
+def _is_progressive_inflight(obj, series_number: str) -> bool:
+    """Unified inflight check via legacy set + lifecycle state-map."""
+    sn = str(series_number)
+    if sn in _get_progressive_inflight_set(obj):
+        return True
+    return _get_progressive_lifecycle_state(obj, sn) == _PROGRESSIVE_STATE_AWAITING
+
+
+def _is_progressive_start_task_inflight(obj, series_number: str) -> bool:
+    """True only while the first-display task has been started."""
+    return str(series_number) in _get_progressive_inflight_set(obj)
+
+
+def _mark_progressive_inflight(obj, series_number: str):
+    """Mark inflight guard (legacy set + lifecycle state)."""
+    sn = str(series_number)
+    _get_progressive_inflight_set(obj).add(sn)
+    _set_progressive_lifecycle_state(
+        obj,
+        sn,
+        _PROGRESSIVE_STATE_AWAITING,
+        source="inflight_guard",
+        reason="mark_inflight",
+    )
+
+
+def _clear_progressive_inflight(obj, series_number: str):
+    """Clear inflight guard (legacy set only; state transitions happen elsewhere)."""
+    _get_progressive_inflight_set(obj).discard(str(series_number))
+
+
+def _get_series_download_completed_set(obj):
+    """Return or lazily create the completed-series guard set."""
+    completed = getattr(obj, '_series_download_completed', None)
+    if completed is None:
+        completed = set()
+        setattr(obj, '_series_download_completed', completed)
+    return completed
+
+
+def _is_series_download_completed(obj, series_number: str) -> bool:
+    """True when a series has already completed in this controller lifetime."""
+    return str(series_number) in _get_series_download_completed_set(obj)
+
+
+def _mark_series_download_completed(obj, series_number: str) -> None:
+    """Record a series as completed for late-progress / late-callback guards."""
+    _get_series_download_completed_set(obj).add(str(series_number))
+
+
+def _clear_series_download_completed(obj, series_number: str) -> None:
+    """Clear completed-series guard for a verified new progressive cycle."""
+    _get_series_download_completed_set(obj).discard(str(series_number))
+
+
+def _should_restart_after_done(obj, series_number: str, downloaded: int, total: int) -> bool:
+    """True when a completed series is receiving a real new partial cycle."""
+    sn = str(series_number)
+    if downloaded >= total:
+        return False
+    if _get_progressive_lifecycle_state(obj, sn) != _PROGRESSIVE_STATE_DONE:
+        return False
+    if sn in getattr(obj, '_progressive_series', {}):
+        return False
+    try:
+        if obj._find_progressive_viewers(sn):
+            return False
+    except Exception:
+        return False
+    return True
+
+
+def _progressive_signal_interval_ms() -> float:
+    """Progressive callback rate: normal 10 Hz, protected 2 Hz."""
+    return float(_ui_progressive_signal_interval_ms())
+
+
+def _progressive_grow_interval_ms() -> float:
+    """Viewer admission retry cadence for non-terminal progressive growth."""
+    return float(_ui_progressive_grow_interval_ms())
+
+
+def _should_defer_progressive_grow(*, terminal: bool = False) -> bool:
+    """Helper front door for progressive grow deferral decisions."""
+    return bool(_ui_should_defer_progressive_grow(terminal=terminal))
+
+
+def _should_defer_cache_warm() -> bool:
+    """Helper front door for post-completion cache-warm deferral decisions."""
+    return bool(_ui_should_defer_cache_warm())
+
+
+def _should_admit_cache_warm(obj, series_number: str) -> bool:
+    """Admission front door for post-completion cache warm dispatch."""
+    return bool(_ui_should_admit(
+        "cache_warm",
+        {
+            "key": f"cache-warm:{id(obj)}:{series_number}",
+            "series_key": str(series_number),
+        },
+    ))
+
+
+def _should_admit_progressive_signal(obj, series_number: str, *, terminal: bool = False) -> bool:
+    """Admission front door for viewer-facing progressive progress work."""
+    if terminal:
+        return True
+    return bool(_ui_should_admit(
+        "progressive_signal",
+        {
+            "key": f"progressive-signal:{id(obj)}:{series_number}",
+            "series_key": str(series_number),
+            "terminal": bool(terminal),
+        },
+    ))
+
+
+def _restart_progressive_grow_timer(obj, delay_ms: float | None = None) -> None:
+    """Start the single-shot grow timer with an optional retry delay."""
+    timer = getattr(obj, '_progressive_grow_timer', None)
+    if timer is None:
+        return
+    default_delay = getattr(obj, '_progressive_grow_timer_default_interval_ms', 150)
+    target_delay = int(max(1, round(delay_ms if delay_ms is not None else default_delay)))
+    try:
+        if hasattr(timer, 'setInterval'):
+            timer.setInterval(target_delay)
+    except Exception:
+        pass
+    try:
+        timer.start()
+    except Exception:
+        pass
+
+
+def _get_progressive_admit_batch_size(obj) -> int:
+    """Return the max non-terminal slice window admitted per grow tick."""
+    fallback = getattr(obj, '_progressive_admit_batch_size_default', 8)
+    try:
+        return max(1, int(getattr(obj, '_progressive_admit_batch_size', fallback) or fallback))
+    except Exception:
+        return max(1, int(fallback or 8))
+
+
+def _get_layer2b_complete_guard_set(obj):
+    """Return or lazily create the Layer 2b duplicate-completion guard set."""
+    complete_guard = getattr(obj, '_layer2b_complete_guard', None)
+    if complete_guard is None:
+        complete_guard = set()
+        setattr(obj, '_layer2b_complete_guard', complete_guard)
+    return complete_guard
+
+
+def _is_layer2b_complete_guard_active(obj, series_number: str) -> bool:
+    """True when Layer 2b completion has already run for this series."""
+    return str(series_number) in _get_layer2b_complete_guard_set(obj)
+
+
+def _mark_layer2b_complete_guard(obj, series_number: str) -> None:
+    """Mark Layer 2b completion as processed for a series."""
+    _get_layer2b_complete_guard_set(obj).add(str(series_number))
+
+
+def _clear_layer2b_complete_guard(obj, series_number: str) -> None:
+    """Clear Layer 2b duplicate-completion guard for a series."""
+    _get_layer2b_complete_guard_set(obj).discard(str(series_number))
+
+
+def _get_progressive_terminal_complete_guard_set(obj):
+    """Return or lazily create the terminal-complete one-shot guard set."""
+    guard = getattr(obj, '_progressive_terminal_complete_guard', None)
+    if guard is None:
+        guard = set()
+        setattr(obj, '_progressive_terminal_complete_guard', guard)
+    return guard
+
+
+def _is_progressive_terminal_complete_guard_active(obj, series_number: str) -> bool:
+    """True after the fast progressive path already observed terminal completion."""
+    return str(series_number) in _get_progressive_terminal_complete_guard_set(obj)
+
+
+def _mark_progressive_terminal_complete_guard(obj, series_number: str) -> None:
+    """Record that terminal completion was already observed for this cycle."""
+    _get_progressive_terminal_complete_guard_set(obj).add(str(series_number))
+
+
+def _clear_progressive_terminal_complete_guard(obj, series_number: str) -> None:
+    """Clear the terminal-complete guard for a verified new cycle."""
+    _get_progressive_terminal_complete_guard_set(obj).discard(str(series_number))
+
+
+def _get_progressive_finalized_series_set(obj):
+    """Return or lazily create the terminal-finalization one-shot guard set."""
+    guard = getattr(obj, '_progressive_finalized_series', None)
+    if guard is None:
+        guard = set()
+        setattr(obj, '_progressive_finalized_series', guard)
+    return guard
+
+
+def _is_progressive_finalized(obj, series_number: str) -> bool:
+    """True once terminal finalization has already run for this cycle."""
+    return str(series_number) in _get_progressive_finalized_series_set(obj)
+
+
+def _mark_progressive_finalized(obj, series_number: str) -> None:
+    """Mark a series as terminal-finalized for this cycle."""
+    _get_progressive_finalized_series_set(obj).add(str(series_number))
+
+
+def _clear_progressive_finalized(obj, series_number: str) -> None:
+    """Clear terminal-finalized guard for a verified new cycle."""
+    _get_progressive_finalized_series_set(obj).discard(str(series_number))
+
+
+def _finalize_progressive_series(
+    obj,
+    series_number: str,
+    *,
+    final_count: int = 0,
+    viewers: list | None = None,
+    source: str,
+    dispatch_cache_warm: bool = False,
+) -> bool:
+    """Single terminal authority for progressive completion.
+
+    Module-level helper so tests that bind only selected mixin methods onto
+    lightweight controllers still exercise the real finalization path.
+    """
+    sn = str(series_number)
+    if _is_progressive_finalized(obj, sn):
+        getattr(obj, 'logger', logger).debug(
+            "progressive: finalize skipped duplicate series=%s source=%s",
+            sn, source,
+        )
+        return False
+
+    _mark_progressive_finalized(obj, sn)
+    _mark_progressive_terminal_complete_guard(obj, sn)
+    _mark_series_download_completed(obj, sn)
+    _set_progressive_lifecycle_state(
+        obj,
+        sn,
+        _PROGRESSIVE_STATE_COMPLETING,
+        source="_finalize_progressive_series",
+        reason=source,
+    )
+
+    matched_viewers = list(viewers or [])
+    if not matched_viewers:
+        for node in getattr(obj, 'lst_nodes_viewer', None) or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is None:
+                continue
+            try:
+                viewer_sn = str(
+                    getattr(vtk_w.image_viewer, "metadata", {})
+                    .get("series", {}).get("series_number", "")
+                )
+            except Exception:
+                viewer_sn = ""
+            if viewer_sn == sn or getattr(vtk_w, "_progressive_series_number", None) == sn:
+                matched_viewers.append((vtk_w, node))
+
+    for vtk_w, _node in matched_viewers:
+        try:
+            if getattr(vtk_w, "_progressive_mode", False):
+                vtk_w.exit_progressive_mode()
+        except Exception as _epm_exc:
+            getattr(obj, 'logger', logger).warning(
+                "progressive: exit_progressive_mode failed viewer_id=%s series=%s (%s): %s",
+                getattr(vtk_w, "id_vtk_widget", id(vtk_w)), sn, source, _epm_exc,
+            )
+        try:
+            iv = getattr(vtk_w, "image_viewer", None)
+            if iv is not None and hasattr(iv, "update_corners_actors"):
+                iv.update_corners_actors()
+        except Exception:
+            pass
+
+    if final_count > 0:
+        obj._refresh_and_sync_metadata(sn, final_count)
+        obj._invalidate_series_caches(sn)
+        obj._update_thumbnail_count(sn, final_count)
+
+    _cleanup_progressive_lifecycle_state(obj, sn, source=source)
+
+    if dispatch_cache_warm and matched_viewers:
+        obj._dispatch_post_completion_cache_warm(sn, matched_viewers)
+
+    getattr(obj, 'logger', logger).info(
+        "progressive: finalized series=%s count=%d source=%s",
+        sn, final_count, source,
+    )
+    return True
 
 
 class _VCProgressiveMixin:
@@ -78,75 +536,192 @@ class _VCProgressiveMixin:
         if total <= 0 or downloaded <= 0:
             return
 
+        def _has_viewer_interest_for_series() -> bool:
+            for node in self.lst_nodes_viewer or []:
+                vtk_w = getattr(node, "vtk_widget", None)
+                if vtk_w is None:
+                    continue
+                if getattr(vtk_w, "_awaiting_series_number", None) == sn:
+                    return True
+                if getattr(vtk_w, "_progressive_series_number", None) == sn:
+                    return True
+                try:
+                    viewer_sn = str(
+                        getattr(vtk_w.image_viewer, "metadata", {})
+                        .get("series", {}).get("series_number", "")
+                    )
+                except Exception:
+                    viewer_sn = ""
+                if viewer_sn == sn:
+                    return True
+            return False
+
         # Advanced (VTK) mode: skip progressive display entirely.
         # The series will be loaded once via series_downloaded signal.
         if not self._is_fast_viewer_mode():
             return
 
+        if downloaded < total and not _should_admit_progressive_signal(self, str(series_number), terminal=False):
+            return
+
+        # Terminal idempotence: once this cycle already reached COMPLETE
+        # (or Layer 2b has begun), reject duplicate terminal progress callbacks
+        # before they recreate _progressive_series and re-enter one-shot grow.
+        if downloaded >= total:
+            if _is_progressive_finalized(self, sn):
+                logger.info(
+                    "progressive: duplicate terminal progress ignored series=%s downloaded=%d total=%d guard=finalized",
+                    sn, downloaded, total,
+                )
+                return
+            if _is_progressive_terminal_complete_guard_active(self, sn):
+                _set_progressive_lifecycle_state(
+                    self,
+                    sn,
+                    _get_progressive_lifecycle_state(self, sn),
+                    source="on_series_images_progress",
+                    reason="duplicate_terminal_progress_guard",
+                )
+                logger.info(
+                    "progressive: duplicate terminal progress ignored series=%s downloaded=%d total=%d guard=terminal_complete",
+                    sn, downloaded, total,
+                )
+                return
+            if _is_layer2b_complete_guard_active(self, sn):
+                _set_progressive_lifecycle_state(
+                    self,
+                    sn,
+                    _PROGRESSIVE_STATE_COMPLETING,
+                    source="on_series_images_progress",
+                    reason="duplicate_terminal_progress_layer2b",
+                )
+                logger.info(
+                    "progressive: duplicate terminal progress ignored series=%s downloaded=%d total=%d guard=layer2b",
+                    sn, downloaded, total,
+                )
+                return
+            try:
+                untargeted_background_complete = (
+                    bool(getattr(self, '_first_series_displayed', False))
+                    and not self._any_viewer_empty()
+                    and not _has_viewer_interest_for_series()
+                )
+            except Exception:
+                untargeted_background_complete = False
+            if untargeted_background_complete:
+                _mark_progressive_terminal_complete_guard(self, sn)
+                _set_progressive_lifecycle_state(
+                    self,
+                    sn,
+                    _PROGRESSIVE_STATE_AWAITING,
+                    source="on_series_images_progress",
+                    reason="terminal_background_completion_waiting_load_series",
+                )
+                self.logger.info(
+                    "progressive: terminal background completion deferred to load_series_on_demand "
+                    "series=%s downloaded=%d total=%d",
+                    sn, downloaded, total,
+                )
+                return
+
         # H6 defense-in-depth: reject late progress signals for series that
         # have already completed.  Without this, late DM signals could
         # re-create _progressive_series tracking for a finished series.
-        if sn in getattr(self, '_series_download_completed', set()):
-            logger.info(
-                "[H7-P7] series=%s downloaded=%d total=%d action=rejected_H6_completed",
-                sn, downloaded, total,
-            )
-            return
+        if _is_series_download_completed(self, sn):
+            if _should_restart_after_done(self, sn, downloaded, total):
+                _clear_series_download_completed(self, sn)
+                _clear_layer2b_complete_guard(self, sn)
+                _clear_progressive_terminal_complete_guard(self, sn)
+                _clear_progressive_finalized(self, sn)
+                logger.info(
+                    "progressive: restart_after_done series=%s downloaded=%d total=%d",
+                    sn, downloaded, total,
+                )
+            else:
+                _set_progressive_lifecycle_state(
+                    self,
+                    sn,
+                    _PROGRESSIVE_STATE_DONE,
+                    source="on_series_images_progress",
+                    reason="already_completed_guard",
+                )
+                logger.info(
+                    "[H7-P7] series=%s downloaded=%d total=%d action=rejected_H6_completed",
+                    sn, downloaded, total,
+                )
+                return
 
         # [H7-P7] Entry log â€” captures all guard states at entry
-        _done_set = getattr(self, '_progressive_display_done', set())
-        _inflight_set = getattr(self, '_progressive_display_inflight', set())
-        _viewers_prog = []
-        _viewers_nonprog = []
-        for _n in (self.lst_nodes_viewer or []):
-            _vw = getattr(_n, "vtk_widget", None)
-            if _vw is None:
-                continue
-            try:
-                _vsn = str(
-                    getattr(_vw.image_viewer, "metadata", {})
-                    .get("series", {}).get("series_number", "")
-                )
-            except Exception:
-                _vsn = ""
-            if _vsn == sn:
-                if _vw._progressive_mode:
-                    _viewers_prog.append(_vsn)
-                else:
-                    _viewers_nonprog.append(_vsn)
-        logger.info(
-            "[H7-P7] series=%s downloaded=%d total=%d fast_mode=True "
-            "in_completed_set=False in_done_set=%s in_inflight_set=%s "
-            "in_progressive_series=%s viewers_prog=%d viewers_nonprog=%d",
-            sn, downloaded, total,
-            sn in _done_set, sn in _inflight_set,
-            sn in self._progressive_series,
-            len(_viewers_prog), len(_viewers_nonprog),
-        )
+        _done_active = _is_progressive_done_guard_active(self, sn)
+        _inflight_active = _is_progressive_inflight(self, sn)
+        # B3.5: Demoted viewer iteration loop to DEBUG — adds ~0.5-1ms
+        # per progress signal on main thread.  Only runs for diagnostics.
+        if logger.isEnabledFor(logging.DEBUG):
+            _viewers_prog = []
+            _viewers_nonprog = []
+            for _n in (self.lst_nodes_viewer or []):
+                _vw = getattr(_n, "vtk_widget", None)
+                if _vw is None:
+                    continue
+                try:
+                    _vsn = str(
+                        getattr(_vw.image_viewer, "metadata", {})
+                        .get("series", {}).get("series_number", "")
+                    )
+                except Exception:
+                    _vsn = ""
+                if _vsn == sn:
+                    if _vw._progressive_mode:
+                        _viewers_prog.append(_vsn)
+                    else:
+                        _viewers_nonprog.append(_vsn)
+            logger.debug(
+                "[H7-P7] series=%s downloaded=%d total=%d fast_mode=True "
+                "in_completed_set=False in_done_set=%s in_inflight_set=%s "
+                "in_progressive_series=%s viewers_prog=%d viewers_nonprog=%d",
+                sn, downloaded, total,
+                _done_active, _inflight_active,
+                sn in self._progressive_series,
+                len(_viewers_prog), len(_viewers_nonprog),
+            )
 
         # Track this series for progressive updates
         if sn not in self._progressive_series:
             self._progressive_series[sn] = {"total": total, "last_grow_count": 0, "last_signal_ms": 0}
             _h10_log_progressive_mutation(self, 'on_series_images_progress_impl', sn, 'add_key')
+            _set_progressive_lifecycle_state(
+                self,
+                sn,
+                _PROGRESSIVE_STATE_AWAITING,
+                source="on_series_images_progress",
+                reason="first_progress_signal",
+            )
         info = self._progressive_series[sn]
         info["total"] = max(info["total"], total)
 
         # â”€â”€ Throttle: skip if called less than 250ms ago for this series
         #    (always process 'download complete' signals though) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         now_ms_val = time.monotonic() * 1000
-        if downloaded < total and (now_ms_val - info.get("last_signal_ms", 0)) < 100:
+        if downloaded < total and (now_ms_val - info.get("last_signal_ms", 0)) < _progressive_signal_interval_ms():
             return
         info["last_signal_ms"] = now_ms_val
 
         # Check if a viewer is already displaying this series in progressive mode
         viewers_showing = self._find_progressive_viewers(sn)
         if viewers_showing:
+            _set_progressive_lifecycle_state(
+                self,
+                sn,
+                _PROGRESSIVE_STATE_PROGRESSIVE,
+                source="on_series_images_progress",
+                reason="progressive_viewer_present",
+            )
             # Only grow when enough NEW images arrived (batch boundary)
             delta = downloaded - info["last_grow_count"]
             if delta >= self._progressive_grow_batch_size or downloaded >= total:
                 info["pending_downloaded"] = downloaded
                 if not self._progressive_grow_timer.isActive():
-                    self._progressive_grow_timer.start()
+                    _restart_progressive_grow_timer(self, _progressive_grow_interval_ms())
             return
 
         # Check if a viewer already shows this series (non-progressive, e.g. the
@@ -181,6 +756,13 @@ class _VCProgressiveMixin:
                 avail = vtk_w.image_viewer.get_count_of_slices() if vtk_w.image_viewer else 0
                 vtk_w.enter_progressive_mode(total, sn)
                 vtk_w.update_available_slice_count(avail)
+                _set_progressive_lifecycle_state(
+                    self,
+                    sn,
+                    _PROGRESSIVE_STATE_PROGRESSIVE,
+                    source="on_series_images_progress",
+                    reason="retroactive_activation",
+                )
                 slider = getattr(node, "slider", None)
                 if slider is not None:
                     try:
@@ -209,6 +791,13 @@ class _VCProgressiveMixin:
                 # Download COMPLETE â€” one-shot final grow so the viewer shows
                 # all downloaded images (covers the "last batch arrived at once"
                 # scenario that bypassed retroactive activation).
+                _set_progressive_lifecycle_state(
+                    self,
+                    sn,
+                    _PROGRESSIVE_STATE_COMPLETING,
+                    source="on_series_images_progress",
+                    reason="done_guard_one_shot",
+                )
                 self.logger.info(
                     "progressive: one-shot final grow series=%s downloaded=%d total=%d",
                     sn, downloaded, total,
@@ -236,13 +825,17 @@ class _VCProgressiveMixin:
                 _awaiting_node = node
                 break
 
+        try:
+            _has_empty_viewer = bool(self._any_viewer_empty())
+        except Exception:
+            _has_empty_viewer = False
+
+        if _awaiting_viewer is not None or _has_empty_viewer or not getattr(self, '_first_series_displayed', False):
+            _clear_progressive_untargeted_deferred(self, sn)
+
         if downloaded >= self._progressive_grow_batch_size:
-            done = getattr(self, '_progressive_display_done', None)
-            if done is None:
-                self._progressive_display_done = set()
-                done = self._progressive_display_done
-            if sn in done:
-                # Already displayed once â€” grow path should handle updates.
+            if _is_progressive_done_guard_active(self, sn):
+                # Already displayed once — grow path should handle updates.
                 # Defensive: if progressive mode was lost (e.g. race between
                 # threaded done.add and activation, or switch_series skipped
                 # progressive entry), re-enter progressive mode so the grow
@@ -269,16 +862,16 @@ class _VCProgressiveMixin:
                                 sn, avail,
                             )
                             return  # Will grow on next progress signal
-                # downloaded < total but no viewer found â€” nothing further to do
+                # downloaded < total but no viewer found — nothing further to do
                 if downloaded < total:
                     return
-                # downloaded >= total â€” completion signal.  If progressive mode was
+                # downloaded >= total — completion signal. If progressive mode was
                 # exited prematurely (e.g. stale-grow exhaustion at fewer slices),
                 # fire a one-shot grow so the viewer reaches the full file count.
                 for _node in self.lst_nodes_viewer or []:
                     _vtk_w = getattr(_node, "vtk_widget", None)
                     if _vtk_w is None or _vtk_w._progressive_mode:
-                        continue  # skip progressive viewers â€” handled by normal grow path
+                        continue  # skip progressive viewers — handled by normal grow path
                     try:
                         _viewer_sn = str(
                             getattr(_vtk_w.image_viewer, "metadata", {})
@@ -290,7 +883,7 @@ class _VCProgressiveMixin:
                         continue
                     _current_count = _vtk_w.get_count_of_slices()
                     if _current_count >= downloaded:
-                        continue  # already showing full count â€” no action needed
+                        continue  # already showing full count — no action needed
                     self.logger.info(
                         "progressive: done-guard completion one-shot series=%s current=%d downloaded=%d",
                         sn, _current_count, downloaded,
@@ -315,17 +908,22 @@ class _VCProgressiveMixin:
                         _viewers_shot = [(_vtk_w, _node)]
                     self._grow_progressive_fast(sn, downloaded, _viewers_shot)
                     return
-                # No viewer needs a grow for this completed series â€” nothing to do.
+                # No viewer needs a grow for this completed series — nothing to do.
                 # IMPORTANT: do NOT fall through to the inflight block below; that
                 # would restart _start_progressive_display for an already-done series.
                 return
 
-            inflight = getattr(self, '_progressive_display_inflight', None)
-            if inflight is None:
-                self._progressive_display_inflight = set()
-                inflight = self._progressive_display_inflight
-            if sn not in inflight:
-                inflight.add(sn)
+            if (
+                downloaded < total
+                and _awaiting_viewer is None
+                and not _has_empty_viewer
+                and getattr(self, '_first_series_displayed', False)
+                and _is_progressive_untargeted_deferred(self, sn)
+            ):
+                return
+
+            if not _is_progressive_start_task_inflight(self, sn):
+                _mark_progressive_inflight(self, sn)
                 self._start_progressive_display(
                     sn, downloaded, total,
                     target_vtk_widget=_awaiting_viewer,
@@ -358,9 +956,17 @@ class _VCProgressiveMixin:
             series_number, downloaded, total,
             getattr(target_vtk_widget, 'id_vtk_widget', None) if target_vtk_widget else None,
         )
+        _clear_progressive_untargeted_deferred(self, series_number)
         self._progressive_series.setdefault(series_number, {
             "total": total, "last_grow_count": 0,
         })
+        _set_progressive_lifecycle_state(
+            self,
+            str(series_number),
+            _PROGRESSIVE_STATE_AWAITING,
+            source="_start_progressive_display",
+            reason="initial_display_start",
+        )
 
         # Ensure import_folder_path is set â€” during download the PatientWidget
         # may have been created before any files existed on disk.
@@ -370,10 +976,47 @@ class _VCProgressiveMixin:
                 "progressive: cannot start series=%s â€” no valid study path",
                 series_number,
             )
-            inflight = getattr(self, '_progressive_display_inflight', None)
-            if inflight is not None:
-                inflight.discard(series_number)
+            _clear_progressive_inflight(self, series_number)
             return
+
+        # v2.3.5 Fix 3: completeness gate -- defer initial load during active
+        # download when too few files are available.  The 500ms load overhead
+        # is wasteful on a partial set that will grow rapidly.  The next
+        # progress signal will retry when more files have arrived.
+        # Skip gate when a target viewer is waiting (user drag-drop).
+        _PROGRESSIVE_MIN_COMPLETENESS = 0.30
+        if target_vtk_widget is None and total > 0:
+            completeness = downloaded / total
+            if completeness < _PROGRESSIVE_MIN_COMPLETENESS:
+                try:
+                    from modules.viewer.fast.ui_throttle import is_heavy_download_active as _heavy_dl
+                    if _heavy_dl():
+                        self.logger.info(
+                            "progressive: DEFERRED start series=%s completeness=%.0f%% "
+                            "(%d/%d) -- below %.0f%% threshold during active download",
+                            series_number, completeness * 100, downloaded, total,
+                            _PROGRESSIVE_MIN_COMPLETENESS * 100,
+                        )
+                        _clear_progressive_inflight(self, series_number)
+                        return
+                except Exception:
+                    pass
+
+        if target_vtk_widget is None:
+            try:
+                if getattr(self, '_first_series_displayed', False) and not self._any_viewer_empty():
+                    _mark_progressive_untargeted_deferred(self, series_number)
+                    self.logger.info(
+                        "progressive: DEFERRED untargeted start series=%s downloaded=%d total=%d "
+                        "-- no awaiting/empty viewer",
+                        series_number,
+                        downloaded,
+                        total,
+                    )
+                    _clear_progressive_inflight(self, series_number)
+                    return
+            except Exception:
+                pass
 
         async def _load_and_show():
             try:
@@ -387,18 +1030,21 @@ class _VCProgressiveMixin:
                     self._apply_progressive_to_target_viewer(
                         series_number, total, target_vtk_widget, target_node,
                     )
+                _set_progressive_lifecycle_state(
+                    self,
+                    str(series_number),
+                    _PROGRESSIVE_STATE_PROGRESSIVE,
+                    source="_start_progressive_display",
+                    reason="first_display_ready_async",
+                )
                 # Mark done so on_series_images_progress won't re-start
-                done = getattr(self, '_progressive_display_done', None)
-                if done is not None:
-                    done.add(series_number)
-                    _h10_log_progressive_mutation(self, '_start_progressive_display', series_number, 'done_add')
+                _mark_progressive_done_guard(self, series_number)
+                _h10_log_progressive_mutation(self, '_start_progressive_display', series_number, 'done_add')
             except Exception as e:
                 self.logger.warning("progressive: first display failed: %s", e)
             finally:
                 # Clear inflight guard so the series can be retried if needed
-                inflight = getattr(self, '_progressive_display_inflight', None)
-                if inflight is not None:
-                    inflight.discard(series_number)
+                _clear_progressive_inflight(self, series_number)
 
         try:
             loop = asyncio.get_running_loop()
@@ -443,8 +1089,7 @@ class _VCProgressiveMixin:
                             """
                             try:
                                 # H6 guard: skip if series already completed
-                                completed = getattr(self, '_series_download_completed', None)
-                                if completed is not None and _sn_local in completed:
+                                if _is_series_download_completed(self, _sn_local):
                                     self.logger.info(
                                         "progressive: skipping late activation for "
                                         "completed series=%s", _sn_local,
@@ -463,11 +1108,16 @@ class _VCProgressiveMixin:
                                 self._activate_progressive_mode_on_viewers(
                                     _sn_local, _total_local,
                                 )
+                                _set_progressive_lifecycle_state(
+                                    self,
+                                    _sn_local,
+                                    _PROGRESSIVE_STATE_PROGRESSIVE,
+                                    source="_start_progressive_display_threaded",
+                                    reason="first_display_ready_threaded",
+                                )
                                 # Mark done AFTER activation so grow path is reachable
-                                done = getattr(self, '_progressive_display_done', None)
-                                if done is not None:
-                                    done.add(_sn_local)
-                                    _h10_log_progressive_mutation(self, '_start_progressive_display_threaded', _sn_local, 'done_add')
+                                _mark_progressive_done_guard(self, _sn_local)
+                                _h10_log_progressive_mutation(self, '_start_progressive_display_threaded', _sn_local, 'done_add')
                             except Exception as _cb_exc:
                                 self.logger.error(
                                     "progressive: _display_activate_and_mark_done "
@@ -479,9 +1129,7 @@ class _VCProgressiveMixin:
                 except Exception as exc:
                     self.logger.warning("progressive: threaded fallback failed: %s", exc)
                 finally:
-                    inflight = getattr(self, '_progressive_display_inflight', None)
-                    if inflight is not None:
-                        inflight.discard(series_number)
+                    _clear_progressive_inflight(self, series_number)
 
             thread = threading.Thread(
                 target=_threaded_load,
@@ -503,6 +1151,7 @@ class _VCProgressiveMixin:
     def _flush_progressive_grow_impl(self):
         """Inner implementation called by _flush_progressive_grow."""
         is_fast = self._is_fast_viewer_mode()
+        admit_batch = _get_progressive_admit_batch_size(self)
 
         for sn, info in list(self._progressive_series.items()):
             pending = info.get("pending_downloaded", 0)
@@ -515,12 +1164,39 @@ class _VCProgressiveMixin:
                 continue
 
             if is_fast:
+                is_terminal = total > 0 and pending >= total
+                visible_target = pending
+                if not is_terminal and admit_batch > 0:
+                    visible_target = min(pending, last_grow + admit_batch)
+                if _should_defer_progressive_grow(terminal=is_terminal):
+                    info["pending_downloaded"] = pending
+                    if not self._progressive_grow_timer.isActive():
+                        _restart_progressive_grow_timer(self, _progressive_grow_interval_ms())
+                    self.logger.debug(
+                        "progressive-fast: deferred grow series=%s pending=%d total=%d",
+                        sn, pending, total,
+                    )
+                    continue
                 # Fast mode: refresh backend file list + update available count
                 # (no VTK volume reconstruction needed).
                 # Guard: prevent exceptions from escaping the QTimer callback.
                 # One-time-per-series traceback log avoids 150ms log spam.
                 try:
-                    self._grow_progressive_fast(sn, pending, viewers)
+                    self._grow_progressive_fast(
+                        sn,
+                        pending,
+                        viewers,
+                        visible_count=visible_target,
+                    )
+                    if visible_target < pending:
+                        self.logger.debug(
+                            "progressive-fast: admission gate series=%s visible=%d pending=%d total=%d batch=%d",
+                            sn,
+                            visible_target,
+                            pending,
+                            total,
+                            admit_batch,
+                        )
                     # Clear flags on success so a future re-occurrence is fully logged
                     info.pop("_grow_error_logged", None)
                     info.pop("_grow_error_count", None)
@@ -574,10 +1250,73 @@ class _VCProgressiveMixin:
             for info in self._progressive_series.values()
         ):
             if not self._progressive_grow_timer.isActive():
-                self._progressive_grow_timer.start()
+                _restart_progressive_grow_timer(self, _progressive_grow_interval_ms())
 
-    def _grow_progressive_fast(self, series_number: str, pending_count: int,
-                               viewers: list):
+    def _dispatch_post_completion_cache_warm(
+        self,
+        series_number: str,
+        viewers: list,
+        *,
+        _retry: int = 0,
+    ) -> None:
+        """Defer post-completion cache warm while protected UI is active."""
+        if (_should_defer_cache_warm() or not _should_admit_cache_warm(self, series_number)) and _retry < 3:
+            self.logger.debug(
+                "progressive-fast: cache-warm deferred series=%s retry=%d",
+                series_number, _retry + 1,
+            )
+            QTimer.singleShot(
+                750,
+                lambda sn=str(series_number), vs=viewers, retry=_retry + 1:
+                    self._dispatch_post_completion_cache_warm(sn, vs, _retry=retry),
+            )
+            return
+
+        for vtk_w, node in viewers:
+            try:
+                bridge = getattr(vtk_w, "image_viewer", None)
+                pipeline = getattr(bridge, "pipeline", None)
+                if pipeline is not None and hasattr(pipeline, "_prefetch_around"):
+                    current_slice = getattr(bridge, "_current_slice", 0)
+                    # Reset dedup so prefetch runs even if same position
+                    pipeline._last_prefetch_center = -1
+                    pipeline._prefetch_around(current_slice, direction=0)
+                    self.logger.info(
+                        "progressive-fast: series=%s cache-warm dispatched around slice=%d",
+                        series_number, current_slice,
+                    )
+            except Exception as _cw_exc:
+                self.logger.debug(
+                    "progressive-fast: cache-warm failed series=%s: %s",
+                    series_number, _cw_exc,
+                )
+
+    def _finalize_progressive_series(
+        self,
+        series_number: str,
+        *,
+        final_count: int = 0,
+        viewers: list | None = None,
+        source: str,
+        dispatch_cache_warm: bool = False,
+    ) -> bool:
+        return _finalize_progressive_series(
+            self,
+            series_number,
+            final_count=final_count,
+            viewers=viewers,
+            source=source,
+            dispatch_cache_warm=dispatch_cache_warm,
+        )
+
+    def _grow_progressive_fast(
+        self,
+        series_number: str,
+        pending_count: int,
+        viewers: list,
+        *,
+        visible_count: int | None = None,
+    ):
         """Fast mode growth: refresh PyDicom backend file list & update counts.
 
         Unlike the VTK path, no volume reconstruction is needed.  The PyDicom
@@ -585,11 +1324,30 @@ class _VCProgressiveMixin:
         to tell it about new files so ``get_slice_count()`` returns the correct
         value, and update the ImageSliceBooster paths if the series is active.
 
+        ``pending_count`` tracks how many slices the downloader says are already
+        on disk.  ``visible_count`` optionally caps how many of those slices are
+        admitted into the viewer this tick; this is the viewer-side burst gate
+        used while a series is still actively downloading.
+
         Also updates lst_thumbnails_data metadata so that re-dropping the series
         into another viewer will see the full file count (fixes stuck-slice bug).
         """
         info = self._progressive_series.get(series_number, {})
         total = info.get("total", 0)
+        target_visible_count = max(
+            0,
+            min(
+                int(pending_count),
+                int(pending_count if visible_count is None else visible_count),
+            ),
+        )
+        _set_progressive_lifecycle_state(
+            self,
+            series_number,
+            _PROGRESSIVE_STATE_PROGRESSIVE,
+            source="_grow_progressive_fast",
+            reason="grow_tick",
+        )
 
         for vtk_w, node in viewers:
             new_count = pending_count  # fallback
@@ -661,8 +1419,15 @@ class _VCProgressiveMixin:
             except Exception as exc:
                 self.logger.debug("progressive-fast: refresh_file_list/grow failed: %s", exc)
 
+            admitted_count = min(new_count, target_visible_count)
+
             # 2+3. Update slice count and slider max
-            self._update_vtk_slice_range(vtk_w, node, new_count)
+            self._update_vtk_slice_range(
+                vtk_w,
+                node,
+                new_count,
+                available_count=admitted_count,
+            )
 
             # 4. Update ImageSliceBooster paths if active for this series
             try:
@@ -680,10 +1445,10 @@ class _VCProgressiveMixin:
         # 5+6. Update stored metadata and sync to live viewers
         self._refresh_and_sync_metadata(series_number, new_count)
 
-        info["last_grow_count"] = new_count
+        info["last_grow_count"] = admitted_count
         self.logger.info(
-            "progressive-fast: grew series=%s available=%d/%d",
-            series_number, new_count, total,
+            "progressive-fast: grew series=%s visible=%d actual=%d/%d",
+            series_number, admitted_count, new_count, total,
         )
 
         # â”€â”€ Stale-grow guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -698,7 +1463,7 @@ class _VCProgressiveMixin:
         # The done-guard completion one-shot will recover when DM sends the
         # final signal (after the OS has certainly flushed).
         _STALE_RETRY_MAX = 5
-        if new_count < pending_count:
+        if new_count < target_visible_count:
             _stale_retry = info.get("_stale_retry_count", 0)
             if _stale_retry < _STALE_RETRY_MAX:
                 info["_stale_retry_count"] = _stale_retry + 1
@@ -711,11 +1476,11 @@ class _VCProgressiveMixin:
                         _vtk_w2.enter_progressive_mode(total, series_number)
                         _vtk_w2.update_available_slice_count(new_count)
                 if not self._progressive_grow_timer.isActive():
-                    self._progressive_grow_timer.start()
+                    _restart_progressive_grow_timer(self, _progressive_grow_interval_ms())
                 self.logger.warning(
                     "progressive-fast: STALE grow series=%s got=%d expected=%d "
                     "(retry %d/%d in %dms)",
-                    series_number, new_count, pending_count,
+                    series_number, new_count, target_visible_count,
                     info["_stale_retry_count"], _STALE_RETRY_MAX,
                     self._progressive_grow_timer.interval(),
                 )
@@ -730,7 +1495,14 @@ class _VCProgressiveMixin:
                 self.logger.error(
                     "progressive-fast: STALE-EXHAUSTED series=%s stuck at %d/%d after %d retries"
                     " â€” exiting progressive mode; done-guard will recover on completion signal",
-                    series_number, new_count, pending_count, _stale_retry,
+                    series_number, new_count, target_visible_count, _stale_retry,
+                )
+                _set_progressive_lifecycle_state(
+                    self,
+                    series_number,
+                    _PROGRESSIVE_STATE_COMPLETING,
+                    source="_grow_progressive_fast",
+                    reason="stale_exhausted_waiting_completion_signal",
                 )
                 info["pending_downloaded"] = new_count  # stop safety-net loop
                 self._progressive_series.pop(series_number, None)
@@ -764,35 +1536,18 @@ class _VCProgressiveMixin:
                 return  # don't fall through to step 6 (already cleaned up)
 
         # 6. Check if download completed
-        if new_count >= total and total > 0:
-            # Final refresh of stored metadata with complete file list
-            self._refresh_and_sync_metadata(series_number, new_count)
-            # Invalidate stale caches so next access rebuilds from full data
-            self._invalidate_series_caches(series_number)
-
-            for vtk_w, node in viewers:
-                try:
-                    vtk_w.exit_progressive_mode()
-                except Exception as _epm_exc:
-                    self.logger.warning(
-                        "progressive-fast: exit_progressive_mode failed "
-                        "viewer_id=%s series=%s (completion): %s",
-                        getattr(vtk_w, "id_vtk_widget", id(vtk_w)),
-                        series_number, _epm_exc,
-                    )
-                # Refresh corner text after exiting progressive mode
-                try:
-                    iv = getattr(vtk_w, "image_viewer", None)
-                    if iv is not None and hasattr(iv, "update_corners_actors"):
-                        iv.update_corners_actors()
-                except Exception:
-                    pass
-            self._progressive_series.pop(series_number, None)
-            _h10_log_progressive_mutation(self, '_grow_progressive_fast', series_number, 'pop_complete')
-            self._update_thumbnail_count(series_number, new_count)
-            self.logger.info(
-                "progressive-fast: series=%s COMPLETE (%d slices)", series_number, new_count
-            )
+        if admitted_count >= total and total > 0:
+            if _finalize_progressive_series(
+                self,
+                series_number,
+                final_count=new_count,
+                viewers=viewers,
+                source="grow_complete",
+                dispatch_cache_warm=True,
+            ):
+                self.logger.info(
+                    "progressive-fast: series=%s COMPLETE (%d slices)", series_number, new_count
+                )
 
     async def _grow_progressive_viewer_async(self, series_number: str, expected_count: int):
         """Background: reload partial series from disk and grow viewers in-place."""
@@ -901,10 +1656,34 @@ class _VCProgressiveMixin:
         the remaining images while progressive mode stays active.
         """
         sn = str(series_number)
+        if _is_progressive_finalized(self, sn):
+            self.logger.debug(
+                "progressive: Layer 2b skipped finalized series=%s", sn,
+            )
+            return
+        _set_progressive_lifecycle_state(
+            self,
+            sn,
+            _PROGRESSIVE_STATE_COMPLETING,
+            source="_on_series_download_fully_complete_impl",
+            reason="definitive_completion_signal",
+        )
+
+        # B3.8d: Duplicate call guard — prevents double execution for the
+        # same series within a short window (caused by both series_downloaded
+        # and completion pulse arriving for the same series).
+        if _is_layer2b_complete_guard_active(self, sn):
+            self.logger.debug(
+                "progressive: Layer 2b duplicate call skipped series=%s", sn,
+            )
+            return
+        _mark_layer2b_complete_guard(self, sn)
+
         info = self._progressive_series.get(sn, {})
         expected_total = info.get("total", 0)
         final_count = 0
         all_viewers_complete = True
+        matched_viewers = []
 
         for node in self.lst_nodes_viewer or []:
             vtk_w = getattr(node, "vtk_widget", None)
@@ -923,8 +1702,11 @@ class _VCProgressiveMixin:
                     pass
             if not is_match:
                 continue
+            matched_viewers.append((vtk_w, node))
 
-            # Final grow: pick up any remaining files before exiting progressive
+            # Final grow: pick up any remaining files before exiting progressive.
+            # B3.8b: Added Qt bridge and backend fallback paths to match
+            # _grow_progressive_fast's 3-tier priority (lazy_loader → backend → bridge).
             try:
                 loader = getattr(vtk_w, "_lazy_loader", None)
                 if loader is not None and hasattr(loader, "grow"):
@@ -935,6 +1717,28 @@ class _VCProgressiveMixin:
                         "progressive: final grow on download-complete series=%s count=%d",
                         sn, new_count,
                     )
+                else:
+                    # B3.8b: FAST/pydicom_qt viewers don't have _lazy_loader.grow().
+                    # Try backend.refresh_file_list() or Qt bridge.grow() instead.
+                    backend = getattr(loader, "backend", None) if loader is not None else None
+                    if backend is not None and hasattr(backend, "refresh_file_list"):
+                        new_count = backend.refresh_file_list()
+                        final_count = max(final_count, new_count)
+                        self._update_vtk_slice_range(vtk_w, node, new_count)
+                        self.logger.info(
+                            "progressive: final grow (backend) on download-complete series=%s count=%d",
+                            sn, new_count,
+                        )
+                    elif getattr(vtk_w, "_qt_bridge_active", False):
+                        bridge = getattr(vtk_w, "image_viewer", None)
+                        if bridge is not None and hasattr(bridge, "grow"):
+                            new_count = bridge.grow()
+                            final_count = max(final_count, new_count)
+                            self._update_vtk_slice_range(vtk_w, node, new_count)
+                            self.logger.info(
+                                "progressive: final grow (qt_bridge) on download-complete series=%s count=%d",
+                                sn, new_count,
+                            )
             except Exception as exc:
                 self.logger.debug(
                     "progressive: final grow failed series=%s: %s", sn, exc
@@ -950,49 +1754,22 @@ class _VCProgressiveMixin:
                     "count=%d expected=%d â€” keeping progressive mode for Layer 3",
                     sn, final_count, expected_total,
                 )
-            else:
-                try:
-                    vtk_w.exit_progressive_mode()
-                except Exception as _epm_fc:
-                    self.logger.warning(
-                        "progressive: exit_progressive_mode failed "
-                        "viewer_id=%s series=%s (download-complete): %s",
-                        getattr(vtk_w, "id_vtk_widget", id(vtk_w)), sn, _epm_fc,
-                    )
-
-            # Refresh corner text "Slice: X / Y" so it shows the final total
-            try:
-                iv = getattr(vtk_w, "image_viewer", None)
-                if iv is not None and hasattr(iv, "update_corners_actors"):
-                    iv.update_corners_actors()
-            except Exception:
-                pass
 
         # v2.2.9.2 â€” only pop tracking info if all viewers got all files.
         # Layer 3 / Layer 4 need the info to keep growing.
+        finalized = False
         if all_viewers_complete:
-            # H6 fix (v2.2.9.3): mark series as completed BEFORE pop/discard.
-            # This prevents the late _display_activate_and_mark_done callback
-            # (from _start_progressive_display's threaded fallback) from
-            # re-entering progressive mode after we clean up here.
-            completed = getattr(self, '_series_download_completed', None)
-            if completed is not None:
-                completed.add(sn)
-                self.logger.info(
-                    "progressive: _series_download_completed.add series=%s", sn,
-                )
-            self._progressive_series.pop(sn, None)
-            _h10_log_progressive_mutation(self, 'on_series_download_fully_complete', sn, 'pop_completed')
-            # H4 fix (v2.2.9.2): discard the done-guard key so a future re-open
-            # of the same series can start a fresh progressive display.
-            # _progressive_display_done is a lifecycle guard, NOT a permanent cache.
-            done = getattr(self, '_progressive_display_done', None)
-            if done is not None:
-                done.discard(sn)
-                _h10_log_progressive_mutation(self, 'on_series_download_fully_complete', sn, 'done_discard')
+            _finalize_progressive_series(
+                self,
+                sn,
+                final_count=final_count,
+                viewers=matched_viewers,
+                source='layer2b_complete',
+            )
+            finalized = True
 
         # Update stored metadata so re-drop and thumbnails use the final count
-        if final_count > 0:
+        if final_count > 0 and not finalized:
             self._refresh_and_sync_metadata(sn, final_count)
             self._invalidate_series_caches(sn)
 
@@ -1031,10 +1808,11 @@ class _VCProgressiveMixin:
                     )
 
         # Update thumbnail label to show the definitive image count
-        self._update_thumbnail_count(sn, final_count)
+        if final_count > 0 and not finalized:
+            self._update_thumbnail_count(sn, final_count)
 
-        # v2.2.9.2 â€” invalidate disk count cache so Layer 3 gets a fresh read.
-        self._disk_count_cache.pop(sn, None)
+        # v2.2.9.2 — invalidate disk count cache so Layer 3 gets a fresh read.
+        self._invalidate_disk_count_cache(sn)
 
         # Schedule deferred verification to catch OS-flush-delayed files.
         # Expected total comes from DICOM headers (set by DM progress signals).
@@ -1119,8 +1897,57 @@ class _VCProgressiveMixin:
         tracking info when grow succeeds (Layer 2b may have left them active).
         """
         sn = str(series_number)
-        # v2.2.9.2 â€” invalidate cache for fresh disk count
-        self._disk_count_cache.pop(sn, None)
+        if _is_progressive_finalized(self, sn):
+            self.logger.debug(
+                "completion-verify: series=%s SKIPPED -- already finalized",
+                sn,
+            )
+            return
+
+        # Epoch-aware guard (v2.3.5): skip redundant Layer 3 verification when
+        # Layer 2b already succeeded.  Uses cached disk count (no invalidation)
+        # to avoid main-thread I/O.  Falls through if viewer is behind.
+        current_state = _get_progressive_lifecycle_state(self, sn)
+        if current_state == _PROGRESSIVE_STATE_DONE and _is_series_download_completed(self, sn):
+            try:
+                cached_disk = self._count_series_files_on_disk(sn)  # 1s TTL cache
+                if cached_disk > 0:
+                    all_ok = True
+                    for node in self.lst_nodes_viewer or []:
+                        vtk_w = getattr(node, "vtk_widget", None)
+                        if vtk_w is None:
+                            continue
+                        try:
+                            viewer_sn = str(
+                                getattr(vtk_w.image_viewer, "metadata", {})
+                                .get("series", {}).get("series_number", "")
+                            )
+                        except Exception:
+                            viewer_sn = ""
+                        if viewer_sn != sn:
+                            continue
+                        if vtk_w.get_count_of_slices() < cached_disk:
+                            all_ok = False
+                            break
+                    if all_ok:
+                        self.logger.debug(
+                            "completion-verify: series=%s SKIPPED -- already DONE "
+                            "(viewer up-to-date, cached_disk=%d, retry=%d)",
+                            sn, cached_disk, _retry,
+                        )
+                        return
+            except Exception:
+                pass  # fall through to full verification
+
+        _set_progressive_lifecycle_state(
+            self,
+            sn,
+            _PROGRESSIVE_STATE_COMPLETING,
+            source="_completion_verify_series_impl",
+            reason=f"layer3_retry_{_retry}",
+        )
+        # v2.2.9.2 — invalidate cache for fresh disk count
+        self._invalidate_disk_count_cache(sn)
         try:
             disk_count = self._count_series_files_on_disk(sn)
         except Exception:
@@ -1167,19 +1994,13 @@ class _VCProgressiveMixin:
                         "completion-verify: series=%s grew to %d", sn, new_count,
                     )
                     if new_count >= disk_count:
-                        # v2.2.9.2 â€” clean up progressive state left by Layer 2b
-                        if vtk_w._progressive_mode:
-                            vtk_w.exit_progressive_mode()
-                        self._progressive_series.pop(sn, None)
-                        _h10_log_progressive_mutation(self, '_completion_verify_series_impl', sn, 'pop_verified')
-                        # H4 fix: Layer 3 must also clear done-guard (Layer 2b may
-                        # not have fired yet in OS-flush-delayed scenarios).
-                        done = getattr(self, '_progressive_display_done', None)
-                        if done is not None:
-                            done.discard(sn)
-                            _h10_log_progressive_mutation(self, '_completion_verify_series_impl', sn, 'done_discard')
-                        self._refresh_corner_text(sn)
-                        self._update_thumbnail_count(sn, new_count)
+                        _finalize_progressive_series(
+                            self,
+                            sn,
+                            final_count=new_count,
+                            viewers=[(vtk_w, node)],
+                            source='layer3_verify',
+                        )
                         return  # success
             except Exception as exc:
                 self.logger.debug(
@@ -1231,8 +2052,18 @@ class _VCProgressiveMixin:
         """
         resolved = set()
         for sn, expected_total in list(self._completion_sweep_series_set):
-            # v2.2.9.2 â€” invalidate cache for fresh disk count
-            self._disk_count_cache.pop(sn, None)
+            if _is_progressive_finalized(self, sn):
+                resolved.add((sn, expected_total))
+                continue
+            _set_progressive_lifecycle_state(
+                self,
+                sn,
+                _PROGRESSIVE_STATE_COMPLETING,
+                source="_completion_sweep_tick_impl",
+                reason="layer4_sweep",
+            )
+            # v2.2.9.2 — invalidate cache for fresh disk count
+            self._invalidate_disk_count_cache(sn)
             try:
                 disk_count = self._count_series_files_on_disk(sn)
             except Exception:
@@ -1275,19 +2106,13 @@ class _VCProgressiveMixin:
                             sn, current_count, new_count, disk_count,
                         )
                         if new_count >= disk_count:
-                            # v2.2.9.2 â€” clean up progressive state left by Layer 2b
-                            if vtk_w._progressive_mode:
-                                vtk_w.exit_progressive_mode()
-                            self._progressive_series.pop(sn, None)
-                            _h10_log_progressive_mutation(self, '_completion_sweep_tick_impl', sn, 'pop_swept')
-                            # H4 fix: Layer 4 must also clear done-guard so the
-                            # series can restart progressive display on next open.
-                            done = getattr(self, '_progressive_display_done', None)
-                            if done is not None:
-                                done.discard(sn)
-                                _h10_log_progressive_mutation(self, '_completion_sweep_tick_impl', sn, 'done_discard')
-                            self._refresh_corner_text(sn)
-                            self._update_thumbnail_count(sn, new_count)
+                            _finalize_progressive_series(
+                                self,
+                                sn,
+                                final_count=new_count,
+                                viewers=[(vtk_w, node)],
+                                source='layer4_sweep',
+                            )
                             resolved.add((sn, expected_total))
                 except Exception as exc:
                     self.logger.debug(
@@ -1324,9 +2149,27 @@ class _VCProgressiveMixin:
             except Exception:
                 viewer_sn = ""
             if viewer_sn == str(series_number):
-                avail = vtk_w.get_count_of_slices()  # Current VTK Z-dim
+                try:
+                    _raw_avail_getter = getattr(
+                        vtk_w,
+                        "_get_loaded_slice_count_for_progressive_sync",
+                        None,
+                    )
+                    if callable(_raw_avail_getter):
+                        avail = int(_raw_avail_getter() or 0)
+                    else:
+                        avail = int(vtk_w.get_count_of_slices() or 0)
+                except Exception:
+                    avail = 0
                 vtk_w.enter_progressive_mode(total_expected, series_number)
                 vtk_w.update_available_slice_count(avail)
+                _set_progressive_lifecycle_state(
+                    self,
+                    str(series_number),
+                    _PROGRESSIVE_STATE_PROGRESSIVE,
+                    source="_activate_progressive_mode_on_viewers",
+                    reason="entered_progressive_mode",
+                )
                 # Update slider to show full range
                 slider = getattr(node, "slider", None)
                 if slider is not None:
@@ -1399,6 +2242,13 @@ class _VCProgressiveMixin:
             avail = vtk_widget.get_count_of_slices()
             vtk_widget.enter_progressive_mode(total, str(series_number))
             vtk_widget.update_available_slice_count(avail)
+            _set_progressive_lifecycle_state(
+                self,
+                str(series_number),
+                _PROGRESSIVE_STATE_PROGRESSIVE,
+                source="_apply_progressive_to_target_viewer",
+                reason="awaiting_viewer_activated",
+            )
             if slider is not None:
                 try:
                     slider.blockSignals(True)

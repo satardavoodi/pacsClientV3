@@ -6,7 +6,7 @@ Read in this exact order. Do not skip Priority 1 before running any code.
 
 ## Priority 1 — Read First (before touching any code or running any tests)
 
-### 1. `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md`
+### 1. `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md`
 **Why first:** This is the distilled execution guide. It tells you what is proven, what is open, what to avoid, and the exact next-run order. Written specifically to prevent drift and repeated wasted work.  
 **Key sections:**
 - §2 "What the process has already accomplished" — wins and mistakes
@@ -74,7 +74,7 @@ Read in this exact order. Do not skip Priority 1 before running any code.
 ## File Map Quick Reference
 
 ```
-docs/stability/
+docs/plans/stability/
   H13_FOCUSED_RECOVERY_PLAN.md    ← START HERE (operational guide)
   H13_WORKING_DOCUMENT.md         ← full evidence ledger (read §11 + §16)
 

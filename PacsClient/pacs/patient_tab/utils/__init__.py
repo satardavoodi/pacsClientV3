@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from .thumbnail_manager import ThumbnailManager
+from .thumbnail_batch_runner import ThumbnailBatchRunner
+from .thumbnail_image_source_service import ThumbnailImageSourceService
+from .thumbnail_projection_service import ThumbnailProjectionService
+from PacsClient.utils.series_metadata_service import SeriesMetadataService
+from .thumbnail_metadata_service import ThumbnailMetadataService
 from .utils import (
     BoxManager,
     DicomTagsActors,
@@ -41,6 +46,11 @@ from .corner_labels import make_corner_actor
 
 __all__ = [
     "ThumbnailManager",
+    "ThumbnailBatchRunner",
+    "ThumbnailImageSourceService",
+    "ThumbnailProjectionService",
+    "SeriesMetadataService",
+    "ThumbnailMetadataService",
     "load_images",
     "read_segment_nifti",
     "load_images_from_server",

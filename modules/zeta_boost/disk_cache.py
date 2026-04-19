@@ -42,12 +42,8 @@ class ZetaBoostDiskCache:
     # ------------------------- logging -------------------------
     def _log(self, msg: str):
         try:
-            print(f"[ZetaBoostDisk] {msg}")
-        except Exception:
-            pass
-        try:
             if self._logger is not None:
-                self._logger.info(f"[ZetaBoostDisk] {msg}")
+                self._logger.info("[ZetaBoostDisk] %s", msg)
         except Exception:
             pass
 

@@ -5,6 +5,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 import platform
+import sys
 import threading
 import time
 import uuid
@@ -135,6 +136,83 @@ class DownloadOnlyFilter(logging.Filter):
         return component == "download"
 
 
+class SafeRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler variant that degrades gracefully on Windows locks.
+
+    On Windows, rollover can fail with WinError 32 when another process still
+    has the file open. The default handler prints a traceback for every failed
+    emit, which adds noise and overhead exactly when diagnostics are needed.
+
+    This handler temporarily skips rollover when the rename is blocked,
+    continues appending to the current file, and retries rollover later.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._rollover_retry_after_ms: float = 0.0
+        self._rollover_retry_ms: float = float(
+            os.getenv("AIPACS_LOG_ROLLOVER_RETRY_MS", "5000") or "5000"
+        )
+        self._rollover_warn_interval_ms: float = float(
+            os.getenv("AIPACS_LOG_ROLLOVER_WARN_INTERVAL_MS", "30000") or "30000"
+        )
+        self._last_rollover_warn_ms: float = 0.0
+        self._rollover_failure_count: int = 0
+
+    @staticmethod
+    def _is_rollover_lock_error(exc: BaseException) -> bool:
+        if isinstance(exc, PermissionError):
+            return True
+        if isinstance(exc, OSError) and getattr(exc, "winerror", None) == 32:
+            return True
+        return False
+
+    def _emit_without_rollover(self, record: logging.LogRecord) -> None:
+        if self.stream is None:
+            self.stream = self._open()
+        logging.FileHandler.emit(self, record)
+
+    def _handle_blocked_rollover(self, exc: BaseException) -> None:
+        now = now_ms()
+        self._rollover_failure_count += 1
+        self._rollover_retry_after_ms = now + max(250.0, self._rollover_retry_ms)
+        try:
+            if self.stream is None:
+                self.stream = self._open()
+        except Exception:
+            pass
+
+        if (now - self._last_rollover_warn_ms) < self._rollover_warn_interval_ms:
+            return
+
+        self._last_rollover_warn_ms = now
+        try:
+            msg = (
+                "[AIPACS][logging] Rollover skipped for locked file "
+                f"{self.baseFilename!s}; retrying in {int(self._rollover_retry_ms)}ms.\n"
+            )
+            sys.stderr.write(msg)
+        except Exception:
+            pass
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            if self.shouldRollover(record):
+                now = now_ms()
+                if now >= self._rollover_retry_after_ms:
+                    try:
+                        self.doRollover()
+                        self._rollover_retry_after_ms = 0.0
+                    except Exception as exc:
+                        if self._is_rollover_lock_error(exc):
+                            self._handle_blocked_rollover(exc)
+                        else:
+                            raise
+            self._emit_without_rollover(record)
+        except Exception:
+            self.handleError(record)
+
+
 def _infer_component(logger_name: str) -> str:
     name = (logger_name or "").lower()
     if "zeta_download_manager" in name or "download" in name or "socket_client" in name:
@@ -246,7 +324,7 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
     max_bytes = int(os.getenv("AIPACS_LOG_MAX_BYTES", str(20 * 1024 * 1024)) or str(20 * 1024 * 1024))
     backup_count = int(os.getenv("AIPACS_LOG_BACKUP_COUNT", "3") or "3")
 
-    viewer_handler = RotatingFileHandler(
+    viewer_handler = SafeRotatingFileHandler(
         logs_dir / "viewer_diagnostics.log",
         maxBytes=max_bytes,
         backupCount=backup_count,
@@ -258,7 +336,7 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
     viewer_handler.addFilter(ViewerOnlyFilter())
     root.addHandler(viewer_handler)
 
-    download_handler = RotatingFileHandler(
+    download_handler = SafeRotatingFileHandler(
         logs_dir / "download_diagnostics.log",
         maxBytes=max_bytes,
         backupCount=backup_count,
@@ -316,14 +394,20 @@ def start_resource_monitor(process_role: str = "main") -> None:
                 io_rate = "n/a"
                 io_wait_ms = -1.0
                 try:
-                    before = process.io_counters()
-                    t0 = now_ms()
-                    time.sleep(0.05)
-                    after = process.io_counters()
-                    dt_ms = max(1.0, now_ms() - t0)
-                    read_bps = max(0, after.read_bytes - before.read_bytes) * 1000.0 / dt_ms
-                    write_bps = max(0, after.write_bytes - before.write_bytes) * 1000.0 / dt_ms
-                    io_rate = f"read={read_bps/1024.0:.1f}KB/s write={write_bps/1024.0:.1f}KB/s"
+                    counters = process.io_counters()
+                    read_bytes = counters.read_bytes
+                    write_bytes = counters.write_bytes
+                    # Use delta from last sample (interval_s gap) instead of
+                    # sleeping 50ms mid-loop — the sleep wasted 50ms of thread
+                    # time and held GIL briefly on each psutil call boundary.
+                    if hasattr(_run, '_prev_io'):
+                        prev_r, prev_w, prev_t = _run._prev_io
+                        dt_s = time.monotonic() - prev_t
+                        if dt_s > 0.1:
+                            read_bps = max(0, read_bytes - prev_r) / dt_s
+                            write_bps = max(0, write_bytes - prev_w) / dt_s
+                            io_rate = f"read={read_bps/1024.0:.1f}KB/s write={write_bps/1024.0:.1f}KB/s"
+                    _run._prev_io = (read_bytes, write_bytes, time.monotonic())
                 except Exception:
                     pass
 

@@ -4,6 +4,9 @@
 
 
 import asyncio
+import logging
+
+_logger = logging.getLogger(__name__)
 
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QSize
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QGridLayout, QLineEdit, QTableWidget, QAbstractItemView, QHeaderView, QCheckBox, QScrollArea, QToolButton, QTableWidgetItem, QMessageBox, QApplication, QProgressDialog, QTabWidget, QLabel, QFileDialog, QProgressBar, QStatusBar, QSplitter, QDialog, QGraphicsDropShadowEffect, QSizePolicy, QWidget
@@ -359,6 +362,8 @@ class _HPSearchMixin:
         try:
             study_uid = patient_info['StudyInstanceUID']
             patient_id = patient_info['PatientID']
+            if hasattr(self, '_log_open_trace'):
+                self._log_open_trace(study_uid, 'right_panel_begin', patient_id=patient_id)
 
             if self.source_of_patient_load == SourceOfPatientLoad.OFFLINE_CLOUD:
                 server = self.data_access_panel_widget.get_server_selected()
@@ -395,6 +400,8 @@ class _HPSearchMixin:
                         }
                     )
                 self.display_thumbnails(thumbnails.get('thumbnails', []))
+                if hasattr(self, '_log_open_trace'):
+                    self._log_open_trace(study_uid, 'right_panel_offline_cloud_display', thumbnail_count=len(thumbnails.get('thumbnails', [])))
                 return
 
             # Fast check for cached thumbnails
@@ -421,10 +428,27 @@ class _HPSearchMixin:
 
                 # Display cached thumbnails with spinner for consistency
                 self.display_thumbnails(thumbnails.get('thumbnails', []))
+                if hasattr(self, '_log_open_trace'):
+                    self._log_open_trace(study_uid, 'right_panel_cache_hit', thumbnail_count=len(thumbnails.get('thumbnails', [])))
                 return
 
             # Server request only if not cached
             thumbnails = None
+
+            try:
+                from modules.viewer.fast.ui_throttle import should_defer_noncritical_open_network
+
+                if should_defer_noncritical_open_network(
+                    first_series_visible=self._is_first_series_visible_for_study(study_uid)
+                ):
+                    self._defer_patient_studies_refresh(patient_info)
+                    _logger.info(
+                        "[FAST-OPEN-GATE] deferred right-panel remote thumbnails study=%s until first series visible",
+                        study_uid,
+                    )
+                    return
+            except Exception:
+                pass
 
             try:
                 server = self.data_access_panel_widget.get_server_selected()
@@ -432,6 +456,8 @@ class _HPSearchMixin:
                     QMessageBox.warning(self, "Server Error", "No PACS server selected. Please select a server first.")
                     return
 
+                if hasattr(self, '_log_open_trace'):
+                    self._log_open_trace(study_uid, 'right_panel_grpc_start', host=server.get('host'))
                 grpc_client = DicomGrpcClient(host=server['host'], port=50051)
                 thumbnails = grpc_client.get_thumbnails(patient_id, study_uid)
                 grpc_client.close()
@@ -443,10 +469,16 @@ class _HPSearchMixin:
                         self.save_series_info_to_database(study_uid, thumbnails['thumbnails'])
                         # Clear cache to ensure fresh data
                         clear_study_cache(study_uid)
+                        if hasattr(self, '_log_open_trace'):
+                            self._log_open_trace(study_uid, 'right_panel_grpc_done', thumbnail_count=len(thumbnails['thumbnails']))
                 else:
+                    if hasattr(self, '_log_open_trace'):
+                        self._log_open_trace(study_uid, 'right_panel_grpc_empty')
                     QMessageBox.information(self, "No Thumbnails", "No thumbnails available for this study.")
 
             except Exception as grpc_error:
+                if hasattr(self, '_log_open_trace'):
+                    self._log_open_trace(study_uid, 'right_panel_grpc_error', level='error', error=str(grpc_error))
                 print(f"gRPC Error: {str(grpc_error)}")
                 QMessageBox.warning(self, "Connection Error",
                                     f"Failed to connect to PACS server for thumbnails:\n{str(grpc_error)}\n\nPlease check server configuration.")
@@ -454,8 +486,12 @@ class _HPSearchMixin:
 
             if thumbnails:
                 self.display_thumbnails(thumbnails.get('thumbnails', []))
+                if hasattr(self, '_log_open_trace'):
+                    self._log_open_trace(study_uid, 'right_panel_display_done', thumbnail_count=len(thumbnails.get('thumbnails', [])))
 
         except Exception as e:
+            if 'study_uid' in locals() and hasattr(self, '_log_open_trace'):
+                self._log_open_trace(study_uid, 'right_panel_error', level='error', error=str(e))
             print(f"Error in show_patient_studies: {str(e)}")
             raise
 

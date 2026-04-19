@@ -23,7 +23,85 @@ from PySide6.QtWidgets import QTabWidget
 from PacsClient.utils.config import SOURCE_PATH
 from modules.download_manager.ui.main_widget import DownloadManagerWidget
 
+try:
+    from modules.viewer.fast.ui_throttle import (
+        progress_update_interval_ms as _progress_update_interval_ms,
+        should_admit as _ui_should_admit,
+    )
+except Exception:  # pragma: no cover - defensive for stripped test envs
+    def _progress_update_interval_ms() -> float:
+        return 200.0
+
+    def _ui_should_admit(task_type, context=None) -> bool:
+        return True
+
 _logger = logging.getLogger(__name__)
+
+
+class _ConnectionRecord:
+    """Bookkeeping for one DM↔widget signal wiring session."""
+
+    __slots__ = (
+        "dm",
+        "widget_ref",
+        "handlers",
+        "flush_timer",
+        "progress_timer",
+        "key",
+    )
+
+    def __init__(self, dm, widget_ref, handlers: dict, flush_timer, progress_timer, key: str):
+        self.dm = dm
+        self.widget_ref = widget_ref
+        self.handlers = handlers  # signal_name → handler callable
+        self.flush_timer = flush_timer
+        self.progress_timer = progress_timer
+        self.key = key
+
+
+class _SeriesProgressNormalizer:
+    """Normalize raw DM per-series progress into one terminal authority.
+
+    This helper keeps the completion signal as the single authoritative
+    terminal pulse for a series cycle. Raw terminal progress updates
+    (`current >= total`) are treated as provisional and are dropped so they
+    do not race against the definitive completion path and re-fan out into
+    thumbnails/progressive consumers.
+
+    The state also lets a verified new partial cycle for the same series clear
+    the completed guard and begin emitting progress again.
+    """
+
+    __slots__ = ("_completed_series",)
+
+    def __init__(self) -> None:
+        self._completed_series: set[str] = set()
+
+    def mark_started(self, series_number: str) -> None:
+        self._completed_series.discard(str(series_number))
+
+    def mark_completed(self, series_number: str) -> bool:
+        sn = str(series_number)
+        if sn in self._completed_series:
+            return False
+        self._completed_series.add(sn)
+        return True
+
+    def should_emit_progress(self, series_number: str, current: int, total: int) -> tuple[bool, str]:
+        sn = str(series_number)
+        current = int(current)
+        total = int(total)
+
+        if total > 0 and current >= total:
+            return False, "terminal_progress_reserved_for_completion"
+
+        if sn in self._completed_series:
+            if total > 0 and current < total:
+                self._completed_series.discard(sn)
+                return True, "new_partial_cycle"
+            return False, "stale_after_completion"
+
+        return True, "admit"
 
 
 class HomeDownloadService:
@@ -40,8 +118,9 @@ class HomeDownloadService:
     def __init__(self, tab_widget: QTabWidget, custom_tab_manager=None):
         self.tab_widget = tab_widget
         self.custom_tab_manager = custom_tab_manager
-        # Connection key → True  (duplicate-guard)
-        self._dm_widget_connections: dict[str, bool] = {}
+        # Connection key → _ConnectionRecord (lifecycle-tracked)
+        self._dm_widget_connections: dict[str, _ConnectionRecord] = {}
+        self._cleaned_up = False
 
     # ------------------------------------------------------------------
     # Download Manager tab lifecycle
@@ -93,17 +172,23 @@ class HomeDownloadService:
         no-ops.
         """
         connection_key = f"{study_uid}_{id(widget)}"
-        if self._dm_widget_connections.get(connection_key):
+        if connection_key in self._dm_widget_connections:
             return
         try:
             import weakref
 
             widget_ref = weakref.ref(widget)
             _pending_completed: list[str] = []
+            _pending_progress: dict[str, tuple[int, int]] = {}
+            _last_progress_sent: dict[str, tuple[int, int]] = {}
+            _progress_normalizer = _SeriesProgressNormalizer()
             from PySide6.QtCore import QTimer
             _flush_timer = QTimer()
             _flush_timer.setSingleShot(True)
             _flush_timer.setInterval(100)
+            _progress_timer = QTimer()
+            _progress_timer.setSingleShot(True)
+            _progress_timer.setInterval(int(max(100.0, _progress_update_interval_ms())))
             _first_emitted = {"done": False}
 
             def _resolve_sn(series_uid_or_number):
@@ -119,6 +204,20 @@ class HomeDownloadService:
                         mapped = tm._series_uid_to_number.get(sn)
                         if mapped and str(mapped) in tm.series_widgets:
                             return str(mapped)
+                # 2b. Fallback to the widget-level UID→number map populated by
+                # set_server_series_info() before thumbnail widgets exist.
+                # During patient open, download progress can arrive before the
+                # thumbnail manager has finished building widgets/its own map.
+                # If we ignore the widget-side map, progress is emitted with the
+                # raw series UID, which does not match viewer series_number.
+                if w:
+                    try:
+                        widget_uid_map = getattr(w, '_series_uid_to_number', {}) or {}
+                        mapped = widget_uid_map.get(sn)
+                        if mapped:
+                            return str(mapped)
+                    except Exception:
+                        pass
                 # 3. Fallback: resolve via DM task series list (SeriesInfo dataclass)
                 try:
                     task = dm._tasks.get(study_uid)
@@ -168,7 +267,11 @@ class HomeDownloadService:
                 for sn in batch:
                     try:
                         if hasattr(w, "thumbnail_manager"):
-                            w.thumbnail_manager.complete_series_download(sn)
+                            total_images = _resolve_series_total(sn)
+                            w.thumbnail_manager.complete_series_download(
+                                sn,
+                                total_images=total_images if total_images > 0 else None,
+                            )
                         _emit_final_progress(w, sn)
                         if hasattr(w, "series_downloaded"):
                             w.series_downloaded.emit(sn)
@@ -177,7 +280,49 @@ class HomeDownloadService:
                     except Exception:
                         pass
 
+            def _flush_progress():
+                batch = dict(_pending_progress)
+                _pending_progress.clear()
+                w = widget_ref()
+                if not w:
+                    return
+                try:
+                    _ = w.isVisible()
+                except (RuntimeError, AttributeError):
+                    return
+                for sn, progress in batch.items():
+                    current, total = progress
+                    if _last_progress_sent.get(sn) == progress:
+                        continue
+                    if not _ui_should_admit(
+                        "progress_update",
+                        {
+                            "key": f"viewer-progress:{connection_key}:{sn}",
+                            "series_key": sn,
+                        },
+                    ):
+                        _pending_progress[sn] = progress
+                        interval_ms = int(max(100.0, _progress_update_interval_ms()))
+                        if _progress_timer.interval() != interval_ms:
+                            _progress_timer.setInterval(interval_ms)
+                        if not _progress_timer.isActive():
+                            _progress_timer.start()
+                        continue
+                    _last_progress_sent[sn] = progress
+                    if hasattr(w, "series_images_progress"):
+                        try:
+                            w.series_images_progress.emit(sn, int(current), int(total))
+                            if _logger.isEnabledFor(logging.DEBUG):
+                                _pip_st = getattr(getattr(w, 'pipeline', None), 'state', '?')
+                                _logger.debug(
+                                    "[H7-P8-RECV] series=%s downloaded=%d total=%d pipeline_state=%s",
+                                    sn, int(current), int(total),
+                                    _pip_st.name if hasattr(_pip_st, 'name') else _pip_st,
+                                )
+                        except Exception:
+                            pass
             _flush_timer.timeout.connect(_flush)
+            _progress_timer.timeout.connect(_flush_progress)
 
             def on_study_progress(uid, current, total, percent):
                 if uid != study_uid:
@@ -193,6 +338,8 @@ class HomeDownloadService:
                 if uid != study_uid:
                     return
                 sn = _resolve_sn(series_uid)
+                _progress_normalizer.mark_started(sn)
+                total_images = _resolve_series_total(sn)
                 _t_dl_start = _time.perf_counter()
                 _logger.info(
                     "[FAST-SERIES-DOWNLOAD-START] study=%s series=%s desc=%s",
@@ -206,7 +353,10 @@ class HomeDownloadService:
                 w = widget_ref()
                 if w and hasattr(w, "thumbnail_manager"):
                     try:
-                        w.thumbnail_manager.start_series_download(sn)
+                        w.thumbnail_manager.start_series_download(
+                            sn,
+                            total_images=total_images if total_images > 0 else None,
+                        )
                     except Exception:
                         pass
 
@@ -214,8 +364,32 @@ class HomeDownloadService:
                 if uid != study_uid:
                     return
                 sn = _resolve_sn(series_uid)
+                allowed, reason = _progress_normalizer.should_emit_progress(
+                    sn,
+                    int(current),
+                    int(total),
+                )
+                if not allowed:
+                    _logger.debug(
+                        "[FAST-SERIES-DOWNLOAD-PROGRESS-DROP] study=%s series=%s current=%d total=%d reason=%s",
+                        uid, sn, int(current), int(total), reason,
+                    )
+                    _pending_progress.pop(sn, None)
+                    return
+                if reason == "new_partial_cycle":
+                    w_restart = widget_ref()
+                    if w_restart and hasattr(w_restart, "thumbnail_manager"):
+                        try:
+                            total_images = _resolve_series_total(sn)
+                            fallback_total = int(total) if int(total) > 0 else None
+                            w_restart.thumbnail_manager.start_series_download(
+                                sn,
+                                total_images=total_images if total_images > 0 else fallback_total,
+                            )
+                        except Exception:
+                            pass
                 pct = (current / total * 100) if total > 0 else 0
-                _logger.info(
+                _logger.debug(
                     "[FAST-SERIES-DOWNLOAD-PROGRESS] study=%s series=%s percent=%.0f images=%d/%d",
                     uid, sn, pct, current, total,
                 )
@@ -230,33 +404,26 @@ class HomeDownloadService:
                         _prev_dm, sn,
                     )
                     w._h10_dm_active_series = sn
-                # Update progressive viewer display via signal (the method
-                # lives on viewer_controller, not on PatientWidget directly).
-                if hasattr(w, "series_images_progress"):
-                    try:
-                        w.series_images_progress.emit(sn, int(current), int(total))
-                        # [H7-P8-RECV] DM progress signal received and forwarded
-                        _pip_st = getattr(getattr(w, 'pipeline', None), 'state', '?')
-                        _logger.info(
-                            "[H7-P8-RECV] series=%s downloaded=%d total=%d pipeline_state=%s",
-                            sn, int(current), int(total),
-                            _pip_st.name if hasattr(_pip_st, 'name') else _pip_st,
-                        )
-                    except Exception:
-                        pass
-                # Update thumbnail progress overlay (fixes 0% stuck bug)
-                if hasattr(w, "thumbnail_manager") and w.thumbnail_manager:
-                    try:
-                        pct = (current / total * 100) if total > 0 else 0
-                        w.thumbnail_manager.update_series_progress(
-                            sn, pct, f"{current}/{total}")
-                    except Exception:
-                        pass
+                progress = (int(current), int(total))
+                if _last_progress_sent.get(sn) == progress and sn not in _pending_progress:
+                    return
+                _pending_progress[sn] = progress
+                interval_ms = int(max(100.0, _progress_update_interval_ms()))
+                if _progress_timer.interval() != interval_ms:
+                    _progress_timer.setInterval(interval_ms)
+                if not _progress_timer.isActive():
+                    _progress_timer.start()
 
             def on_series_completed(uid, series_uid):
                 if uid != study_uid or not widget_ref():
                     return
                 sn = _resolve_sn(series_uid)
+                if not _progress_normalizer.mark_completed(sn):
+                    _logger.debug(
+                        "[FAST-SERIES-DOWNLOAD-COMPLETE-DROP] study=%s series=%s reason=duplicate_completion",
+                        uid, sn,
+                    )
+                    return
                 _logger.info(
                     "[FAST-SERIES-DOWNLOAD-COMPLETE] study=%s series=%s",
                     uid, sn,
@@ -274,18 +441,27 @@ class HomeDownloadService:
                 if not _first_emitted["done"]:
                     _first_emitted["done"] = True
                     _flush_timer.stop()
+                    _progress_timer.stop()
                     _pending_completed.clear()
+                    _pending_progress.pop(sn, None)
+                    _last_progress_sent.pop(sn, None)
                     try:
                         w = widget_ref()
                         if w:
                             if hasattr(w, "thumbnail_manager"):
-                                w.thumbnail_manager.complete_series_download(sn)
+                                total_images = _resolve_series_total(sn)
+                                w.thumbnail_manager.complete_series_download(
+                                    sn,
+                                    total_images=total_images if total_images > 0 else None,
+                                )
                             _emit_final_progress(w, sn)
                             if hasattr(w, "series_downloaded"):
                                 w.series_downloaded.emit(sn)
                     except Exception:
                         pass
                     return
+                _pending_progress.pop(sn, None)
+                _last_progress_sent.pop(sn, None)
                 _pending_completed.append(sn)
                 if not _flush_timer.isActive():
                     _flush_timer.start()
@@ -295,7 +471,21 @@ class HomeDownloadService:
             dm.seriesProgressUpdated.connect(on_series_progress)
             dm.seriesDownloadCompleted.connect(on_series_completed)
 
-            self._dm_widget_connections[connection_key] = True
+            handlers = {
+                "studyProgressUpdated": on_study_progress,
+                "seriesDownloadStarted": on_series_started,
+                "seriesProgressUpdated": on_series_progress,
+                "seriesDownloadCompleted": on_series_completed,
+            }
+            record = _ConnectionRecord(
+                dm=dm,
+                widget_ref=widget_ref,
+                handlers=handlers,
+                flush_timer=_flush_timer,
+                progress_timer=_progress_timer,
+                key=connection_key,
+            )
+            self._dm_widget_connections[connection_key] = record
             # [H7-P8] DM signal wiring checkpoint
             _has_workers = bool(getattr(dm, '_active_workers', None))
             _logger.info(
@@ -305,6 +495,84 @@ class HomeDownloadService:
             )
         except Exception as exc:
             print(f"[DM] Error connecting signals: {exc}")
+
+    # ------------------------------------------------------------------
+    # Lifecycle: disconnect / cleanup
+    # ------------------------------------------------------------------
+
+    def disconnect_widget(self, widget) -> int:
+        """Disconnect all DM signals wired to *widget*.
+
+        Call this when a patient tab is closed to prevent stale callbacks.
+        Returns the number of connections removed.
+        """
+        widget_id = id(widget)
+        to_remove = [
+            k for k, rec in self._dm_widget_connections.items()
+            if k.endswith(f"_{widget_id}")
+        ]
+        removed = 0
+        for key in to_remove:
+            self._disconnect_record(key)
+            removed += 1
+        return removed
+
+    def _disconnect_record(self, key: str) -> None:
+        """Disconnect a single connection record by key."""
+        rec = self._dm_widget_connections.pop(key, None)
+        if rec is None:
+            return
+        # Stop and discard the flush timer
+        try:
+            if rec.flush_timer is not None:
+                rec.flush_timer.stop()
+                rec.flush_timer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            if rec.progress_timer is not None:
+                rec.progress_timer.stop()
+                rec.progress_timer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+
+        # Disconnect DM signals
+        signal_map = {
+            "studyProgressUpdated": rec.dm.studyProgressUpdated,
+            "seriesDownloadStarted": rec.dm.seriesDownloadStarted,
+            "seriesProgressUpdated": rec.dm.seriesProgressUpdated,
+            "seriesDownloadCompleted": rec.dm.seriesDownloadCompleted,
+        }
+        for sig_name, handler in rec.handlers.items():
+            try:
+                signal_map[sig_name].disconnect(handler)
+            except (RuntimeError, TypeError, KeyError):
+                pass
+
+        _logger.debug("[DM] Disconnected connection_key=%s", key)
+
+    def cleanup(self) -> None:
+        """Deterministic teardown — call on service / app shutdown.
+
+        Safe to call multiple times (idempotent).
+        """
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+        keys = list(self._dm_widget_connections.keys())
+        for key in keys:
+            self._disconnect_record(key)
+        self._dm_widget_connections.clear()
+
+        try:
+            for i in range(self.tab_widget.count()):
+                widget = self.tab_widget.widget(i)
+                if isinstance(widget, DownloadManagerWidget) and hasattr(widget, "cleanup"):
+                    widget.cleanup()
+        except Exception:
+            _logger.exception("[DM] Failed to cleanup DownloadManagerWidget from HomeDownloadService")
+
+        _logger.debug("[DM] HomeDownloadService cleanup complete")
 
     # ------------------------------------------------------------------
     # Zeta-boost global flag

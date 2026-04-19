@@ -20,6 +20,7 @@ Version: v1.0.0 (2026-03-02)
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -32,6 +33,8 @@ from PySide6.QtGui import (
     QPen, QPixmap, QTransform, QWheelEvent,
 )
 from PySide6.QtWidgets import QWidget
+
+from modules.viewer.fast.stack_drag_profile import build_stack_drag_profile
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +135,7 @@ class QtSliceViewer(QWidget):
     """
 
     slice_scroll_requested = Signal(int)        # delta slices
+    stack_drag_state_changed = Signal(bool)     # True=started, False=stopped (B3.3)
     window_level_changed = Signal(float, float) # window, level
     zoom_changed = Signal(float)                # zoom factor
     mouse_moved = Signal(float, float)          # image x, y
@@ -155,6 +159,9 @@ class QtSliceViewer(QWidget):
     TOOL_ARROW = "arrow"
     TOOL_TEXT = "text"
     TOOL_ERASER = "eraser"
+    STACK_DRAG_POLICY_ADAPTIVE = "adaptive"
+    STACK_DRAG_POLICY_CLEARCANVAS = "clearcanvas_directional"
+    STACK_DRAG_EDGE_GRACE_PX = 12.0
     _MEASUREMENT_TOOLS = frozenset({
         "ruler", "angle", "two_line_angle",
         "roi_rect", "roi_circle", "arrow", "text", "eraser",
@@ -175,6 +182,7 @@ class QtSliceViewer(QWidget):
         # View transform (zoom + pan)
         self._zoom: float = 1.0
         self._pan_offset: QPointF = QPointF(0.0, 0.0)
+        self._fit_to_viewport: bool = True
 
         # Window/Level interaction state
         self._wl_dragging: bool = False
@@ -223,6 +231,7 @@ class QtSliceViewer(QWidget):
         self._stacked_dragging: bool = False
         self._stacked_last_y: float = 0.0
         self._stacked_accum: float = 0.0
+        self._stacked_first_step_pending: bool = False
 
         # Current displayed slice index (used by tool controller and coord resolver)
         self._current_slice_index: int = 0
@@ -248,9 +257,17 @@ class QtSliceViewer(QWidget):
         # radiography modalities MG/DX/CR/XR use 10x higher sensitivity)
         self._modality_hint: str = ""
 
-        # Total-slices hint for adaptive stack-drag behavior.
+        # Total-slices hint for stack-drag behavior.
         # Set by QtViewerBridge; used to scale drag threshold/step limits.
+        #
+        # Default to the slice-adaptive policy. It preserves the predictable
+        # directional feel users expect from ClearCanvas-style stacking while
+        # still adapting drag distance/skip limits to the actual series size.
         self._total_slices_hint: int = 0
+        self._stack_drag_policy: str = self._normalize_stack_drag_policy(
+            os.environ.get("AIPACS_STACK_DRAG_POLICY", self.STACK_DRAG_POLICY_ADAPTIVE)
+        )
+        self._debug_viewer_id: str = f"q{id(self) & 0xFFFFF:05x}"
 
         # Measurement tool state
         self._tool_controller = None   # Optional[ToolController]
@@ -309,12 +326,14 @@ class QtSliceViewer(QWidget):
         """Reset zoom and pan to fit image in widget."""
         self._zoom = self._calculate_fit_zoom()
         self._pan_offset = QPointF(0.0, 0.0)
+        self._fit_to_viewport = True
         self.update()
 
     def zoom_to_fit(self) -> float:
         """Zoom to fit and return the zoom factor."""
         self._zoom = self._calculate_fit_zoom()
         self._pan_offset = QPointF(0.0, 0.0)
+        self._fit_to_viewport = True
         self.update()
         return self._zoom
 
@@ -446,30 +465,221 @@ class QtSliceViewer(QWidget):
 
     def set_total_slices_hint(self, total_slices: int) -> None:
         """Set total slice count hint for adaptive stack-drag behavior."""
+        old_hint = int(max(0, self._total_slices_hint))
         try:
             self._total_slices_hint = max(0, int(total_slices))
         except Exception:
             self._total_slices_hint = 0
+        new_hint = int(max(0, self._total_slices_hint))
 
-    def _get_stack_drag_profile(self) -> tuple[float, int]:
+        # Stack drag must not carry stale momentum across a live slice-count
+        # policy change (for example while progressive download grows).
+        if old_hint != new_hint and (self._stacked_dragging or abs(self._stacked_accum) > 1e-6):
+            accum_before = float(self._stacked_accum)
+            accum_after = 0.0
+            preserve_drag_progress = self._stacked_dragging and new_hint > old_hint and old_hint > 1
+
+            if preserve_drag_progress:
+                old_threshold, _ = self._get_stack_drag_profile_for_count(old_hint)
+                new_threshold, _ = self._get_stack_drag_profile_for_count(new_hint)
+                if old_threshold > 0.0 and new_threshold > 0.0:
+                    progress = accum_before / float(old_threshold)
+                    accum_after = progress * float(new_threshold)
+                    cap = max(0.0, float(new_threshold) * 0.95)
+                    if cap > 0.0:
+                        accum_after = max(-cap, min(cap, accum_after))
+            logger.info(
+                "[B3.4_DIAG] STACK_HINT_RESET viewer=%s old=%d new=%d dragging=%s accum_before=%.2f accum_after=%.2f preserved=%s",
+                self._debug_viewer_id,
+                old_hint,
+                new_hint,
+                bool(self._stacked_dragging),
+                accum_before,
+                accum_after,
+                bool(preserve_drag_progress),
+            )
+            self._stacked_accum = float(accum_after)
+
+    def set_stack_drag_policy(self, policy: str) -> None:
+        """Override stack-drag policy for A/B testing or compatibility mode.
+
+        Supported policies:
+        - ``adaptive``: current AI-PACS distance-based stack drag (default)
+        - ``clearcanvas_directional``: one slice per non-zero mouse-move event
+        """
+        self._stack_drag_policy = self._normalize_stack_drag_policy(policy)
+
+    @classmethod
+    def _normalize_stack_drag_policy(cls, policy: object) -> str:
+        text = str(policy or "").strip().lower()
+        if text in {
+            "clearcanvas",
+            "clearcanvas_directional",
+            "clearcanvas-directional",
+            "directional",
+            "direction_only",
+            "direction-only",
+        }:
+            return cls.STACK_DRAG_POLICY_CLEARCANVAS
+        return cls.STACK_DRAG_POLICY_ADAPTIVE
+
+    def _get_stack_drag_profile_for_count(self, total_slices: int) -> tuple[float, int]:
         """Return (threshold_px, max_steps_per_event) for stack drag.
 
         UX policy:
         - Wheel: always one slice per notch (no skipping).
-        - Stack drag: adaptive threshold + capped acceleration by stack size.
+        - Stack drag: threshold scales from visible screen pixels and stack size.
+
+        Design goals:
+        - use actual on-screen drag distance, not arbitrary slice math
+        - small stacks should feel deliberate (larger threshold)
+        - large stacks should feel more responsive (smaller threshold)
+        - one full-height drag should traverse a meaningful portion of the stack
+        - per-event jumps remain capped so drag never feels chaotic
         """
-        n = int(max(0, self._total_slices_hint))
-        if n <= 25:
-            return 10.0, 1
-        if n <= 50:
-            return 8.0, 2
-        if n <= 100:
-            return 7.0, 3
-        if n <= 200:
-            return 6.0, 4
-        if n <= 500:
-            return 5.0, 6
-        return 4.0, 8
+        n = int(max(0, total_slices))
+        if self._stack_drag_policy == self.STACK_DRAG_POLICY_CLEARCANVAS:
+            return 1.0, 1
+
+        active_h = self._get_stack_active_height_px()
+
+        if n <= 1:
+            return min(18.0, max(8.0, active_h / 20.0)), 1
+
+        profile = build_stack_drag_profile(n)
+        desired_full_drag_steps = max(
+            1,
+            min(max(1, n - 1), int(profile.drag_fullscreen_slices)),
+        )
+        threshold_px = active_h / float(desired_full_drag_steps)
+        threshold_px = max(3.0, min(32.0, threshold_px))
+
+        return float(threshold_px), int(profile.drag_max_steps_per_event)
+
+    def _get_stack_drag_profile(self) -> tuple[float, int]:
+        return self._get_stack_drag_profile_for_count(self._total_slices_hint)
+
+    @staticmethod
+    def _sign(value: float) -> int:
+        if value > 0:
+            return 1
+        if value < 0:
+            return -1
+        return 0
+
+    def _is_point_in_viewport(self, pos: QPointF) -> bool:
+        """Return True when *pos* is inside the viewer widget bounds."""
+        x = float(pos.x())
+        y = float(pos.y())
+        return (0.0 <= x < float(max(1, self.width())) and
+                0.0 <= y < float(max(1, self.height())))
+
+    def _is_point_in_image_area(self, pos: QPointF, grace_px: float = 0.0) -> bool:
+        """Return True when *pos* maps inside current image bounds.
+
+        Uses rotation/flip-aware coordinate mapping so stack interaction is
+        limited to the displayed image area, not the full widget background.
+        """
+        if self._image_width <= 0 or self._image_height <= 0:
+            return False
+        try:
+            ix, iy = self.widget_to_image_coords(float(pos.x()), float(pos.y()))
+            zoom = float(max(self._zoom, 0.1))
+            grace_img = max(0.0, float(grace_px)) / zoom
+            return (-grace_img <= float(ix) < float(self._image_width) + grace_img and
+                    -grace_img <= float(iy) < float(self._image_height) + grace_img)
+        except Exception:
+            return False
+
+    def _is_stack_position_valid(self, pos: QPointF) -> bool:
+        """Stack drag is valid only while pointer stays in viewer + image area."""
+        return self._is_point_in_viewport(pos) and self._is_point_in_image_area(
+            pos,
+            grace_px=self.STACK_DRAG_EDGE_GRACE_PX,
+        )
+
+    def _get_stack_active_height_px(self) -> float:
+        """Visible on-screen height available for stack drag, in pixels."""
+        widget_h = float(max(64, self.height()))
+        if self._image_width <= 0 or self._image_height <= 0:
+            return widget_h
+
+        if self._rotation_angle in (90, 270):
+            rendered_h = float(self._image_width) * float(max(self._zoom, 0.1))
+        else:
+            rendered_h = float(self._image_height) * float(max(self._zoom, 0.1))
+
+        return float(max(64.0, min(widget_h, rendered_h)))
+
+    def _consume_stack_drag_delta(self, dy: float) -> int:
+        """Convert vertical drag delta to bounded slice steps.
+
+        Wheel scrolling is intentionally precise (±1 slice per event), while
+        stack drag should feel continuous but still controllable. The stack
+        profile already defines a pixel threshold and a per-event cap; the
+        live drag path must honor both.
+
+        Returns the signed number of slice steps to emit for this mouse move.
+        """
+        if int(max(0, self._total_slices_hint)) <= 1:
+            return 0
+
+        if self._stack_drag_policy == self.STACK_DRAG_POLICY_CLEARCANVAS:
+            self._stacked_accum = 0.0
+            if dy > 0:
+                return 1
+            if dy < 0:
+                return -1
+            return 0
+
+        threshold_px, max_steps = self._get_stack_drag_profile()
+        threshold_px = max(1.0, float(threshold_px))
+        max_steps = max(1, int(max_steps))
+        first_step_pending = bool(self._stacked_first_step_pending)
+        first_step_scale = float(getattr(build_stack_drag_profile(self._total_slices_hint), 'first_step_threshold_scale', 0.65))
+        effective_threshold_px = threshold_px * (first_step_scale if first_step_pending else 1.0)
+        effective_threshold_px = max(1.0, float(effective_threshold_px))
+
+        pending_sign = self._sign(self._stacked_accum)
+        incoming_sign = self._sign(dy)
+        if pending_sign != 0 and incoming_sign != 0 and pending_sign != incoming_sign:
+            logger.info(
+                "[B3.4_DIAG] STACK_DRAG_REVERSAL viewer=%s pending_sign=%d incoming_sign=%d accum_before=%.2f dy=%.2f",
+                self._debug_viewer_id,
+                pending_sign,
+                incoming_sign,
+                float(self._stacked_accum),
+                float(dy),
+            )
+            self._stacked_accum = 0.0
+
+        self._stacked_accum += float(dy)
+        raw_steps = int(self._stacked_accum / effective_threshold_px)
+        if raw_steps == 0:
+            return 0
+
+        if first_step_pending:
+            # Reduce the dead-zone only for the first emitted step of a new
+            # drag gesture, then immediately fall back to the normal threshold.
+            # Keep this startup assist capped to a single slice so the gesture
+            # starts promptly without reintroducing a first-event jump.
+            emit_steps = self._clamp_int(raw_steps, -1, 1)
+            self._stacked_first_step_pending = False
+            self._stacked_accum = 0.0
+            return int(emit_steps)
+
+        emit_steps = self._clamp_int(raw_steps, -max_steps, max_steps)
+        if abs(raw_steps) > max_steps:
+            # Oversized drag events are bounded, not queued. Keep only the
+            # sub-threshold tail so later mouse moves do not inherit momentum.
+            self._stacked_accum -= float(raw_steps) * threshold_px
+        else:
+            self._stacked_accum -= float(emit_steps) * threshold_px
+        return int(emit_steps)
+
+    @staticmethod
+    def _clamp_int(v: int, lo: int, hi: int) -> int:
+        return max(int(lo), min(int(hi), int(v)))
 
     def _emit_tool_completed(self) -> None:
         """Auto-deactivate after a measurement tool placement completes.
@@ -585,7 +795,26 @@ class QtSliceViewer(QWidget):
 
         self._last_paint_ms = (time.perf_counter() - t_start) * 1000.0
 
+    def _notify_parent_view_selected(self) -> None:
+        """Notify the parent viewport that this FAST viewer was clicked."""
+        p = self.parent()
+        if p is None:
+            return
+        try:
+            callback = getattr(p, 'change_container_border', None)
+            if callable(callback):
+                callback()
+        except Exception:
+            pass
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() in (
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.MiddleButton,
+        ):
+            self._notify_parent_view_selected()
+
         pos = event.position()
 
         # Right button: Window/Level (default) — or pan when Left is also held (L+R pan)
@@ -666,9 +895,15 @@ class QtSliceViewer(QWidget):
                 return
 
             if self._tool_mode == self.TOOL_STACKED:
+                if not self._is_stack_position_valid(pos):
+                    event.accept()
+                    return
                 self._stacked_dragging = True
                 self._stacked_last_y = pos.y()
-                self._stacked_accum = 0.0
+                self._stacked_accum = 0.0  # accumulated drag pixels
+                self._stacked_first_step_pending = True
+                self._begin_scroll_interaction()
+                self.stack_drag_state_changed.emit(True)  # B3.3
                 event.accept()
                 return
 
@@ -692,9 +927,15 @@ class QtSliceViewer(QWidget):
 
             # Default left-drag (no tool active): stacked scroll (matches Advanced mode)
             if self._tool_mode == self.TOOL_NONE:
+                if not self._is_stack_position_valid(pos):
+                    event.accept()
+                    return
                 self._stacked_dragging = True
                 self._stacked_last_y = pos.y()
-                self._stacked_accum = 0.0
+                self._stacked_accum = 0.0  # accumulated drag pixels
+                self._stacked_first_step_pending = True
+                self._begin_scroll_interaction()
+                self.stack_drag_state_changed.emit(True)  # B3.3
                 event.accept()
                 return
 
@@ -743,6 +984,7 @@ class QtSliceViewer(QWidget):
 
         # Pan drag
         if self._pan_dragging:
+            self._fit_to_viewport = False
             delta = pos - self._pan_start_pos
             self._pan_offset = self._pan_start_offset + delta
             self.update()
@@ -751,6 +993,7 @@ class QtSliceViewer(QWidget):
 
         # Zoom drag
         if self._zoom_dragging:
+            self._fit_to_viewport = False
             dy = pos.y() - self._zoom_start_pos.y()
             factor = 1.0 + (-dy) * 0.005
             new_zoom = max(self.MIN_ZOOM, min(self.MAX_ZOOM, self._zoom_start_zoom * factor))
@@ -762,18 +1005,39 @@ class QtSliceViewer(QWidget):
 
         # Stacked scroll drag (vertical movement → slice scroll)
         if self._stacked_dragging:
+            # Stop stack interaction immediately once pointer leaves either
+            # the viewer page or the actual image area.
+            if not self._is_stack_position_valid(pos):
+                logger.info(
+                    "[B3.4_DIAG] STACK_DRAG_CANCEL viewer=%s slice=%d reason=pointer_left_image accum=%.2f pos=(%.1f,%.1f)",
+                    self._debug_viewer_id,
+                    self._current_slice_index,
+                    float(self._stacked_accum),
+                    float(pos.x()),
+                    float(pos.y()),
+                )
+                self._stacked_dragging = False
+                self._stacked_accum = 0.0
+                self._stacked_first_step_pending = False
+                self._defer_scroll_settle()
+                self.stack_drag_state_changed.emit(False)  # B3.3
+                event.accept()
+                return
+
             dy = pos.y() - self._stacked_last_y
             self._stacked_last_y = pos.y()
-            self._stacked_accum += dy
-            threshold_px, max_steps = self._get_stack_drag_profile()
-            if threshold_px > 0.0:
-                steps = int(self._stacked_accum / threshold_px)
-                if steps != 0:
-                    emit_steps = max(-int(max_steps), min(int(max_steps), int(steps)))
-                    self._stacked_accum -= float(emit_steps) * float(threshold_px)
-                    direction = 1 if emit_steps > 0 else -1
-                    for _ in range(abs(int(emit_steps))):
-                        self.slice_scroll_requested.emit(direction)
+            n = int(max(0, self._total_slices_hint))
+            if n <= 1:
+                event.accept()
+                return
+
+            emit_steps = self._consume_stack_drag_delta(dy)
+            if emit_steps != 0:
+                # Emit the full signed delta once so the bridge can apply the
+                # intended movement atomically. Emitting a loop of ±1 signals
+                # makes stack drag vulnerable to event-loop timing drops and
+                # produces the exact "one step then sticks" behavior users saw.
+                self.slice_scroll_requested.emit(int(emit_steps))
             event.accept()
             return
 
@@ -839,11 +1103,15 @@ class QtSliceViewer(QWidget):
             self._left_button_down = False
             if self._lr_pan_active:
                 # L+R pan ended — clear all drag state
+                _was_stacking = self._stacked_dragging
                 self._lr_pan_active = False
                 self._pan_dragging = False
                 self._wl_dragging = False
                 self._stacked_dragging = False
                 self._zoom_dragging = False
+                if _was_stacking:
+                    self._defer_scroll_settle()
+                    self.stack_drag_state_changed.emit(False)  # B3.3
                 event.accept()
                 return
             if self._pan_dragging:
@@ -856,6 +1124,9 @@ class QtSliceViewer(QWidget):
                 return
             if self._stacked_dragging:
                 self._stacked_dragging = False
+                self._stacked_first_step_pending = False
+                self._defer_scroll_settle()
+                self.stack_drag_state_changed.emit(False)  # B3.3
                 event.accept()
                 return
         # Finalize annotation drag
@@ -897,6 +1168,7 @@ class QtSliceViewer(QWidget):
 
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             # Zoom
+            self._fit_to_viewport = False
             zoom_factor = 1.1 if delta > 0 else 1.0 / 1.1
             old_zoom = self._zoom
             self._zoom = max(self.MIN_ZOOM, min(self.MAX_ZOOM, self._zoom * zoom_factor))
@@ -915,8 +1187,8 @@ class QtSliceViewer(QWidget):
             self.update()
         else:
             # Slice scroll
-            self._in_wheel_scroll = True
-            self._scroll_stop_timer.start()
+            self._begin_scroll_interaction()
+            self._defer_scroll_settle()
             slices_delta = -1 if delta > 0 else 1
             self.slice_scroll_requested.emit(slices_delta)
 
@@ -924,7 +1196,10 @@ class QtSliceViewer(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        # Don't auto-reset zoom on resize — maintain user's zoom
+        if self._fit_to_viewport and self._image_width > 0 and self._image_height > 0:
+            self._zoom = self._calculate_fit_zoom()
+            self._pan_offset = QPointF(0.0, 0.0)
+            self.update()
 
     # ── Private: painting ─────────────────────────────────────────────
 
@@ -1089,9 +1364,25 @@ class QtSliceViewer(QWidget):
             fit_h = float(self._image_height)
         return min(widget_w / fit_w, widget_h / fit_h) * 0.95  # 5% margin
 
+    def _begin_scroll_interaction(self) -> None:
+        """Enter the lightweight scroll mode used to suppress overlay churn."""
+        self._in_wheel_scroll = True
+        self._scroll_stop_timer.stop()
+
+    def _defer_scroll_settle(self) -> None:
+        """Keep scroll mode active briefly so settle work happens once."""
+        self._scroll_stop_timer.start()
+
     def _on_scroll_stopped(self) -> None:
-        """Called 200ms after last wheel event — re-enable tool annotations."""
+        """Called shortly after wheel/drag settles — re-enable tool annotations."""
         self._in_wheel_scroll = False
+        logger.info(
+            "[B3.4_DIAG] QT_SCROLL_SETTLE viewer=%s slice=%d stacked_dragging=%s accum=%.2f",
+            self._debug_viewer_id,
+            self._current_slice_index,
+            bool(self._stacked_dragging),
+            float(self._stacked_accum),
+        )
         self.update()
 
     def keyPressEvent(self, event) -> None:

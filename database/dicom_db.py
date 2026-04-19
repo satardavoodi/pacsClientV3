@@ -357,41 +357,41 @@ def ensure_report_status_schema():
     """
     _logger = logging.getLogger(__name__)
 
-    conn = get_connection_database()
-    cur = conn.cursor()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
 
-    # Add reportStatus column if missing
-    try:
-        cur.execute("SELECT reportStatus FROM studies LIMIT 1")
-    except Exception:
-        cur.execute("ALTER TABLE studies ADD COLUMN reportStatus TEXT DEFAULT 'pending'")
-        cur.execute("UPDATE studies SET reportStatus = 'pending' WHERE reportStatus IS NULL")
-        _logger.info("✅ Added reportStatus column to studies table")
+        # Add reportStatus column if missing
+        try:
+            cur.execute("SELECT reportStatus FROM studies LIMIT 1")
+        except Exception:
+            cur.execute("ALTER TABLE studies ADD COLUMN reportStatus TEXT DEFAULT 'pending'")
+            cur.execute("UPDATE studies SET reportStatus = 'pending' WHERE reportStatus IS NULL")
+            _logger.info("✅ Added reportStatus column to studies table")
 
-    # Add reportStatusHistory column if missing (stored as JSON text)
-    try:
-        cur.execute("SELECT reportStatusHistory FROM studies LIMIT 1")
-    except Exception:
-        cur.execute("ALTER TABLE studies ADD COLUMN reportStatusHistory TEXT DEFAULT '[]'")
-        cur.execute("UPDATE studies SET reportStatusHistory = '[]' WHERE reportStatusHistory IS NULL")
-        _logger.info("✅ Added reportStatusHistory column to studies table")
+        # Add reportStatusHistory column if missing (stored as JSON text)
+        try:
+            cur.execute("SELECT reportStatusHistory FROM studies LIMIT 1")
+        except Exception:
+            cur.execute("ALTER TABLE studies ADD COLUMN reportStatusHistory TEXT DEFAULT '[]'")
+            cur.execute("UPDATE studies SET reportStatusHistory = '[]' WHERE reportStatusHistory IS NULL")
+            _logger.info("✅ Added reportStatusHistory column to studies table")
 
-    # Add updatedAt column if missing (for tracking when status was last updated)
-    try:
-        cur.execute("SELECT reportStatusUpdatedAt FROM studies LIMIT 1")
-    except Exception:
-        cur.execute("ALTER TABLE studies ADD COLUMN reportStatusUpdatedAt TEXT DEFAULT NULL")
-        _logger.info("✅ Added reportStatusUpdatedAt column to studies table")
+        # Add updatedAt column if missing (for tracking when status was last updated)
+        try:
+            cur.execute("SELECT reportStatusUpdatedAt FROM studies LIMIT 1")
+        except Exception:
+            cur.execute("ALTER TABLE studies ADD COLUMN reportStatusUpdatedAt TEXT DEFAULT NULL")
+            _logger.info("✅ Added reportStatusUpdatedAt column to studies table")
 
-    # Create indexes for better query performance
-    try:
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_studies_reportStatus ON studies(reportStatus)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_studies_reportStatus_date ON studies(reportStatus, study_date)")
-        _logger.info("✅ Created indexes for report status")
-    except Exception as e:
-        _logger.warning(f"⚠️ Could not create indexes: {e}")
+        # Create indexes for better query performance
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_studies_reportStatus ON studies(reportStatus)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_studies_reportStatus_date ON studies(reportStatus, study_date)")
+            _logger.info("✅ Created indexes for report status")
+        except Exception as e:
+            _logger.warning(f"⚠️ Could not create indexes: {e}")
 
-    conn.commit()
+        conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -488,65 +488,65 @@ def migrate_fix_null_study_paths() -> dict:
     _logger.debug("=" * 80)
 
     try:
-        conn = get_connection_database()
-        cur = conn.cursor()
+        with get_db_connection() as conn:
+            cur = conn.cursor()
 
-        cur.execute("""
-            SELECT s.study_pk, s.study_uid, s.patient_fk, p.patient_name
-            FROM studies s
-            LEFT JOIN patients p ON s.patient_fk = p.patient_pk
-            WHERE s.study_path IS NULL
-            ORDER BY s.study_pk
-        """)
+            cur.execute("""
+                SELECT s.study_pk, s.study_uid, s.patient_fk, p.patient_name
+                FROM studies s
+                LEFT JOIN patients p ON s.patient_fk = p.patient_pk
+                WHERE s.study_path IS NULL
+                ORDER BY s.study_pk
+            """)
 
-        null_studies = cur.fetchall()
-        _logger.debug(f"📋 Found {len(null_studies)} studies with NULL study_path")
+            null_studies = cur.fetchall()
+            _logger.debug(f"📋 Found {len(null_studies)} studies with NULL study_path")
 
-        if not null_studies:
-            _logger.debug("✅ No studies with NULL study_path found")
-            return {'updated': 0, 'checked': 0, 'not_found': 0}
+            if not null_studies:
+                _logger.debug("✅ No studies with NULL study_path found")
+                return {'updated': 0, 'checked': 0, 'not_found': 0}
 
-        updated = 0
-        not_found = 0
+            updated = 0
+            not_found = 0
 
-        for study_pk, study_uid, patient_fk, patient_name in null_studies:
-            try:
-                if study_uid:
-                    potential_path = Path(SOURCE_PATH) / study_uid
-                    if potential_path.exists():
-                        cur.execute(
-                            "UPDATE studies SET study_path = ? WHERE study_pk = ?",
-                            (str(potential_path), study_pk),
-                        )
-                        _logger.debug(f"✅ Updated: {patient_name} ({study_uid[:40]}...)")
-                        updated += 1
+            for study_pk, study_uid, patient_fk, patient_name in null_studies:
+                try:
+                    if study_uid:
+                        potential_path = Path(SOURCE_PATH) / study_uid
+                        if potential_path.exists():
+                            cur.execute(
+                                "UPDATE studies SET study_path = ? WHERE study_pk = ?",
+                                (str(potential_path), study_pk),
+                            )
+                            _logger.debug(f"✅ Updated: {patient_name} ({study_uid[:40]}...)")
+                            updated += 1
+                        else:
+                            _logger.debug(f"❌ Not found: {patient_name} ({study_uid[:40]}...)")
+                            not_found += 1
                     else:
-                        _logger.debug(f"❌ Not found: {patient_name} ({study_uid[:40]}...)")
+                        _logger.debug(f"❌ No study_uid for study_pk={study_pk}")
                         not_found += 1
-                else:
-                    _logger.debug(f"❌ No study_uid for study_pk={study_pk}")
+                except Exception as e:
+                    _logger.error(f"❌ Error processing study_pk={study_pk}: {e}")
                     not_found += 1
-            except Exception as e:
-                _logger.error(f"❌ Error processing study_pk={study_pk}: {e}")
-                not_found += 1
 
-        conn.commit()
+            conn.commit()
 
-        if updated > 0 or not_found > 0:
-            _logger.info("-" * 80)
-            _logger.info("📊 Migration Summary:")
-            if updated > 0:
-                _logger.info(f"   ✅ Updated: {updated}")
-            if not_found > 0:
-                _logger.info(f"   ⚠️  Not found on disk: {not_found}")
-            _logger.info(f"   📋 Total checked: {len(null_studies)}")
-            _logger.info("=" * 80)
+            if updated > 0 or not_found > 0:
+                _logger.info("-" * 80)
+                _logger.info("📊 Migration Summary:")
+                if updated > 0:
+                    _logger.info(f"   ✅ Updated: {updated}")
+                if not_found > 0:
+                    _logger.info(f"   ⚠️  Not found on disk: {not_found}")
+                _logger.info(f"   📋 Total checked: {len(null_studies)}")
+                _logger.info("=" * 80)
 
-        return {
-            'updated': updated,
-            'checked': len(null_studies),
-            'not_found': not_found,
-        }
+            return {
+                'updated': updated,
+                'checked': len(null_studies),
+                'not_found': not_found,
+            }
 
     except Exception as e:
         _logger = logging.getLogger(__name__)

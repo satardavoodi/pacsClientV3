@@ -1,9 +1,14 @@
 """Study/series save: save complete study info, series info DB/server"""
 # Auto-generated from home_ui.py — Phase 3 split
 
-
-
+import logging as _logging
 import traceback
+
+# Redirect print() to logger to avoid synchronous console I/O on Windows.
+# Console writes cost 1-5ms each and block the calling thread.
+_print_logger = _logging.getLogger(__name__)
+def print(*args, **_kw):  # noqa: A001
+    _print_logger.debug(' '.join(str(a) for a in args))
 
 from PacsClient.components import DicomGrpcClient
 from PacsClient.utils import get_connection_database, get_all_patients, search_patients_local, find_patient_pk, find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes

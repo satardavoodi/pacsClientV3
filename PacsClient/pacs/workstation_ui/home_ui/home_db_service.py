@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Optional
 
 from PacsClient.utils import (
-    get_connection_database,
     find_patient_pk,
     find_study_pk,
     insert_patient,
@@ -222,19 +221,19 @@ class HomeDbService:
 
     @staticmethod
     def get_patient_study(study_uid: str) -> Optional[dict]:
-        conn = get_connection_database()
-        cursor = conn.cursor()
-        cursor.execute(
-            """SELECT StudyInstanceUID, PatientID, PatientName, PatientSex,
-                      PatientAge, PatientWeight, StudyDate, StudyTime,
-                      StudyDescription, Modality, BodyPart, ProtocolName,
-                      StationName, InstitutionName, NumberOfSeries,
-                      NumberOfInstances
-               FROM study_details WHERE StudyInstanceUID = ?""",
-            (study_uid,),
-        )
-        row = cursor.fetchone()
-        conn.close()
+        from database.core import get_db_connection
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT StudyInstanceUID, PatientID, PatientName, PatientSex,
+                          PatientAge, PatientWeight, StudyDate, StudyTime,
+                          StudyDescription, Modality, BodyPart, ProtocolName,
+                          StationName, InstitutionName, NumberOfSeries,
+                          NumberOfInstances
+                   FROM study_details WHERE StudyInstanceUID = ?""",
+                (study_uid,),
+            )
+            row = cursor.fetchone()
         if not row:
             return None
 
@@ -250,7 +249,7 @@ class HomeDbService:
     @staticmethod
     def save_study_details(dataset) -> None:
         """Persist a pydicom Dataset into the study_details table."""
-        conn = get_connection_database()
+        from database.core import get_db_connection
         try:
             description_parts = []
             if hasattr(dataset, "StudyDescription"):
@@ -281,12 +280,13 @@ class HomeDbService:
                 int(getattr(dataset, "NumberOfStudyRelatedSeries", 0)),
                 int(getattr(dataset, "NumberOfStudyRelatedInstances", 0)),
             )
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT OR REPLACE INTO study_details VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                vals,
-            )
-            conn.commit()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT OR REPLACE INTO study_details VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    vals,
+                )
+                conn.commit()
         except Exception as exc:
             print(f"Error saving study details: {exc}")
 

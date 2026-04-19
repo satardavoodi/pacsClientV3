@@ -15,6 +15,13 @@ from PySide6.QtCore import Qt
 import math
 import time
 from PacsClient.utils.theme_manager import get_theme_manager
+from modules.viewer.fast.ui_throttle import (
+    is_fast_interaction_active,
+    is_heavy_download_active,
+    should_admit as _ui_should_admit,
+    thumbnail_log_interval_ms,
+    thumbnail_progress_interval_ms,
+)
 
 _tm_logger = logging.getLogger(__name__)
 
@@ -657,14 +664,210 @@ class ThumbnailManager(QObject):
         self._border_state_update_pending = False
         self._last_border_apply_ts = 0.0
         self._scroll_active = False
+        self._progress_update_last_ts = {}
+        self._progress_update_pending = {}
+        self._progress_update_timer_active = False
+        self._thumb_state_log_last_ts = {}
         self._set_ready_reentrant_guard = False
+        self._series_projection_state = {}
+        self._series_total_images = {}
         self.thumbnail_image_ready.connect(self._apply_thumbnail_image)
+
+    @staticmethod
+    def _normalize_total_images(total_images):
+        try:
+            if total_images is None:
+                return None
+            value = int(total_images)
+            return value if value > 0 else None
+        except Exception:
+            return None
+
+    def _remember_series_total_images(self, series_key: str, total_images=None):
+        """Persist the first known positive total for a series lifecycle."""
+        key = str(series_key)
+        normalized = self._normalize_total_images(total_images)
+        known = self._series_total_images.get(key)
+        if known is not None:
+            return known
+        if normalized is not None:
+            self._series_total_images[key] = normalized
+            return normalized
+        return None
+
+    def _get_series_projection_state(self, series_key: str) -> str:
+        return str(self._series_projection_state.get(str(series_key), "pending"))
+
+    def _set_series_projection_state(self, series_key: str, state: str) -> None:
+        self._series_projection_state[str(series_key)] = str(state)
 
     def set_scroll_active(self, active: bool):
         """Defer heavy thumbnail border repaints while the viewer is scrolling."""
         self._scroll_active = bool(active)
         if not self._scroll_active and self._border_state_update_pending:
             QTimer.singleShot(0, lambda: self.apply_border_states_new(immediate=True))
+
+    def _progress_update_interval_ms(self) -> float:
+        """Thumbnail progress cadence: normal 10 Hz, protected 2 Hz."""
+        if self._scroll_active:
+            return 500.0
+        return float(thumbnail_progress_interval_ms())
+
+    def _schedule_progress_flush(self, delay_ms: float) -> None:
+        if self._progress_update_timer_active:
+            return
+        self._progress_update_timer_active = True
+        QTimer.singleShot(max(0, int(delay_ms)), self._flush_pending_progress_updates)
+
+    def _flush_pending_progress_updates(self) -> None:
+        self._progress_update_timer_active = False
+        pending = dict(self._progress_update_pending)
+        self._progress_update_pending.clear()
+        for series_number, progress_percent, status_text in pending.values():
+            self.update_series_progress(series_number, progress_percent, status_text, _force=True)
+
+    def _should_log_thumb_state(self, series_key: str, progress_percent: float, *, force: bool = False) -> bool:
+        if force or progress_percent >= 100:
+            self._thumb_state_log_last_ts[series_key] = time.monotonic() * 1000.0
+            return True
+        now_ms = time.monotonic() * 1000.0
+        last_ms = self._thumb_state_log_last_ts.get(series_key, 0.0)
+        interval_ms = 500.0 if self._scroll_active else float(thumbnail_log_interval_ms())
+        if now_ms - last_ms >= interval_ms:
+            self._thumb_state_log_last_ts[series_key] = now_ms
+            return True
+        return False
+
+    def _is_focus_series(self, series_key: str) -> bool:
+        """True when a thumbnail belongs to the actively viewed / selected series."""
+        try:
+            key = str(series_key)
+            if str(getattr(self, 'selected_series', '') or '') == key:
+                return True
+
+            parent_widget = getattr(self, 'parent_widget', None)
+            if parent_widget is None:
+                return False
+
+            for node in getattr(parent_widget, 'lst_nodes_viewer', []) or []:
+                vtk_w = getattr(node, 'vtk_widget', None)
+                if vtk_w is None:
+                    continue
+                try:
+                    viewer_sn = str(
+                        getattr(vtk_w.image_viewer, 'metadata', {})
+                        .get('series', {}).get('series_number', '')
+                    )
+                except Exception:
+                    viewer_sn = ''
+                if viewer_sn == key:
+                    return True
+                if str(getattr(vtk_w, '_awaiting_series_number', '') or '') == key:
+                    return True
+                if str(getattr(vtk_w, '_progressive_series_number', '') or '') == key:
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def _should_use_compact_progress_ui(self, series_key: str, progress_percent: float) -> bool:
+        """Use a cheaper thumbnail update path for background series under overlap."""
+        try:
+            if progress_percent >= 100:
+                return False
+            if self._is_focus_series(series_key):
+                return False
+            return bool(is_fast_interaction_active() or is_heavy_download_active())
+        except Exception:
+            return False
+
+    def _apply_compact_progress_state(self, widget, series_key: str, progress_percent: float, status_text: str = ""):
+        """Cheap thumbnail update path: no glass overlay churn for background series."""
+        try:
+            if widget is None:
+                return
+
+            if hasattr(widget, 'progress_overlay'):
+                try:
+                    widget.progress_overlay.setVisible(False)
+                except RuntimeError:
+                    return
+
+            if hasattr(widget, 'glass_overlay'):
+                try:
+                    widget.glass_overlay.setVisible(False)
+                except RuntimeError:
+                    return
+
+            if status_text:
+                try:
+                    self._set_series_count_label_text(series_key, status_text)
+                except Exception:
+                    pass
+
+            if hasattr(widget, 'progress_border'):
+                try:
+                    progress_border = widget.progress_border
+                    if progress_percent >= 100:
+                        progress_border.setDownloading(False)
+                        progress_border.setReady(True)
+                    elif progress_percent > 0:
+                        progress_border.setDownloading(True)
+                except RuntimeError:
+                    return
+
+            try:
+                widget.update()
+            except RuntimeError:
+                return
+        except Exception:
+            return
+
+    @staticmethod
+    def _set_widget_visible_if_needed(widget, visible: bool) -> bool:
+        """Set QWidget visibility only when the value actually changes."""
+        if widget is None:
+            return False
+        new_visible = bool(visible)
+        current_visible = bool(widget.isVisible())
+        if current_visible == new_visible:
+            return False
+        widget.setVisible(new_visible)
+        return True
+
+    @staticmethod
+    def _set_label_text_if_needed(label, text: str) -> bool:
+        """Set QLabel text only when the rendered text changes."""
+        if label is None:
+            return False
+        new_text = str(text)
+        if label.text() == new_text:
+            return False
+        label.setText(new_text)
+        return True
+
+    @staticmethod
+    def _set_progress_border_downloading_if_needed(progress_border, downloading: bool) -> bool:
+        """Update border download state only on actual transition."""
+        if progress_border is None:
+            return False
+        new_state = bool(downloading)
+        if bool(getattr(progress_border, '_downloading', False)) == new_state:
+            return False
+        progress_border.setDownloading(new_state)
+        return True
+
+    @staticmethod
+    def _set_progress_border_ready_if_needed(progress_border, ready: bool) -> bool:
+        """Update border ready state only on actual transition."""
+        if progress_border is None:
+            return False
+        new_state = bool(ready)
+        if bool(getattr(progress_border, '_is_ready', False)) == new_state:
+            return False
+        progress_border.setReady(new_state)
+        return True
+
     def _on_theme_changed(self, theme):
         """Handle theme changes - update all created thumbnails"""
         self._theme = theme
@@ -729,35 +932,47 @@ class ThumbnailManager(QObject):
                 return
             if image_count <= 0:
                 return
-
-            count_label = getattr(widget, "count_label", None)
-            if count_label is None:
-                content_layout = getattr(widget, "content_layout", None)
-                if content_layout is None:
-                    return
-                count_label = QLabel(f"{image_count} images")
-                count_label.setFixedHeight(20)
-                count_label.setAlignment(Qt.AlignCenter)
-                count_label.setStyleSheet("""
-                    QLabel {
-                        font-size: 12px;
-                        font-weight: bold;
-                        color: #3b82f6;
-                        background: transparent;
-                        border: none;
-                        padding: 2px;
-                    }
-                """)
-                content_layout.addWidget(count_label)
-                widget.count_label = count_label
-                widget.update()
-                return
-
-            count_label.setText(f"{image_count} images")
-            count_label.update()
-            widget.update()
+            self._set_series_count_label_text(series_key, f"{image_count} images")
         except Exception:
             return
+
+    def _set_series_count_label_text(self, series_key: str, text: str) -> None:
+        """Set or create the thumbnail count label text for one series."""
+        widget = self.series_widgets.get(str(series_key))
+        if widget is None:
+            return
+
+        try:
+            _ = widget.isVisible()
+        except RuntimeError:
+            return
+
+        count_label = getattr(widget, "count_label", None)
+        if count_label is None:
+            content_layout = getattr(widget, "content_layout", None)
+            if content_layout is None:
+                return
+            count_label = QLabel(text)
+            count_label.setFixedHeight(20)
+            count_label.setAlignment(Qt.AlignCenter)
+            count_label.setStyleSheet("""
+                QLabel {
+                    font-size: 12px;
+                    font-weight: bold;
+                    color: #3b82f6;
+                    background: transparent;
+                    border: none;
+                    padding: 2px;
+                }
+            """)
+            content_layout.addWidget(count_label)
+            widget.count_label = count_label
+        else:
+            if count_label.text() == text:
+                return
+            count_label.setText(text)
+        count_label.update()
+        widget.update()
 
     def _apply_thumbnail_image(self, series_number: str, image: QImage):
         """Apply image to existing thumbnail widget on GUI thread."""
@@ -802,6 +1017,8 @@ class ThumbnailManager(QObject):
         # Clear all ready series
         self.ready_series.clear()
         self._series_uid_to_number.clear()
+        self._series_projection_state.clear()
+        self._series_total_images.clear()
 
         # Clear selected series
         self.selected_series = None
@@ -1032,19 +1249,19 @@ class ThumbnailManager(QObject):
     def create_standard_metadata(series_number, modality='Unknown', series_description='', 
                                 image_count=1, protocol_name='', body_part_examined='', 
                                 is_downloading=False, main_thumbnail=True):
-        """Create standardized metadata structure for consistent thumbnail creation"""
-        return {
-            'series': {
-                'series_number': series_number,
-                'modality': modality,
-                'series_description': series_description,
-                'protocol_name': protocol_name,
-                'body_part_examined': body_part_examined,
-                'main_thumbnail': main_thumbnail
-            },
-            'instances': [{'dummy': 'data'}] * image_count,
-            'is_downloading': is_downloading
-        }
+        """Backward-compatible delegate to the shared thumbnail projection helper."""
+        from PacsClient.pacs.patient_tab.utils.thumbnail_projection_service import ThumbnailProjectionService
+
+        return ThumbnailProjectionService.create_standard_metadata(
+            series_number=series_number,
+            modality=modality,
+            series_description=series_description,
+            image_count=image_count,
+            protocol_name=protocol_name,
+            body_part_examined=body_part_examined,
+            is_downloading=is_downloading,
+            main_thumbnail=main_thumbnail,
+        )
 
     def register_button(self, button: QPushButton, button_name):
         self.buttons.append(button)
@@ -1423,7 +1640,21 @@ class ThumbnailManager(QObject):
             if getattr(self, '_pending_download_series', None) and series_key in self._pending_download_series:
                 self._pending_download_series.discard(series_key)
                 _tm_logger.debug("ThumbnailManager: applying deferred download state for series %s", series_key)
-                self.start_series_download(series_key)
+                pending_total = None
+                try:
+                    pending_total = getattr(self, '_pending_download_totals', {}).pop(series_key, None)
+                except Exception:
+                    pending_total = None
+                self.start_series_download(series_key, total_images=pending_total)
+
+            # Replay completed state when the widget is created after the series
+            # already finished downloading. Without this, the series stays visually
+            # pending until some later unrelated refresh happens.
+            if (
+                series_key in self.ready_series
+                or self._get_series_projection_state(series_key) == "completed"
+            ):
+                self.complete_series_download(series_key, total_images=image_count if series_info else None)
 
             return widget
             
@@ -1607,28 +1838,71 @@ class ThumbnailManager(QObject):
             _tm_logger.debug("error highlighting priority series: %s", e)
 
 
-    def update_series_progress(self, series_number, progress_percent, status_text=""):
+    def update_series_progress(self, series_number, progress_percent, status_text="", *, _force=False):
         """
         Update download progress with PRIORITY indicator
         """
         try:
             series_key = self._resolve_series_key(series_number)
-            
+            try:
+                progress_percent = float(progress_percent)
+            except Exception:
+                progress_percent = 0.0
+
+            if (
+                not _force
+                and 0.0 < progress_percent < 100.0
+                and not _ui_should_admit(
+                    "thumbnail_ui",
+                    {
+                        "key": f"thumbnail-progress:{id(self)}:{series_key}",
+                        "series_key": series_key,
+                    },
+                )
+            ):
+                self._progress_update_pending[series_key] = (
+                    series_number,
+                    progress_percent,
+                    status_text,
+                )
+                self._schedule_progress_flush(self._progress_update_interval_ms())
+                return
+
+            if not _force and 0.0 < progress_percent < 100.0:
+                now_ms = time.monotonic() * 1000.0
+                last_ms = self._progress_update_last_ts.get(series_key, 0.0)
+                interval_ms = self._progress_update_interval_ms()
+                elapsed_ms = now_ms - last_ms
+                if elapsed_ms < interval_ms:
+                    self._progress_update_pending[series_key] = (
+                        series_number,
+                        progress_percent,
+                        status_text,
+                    )
+                    self._schedule_progress_flush(interval_ms - elapsed_ms)
+                    return
+                self._progress_update_last_ts[series_key] = now_ms
+            else:
+                self._progress_update_last_ts[series_key] = time.monotonic() * 1000.0
+
             # Add priority indicator if this is a high priority download
             is_priority = "⚡" in status_text or "🎯" in status_text or "🔄" in status_text
             
             if is_priority and (progress_percent % 25 == 0 or progress_percent >= 100):
                 _tm_logger.debug("PRIORITY PROGRESS series=%s pct=%.1f status=%s", series_key, progress_percent, status_text)
             
-            # Log state transition for diagnostic purposes
-            _tm_logger.info(
-                "[FAST-THUMB-STATE] series=%s state=downloading progress=%.0f count_label=%s",
-                series_key, progress_percent, status_text,
-            )
+            # Log state transitions at a bounded cadence to avoid log storms.
+            if self._should_log_thumb_state(series_key, progress_percent, force=_force):
+                _tm_logger.info(
+                    "[FAST-THUMB-STATE] series=%s state=downloading progress=%.0f count_label=%s",
+                    series_key, progress_percent, status_text,
+                )
             
             # Rest of the existing code...
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
+                compact_ui = self._should_use_compact_progress_ui(series_key, progress_percent)
+                widget_changed = False
 
                 # Check if widget is still valid
                 try:
@@ -1655,8 +1929,12 @@ class ThumbnailManager(QObject):
                     # Show glass overlay background
                     if hasattr(widget, 'glass_overlay'):
                         try:
-                            widget.glass_overlay.setVisible(True)
-                            widget.glass_overlay.raise_()
+                            if compact_ui:
+                                widget_changed = self._set_widget_visible_if_needed(widget.glass_overlay, False) or widget_changed
+                            else:
+                                if self._set_widget_visible_if_needed(widget.glass_overlay, True):
+                                    widget.glass_overlay.raise_()
+                                    widget_changed = True
                         except RuntimeError:
                             # Widget has been deleted, remove from tracking
                             if series_key in self.series_widgets:
@@ -1673,7 +1951,14 @@ class ThumbnailManager(QObject):
                                 del self.series_widgets[series_key]
                             return
 
-                        if progress_percent > 0 and progress_percent < 100:
+                        if compact_ui and progress_percent > 0 and progress_percent < 100:
+                            try:
+                                widget_changed = self._set_widget_visible_if_needed(progress_overlay, False) or widget_changed
+                            except RuntimeError:
+                                if series_key in self.series_widgets:
+                                    del self.series_widgets[series_key]
+                                return
+                        elif progress_percent > 0 and progress_percent < 100:
                             # Show percentage and count during download
                             # status_text format: "current/total" (e.g., "3/8")
                             display_text = f"{int(progress_percent)}%"
@@ -1681,24 +1966,29 @@ class ThumbnailManager(QObject):
                                 display_text = f"{int(progress_percent)}%\n{status_text}"
 
                             try:
-                                progress_overlay.setText(display_text)
-                                progress_overlay.setStyleSheet("""
-                                    QLabel {
-                                        background: transparent;
-                                        color: #ffffff;
-                                        font-size: 14px;
-                                        font-weight: bold;
-                                        font-family: 'Segoe UI', 'Roboto', sans-serif;
-                                        border: none;
-                                        padding: 0px;
-                                        line-height: 1.3;
-                                    }
-                                """)
-                                progress_overlay.setVisible(True)
-                                progress_overlay.raise_()  # Ensure it's on top
-
-                                # Force update to make sure it's visible
-                                progress_overlay.update()
+                                text_changed = self._set_label_text_if_needed(progress_overlay, display_text)
+                                # B3.5: Cache stylesheet — setStyleSheet() parses CSS
+                                # on every call (~0.5-2ms).  Apply only once per overlay.
+                                if not getattr(progress_overlay, '_b35_style_applied', False):
+                                    progress_overlay.setStyleSheet("""
+                                        QLabel {
+                                            background: transparent;
+                                            color: #ffffff;
+                                            font-size: 14px;
+                                            font-weight: bold;
+                                            font-family: 'Segoe UI', 'Roboto', sans-serif;
+                                            border: none;
+                                            padding: 0px;
+                                            line-height: 1.3;
+                                        }
+                                    """)
+                                    progress_overlay._b35_style_applied = True
+                                    widget_changed = True
+                                became_visible = self._set_widget_visible_if_needed(progress_overlay, True)
+                                if text_changed or became_visible:
+                                    progress_overlay.raise_()  # Ensure it's on top
+                                    progress_overlay.update()
+                                    widget_changed = True
                             except RuntimeError:
                                 # Widget has been deleted, remove from tracking
                                 if series_key in self.series_widgets:
@@ -1708,21 +1998,26 @@ class ThumbnailManager(QObject):
                         elif progress_percent >= 100:
                             # Show "Ready" message briefly, then hide
                             try:
-                                progress_overlay.setText("✅")
-                                progress_overlay.setStyleSheet("""
-                                    QLabel {
-                                        background: transparent;
-                                        color: #10b981;
-                                        font-size: 24px;
-                                        font-weight: bold;
-                                        font-family: 'Segoe UI', 'Roboto', sans-serif;
-                                        border: none;
-                                        padding: 0px;
-                                    }
-                                """)
-                                progress_overlay.setVisible(True)
-                                progress_overlay.raise_()
-                                progress_overlay.update()
+                                text_changed = self._set_label_text_if_needed(progress_overlay, "✅")
+                                if not getattr(progress_overlay, '_thumb_ready_style_applied', False):
+                                    progress_overlay.setStyleSheet("""
+                                        QLabel {
+                                            background: transparent;
+                                            color: #10b981;
+                                            font-size: 24px;
+                                            font-weight: bold;
+                                            font-family: 'Segoe UI', 'Roboto', sans-serif;
+                                            border: none;
+                                            padding: 0px;
+                                        }
+                                    """)
+                                    progress_overlay._thumb_ready_style_applied = True
+                                    widget_changed = True
+                                became_visible = self._set_widget_visible_if_needed(progress_overlay, True)
+                                if text_changed or became_visible:
+                                    progress_overlay.raise_()
+                                    progress_overlay.update()
+                                    widget_changed = True
                             except RuntimeError:
                                 # Widget has been deleted, remove from tracking
                                 if series_key in self.series_widgets:
@@ -1737,7 +2032,7 @@ class ThumbnailManager(QObject):
                             self.ready_series.add(series_key)
                         else:
                             try:
-                                progress_overlay.setVisible(False)
+                                widget_changed = self._set_widget_visible_if_needed(progress_overlay, False) or widget_changed
                             except RuntimeError:
                                 # Widget has been deleted, remove from tracking
                                 if series_key in self.series_widgets:
@@ -1747,7 +2042,7 @@ class ThumbnailManager(QObject):
                             # Hide glass overlay when not in progress
                             if hasattr(widget, 'glass_overlay'):
                                 try:
-                                    widget.glass_overlay.setVisible(False)
+                                    widget_changed = self._set_widget_visible_if_needed(widget.glass_overlay, False) or widget_changed
                                 except RuntimeError:
                                     # Widget has been deleted, remove from tracking
                                     if series_key in self.series_widgets:
@@ -1760,10 +2055,10 @@ class ThumbnailManager(QObject):
                             progress_border = widget.progress_border
 
                             if progress_percent >= 100:
-                                progress_border.setDownloading(False)
-                                progress_border.setReady(True)
+                                widget_changed = self._set_progress_border_downloading_if_needed(progress_border, False) or widget_changed
+                                widget_changed = self._set_progress_border_ready_if_needed(progress_border, True) or widget_changed
                             elif progress_percent > 0:
-                                progress_border.setDownloading(True)
+                                widget_changed = self._set_progress_border_downloading_if_needed(progress_border, True) or widget_changed
                         except RuntimeError:
                             # Widget has been deleted, remove from tracking
                             if series_key in self.series_widgets:
@@ -1774,7 +2069,10 @@ class ThumbnailManager(QObject):
                     # Re-enable updates and force single repaint
                     try:
                         widget.setUpdatesEnabled(True)
-                        widget.update()
+                        if compact_ui:
+                            self._apply_compact_progress_state(widget, series_key, progress_percent, status_text)
+                        elif widget_changed:
+                            widget.update()
                     except RuntimeError:
                         # Widget has been deleted, remove from tracking
                         if series_key in self.series_widgets:
@@ -1848,13 +2146,22 @@ class ThumbnailManager(QObject):
             _tm_logger.debug("error hiding overlay (safe): %s", e)
 
 
-    def start_series_download(self, series_number):
+    def start_series_download(self, series_number, total_images=None):
         """
         Mark series as starting download - THREAD SAFE
         علامت‌گذاری شروع دانلود سری - thread safe
         """
         try:
             series_key = self._resolve_series_key(series_number)
+            total_images = self._remember_series_total_images(series_key, total_images)
+            current_state = self._get_series_projection_state(series_key)
+            if current_state == "downloading" and series_key in self.series_widgets:
+                if total_images is not None:
+                    self._set_series_count_label_text(series_key, f"{total_images} images")
+                return
+
+            self._set_series_projection_state(series_key, "downloading")
+            self.ready_series.discard(series_key)
             _t_thumb_start = time.perf_counter()
             if not hasattr(self, '_thumb_pipeline_start'):
                 self._thumb_pipeline_start = {}
@@ -1868,6 +2175,7 @@ class ThumbnailManager(QObject):
             # Find widget in series_widgets dictionary
             if series_key in self.series_widgets:
                 widget = self.series_widgets[series_key]
+                compact_ui = self._should_use_compact_progress_ui(series_key, 0.0)
 
                 # Check if widget is still valid
                 try:
@@ -1893,8 +2201,11 @@ class ThumbnailManager(QObject):
                     # Show glass overlay background
                     if hasattr(widget, 'glass_overlay'):
                         try:
-                            widget.glass_overlay.setVisible(True)
-                            widget.glass_overlay.raise_()
+                            if compact_ui:
+                                self._set_widget_visible_if_needed(widget.glass_overlay, False)
+                            else:
+                                if self._set_widget_visible_if_needed(widget.glass_overlay, True):
+                                    widget.glass_overlay.raise_()
                         except RuntimeError:
                             # Widget has been deleted, remove from tracking
                             if series_key in self.series_widgets:
@@ -1905,33 +2216,45 @@ class ThumbnailManager(QObject):
                     if hasattr(widget, 'progress_overlay'):
                         try:
                             progress_overlay = widget.progress_overlay
-                            progress_overlay.setText("0%\n...")
-                            progress_overlay.setStyleSheet("""
-                                QLabel {
-                                    background: transparent;
-                                    color: #ffffff;
-                                    font-size: 14px;
-                                    font-weight: bold;
-                                    font-family: 'Segoe UI', 'Roboto', sans-serif;
-                                    border: none;
-                                    padding: 0px;
-                                    line-height: 1.3;
-                                }
-                            """)
-                            progress_overlay.setVisible(True)
-                            progress_overlay.raise_()
-                            progress_overlay.update()
+                            overlay_text = "Downloading"
+                            if total_images is not None and total_images > 0:
+                                overlay_text = f"{total_images} images"
+                                self._set_series_count_label_text(series_key, overlay_text)
+                            if compact_ui:
+                                self._set_widget_visible_if_needed(progress_overlay, False)
+                            else:
+                                self._set_label_text_if_needed(progress_overlay, overlay_text)
+                                if not getattr(progress_overlay, '_b35_style_applied', False):
+                                    progress_overlay.setStyleSheet("""
+                                        QLabel {
+                                            background: transparent;
+                                            color: #ffffff;
+                                            font-size: 14px;
+                                            font-weight: bold;
+                                            font-family: 'Segoe UI', 'Roboto', sans-serif;
+                                            border: none;
+                                            padding: 0px;
+                                            line-height: 1.3;
+                                        }
+                                    """)
+                                    progress_overlay._b35_style_applied = True
+                                if self._set_widget_visible_if_needed(progress_overlay, True):
+                                    progress_overlay.raise_()
+                                progress_overlay.update()
                         except RuntimeError:
                             # Widget has been deleted, remove from tracking
                             if series_key in self.series_widgets:
                                 del self.series_widgets[series_key]
                             return
 
+                    if total_images is not None and total_images > 0:
+                            self._set_series_count_label_text(series_key, f"{total_images} images")
+
                     # Update border
                     if hasattr(widget, 'progress_border'):
                         try:
                             progress_border = widget.progress_border
-                            progress_border.setDownloading(True)
+                            self._set_progress_border_downloading_if_needed(progress_border, True)
                         except RuntimeError:
                             # Widget has been deleted, remove from tracking
                             if series_key in self.series_widgets:
@@ -1941,6 +2264,9 @@ class ThumbnailManager(QObject):
                 finally:
                     try:
                         widget.setUpdatesEnabled(True)
+                        if compact_ui:
+                            compact_text = f"0/{total_images}" if total_images is not None else ""
+                            self._apply_compact_progress_state(widget, series_key, 0.0, compact_text)
                         widget.update()
                     except RuntimeError:
                         # Widget has been deleted, remove from tracking
@@ -1953,17 +2279,51 @@ class ThumbnailManager(QObject):
                 if not hasattr(self, '_pending_download_series'):
                     self._pending_download_series = set()
                 self._pending_download_series.add(series_key)
+                if total_images is not None:
+                    if not hasattr(self, '_pending_download_totals'):
+                        self._pending_download_totals = {}
+                    self._pending_download_totals[series_key] = total_images
                 _tm_logger.debug("ThumbnailManager: start_series_download deferred for series %s", series_key)
                         
         except Exception as e:
             _tm_logger.exception("ThumbnailManager: error in start_series_download: %s", e)
     
-    def complete_series_download(self, series_number):
+    def complete_series_download(self, series_number, total_images=None):
         """
         Mark series as download complete AND ready for display - با سیستم اولویت‌دار
         """
         try:
             series_key = self._resolve_series_key(series_number)
+            total_images = self._remember_series_total_images(series_key, total_images)
+            current_state = self._get_series_projection_state(series_key)
+            if current_state == "completed":
+                if series_key in self.series_widgets:
+                    widget = self.series_widgets[series_key]
+                    state_changed = False
+                    try:
+                        if widget and hasattr(widget, 'progress_border'):
+                            state_changed = self._set_progress_border_downloading_if_needed(widget.progress_border, False) or state_changed
+                            state_changed = self._set_progress_border_ready_if_needed(widget.progress_border, True) or state_changed
+                    except (RuntimeError, AttributeError):
+                        pass
+                    try:
+                        if widget and hasattr(widget, 'progress_overlay'):
+                            state_changed = self._set_widget_visible_if_needed(widget.progress_overlay, False) or state_changed
+                        if widget and hasattr(widget, 'glass_overlay'):
+                            state_changed = self._set_widget_visible_if_needed(widget.glass_overlay, False) or state_changed
+                    except (RuntimeError, AttributeError):
+                        pass
+                    if total_images is not None and total_images > 0:
+                        label_text = f"{total_images}/{total_images}"
+                        existing_label = getattr(widget, 'count_label', None)
+                        if existing_label is None or existing_label.text() != label_text:
+                            self._set_series_count_label_text(series_key, label_text)
+                            state_changed = True
+                    if state_changed:
+                        self.apply_border_states_new()
+                return
+
+            self._set_series_projection_state(series_key, "completed")
 
             # 1. Mark as ready
             self.ready_series.add(series_key)
@@ -1982,9 +2342,21 @@ class ThumbnailManager(QObject):
                 widget = self.series_widgets[series_key]
                 try:
                     if widget and hasattr(widget, 'progress_border'):
-                        widget.progress_border.setDownloading(False)
-                        widget.progress_border.setReady(True)
+                        self._set_progress_border_downloading_if_needed(widget.progress_border, False)
+                        self._set_progress_border_ready_if_needed(widget.progress_border, True)
                 except (RuntimeError, AttributeError):
+                    pass
+                try:
+                    if widget and hasattr(widget, 'progress_overlay'):
+                        self._set_widget_visible_if_needed(widget.progress_overlay, False)
+                    if widget and hasattr(widget, 'glass_overlay'):
+                        self._set_widget_visible_if_needed(widget.glass_overlay, False)
+                except (RuntimeError, AttributeError):
+                    pass
+                try:
+                    if total_images is not None and total_images > 0:
+                        self._set_series_count_label_text(series_key, f"{total_images}/{total_images}")
+                except Exception:
                     pass
 
             # Schedule coalesced border repaint (immediate=False batches within 150ms)

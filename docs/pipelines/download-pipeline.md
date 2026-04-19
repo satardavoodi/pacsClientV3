@@ -143,17 +143,20 @@ All retry constants live in `modules/download_manager/core/constants.py`:
 Layer 1: send_request() retry wrapper
   أ¢â€‌â€‌أ¢â€‌â‚¬ Retries individual socket requests up to REQUEST_MAX_RETRIES
   أ¢â€‌â€‌أ¢â€‌â‚¬ Exponential backoff + reconnect between retries
+  أ¢â€‌â€‌أ¢â€‌â‚¬ Backoff wait is cancellation-aware so preemption can abort before the next retry/reconnect
   أ¢â€‌â€‌أ¢â€‌â‚¬ Login requests are NOT retried (fail-fast)
 
 Layer 2: connect_with_retry() (socket level)
   أ¢â€‌â€‌أ¢â€‌â‚¬ Exponential backoff with jitter, capped at RECONNECT_MAX_DELAY
   أ¢â€‌â€‌أ¢â€‌â‚¬ Formula: delay = min(base * factor^attempt, max_delay) + random(0, jitter)
+  أ¢â€‌â€‌أ¢â€‌â‚¬ Reconnect backoff wait is cancellation-aware so a preempted worker does not keep the pool slot occupied through the full retry ladder
 
 Layer 3: Per-series retry loop (series_downloader.py)
   أ¢â€‌â€‌أ¢â€‌â‚¬ After main download loop completes, retries ALL failed series
   أ¢â€‌â€‌أ¢â€‌â‚¬ Up to MAX_SERIES_RETRIES rounds (3 by default)
   أ¢â€‌â€‌أ¢â€‌â‚¬ Exponential backoff between rounds: 3s أ¢â€ â€™ 6s أ¢â€ â€™ 12s
   أ¢â€‌â€‌أ¢â€‌â‚¬ Reconnects socket between retry rounds via connect_with_retry()
+  أ¢â€‌â€‌أ¢â€‌â‚¬ If reconnect fails because cancellation/preemption was requested, the round exits as auto-pause/preemption instead of being counted as a hard failure
 ```
 
 ## Validation Rules (R17) أ¢â‚¬â€‌ Duplicate/Resume Detection
@@ -250,6 +253,7 @@ In FAST mode, users may drag/drop any series while a study is already downloadin
 - `_on_series_retry()` avoids false skip when requested series differs from active same-study series.
 - `_pause_all_active_downloads()` first cancels by active worker pool, then normalizes state to `PAUSED`.
 - Socket receive/retry loops check cancellation early to shorten preemption latency.
+- Reconnect and retry backoff sleeps are also cancellation-aware, so preempted workers stop waiting inside retry ladders and free slots sooner.
 
 ### Operational note
 
@@ -267,6 +271,7 @@ This avoids a heavyweight monolithic orchestrator while preserving deterministic
 |------------|----------|
 | Network timeout | Exponential backoff retry (3 attempts, jitter) via `send_request` wrapper |
 | Socket disconnect mid-download | `connect_with_retry()` with exponential backoff + jitter |
+| Preemption during retry/reconnect backoff | Abort wait early, classify as auto-pause/preemption, and release worker path sooner |
 | Series download failure | Per-series retry loop: 3 rounds with backoff (3sأ¢â€ â€™6sأ¢â€ â€™12s) |
 | Partial download (app restart) | R17a detects non-terminal state أ¢â€ â€™ resume path |
 | Partial download (retry button) | Per-patient: deletes complete series, keeps incomplete + R19b/R19 resume |
@@ -299,6 +304,7 @@ This avoids a heavyweight monolithic orchestrator while preserving deterministic
 19. **Lazy connection pool (v2.2.8.0)**: `SocketConnectionPool` creates connections on demand instead of eagerly at init أ¢â‚¬â€‌ validates `is_connected()` before returning pooled clients
 20. **gRPC auto-reconnect (v2.2.8.0)**: `DicomGrpcClient._ensure_stub()` reconnects if channel/stub is `None` أ¢â‚¬â€‌ subsequent thumbnail calls succeed after transient failure
 21. **No hardcoded server IPs (v2.2.8.0)**: `constants.py` defaults to `localhost` with `AIPACS_SOCKET_HOST` env var override أ¢â‚¬â€‌ production IPs come from config only
+22. **Cancellation-aware retry backoff (2026-04-18)**: socket request, reconnect, and per-batch retry sleeps are sliced so cancel/preemption can break out before the next retry attempt; reconnect failures caused by cancellation now preserve the auto-paused/preemption path instead of being recorded as ordinary series failure
 
 ## Network Architecture Reference
 
@@ -331,6 +337,13 @@ and the complete file map, see `docs/architecture/network-architecture.md`.
 | S25 | Rapid toggle stress: 100 rapid NORMALأ¢â€ â€‌CRITICAL toggles, state remains consistent |
 | S26 | Auto-resume after critical done: peers resume when critical study completes |
 | S27 | Series-interrupt: same-study worker cancelled, state=PENDING, viewed_series updated |
+
+### Focused regression additions (2026-04-18)
+
+- `tests/download_manager/test_socket_client_cancellation.py`
+  - `test_connect_with_retry_stops_when_cancelled_during_backoff`
+  - `test_send_request_stops_retry_when_cancelled_during_backoff`
+  - `test_series_downloader_reconnect_cancel_returns_preempted_result`
 
 ### Stress Tests (`tests/download_manager/test_dm_stress.py`)
 

@@ -503,10 +503,13 @@ class _DMWorkersMixin:
                 # sets state to PENDING before this signal arrives.  Do NOT count
                 # preemptions against auto-retry — just let the pipeline re-queue.
                 state = self.state_store.get(study_uid)
-                if state and state.status == DownloadStatus.PENDING:
+                if state and (
+                    state.status == DownloadStatus.PENDING
+                    or (state.status == DownloadStatus.PAUSED and state.is_auto_paused)
+                ):
                     logger.info(
-                        f"⏸️ [COMPLETION] Ignoring failure for preempted (PENDING) study "
-                        f"{study_uid[:40]}... — will be re-queued automatically"
+                        f"⏸️ [COMPLETION] Ignoring failure for preempted study "
+                        f"{study_uid[:40]}... status={state.status.value} — will be re-queued automatically"
                     )
                     self._refresh_table_order()
                     self._check_auto_resume()

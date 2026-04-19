@@ -11,9 +11,17 @@ logger = logging.getLogger(__name__)
 
 
 class SocketService:
-    """
-    Reusable app-wide Socket service.
-    Provides a single place to manage connection and simple requests.
+    """App-wide DICOM download socket facade (wraps SocketDicomClient).
+
+    ─── Socket routing guide ───────────────────────────────────────
+    • Patient list / report metadata  → modules.network.socket_client
+      (PatientListSocketClient + SocketConnectionPool)
+    • DICOM batch downloads           → modules.download_manager.network.socket_client
+      (SocketDicomClient — per-worker, resume/preempt/retry)
+    • This class (SocketService)      → convenience singleton around
+      SocketDicomClient for ad-hoc app-level DICOM ops (study info,
+      quick download).  NOT used by the Download Manager hot path.
+    ────────────────────────────────────────────────────────────────
     """
 
     def __init__(self):

@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 from pathlib import Path
 
+from modules.viewer.viewer_backend_config import BACKEND_PYDICOM_QT
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage, generate_uid
 
@@ -54,6 +55,22 @@ def _make_flat_study(tmp_path: Path, *, series_number: int = 1) -> Path:
         series_uid=series_uid,
         series_number=series_number,
     )
+    return root
+
+
+def _make_series_folder_study(tmp_path: Path, *, series_number: int = 1, instance_count: int = 3) -> Path:
+    root = tmp_path / "study-root"
+    series_dir = root / str(series_number)
+    series_dir.mkdir(parents=True)
+    study_uid = generate_uid()
+    series_uid = generate_uid()
+    for idx in range(1, instance_count + 1):
+        _write_test_dicom(
+            series_dir / f"{idx}.dcm",
+            study_uid=study_uid,
+            series_uid=series_uid,
+            series_number=series_number,
+        )
     return root
 
 
@@ -190,3 +207,97 @@ def test_pipeline_manager_import_supports_sync_logo_check(tmp_path, monkeypatch)
     )
 
     assert len(stored_data) == 1
+
+
+def test_reconcile_db_instances_with_disk_reads_only_missing_headers(tmp_path):
+    root = _make_series_folder_study(tmp_path, series_number=1, instance_count=3)
+    series_dir = root / "1"
+    db_instances = [
+        {
+            "instance_number": 1,
+            "instance_path": str(series_dir / "1.dcm"),
+            "rows": 2,
+            "columns": 2,
+            "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            "image_position_patient": [0.0, 0.0, 0.0],
+            "pixel_spacing": [1.0, 1.0],
+        },
+        {
+            "instance_number": 2,
+            "instance_path": str(series_dir / "2.dcm"),
+            "rows": 2,
+            "columns": 2,
+            "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            "image_position_patient": [0.0, 0.0, 0.0],
+            "pixel_spacing": [1.0, 1.0],
+        },
+    ]
+
+    merged, changed = image_io_mod._reconcile_db_instances_with_disk(series_dir, db_instances)
+
+    assert changed is True
+    assert len(merged) == 3
+    assert merged[-1]["instance_path"] == str(series_dir / "3.dcm")
+    assert merged[-1]["rows"] == 2
+    assert merged[-1]["columns"] == 2
+    assert merged[-1]["image_orientation_patient"] == [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+
+
+def test_load_single_series_by_number_fast_path_merges_disk_gap_without_backfill(tmp_path, monkeypatch):
+    root = _make_series_folder_study(tmp_path, series_number=1, instance_count=3)
+    series_dir = root / "1"
+    db_instances = [
+        {
+            "instance_number": 1,
+            "instance_path": str(series_dir / "1.dcm"),
+            "rows": 2,
+            "columns": 2,
+            "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            "image_position_patient": [0.0, 0.0, 0.0],
+            "pixel_spacing": [1.0, 1.0],
+        },
+        {
+            "instance_number": 2,
+            "instance_path": str(series_dir / "2.dcm"),
+            "rows": 2,
+            "columns": 2,
+            "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            "image_position_patient": [0.0, 0.0, 0.0],
+            "pixel_spacing": [1.0, 1.0],
+        },
+    ]
+
+    import PacsClient.utils.database as db_mod
+
+    monkeypatch.setattr(db_mod, "find_series_pk_by_number", lambda series_number, study_pk: 77)
+    monkeypatch.setattr(image_io_mod, "get_instances_by_series_pk", lambda series_pk, group_id=0: list(db_instances))
+    monkeypatch.setattr(image_io_mod, "_get_instances_from_best_group", lambda series_pk: (0, []))
+    monkeypatch.setattr(
+        image_io_mod,
+        "_get_cached_metadata",
+        lambda series_pk, instances: {"series": {"series_number": "1", "image_count": 2}, "instances": list(instances)},
+    )
+    monkeypatch.setattr(
+        image_io_mod,
+        "_backfill_instance_orientation",
+        lambda instances: (_ for _ in ()).throw(AssertionError("backfill should not run for complete merged geometry")),
+    )
+
+    result = list(
+        image_io_mod.load_single_series_by_number(
+            str(root),
+            1,
+            study_pk=123,
+            viewer_backend=BACKEND_PYDICOM_QT,
+            allow_lazy_backend=True,
+        )
+    )
+
+    assert len(result) == 1
+    vtk_stub, metadata, patient_info = result[0]
+    assert vtk_stub is not None
+    assert patient_info == (None, 123)
+    assert metadata["series"]["image_count"] == 3
+    assert len(metadata["instances"]) == 3
+    assert metadata["instances"][-1]["instance_path"] == str(series_dir / "3.dcm")
+    assert metadata["series"]["viewer_backend"] == BACKEND_PYDICOM_QT

@@ -1,6 +1,6 @@
 # AIPacs
 
-Stable release: `v2.3.3` (`2026-04-14`)
+Stable release: `v2.3.5` (`2026-04-19`)
 
 Modular DICOM workstation for viewing, download orchestration, printing, education, and AI-assisted workflows.
 
@@ -12,7 +12,8 @@ Modular DICOM workstation for viewing, download orchestration, printing, educati
 - [Module Catalog](docs/modules/README.md)
 - [Development Setup](docs/development/setup-and-tooling.md)
 - [Current Release Notes](docs/releases/RELEASE_NOTES.md)
-- [Version 2.3.3 Release Notes](docs/releases/VERSION_2.3.3_RELEASE.md)
+- [Version 2.3.5 Release Notes](docs/releases/VERSION_2.3.5_RELEASE.md)
+- [Version 2.3.4 Release Notes](docs/releases/VERSION_2.3.4_RELEASE.md)
 - [Version 2.2.7 Release Notes](docs/releases/VERSION_2.2.7_RELEASE.md)
 - [Windows Release Flow](builder/docs/WINDOWS_RELEASE_FLOW.md)
 - [Plugin Package Workspace](builder/plugin%20package/README.md)
@@ -54,6 +55,15 @@ Recommended PowerShell setup:
 ```powershell
 .\setup_env.ps1
 .\run_app.ps1
+```
+
+`run_app.ps1` now also mirrors terminal stdout/stderr to a timestamped **UTF-8** session file under `log/` and updates `log/latest_terminal_log.txt` so the newest console log is easy to find.
+
+Quick lookup for the latest captured terminal session:
+
+```powershell
+.\tools\diagnostics\Get-LatestTerminalLog.ps1
+.\tools\diagnostics\Get-LatestTerminalLog.ps1 -Tail
 ```
 
 Manual runtime setup:

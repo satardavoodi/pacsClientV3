@@ -36,7 +36,7 @@ If you only read one file first, read:
 - `docs/pipelines/IMAGE_PIPELINE_REFERENCE.md`
 
 ### Historical/proposal material (not canonical truth)
-- `docs/pipelines/FAST_MODE_DOWNLOAD_VIEWING_PLAN.md` (proposal-era planning context)
+- `docs/plans/pipelines/FAST_MODE_DOWNLOAD_VIEWING_PLAN.md` (proposal-era planning context)
 
 ---
 

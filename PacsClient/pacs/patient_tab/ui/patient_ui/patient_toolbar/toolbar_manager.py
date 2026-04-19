@@ -18,6 +18,7 @@ from modules.viewer.interactor_styles.ai_chat_interactorstyle import AIChatInter
 from PacsClient.pacs.patient_tab.utils import NodeViewer, MatrixSelector
 from PacsClient.utils import ICON_PATH
 from modules.network.upload_download_attchments import upload_attachments_for_study
+from modules.viewer.viewer_backend_config import BACKEND_PYDICOM_QT
 from PacsClient.utils.config import ATTACHMENT_PATH
 from PacsClient.utils import list_files_in_folder
 from PacsClient.utils import get_attachments_uploaded
@@ -4138,6 +4139,8 @@ class ToolbarManager:
                 logger.info(f"   📦 [MPR OPEN] thumb_metadata keys: {thumb_metadata.keys() if thumb_metadata else 'None'}")
                 
                 logger.info(f"   📦 [MPR OPEN] Using series_number: {series_number}, index: {active_series_index}")
+                thumb_series_meta = thumb_metadata.get('series', {}) if isinstance(thumb_metadata, dict) else {}
+                source_series_path = thumb_series_meta.get('series_path')
                 
                 if vtk_image_data is None:
                     logger.error(f"   ❌ [MPR OPEN] No VTK image data for series {series_number} at index {active_series_index}")
@@ -4152,12 +4155,24 @@ class ToolbarManager:
                 logger.info(f"   ✅ Found series {series_number} at list index {active_series_index}")
                 logger.info(f"   vtk_image_data dimensions: {vtk_image_data.GetDimensions()}")
 
-                # In FAST mode (pydicom_qt) the stored vtk_image_data is a stub
-                # (dimensions only, no pixel scalars). StandardMPRViewer needs real
-                # scalar data, so load the full VTK volume from disk if necessary.
-                if vtk_image_data.GetPointData().GetScalars() is None:
+                # In FAST mode (pydicom_qt) the stored vtk_image_data can be a lightweight
+                # placeholder. Even if placeholder scalars are allocated, MPR needs a full
+                # decoded volume from DICOM files.
+                thumb_backend = str(thumb_series_meta.get('viewer_backend', '') or '').strip().lower()
+                needs_full_vtk_for_mpr = (thumb_backend == str(BACKEND_PYDICOM_QT).lower())
+                if not needs_full_vtk_for_mpr:
+                    try:
+                        if vtk_image_data.GetPointData().GetScalars() is None:
+                            needs_full_vtk_for_mpr = True
+                    except Exception:
+                        needs_full_vtk_for_mpr = True
+
+                if needs_full_vtk_for_mpr:
                     logger.info("   ℹ️ [MPR OPEN] vtk_image_data is a FAST-mode stub — loading full VTK from disk")
-                    full_vtk = self._load_full_vtk_for_mpr(series_number=series_number)
+                    full_vtk = self._load_full_vtk_for_mpr(
+                        series_number=series_number,
+                        preferred_series_path=source_series_path,
+                    )
                     if full_vtk is None:
                         logger.error("   ❌ [MPR OPEN] Failed to load full VTK data for MPR")
                         QMessageBox.warning(
@@ -4369,6 +4384,33 @@ class ToolbarManager:
                 if vtk_image_data is None:
                     QMessageBox.warning(self.patient_widget, "No Image Data", f"No VTK image data available for series {series_number}.")
                     return
+
+                thumb_metadata = series_data.get('metadata', {})
+                thumb_series_meta = thumb_metadata.get('series', {}) if isinstance(thumb_metadata, dict) else {}
+                source_series_path = thumb_series_meta.get('series_path')
+                thumb_backend = str(thumb_series_meta.get('viewer_backend', '') or '').strip().lower()
+                needs_full_vtk_for_mpr = (thumb_backend == str(BACKEND_PYDICOM_QT).lower())
+                if not needs_full_vtk_for_mpr:
+                    try:
+                        if vtk_image_data.GetPointData().GetScalars() is None:
+                            needs_full_vtk_for_mpr = True
+                    except Exception:
+                        needs_full_vtk_for_mpr = True
+
+                if needs_full_vtk_for_mpr:
+                    full_vtk = self._load_full_vtk_for_mpr(
+                        series_number=series_number,
+                        preferred_series_path=source_series_path,
+                    )
+                    if full_vtk is None:
+                        QMessageBox.warning(
+                            self.patient_widget,
+                            "MPR Not Available",
+                            "Cannot load the full volume for Curved MPR in FAST mode.\n\n"
+                            "Make sure the series is fully downloaded, then try again.",
+                        )
+                        return
+                    vtk_image_data = full_vtk
             except Exception as e:
                 QMessageBox.warning(self.patient_widget, "Data Error", f"Error accessing series data: {str(e)}")
                 return
@@ -5202,7 +5244,7 @@ class ToolbarManager:
             
         logger.info("Original viewer restored successfully")
 
-    def _load_full_vtk_for_mpr(self, series_number):
+    def _load_full_vtk_for_mpr(self, series_number, preferred_series_path=None):
         """
         Resolve the full VTK volume that external modules (MPR, 3D, etc.) need.
 
@@ -5234,6 +5276,29 @@ class ToolbarManager:
             from natsort import natsorted
             from PySide6.QtWidgets import QApplication
             from PySide6.QtCore import Qt as _Qt
+
+            # ── Step 0: preferred direct series path from thumbnail metadata ──
+            if preferred_series_path:
+                try:
+                    pref_path = Path(str(preferred_series_path))
+                    if pref_path.is_file():
+                        pref_path = pref_path.parent
+                    if pref_path.exists() and pref_path.is_dir():
+                        pref_dcm_files = natsorted([str(f) for f in pref_path.glob('*.dcm')])
+                        if not pref_dcm_files:
+                            pref_dcm_files = natsorted([str(f) for f in pref_path.iterdir() if f.is_file()])
+                        if pref_dcm_files:
+                            logger.info(
+                                f"[MPR VTK LOAD] Using preferred series path from metadata: {pref_path} "
+                                f"({len(pref_dcm_files)} files)"
+                            )
+                            vtk_data = load_vtk_from_dicom_paths(pref_dcm_files)
+                            if vtk_data is not None and vtk_data.GetPointData().GetScalars() is not None:
+                                logger.info(f"[MPR VTK LOAD] ✓ dims={vtk_data.GetDimensions()} (preferred path)")
+                                return vtk_data
+                            logger.warning("[MPR VTK LOAD] Preferred series path returned empty/stub data; falling back")
+                except Exception as e_pref:
+                    logger.warning(f"[MPR VTK LOAD] Preferred series path failed: {e_pref}")
 
             # ── Step 1: resolve the study path (same logic used across the toolbar) ──
             study_path = getattr(self.patient_widget, 'import_folder_path', None)

@@ -118,8 +118,18 @@ class ImageSliceBooster:
     def __init__(self, window: int = _DEFAULT_WINDOW, logger=None) -> None:
         self._window: int = max(1, int(window))
         self._logger = logger
+        # B4.2: programmatic disable — when True, all public methods are no-ops.
+        # Set by ViewerController when FAST backend is active (the pipeline has
+        # its own pixel_cache + disk_cache + prefetch that fully supersede the
+        # booster).  Eliminates one daemon thread, ~20 MB RAM, and GIL
+        # contention per active series.
+        self.disabled: bool = _BOOSTER_DISABLED
         self._lock: threading.Lock = threading.Lock()
         self._cancel: threading.Event = threading.Event()
+        # B3.6: Interaction pause gate — worker waits on this before each decode.
+        # set() = unpaused (go), clear() = paused (block).
+        self._interaction_gate: threading.Event = threading.Event()
+        self._interaction_gate.set()  # initially unpaused
         self._active_series: Optional[str] = None
         self._instance_paths: List[str] = []   # ordered DICOM file paths
         self._center_slice: int = 0
@@ -153,9 +163,8 @@ class ImageSliceBooster:
         center_slice:
             Initial slice index around which to build the window (0-based).
         """
-        # T1: skip entirely when booster is disabled
-        if _BOOSTER_DISABLED:
-            self._log("DISABLED by AIPACS_DISABLE_BOOSTER env var")
+        # T1 + B4.2: skip entirely when booster is disabled
+        if self.disabled:
             return
 
         sn = str(series_number)
@@ -214,6 +223,8 @@ class ImageSliceBooster:
         Slices outside ``[new_center - WINDOW - HYSTERESIS ..
         new_center + WINDOW + HYSTERESIS]`` are evicted.
         """
+        if self.disabled:
+            return
         sn = str(series_number)
         with self._lock:
             if self._active_series != sn:
@@ -289,6 +300,8 @@ class ImageSliceBooster:
         instance_paths:
             Updated **ordered** list of absolute DICOM file paths.
         """
+        if self.disabled:
+            return
         sn = str(series_number)
         paths: List[str] = list(instance_paths or [])
         with self._lock:
@@ -370,6 +383,23 @@ class ImageSliceBooster:
         self._cancel.clear()
         self._log("CLEARED")
 
+    def pause_for_interaction(self) -> None:
+        """B3.6: Pause the booster worker during active user interaction.
+
+        The worker blocks on ``_interaction_gate`` before each slice decode.
+        Clearing the event makes the worker wait, eliminating GIL contention
+        and stale decode work during scroll/drag.
+        """
+        if self.disabled:
+            return
+        self._interaction_gate.clear()
+
+    def resume_from_interaction(self) -> None:
+        """B3.6: Resume the booster worker after interaction settles."""
+        if self.disabled:
+            return
+        self._interaction_gate.set()
+
     @property
     def active_series(self) -> Optional[str]:
         """Currently active series number, or None if inactive."""
@@ -410,6 +440,23 @@ class ImageSliceBooster:
         for idx in indices:
             if self._cancel.is_set():
                 return
+
+            # B3.6: Wait if paused for user interaction.  Block up to 5s
+            # (will unblock immediately when resume_from_interaction is called
+            # or when _cancel is set).  Re-check cancel after wake.
+            if not self._interaction_gate.is_set():
+                self._interaction_gate.wait(timeout=5.0)
+                if self._cancel.is_set():
+                    return
+
+            # B3.6: Pre-decode position relevance check — skip slices that
+            # are now far from the user's current center.  Catches stale work
+            # when the user scrolled while the worker was paused or decoding
+            # previous slices.
+            with self._lock:
+                _current_center = self._center_slice
+            if abs(idx - _current_center) > self._window:
+                continue
 
             # Skip already-cached slices without holding the lock for long.
             with self._lock:

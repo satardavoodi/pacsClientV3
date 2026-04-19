@@ -155,6 +155,7 @@ class QtSliceViewer(QWidget):
         # View transform (zoom + pan)
         self._zoom: float = 1.0
         self._pan_offset: QPointF = QPointF(0.0, 0.0)
+        self._fit_to_viewport: bool = True
 
         # Window/Level interaction state
         self._wl_dragging: bool = False
@@ -238,12 +239,14 @@ class QtSliceViewer(QWidget):
         """Reset zoom and pan to fit image in widget."""
         self._zoom = self._calculate_fit_zoom()
         self._pan_offset = QPointF(0.0, 0.0)
+        self._fit_to_viewport = True
         self.update()
 
     def zoom_to_fit(self) -> float:
         """Zoom to fit and return the zoom factor."""
         self._zoom = self._calculate_fit_zoom()
         self._pan_offset = QPointF(0.0, 0.0)
+        self._fit_to_viewport = True
         self.update()
         return self._zoom
 
@@ -356,7 +359,26 @@ class QtSliceViewer(QWidget):
 
         self._last_paint_ms = (time.perf_counter() - t_start) * 1000.0
 
+    def _notify_parent_view_selected(self) -> None:
+        """Notify the parent viewport that this FAST viewer was clicked."""
+        p = self.parent()
+        if p is None:
+            return
+        try:
+            callback = getattr(p, 'change_container_border', None)
+            if callable(callback):
+                callback()
+        except Exception:
+            pass
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() in (
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.MiddleButton,
+        ):
+            self._notify_parent_view_selected()
+
         pos = event.position()
 
         # Right button: Window/Level adjustment
@@ -401,6 +423,7 @@ class QtSliceViewer(QWidget):
 
         # Pan drag
         if self._pan_dragging:
+            self._fit_to_viewport = False
             delta = pos - self._pan_start_pos
             self._pan_offset = self._pan_start_offset + delta
             self.update()
@@ -437,6 +460,7 @@ class QtSliceViewer(QWidget):
 
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             # Zoom
+            self._fit_to_viewport = False
             zoom_factor = 1.1 if delta > 0 else 1.0 / 1.1
             old_zoom = self._zoom
             self._zoom = max(self.MIN_ZOOM, min(self.MAX_ZOOM, self._zoom * zoom_factor))
@@ -462,7 +486,10 @@ class QtSliceViewer(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        # Don't auto-reset zoom on resize — maintain user's zoom
+        if self._fit_to_viewport and self._image_width > 0 and self._image_height > 0:
+            self._zoom = self._calculate_fit_zoom()
+            self._pan_offset = QPointF(0.0, 0.0)
+            self.update()
 
     # ── Private: painting ─────────────────────────────────────────────
 

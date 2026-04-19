@@ -13,7 +13,6 @@ from PacsClient.utils.theme_manager import get_theme_manager
 from . import settings_ui
 from . import home_ui
 from .theme_ui import ThemeCustomizationDialog
-from modules.data_analysis import DataAnalysisDashboard
 from .user_manual_widget import UserManualWidget
 
 
@@ -534,11 +533,16 @@ class ControlPanelWindow(object):
         # Data page
         self.dataPage = QWidget()
         self.verticalLayout_29 = QVBoxLayout(self.dataPage)
-        auth_user = None
+        self.data_analysis_widget = None
+        self._data_analysis_placeholder = QLabel(
+            "Data Analysis loads on demand.\n"
+            "Open the Data Analysis page to initialize dashboards."
+        )
+        self._data_analysis_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.verticalLayout_29.addWidget(self._data_analysis_placeholder)
+        self._data_analysis_auth_user = None
         if getattr(self.MainWindow, "host_window", None) is not None:
-            auth_user = getattr(self.MainWindow.host_window, "auth_user", None)
-        self.data_analysis_widget = DataAnalysisDashboard(self.dataPage, auth_user=auth_user)
-        self.verticalLayout_29.addWidget(self.data_analysis_widget)
+            self._data_analysis_auth_user = getattr(self.MainWindow.host_window, "auth_user", None)
         self.mainPages.addWidget(self.dataPage)
 
         # Reports page
@@ -755,8 +759,22 @@ class ControlPanelWindow(object):
         """Open data analysis dashboard and refresh metrics."""
         self.mainPages.setCurrentIndex(2)
         try:
-            if hasattr(self, "data_analysis_widget") and hasattr(self.data_analysis_widget, "refresh_data"):
-                self.data_analysis_widget.refresh_data()
+            if self.data_analysis_widget is None:
+                from modules.data_analysis import DataAnalysisDashboard
+
+                if hasattr(self, "_data_analysis_placeholder") and self._data_analysis_placeholder is not None:
+                    self.verticalLayout_29.removeWidget(self._data_analysis_placeholder)
+                    self._data_analysis_placeholder.deleteLater()
+                    self._data_analysis_placeholder = None
+
+                self.data_analysis_widget = DataAnalysisDashboard(
+                    self.dataPage,
+                    auth_user=self._data_analysis_auth_user,
+                )
+                self.verticalLayout_29.addWidget(self.data_analysis_widget)
+
+            if hasattr(self.data_analysis_widget, "refresh_data"):
+                self.data_analysis_widget.refresh_data(force_storage_refresh=True)
         except Exception as e:
             print(f"Error opening data analysis dashboard: {e}")
         

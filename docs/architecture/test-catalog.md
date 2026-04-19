@@ -328,6 +328,7 @@ tests/
 │   └── dm_results.txt             ← latest output
 ├── viewer/
 │   ├── test_fast_viewer_pipeline.py ← 11 progressive display tests
+│   ├── test_progressive_admission_storm.py ← storm/admission gate burst-shock + bounded-churn tests
 │   ├── test_pydicom_backend_geometry.py
 │   ├── test_viewer_backend_config.py
 │   ├── test_viewer_gpu_boost.py

@@ -1,15 +1,20 @@
 """Priority download: thumbnail-click priority, single series immediate download"""
 # Auto-generated from home_ui.py — Phase 3 split
 
-
-
 import asyncio
+import logging as _logging
 import traceback
 
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QSize
 
+# Redirect print() to logger to avoid synchronous console I/O on Windows.
+_print_logger = _logging.getLogger(__name__)
+def print(*args, **_kw):  # noqa: A001
+    _print_logger.debug(' '.join(str(a) for a in args))
+
 from PacsClient.components import DicomGrpcClient
 from PacsClient.utils import get_connection_database, get_all_patients, search_patients_local, find_patient_pk, find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
+from PacsClient.utils.series_metadata_service import SeriesMetadataService
 from PacsClient.utils.config import SOURCE_PATH
 from modules.network import dicom_service_pb2, dicom_service_pb2_grpc
 from pathlib import Path
@@ -19,6 +24,13 @@ from .widget import PRIORITY_MANAGER_AVAILABLE
 
 class _HPPriorityMixin:
     """Priority download: thumbnail-click priority, single series immediate download"""
+
+    def _get_series_metadata_service(self) -> SeriesMetadataService:
+        svc = getattr(self, '_series_metadata_service', None)
+        if svc is None:
+            svc = SeriesMetadataService()
+            self._series_metadata_service = svc
+        return svc
 
     def _handle_priority_download_from_thumbnail(self, series_number, study_uid, widget=None):
         """
@@ -108,11 +120,19 @@ class _HPPriorityMixin:
                 if widget is None:
                     widget = self._find_widget_by_study_uid(study_uid)
                 if widget and hasattr(widget, 'thumbnail_manager'):
-                    widget.thumbnail_manager.start_series_download(str(series_number))
-                    widget.thumbnail_manager.update_series_progress(
-                        series_number=str(series_number),
-                        progress_percent=0.0,
-                        status_text="Prioritized..."
+                    expected_images = 0
+                    try:
+                        task = download_manager._tasks.get(study_uid) if hasattr(download_manager, '_tasks') else None
+                        if task:
+                            for s in getattr(task, 'series_list', []) or []:
+                                if str(getattr(s, 'series_number', '')) == str(series_number):
+                                    expected_images = int(getattr(s, 'image_count', 0) or 0)
+                                    break
+                    except Exception:
+                        expected_images = 0
+                    widget.thumbnail_manager.start_series_download(
+                        str(series_number),
+                        total_images=expected_images if expected_images > 0 else None,
                     )
                 
                 # Don't start a parallel download - let Download Manager continue
@@ -289,11 +309,9 @@ class _HPPriorityMixin:
                 
                 # Update thumbnail UI
                 if hasattr(widget, 'thumbnail_manager'):
-                    widget.thumbnail_manager.start_series_download(str(series_number))
-                    widget.thumbnail_manager.update_series_progress(
-                        series_number=str(series_number),
-                        progress_percent=0.0,
-                        status_text="Starting..."
+                    widget.thumbnail_manager.start_series_download(
+                        str(series_number),
+                        total_images=int(target_series.get('image_count', 0) or 0) if target_series else None,
                     )
                 
                 print(f"✅ Immediate priority download started for series {series_number}")
@@ -343,29 +361,14 @@ class _HPPriorityMixin:
         # سپس از دیتابیس بررسی می‌کنیم
         print(f"🔍 Series list not found in widget, checking database...")
         try:
-            from PacsClient.utils.db_manager import get_series_by_study_uid
-            series_from_db = get_series_by_study_uid(study_uid)
+            series_from_db = self._get_series_metadata_service().get_series_list(study_uid)
             if series_from_db:
                 print(f"📋 Found {len(series_from_db)} series from database")
-                # تبدیل به فرمت استاندارد
-                formatted_series = []
-                for series in series_from_db:
-                    formatted_series.append({
-                        'series_uid': series.get('series_uid', ''),
-                        'series_number': series.get('series_number', ''),
-                        'series_description': series.get('series_description', ''),
-                        'modality': series.get('modality', ''),
-                        'image_count': series.get('image_count', 0),
-                        'protocol_name': series.get('protocol_name', ''),
-                        'body_part_examined': series.get('body_part_examined', ''),
-                        'manufacturer': series.get('manufacturer', ''),
-                        'institution_name': series.get('institution_name', '')
-                    })
                 # کش کردن برای درخواست‌های بعدی
                 if not hasattr(self, '_series_cache'):
                     self._series_cache = {}
-                self._series_cache[cache_key] = formatted_series
-                return formatted_series
+                self._series_cache[cache_key] = series_from_db
+                return series_from_db
         except Exception as e:
             print(f"⚠️ Error fetching series from database: {e}")
         
@@ -496,23 +499,23 @@ class _HPPriorityMixin:
                 
                 # Show progress in UI
                 if hasattr(widget, 'thumbnail_manager'):
-                    widget.thumbnail_manager.start_series_download(str(series_number))
+                    widget.thumbnail_manager.start_series_download(
+                        str(series_number),
+                        total_images=int(expected_count or 0) if expected_count else None,
+                    )
                 
                 # Download with progress callback
                 def progress_callback(event_type, series_num, progress, current=0, total=0):
                     try:
-                        if event_type == 'series_progress' and hasattr(widget, 'thumbnail_manager'):
-                            status_text = f"{current}/{total}" if total > 0 else ""
-                            widget.thumbnail_manager.update_series_progress(
-                                str(series_num), 
-                                progress,
-                                status_text
-                            )
+                        if event_type == 'series_progress':
                             if progress % 25 == 0:
                                 print(f"📊 Progress: Series {series_num} - {progress}% ({current}/{total})")
                         elif event_type == 'series_complete':
                             if hasattr(widget, 'thumbnail_manager'):
-                                widget.thumbnail_manager.complete_series_download(str(series_num))
+                                widget.thumbnail_manager.complete_series_download(
+                                    str(series_num),
+                                    total_images=int(total or expected_count or 0) if (total or expected_count) else None,
+                                )
                     except Exception as e:
                         print(f"⚠️ Progress callback error: {e}")
                 

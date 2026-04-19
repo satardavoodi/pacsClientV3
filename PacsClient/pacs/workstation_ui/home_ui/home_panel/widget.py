@@ -182,6 +182,10 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
         self._background_tasks = set()  # مجموعه‌ای برای مدیریت تسک‌های پس‌زمینه
         # Guard to prevent duplicate patient widget opens
         self._opening_studies = set()
+        self._deferred_patient_studies_refresh = {}
+        self._deferred_series_info_refresh = {}
+        self._deferred_attachment_downloads = set()
+        self._open_trace_contexts = {}
         
         # Initialize custom tab manager with title bar integration
         self.custom_tab_manager = CustomTabManager(tab_widget, title_bar_tab_area, right_tab_area) if tab_widget else None

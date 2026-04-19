@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "phases": [
+    {
+      "id": "A",
+      "title": "Initial open"
+    },
+    {
+      "id": "B",
+      "title": "Early interaction on partially available or freshly opened data"
+    },
+    {
+      "id": "C",
+      "title": "Active scrolling"
+    },
+    {
+      "id": "D",
+      "title": "Mixed-load overlap"
+    },
+    {
+      "id": "E",
+      "title": "After completion or settled state"
+    }
+  ],
+  "steps": [
+    {
+      "id": "S1",
+      "phase": "A",
+      "scenario_id": "common_local_viewing",
+      "aipacs_action": "Launch AI-PACS FAST and prepare the same local DICOM series for opening.",
+      "clearcanvas_action": "Launch ClearCanvas.Desktop.Executable and prepare the same local DICOM series for opening.",
+      "timing_markers_start": [
+        "process start"
+      ],
+      "timing_markers_end": [
+        "viewer ready for open action"
+      ],
+      "equivalence_confidence": "High",
+      "fairness": "Direct",
+      "automation": "Process monitoring automated, viewer-ready marker may be manual"
+    },
+    {
+      "id": "S2",
+      "phase": "A",
+      "scenario_id": "common_local_viewing",
+      "aipacs_action": "Open the target study or series from the identical local dataset.",
+      "clearcanvas_action": "Open the same study or series from the identical local dataset using local file open or local explorer.",
+      "timing_markers_start": [
+        "open command issued"
+      ],
+      "timing_markers_end": [
+        "first image visible"
+      ],
+      "equivalence_confidence": "High",
+      "fairness": "Direct",
+      "automation": "AI-PACS headless automated; ClearCanvas usually manual"
+    },
+    {
+      "id": "S3",
+      "phase": "B",
+      "scenario_id": "common_local_viewing",
+      "aipacs_action": "Confirm first usable image and first scrollable frame.",
+      "clearcanvas_action": "Confirm first usable image and first scrollable frame.",
+      "timing_markers_start": [
+        "first image visible"
+      ],
+      "timing_markers_end": [
+        "first successful scroll response"
+      ],
+      "equivalence_confidence": "High",
+      "fairness": "Direct",
+      "automation": "Manual observation"
+    },
+    {
+      "id": "S4",
+      "phase": "C",
+      "scenario_id": "common_local_viewing",
+      "aipacs_action": "Scroll 10 slices slowly to measure precision browsing.",
+      "clearcanvas_action": "Scroll 10 slices slowly to measure precision browsing.",
+      "timing_markers_start": [
+        "first wheel event"
+      ],
+      "timing_markers_end": [
+        "10th slice visibly presented"
+      ],
+      "equivalence_confidence": "High",
+      "fairness": "Direct",
+      "automation": "AI-PACS headless automated; ClearCanvas manual"
+    },
+    {
+      "id": "S5",
+      "phase": "C",
+      "scenario_id": "common_local_viewing",
+      "aipacs_action": "Run a fast burst through the dense part of the same series.",
+      "clearcanvas_action": "Run the closest equivalent fast wheel or stack navigation burst through the same series.",
+      "timing_markers_start": [
+        "burst start"
+      ],
+      "timing_markers_end": [
+        "burst visibly complete"
+      ],
+      "equivalence_confidence": "Medium",
+      "fairness": "Direct",
+      "automation": "AI-PACS headless automated; ClearCanvas manual"
+    },
+    {
+      "id": "S6",
+      "phase": "C",
+      "scenario_id": "common_local_viewing",
+      "aipacs_action": "Reverse direction repeatedly to stress stale work and redraw discipline.",
+      "clearcanvas_action": "Reverse direction repeatedly to stress stale work and redraw discipline.",
+      "timing_markers_start": [
+        "reversal loop start"
+      ],
+      "timing_markers_end": [
+        "reversal loop end"
+      ],
+      "equivalence_confidence": "High",
+      "fairness": "Direct",
+      "automation": "AI-PACS headless automated; ClearCanvas manual"
+    },
+    {
+      "id": "S7",
+      "phase": "E",
+      "scenario_id": "common_local_viewing",
+      "aipacs_action": "Stop interaction and let the viewer settle.",
+      "clearcanvas_action": "Stop interaction and let the viewer settle.",
+      "timing_markers_start": [
+        "last input event"
+      ],
+      "timing_markers_end": [
+        "CPU and UI visibly settle"
+      ],
+      "equivalence_confidence": "High",
+      "fairness": "Direct",
+      "automation": "Process monitoring automated, visual settle note manual"
+    },
+    {
+      "id": "S8",
+      "phase": "E",
+      "scenario_id": "common_local_viewing",
+      "aipacs_action": "Close and reopen the same series to observe warm reopen behavior.",
+      "clearcanvas_action": "Close and reopen the same series to observe warm reopen behavior.",
+      "timing_markers_start": [
+        "reopen command issued"
+      ],
+      "timing_markers_end": [
+        "reopened first image visible"
+      ],
+      "equivalence_confidence": "High",
+      "fairness": "Direct",
+      "automation": "AI-PACS headless automated; ClearCanvas manual"
+    },
+    {
+      "id": "S9",
+      "phase": "D",
+      "scenario_id": "aipacs_live_download_overlap",
+      "aipacs_action": "Start active download and open the target series while the series is still incomplete.",
+      "clearcanvas_action": "",
+      "timing_markers_start": [
+        "download start"
+      ],
+      "timing_markers_end": [
+        "first partial image visible"
+      ],
+      "equivalence_confidence": "Low",
+      "fairness": "AI-PACS only",
+      "automation": "AI-PACS runtime plus log capture"
+    },
+    {
+      "id": "S10",
+      "phase": "D",
+      "scenario_id": "aipacs_live_download_overlap",
+      "aipacs_action": "Scroll aggressively while download progress, thumbnails, and progressive growth are active.",
+      "clearcanvas_action": "",
+      "timing_markers_start": [
+        "overlap scroll burst start"
+      ],
+      "timing_markers_end": [
+        "overlap scroll burst end"
+      ],
+      "equivalence_confidence": "Low",
+      "fairness": "AI-PACS only",
+      "automation": "AI-PACS runtime plus log capture"
+    },
+    {
+      "id": "S11",
+      "phase": "D",
+      "scenario_id": "aipacs_live_download_overlap",
+      "aipacs_action": "Reverse direction repeatedly during the same overlap window.",
+      "clearcanvas_action": "",
+      "timing_markers_start": [
+        "overlap reversal start"
+      ],
+      "timing_markers_end": [
+        "overlap reversal end"
+      ],
+      "equivalence_confidence": "Low",
+      "fairness": "AI-PACS only",
+      "automation": "AI-PACS runtime plus log capture"
+    },
+    {
+      "id": "S12",
+      "phase": "E",
+      "scenario_id": "aipacs_live_download_overlap",
+      "aipacs_action": "Stop input and observe completion, terminal events, cache warm dispatch, and settle behavior.",
+      "clearcanvas_action": "",
+      "timing_markers_start": [
+        "last overlap input"
+      ],
+      "timing_markers_end": [
+        "terminal completion and settle"
+      ],
+      "equivalence_confidence": "Low",
+      "fairness": "AI-PACS only",
+      "automation": "AI-PACS log parsing and process monitoring"
+    },
+    {
+      "id": "S13",
+      "phase": "D",
+      "scenario_id": "clearcanvas_background_copy_pressure_approx",
+      "aipacs_action": "",
+      "clearcanvas_action": "Launch ClearCanvas on the same fully local dataset while a background staged copy of shadow DICOM data creates CPU and disk pressure.",
+      "timing_markers_start": [
+        "background copy start"
+      ],
+      "timing_markers_end": [
+        "first image visible under pressure"
+      ],
+      "equivalence_confidence": "Low",
+      "fairness": "Approximate only",
+      "automation": "ClearCanvas manual plus process monitoring"
+    },
+    {
+      "id": "S14",
+      "phase": "D",
+      "scenario_id": "clearcanvas_background_copy_pressure_approx",
+      "aipacs_action": "",
+      "clearcanvas_action": "Run the same fast burst and direction reversal pattern while the background copy is still active.",
+      "timing_markers_start": [
+        "pressure scroll start"
+      ],
+      "timing_markers_end": [
+        "pressure scroll end"
+      ],
+      "equivalence_confidence": "Low",
+      "fairness": "Approximate only",
+      "automation": "ClearCanvas manual plus process monitoring"
+    },
+    {
+      "id": "S15",
+      "phase": "E",
+      "scenario_id": "clearcanvas_background_copy_pressure_approx",
+      "aipacs_action": "",
+      "clearcanvas_action": "Stop interaction and wait for the background copy to finish so process metrics can settle.",
+      "timing_markers_start": [
+        "last input under pressure"
+      ],
+      "timing_markers_end": [
+        "background copy complete and UI settled"
+      ],
+      "equivalence_confidence": "Low",
+      "fairness": "Approximate only",
+      "automation": "ClearCanvas manual plus process monitoring"
+    }
+  ]
+}

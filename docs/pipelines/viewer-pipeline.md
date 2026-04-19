@@ -189,6 +189,7 @@ on_series_images_progress()  [100ms per-series debounce]
   ├─ First batch (sn not in _progressive_display_done):
   │   └─ _start_progressive_display(sn)
   │       ├─ _ensure_import_folder_path()  [resolve study_uid → disk path]
+  │       ├─ defer if no target viewer requested it and all viewers are already occupied
   │       ├─ _load_single_series_on_demand(sn)
   │       ├─ _display_series_after_load(sn)
   │       ├─ _activate_progressive_mode_on_viewers(sn)
@@ -198,6 +199,40 @@ on_series_images_progress()  [100ms per-series debounce]
       └─ _grow_progressive_fast(sn)
           └─ _progressive_grow_timer fires at 150ms intervals
 ```
+
+    ### Admission Gate (2026-04-16)
+
+    Progressive display now distinguishes between:
+
+    - **actual downloaded count** — how many slices the backend/loader already knows are on disk
+    - **visible/admitted count** — how many of those slices the viewer exposes right now
+
+    For non-terminal progressive growth, `_flush_progressive_grow_impl()` caps each grow tick to:
+
+    $$
+    \min(\text{pending\_downloaded},\ \text{last\_grow\_count} + \text{admit\_batch})
+    $$
+
+    where `admit_batch` comes from `ViewerController._progressive_admit_batch_size`
+    (configurable via `AIPACS_PROGRESSIVE_ADMIT_BATCH`, default **8** as of 2026-04-16; kept independent from `_progressive_grow_batch_size`).
+
+    This keeps the downloader fast while preventing a large LAN-speed burst from being
+    admitted into the viewer as one huge UI jump. Terminal completion remains **uncapped**
+    so the user still sees the final full series immediately once `downloaded >= total`.
+
+    ### Why stack/scroll stays direct
+
+    The admission gate applies only to **non-interactive progressive growth**. It must
+    not be applied to the direct stack/wheel path:
+
+    - wheel/stack drag are user-driven and must stay low-latency
+    - progressive gating is background/load-shedding logic
+    - mixing them would trade overlap pressure for delayed interaction
+
+    So the workstation pattern is:
+
+    - **stack/wheel/drag**: direct priority path
+    - **progressive growth / cache warm / other non-interactive work**: admitted in bounded steps
 
 ### Guard States
 
@@ -212,6 +247,43 @@ on_series_images_progress()  [100ms per-series debounce]
 - `done.add(sn)` MUST run AFTER `_activate_progressive_mode_on_viewers()` completes on the main thread
 - Background threads MUST NOT add to `_progressive_display_done` directly — marshal via `QTimer.singleShot(0, callback)`
 - FAST mode only — the progressive path returns early for Advanced/VTK backends
+- Untargeted progressive first-display must stay deferred once a first series is already visible and there is no empty viewer. A background series may keep accumulating progress, but it must not trigger a surprise first-load/rebind on the active layout unless a viewer explicitly awaited it.
+- `load_series_on_demand()` must treat `on_series_download_fully_complete()` as the authoritative completion grow. If a viewer already shows the completed disk-count after Layer 2b, only mark the thumbnail ready; do not invalidate/reload the same series again.
+
+### Untargeted First-Display Deferral (2026-04-16)
+
+The completeness gate protects `_start_progressive_display()` during heavy overlap, but it is not sufficient by itself. Once the workstation already has visible content, a newly downloading background series can still reach the first-batch threshold and trigger an unnecessary 1s+ metadata/load/apply cycle.
+
+The current rule is:
+
+- allow `_start_progressive_display()` when a viewer is explicitly awaiting the series
+- allow it when an empty viewer still needs content
+- otherwise, keep tracking progress and defer first-display until the user actually asks for that series
+
+Hardening note: once that untargeted defer fires, later background progress pulses must not keep re-invoking `_start_progressive_display()` while the same “no awaiting/empty viewer” condition still holds. The controller now keeps a per-series untargeted-defer guard and only retries when layout eligibility changes.
+
+This preserves progressive readiness without causing layout churn while the user is actively reviewing another series.
+
+### Sync / Sidebar Idempotence (2026-04-16)
+
+Progressive admission is already gated in batches, but the post-gate sync path must also stay cheap:
+
+- `_update_vtk_slice_range()` should skip `update_available_slice_count()` when the visible count is unchanged
+- `_sync_viewer_metadata_instances()` should append-only extend viewer metadata lists when possible instead of replacing the whole list every tick
+- thumbnail progress/count/ready updates should skip `setVisible`, `setText`, and border state setters when the value is already current
+
+The rule is simple: once the same state is already visible, do not re-write it just because another progress signal arrived.
+
+### Post-Completion Reload Suppression (2026-04-16)
+
+`load_series_on_demand()` still runs on the completion signal path, but after it calls `on_series_download_fully_complete(series_number)` it must check whether any viewer already shows that series at the current disk count.
+
+If the final Layer 2b grow already exposed the full series:
+
+- mark the thumbnail ready
+- skip cache invalidation / full reload
+
+Without this guard, the workstation can rebind or partially reload the same series immediately after completion, producing the visible “finished, then shuffled itself again” lag reported in the April 16 overlap logs.
 
 ### Done-Guard Lifecycle Rule (v2.2.9.2 — H4 fix)
 

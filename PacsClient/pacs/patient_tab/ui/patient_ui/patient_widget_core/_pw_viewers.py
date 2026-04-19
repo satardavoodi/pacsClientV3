@@ -5,13 +5,18 @@ Extracted from patient_widget.py during Phase 1 refactoring (v2.2.9.1).
 This is a mixin class — do NOT instantiate directly.
 """
 
-
 import json
+import logging as _logging
 import traceback
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QLabel, QProgressDialog, QSlider, QWidget
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
 from PacsClient.pacs.patient_tab.utils import NodeViewer
+
+# Redirect print() to logger to avoid synchronous console I/O on Windows.
+_print_logger = _logging.getLogger(__name__)
+def print(*args, **_kw):  # noqa: A001
+    _print_logger.debug(' '.join(str(a) for a in args))
 
 
 class _PWViewersMixin:

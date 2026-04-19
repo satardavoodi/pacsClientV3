@@ -39,7 +39,7 @@ App-crashing. Loss of all viewer state. Reproducible within 1–5 minutes under 
 - T4 result: crash persists even when write/render overlap is zeroed (does NOT fix it)
 - T5 result: crash persists with no grow events (grow/UAF is NOT the dominant path)
 - T6 instrumented: `[H13-T6-DIAG]` block added to `_on_lazy_slice_ready_impl`, `stale_cond_count` counter added (always-on, toggle-independent)
-- Focused recovery plan written: `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md`
+- Focused recovery plan written: `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md`
 
 ### Partially done
 - T6 diagnostic run NOT yet performed with the new instrumentation
@@ -61,7 +61,7 @@ App-crashing. Loss of all viewer state. Reproducible within 1–5 minutes under 
 | File | What it contains | Status |
 |------|-----------------|--------|
 | `docs/stability/H13_WORKING_DOCUMENT.md` | Full forensic evidence ledger: hypotheses table, probe/toggle inventory, all KPI tables (Logs 18–21), decision gate logic, phase procedures | **Current — primary reference** |
-| `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md` | Distilled executable plan: what's proven, what's open, exact next-run order, guardrails, KPI set | **Current — day-to-day guide** |
+| `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md` | Distilled executable plan: what's proven, what's open, exact next-run order, guardrails, KPI set | **Current — day-to-day guide** |
 | `modules/viewer/fast/_decode_guard.py` | All H13 probe functions (P1–P3), toggle flags (T3/T4/T5/T6), overlap stats | **Current — primary probe source** |
 | `PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget/_vw_backend.py` | Hot callback `_on_lazy_slice_ready_impl`, `_log_lazy_metrics_if_due` (P5), T6 diagnostic block, `_stale_condition_count` / `_stale_render_abort_count` counters | **Current — modified this session** |
 | `PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget/_vw_scroll.py` | Scroll render path, T4 render gate call site, P1/P3 probe call sites | Current |
@@ -129,7 +129,7 @@ App-crashing. Loss of all viewer state. Reproducible within 1–5 minutes under 
 - **Whether it helped:** Not yet measured (needs a new run)
 - **Should stay:** Yes — this is diagnostic infrastructure, not a behavioral change
 
-### 5.3 `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md`
+### 5.3 `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md`
 - **What:** Created new document — focused execution companion to the working document
 - **Why:** The working document is ~1000 lines; this distills what's proven, what's open, the next-run order, and guardrails
 - **Status:** Current — primary day-to-day guide for the next agent
@@ -238,7 +238,7 @@ print(extract_h13_toggle_state(log_text))
 ## 9. What The Next Agent Should Do First
 
 ### Step 1: Read
-1. `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md` — sections 2, 5, 6, 11 (this is the operational guide)
+1. `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md` — sections 2, 5, 6, 11 (this is the operational guide)
 2. `docs/stability/H13_WORKING_DOCUMENT.md` §11 status log (last 20 rows) and §16
 
 ### Step 2: Verify code changes are intact
@@ -274,7 +274,7 @@ Goal: first valid measurement of `stale_cond_count`. This answers whether stale 
 ### Step 5: Based on T6 diagnostic results
 - If `stale_cond_count > 10` per P5 snapshot → stale-render is real → proceed to P1 booster-off run
 - If `stale_cond_count ≈ 0` → stale render is not frequent → go directly to P1/P2 pressure experiments
-- Full decision guide: `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md §6, §11`
+- Full decision guide: `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md §6, §11`
 
 ---
 

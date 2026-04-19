@@ -8,6 +8,30 @@ timing; this suite enforces the per-call contracts in CI.
 import time
 import pytest
 
+from modules.viewer.fast import ui_throttle
+
+
+def test_noncritical_open_network_deferred_under_heavy_download(monkeypatch):
+    monkeypatch.setattr(ui_throttle, "is_heavy_download_active", lambda grace_ms=750.0: True)
+    assert ui_throttle.should_defer_noncritical_open_network(first_series_visible=False)
+
+
+def test_noncritical_open_network_not_deferred_after_first_series(monkeypatch):
+    monkeypatch.setattr(ui_throttle, "is_heavy_download_active", lambda grace_ms=750.0: True)
+    assert not ui_throttle.should_defer_noncritical_open_network(first_series_visible=True)
+
+
+def test_noncritical_open_network_not_deferred_without_heavy_download(monkeypatch):
+    monkeypatch.setattr(ui_throttle, "is_heavy_download_active", lambda grace_ms=750.0: False)
+    assert not ui_throttle.should_defer_noncritical_open_network(first_series_visible=False)
+
+
+def test_noncritical_open_network_uses_current_download_state(monkeypatch):
+    states = iter([True, False])
+    monkeypatch.setattr(ui_throttle, "is_heavy_download_active", lambda grace_ms=750.0: next(states))
+    assert ui_throttle.should_defer_noncritical_open_network(first_series_visible=False)
+    assert not ui_throttle.should_defer_noncritical_open_network(first_series_visible=False)
+
 _SINGLE_CALL_BUDGET_MS = 5.0     # < 5 ms per state call
 _100_UPDATES_BUDGET_MS = 200.0   # < 200 ms for 100 progress updates
 _100_REGISTER_BUDGET_MS = 50.0   # < 50 ms for 100 thumbnail registrations

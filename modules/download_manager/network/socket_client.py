@@ -244,6 +244,48 @@ class SocketDicomClient:
         """Reset cancellation flag"""
         with self._cancel_lock:
             self._cancelled = False
+
+    def _sleep_with_cancel(self, total_delay: float, interval_s: float = 0.1) -> bool:
+        """
+        Sleep in small slices so preemption can interrupt reconnect/backoff waits.
+
+        Returns:
+            True if the full delay elapsed, False if cancellation was requested.
+        """
+        if total_delay <= 0:
+            return not self.is_cancelled()
+
+        deadline = time.monotonic() + total_delay
+        while True:
+            if self.is_cancelled():
+                return False
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+
+            time.sleep(min(interval_s, remaining))
+
+    async def _async_sleep_with_cancel(self, total_delay: float, interval_s: float = 0.1) -> bool:
+        """
+        Async variant of `_sleep_with_cancel` for retry paths inside coroutines.
+
+        Returns:
+            True if the full delay elapsed, False if cancellation was requested.
+        """
+        if total_delay <= 0:
+            return not self.is_cancelled()
+
+        deadline = time.monotonic() + total_delay
+        while True:
+            if self.is_cancelled():
+                return False
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+
+            await asyncio.sleep(min(interval_s, remaining))
     
     def connect_with_retry(self, max_retries: int = None, retry_delay: float = None) -> bool:
         """
@@ -260,6 +302,10 @@ class SocketDicomClient:
         base_delay = retry_delay if retry_delay is not None else RECONNECT_BASE_DELAY
 
         for attempt in range(max_retries):
+            if self.is_cancelled():
+                logger.info("⏸️ connect_with_retry cancelled before attempt %s", attempt + 1)
+                return False
+
             if self.connect():
                 if attempt > 0:
                     logger.info(f"✅ Connected after {attempt + 1} attempts")
@@ -277,7 +323,9 @@ class SocketDicomClient:
                     f"⚠️ Connection attempt {attempt + 1}/{max_retries} failed, "
                     f"retrying in {total_delay:.1f}s (backoff={delay:.1f}s + jitter={jitter:.1f}s)..."
                 )
-                time.sleep(total_delay)
+                if not self._sleep_with_cancel(total_delay):
+                    logger.info("⏸️ connect_with_retry cancelled during backoff")
+                    return False
         
         logger.error(f"❌ Failed to connect after {max_retries} attempts")
         return False
@@ -453,10 +501,19 @@ class SocketDicomClient:
                     f"⚠️ send_request({endpoint}) attempt {attempt + 1}/{max_attempts} failed, "
                     f"retrying in {total_delay:.1f}s..."
                 )
-                time.sleep(total_delay)
+                if not self._sleep_with_cancel(total_delay):
+                    logger.info(
+                        f"⏸️ send_request({endpoint}) cancelled during retry backoff"
+                    )
+                    return None
 
                 # Reconnect before next attempt
                 self.disconnect()
+                if self.is_cancelled():
+                    logger.info(
+                        f"⏸️ send_request({endpoint}) cancelled before reconnect"
+                    )
+                    return None
                 if not self.connect():
                     logger.error(f"❌ Reconnect failed before retry {attempt + 2}")
                     # Continue loop – connect() will be retried inside _send_request_once
@@ -1219,12 +1276,21 @@ class SocketDicomClient:
                         logger.info(f"⚠️ Unhealthy connection - doubling retry delay", extra={"component": "download"})
                     
                     logger.info(f"⏳ Retrying in {delay:.1f}s...", extra={"component": "download"})
-                    await asyncio.sleep(delay)
+                    if not await self._async_sleep_with_cancel(delay):
+                        logger.info("⏸️ Batch retry cancelled during backoff")
+                        return None
+
+                    if self.is_cancelled():
+                        logger.info("⏸️ Batch retry cancelled before reconnect")
+                        return None
                     
                     # Reconnect with backoff
                     logger.info(f"🔌 Reconnecting...", extra={"component": "download"})
                     self.disconnect()
                     if not self.connect_with_retry(max_retries=3):
+                        if self.is_cancelled():
+                            logger.info("⏸️ Batch retry reconnect cancelled")
+                            return None
                         logger.error(f"❌ Reconnection failed")
                         continue
                     logger.info(f"✅ Reconnected", extra={"component": "download"})

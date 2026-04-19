@@ -13,6 +13,7 @@ Verifies:
 """
 import importlib
 import sys
+import types
 import pytest
 
 
@@ -200,6 +201,184 @@ def test_backward_compat_patient_tab_ui():
     """Import VTKWidget from PacsClient.pacs.patient_tab.ui still works."""
     from PacsClient.pacs.patient_tab.ui import VTKWidget
     assert VTKWidget is not None
+
+
+def test_switch_series_progressive_sync_seeds_available_count():
+    """Progressive switch should publish already-loaded slices immediately."""
+    mod = importlib.import_module(
+        "PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_series"
+    )
+    calls = []
+    class _FakeWidget(mod._VWSeriesMixin):
+        _progressive_mode = True
+        image_viewer = type("_FakeViewer", (), {
+            "get_count_of_slices": lambda self: 20,
+        })()
+        _lazy_loader = None
+        id_vtk_widget = "v1"
+
+        def update_available_slice_count(self, count):
+            calls.append(count)
+
+    fake_widget = _FakeWidget()
+
+    mod._VWSeriesMixin._sync_progressive_available_after_switch(fake_widget)
+
+    assert calls == [20]
+
+
+def test_progressive_sync_uses_raw_loaded_slice_count_over_progressive_total():
+    """Sync helper must use raw loaded slices, not widget progressive total."""
+    mod = importlib.import_module(
+        "PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_series"
+    )
+    calls = []
+    class _FakeWidget(mod._VWSeriesMixin):
+        _progressive_mode = True
+        image_viewer = type("_FakeViewer", (), {
+            "_slice_count": 20,
+            "get_count_of_slices": lambda self: 78,
+        })()
+        _lazy_loader = None
+        id_vtk_widget = "v2"
+
+        def update_available_slice_count(self, count):
+            calls.append(count)
+
+    fake_widget = _FakeWidget()
+
+    mod._VWSeriesMixin._sync_progressive_available_after_switch(fake_widget)
+
+    assert calls == [20]
+
+
+def test_start_process_series_qt_syncs_progressive_available_count():
+    """Initial Qt series startup should seed progressive availability immediately."""
+    mod = importlib.import_module(
+        "PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_series"
+    )
+
+    class _Spinner:
+        def show_loading(self, _msg):
+            pass
+
+        def hide_loading(self):
+            pass
+
+        spinner = None
+
+    sync_calls = []
+    fake_widget = type("_FakeWidget", (), {
+        "_active_backend": "pydicom_qt",
+        "_lazy_loader": None,
+        "viewport_spinner": _Spinner(),
+        "_bind_backend_from_metadata": lambda self, metadata, source=None: None,
+        "_start_qt_viewer": lambda self, metadata, metadata_fixed: None,
+        "_sync_progressive_available_after_switch": lambda self: sync_calls.append("sync"),
+        "setUpdatesEnabled": lambda self, enabled: None,
+        "save_status_camera": lambda self, image_viewer: None,
+        "_dump_scroll_state": lambda self, tag: None,
+        "get_count_of_slices": lambda self: 20,
+        "image_viewer": object(),
+        "height_viewer": 0,
+    })()
+
+    metadata = {
+        "series": {
+            "series_number": "201",
+            "series_description": "Test",
+            "modality": "CT",
+        }
+    }
+    vtk_image_data = type("_FakeVtk", (), {
+        "GetDimensions": lambda self: (512, 512, 20),
+    })()
+
+    mod._VWSeriesMixin.start_process_series(
+        fake_widget,
+        vtk_image_data,
+        metadata,
+        0,
+        0,
+        {},
+    )
+
+    assert sync_calls == ["sync"]
+
+
+def test_qt_wheel_fast_path_clamps_to_progressive_available_slices():
+    """Qt wheel fast-path must not scroll beyond loaded slices in progressive mode."""
+    mod = importlib.import_module(
+        "PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_scroll"
+    )
+
+    class _FakeImageViewer:
+        def __init__(self):
+            self._slice = 0
+            self.last_index_slice_saved = 0
+            self.calls = []
+
+        def GetSlice(self):
+            return self._slice
+
+        def set_slice(self, idx, fast_interaction=False, interaction_type=''):
+            self._slice = int(idx)
+            self.calls.append((int(idx), bool(fast_interaction), interaction_type))
+
+    class _FakeSlider:
+        def __init__(self):
+            self._value = 0
+
+        def blockSignals(self, _blocked):
+            pass
+
+        def setValue(self, value):
+            self._value = int(value)
+
+        def value(self):
+            return self._value
+
+    class _FakeDelta:
+        def __init__(self, y):
+            self._y = y
+
+        def y(self):
+            return self._y
+
+    class _FakeEvent:
+        def __init__(self, y):
+            self.accepted = False
+            self._delta = _FakeDelta(y)
+
+        def angleDelta(self):
+            return self._delta
+
+        def accept(self):
+            self.accepted = True
+
+    fake_widget = types.SimpleNamespace(
+        _qt_bridge_active=True,
+        _active_backend="pydicom_qt",
+        _progressive_mode=True,
+        _available_slice_count=2,
+        image_viewer=_FakeImageViewer(),
+        slider=_FakeSlider(),
+        _on_slice_changed_cb=None,
+        patient_widget=None,
+        get_count_of_slices=lambda: 20,
+    )
+    fake_widget._get_interactive_slice_count = types.MethodType(
+        mod._VWScrollMixin._get_interactive_slice_count,
+        fake_widget,
+    )
+    fake_widget.wheelEvent = types.MethodType(mod._VWScrollMixin.wheelEvent, fake_widget)
+
+    fake_widget.wheelEvent(_FakeEvent(-120))
+    fake_widget.wheelEvent(_FakeEvent(-120))
+
+    assert fake_widget.image_viewer.calls == [(1, True, 'wheel')]
+    assert fake_widget.image_viewer.GetSlice() == 1
+    assert fake_widget.slider.value() == 1
 
 
 # ── 6. No duplicate methods across mixins ───────────────────────────────────

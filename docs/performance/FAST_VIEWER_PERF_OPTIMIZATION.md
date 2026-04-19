@@ -56,15 +56,15 @@ Optimized the FAST viewer scroll hot-path from **12.7ms P50 frame time** to **1.
 
 - `set_slice()` accepts `fast_interaction` parameter
 - Skips `_update_annotations()` during fast scroll
-- `end_fast_interaction()` re-renders with filter and updates annotations on scroll-stop
+- `end_fast_interaction()` re-renders the exact final slice, refreshes W/L display state, and updates annotations on scroll-stop
 
 ### B3.4 — WheelEvent wiring + scroll-stop timer
 
 **File:** `PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget/_vw_scroll.py`
 
 - Qt fast-path wheelEvent now passes `fast_interaction=True` to bridge
-- Added `_qt_scroll_stop_timer` (200ms single-shot QTimer)
-- Timer restarts on each wheel event; fires `_on_qt_scroll_stop()` which calls `end_fast_interaction()`
+- The Qt bridge owns the single 200ms interaction-settle timer and calls `end_fast_interaction()` after wheel/drag inactivity
+- VTK wheelEvent intentionally does **not** arm a second settle timer in Qt mode
 - Separate from VTK path's `_reenable_gc` mechanism
 
 ### B3.5 — Debug logging gated
@@ -83,6 +83,15 @@ Optimized the FAST viewer scroll hot-path from **12.7ms P50 frame time** to **1.
 - Instead, store numpy buffer reference on QImage (`qimg._np_buffer = arr`) to prevent GC
 - Saves ~0.2ms per frame for 512×512 images
 
+### B3.7 — Shared slice-count stack/cache profile
+
+**Files:** `modules/viewer/fast/qt_slice_viewer.py`, `modules/viewer/fast/lightweight_2d_pipeline.py`, `modules/viewer/fast/stack_cache_profile.py`
+
+- Added a shared piecewise profile so FAST stack drag no longer treats 20-slice, 100-slice, and 200-slice series as equivalent
+- Drag threshold and bounded per-event skip now scale from the same policy as drag-side prefetch radius, surrogate search distance, and decode relevance window
+- Small stacks keep deliberate full-series-style caching, medium stacks keep the current balanced behavior, and larger stacks widen drag/cache windows without bypassing heavy-download admission caps
+- Follow-up hardening: capped drag overflow is no longer queued as momentum backlog, direction reversal clears stale pending drag immediately, and `QtViewerBridge` now pushes the current interactive slice count into both `QtSliceViewer` and `Lightweight2DPipeline` so Block C stays coherent while progressive download grows the stack
+
 ---
 
 ## Post-Optimization Results
@@ -98,7 +107,7 @@ Optimized the FAST viewer scroll hot-path from **12.7ms P50 frame time** to **1.
 | Slow (>16ms) | 52/200 | 0/200 | eliminated |
 | FPS | 61 | 135 | 2.2× |
 
-### Fast-scroll mode (filter skipped, during active scrolling)
+### Fast-scroll mode (drag skips filter; wheel keeps precision appearance)
 
 | Metric | Before | After | Improvement |
 |--------|--------|-------|-------------|

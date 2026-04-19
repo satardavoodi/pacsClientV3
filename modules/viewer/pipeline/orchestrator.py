@@ -33,10 +33,29 @@ Invariants
 
 from __future__ import annotations
 
+from collections import Counter
+from collections import deque
+from dataclasses import asdict, dataclass
 import threading
 import time
 from enum import Enum, auto
 from typing import Callable, Optional, Set
+
+
+@dataclass(frozen=True)
+class PipelineEvent:
+    seq: int
+    timestamp_ms: float
+    event: str
+    owner_block: str
+    state_before: str
+    state_after: str
+    active_download_count: int
+    completed_series_count: int
+    study_download_complete: bool
+    series_number: str = ""
+    study_uid: str = ""
+    detail: str = ""
 
 
 class PipelineState(Enum):
@@ -76,6 +95,8 @@ class PipelineOrchestrator:
         self._downloading_series: Set[str] = set()
         self._completed_series: Set[str] = set()
         self._study_download_complete: bool = False
+        self._transition_seq: int = 0
+        self._events: deque[PipelineEvent] = deque(maxlen=128)
 
         # Timestamps for diagnostics
         self._state_enter_ts: float = time.time()
@@ -93,6 +114,12 @@ class PipelineOrchestrator:
             return self._state == PipelineState.DOWNLOADING
 
     @property
+    def active_download_count(self) -> int:
+        """Number of series currently downloading in this orchestrator."""
+        with self._lock:
+            return len(self._downloading_series)
+
+    @property
     def is_warmup_allowed(self) -> bool:
         """True when ZetaBoost warmup may run (POST_DOWNLOAD or READY)."""
         with self._lock:
@@ -104,12 +131,45 @@ class PipelineOrchestrator:
         with self._lock:
             return self._state == PipelineState.DOWNLOADING
 
+    def is_series_downloading(self, series_number) -> bool:
+        """True when the specific series is still downloading."""
+        with self._lock:
+            return str(series_number) in self._downloading_series
+
+    def is_heavy_download_active(self) -> bool:
+        """True when this orchestrator has active per-series download work."""
+        with self._lock:
+            return self._state == PipelineState.DOWNLOADING and bool(self._downloading_series)
+
     def is_series_downloaded(self, series_number) -> bool:
         with self._lock:
             return (
                 str(series_number) in self._completed_series
                 or self._study_download_complete
             )
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            now = time.time()
+            event_counts_by_block = Counter(event.owner_block for event in self._events)
+            event_counts_by_name = Counter(event.event for event in self._events)
+            most_recent_event = asdict(self._events[-1]) if self._events else None
+            return {
+                "state": self._state.name,
+                "download_session_active": bool(self._download_session_active),
+                "active_download_count": len(self._downloading_series),
+                "completed_series_count": len(self._completed_series),
+                "transition_seq": self._transition_seq,
+                "study_download_complete": bool(self._study_download_complete),
+                "state_duration_ms": round((now - self._state_enter_ts) * 1000.0, 2),
+                "last_download_age_ms": round((now - self._last_download_ts) * 1000.0, 2) if self._last_download_ts else 0.0,
+                "downloading_series": sorted(self._downloading_series),
+                "completed_series": sorted(self._completed_series),
+                "most_recent_event": most_recent_event,
+                "event_counts_by_block": dict(event_counts_by_block),
+                "event_counts_by_name": dict(event_counts_by_name),
+                "recent_events": [asdict(event) for event in self._events],
+            }
 
     # ------------------------------------------------------ download signals
     def on_download_session_started(self, study_uid: str = ""):
@@ -121,6 +181,13 @@ class PipelineOrchestrator:
             self._state = PipelineState.DOWNLOADING
             self._state_enter_ts = time.time()
             changed = old != PipelineState.DOWNLOADING
+            self._record_event_locked(
+                event="download_session_started",
+                owner_block="block_1_data_services",
+                state_before=old,
+                state_after=self._state,
+                study_uid=str(study_uid or ""),
+            )
         self._log(f"DOWNLOAD_SESSION_START study={study_uid[:30] if study_uid else ''}")
         if changed:
             self._notify(old, PipelineState.DOWNLOADING)
@@ -141,6 +208,13 @@ class PipelineOrchestrator:
             else:
                 need_notify = False
                 old = self._state
+            self._record_event_locked(
+                event="series_download_started",
+                owner_block="block_1_data_services",
+                state_before=old,
+                state_after=self._state,
+                series_number=str(series_number),
+            )
         if need_notify:
             self._notify(old, PipelineState.DOWNLOADING)
 
@@ -172,6 +246,13 @@ class PipelineOrchestrator:
             else:
                 need_notify = False
                 old = self._state
+            self._record_event_locked(
+                event="series_download_completed",
+                owner_block="block_1_data_services",
+                state_before=old,
+                state_after=self._state,
+                series_number=key,
+            )
         self._log(
             f"SERIES_DOWNLOAD_COMPLETE series={key} state={self._state.name} "
             f"total_completed={len(self._completed_series)}"
@@ -192,6 +273,13 @@ class PipelineOrchestrator:
             self._state = PipelineState.POST_DOWNLOAD
             self._state_enter_ts = time.time()
             changed = old != PipelineState.POST_DOWNLOAD
+            self._record_event_locked(
+                event="study_download_completed",
+                owner_block="block_3_cache_scroll_orchestration",
+                state_before=old,
+                state_after=self._state,
+                study_uid=str(study_uid or ""),
+            )
         self._log(
             f"STUDY_DOWNLOAD_COMPLETE study={study_uid[:30] if study_uid else ''} "
             f"completed_series={len(self._completed_series)}"
@@ -209,6 +297,12 @@ class PipelineOrchestrator:
             self._state = PipelineState.POST_DOWNLOAD
             self._state_enter_ts = time.time()
             changed = old != PipelineState.POST_DOWNLOAD
+            self._record_event_locked(
+                event="mark_pre_downloaded",
+                owner_block="block_3_cache_scroll_orchestration",
+                state_before=old,
+                state_after=self._state,
+            )
         self._log("PRE_DOWNLOADED mode=A")
         if changed:
             self._notify(old, PipelineState.POST_DOWNLOAD)
@@ -222,6 +316,12 @@ class PipelineOrchestrator:
             old = self._state
             self._state = PipelineState.READY
             self._state_enter_ts = time.time()
+            self._record_event_locked(
+                event="all_warmed_up",
+                owner_block="block_3_cache_scroll_orchestration",
+                state_before=old,
+                state_after=self._state,
+            )
         self._log("ALL_WARMED_UP → READY")
         self._notify(old, PipelineState.READY)
 
@@ -236,6 +336,12 @@ class PipelineOrchestrator:
             self._study_download_complete = False
             self._state_enter_ts = time.time()
             changed = old != PipelineState.IDLE
+            self._record_event_locked(
+                event="reset",
+                owner_block="block_3_cache_scroll_orchestration",
+                state_before=old,
+                state_after=self._state,
+            )
         if changed:
             self._notify(old, PipelineState.IDLE)
 
@@ -247,6 +353,35 @@ class PipelineOrchestrator:
                 cb(old, new)
             except Exception:
                 pass
+
+    def _record_event_locked(
+        self,
+        *,
+        event: str,
+        owner_block: str,
+        state_before: PipelineState,
+        state_after: PipelineState,
+        series_number: str = "",
+        study_uid: str = "",
+        detail: str = "",
+    ) -> None:
+        self._transition_seq += 1
+        self._events.append(
+            PipelineEvent(
+                seq=self._transition_seq,
+                timestamp_ms=round(time.time() * 1000.0, 2),
+                event=str(event),
+                owner_block=str(owner_block),
+                state_before=state_before.name,
+                state_after=state_after.name,
+                active_download_count=len(self._downloading_series),
+                completed_series_count=len(self._completed_series),
+                study_download_complete=bool(self._study_download_complete),
+                series_number=str(series_number or ""),
+                study_uid=str(study_uid or ""),
+                detail=str(detail or ""),
+            )
+        )
 
     def _log(self, msg: str):
         full = f"[Pipeline] state={self._state.name} {msg}"

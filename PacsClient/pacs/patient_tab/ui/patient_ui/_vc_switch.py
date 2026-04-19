@@ -9,6 +9,7 @@ import time
 import copy
 import traceback
 import gc
+import logging as _logging
 from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QSlider
@@ -24,9 +25,54 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Redirect print() to logger to avoid synchronous console I/O on Windows.
+_print_logger = _logging.getLogger(__name__)
+def print(*args, **_kw):  # noqa: A001
+    _print_logger.debug(' '.join(str(a) for a in args))
+
 
 class _VCSwitchMixin:
     """Auto-split mixin — see patient_widget_viewer_controller.py for history."""
+
+    def _should_use_interactive_preview(self, expected_slices: int) -> bool:
+        """Return True when uncached interactive loads should show a quick preview.
+
+        Phase 4 policy: preview is most valuable for large/heavy series, so we
+        no longer gate it away just because the series is bigger than an old
+        threshold. Single-slice series skip preview because the full load is the
+        first image already.
+        """
+        try:
+            if not bool(getattr(self, '_interactive_preview_enabled', False)):
+                return False
+            count = int(expected_slices or 0)
+        except Exception:
+            count = 0
+        if count == 1:
+            return False
+        return True
+
+    def _interactive_preview_file_cap(self) -> int:
+        """Bound preview work to a small file window regardless of series size."""
+        try:
+            configured = int(getattr(self, '_interactive_preview_max_slices', 8) or 8)
+        except Exception:
+            configured = 8
+        return max(1, min(8, configured))
+
+    def _requires_serialized_interactive_load(self, viewer_backend: str) -> bool:
+        """Only heavyweight VTK/SimpleITK loads should wait behind the load gate.
+
+        Phase 4: FAST metadata-first backends already avoid the heavy ITK/VTK
+        pipeline, so forcing them to wait for warmup drain or the serialized
+        full-load semaphore only delays first usable image work without reducing
+        meaningful contention.
+        """
+        try:
+            backend = str(viewer_backend or BACKEND_VTK)
+        except Exception:
+            backend = BACKEND_VTK
+        return backend == BACKEND_VTK
 
     def change_series_on_viewer(self, series_index, flag_change_selected_widget=True,
                                 vtk_widget: VTKWidget = None, slider: QSlider = None,
@@ -499,17 +545,14 @@ class _VCSwitchMixin:
             # Preview-first path: show a very fast first-slice preview while full load runs.
             try:
                 exp_slices = self._get_series_expected_slices(series_number)
-                use_preview = bool(
-                    self._interactive_preview_enabled and
-                    (exp_slices <= 0 or exp_slices <= self._interactive_preview_max_slices)
-                )
+                use_preview = self._should_use_interactive_preview(exp_slices)
                 if use_preview:
                     preview = load_series_preview(
                         study_path=study_path,
                         series_number=int(series_number),
                         patient_pk=self.parent_widget.metadata_fixed.get('patient_pk', None),
                         study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
-                        max_files=1,
+                        max_files=self._interactive_preview_file_cap(),
                     )
                     if preview:
                         vtk_prev, meta_prev, (p_pk, s_pk), _total_files = preview
@@ -544,13 +587,14 @@ class _VCSwitchMixin:
             # running alone, is faster than 4-6s of concurrent execution.
             # _set_zeta_external_interactive_busy(True) already prevents NEW warmup
             # items from starting; this waits for the CURRENT inflight item to finish.
-            try:
-                if hasattr(self, 'zeta_boost') and self.zeta_boost is not None:
-                    _drained = self.zeta_boost.wait_for_inflight_drain(timeout_sec=3.0)
-                    if not _drained:
-                        logger.debug(f"[ASYNC SWITCH] warmup still inflight after 3s, proceeding with contention for series={series_number}")
-            except Exception:
-                pass
+            if self._requires_serialized_interactive_load(viewer_backend):
+                try:
+                    if hasattr(self, 'zeta_boost') and self.zeta_boost is not None:
+                        _drained = self.zeta_boost.wait_for_inflight_drain(timeout_sec=3.0)
+                        if not _drained:
+                            logger.debug(f"[ASYNC SWITCH] warmup still inflight after 3s, proceeding with contention for series={series_number}")
+                except Exception:
+                    pass
 
             try:
                 ok = self._load_single_series_on_demand(

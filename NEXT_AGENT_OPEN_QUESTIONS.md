@@ -52,7 +52,7 @@ These are the questions that must be answered to solve the crash. They are order
 - If P1 (booster off) eliminates crashes with high `stale_cond_count` remaining → pressure is primary gate
 - If neither alone fixes it → both required; dual fix needed
 
-**Where to look next:** `docs/stability/H13_FOCUSED_RECOVERY_PLAN.md §6.5 (decision goal mapping)` in `H13_WORKING_DOCUMENT.md §16.5`
+**Where to look next:** `docs/plans/stability/H13_FOCUSED_RECOVERY_PLAN.md §6.5 (decision goal mapping)` in `H13_WORKING_DOCUMENT.md §16.5`
 
 ---
 

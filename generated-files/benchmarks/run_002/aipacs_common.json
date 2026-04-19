@@ -1,0 +1,96 @@
+{
+  "viewer": "AI-PACS FAST",
+  "mode": "headless-aipacs-fast",
+  "dataset": "c:\\AI-Pacs codes\\aipacs-pydicom2d\\user_data\\patients\\dicom\\1.2.840.1.99.1.47.1.1772527236103.85188\\202",
+  "scenario_id": "common_local_viewing",
+  "scenario_title": "Common Local Viewing Baseline",
+  "kpis": {
+    "first_image_visible_ms": 227.61,
+    "set_slice_present_p50_ms": 0.03,
+    "set_slice_present_p95_ms": 23.33,
+    "set_slice_present_max_ms": 28.69,
+    "decode_p95_ms": 23.12,
+    "frame_render_p95_ms": 23.94,
+    "cache_hit_ratio_pct": 56.2,
+    "slow_frame_count_16ms": 109,
+    "longest_ui_gap_ms": 0.0,
+    "stale_task_ratio": 0.9538,
+    "cpu_p95_pct": 85.0,
+    "rss_peak_mb": 291.55,
+    "thread_count_p95": 29.0
+  },
+  "raw_perf_metrics": {
+    "set_slice_p50_ms": 0.03,
+    "set_slice_p95_ms": 23.33,
+    "set_slice_p99_ms": 26.09,
+    "set_slice_max_ms": 28.69,
+    "decode_p50_ms": 17.84,
+    "decode_p95_ms": 23.12,
+    "frame_render_p50_ms": 15.92,
+    "frame_render_p95_ms": 23.94,
+    "wl_p50_ms": 1.28,
+    "wl_p95_ms": 2.09,
+    "filter_p50_ms": 0.0,
+    "paint_p95_ms": 0.0,
+    "decode_queue_depth_max": 15,
+    "decode_queue_depth_p95": 3,
+    "frame_queue_depth_max": 1,
+    "frame_queue_depth_p95": 0,
+    "stale_task_ratio": 0.9538,
+    "cancelled_task_ratio": 0.0,
+    "stale_task_count": 392,
+    "prefetch_submitted": 411,
+    "prefetch_completed": 396,
+    "cache_hit_ratio_pct": 56.2,
+    "cache_hits": 164,
+    "cache_misses": 128,
+    "foreground_wait_p50_ms": 17.84,
+    "foreground_wait_p95_ms": 23.12,
+    "foreground_wait_max_ms": 211.61,
+    "slow_frame_count_16ms": 109,
+    "slow_frame_count_33ms": 0,
+    "total_frames": 296,
+    "first_image_ms": 227.61,
+    "longest_ui_gap_ms": 0.0,
+    "effective_fps": 34.7,
+    "capture_duration_s": 8.53
+  },
+  "process_summary": {
+    "sample_count": 5,
+    "cpu_p50_pct": 18.1,
+    "cpu_p95_pct": 85.0,
+    "cpu_max_pct": 100.7,
+    "rss_peak_mb": 291.55,
+    "thread_count_p95": 29.0,
+    "thread_count_max": 29,
+    "read_mb_delta": 29.67,
+    "write_mb_delta": 0.0,
+    "steps": {
+      "steady_forward": {
+        "cpu_p95_pct": 22.2,
+        "rss_peak_mb": 276.95,
+        "thread_count_max": 29
+      },
+      "rapid_burst": {
+        "cpu_p95_pct": 10.2,
+        "rss_peak_mb": 289.28,
+        "thread_count_max": 29
+      },
+      "direction_reversal": {
+        "cpu_p95_pct": 18.1,
+        "rss_peak_mb": 289.3,
+        "thread_count_max": 29
+      },
+      "idle_settle": {
+        "cpu_p95_pct": 0.0,
+        "rss_peak_mb": 291.55,
+        "thread_count_max": 29
+      },
+      "reopen_same_series": {
+        "cpu_p95_pct": 100.7,
+        "rss_peak_mb": 221.38,
+        "thread_count_max": 26
+      }
+    }
+  }
+}
