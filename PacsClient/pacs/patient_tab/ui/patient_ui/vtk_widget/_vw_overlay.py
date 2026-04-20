@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter, QPixmap, QColor
+from PySide6.QtWidgets import QLabel
 import vtkmodules.all as vtk
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,93 @@ logger = logging.getLogger(__name__)
 
 class _VWOverlayMixin:
     """VTK image overlay: add, clear, update extent."""
+
+    _EMPTY_DROP_HINT_HTML = (
+        "<div style='text-align:center;'>"
+        "<span style='font-size:15px; font-weight:600;'>Drop a series here</span><br/>"
+        "<span style='font-size:11px; color:rgba(226,232,240,0.88);'>"
+        "or select one from the thumbnail panel"
+        "</span>"
+        "</div>"
+    )
+
+    def _ensure_empty_drop_hint_label(self):
+        label = getattr(self, '_empty_drop_hint_label', None)
+        if label is not None:
+            return label
+
+        label = QLabel(self)
+        label.setObjectName("emptyDropHint")
+        label.setAlignment(Qt.AlignCenter)
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.RichText)
+        label.setText(self._EMPTY_DROP_HINT_HTML)
+        label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        label.setStyleSheet(
+            "QLabel#emptyDropHint {"
+            "background-color: rgba(15, 23, 42, 145);"
+            "color: #f8fafc;"
+            "border: 1px dashed rgba(148, 163, 184, 170);"
+            "border-radius: 12px;"
+            "padding: 14px 18px;"
+            "}"
+        )
+        label.hide()
+        self._empty_drop_hint_label = label
+        return label
+
+    def _layout_empty_drop_hint_label(self):
+        label = self._ensure_empty_drop_hint_label()
+        available_width = max(180, int(self.width()) - 48)
+        target_width = max(180, min(available_width, 340))
+        label.setFixedWidth(target_width)
+        label.adjustSize()
+
+        x = max(12, (self.width() - label.width()) // 2)
+        y = max(48, (self.height() - label.height()) // 2)
+        label.move(x, y)
+
+    def _should_show_empty_drop_hint(self) -> bool:
+        if getattr(self, 'last_series_show', None) is not None:
+            return False
+
+        drop_overlay = getattr(self, '_drop_overlay', None)
+        try:
+            if drop_overlay is not None and drop_overlay.isVisible():
+                return False
+        except Exception:
+            pass
+
+        spinner = getattr(self, 'viewport_spinner', None)
+        if spinner is not None:
+            try:
+                overlay = getattr(spinner, 'overlay', None)
+                if overlay is not None and overlay.isVisible():
+                    return False
+            except Exception:
+                pass
+            try:
+                fallback_spinner = getattr(spinner, 'spinner', None)
+                if fallback_spinner is not None and fallback_spinner.isVisible():
+                    return False
+            except Exception:
+                pass
+
+        return True
+
+    def _update_empty_drop_hint_visibility(self):
+        try:
+            label = self._ensure_empty_drop_hint_label()
+            if self._should_show_empty_drop_hint():
+                self._layout_empty_drop_hint_label()
+                label.show()
+                label.raise_()
+            else:
+                label.hide()
+        except RuntimeError:
+            pass
+        except Exception:
+            logger.debug("Failed to update empty drop hint visibility", exc_info=True)
 
     def overlay(self, vtk_image_data: vtk.vtkImageData, color=(1.0, 0.0, 0.0), opacity=0.4, is_label=True):
         """

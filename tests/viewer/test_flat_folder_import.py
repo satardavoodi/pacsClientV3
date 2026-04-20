@@ -1,6 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 from pathlib import Path
+from PySide6.QtCore import QTimer
 
 from modules.viewer.viewer_backend_config import BACKEND_PYDICOM_QT
 from pydicom.dataset import FileDataset, FileMetaDataset
@@ -100,9 +101,11 @@ class _SignalProbe:
 def _build_widget(import_folder_path: str):
     widget = patient_widget_mod.PatientWidget.__new__(patient_widget_mod.PatientWidget)
     widget._first_series_displayed = False
+    widget._local_first_series_retry_count = 0
     widget.import_folder_path = import_folder_path
     widget.series_downloaded = _SignalProbe()
     widget.isVisible = lambda: True
+    widget.viewer_controller = SimpleNamespace(lst_nodes_viewer=[object()])
     return widget
 
 
@@ -138,22 +141,49 @@ def test_load_single_series_by_number_supports_flat_import_root(tmp_path, monkey
     assert result[-1][1]["series"]["series_number"] == "1"
 
 
-def test_check_and_load_local_first_series_emits_for_flat_import_root(tmp_path):
+def test_check_and_load_local_first_series_keeps_flat_import_root_manual_only(tmp_path):
     root = _make_flat_study(tmp_path)
     widget = _build_widget(str(root))
 
     patient_widget_mod.PatientWidget._check_and_load_local_first_series(widget)
 
-    assert widget.series_downloaded.values == ["1"]
+    assert widget.series_downloaded.values == []
 
 
-def test_check_and_load_local_first_series_emits_for_non_numeric_series_folder(tmp_path):
+def test_check_and_load_local_first_series_keeps_non_numeric_series_folder_manual_only(tmp_path):
     root = _make_non_numeric_series_study(tmp_path)
     widget = _build_widget(str(root))
 
     patient_widget_mod.PatientWidget._check_and_load_local_first_series(widget)
 
-    assert widget.series_downloaded.values == ["7"]
+    assert widget.series_downloaded.values == []
+
+
+def test_check_and_load_local_first_series_defers_until_viewers_exist(tmp_path, monkeypatch):
+    root = _make_flat_study(tmp_path)
+    widget = _build_widget(str(root))
+    widget.viewer_controller = SimpleNamespace(lst_nodes_viewer=[])
+
+    scheduled = []
+    monkeypatch.setattr(QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+
+    patient_widget_mod.PatientWidget._check_and_load_local_first_series(widget)
+
+    assert widget.series_downloaded.values == []
+    assert widget._local_first_series_retry_count == 1
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == 150
+
+
+def test_check_and_load_local_first_series_resets_retry_when_viewers_ready(tmp_path):
+    root = _make_flat_study(tmp_path)
+    widget = _build_widget(str(root))
+    widget._local_first_series_retry_count = 4
+
+    patient_widget_mod.PatientWidget._check_and_load_local_first_series(widget)
+
+    assert widget.series_downloaded.values == []
+    assert widget._local_first_series_retry_count == 0
 
 
 def test_get_correct_study_path_keeps_flat_import_root(tmp_path):
@@ -191,9 +221,10 @@ def test_pipeline_manager_import_supports_sync_logo_check(tmp_path, monkeypatch)
     def _fake_load_images(folder_path, patient_pk=None, study_pk=None, ordering_by_instances_number=None):
         yield "vtk", {"series": {"series_path": str(root), "series_number": "1"}, "instances": []}, {}
 
-    monkeypatch.setattr(patient_widget_mod, "load_images", _fake_load_images)
-    monkeypatch.setattr(
-        patient_widget_mod,
+    pipeline_globals = patient_widget_mod.PatientWidget.pipeline_manager_import.__globals__
+    monkeypatch.setitem(pipeline_globals, "load_images", _fake_load_images)
+    monkeypatch.setitem(
+        pipeline_globals,
         "save_image_as_png",
         lambda vtk_image_data, metadata, metadata_fixed, file: str(root / "thumb.png"),
     )
@@ -241,6 +272,51 @@ def test_reconcile_db_instances_with_disk_reads_only_missing_headers(tmp_path):
     assert merged[-1]["rows"] == 2
     assert merged[-1]["columns"] == 2
     assert merged[-1]["image_orientation_patient"] == [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+
+
+def test_reconcile_db_instances_with_disk_skips_full_merge_when_counts_match(tmp_path, monkeypatch):
+    root = _make_series_folder_study(tmp_path, series_number=1, instance_count=3)
+    series_dir = root / "1"
+    db_instances = [
+        {
+            "instance_number": 1,
+            "instance_path": str(series_dir / "1.dcm"),
+            "rows": 2,
+            "columns": 2,
+            "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            "image_position_patient": [0.0, 0.0, 0.0],
+            "pixel_spacing": [1.0, 1.0],
+        },
+        {
+            "instance_number": 2,
+            "instance_path": str(series_dir / "2.dcm"),
+            "rows": 2,
+            "columns": 2,
+            "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            "image_position_patient": [0.0, 0.0, 0.0],
+            "pixel_spacing": [1.0, 1.0],
+        },
+        {
+            "instance_number": 3,
+            "instance_path": str(series_dir / "3.dcm"),
+            "rows": 2,
+            "columns": 2,
+            "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            "image_position_patient": [0.0, 0.0, 0.0],
+            "pixel_spacing": [1.0, 1.0],
+        },
+    ]
+
+    monkeypatch.setattr(
+        image_io_mod,
+        "_list_unique_dicom_files",
+        lambda _folder: (_ for _ in ()).throw(AssertionError("full disk merge should be skipped")),
+    )
+
+    merged, changed = image_io_mod._reconcile_db_instances_with_disk(series_dir, db_instances)
+
+    assert changed is False
+    assert merged == db_instances
 
 
 def test_load_single_series_by_number_fast_path_merges_disk_gap_without_backfill(tmp_path, monkeypatch):

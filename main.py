@@ -264,7 +264,7 @@ if __name__ == "__main__":
     configure_diagnostic_logging(process_role="main", force=True)
     logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
 
-    # ── BACKEND_SWITCH v2.3.5: Startup banner ────────────────────────────
+    # ── BACKEND_SWITCH v2.3.6: Startup banner ────────────────────────────
     try:
         from modules.viewer.viewer_backend_config import (
             load_viewer_backend as _load_vb,
@@ -418,7 +418,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("2.3.5")
+    app.setApplicationVersion("2.3.6")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

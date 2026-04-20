@@ -42,6 +42,7 @@ from modules.viewer.fast.disk_pixel_cache import get_disk_pixel_cache
 from modules.viewer.fast.decode_service import get_decode_service
 from modules.viewer.fast.stack_cache_profile import build_stack_cache_profile
 from modules.viewer.fast.system_load_controller import WorkClass
+from modules.viewer.fast.dicom_header_scan import DicomHeaderEntry, scan_series_header_entries
 from modules.viewer.fast.ui_throttle import (
     cap_prefetch_radius,
     is_heavy_download_active,
@@ -294,6 +295,7 @@ class Lightweight2DPipeline(QObject):
         self._scroll_history: List[Tuple[float, int]] = []  # (timestamp, slice_index) ring
         self._scroll_history_max: int = 12           # keep last N events
         self._last_prefetch_center: int = -1         # dedup: skip if same center
+        self._prefetch_prepared_index: Optional[int] = None
 
         # Metrics
         self._metrics_lock = threading.Lock()
@@ -395,6 +397,7 @@ class Lightweight2DPipeline(QObject):
         self._filter_first_slices.clear()
         self._scroll_history.clear()
         self._last_prefetch_center = -1
+        self._prefetch_prepared_index = None
 
     def notify_drag_started(self, center: Optional[int] = None) -> None:
         """Warm the current neighborhood when a new stack-drag begins.
@@ -439,56 +442,15 @@ class Lightweight2DPipeline(QObject):
         """
         if not self._series_path:
             return len(self._slices)
-        from pathlib import Path as _Path
-        series_dir = _Path(self._series_path)
-        if not series_dir.is_dir():
-            return len(self._slices)
-
         existing_paths = {s.path for s in self._slices}
-        new_files = [
-            f for f in series_dir.iterdir()
-            if f.is_file()
-            and f.suffix.lower() in {".dcm", ".dicom", ""}
-            and str(f) not in existing_paths
-        ]
-        if not new_files:
+        new_entries = scan_series_header_entries(
+            self._series_path,
+            existing_paths=existing_paths,
+        )
+        if not new_entries:
             return len(self._slices)
 
-        new_slices: List[SliceMeta] = []
-        for f in new_files:
-            try:
-                ds = pydicom.dcmread(str(f), stop_before_pixels=True, force=True)
-                iop = _as_float_tuple(getattr(ds, "ImageOrientationPatient", None), 6, (1, 0, 0, 0, 1, 0))
-                ipp = _as_float_tuple(getattr(ds, "ImagePositionPatient", None), 3, (0, 0, 0))
-                ps = _as_float_tuple(getattr(ds, "PixelSpacing", None), 2, (1, 1))
-                spp = int(getattr(ds, "SamplesPerPixel", 1) or 1)
-                new_slices.append(SliceMeta(
-                    path=str(f),
-                    rows=int(getattr(ds, "Rows", 0) or 0),
-                    cols=int(getattr(ds, "Columns", 0) or 0),
-                    pixel_spacing=(float(ps[0]), float(ps[1])),
-                    iop=(float(iop[0]), float(iop[1]), float(iop[2]),
-                         float(iop[3]), float(iop[4]), float(iop[5])),
-                    ipp=(float(ipp[0]), float(ipp[1]), float(ipp[2])),
-                    slice_thickness=_safe_float(getattr(ds, "SliceThickness", None)),
-                    spacing_between_slices=_safe_float(getattr(ds, "SpacingBetweenSlices", None)),
-                    photometric=str(getattr(ds, "PhotometricInterpretation", "MONOCHROME2")),
-                    bits_allocated=int(getattr(ds, "BitsAllocated", 16) or 16),
-                    pixel_representation=int(getattr(ds, "PixelRepresentation", 1) or 1),
-                    samples_per_pixel=spp,
-                    window_width=_safe_float(getattr(ds, "WindowWidth", None)),
-                    window_center=_safe_float(getattr(ds, "WindowCenter", None)),
-                    slope=_safe_float(getattr(ds, "RescaleSlope", None), 1.0) or 1.0,
-                    intercept=_safe_float(getattr(ds, "RescaleIntercept", None), 0.0) or 0.0,
-                    instance_number=(
-                        int(getattr(ds, "InstanceNumber"))
-                        if getattr(ds, "InstanceNumber", None) is not None
-                        else None
-                    ),
-                    is_rgb=(spp >= 3),
-                ))
-            except Exception:
-                continue
+        new_slices = [self._slice_meta_from_entry(entry) for entry in new_entries]
 
         if new_slices:
             self._slices.extend(new_slices)
@@ -502,7 +464,13 @@ class Lightweight2DPipeline(QObject):
             )
         return len(self._slices)
 
-    def set_window_level(self, window: Optional[float], level: Optional[float]) -> None:
+    def set_window_level(
+        self,
+        window: Optional[float],
+        level: Optional[float],
+        *,
+        trigger_prefetch: bool = True,
+    ) -> None:
         old_frame_cache_size = len(self._frame_cache)
         self._window = float(window) if window is not None else None
         self._level = float(level) if level is not None else None
@@ -514,7 +482,7 @@ class Lightweight2DPipeline(QObject):
                 "purged=%d filter_will_recompute=True",
                 float(window or 0), float(level or 0), old_frame_cache_size,
             )
-        if self._is_open and self._slices:
+        if trigger_prefetch and self._is_open and self._slices:
             # W/L change: bump generation to invalidate stale W/L frames,
             # and reset dedup so _prefetch_around re-submits.
             with self._prefetch_lock:
@@ -629,48 +597,17 @@ class Lightweight2DPipeline(QObject):
             with self._prefetch_lock:
                 _pm.record_queue_depths(len(self._prefetch_pending), len(self._frame_prefetch_pending))
 
-        # During fast interaction, prefer an exact filtered cached frame when
-        # available so the scrolling image matches the settled image appearance.
-        # Fall back to the exact unfiltered cache only when the filtered frame
-        # is not already available.
-        if self._fast_interaction and self._config.opencv_filter_enabled and not filter_enabled:
-            full_key = self._frame_cache_key(idx, ww, wc, True)
-            if full_key in self._frame_cache:
-                qimg = self._frame_cache.pop(full_key)
-                self._frame_cache[full_key] = qimg
-                self._record_cache_hit()
-                _pm.record_cache_hit()
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "FAST:frame_cache source=hit_filtered_fast slice=%d ww=%.0f wc=%.0f "
-                        "cache_size=%d pixel_cache_size=%d",
-                        idx, ww, wc,
-                        len(self._frame_cache), len(self._pixel_cache),
-                    )
-                return RenderedFrame(
-                    qimage=qimg, width=qimg.width(), height=qimg.height(),
-                    slice_index=idx, window_width=ww, window_center=wc,
-                    photometric=sm.photometric, decode_ms=0.0, filter_ms=0.0,
-                    wl_ms=0.0, total_ms=0.0,
-                )
-        if cache_key in self._frame_cache:
-            qimg = self._frame_cache.pop(cache_key)
-            self._frame_cache[cache_key] = qimg
-            self._record_cache_hit()
-            _pm.record_cache_hit()
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "FAST:frame_cache source=hit slice=%d ww=%.0f wc=%.0f filter=%s "
-                    "cache_size=%d pixel_cache_size=%d",
-                    idx, ww, wc, filter_enabled,
-                    len(self._frame_cache), len(self._pixel_cache),
-                )
-            return RenderedFrame(
-                qimage=qimg, width=qimg.width(), height=qimg.height(),
-                slice_index=idx, window_width=ww, window_center=wc,
-                photometric=sm.photometric, decode_ms=0.0, filter_ms=0.0,
-                wl_ms=0.0, total_ms=0.0,
-            )
+        cached_frame = self._try_exact_cached_frame(
+            idx,
+            sm,
+            ww,
+            wc,
+            filter_enabled,
+            cache_key,
+            _pm,
+        )
+        if cached_frame is not None:
+            return cached_frame
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "FAST:frame_cache source=miss slice=%d ww=%.0f wc=%.0f filter=%s "
@@ -692,79 +629,17 @@ class Lightweight2DPipeline(QObject):
         # adjacent slice is almost always already in pixel_cache (cache
         # hit, 0ms decode).  On the rare miss, synchronous decode (≤17ms)
         # is acceptable for precision reading.
-        _allow_surrogate = (interaction_type == 'drag')
-        surrogate_distance = self._get_drag_surrogate_max_distance()
-        if _allow_surrogate and self._fast_interaction:
-            nearest_frame = self._find_nearest_cached_frame(
-                idx,
-                ww,
-                wc,
-                filter_enabled,
-                max_distance=surrogate_distance,
-            )
-            if nearest_frame is not None:
-                nearest_idx, qimg = nearest_frame
-                frame = RenderedFrame(
-                    qimage=qimg,
-                    width=qimg.width(),
-                    height=qimg.height(),
-                    slice_index=idx,
-                    window_width=ww,
-                    window_center=wc,
-                    photometric=sm.photometric,
-                    decode_ms=0.0,
-                    filter_ms=0.0,
-                    wl_ms=0.0,
-                    total_ms=0.0,
-                )
-                _pm.record_cache_hit()
-                _pm.record_frame_render(0.0)
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "FAST:nearest_cached_frame idx=%d nearest=%d dist=%d",
-                        idx, nearest_idx, abs(idx - nearest_idx),
-                    )
-                if idx in self._pixel_cache:
-                    self._submit_frame_prefetch(idx)
-                else:
-                    self._prefetch_around(idx)
-                return frame
-
-        if _allow_surrogate and self._fast_interaction and idx not in self._pixel_cache:
-            nearest_idx = self._find_nearest_cached_pixel(
-                idx,
-                max_distance=surrogate_distance,
-            )
-            if nearest_idx is not None:
-                t_surr = time.perf_counter()
-                surrogate = self._render_frame_uncached(
-                    nearest_idx, ww, wc, filter_enabled, record_metrics=False,
-                )
-                surr_ms = (time.perf_counter() - t_surr) * 1000.0
-                frame = RenderedFrame(
-                    qimage=surrogate.qimage,
-                    width=surrogate.width,
-                    height=surrogate.height,
-                    slice_index=idx,
-                    window_width=ww,
-                    window_center=wc,
-                    photometric=sm.photometric,
-                    decode_ms=0.0,
-                    filter_ms=surrogate.filter_ms,
-                    wl_ms=surrogate.wl_ms,
-                    total_ms=surr_ms,
-                )
-                _pm.record_cache_hit()  # surrogate counts as cache-assisted
-                _pm.record_frame_render(surr_ms)
-                if surr_ms > 0:
-                    _pm.record_wl(surrogate.wl_ms)
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "FAST:nearest_cached idx=%d nearest=%d dist=%d surr_ms=%.1f",
-                        idx, nearest_idx, abs(idx - nearest_idx), surr_ms,
-                    )
-                self._prefetch_around(idx)
-                return frame
+        surrogate_frame = self._try_surrogate_frame(
+            idx,
+            sm,
+            ww,
+            wc,
+            filter_enabled,
+            interaction_type,
+            _pm,
+        )
+        if surrogate_frame is not None:
+            return surrogate_frame
         # ── End B3.7 ──────────────────────────────────────────────────
 
         _pm.record_cache_miss()
@@ -779,7 +654,7 @@ class Lightweight2DPipeline(QObject):
             _pm.record_wl(frame.wl_ms)
         if frame.filter_ms > 0:
             _pm.record_filter(frame.filter_ms)
-        self._prefetch_around(idx)
+        self._ensure_prefetch_prepared(idx)
         return frame
 
     def set_fast_interaction(self, fast: bool, interaction_type: str = '') -> None:
@@ -805,6 +680,176 @@ class Lightweight2DPipeline(QObject):
 
     def _frame_cache_key(self, idx: int, ww: float, wc: float, filter_enabled: bool) -> Tuple[int, float, float, bool]:
         return int(idx), float(ww), float(wc), bool(filter_enabled)
+
+    def _frame_from_qimage(
+        self,
+        qimg: QImage,
+        *,
+        slice_index: int,
+        window_width: float,
+        window_center: float,
+        photometric: str,
+        decode_ms: float = 0.0,
+        filter_ms: float = 0.0,
+        wl_ms: float = 0.0,
+        total_ms: float = 0.0,
+    ) -> RenderedFrame:
+        return RenderedFrame(
+            qimage=qimg,
+            width=qimg.width(),
+            height=qimg.height(),
+            slice_index=slice_index,
+            window_width=window_width,
+            window_center=window_center,
+            photometric=photometric,
+            decode_ms=decode_ms,
+            filter_ms=filter_ms,
+            wl_ms=wl_ms,
+            total_ms=total_ms,
+        )
+
+    def _touch_frame_cache_entry(self, key: Tuple[int, float, float, bool]) -> Optional[QImage]:
+        qimg = self._frame_cache.get(key)
+        if qimg is None:
+            return None
+        self._frame_cache.move_to_end(key)
+        return qimg
+
+    def _try_exact_cached_frame(
+        self,
+        idx: int,
+        sm: SliceMeta,
+        ww: float,
+        wc: float,
+        filter_enabled: bool,
+        cache_key: Tuple[int, float, float, bool],
+        perf_metrics: Any,
+    ) -> Optional[RenderedFrame]:
+        # During fast interaction, prefer an exact filtered cached frame when
+        # available so the scrolling image matches the settled image appearance.
+        # Fall back to the exact unfiltered cache only when the filtered frame
+        # is not already available.
+        if self._fast_interaction and self._config.opencv_filter_enabled and not filter_enabled:
+            full_key = self._frame_cache_key(idx, ww, wc, True)
+            qimg = self._touch_frame_cache_entry(full_key)
+            if qimg is not None:
+                self._record_cache_hit()
+                perf_metrics.record_cache_hit()
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "FAST:frame_cache source=hit_filtered_fast slice=%d ww=%.0f wc=%.0f "
+                        "cache_size=%d pixel_cache_size=%d",
+                        idx, ww, wc,
+                        len(self._frame_cache), len(self._pixel_cache),
+                    )
+                return self._frame_from_qimage(
+                    qimg,
+                    slice_index=idx,
+                    window_width=ww,
+                    window_center=wc,
+                    photometric=sm.photometric,
+                )
+
+        qimg = self._touch_frame_cache_entry(cache_key)
+        if qimg is None:
+            return None
+
+        self._record_cache_hit()
+        perf_metrics.record_cache_hit()
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "FAST:frame_cache source=hit slice=%d ww=%.0f wc=%.0f filter=%s "
+                "cache_size=%d pixel_cache_size=%d",
+                idx, ww, wc, filter_enabled,
+                len(self._frame_cache), len(self._pixel_cache),
+            )
+        return self._frame_from_qimage(
+            qimg,
+            slice_index=idx,
+            window_width=ww,
+            window_center=wc,
+            photometric=sm.photometric,
+        )
+
+    def _try_surrogate_frame(
+        self,
+        idx: int,
+        sm: SliceMeta,
+        ww: float,
+        wc: float,
+        filter_enabled: bool,
+        interaction_type: str,
+        perf_metrics: Any,
+    ) -> Optional[RenderedFrame]:
+        # B4.1: Surrogate is ONLY used for stack-drag navigation.
+        if interaction_type != 'drag' or not self._fast_interaction:
+            return None
+
+        surrogate_distance = self._get_drag_surrogate_max_distance()
+        nearest_frame = self._find_nearest_cached_frame(
+            idx,
+            ww,
+            wc,
+            filter_enabled,
+            max_distance=surrogate_distance,
+        )
+        if nearest_frame is not None:
+            nearest_idx, qimg = nearest_frame
+            perf_metrics.record_cache_hit()
+            perf_metrics.record_frame_render(0.0)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "FAST:nearest_cached_frame idx=%d nearest=%d dist=%d",
+                    idx, nearest_idx, abs(idx - nearest_idx),
+                )
+            if idx in self._pixel_cache:
+                self._submit_frame_prefetch(idx)
+            else:
+                self._ensure_prefetch_prepared(idx)
+            return self._frame_from_qimage(
+                qimg,
+                slice_index=idx,
+                window_width=ww,
+                window_center=wc,
+                photometric=sm.photometric,
+            )
+
+        if idx in self._pixel_cache:
+            return None
+
+        nearest_idx = self._find_nearest_cached_pixel(
+            idx,
+            max_distance=surrogate_distance,
+        )
+        if nearest_idx is None:
+            return None
+
+        t_surr = time.perf_counter()
+        surrogate = self._render_frame_uncached(
+            nearest_idx, ww, wc, filter_enabled, record_metrics=False,
+        )
+        surr_ms = (time.perf_counter() - t_surr) * 1000.0
+        perf_metrics.record_cache_hit()  # surrogate counts as cache-assisted
+        perf_metrics.record_frame_render(surr_ms)
+        if surr_ms > 0:
+            perf_metrics.record_wl(surrogate.wl_ms)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "FAST:nearest_cached idx=%d nearest=%d dist=%d surr_ms=%.1f",
+                idx, nearest_idx, abs(idx - nearest_idx), surr_ms,
+            )
+        self._ensure_prefetch_prepared(idx)
+        return self._frame_from_qimage(
+            surrogate.qimage,
+            slice_index=idx,
+            window_width=ww,
+            window_center=wc,
+            photometric=sm.photometric,
+            decode_ms=0.0,
+            filter_ms=surrogate.filter_ms,
+            wl_ms=surrogate.wl_ms,
+            total_ms=surr_ms,
+        )
 
     def _render_frame_uncached(
         self,
@@ -955,7 +1000,11 @@ class Lightweight2DPipeline(QObject):
     def shutdown(self) -> None:
         """Clean shutdown of background threads."""
         self.close_series()
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        for executor_attr in ("_decode_executor", "_frame_executor"):
+            executor = getattr(self, executor_attr, None)
+            if executor is None:
+                continue
+            executor.shutdown(wait=False, cancel_futures=True)
 
     # ── Private: decode ───────────────────────────────────────────────
 
@@ -1175,6 +1224,12 @@ class Lightweight2DPipeline(QObject):
             return max(1, min(actual, hinted))
         return max(0, actual)
 
+    def _ensure_prefetch_prepared(self, idx: int, *, direction: int = 0) -> None:
+        """Warm the requested neighborhood unless it was already prepared."""
+        if getattr(self, '_prefetch_prepared_index', None) == int(idx):
+            return
+        self._prefetch_around(int(idx), direction=direction)
+
     # ── Private: prefetch ─────────────────────────────────────────────
 
     # -- B3.2: velocity estimation ---
@@ -1264,6 +1319,8 @@ class Lightweight2DPipeline(QObject):
         if self._config.prefetch_radius <= 0:
             return
 
+        self._prefetch_prepared_index = int(center)
+
         # Dedup: skip if we already prefetched around this exact center.
         # Reset by close_series(), set_window_level(), direction changes.
         if center == self._last_prefetch_center:
@@ -1322,13 +1379,33 @@ class Lightweight2DPipeline(QObject):
                 if 0 <= bwd < n:
                     target_indices.add(bwd)
 
+        uncached_targets = {
+            idx for idx in target_indices
+            if idx not in self._pixel_cache
+        }
+
         with self._prefetch_lock:
             active_targets = set(getattr(self, '_active_prefetch_targets', set()))
             request_epoch = int(getattr(self, '_prefetch_request_epoch', 0))
-            if target_indices != active_targets:
+            if uncached_targets != active_targets:
                 request_epoch += 1
-                self._active_prefetch_targets = set(target_indices)
+                self._active_prefetch_targets = set(uncached_targets)
                 self._prefetch_request_epoch = request_epoch
+
+        # When drag/wheel interaction already has the entire admitted pixel
+        # neighborhood hot, do not re-walk the submit path. Updating the
+        # active target set above is still important because it lets older
+        # queued neighborhoods age out through the request_epoch gate.
+        if interaction_mode and target_indices and not uncached_targets:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "FAST:prefetch_skip_fully_cached center=%d radius=%d direction=%d targets=%d",
+                    center,
+                    adaptive_radius,
+                    direction,
+                    len(target_indices),
+                )
+            return
 
         for offset in range(1, adaptive_radius + 1):
             # Forward
@@ -1601,42 +1678,32 @@ class Lightweight2DPipeline(QObject):
         return out
 
     def _scan_series_headers(self, series_path: str) -> List[SliceMeta]:
-        from pathlib import Path
-        p = Path(series_path)
-        files = []
-        if p.is_dir():
-            files = [f for f in p.iterdir() if f.is_file() and f.suffix.lower() in {".dcm", ".dicom", ""}]
-        out: List[SliceMeta] = []
-        for f in sorted(files):
-            try:
-                ds = pydicom.dcmread(str(f), stop_before_pixels=True, force=True)
-                iop = _as_float_tuple(getattr(ds, "ImageOrientationPatient", None), 6, (1, 0, 0, 0, 1, 0))
-                ipp = _as_float_tuple(getattr(ds, "ImagePositionPatient", None), 3, (0, 0, 0))
-                ps = _as_float_tuple(getattr(ds, "PixelSpacing", None), 2, (1, 1))
-                spp = int(getattr(ds, "SamplesPerPixel", 1) or 1)
-                out.append(SliceMeta(
-                    path=str(f),
-                    rows=int(getattr(ds, "Rows", 0) or 0),
-                    cols=int(getattr(ds, "Columns", 0) or 0),
-                    pixel_spacing=(float(ps[0]), float(ps[1])),
-                    iop=(float(iop[0]), float(iop[1]), float(iop[2]), float(iop[3]), float(iop[4]), float(iop[5])),
-                    ipp=(float(ipp[0]), float(ipp[1]), float(ipp[2])),
-                    slice_thickness=_safe_float(getattr(ds, "SliceThickness", None)),
-                    spacing_between_slices=_safe_float(getattr(ds, "SpacingBetweenSlices", None)),
-                    photometric=str(getattr(ds, "PhotometricInterpretation", "MONOCHROME2")),
-                    bits_allocated=int(getattr(ds, "BitsAllocated", 16) or 16),
-                    pixel_representation=int(getattr(ds, "PixelRepresentation", 1) or 1),
-                    samples_per_pixel=spp,
-                    window_width=_safe_float(getattr(ds, "WindowWidth", None)),
-                    window_center=_safe_float(getattr(ds, "WindowCenter", None)),
-                    slope=_safe_float(getattr(ds, "RescaleSlope", None), 1.0) or 1.0,
-                    intercept=_safe_float(getattr(ds, "RescaleIntercept", None), 0.0) or 0.0,
-                    instance_number=int(getattr(ds, "InstanceNumber")) if getattr(ds, "InstanceNumber", None) is not None else None,
-                    is_rgb=(spp >= 3),
-                ))
-            except Exception:
-                continue
-        return out
+        return [
+            self._slice_meta_from_entry(entry)
+            for entry in scan_series_header_entries(series_path)
+        ]
+
+    def _slice_meta_from_entry(self, entry: DicomHeaderEntry) -> SliceMeta:
+        return SliceMeta(
+            path=entry.path,
+            rows=entry.rows,
+            cols=entry.cols,
+            pixel_spacing=entry.pixel_spacing,
+            iop=entry.iop,
+            ipp=entry.ipp,
+            slice_thickness=entry.slice_thickness,
+            spacing_between_slices=entry.spacing_between_slices,
+            photometric=entry.photometric,
+            bits_allocated=entry.bits_allocated,
+            pixel_representation=entry.pixel_representation,
+            samples_per_pixel=entry.samples_per_pixel,
+            window_width=entry.window_width,
+            window_center=entry.window_center,
+            slope=entry.slope,
+            intercept=entry.intercept,
+            instance_number=entry.instance_number,
+            is_rgb=entry.is_rgb,
+        )
 
     def _sort_slices(self, slices: List[SliceMeta]) -> List[SliceMeta]:
         """Sort slices by DICOM InstanceNumber (acquisition order).

@@ -95,13 +95,7 @@ class _PWViewersMixin:
             container.setFrameStyle(QFrame.Box | QFrame.Plain)
             container.setLineWidth(2)  # Smaller border for inactive
             container.setProperty("active", False)
-            container.setStyleSheet("""
-                QFrame#ViewportContainer {
-                    border: 2px solid #9ca3af;
-                    border-radius: 2px;
-                    background-color: transparent;
-                }
-            """)
+            container.setStyleSheet(self.viewer_controller._viewport_container_styles(active=False))
             print("   ✅ Container created")
         except Exception as e:
             print(f"   ❌ ERROR creating container: {e}")
@@ -399,8 +393,15 @@ class _PWViewersMixin:
 
             vtk_widget.set_slider(slider)
             count_slices = vtk_widget.get_count_of_slices()
-
-            mid_slices = 0  # Always start at first slice for speed
+            qt_bridge_active = bool(getattr(vtk_widget, '_qt_bridge_active', False))
+            mid_slices = 0  # Default to first slice for legacy/VTK path
+            if qt_bridge_active and getattr(vtk_widget, 'image_viewer', None) is not None:
+                try:
+                    # FAST/Qt switch path already rendered the preferred slice.
+                    # Reuse that slice instead of forcing a second render to 0.
+                    mid_slices = max(0, int(vtk_widget.image_viewer.GetSlice()))
+                except Exception:
+                    mid_slices = 0
             last_slices = max(0, count_slices - 1)
 
             # ✅ Set range and value WHILE signals are blocked
@@ -409,13 +410,22 @@ class _PWViewersMixin:
             # previous placeholder state is cleared.  Expensive per-slice
             # operations (on_slider_value_changed, apply_default_window_level)
             # are still skipped for single-slice series.
-            slider.setRange(0, last_slices)
-            slider.setValue(mid_slices)
+            if slider.minimum() != 0 or slider.maximum() != last_slices:
+                slider.setRange(0, last_slices)
+            if slider.value() != mid_slices:
+                slider.setValue(mid_slices)
 
             # ✅ CRITICAL: Unblock signals AFTER all slider updates are complete
             slider.blockSignals(False)
 
             if count_slices <= 1:
+                return
+
+            # FAST/Qt bridge already applied window/level and rendered the
+            # target slice inside switch_series/start_qt_viewer. Replaying the
+            # slider callback here forces an immediate second set_slice() on the
+            # UI thread (observed as a ~37ms tax in series-switch logs).
+            if qt_bridge_active:
                 return
 
             # ✅ Now manually trigger the value changed handler with the correct value

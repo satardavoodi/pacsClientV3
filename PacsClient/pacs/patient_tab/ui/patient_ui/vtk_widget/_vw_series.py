@@ -37,6 +37,33 @@ logger = logging.getLogger(__name__)
 class _VWSeriesMixin:
     """Series lifecycle: start_process_series, switch_series, reset, cleanup."""
 
+    def _queue_qt_startup_refit(self, bridge) -> None:
+        """Re-fit a freshly created Qt viewer on the next event-loop tick.
+
+        The initial zoom-to-fit in ``_start_qt_viewer`` can run before the
+        target viewport has fully settled into its final layout geometry.
+        When that happens, the last series dropped into a layout may appear
+        under-zoomed until a later UI event triggers another presentation sync.
+
+        Queue exactly one guarded follow-up refit for fresh Qt starts only.
+        In-place Qt refreshes continue to use the controller-managed refit path.
+        """
+
+        def _apply() -> None:
+            try:
+                if not bool(getattr(self, '_qt_bridge_active', False)):
+                    return
+                if getattr(self, 'image_viewer', None) is not bridge:
+                    return
+                self._sync_qt_viewer_presentation(refit_view=True)
+            except Exception as exc:
+                logger.debug("[QT_PRESENTATION] deferred startup refit failed: %s", exc)
+
+        try:
+            QTimer.singleShot(0, _apply)
+        except Exception:
+            _apply()
+
     def _sync_qt_viewer_presentation(self, *, refit_view: bool = False) -> None:
         """Keep the FAST Qt child viewer aligned with the host widget.
 
@@ -104,6 +131,7 @@ class _VWSeriesMixin:
             self.last_series_show = series_index
             self._sync_progressive_available_after_switch()
             self._sync_qt_viewer_presentation(refit_view=False)
+            self._qt_switch_refit_applied = False
             self.save_status_camera(bridge)
             logger.info(
                 "[SERIES SWITCH] COMPLETE (Qt refresh) - preserved slice=%d/%d",
@@ -375,9 +403,12 @@ class _VWSeriesMixin:
 
             # Render the first slice
             mid_slice = bridge.get_count_of_slices() // 2
+            bridge.SetSlice(mid_slice)
             bridge.apply_default_window_level(mid_slice)
             bridge.set_slice(mid_slice)
             self._sync_qt_viewer_presentation(refit_view=True)
+            self._qt_switch_refit_applied = True
+            self._queue_qt_startup_refit(bridge)
 
             logger.info(
                 "qt-viewer started slices=%d mid=%d",

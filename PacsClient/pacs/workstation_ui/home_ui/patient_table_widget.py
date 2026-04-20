@@ -1867,24 +1867,24 @@ class PatientTableWidget(QWidget):
     def _update_study_as_not_downloaded(self, study_uid: str):
         """Update database to mark study as not downloaded"""
         try:
-            from PacsClient.utils import get_connection_database
-            
-            conn = get_connection_database()
-            cur = conn.cursor()
-            
-            # Clear study_path to indicate not downloaded
-            cur.execute(
-                "UPDATE studies SET study_path = NULL WHERE study_uid = ?",
-                (study_uid,)
-            )
-            
-            # Also clear attachments_uploaded
-            cur.execute(
-                "UPDATE studies SET attachments_uploaded = NULL WHERE study_uid = ?",
-                (study_uid,)
-            )
-            
-            conn.commit()
+            from database.core import get_db_connection
+
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+
+                # Clear study_path to indicate not downloaded
+                cur.execute(
+                    "UPDATE studies SET study_path = NULL WHERE study_uid = ?",
+                    (study_uid,)
+                )
+
+                # Also clear attachments_uploaded
+                cur.execute(
+                    "UPDATE studies SET attachments_uploaded = NULL WHERE study_uid = ?",
+                    (study_uid,)
+                )
+
+                conn.commit()
             print(f"✓ Updated database for {study_uid} - marked as not downloaded")
             
         except Exception as e:

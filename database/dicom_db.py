@@ -35,7 +35,7 @@ import json
 import logging
 import sqlite3
 
-from database._pool import get_db_connection, get_connection_database
+from database._pool import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -405,19 +405,19 @@ def insert_patient(patient_id: str, name: str, birth_date: str = None, sex: str 
     Uses ``INSERT OR IGNORE`` to prevent duplicates based on ``patient_id``.
     If the record already exists, the existing PK is returned.
     """
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT OR IGNORE INTO patients
-            (patient_id, patient_name, birth_date, sex, age, patient_weight)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (patient_id, name, birth_date, sex, age, patient_weight),
-    )
-    conn.commit()
-    cur.execute("SELECT patient_pk FROM patients WHERE patient_id = ?", (patient_id,))
-    return cur.fetchone()[0]
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO patients
+                (patient_id, patient_name, birth_date, sex, age, patient_weight)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (patient_id, name, birth_date, sex, age, patient_weight),
+        )
+        conn.commit()
+        cur.execute("SELECT patient_pk FROM patients WHERE patient_id = ?", (patient_id,))
+        return cur.fetchone()[0]
 
 
 def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_time: str = None,
@@ -425,45 +425,45 @@ def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_
                  body_part: str = None, number_of_series: int = 0,
                  number_of_instances: int = 0, study_path: str = None) -> int:
     """Insert a study row and return its PK. Updates study_path if study already exists."""
-    conn = get_connection_database()
-    cur = conn.cursor()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
 
-    try:
-        cur.execute(
-            """
-            INSERT INTO studies
-                (study_uid, patient_fk, study_date, study_time, study_description,
-                 institution_name, modality, body_part, number_of_series, number_of_instances, study_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                study_uid, patient_fk, study_date, study_time, study_description,
-                institution_name, modality, body_part, number_of_series, number_of_instances, study_path,
-            ),
-        )
-        study_pk = cur.lastrowid
-    except sqlite3.IntegrityError:
-        cur.execute(
-            """
-            UPDATE studies
-            SET patient_fk = ?, study_date = ?, study_time = ?, study_description = ?,
-                institution_name = ?, modality = ?, body_part = ?,
-                number_of_series = ?, number_of_instances = ?,
-                study_path = COALESCE(?, study_path)
-            WHERE study_uid = ?
-            """,
-            (
-                patient_fk, study_date, study_time, study_description,
-                institution_name, modality, body_part,
-                number_of_series, number_of_instances,
-                study_path, study_uid,
-            ),
-        )
-        cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
-        study_pk = cur.fetchone()[0]
+        try:
+            cur.execute(
+                """
+                INSERT INTO studies
+                    (study_uid, patient_fk, study_date, study_time, study_description,
+                     institution_name, modality, body_part, number_of_series, number_of_instances, study_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    study_uid, patient_fk, study_date, study_time, study_description,
+                    institution_name, modality, body_part, number_of_series, number_of_instances, study_path,
+                ),
+            )
+            study_pk = cur.lastrowid
+        except sqlite3.IntegrityError:
+            cur.execute(
+                """
+                UPDATE studies
+                SET patient_fk = ?, study_date = ?, study_time = ?, study_description = ?,
+                    institution_name = ?, modality = ?, body_part = ?,
+                    number_of_series = ?, number_of_instances = ?,
+                    study_path = COALESCE(?, study_path)
+                WHERE study_uid = ?
+                """,
+                (
+                    patient_fk, study_date, study_time, study_description,
+                    institution_name, modality, body_part,
+                    number_of_series, number_of_instances,
+                    study_path, study_uid,
+                ),
+            )
+            cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
+            study_pk = cur.fetchone()[0]
 
-    conn.commit()
-    return study_pk
+        conn.commit()
+        return study_pk
 
 
 def migrate_fix_null_study_paths() -> dict:
@@ -562,48 +562,48 @@ def insert_series(series_uid: str, study_fk: int, series_name: str = None, serie
                   body_part_examined: str = None, manufacturer: str = None, institution_name: str = None,
                   main_thumbnail: bool = False, thumbnail_path: str = None, series_path: str = None) -> int:
     """Insert a series row and return its PK. Updates series_path if series already exists."""
-    conn = get_connection_database()
-    cur = conn.cursor()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
 
-    try:
-        cur.execute(
-            """
-            INSERT INTO series
-                (series_uid, series_name, study_fk, series_number,
-                 series_thk, series_description, orientation, modality, image_count,
-                 protocol_name, body_part_examined, manufacturer, institution_name,
-                 main_thumbnail, thumbnail_path, series_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                series_uid, series_name, study_fk, series_number, series_thk, series_description,
-                orientation, modality, image_count, protocol_name, body_part_examined, manufacturer,
-                institution_name, int(main_thumbnail), thumbnail_path, series_path,
-            ),
-        )
-        series_pk = cur.lastrowid
-    except sqlite3.IntegrityError:
-        cur.execute(
-            """
-            UPDATE series
-            SET study_fk = ?, series_name = ?, series_number = ?, series_thk = ?,
-                series_description = ?, orientation = ?, modality = ?, image_count = ?,
-                protocol_name = ?, body_part_examined = ?, manufacturer = ?,
-                institution_name = ?, main_thumbnail = ?, thumbnail_path = ?,
-                series_path = COALESCE(?, series_path)
-            WHERE series_uid = ?
-            """,
-            (
-                study_fk, series_name, series_number, series_thk, series_description, orientation,
-                modality, image_count, protocol_name, body_part_examined, manufacturer,
-                institution_name, int(main_thumbnail), thumbnail_path, series_path, series_uid,
-            ),
-        )
-        cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_uid,))
-        series_pk = cur.fetchone()[0]
+        try:
+            cur.execute(
+                """
+                INSERT INTO series
+                    (series_uid, series_name, study_fk, series_number,
+                     series_thk, series_description, orientation, modality, image_count,
+                     protocol_name, body_part_examined, manufacturer, institution_name,
+                     main_thumbnail, thumbnail_path, series_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    series_uid, series_name, study_fk, series_number, series_thk, series_description,
+                    orientation, modality, image_count, protocol_name, body_part_examined, manufacturer,
+                    institution_name, int(main_thumbnail), thumbnail_path, series_path,
+                ),
+            )
+            series_pk = cur.lastrowid
+        except sqlite3.IntegrityError:
+            cur.execute(
+                """
+                UPDATE series
+                SET study_fk = ?, series_name = ?, series_number = ?, series_thk = ?,
+                    series_description = ?, orientation = ?, modality = ?, image_count = ?,
+                    protocol_name = ?, body_part_examined = ?, manufacturer = ?,
+                    institution_name = ?, main_thumbnail = ?, thumbnail_path = ?,
+                    series_path = COALESCE(?, series_path)
+                WHERE series_uid = ?
+                """,
+                (
+                    study_fk, series_name, series_number, series_thk, series_description, orientation,
+                    modality, image_count, protocol_name, body_part_examined, manufacturer,
+                    institution_name, int(main_thumbnail), thumbnail_path, series_path, series_uid,
+                ),
+            )
+            cur.execute("SELECT series_pk FROM series WHERE series_uid = ?", (series_uid,))
+            series_pk = cur.fetchone()[0]
 
-    conn.commit()
-    return series_pk
+        conn.commit()
+        return series_pk
 
 
 def insert_instances_batch(instances: list) -> int:
@@ -620,53 +620,51 @@ def insert_instances_batch(instances: list) -> int:
     if not instances:
         return 0
 
-    conn = get_connection_database()
-    cur = conn.cursor()
-
     try:
-        insert_data = []
-        for inst in instances:
-            insert_data.append((
-                inst.get('sop_uid'),
-                inst.get('series_fk'),
-                inst.get('instance_path'),
-                inst.get('instance_number'),
-                inst.get('rows'),
-                inst.get('columns'),
-                inst.get('window_width'),
-                inst.get('window_center'),
-                inst.get('is_rgb', False),
-                inst.get('group_id', 0),
-                inst.get('image_position_patient'),
-                inst.get('image_orientation_patient'),
-                inst.get('pixel_spacing'),
-                inst.get('direction'),
-                inst.get('slice_thickness'),
-                inst.get('spacing_between_slices'),
-                inst.get('rescale_slope', 1.0),
-                inst.get('rescale_intercept', 0.0),
-                inst.get('bits_allocated', 16),
-                inst.get('pixel_representation', 1),
-            ))
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            insert_data = []
+            for inst in instances:
+                insert_data.append((
+                    inst.get('sop_uid'),
+                    inst.get('series_fk'),
+                    inst.get('instance_path'),
+                    inst.get('instance_number'),
+                    inst.get('rows'),
+                    inst.get('columns'),
+                    inst.get('window_width'),
+                    inst.get('window_center'),
+                    inst.get('is_rgb', False),
+                    inst.get('group_id', 0),
+                    inst.get('image_position_patient'),
+                    inst.get('image_orientation_patient'),
+                    inst.get('pixel_spacing'),
+                    inst.get('direction'),
+                    inst.get('slice_thickness'),
+                    inst.get('spacing_between_slices'),
+                    inst.get('rescale_slope', 1.0),
+                    inst.get('rescale_intercept', 0.0),
+                    inst.get('bits_allocated', 16),
+                    inst.get('pixel_representation', 1),
+                ))
 
-        cur.executemany(
-            """
-            INSERT OR REPLACE INTO instances
-                (sop_uid, series_fk, instance_path, instance_number, rows, columns,
-                 window_width, window_center, is_rgb, group_id,
-                 image_position_patient, image_orientation_patient, pixel_spacing, direction,
-                 slice_thickness, spacing_between_slices, rescale_slope, rescale_intercept,
-                 bits_allocated, pixel_representation)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            insert_data,
-        )
+            cur.executemany(
+                """
+                INSERT OR REPLACE INTO instances
+                    (sop_uid, series_fk, instance_path, instance_number, rows, columns,
+                     window_width, window_center, is_rgb, group_id,
+                     image_position_patient, image_orientation_patient, pixel_spacing, direction,
+                     slice_thickness, spacing_between_slices, rescale_slope, rescale_intercept,
+                     bits_allocated, pixel_representation)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                insert_data,
+            )
 
-        conn.commit()
-        return len(insert_data)
+            conn.commit()
+            return len(insert_data)
 
     except Exception as e:
-        conn.rollback()
         logging.getLogger(__name__).error(f"❌ Batch insert failed: {e}")
         raise
 
@@ -684,9 +682,6 @@ def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_n
     Lists (image_position_patient, image_orientation_patient, pixel_spacing, direction)
     are stored as JSON strings for proper serialization.
     """
-    conn = get_connection_database()
-    cur = conn.cursor()
-
     def _serialize(value):
         if value is None:
             return None
@@ -703,62 +698,65 @@ def insert_instance(sop_uid: str, series_fk: int, instance_path: str, instance_n
     pixel_spacing_json = _serialize(pixel_spacing)
     direction_json = _serialize(direction)
 
-    try:
-        cur.execute(
-            """
-            INSERT INTO instances
-                (sop_uid, series_fk, instance_path, instance_number, rows, columns,
-                 window_width, window_center, is_rgb, group_id, image_position_patient,
-                  image_orientation_patient, pixel_spacing, direction, slice_thickness,
-                  spacing_between_slices, rescale_slope, rescale_intercept, bits_allocated,
-                  pixel_representation)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                sop_uid, series_fk, instance_path, instance_number, rows, columns,
-                window_width, window_center, int(is_rgb), int(group_id),
-                image_position_json, image_orientation_json, pixel_spacing_json, direction_json,
-                slice_thickness, spacing_between_slices, rescale_slope, rescale_intercept,
-                bits_allocated, pixel_representation,
-            ),
-        )
-        instance_pk = cur.lastrowid
-    except sqlite3.IntegrityError:
-        cur.execute(
-            """
-            UPDATE instances
-            SET series_fk = ?, instance_path = ?, instance_number = ?,
-                rows = COALESCE(?, rows), columns = COALESCE(?, columns),
-                window_width = ?, window_center = ?, is_rgb = ?, group_id = ?,
-                image_position_patient = COALESCE(?, image_position_patient),
-                image_orientation_patient = COALESCE(?, image_orientation_patient),
-                pixel_spacing = COALESCE(?, pixel_spacing),
-                direction = COALESCE(?, direction),
-                slice_thickness = COALESCE(?, slice_thickness),
-                spacing_between_slices = COALESCE(?, spacing_between_slices),
-                rescale_slope = COALESCE(?, rescale_slope),
-                rescale_intercept = COALESCE(?, rescale_intercept),
-                bits_allocated = COALESCE(?, bits_allocated),
-                pixel_representation = COALESCE(?, pixel_representation)
-            WHERE sop_uid = ?
-            """,
-            (
-                series_fk, instance_path, instance_number,
-                rows, columns,
-                window_width, window_center, int(is_rgb), int(group_id),
-                image_position_json, image_orientation_json,
-                pixel_spacing_json, direction_json,
-                slice_thickness, spacing_between_slices,
-                rescale_slope, rescale_intercept,
-                bits_allocated, pixel_representation,
-                sop_uid,
-            ),
-        )
-        cur.execute("SELECT instance_pk FROM instances WHERE sop_uid = ?", (sop_uid,))
-        instance_pk = cur.fetchone()[0]
+    with get_db_connection() as conn:
+        cur = conn.cursor()
 
-    conn.commit()
-    return instance_pk
+        try:
+            cur.execute(
+                """
+                INSERT INTO instances
+                    (sop_uid, series_fk, instance_path, instance_number, rows, columns,
+                     window_width, window_center, is_rgb, group_id, image_position_patient,
+                      image_orientation_patient, pixel_spacing, direction, slice_thickness,
+                      spacing_between_slices, rescale_slope, rescale_intercept, bits_allocated,
+                      pixel_representation)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    sop_uid, series_fk, instance_path, instance_number, rows, columns,
+                    window_width, window_center, int(is_rgb), int(group_id),
+                    image_position_json, image_orientation_json, pixel_spacing_json, direction_json,
+                    slice_thickness, spacing_between_slices, rescale_slope, rescale_intercept,
+                    bits_allocated, pixel_representation,
+                ),
+            )
+            instance_pk = cur.lastrowid
+        except sqlite3.IntegrityError:
+            cur.execute(
+                """
+                UPDATE instances
+                SET series_fk = ?, instance_path = ?, instance_number = ?,
+                    rows = COALESCE(?, rows), columns = COALESCE(?, columns),
+                    window_width = ?, window_center = ?, is_rgb = ?, group_id = ?,
+                    image_position_patient = COALESCE(?, image_position_patient),
+                    image_orientation_patient = COALESCE(?, image_orientation_patient),
+                    pixel_spacing = COALESCE(?, pixel_spacing),
+                    direction = COALESCE(?, direction),
+                    slice_thickness = COALESCE(?, slice_thickness),
+                    spacing_between_slices = COALESCE(?, spacing_between_slices),
+                    rescale_slope = COALESCE(?, rescale_slope),
+                    rescale_intercept = COALESCE(?, rescale_intercept),
+                    bits_allocated = COALESCE(?, bits_allocated),
+                    pixel_representation = COALESCE(?, pixel_representation)
+                WHERE sop_uid = ?
+                """,
+                (
+                    series_fk, instance_path, instance_number,
+                    rows, columns,
+                    window_width, window_center, int(is_rgb), int(group_id),
+                    image_position_json, image_orientation_json,
+                    pixel_spacing_json, direction_json,
+                    slice_thickness, spacing_between_slices,
+                    rescale_slope, rescale_intercept,
+                    bits_allocated, pixel_representation,
+                    sop_uid,
+                ),
+            )
+            cur.execute("SELECT instance_pk FROM instances WHERE sop_uid = ?", (sop_uid,))
+            instance_pk = cur.fetchone()[0]
+
+        conn.commit()
+        return instance_pk
 
 
 # ---------------------------------------------------------------------------
@@ -797,20 +795,19 @@ def deserialize_instance_metadata(instance_row: dict) -> dict:
 
 def get_all_patients() -> list:
     """Return *all* patients as list of dictionaries."""
-    conn = get_connection_database()
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT
-            p.*,
-            s.*
-        FROM patients p
-        LEFT JOIN studies s ON p.patient_pk = s.patient_fk
-        ORDER BY p.patient_name, s.study_date DESC
-    """)
-    rows = cur.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    with get_db_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                p.*,
+                s.*
+            FROM patients p
+            LEFT JOIN studies s ON p.patient_pk = s.patient_fk
+            ORDER BY p.patient_name, s.study_date DESC
+        """)
+        rows = cur.fetchall()
+        return [dict(r) for r in rows]
 
 
 def search_patients_local(search_data: dict) -> list:
@@ -984,17 +981,16 @@ def find_instances_by_sop_uids(sop_uids: list) -> list:
     if not sop_uids:
         return []
 
-    conn = get_connection_database()
-    cur = conn.cursor()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
 
-    placeholders = ','.join(['?' for _ in sop_uids])
-    cur.execute(
-        f"SELECT instance_pk, sop_uid FROM instances WHERE sop_uid IN ({placeholders})",
-        sop_uids,
-    )
-    results = cur.fetchall()
-    conn.close()
-    return [{'instance_pk': row[0], 'sop_uid': row[1]} for row in results]
+        placeholders = ','.join(['?' for _ in sop_uids])
+        cur.execute(
+            f"SELECT instance_pk, sop_uid FROM instances WHERE sop_uid IN ({placeholders})",
+            sop_uids,
+        )
+        results = cur.fetchall()
+        return [{'instance_pk': row[0], 'sop_uid': row[1]} for row in results]
 
 
 def bulk_insert_instances(instances_data: list):
@@ -1004,9 +1000,6 @@ def bulk_insert_instances(instances_data: list):
     """
     if not instances_data:
         return
-
-    conn = get_connection_database()
-    cur = conn.cursor()
 
     insert_sql = """
         INSERT OR REPLACE INTO instances (
@@ -1038,13 +1031,13 @@ def bulk_insert_instances(instances_data: list):
         ))
 
     try:
-        cur.executemany(insert_sql, values)
-        conn.commit()
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.executemany(insert_sql, values)
+            conn.commit()
     except Exception as e:
         print(f"⚠️ Warning during bulk_insert_instances: {e}")
-        conn.rollback()
-    finally:
-        conn.close()
+        return
 
 
 def bulk_update_instances(instances_data: list):
@@ -1053,9 +1046,6 @@ def bulk_update_instances(instances_data: list):
     """
     if not instances_data:
         return
-
-    conn = get_connection_database()
-    cur = conn.cursor()
 
     update_sql = """
         UPDATE instances
@@ -1096,8 +1086,10 @@ def bulk_update_instances(instances_data: list):
             inst['sop_uid'],
         ))
 
-    cur.executemany(update_sql, values)
-    conn.commit()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.executemany(update_sql, values)
+        conn.commit()
     conn.close()
 
 

@@ -398,6 +398,45 @@ So the overall answer is:
 1. **Extract Block A data supply from `thumbnail_panel.py`**
    - move DB/cache fallback metadata lookup behind a thumbnail data service or provider
 2. **Narrow Block B authority in `_vc_switch.py`**
+
+---
+
+## 2026-04-20 hardening update
+
+### What was hardened
+
+- `modules/viewer/fast/lightweight_2d_pipeline.py::shutdown()` now shuts down the actual FAST background pools (`_decode_executor`, `_frame_executor`) instead of referencing a non-existent `_executor` field.
+- The matching builder payload copy under `builder/plugin package/packages/viewer/payload/python/modules/viewer/fast/lightweight_2d_pipeline.py` was updated in the same way so packaged builds do not drift behind the workspace runtime behavior.
+- `_vc_switch.py::_perform_series_switch_optimized()` now keeps the actual series switch, spinner hide, and Qt refit immediate, while deferring lower-priority follow-up work (corner refresh, reference-line recompute, protected-series refresh) to the next Qt tick.
+
+### Why this is a Block B improvement
+
+This is deliberately a **beside-the-current-function** optimization, not a redesign:
+
+- no change to the first-image-visible path,
+- no change to the current FAST badge / loader-GIF / viewport-fit behavior,
+- no change to the manual-switch refit path that fixed the quarter-size layout zoom regression,
+- no change to the terminal/background skip policy for untargeted FAST series.
+
+Instead, it removes a latent cleanup fault in the FAST render core so shutdown/teardown does not fail on a stale attribute lookup.
+It also trims a small amount of non-essential work off the immediate Block B switch path without changing current presentation semantics.
+
+### Regression guardrails preserved
+
+The current hardening pass must remain compatible with the following already-fixed user-visible behaviors:
+
+1. **Badge behavior** remains presentation-only; cleanup hardening must not reintroduce state churn that changes backend badge timing.
+2. **Loader/GIF behavior** remains unchanged; successful manual switch still owns spinner hide/awaiting cleanup.
+3. **Layout zoom / quarter-size regression** remains protected by the Qt post-switch refit path in `_vc_switch.py`; cleanup work must stay separate from viewport presentation repair.
+4. **Post-switch first-frame priority** is now explicit: spinner hide and Qt refit remain inline, while safe follow-up UI work runs one Qt tick later so performance improves beside the current behavior instead of replacing it.
+
+### Architectural meaning
+
+This update reinforces the current conclusion of this review:
+
+- the FAST decode/render core is qualified,
+- the next improvements should be narrow hardening and ownership cleanup,
+- and performance work should stay adjacent to the current behavior instead of broad rewrites that risk regressions in Block A/B presentation.
    - first-image path should stop after a stable visible frame + essential slider/layout state
 3. **Move all nonessential warmup behind Block B completion**
    - treat warmup/prefetch as admitted Block C work only

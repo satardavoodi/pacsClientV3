@@ -9,6 +9,7 @@ from PySide6.QtGui import QMouseEvent, QResizeEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
 import PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_interactor as _vw_interactor
+import PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_series as _vw_series_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_series import _VWSeriesMixin
 from modules.viewer.fast.qt_slice_viewer import QtSliceViewer
 
@@ -124,6 +125,67 @@ def _build_cleanup_bridge_stub():
     return bridge
 
 
+def _build_window_level_bridge_stub():
+    bridge = SimpleNamespace()
+    bridge.metadata = {}
+    bridge._current_slice = 3
+    bridge._slice_count = 12
+    bridge._window = 400.0
+    bridge._level = 40.0
+    bridge._wl_scroll_cache_ww = None
+    bridge._wl_scroll_cache_wc = None
+    bridge.qt_viewer = SimpleNamespace(
+        set_image=lambda _img: None,
+        set_window_level_values=lambda _ww, _wc: None,
+        annotations=SimpleNamespace(update_from_metadata=lambda **_kwargs: None),
+        get_zoom=lambda: 1.0,
+        update=lambda: None,
+    )
+    bridge._update_annotations = lambda *_args, **_kwargs: None
+    bridge._sync_window_level_from_pipeline = lambda default=None: default or (bridge._window, bridge._level)
+    bridge._rendered_frames = []
+    bridge.pipeline_calls = []
+    bridge.pipeline = SimpleNamespace(
+        set_window_level=lambda ww, wc, trigger_prefetch=True: bridge.pipeline_calls.append((ww, wc, trigger_prefetch)),
+        get_rendered_frame=lambda idx: bridge._rendered_frames.append(idx) or SimpleNamespace(
+            qimage=None,
+            window_width=111.0,
+            window_center=22.0,
+        ),
+    )
+
+    from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
+    bridge.set_window_level = types.MethodType(QtViewerBridge.set_window_level, bridge)
+    return bridge
+
+
+def _build_mock_vtk_bridge_stub():
+    bridge = SimpleNamespace()
+    bridge._slice_count = 0
+    bridge.qt_viewer = SimpleNamespace(set_pixel_spacing=lambda _spacing: None)
+    bridge.renderer = SimpleNamespace(_camera=SimpleNamespace(_parallel_scale=0.0))
+    bridge._sync_window_level_from_pipeline = lambda default=None: default
+    bridge._sync_interaction_slice_count_hint = lambda: bridge._slice_count
+    bridge.pipeline_calls = []
+    bridge.pipeline = SimpleNamespace(
+        slice_count=12,
+        get_slice_meta=lambda _idx: SimpleNamespace(
+            cols=512,
+            rows=256,
+            pixel_spacing=(1.0, 1.0),
+            ipp=(0.0, 0.0, 0.0),
+            slice_thickness=1.0,
+        ),
+        get_scalar_range=lambda _idx: (0.0, 4095.0),
+        get_default_window_level=lambda _idx: (400.0, 40.0),
+        set_window_level=lambda ww, wc, trigger_prefetch=True: bridge.pipeline_calls.append((ww, wc, trigger_prefetch)),
+    )
+
+    from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
+    bridge._build_mock_vtk_data = types.MethodType(QtViewerBridge._build_mock_vtk_data, bridge)
+    return bridge
+
+
 class _FakeRenderWindow:
     def SetOffScreenRendering(self, _flag):
         pass
@@ -154,10 +216,17 @@ class _FakeQtViewer:
 class _FakeBridge:
     def __init__(self, slice_count=12):
         self._slice_count = slice_count
+        self._current_slice = 0
+        self.primed_slice_calls = []
         self.slice_calls = []
         self.default_calls = []
         self.events = []
         self.zoom_to_fit_calls = 0
+
+    def SetSlice(self, idx):
+        self._current_slice = idx
+        self.primed_slice_calls.append(idx)
+        self.events.append(("prime", idx))
 
     def get_count_of_slices(self):
         return self._slice_count
@@ -443,6 +512,7 @@ class TestQtStackDragBridge:
 
     def test_start_qt_viewer_cleans_existing_bridge_before_replacement(self, monkeypatch):
         old_bridge = SimpleNamespace(cleanup_called=False)
+        queued = []
 
         def _cleanup_old_bridge():
             old_bridge.cleanup_called = True
@@ -457,6 +527,11 @@ class TestQtStackDragBridge:
             lambda vtk_widget, metadata, metadata_fixed: (new_bridge, new_viewer),
         )
         monkeypatch.setattr(_vw_interactor, '_QtBridgeStyle', _FakeQtBridgeStyle)
+        monkeypatch.setattr(
+            _vw_series_mod.QTimer,
+            'singleShot',
+            lambda delay, fn: queued.append((delay, fn)),
+        )
 
         widget._start_qt_viewer(metadata={}, metadata_fixed={})
 
@@ -465,10 +540,32 @@ class TestQtStackDragBridge:
         assert widget.image_viewer is new_bridge
         assert widget._qt_viewer_widget is new_viewer
         assert widget._qt_bridge_active is True
+        assert new_bridge.primed_slice_calls == [6]
         assert new_bridge.slice_calls == [6]
         assert new_bridge.default_calls == [6]
-        assert new_bridge.events[:2] == [("wl", 6), ("slice", 6)]
+        assert new_bridge.events[:3] == [("prime", 6), ("wl", 6), ("slice", 6)]
         assert new_bridge.zoom_to_fit_calls == 1
         assert widget._protected_parallel_scale == 321.0
         assert new_viewer.geometry == (0, 0, 128, 128)
         assert new_viewer.raised is True
+        assert [delay for delay, _ in queued] == [0]
+
+        queued[0][1]()
+
+        assert new_bridge.zoom_to_fit_calls == 2
+        assert widget._protected_parallel_scale == 321.0
+
+    def test_default_window_level_sync_does_not_trigger_prefetch(self):
+        bridge = _build_window_level_bridge_stub()
+
+        bridge.set_window_level(350.0, 30.0, flag_default=True)
+
+        assert bridge.pipeline_calls == [(350.0, 30.0, False)]
+        assert bridge._rendered_frames == []
+
+    def test_initial_bridge_window_level_sync_skips_prefetch(self):
+        bridge = _build_mock_vtk_bridge_stub()
+
+        bridge._build_mock_vtk_data()
+
+        assert bridge.pipeline_calls == [(400.0, 40.0, False)]

@@ -53,10 +53,17 @@ def build_stack_cache_profile(total_slices: int) -> StackCacheProfile:
 
     if n <= 24:
         full_series_radius = max(1, n - 1)
+        # Small stacks still benefit from fully warming in idle mode, but
+        # drag/wheel interaction should not try to submit almost the entire
+        # series at once. A tighter fast radius keeps the visible path smooth
+        # while trimming background CPU on 18–24 slice stacks where the
+        # visible drag path is already hot but the background decode band can
+        # still spike CPU right after a cold open.
+        fast_radius = min(full_series_radius, 4)
         return StackCacheProfile(
             drag_fullscreen_slices=max(1, n - 1),
             drag_max_steps_per_event=1,
-            fast_prefetch_radius=full_series_radius,
+            fast_prefetch_radius=fast_radius,
             medium_prefetch_radius=full_series_radius,
             idle_prefetch_radius=full_series_radius,
             surrogate_distance=min(full_series_radius, 6),

@@ -393,17 +393,24 @@ class QtViewerBridge:
                 origin=(float(ipp[0]), float(ipp[1]), float(ipp[2])),
                 scalar_range=scalar_range,
             )
+            try:
+                self.qt_viewer.set_pixel_spacing((float(ps[0]), float(ps[1])))
+            except Exception:
+                pass
 
             # Set initial W/L
             ww, wc = self.pipeline.get_default_window_level(0)
-            self._window = ww
-            self._level = wc
-            self.pipeline.set_window_level(ww, wc)
+            self.pipeline.set_window_level(ww, wc, trigger_prefetch=False)
+            self._sync_window_level_from_pipeline(default=(ww, wc))
 
             # Set initial camera scale based on image size
             self.renderer._camera._parallel_scale = float(rows) / 2.0
         else:
             self.vtk_image_data = _MockVTKImageData()
+            try:
+                self.qt_viewer.set_pixel_spacing((1.0, 1.0))
+            except Exception:
+                pass
 
         # Store properties for compatibility
         try:
@@ -586,6 +593,8 @@ class QtViewerBridge:
         t_stage = time.perf_counter()
         self.qt_viewer.set_image(frame.qimage)
         self.qt_viewer.set_window_level_values(frame.window_width, frame.window_center)
+        self._window = float(frame.window_width)
+        self._level = float(frame.window_center)
         display_ms = (time.perf_counter() - t_stage) * 1000.0
 
         # Skip annotation update during fast scroll for lower latency
@@ -707,6 +716,8 @@ class QtViewerBridge:
         frame = self.pipeline.get_rendered_frame(self._current_slice)
         self.qt_viewer.set_image(frame.qimage)
         self.qt_viewer.set_window_level_values(frame.window_width, frame.window_center)
+        self._window = float(frame.window_width)
+        self._level = float(frame.window_center)
         self._update_annotations(
             self._current_slice, frame.window_width, frame.window_center
         )
@@ -745,18 +756,27 @@ class QtViewerBridge:
             self._wl_scroll_cache_ww = None
             self._wl_scroll_cache_wc = None
 
-        self._window = float(window_width)
-        self._level = float(window_center)
-        self.pipeline.set_window_level(self._window, self._level)
+        self.pipeline.set_window_level(
+            float(window_width),
+            float(window_center),
+            trigger_prefetch=not flag_default,
+        )
+        ww, wc = self._sync_window_level_from_pipeline(
+            default=(float(window_width), float(window_center))
+        )
 
         # Re-render current slice
         if not flag_default:
             frame = self.pipeline.get_rendered_frame(self._current_slice)
             self.qt_viewer.set_image(frame.qimage)
-            self._update_annotations(self._current_slice, self._window, self._level)
+            self._window = float(frame.window_width)
+            self._level = float(frame.window_center)
+            self._update_annotations(self._current_slice, frame.window_width, frame.window_center)
+        else:
+            self._update_annotations(self._current_slice, ww, wc)
 
     def get_window_level(self) -> Tuple[float, float]:
-        return self._window, self._level
+        return self._current_window_level()
 
     def Render(self) -> None:
         """Trigger re-render. In Qt mode, this repaints the widget."""
@@ -775,7 +795,8 @@ class QtViewerBridge:
             self.qt_viewer.annotations.zoom_info = f"Zoom: {zoom_pct:.0f}%"
             self.qt_viewer.update()
             return
-        self._update_annotations(self._current_slice, self._window, self._level)
+        ww, wc = self._current_window_level()
+        self._update_annotations(self._current_slice, ww, wc)
         self.qt_viewer.update()
 
     def update_corners_actors_pos(self, height: int) -> None:
@@ -1082,15 +1103,40 @@ class QtViewerBridge:
 
     def _on_qt_wl_changed(self, window: float, level: float) -> None:
         """Handle W/L changes from Qt viewer mouse interaction."""
-        self._window = window
-        self._level = level
         self.pipeline.set_window_level(window, level)
+        ww, wc = self._sync_window_level_from_pipeline(default=(float(window), float(level)))
         self.flag_set_custom_window_level = True
 
         # Re-render with new W/L
         frame = self.pipeline.get_rendered_frame(self._current_slice)
         self.qt_viewer.set_image(frame.qimage)
-        self._update_annotations(self._current_slice, window, level)
+        self._window = float(frame.window_width)
+        self._level = float(frame.window_center)
+        self._update_annotations(self._current_slice, ww, wc)
+
+    def _sync_window_level_from_pipeline(
+        self,
+        default: Optional[Tuple[float, float]] = None,
+    ) -> Tuple[float, float]:
+        """Mirror the canonical pipeline W/L onto bridge fields for compatibility."""
+        try:
+            ww, wc = self.pipeline.get_window_level()
+        except Exception:
+            ww, wc = None, None
+
+        if ww is None or wc is None:
+            if default is not None:
+                ww, wc = default
+            else:
+                ww, wc = self._window, self._level
+
+        self._window = float(ww)
+        self._level = float(wc)
+        return self._window, self._level
+
+    def _current_window_level(self) -> Tuple[float, float]:
+        """Return the canonical window/level, falling back to mirrored fields."""
+        return self._sync_window_level_from_pipeline()
 
     def _disconnect_viewer_signals(self) -> None:
         """Disconnect Qt viewer signals owned by this bridge.

@@ -165,6 +165,7 @@ class VTKWidget(
         )
         self._backend_badge.show()
         self._update_backend_badge()
+        self._update_empty_drop_hint_visibility()
         self._log_backend_resolution(source="widget_init", resolution=_initial_resolution, metadata=None)
         logger.info(
             "[BACKEND_SWITCH] __init__ viewer=%s selected=%s active=%s (metadata=None, expected VTK fallback)",
@@ -350,6 +351,7 @@ class VTKWidget(
             # and calls self.update(), which triggers paintEvent → _Iren.Render()
             # that overwrites the Qt viewer via OpenGL.
             self._update_backend_badge()
+            self._update_empty_drop_hint_visibility()
             if self._qt_viewer_widget is not None:
                 try:
                     self._qt_viewer_widget.setGeometry(self.rect())
@@ -368,6 +370,7 @@ class VTKWidget(
 
         super().resizeEvent(ev)
         self._update_backend_badge()
+        self._update_empty_drop_hint_visibility()
 
         # Keep Qt viewer widget sized to match the VTK widget
         if self._qt_bridge_active and self._qt_viewer_widget is not None:

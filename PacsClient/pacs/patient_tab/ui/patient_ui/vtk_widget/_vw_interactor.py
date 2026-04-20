@@ -346,6 +346,12 @@ class _VWInteractorMixin:
         )
 
     def mousePressEvent(self, event):
+        try:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.change_container_border()
+        except Exception:
+            pass
+
         # Qt bridge mode: handle sync point via Qt mouse events
         if self._qt_bridge_active:
             if (self._sync_enabled and self.image_viewer is not None

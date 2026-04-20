@@ -331,6 +331,38 @@ class TestCloseUnderActiveDownload:
         assert w.series_images_progress.emissions[-1] == ("7", 10, 10)
         assert w.thumbnail_manager.update_series_progress.call_count == 0
 
+    def test_second_completion_projects_thumbnail_immediately_before_flush(self):
+        svc = _make_service()
+        dm = FakeDM()
+        w = FakeWidget()
+        dm._tasks["study-1"] = SimpleNamespace(
+            series_list=[
+                SimpleNamespace(series_uid="7", series_number="7", image_count=10),
+                SimpleNamespace(series_uid="8", series_number="8", image_count=12),
+            ]
+        )
+
+        with patch("PySide6.QtCore.QTimer", FakeTimer):
+            svc.connect_dm_to_widget(dm, w, "study-1")
+
+        rec = next(iter(svc._dm_widget_connections.values()))
+
+        dm.seriesDownloadCompleted.emit("study-1", "7")
+        assert w.thumbnail_manager.complete_series_download.call_count == 1
+        assert w.series_downloaded.emit_count == 1
+
+        dm.seriesDownloadCompleted.emit("study-1", "8")
+
+        # Thumbnail should turn ready immediately; viewer completion fan-out stays batched.
+        assert w.thumbnail_manager.complete_series_download.call_count == 2
+        assert w.thumbnail_manager.complete_series_download.call_args.args == ("8",)
+        assert w.thumbnail_manager.complete_series_download.call_args.kwargs == {"total_images": 12}
+        assert w.series_downloaded.emit_count == 1
+
+        rec.flush_timer.fire()
+
+        assert w.series_downloaded.emit_count == 2
+
     def test_new_partial_cycle_after_completion_is_admitted(self):
         svc = _make_service()
         dm = FakeDM()

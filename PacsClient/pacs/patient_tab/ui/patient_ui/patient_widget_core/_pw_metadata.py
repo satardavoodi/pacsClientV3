@@ -295,9 +295,37 @@ class _PWMetadataMixin:
                     print(f"[REPLACE_SERIES_DATA] Found existing at idx={idx}, replacing")
                     self.lst_thumbnails_data[idx] = new_data
                     series_name = str(metadata.get('series', {}).get('series_name'))
+                    existing_series_name = str(existing_meta.get('series', {}).get('series_name', ''))
                     self.viewer_controller._series_cache[series_number_str] = (vtk_image_data, metadata, idx)
                     self.viewer_controller._hot_series_cache[series_number_str] = (vtk_image_data, metadata, idx)
                     self.viewer_controller._series_name_cache[series_number_str] = series_name
+                    try:
+                        self.viewer_controller._series_number_to_index[series_number_str] = idx
+                    except Exception:
+                        pass
+                    try:
+                        self.viewer_controller._metadata_flat_cache[series_number_str] = {
+                            'series_number': series_number_str,
+                            'series_name': series_name,
+                            'series_path': metadata.get('series', {}).get('series_path', ''),
+                            'instances': metadata.get('instances', []),
+                        }
+                    except Exception:
+                        pass
+                    try:
+                        paired_map = self.viewer_controller._paired_series_map
+                        if existing_series_name and existing_series_name != series_name:
+                            existing_list = paired_map.get(existing_series_name, [])
+                            if series_number_str in existing_list:
+                                existing_list.remove(series_number_str)
+                            if not existing_list and existing_series_name in paired_map:
+                                paired_map.pop(existing_series_name, None)
+                        if series_name:
+                            paired_list = paired_map.setdefault(series_name, [])
+                            if series_number_str not in paired_list:
+                                paired_list.append(series_number_str)
+                    except Exception:
+                        pass
                     try:
                         if incoming_is_preview:
                             self.thumbnail_manager.set_series_pending(series_number_str)
@@ -313,7 +341,6 @@ class _PWMetadataMixin:
                             self.thumbnail_manager.update_series_image_count(series_number_str, actual_count)
                     except Exception:
                         pass
-                    self.viewer_controller._rebuild_series_index()
                     print(f"[REPLACE_SERIES_DATA] Successfully replaced and returning idx={idx}")
                     return idx
             except Exception as e:

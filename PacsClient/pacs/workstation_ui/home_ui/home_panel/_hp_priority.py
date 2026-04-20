@@ -13,7 +13,7 @@ def print(*args, **_kw):  # noqa: A001
     _print_logger.debug(' '.join(str(a) for a in args))
 
 from PacsClient.components import DicomGrpcClient
-from PacsClient.utils import get_connection_database, get_all_patients, search_patients_local, find_patient_pk, find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
+from PacsClient.utils import get_all_patients, search_patients_local, find_patient_pk, find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 from PacsClient.utils.series_metadata_service import SeriesMetadataService
 from PacsClient.utils.config import SOURCE_PATH
 from modules.network import dicom_service_pb2, dicom_service_pb2_grpc

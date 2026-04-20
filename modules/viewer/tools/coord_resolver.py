@@ -33,7 +33,7 @@ class CoordinateResolver:
 
     __slots__ = (
         "_w", "_h", "_zoom", "_pan_x", "_pan_y",
-        "_rot", "_fh", "_fv", "_iw", "_ih", "_backend",
+        "_rot", "_fh", "_fv", "_iw", "_ih", "_sx", "_sy", "_backend",
     )
 
     def __init__(self, viewer_state: Any, backend: Any = None) -> None:
@@ -47,6 +47,8 @@ class CoordinateResolver:
         self._fv: bool = bool(viewer_state._flip_v)
         self._iw: float = float(viewer_state._image_width)
         self._ih: float = float(viewer_state._image_height)
+        self._sx: float = float(getattr(viewer_state, '_display_scale_x', 1.0) or 1.0)
+        self._sy: float = float(getattr(viewer_state, '_display_scale_y', 1.0) or 1.0)
         self._backend = backend
 
     # ── Forward: image → widget ─────────────────────────────────────
@@ -60,35 +62,40 @@ class CoordinateResolver:
         if self._fv:
             y = self._ih - 1 - y
 
-        # 2) Rotate around image center
-        x, y = self._rotate_fwd(x, y)
+        # 2) Apply anisotropic display scaling around image center
+        dx = (x - self._iw / 2.0) * self._sx
+        dy = (y - self._ih / 2.0) * self._sy
 
-        # 3) After rotation the visible image dimensions may swap
-        vis_w, vis_h = self._visible_size()
+        # 3) Rotate scaled display vector around image center
+        dx, dy = self._rotate_display_fwd(dx, dy)
 
         # 4) Scale by zoom and translate to widget space
         cx = self._w / 2.0 + self._pan_x
         cy = self._h / 2.0 + self._pan_y
-        wx = cx + (x - vis_w / 2.0) * self._zoom
-        wy = cy + (y - vis_h / 2.0) * self._zoom
+        wx = cx + dx * self._zoom
+        wy = cy + dy * self._zoom
         return wx, wy
 
     # ── Inverse: widget → image ─────────────────────────────────────
 
     def widget_to_image(self, wx: float, wy: float) -> Tuple[float, float]:
         """Convert widget (screen) coords to image-pixel (col, row)."""
-        vis_w, vis_h = self._visible_size()
-
         # 1) Undo zoom + pan
         cx = self._w / 2.0 + self._pan_x
         cy = self._h / 2.0 + self._pan_y
-        x = (wx - cx) / self._zoom + vis_w / 2.0
-        y = (wy - cy) / self._zoom + vis_h / 2.0
+        dx = (wx - cx) / self._zoom
+        dy = (wy - cy) / self._zoom
 
         # 2) Undo rotation
-        x, y = self._rotate_inv(x, y)
+        dx, dy = self._rotate_display_inv(dx, dy)
 
-        # 3) Undo flip
+        # 3) Undo anisotropic display scaling
+        sx = self._sx if abs(self._sx) > 1e-12 else 1.0
+        sy = self._sy if abs(self._sy) > 1e-12 else 1.0
+        x = dx / sx + self._iw / 2.0
+        y = dy / sy + self._ih / 2.0
+
+        # 4) Undo flip
         if self._fh:
             x = self._iw - 1 - x
         if self._fv:
@@ -122,8 +129,28 @@ class CoordinateResolver:
     def _visible_size(self) -> Tuple[float, float]:
         """Image dimensions as seen after rotation (before zoom)."""
         if self._rot in (90, 270):
-            return self._ih, self._iw
-        return self._iw, self._ih
+            return self._ih * self._sy, self._iw * self._sx
+        return self._iw * self._sx, self._ih * self._sy
+
+    def _rotate_display_fwd(self, dx: float, dy: float) -> Tuple[float, float]:
+        """Rotate a centered display vector forward (image → widget basis)."""
+        if self._rot == 0:
+            return dx, dy
+        if self._rot == 90:
+            return dy, -dx
+        if self._rot == 180:
+            return -dx, -dy
+        return -dy, dx
+
+    def _rotate_display_inv(self, dx: float, dy: float) -> Tuple[float, float]:
+        """Undo rotation of a centered display vector."""
+        if self._rot == 0:
+            return dx, dy
+        if self._rot == 90:
+            return -dy, dx
+        if self._rot == 180:
+            return -dx, -dy
+        return dy, -dx
 
     def _rotate_fwd(self, x: float, y: float) -> Tuple[float, float]:
         """Rotate point around image center (forward: image → rotated)."""

@@ -1561,9 +1561,7 @@ class _VCLoadMixin:
 
             _skip_untargeted_background_completion = (
                 self._is_fast_viewer_mode()
-                and bool(getattr(self, '_first_series_displayed', False))
                 and not _has_awaiting_viewer()
-                and not self._any_viewer_empty()
                 and not _has_series_viewer_interest()
             )
 
@@ -1579,7 +1577,7 @@ class _VCLoadMixin:
                 _mark_series_ready_only()
                 self.logger.info(
                     'load_series_on_demand: series=%s background-complete skip '
-                    '-- no awaiting/empty/displayed viewer in FAST mode',
+                    '-- loader-only until explicit viewer request in FAST mode',
                     series_number_str,
                 )
                 return
@@ -1684,10 +1682,9 @@ class _VCLoadMixin:
             # Check if already loaded
             series_key = f"series_{series_number_str}"
             if series_key in self.parent_widget.lst_series_name:
-                # Series data is loaded, but if first series hasn't been displayed
-                # yet (e.g. loaded by show_exist_thumbnails but never shown on
-                # viewer), trigger display now.
-                if (not self._first_series_displayed) or self._any_viewer_empty():
+                # Manual-only layout policy: loaded/background series stay in the
+                # thumbnail lane unless a viewer explicitly asked for them.
+                if _has_awaiting_viewer() or _has_series_viewer_interest():
                     self.logger.info(f"Series {series_number_str} already loaded but not displayed â€” showing now")
                     QTimer.singleShot(0, lambda sn=series_number_str: self._display_series_after_load(sn))
                     return
@@ -1902,18 +1899,16 @@ class _VCLoadMixin:
 
     def _display_series_after_load(self, series_number: str, progressive_total: int = 0):
         """
-        Mark series ready; for the first downloaded series, display it in all viewers
-        and hide loading.
+        Mark a series ready in the thumbnail lane.
+
+        Manual-only layout policy: background or local loads must not
+        auto-insert a series into viewers. Explicit viewer-targeted flows
+        perform their own switch/display work.
         """
         try:
             # Validate widget state
             if not self.parent_widget.isVisible():
                 return
-
-            if (not self._first_series_displayed) or self._any_viewer_empty():
-                if self._display_first_series_in_all_viewers(series_number, progressive_total=progressive_total):
-                    self._mark_first_series_displayed()
-                    return
 
             # Mark as ready in thumbnail manager
             if hasattr(self.parent_widget, 'thumbnail_manager') and self.parent_widget.thumbnail_manager:
@@ -2126,30 +2121,10 @@ class _VCLoadMixin:
         try:
             number_of_row, number_of_column = int(numbers[0]), int(numbers[1])
 
-            self._current_layout = (number_of_row, number_of_column)
-
-            # Cleanup old viewers
-            self.cleanup_all_viewers()
-            self.lst_nodes_viewer.clear()
-
-            # Create new viewers
-            count = number_of_row * number_of_column
-            self.create_some_viewers(count)
-
-            # Apply layout
-            if (number_of_row, number_of_column) == (1, 1) and len(self.lst_nodes_viewer) > 0:
-                self.parent_widget.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
-                self.parent_widget.change_container_border(0)
-            elif (number_of_row, number_of_column) == (2, 1) and len(self.lst_nodes_viewer) >= 2:
-                self.parent_widget.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
-                self.parent_widget.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 1, 0)
-                self.parent_widget.change_container_border(0)
-            elif (number_of_row, number_of_column) == (1, 2) and len(self.lst_nodes_viewer) >= 2:
-                self.parent_widget.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
-                self.parent_widget.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 0, 1)
-                self.parent_widget.change_container_border(0)
-
-            # âڑ، OPTIMIZATION: Removed processEvents() call - introduces unwanted delay
+            # Route ALL initial/synchronous layout builds through the canonical
+            # controller path so first-open layouts get the exact same viewer
+            # wiring as user-initiated layout changes.
+            self.apply_multi_viewer((number_of_row, number_of_column), modify_by_user=False)
 
         except Exception as e:
             logger.error(f"â‌Œ Error applying viewer layout sync: {e}")

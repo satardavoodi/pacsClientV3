@@ -18,7 +18,7 @@ from pathlib import Path
 # Add project root to path to import PacsClient modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from database.core import get_connection_database, ensure_report_status_schema
+from database.core import get_db_connection, ensure_report_status_schema
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -38,50 +38,50 @@ def migrate_report_status():
         
         # Validate migration
         logger.info("✅ Validating migration...")
-        conn = get_connection_database()
-        cur = conn.cursor()
-        
-        # Check if columns exist
-        cur.execute("PRAGMA table_info(studies)")
-        columns = [row[1] for row in cur.fetchall()]
-        
-        required_columns = ['reportStatus', 'reportStatusHistory', 'reportStatusUpdatedAt']
-        missing_columns = [col for col in required_columns if col not in columns]
-        
-        if missing_columns:
-            logger.error(f"❌ Migration failed: Missing columns: {missing_columns}")
-            return False
-        
-        logger.info("✅ All required columns exist")
-        
-        # Check indexes
-        cur.execute("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_studies_report%'")
-        indexes = [row[0] for row in cur.fetchall()]
-        logger.info(f"📊 Created indexes: {indexes}")
-        
-        # Get statistics
-        cur.execute("SELECT COUNT(*) FROM studies")
-        total_studies = cur.fetchone()[0]
-        
-        cur.execute("SELECT COUNT(*) FROM studies WHERE reportStatus IS NULL")
-        null_status = cur.fetchone()[0]
-        
-        cur.execute("SELECT reportStatus, COUNT(*) FROM studies GROUP BY reportStatus")
-        status_counts = dict(cur.fetchall())
-        
-        logger.info("📊 Migration Statistics:")
-        logger.info(f"   Total studies: {total_studies}")
-        logger.info(f"   Studies with null status: {null_status}")
-        logger.info(f"   Status distribution:")
-        for status, count in status_counts.items():
-            logger.info(f"      {status}: {count}")
-        
-        # Update any remaining null statuses
-        if null_status > 0:
-            logger.info(f"🔄 Updating {null_status} studies with null status to 'pending'...")
-            cur.execute("UPDATE studies SET reportStatus = 'pending' WHERE reportStatus IS NULL")
-            conn.commit()
-            logger.info("✅ Updated null statuses")
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+
+            # Check if columns exist
+            cur.execute("PRAGMA table_info(studies)")
+            columns = [row[1] for row in cur.fetchall()]
+
+            required_columns = ['reportStatus', 'reportStatusHistory', 'reportStatusUpdatedAt']
+            missing_columns = [col for col in required_columns if col not in columns]
+
+            if missing_columns:
+                logger.error(f"❌ Migration failed: Missing columns: {missing_columns}")
+                return False
+
+            logger.info("✅ All required columns exist")
+
+            # Check indexes
+            cur.execute("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_studies_report%'")
+            indexes = [row[0] for row in cur.fetchall()]
+            logger.info(f"📊 Created indexes: {indexes}")
+
+            # Get statistics
+            cur.execute("SELECT COUNT(*) FROM studies")
+            total_studies = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(*) FROM studies WHERE reportStatus IS NULL")
+            null_status = cur.fetchone()[0]
+
+            cur.execute("SELECT reportStatus, COUNT(*) FROM studies GROUP BY reportStatus")
+            status_counts = dict(cur.fetchall())
+
+            logger.info("📊 Migration Statistics:")
+            logger.info(f"   Total studies: {total_studies}")
+            logger.info(f"   Studies with null status: {null_status}")
+            logger.info(f"   Status distribution:")
+            for status, count in status_counts.items():
+                logger.info(f"      {status}: {count}")
+
+            # Update any remaining null statuses
+            if null_status > 0:
+                logger.info(f"🔄 Updating {null_status} studies with null status to 'pending'...")
+                cur.execute("UPDATE studies SET reportStatus = 'pending' WHERE reportStatus IS NULL")
+                conn.commit()
+                logger.info("✅ Updated null statuses")
         
         logger.info("✅ Migration completed successfully!")
         return True
@@ -91,11 +91,6 @@ def migrate_report_status():
         import traceback
         traceback.print_exc()
         return False
-    finally:
-        try:
-            conn.close()
-        except:
-            pass
 
 
 if __name__ == "__main__":

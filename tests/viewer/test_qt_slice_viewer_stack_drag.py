@@ -16,6 +16,21 @@ _app = QApplication.instance() or QApplication(sys.argv)
 
 
 class TestQtSliceViewerStackDrag:
+    def test_zoom_to_fit_respects_anisotropic_pixel_spacing(self):
+        viewer = QtSliceViewer()
+        viewer.resize(512, 512)
+        from PySide6.QtGui import QImage
+
+        viewer.set_image(QImage(256, 256, QImage.Format.Format_Grayscale8))
+        isotropic_zoom = viewer.zoom_to_fit()
+
+        viewer.set_pixel_spacing((3.5, 1.0))
+        anisotropic_zoom = viewer.zoom_to_fit()
+
+        assert anisotropic_zoom < isotropic_zoom
+        assert viewer._display_scale_y == 3.5
+        assert viewer._display_scale_x == 1.0
+
     def test_default_policy_is_slice_adaptive(self, monkeypatch):
         monkeypatch.delenv("AIPACS_STACK_DRAG_POLICY", raising=False)
 

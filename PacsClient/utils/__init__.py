@@ -12,7 +12,7 @@ from .utils import (
 )
 from .database import load_token_usage, save_token_usage
 from .series_metadata_service import SeriesMetadataService
-from .db_manager import get_connection_database, insert_patient, insert_study, insert_series, insert_instance, \
+from .db_manager import insert_patient, insert_study, insert_series, insert_instance, \
     find_patient_pk, find_study_pk, find_series_pk, find_instance_pk,\
     get_patient_by_patient_pk, get_patient_by_study_uid, get_studies_by_patient_pk, get_series_by_study_pk, get_instances_by_series_pk,\
     get_series_by_series_pk, update_series_thumbnail_path, get_series_thumbnail_path, find_study_pk_with_study_uid,\

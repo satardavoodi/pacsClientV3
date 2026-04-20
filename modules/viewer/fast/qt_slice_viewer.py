@@ -183,6 +183,8 @@ class QtSliceViewer(QWidget):
         self._zoom: float = 1.0
         self._pan_offset: QPointF = QPointF(0.0, 0.0)
         self._fit_to_viewport: bool = True
+        self._display_scale_x: float = 1.0
+        self._display_scale_y: float = 1.0
 
         # Window/Level interaction state
         self._wl_dragging: bool = False
@@ -313,6 +315,36 @@ class QtSliceViewer(QWidget):
 
     def set_zoom(self, zoom: float) -> None:
         self._zoom = max(self.MIN_ZOOM, min(self.MAX_ZOOM, float(zoom)))
+        self.update()
+
+    def set_pixel_spacing(self, pixel_spacing: Optional[Tuple[float, float]]) -> None:
+        """Set per-axis display scaling derived from DICOM pixel spacing.
+
+        ``pixel_spacing`` is expected as ``(row_spacing_mm, col_spacing_mm)``.
+        The viewer keeps a single user zoom factor but applies per-axis display
+        scaling so anisotropic series (for example localizers or odd-FOV MR)
+        render with the correct on-screen aspect ratio.
+        """
+        row_spacing = 1.0
+        col_spacing = 1.0
+        try:
+            if pixel_spacing is not None:
+                row_spacing = abs(float(pixel_spacing[0])) or 1.0
+                col_spacing = abs(float(pixel_spacing[1])) or 1.0
+        except Exception:
+            row_spacing = 1.0
+            col_spacing = 1.0
+
+        base = min(row_spacing, col_spacing)
+        if base <= 0.0:
+            base = 1.0
+
+        self._display_scale_x = float(col_spacing / base)
+        self._display_scale_y = float(row_spacing / base)
+
+        if self._fit_to_viewport and self._image_width > 0 and self._image_height > 0:
+            self._zoom = self._calculate_fit_zoom()
+            self._pan_offset = QPointF(0.0, 0.0)
         self.update()
 
     def get_pan_offset(self) -> QPointF:
@@ -604,10 +636,12 @@ class QtSliceViewer(QWidget):
         if self._image_width <= 0 or self._image_height <= 0:
             return widget_h
 
+        base_w = float(self._image_width) * float(max(self._display_scale_x, 1e-9))
+        base_h = float(self._image_height) * float(max(self._display_scale_y, 1e-9))
         if self._rotation_angle in (90, 270):
-            rendered_h = float(self._image_width) * float(max(self._zoom, 0.1))
+            rendered_h = base_w * float(max(self._zoom, 0.1))
         else:
-            rendered_h = float(self._image_height) * float(max(self._zoom, 0.1))
+            rendered_h = base_h * float(max(self._zoom, 0.1))
 
         return float(max(64.0, min(widget_h, rendered_h)))
 
@@ -1221,8 +1255,8 @@ class QtSliceViewer(QWidget):
         # Widget centre (rotation anchor) accounting for pan
         cx = self.width() / 2.0 + self._pan_offset.x()
         cy = self.height() / 2.0 + self._pan_offset.y()
-        scaled_w = self._image_width * self._zoom
-        scaled_h = self._image_height * self._zoom
+        scaled_w = self._image_width * self._zoom * self._display_scale_x
+        scaled_h = self._image_height * self._zoom * self._display_scale_y
         src_rect = QRectF(0, 0, self._image_width, self._image_height)
 
         if self._rotation_angle == 0 and not self._flip_h and not self._flip_v:
@@ -1355,13 +1389,15 @@ class QtSliceViewer(QWidget):
             return 1.0
         widget_w = max(1, self.width())
         widget_h = max(1, self.height())
+        base_w = float(self._image_width) * float(max(self._display_scale_x, 1e-9))
+        base_h = float(self._image_height) * float(max(self._display_scale_y, 1e-9))
         # For 90°/270° rotations the image occupies transposed dimensions on screen
         if self._rotation_angle in (90, 270):
-            fit_w = float(self._image_height)
-            fit_h = float(self._image_width)
+            fit_w = base_h
+            fit_h = base_w
         else:
-            fit_w = float(self._image_width)
-            fit_h = float(self._image_height)
+            fit_w = base_w
+            fit_h = base_h
         return min(widget_w / fit_w, widget_h / fit_h) * 0.95  # 5% margin
 
     def _begin_scroll_interaction(self) -> None:

@@ -324,6 +324,16 @@ class TestPrefetchInteractionAware:
         assert len(p._submitted_prefetch) == 6
         assert set(p._submitted_prefetch) == {47, 48, 49, 51, 52, 53}
 
+    def test_small_stack_fast_interaction_uses_tighter_radius_four(self):
+        """Small cold-open stacks should admit less background decode during drag."""
+        p = _build_pipeline_stub(slice_count=18, radius=5)
+        p._fast_interaction = True
+        p._fast_interaction_mode = 'drag'
+        p._estimate_scroll_velocity = lambda: 25.0
+        p._prefetch_around(9, direction=1)
+
+        assert set(p._submitted_prefetch) == {10, 11, 12, 13}
+
     def test_fast_interaction_skips_frame_prefetch(self):
         """During fast_interaction, frame prefetch is skipped for cached slices."""
         p = _build_pipeline_stub(slice_count=100, radius=5)
@@ -358,6 +368,34 @@ class TestPrefetchInteractionAware:
         # Backward (49) is not cached → pixel decode submitted
         assert set(p._submitted_prefetch) == {47, 48, 49, 52, 53}
         assert len(p._submitted_frame_prefetch) == 0
+
+    def test_fast_interaction_fully_cached_neighborhood_skips_submit_path(self):
+        """Fully hot drag neighborhoods should avoid redundant prefetch submissions."""
+        p = _build_pipeline_stub(slice_count=100, radius=5)
+        p._fast_interaction = True
+        p._pixel_cache = {
+            47: b"data", 48: b"data", 49: b"data",
+            51: b"data", 52: b"data", 53: b"data",
+        }
+
+        p._prefetch_around(50, direction=0)
+
+        assert p._submitted_prefetch == []
+        assert p._submitted_frame_prefetch == []
+        assert p._active_prefetch_targets == set()
+        assert p._prefetch_request_epoch == 0
+
+    def test_fast_interaction_epoch_tracks_only_uncached_targets(self):
+        """Epoch bookkeeping should ignore cached neighbors and track decode work only."""
+        p = _build_pipeline_stub(slice_count=100, radius=5)
+        p._fast_interaction = True
+        p._pixel_cache = {51: b"data"}
+
+        p._prefetch_around(50, direction=1)
+
+        assert set(p._submitted_prefetch) == {52, 53}
+        assert p._active_prefetch_targets == {52, 53}
+        assert p._prefetch_request_epoch == 1
 
 
 class TestPrefetchDedup:

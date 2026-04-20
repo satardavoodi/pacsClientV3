@@ -92,14 +92,8 @@ class _VCCacheMixin:
                 QTimer.singleShot(250, self._start_background_prefetch)
         except Exception:
             pass
-        # Recovery path: if first-series display never completed (e.g. load finished
-        # while tab was inactive), re-run the local-first-series signal route on
-        # activation. This call is idempotent and exits quickly when already shown.
-        if not self._first_series_displayed:
-            try:
-                QTimer.singleShot(120, self.parent_widget._check_and_load_local_first_series)
-            except Exception:
-                pass
+        # Manual-only layout policy: tab activation must not auto-insert a
+        # locally available series into a viewer.
         self._replay_deferred_series_loads_after_activation()
         # Start warmup shortly after tab-open bootstrap to avoid competing with first render.
         try:

@@ -482,6 +482,9 @@ class _VCSwitchMixin:
             self._perform_series_switch_optimized(vtk_widget, metadata, vtk_image_data, series_idx, slider,
                                                   allow_paired=allow_paired,
                                                   expected_token=expected_token)
+            self._hide_spinner_for_widget(target_widget_for_spinner)
+            if not bool(getattr(self, '_first_series_displayed', False)):
+                self._mark_first_series_displayed()
             log_stage_timing(
                 self.logger,
                 component="viewer",
@@ -560,6 +563,16 @@ class _VCSwitchMixin:
                             def _apply_preview_ui():
                                 try:
                                     if not self._is_request_current(vtk_widget, expected_token):
+                                        return
+                                    current_meta = getattr(getattr(vtk_widget, 'image_viewer', None), 'metadata', {}) or {}
+                                    current_series = str(current_meta.get('series', {}).get('series_number', '') or '')
+                                    current_is_preview = bool(current_meta.get('preview_only', False))
+                                    if current_series == str(series_number) and not current_is_preview:
+                                        logger.debug(
+                                            "[ASYNC SWITCH] skip stale preview apply series=%s viewer=%s",
+                                            series_number,
+                                            viewer_id,
+                                        )
                                         return
                                     vid = self._get_viewer_id(vtk_widget)
                                     self._apply_loaded_series_data(
@@ -651,6 +664,26 @@ class _VCSwitchMixin:
                         return
 
                     logger.debug(f"[PROFILE] change_series_on_viewer: async load-on-demand OK for series {series_number} in {(time.perf_counter() - _t_load)*1000:.1f}ms")
+                    _already_applied = False
+                    try:
+                        current_meta = getattr(getattr(vtk_widget, 'image_viewer', None), 'metadata', {}) or {}
+                        current_series = str(current_meta.get('series', {}).get('series_number', '') or '')
+                        current_is_preview = bool(current_meta.get('preview_only', False))
+                        _already_applied = current_series == str(series_number) and not current_is_preview
+                    except Exception:
+                        _already_applied = False
+
+                    if _already_applied:
+                        self._hide_spinner_for_widget(target_widget_for_spinner)
+                        if not bool(getattr(self, '_first_series_displayed', False)):
+                            self._mark_first_series_displayed()
+                        print(
+                            f"[PROFILE] change_series_on_viewer: series={series_number} cache_hit=False "
+                            f"total={(time.perf_counter() - total_start)*1000:.1f}ms "
+                            f"finish_action=skip_duplicate_switch"
+                        )
+                        return
+
                     vtk_image_data, metadata, series_idx = self._get_series_by_number_fast(series_number)
                     if metadata is None or vtk_image_data is None:
                         logger.debug(f"â‌Œ [SWITCH FAIL] series={series_number} not found in cache after async loading")
@@ -666,9 +699,13 @@ class _VCSwitchMixin:
                         allow_paired=allow_paired,
                         expected_token=expected_token,
                     )
+                    self._hide_spinner_for_widget(target_widget_for_spinner)
+                    if not bool(getattr(self, '_first_series_displayed', False)):
+                        self._mark_first_series_displayed()
                     print(
                         f"[PROFILE] change_series_on_viewer: series={series_number} cache_hit=False "
-                        f"total={(time.perf_counter() - total_start)*1000:.1f}ms"
+                        f"total={(time.perf_counter() - total_start)*1000:.1f}ms "
+                        f"finish_action=fallback_switch"
                     )
                 except Exception as e:
                     logger.debug(f"â‌Œ [ASYNC SWITCH] _finish_on_ui crashed for series={series_number}: {e}")
@@ -729,14 +766,25 @@ class _VCSwitchMixin:
             if callable(resolver):
                 resolved = resolver()
                 if resolved:
-                    return str(resolved)
+                    resolved_path = Path(str(resolved))
+                    if resolved_path.exists():
+                        return str(resolved_path)
         except Exception:
             pass
 
-        if not self.parent_widget.import_folder_path:
-            return None
+        try:
+            import_path = getattr(self.parent_widget, 'import_folder_path', None)
+            if import_path:
+                import_path_obj = Path(str(import_path))
+                if import_path_obj.exists():
+                    return str(import_path_obj)
+        except Exception:
+            pass
 
-        return str(self.parent_widget.import_folder_path)
+        try:
+            return self._ensure_import_folder_path()
+        except Exception:
+            return None
 
     def _perform_series_switch_optimized(self, vtk_widget, metadata, vtk_image_data, series_idx, slider,
                                          allow_paired: bool = True, expected_token=None):
@@ -899,6 +947,10 @@ class _VCSwitchMixin:
                     _t0_rs = time.perf_counter()
                     self.parent_widget.reset_slider(vtk_widget, slider)
                     _t_reset_ms = (time.perf_counter() - _t0_rs) * 1000
+                    try:
+                        vtk_widget._awaiting_series_number = None
+                    except Exception:
+                        pass
                     # Diagnostic: verify state after series switch
                     _cnt = vtk_widget.get_count_of_slices() if vtk_widget else 0
                     _iv_ok = (getattr(vtk_widget, 'image_viewer', None) is not None) if vtk_widget else False
@@ -907,6 +959,24 @@ class _VCSwitchMixin:
                           f"image_viewer={'Y' if _iv_ok else 'N'} slider={'Y' if _sl_ok else 'N'} "
                           f"count_slices={_cnt}", flush=True)
                     self.parent_widget.toolbar_manager.turn_off_all_tools()
+
+                    # Qt/FAST presentation repair: series switches can complete
+                    # before the target viewport finishes its layout pass. When
+                    # zoom-to-fit is computed against that stale child geometry,
+                    # the image appears shrunk into a corner until a later UI
+                    # event (often a click) triggers another presentation sync.
+                    # Fresh Qt starts already perform their own zoom-to-fit
+                    # inside _start_qt_viewer(); only in-place refreshes need
+                    # a deferred follow-up refit here.
+                    if (
+                        getattr(vtk_widget, '_qt_bridge_active', False)
+                        and hasattr(vtk_widget, '_sync_qt_viewer_presentation')
+                        and not bool(getattr(vtk_widget, '_qt_switch_refit_applied', False))
+                    ):
+                        QTimer.singleShot(
+                            0,
+                            lambda vw=vtk_widget: vw._sync_qt_viewer_presentation(refit_view=True),
+                        )
 
                     # Activate progressive mode if this series is still downloading
                     if series_number in self._progressive_series:
@@ -984,36 +1054,11 @@ class _VCSwitchMixin:
                                 self._image_slice_booster.clear()
                     except Exception:
                         pass
-
-                    self._refresh_zeta_protected_series()
-
-                    # â”€â”€ Look-ahead warmup: pre-cache adjacent series â”€â”€
-                    # After every successful series switch, schedule warmup for
-                    # the next N adjacent series so they're ready when the doctor
-                    # drags-and-drops them.  This runs on a short deferred timer
-                    # so it doesn't block the current render.
-                    try:
-                        _la_sn = str(series_number)
-                        QTimer.singleShot(100, lambda sn=_la_sn: self._enqueue_lookahead_warmup(sn))
-                    except Exception:
-                        pass
-                    
-                    # Update UI elements (batch updates)
-                    if hasattr(vtk_widget, 'image_viewer') and vtk_widget.image_viewer:
-                        _t0_cor = time.perf_counter()
-                        vtk_widget.image_viewer.update_corners_actors()
-                        _t_corners_ms = (time.perf_counter() - _t0_cor) * 1000
-
-                    # Recompute reference lines for ALL viewers after series change.
-                    # Without this, drag-drop series switches leave stale/missing
-                    # reference lines because only viewport-click and slider-scroll
-                    # previously triggered recalculation.
-                    try:
-                        _t0_rl = time.perf_counter()
-                        self.parent_widget.manage_reference_line()
-                        _t_refline_ms = (time.perf_counter() - _t0_rl) * 1000
-                    except Exception as _rl_err:
-                        logger.error(f"âڑ ï¸ڈ [RL] manage_reference_line error after switch: {_rl_err}")
+                    self._hide_spinner_for_widget(vtk_widget)
+                    self._schedule_post_switch_followups(
+                        vtk_widget=vtk_widget,
+                        series_number=series_number,
+                    )
                     logger.info(
                         "[PERF] series_switch_breakdown series=%s "
                         "switch_series=%.1fms reset_slider=%.1fms boost_set=%.1fms "
@@ -1029,6 +1074,55 @@ class _VCSwitchMixin:
         
         except Exception as e:
             self.logger.error(f"Error in series switch: {e}", exc_info=True)
+
+    def _schedule_post_switch_followups(self, vtk_widget, series_number: str) -> None:
+        """Defer non-essential follow-up work until after the first frame is stable.
+
+        The visible series switch, spinner hide, and Qt refit stay immediate.
+        Lower-priority UI refresh work runs on the next Qt tick so the switch
+        path does not pay for corner-text / reference-line / protected-series
+        bookkeeping before the user sees the image.
+        """
+
+        def _run_followups() -> None:
+            try:
+                self._refresh_zeta_protected_series()
+            except Exception:
+                pass
+
+            try:
+                if hasattr(vtk_widget, 'image_viewer') and vtk_widget.image_viewer:
+                    vtk_widget.image_viewer.update_corners_actors()
+            except Exception:
+                pass
+
+            # Recompute reference lines for ALL viewers after series change.
+            # Without this, drag-drop series switches leave stale/missing
+            # reference lines because only viewport-click and slider-scroll
+            # previously triggered recalculation.
+            try:
+                self.parent_widget.manage_reference_line()
+            except Exception as _rl_err:
+                logger.error(f"âڑ ï¸ڈ [RL] manage_reference_line error after switch: {_rl_err}")
+
+        try:
+            QTimer.singleShot(0, _run_followups)
+        except Exception:
+            try:
+                _run_followups()
+            except Exception:
+                pass
+
+        # â”€â”€ Look-ahead warmup: pre-cache adjacent series â”€â”€
+        # After every successful series switch, schedule warmup for
+        # the next N adjacent series so they're ready when the doctor
+        # drags-and-drops them.  This remains deferred beyond the next tick
+        # so it stays out of the first-visible-image path.
+        try:
+            _la_sn = str(series_number)
+            QTimer.singleShot(100, lambda sn=_la_sn: self._enqueue_lookahead_warmup(sn))
+        except Exception:
+            pass
 
     def _clone_metadata_for_switch(self, metadata):
         """Low-overhead metadata clone for switch path.
@@ -1138,12 +1232,12 @@ class _VCSwitchMixin:
             pass
 
     def _display_first_series_in_viewer(self):
-        """Display the first available series in all viewers."""
+        """Display the first available series in the primary viewer."""
         try:
             if not self.parent_widget.lst_thumbnails_data:
                 return False
             series_number = str(self.parent_widget.lst_thumbnails_data[0]['metadata']['series']['series_number'])
-            if self._display_first_series_in_all_viewers(series_number):
+            if self._display_first_series_in_primary_viewer(series_number):
                 self._mark_first_series_displayed()
                 return True
             return False

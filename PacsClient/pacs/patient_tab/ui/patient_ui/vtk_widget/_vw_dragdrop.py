@@ -190,6 +190,8 @@ class _VWDragDropMixin:
                 self._drop_overlay.show()
             else:
                 self._drop_overlay.hide()
+            if hasattr(self, '_update_empty_drop_hint_visibility'):
+                self._update_empty_drop_hint_visibility()
         except RuntimeError:
             pass
 

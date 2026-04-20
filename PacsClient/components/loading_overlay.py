@@ -25,6 +25,7 @@ and includes animated status text.
 from __future__ import annotations
 
 import math
+import contextlib
 from pathlib import Path
 from typing import Optional
 
@@ -74,6 +75,15 @@ def _resolve_logo_path() -> Path:
 _LOGO_PATH: Path = _resolve_logo_path()
 
 
+def _window_transparent_for_input_flag():
+    """Best-effort access to Qt's top-level input-transparent window flag."""
+    with contextlib.suppress(Exception):
+        return Qt.WindowType.WindowTransparentForInput
+    with contextlib.suppress(Exception):
+        return Qt.WindowTransparentForInput
+    return None
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  Logo + spinner widget  (paints the logo in the center with rotating arcs)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -85,6 +95,8 @@ class _LogoSpinner(QWidget):
     INNER_RADIUS = 54       # inner ring radius (gap between ring & logo)
     LOGO_SIZE = 80          # logo is drawn at 80×80 inside the ring
     WIDGET_SIZE = 160       # total widget dimensions
+    ROTATION_STEP_DEGREES = 1.2
+    FRAME_INTERVAL_MS = 30
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -105,10 +117,10 @@ class _LogoSpinner(QWidget):
         self._angle = 0.0
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(20)  # ~50 fps
+        self._timer.start(self.FRAME_INTERVAL_MS)
 
     def _tick(self):
-        self._angle = (self._angle + 2.5) % 360.0
+        self._angle = (self._angle + self.ROTATION_STEP_DEGREES) % 360.0
         self.update()
 
     def paintEvent(self, _event):  # noqa: N802
@@ -209,6 +221,8 @@ class AiPacsLoadingOverlay(QWidget):
         title: str = "AI Pacs Image Analysis",
         status: str = "Please wait",
         subtitle: str = "",
+        minimal: bool = False,
+        pass_through: bool = False,
     ):
         # Top-level frameless tool window — floats above VTK surfaces
         super().__init__(
@@ -220,6 +234,14 @@ class AiPacsLoadingOverlay(QWidget):
         self.setObjectName("AiPacsLoadingOverlay")
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self._minimal = bool(minimal)
+        self._pass_through = bool(pass_through)
+
+        if self._pass_through:
+            self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            _transparent_input_flag = _window_transparent_for_input_flag()
+            if _transparent_input_flag is not None:
+                self.setWindowFlag(_transparent_input_flag, True)
 
         # Keep a reference to the widget we're covering
         self._anchor = anchor
@@ -240,6 +262,14 @@ class AiPacsLoadingOverlay(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setAlignment(Qt.AlignCenter)
+
+        if self._minimal:
+            spinner = _LogoSpinner(self)
+            outer.addWidget(spinner, alignment=Qt.AlignCenter)
+            self._dots_n = 0
+            self._status_base = status or ""
+            self._lbl_status = None
+            return
 
         # ── Card ─────────────────────────────────────────────────────
         card = QFrame()
@@ -345,12 +375,14 @@ class AiPacsLoadingOverlay(QWidget):
     # ── helpers ──────────────────────────────────────────────────────
     def _tick_dots(self):
         self._dots_n = (self._dots_n + 1) % 4
-        self._lbl_status.setText(self._status_base + "." * self._dots_n)
+        if self._lbl_status is not None:
+            self._lbl_status.setText(self._status_base + "." * self._dots_n)
 
     def set_status(self, text: str):
         """Update the main status text (the dots animation adjusts)."""
         self._status_base = text
-        self._lbl_status.setText(text)
+        if self._lbl_status is not None:
+            self._lbl_status.setText(text)
 
     # ── class-level show / hide API ──────────────────────────────────
     @classmethod
@@ -360,6 +392,8 @@ class AiPacsLoadingOverlay(QWidget):
         title: str = "AI Pacs Image Analysis",
         status: str = "Please wait",
         subtitle: str = "",
+        minimal: bool = False,
+        pass_through: bool = False,
     ) -> "AiPacsLoadingOverlay":
         """Create, paint, and return the overlay (already visible).
 
@@ -369,10 +403,18 @@ class AiPacsLoadingOverlay(QWidget):
 
         Call ``AiPacsLoadingOverlay.hide_overlay(ref)`` when done.
         """
-        overlay = cls(parent, title=title, status=status, subtitle=subtitle)
+        overlay = cls(
+            parent,
+            title=title,
+            status=status,
+            subtitle=subtitle,
+            minimal=minimal,
+            pass_through=pass_through,
+        )
         overlay.show()
         overlay.raise_()
-        overlay.activateWindow()
+        if not pass_through:
+            overlay.activateWindow()
         # Force the event loop to paint the overlay immediately
         QApplication.processEvents()
         QApplication.processEvents()

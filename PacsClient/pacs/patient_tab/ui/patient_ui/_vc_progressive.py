@@ -601,22 +601,12 @@ class _VCProgressiveMixin:
                 )
                 return
             try:
-                untargeted_background_complete = (
-                    bool(getattr(self, '_first_series_displayed', False))
-                    and not self._any_viewer_empty()
-                    and not _has_viewer_interest_for_series()
-                )
+                untargeted_background_complete = not _has_viewer_interest_for_series()
             except Exception:
                 untargeted_background_complete = False
             if untargeted_background_complete:
                 _mark_progressive_terminal_complete_guard(self, sn)
-                _set_progressive_lifecycle_state(
-                    self,
-                    sn,
-                    _PROGRESSIVE_STATE_AWAITING,
-                    source="on_series_images_progress",
-                    reason="terminal_background_completion_waiting_load_series",
-                )
+                _mark_progressive_untargeted_deferred(self, sn)
                 self.logger.info(
                     "progressive: terminal background completion deferred to load_series_on_demand "
                     "series=%s downloaded=%d total=%d",
@@ -650,6 +640,29 @@ class _VCProgressiveMixin:
                     sn, downloaded, total,
                 )
                 return
+
+        # Block B optimization: untargeted FAST background series should remain
+        # loader-only until an explicit viewer request exists.  Short-circuit
+        # BEFORE creating progressive lifecycle entries or calling
+        # _start_progressive_display(target=None), which only logs/deferred-cleans
+        # and adds control-plane churn under download overlap.
+        try:
+            untargeted_loader_only = (
+                downloaded < total
+                and downloaded >= self._progressive_grow_batch_size
+                and not _has_viewer_interest_for_series()
+            )
+        except Exception:
+            untargeted_loader_only = False
+        if untargeted_loader_only:
+            if not _is_progressive_untargeted_deferred(self, sn):
+                _mark_progressive_untargeted_deferred(self, sn)
+                self.logger.info(
+                    "progressive: untargeted background progress deferred series=%s "
+                    "downloaded=%d total=%d -- loader-only until explicit viewer request",
+                    sn, downloaded, total,
+                )
+            return
 
         # [H7-P7] Entry log â€” captures all guard states at entry
         _done_active = _is_progressive_done_guard_active(self, sn)
@@ -825,12 +838,9 @@ class _VCProgressiveMixin:
                 _awaiting_node = node
                 break
 
-        try:
-            _has_empty_viewer = bool(self._any_viewer_empty())
-        except Exception:
-            _has_empty_viewer = False
+        _allow_untargeted_first_display = (_awaiting_viewer is not None)
 
-        if _awaiting_viewer is not None or _has_empty_viewer or not getattr(self, '_first_series_displayed', False):
+        if _awaiting_viewer is not None:
             _clear_progressive_untargeted_deferred(self, sn)
 
         if downloaded >= self._progressive_grow_batch_size:
@@ -913,13 +923,17 @@ class _VCProgressiveMixin:
                 # would restart _start_progressive_display for an already-done series.
                 return
 
-            if (
-                downloaded < total
-                and _awaiting_viewer is None
-                and not _has_empty_viewer
-                and getattr(self, '_first_series_displayed', False)
-                and _is_progressive_untargeted_deferred(self, sn)
-            ):
+            if (not _allow_untargeted_first_display) and _awaiting_viewer is None and _is_progressive_untargeted_deferred(self, sn):
+                return
+
+            if not _allow_untargeted_first_display:
+                if not _is_progressive_untargeted_deferred(self, sn):
+                    _mark_progressive_untargeted_deferred(self, sn)
+                    self.logger.info(
+                        "progressive: untargeted first display deferred series=%s "
+                        "downloaded=%d total=%d -- awaiting explicit viewer request",
+                        sn, downloaded, total,
+                    )
                 return
 
             if not _is_progressive_start_task_inflight(self, sn):
@@ -979,42 +993,18 @@ class _VCProgressiveMixin:
             _clear_progressive_inflight(self, series_number)
             return
 
-        # v2.3.5 Fix 3: completeness gate -- defer initial load during active
-        # download when too few files are available.  The 500ms load overhead
-        # is wasteful on a partial set that will grow rapidly.  The next
-        # progress signal will retry when more files have arrived.
-        # Skip gate when a target viewer is waiting (user drag-drop).
-        _PROGRESSIVE_MIN_COMPLETENESS = 0.30
-        if target_vtk_widget is None and total > 0:
-            completeness = downloaded / total
-            if completeness < _PROGRESSIVE_MIN_COMPLETENESS:
-                try:
-                    from modules.viewer.fast.ui_throttle import is_heavy_download_active as _heavy_dl
-                    if _heavy_dl():
-                        self.logger.info(
-                            "progressive: DEFERRED start series=%s completeness=%.0f%% "
-                            "(%d/%d) -- below %.0f%% threshold during active download",
-                            series_number, completeness * 100, downloaded, total,
-                            _PROGRESSIVE_MIN_COMPLETENESS * 100,
-                        )
-                        _clear_progressive_inflight(self, series_number)
-                        return
-                except Exception:
-                    pass
-
         if target_vtk_widget is None:
             try:
-                if getattr(self, '_first_series_displayed', False) and not self._any_viewer_empty():
-                    _mark_progressive_untargeted_deferred(self, series_number)
-                    self.logger.info(
-                        "progressive: DEFERRED untargeted start series=%s downloaded=%d total=%d "
-                        "-- no awaiting/empty viewer",
-                        series_number,
-                        downloaded,
-                        total,
-                    )
-                    _clear_progressive_inflight(self, series_number)
-                    return
+                _mark_progressive_untargeted_deferred(self, series_number)
+                self.logger.info(
+                    "progressive: DEFERRED untargeted start series=%s downloaded=%d total=%d "
+                    "-- manual-only layout policy; awaiting explicit viewer request",
+                    series_number,
+                    downloaded,
+                    total,
+                )
+                _clear_progressive_inflight(self, series_number)
+                return
             except Exception:
                 pass
 
@@ -2271,8 +2261,8 @@ class _VCProgressiveMixin:
                 except Exception:
                     pass
 
-            # Hide the spinner now that content is visible
-            self._hide_spinner_for_widget(vtk_widget)
+            if not bool(getattr(self, '_first_series_displayed', False)):
+                self._mark_first_series_displayed()
 
             self.logger.info(
                 "progressive-target: displayed series=%s on awaiting viewer avail=%d total=%d",

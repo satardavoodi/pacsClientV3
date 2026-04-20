@@ -892,10 +892,21 @@ class _VWBackendMixin:
 
     def _update_backend_badge(self):
         backend = self._active_backend or BACKEND_VTK
-        if backend in (BACKEND_PYDICOM_QT, BACKEND_PYDICOM):
+        requested_backend = getattr(self, "_selected_backend", "") or ""
+        bound_metadata = getattr(self, "_bound_backend_metadata", None)
+
+        # Empty viewers are created before series metadata arrives, so the
+        # active backend intentionally falls back to VTK during widget init.
+        # In FAST mode that transient fallback was surfacing an "advance"
+        # badge above empty layouts, which is misleading because the viewer is
+        # still configured for FAST mode and will bind to pydicom_qt once data
+        # lands. Prefer the requested backend until real metadata is bound.
+        if backend in (BACKEND_PYDICOM_QT, BACKEND_PYDICOM) or (
+            not bound_metadata and requested_backend in (BACKEND_PYDICOM_QT, BACKEND_PYDICOM)
+        ):
             text = "Fast"
         else:
-            text = "Advanced"
+            text = "advance"
         self._backend_badge.setText(text)
         self._backend_badge.adjustSize()
         margin = 8

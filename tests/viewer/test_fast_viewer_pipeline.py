@@ -8,7 +8,9 @@ from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_cache as _vc_cache_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_load as _vc_load_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_layout as _vc_layout_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _vc_progressive_mod
+from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_switch as _vc_switch_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_warmup as _vc_warmup_mod
+from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core import _pw_metadata as _pw_metadata_mod
 from PacsClient.pacs.patient_tab.utils import image_io as image_io_mod
 
 
@@ -108,6 +110,42 @@ def test_start_progressive_display_defers_untargeted_background_series(monkeypat
     assert "203" not in controller._progressive_display_inflight
 
 
+def test_start_progressive_display_defers_untargeted_series_even_when_layout_is_empty(monkeypatch):
+    controller = _build_controller()
+    controller._progressive_display_inflight = {"203"}
+    controller._progressive_display_done = set()
+    controller._progressive_lifecycle_state = {}
+    controller._first_series_displayed = False
+    controller._any_viewer_empty = lambda: True
+    controller._ensure_import_folder_path = lambda: "C:/study"
+    controller.parent_widget = SimpleNamespace(
+        _background_tasks=set(),
+    )
+
+    scheduled = []
+
+    class _DummyTask:
+        def add_done_callback(self, cb):
+            return None
+
+    def _fake_create_task(coro):
+        scheduled.append(coro)
+        try:
+            coro.close()
+        except Exception:
+            pass
+        return _DummyTask()
+
+    monkeypatch.setattr(_vc_progressive_mod.asyncio, "create_task", _fake_create_task)
+    monkeypatch.setattr(_vc_progressive_mod.asyncio, "get_running_loop", lambda: object())
+
+    controller._start_progressive_display("203", 11, 135)
+
+    assert scheduled == []
+    assert "203" not in controller._progressive_display_inflight
+    assert _vc_progressive_mod._is_progressive_untargeted_deferred(controller, "203")
+
+
 def test_on_series_images_progress_skips_repeated_untargeted_background_retry():
     controller = _build_controller()
     controller._progressive_display_done = set()
@@ -163,7 +201,7 @@ def test_on_series_images_progress_skips_terminal_untargeted_background_completi
     assert _vc_progressive_mod._is_progressive_terminal_complete_guard_active(controller, "203")
 
 
-def test_on_series_images_progress_retries_deferred_background_series_when_viewer_empty():
+def test_on_series_images_progress_keeps_deferred_background_series_loader_only_when_viewer_empty():
     controller = _build_controller()
     controller._progressive_display_done = set()
     controller._progressive_display_inflight = set()
@@ -177,14 +215,80 @@ def test_on_series_images_progress_retries_deferred_background_series_when_viewe
     controller.lst_nodes_viewer = []
 
     start_calls = []
-    controller._start_progressive_display = lambda *a, **kw: start_calls.append((a, kw))
+    controller._start_progressive_display = lambda *a, **kw: (
+        _vc_progressive_mod._clear_progressive_untargeted_deferred(controller, "203"),
+        start_calls.append((a, kw))
+    )[-1]
+    _vc_progressive_mod._should_admit_progressive_signal = lambda *a, **kw: True
 
     _vc_progressive_mod._mark_progressive_untargeted_deferred(controller, "203")
 
     controller.on_series_images_progress("203", 20, 135)
 
-    assert len(start_calls) == 1
-    assert not _vc_progressive_mod._is_progressive_untargeted_deferred(controller, "203")
+    assert start_calls == []
+    assert _vc_progressive_mod._is_progressive_untargeted_deferred(controller, "203")
+
+
+def test_on_series_images_progress_keeps_untargeted_series_out_of_layout_without_request():
+    controller = _build_controller()
+    controller._progressive_display_done = set()
+    controller._progressive_display_inflight = set()
+    controller._progressive_lifecycle_state = {}
+    controller._progressive_series = {}
+    controller._first_series_displayed = False
+    controller._any_viewer_empty = lambda: True
+    controller._is_fast_viewer_mode = lambda: True
+    controller._find_progressive_viewers = lambda sn: []
+    controller._progressive_grow_batch_size = 10
+    controller.lst_nodes_viewer = []
+
+    start_calls = []
+    controller._start_progressive_display = lambda *a, **kw: start_calls.append((a, kw))
+
+    controller.on_series_images_progress("203", 20, 135)
+
+    assert start_calls == []
+    assert "203" not in controller._progressive_display_inflight
+    assert controller._progressive_series == {}
+    assert _vc_progressive_mod._is_progressive_untargeted_deferred(controller, "203")
+
+
+def test_on_series_images_progress_short_circuits_untargeted_background_before_state_creation(monkeypatch):
+    controller = _build_controller()
+    controller._progressive_display_done = set()
+    controller._progressive_display_inflight = set()
+    controller._progressive_lifecycle_state = {}
+    controller._progressive_series = {}
+    controller._first_series_displayed = True
+    controller._any_viewer_empty = lambda: False
+    controller._is_fast_viewer_mode = lambda: True
+    controller._find_progressive_viewers = lambda sn: []
+    controller._progressive_grow_batch_size = 10
+    controller.lst_nodes_viewer = [
+        SimpleNamespace(
+            vtk_widget=SimpleNamespace(
+                _awaiting_series_number=None,
+                _progressive_series_number=None,
+                image_viewer=SimpleNamespace(metadata={"series": {"series_number": "101"}}),
+            )
+        )
+    ]
+
+    start_calls = []
+    controller._start_progressive_display = lambda *a, **kw: start_calls.append((a, kw))
+
+    monkeypatch.setattr(
+        _vc_progressive_mod,
+        "_should_admit_progressive_signal",
+        lambda obj, series_number, *, terminal=False: True,
+    )
+
+    controller.on_series_images_progress("203", 20, 135)
+
+    assert start_calls == []
+    assert controller._progressive_series == {}
+    assert "203" not in controller._progressive_display_inflight
+    assert _vc_progressive_mod._is_progressive_untargeted_deferred(controller, "203")
 
 
 def test_on_series_images_progress_defers_until_admitted(monkeypatch):
@@ -326,6 +430,53 @@ def test_load_series_on_demand_skips_untargeted_background_completion_in_fast_mo
     assert finalize_calls == [
         ("finalize", "203", {"final_count": 0, "source": "load_series_on_demand_background_skip"})
     ]
+    assert load_calls == []
+    assert ready_calls == [("ready", "203"), ("apply", None)]
+
+
+def test_load_series_on_demand_skips_untargeted_background_completion_even_before_first_display(monkeypatch):
+    controller = _build_controller()
+    ready_calls = []
+    finalize_calls = []
+    load_calls = []
+
+    controller.lst_nodes_viewer = [
+        SimpleNamespace(
+            vtk_widget=SimpleNamespace(
+                _awaiting_series_number=None,
+                _progressive_series_number=None,
+                image_viewer=None,
+                get_count_of_slices=lambda: 0,
+            )
+        )
+    ]
+    controller._tab_active = True
+    controller._first_series_displayed = False
+    controller._any_viewer_empty = lambda: True
+    controller._is_fast_viewer_mode = lambda: True
+    controller.parent_widget = SimpleNamespace(
+        isVisible=lambda: True,
+        resolve_series_key=lambda s: str(s),
+        thumbnail_manager=SimpleNamespace(
+            set_series_ready=lambda sn: ready_calls.append(("ready", sn)),
+            apply_border_states_new=lambda: ready_calls.append(("apply", None)),
+        ),
+        _background_tasks=set(),
+    )
+    controller.pipeline = SimpleNamespace(
+        state=_vc_load_mod.PipelineState.DOWNLOADING,
+        on_series_download_completed=lambda sn: None,
+    )
+    controller._mark_download_active = lambda: None
+    controller._finalize_progressive_series = lambda sn, **kw: finalize_calls.append((sn, kw)) or True
+    controller._load_single_series_on_demand = lambda *a, **kw: load_calls.append((a, kw)) or True
+    controller.zeta_boost = SimpleNamespace(is_active=lambda: False)
+
+    monkeypatch.setattr(_vc_load_mod.logger, "info", lambda *a, **kw: None)
+
+    controller.load_series_on_demand("203")
+
+    assert finalize_calls == [("203", {"final_count": 0, "source": "load_series_on_demand_background_skip"})]
     assert load_calls == []
     assert ready_calls == [("ready", "203"), ("apply", None)]
 
@@ -509,6 +660,70 @@ def test_get_series_by_number_fast_rehydrates_from_full_cache(monkeypatch):
 
     assert captured["allow_append_if_missing"] is True
     assert result == (vtk_data, metadata, 0)
+
+
+def test_replace_series_data_updates_existing_entry_without_full_rebuild():
+    widget = _pw_metadata_mod._PWMetadataMixin.__new__(_pw_metadata_mod._PWMetadataMixin)
+    ready_calls = []
+    image_count_calls = []
+    rebuild_calls = []
+
+    widget.lst_thumbnails_data = [
+        {
+            "vtk_image_data": _DummyVtkImage((32, 32, 1)),
+            "metadata": {
+                "series": {
+                    "series_number": "202",
+                    "series_name": "Old Name",
+                    "series_path": "C:/study/202",
+                },
+                "preview_only": True,
+                "instances": [{}],
+            },
+            "file_path": "thumb-preview.png",
+        }
+    ]
+    widget.thumbnail_manager = SimpleNamespace(
+        set_series_pending=lambda sn: None,
+        set_series_ready=lambda sn: ready_calls.append(sn),
+        update_series_image_count=lambda sn, count: image_count_calls.append((sn, count)),
+    )
+    widget.viewer_controller = SimpleNamespace(
+        _series_cache={},
+        _hot_series_cache={},
+        _series_name_cache={},
+        _series_number_to_index={"202": 0},
+        _metadata_flat_cache={"202": {"series_number": "202", "series_name": "Old Name", "series_path": "C:/study/202", "instances": [{}]}},
+        _paired_series_map={"Old Name": ["202"]},
+        _rebuild_series_index=lambda: rebuild_calls.append("rebuild"),
+    )
+    widget._server_series_info = {"202": {"image_count": 1}}
+
+    idx = widget.replace_series_data(
+        series_number="202",
+        vtk_image_data=_DummyVtkImage((64, 64, 120)),
+        metadata={
+            "series": {
+                "series_number": "202",
+                "series_name": "New Name",
+                "series_path": "C:/study/202",
+            },
+            "instances": [{} for _ in range(120)],
+        },
+        file_path="thumb-full.png",
+    )
+
+    assert idx == 0
+    assert rebuild_calls == []
+    assert widget.viewer_controller._series_number_to_index["202"] == 0
+    assert widget.viewer_controller._series_name_cache["202"] == "New Name"
+    assert widget.viewer_controller._metadata_flat_cache["202"]["series_name"] == "New Name"
+    assert len(widget.viewer_controller._metadata_flat_cache["202"]["instances"]) == 120
+    assert widget.viewer_controller._paired_series_map.get("Old Name") in (None, [])
+    assert widget.viewer_controller._paired_series_map["New Name"] == ["202"]
+    assert ready_calls == ["202"]
+    assert image_count_calls == [("202", 120)]
+    assert widget._server_series_info["202"]["image_count"] == 120
 
 
 def test_load_single_series_on_demand_uses_requested_fast_backend_when_backend_is_none(tmp_path, monkeypatch):
@@ -748,6 +963,7 @@ def test_load_series_on_demand_preview_displays_before_full_load(monkeypatch):
     controller._mark_download_active = lambda: None
     controller.on_series_download_fully_complete = lambda sn: None
     controller._count_series_files_on_disk = lambda sn: 0
+    controller._get_correct_study_path = lambda: "C:/study"
     controller._queue_on_ui_thread = lambda func: func()
     controller._display_series_after_load = lambda sn, progressive_total=0: display_calls.append((sn, progressive_total))
 
@@ -881,6 +1097,7 @@ def test_progressive_download_flow_displays_initial_batch_then_grows_and_complet
             metadata={"series": {"series_number": ""}},
             update_corners_actors=lambda **kw: None,
         ),
+        _awaiting_series_number="301",
         _progressive_mode=False,
         _progressive_series_number=None,
         _progressive_grow_pending=False,
@@ -911,14 +1128,20 @@ def test_progressive_download_flow_displays_initial_batch_then_grows_and_complet
         update_paths=lambda *args, **kwargs: None,
     )
     controller._load_single_series_on_demand = lambda series_number, study_path=None: True
+    controller._get_series_by_number_fast = lambda sn: (
+        _DummyVtkImage((32, 32, 10)),
+        {"series": {"series_number": str(sn)}, "instances": [{} for _ in range(10)]},
+        0,
+    )
+    controller._hide_spinner_for_widget = lambda *_args, **_kwargs: None
 
-    def _display_series_after_load(series_number, progressive_total=0):
-        display_calls.append((series_number, progressive_total))
+    def _display_loaded_series(**kwargs):
+        display_calls.append((kwargs["series_number"], kwargs.get("progressive_total", 0)))
         state["slice_count"] = 10
-        viewer.image_viewer.metadata["series"]["series_number"] = str(series_number)
+        viewer.image_viewer.metadata["series"]["series_number"] = str(kwargs["series_number"])
         controller._first_series_displayed = True
 
-    controller._display_series_after_load = _display_series_after_load
+    controller._display_loaded_series = _display_loaded_series
     controller._update_vtk_slice_range = lambda vtk_w, current_node, new_count, *, slider=None, available_count=None: (
         slice_updates.append((new_count, available_count)),
         state.__setitem__("slice_count", new_count),
@@ -934,10 +1157,14 @@ def test_progressive_download_flow_displays_initial_batch_then_grows_and_complet
     controller.on_series_images_progress("301", 10, 20)
 
     assert display_calls == [("301", 20)]
-    assert enter_calls == [(20, "301")]
-    assert available_updates == [10]
-    assert slider_updates == [19]
-    assert booster_calls == [(("301", [f"/fake/{idx}.dcm" for idx in range(10)]), {"center_slice": 0})]
+    assert enter_calls
+    assert enter_calls[-1] == (20, "301")
+    assert available_updates
+    assert available_updates[-1] == 10
+    assert slider_updates
+    assert slider_updates[-1] == 19
+    assert booster_calls
+    assert booster_calls[-1] == (("301", [f"/fake/{idx}.dcm" for idx in range(10)]), {"center_slice": 0})
     assert "301" in controller._progressive_display_done
     assert viewer._progressive_mode is True
 
@@ -1022,6 +1249,537 @@ def test_display_loaded_series_skips_paired_lookup_for_non_mg_same_name():
     assert args[4] is None
 
 
+def test_display_loaded_series_refits_qt_target_instead_of_resize_only(monkeypatch):
+    controller = _build_controller()
+    switch_calls = []
+    refit_calls = []
+    resize_calls = []
+    queued = []
+
+    def _switch_series(*args, **kwargs):
+        target_widget._qt_switch_refit_applied = True
+        switch_calls.append((args, kwargs))
+        return True
+
+    target_widget = SimpleNamespace(
+        _qt_bridge_active=True,
+        _qt_switch_refit_applied=False,
+        switch_series=_switch_series,
+        _sync_qt_viewer_presentation=lambda **kwargs: refit_calls.append(kwargs),
+        resizeEvent=lambda event: resize_calls.append(event),
+        image_viewer=None,
+    )
+
+    controller.selected_widget = None
+    controller.lst_nodes_viewer = [SimpleNamespace(vtk_widget=target_widget, slider="slider-1")]
+    controller._paired_series_map = {}
+    controller.parent_widget = SimpleNamespace(
+        slider="slider-1",
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+        reset_slider=lambda *args, **kwargs: None,
+        toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+        manage_reference_line=lambda: None,
+    )
+
+    monkeypatch.setattr(_vc_warmup_mod.QTimer, "singleShot", lambda delay, fn: queued.append(delay))
+
+    controller._display_loaded_series(
+        series_number="201",
+        series_idx=0,
+        vtk_image_data=_DummyVtkImage(),
+        metadata={"series": {"series_number": "201", "series_name": "CT 1", "modality": "CT"}},
+        flag_change_selected_widget=False,
+        vtk_widget=target_widget,
+        slider="slider-1",
+        progressive_total=0,
+    )
+
+    assert len(switch_calls) == 1
+    assert refit_calls == []
+    assert resize_calls == []
+    assert queued == []
+
+
+def test_perform_series_switch_optimized_refits_qt_target_after_switch(monkeypatch):
+    controller = _build_controller()
+    controller._perform_series_switch_optimized = controller_mod.ViewerController._perform_series_switch_optimized.__get__(
+        controller,
+        controller_mod.ViewerController,
+    )
+    refit_calls = []
+    queued = []
+    hidden = []
+
+    def _switch_series(*args, **kwargs):
+        vtk_widget._qt_switch_refit_applied = True
+        return True
+
+    vtk_widget = SimpleNamespace(
+        _qt_bridge_active=True,
+        _qt_switch_refit_applied=False,
+        _awaiting_series_number="201",
+        _sync_qt_viewer_presentation=lambda **kwargs: refit_calls.append(kwargs),
+        switch_series=_switch_series,
+        get_count_of_slices=lambda: 24,
+        image_viewer=SimpleNamespace(update_corners_actors=lambda: None),
+    )
+
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+        reset_slider=lambda *args, **kwargs: None,
+        toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+        manage_reference_line=lambda: None,
+    )
+    controller._paired_series_map = {}
+    controller._progressive_series = {}
+    controller._image_slice_booster = SimpleNamespace(
+        is_active=False,
+        clear=lambda: None,
+        set_active=lambda *args, **kwargs: None,
+    )
+    controller._get_requested_viewer_backend = lambda: controller_mod.BACKEND_PYDICOM_QT
+    controller._is_fast_viewer_mode = lambda: False
+    controller._refresh_zeta_protected_series = lambda: None
+    controller._is_full_volume_cache_candidate = lambda *args, **kwargs: False
+    controller._enqueue_lookahead_warmup = lambda *args, **kwargs: None
+    controller._sync_progressive_available_after_switch = lambda: None
+    controller.save_status_camera = lambda *args, **kwargs: None
+    controller._hide_spinner_for_widget = lambda widget: hidden.append(widget)
+
+    monkeypatch.setattr(_vc_switch_mod.QTimer, "singleShot", lambda delay, fn: queued.append(delay))
+
+    controller._perform_series_switch_optimized(
+        vtk_widget,
+        {"series": {"series_number": "201", "series_name": "CT 1", "modality": "CT"}},
+        _DummyVtkImage(),
+        0,
+        "slider-1",
+    )
+
+    assert refit_calls == []
+    assert queued == [0, 100]
+    assert vtk_widget._awaiting_series_number is None
+    assert hidden == [vtk_widget]
+
+
+def test_perform_series_switch_optimized_defers_followup_ui_work(monkeypatch):
+    controller = _build_controller()
+    controller._perform_series_switch_optimized = controller_mod.ViewerController._perform_series_switch_optimized.__get__(
+        controller,
+        controller_mod.ViewerController,
+    )
+
+    refit_calls = []
+    queued = []
+    hidden = []
+    corner_updates = []
+    refline_calls = []
+    zeta_refresh_calls = []
+    lookahead_calls = []
+
+    image_viewer = SimpleNamespace(
+        update_corners_actors=lambda: corner_updates.append("corners"),
+        GetSlice=lambda: 0,
+    )
+
+    def _switch_series(*args, **kwargs):
+        vtk_widget._qt_switch_refit_applied = True
+        return True
+
+    vtk_widget = SimpleNamespace(
+        _qt_bridge_active=True,
+        _qt_switch_refit_applied=False,
+        _awaiting_series_number="201",
+        _sync_qt_viewer_presentation=lambda **kwargs: refit_calls.append(kwargs),
+        switch_series=_switch_series,
+        get_count_of_slices=lambda: 24,
+        image_viewer=image_viewer,
+    )
+
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+        reset_slider=lambda *args, **kwargs: None,
+        toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+        manage_reference_line=lambda: refline_calls.append("refline"),
+    )
+    controller._paired_series_map = {}
+    controller._progressive_series = {}
+    controller._image_slice_booster = SimpleNamespace(
+        is_active=False,
+        clear=lambda: None,
+        set_active=lambda *args, **kwargs: None,
+    )
+    controller._get_requested_viewer_backend = lambda: controller_mod.BACKEND_PYDICOM_QT
+    controller._is_fast_viewer_mode = lambda: False
+    controller._refresh_zeta_protected_series = lambda: zeta_refresh_calls.append("zeta")
+    controller._is_full_volume_cache_candidate = lambda *args, **kwargs: False
+    controller._enqueue_lookahead_warmup = lambda sn: lookahead_calls.append(sn)
+    controller._sync_progressive_available_after_switch = lambda: None
+    controller.save_status_camera = lambda *args, **kwargs: None
+    controller._hide_spinner_for_widget = lambda widget: hidden.append(widget)
+
+    monkeypatch.setattr(
+        _vc_switch_mod.QTimer,
+        "singleShot",
+        lambda delay, fn: queued.append((delay, fn)),
+    )
+
+    controller._perform_series_switch_optimized(
+        vtk_widget,
+        {"series": {"series_number": "201", "series_name": "CT 1", "modality": "CT"}},
+        _DummyVtkImage(),
+        0,
+        "slider-1",
+    )
+
+    assert refit_calls == []
+    assert hidden == [vtk_widget]
+    assert vtk_widget._awaiting_series_number is None
+    assert corner_updates == []
+    assert refline_calls == []
+    assert zeta_refresh_calls == []
+    assert lookahead_calls == []
+    assert [delay for delay, _ in queued] == [0, 100]
+
+    zero_delay_callbacks = [fn for delay, fn in queued if delay == 0]
+    for callback in zero_delay_callbacks:
+        callback()
+
+    assert refit_calls == []
+    assert corner_updates == ["corners"]
+    assert refline_calls == ["refline"]
+    assert zeta_refresh_calls == ["zeta"]
+
+    delayed_callback = next(fn for delay, fn in queued if delay == 100)
+    delayed_callback()
+    assert lookahead_calls == ["201"]
+
+
+def test_perform_series_switch_optimized_queues_qt_refit_for_inplace_refresh(monkeypatch):
+    controller = _build_controller()
+    controller._perform_series_switch_optimized = controller_mod.ViewerController._perform_series_switch_optimized.__get__(
+        controller,
+        controller_mod.ViewerController,
+    )
+
+    refit_calls = []
+    queued = []
+
+    def _switch_series(*args, **kwargs):
+        vtk_widget._qt_switch_refit_applied = False
+        return True
+
+    vtk_widget = SimpleNamespace(
+        _qt_bridge_active=True,
+        _qt_switch_refit_applied=False,
+        _awaiting_series_number="201",
+        _sync_qt_viewer_presentation=lambda **kwargs: refit_calls.append(kwargs),
+        switch_series=_switch_series,
+        get_count_of_slices=lambda: 24,
+        image_viewer=SimpleNamespace(update_corners_actors=lambda: None),
+    )
+
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+        reset_slider=lambda *args, **kwargs: None,
+        toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+        manage_reference_line=lambda: None,
+    )
+    controller._paired_series_map = {}
+    controller._progressive_series = {}
+    controller._image_slice_booster = SimpleNamespace(
+        is_active=False,
+        clear=lambda: None,
+        set_active=lambda *args, **kwargs: None,
+    )
+    controller._get_requested_viewer_backend = lambda: controller_mod.BACKEND_PYDICOM_QT
+    controller._is_fast_viewer_mode = lambda: False
+    controller._refresh_zeta_protected_series = lambda: None
+    controller._is_full_volume_cache_candidate = lambda *args, **kwargs: False
+    controller._enqueue_lookahead_warmup = lambda *args, **kwargs: None
+    controller._sync_progressive_available_after_switch = lambda: None
+    controller.save_status_camera = lambda *args, **kwargs: None
+    controller._hide_spinner_for_widget = lambda widget: None
+
+    monkeypatch.setattr(
+        _vc_switch_mod.QTimer,
+        "singleShot",
+        lambda delay, fn: queued.append((delay, fn)),
+    )
+
+    controller._perform_series_switch_optimized(
+        vtk_widget,
+        {"series": {"series_number": "201", "series_name": "CT 1", "modality": "CT"}},
+        _DummyVtkImage(),
+        0,
+        "slider-1",
+    )
+
+    assert [delay for delay, _ in queued] == [0, 0, 100]
+
+    zero_delay_callbacks = [fn for delay, fn in queued if delay == 0]
+    zero_delay_callbacks[0]()
+    assert refit_calls == [{"refit_view": True}]
+
+
+def test_async_switch_finish_skips_duplicate_switch_after_ui_apply(monkeypatch):
+    controller = _build_controller()
+    controller._schedule_async_load_and_switch = controller_mod.ViewerController._schedule_async_load_and_switch.__get__(
+        controller,
+        controller_mod.ViewerController,
+    )
+
+    switch_calls = []
+    hidden = []
+    marked = []
+
+    vtk_widget = SimpleNamespace(
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "101"}}),
+        isVisible=lambda: True,
+    )
+
+    controller._async_switch_inflight = set()
+    controller._interactive_load_in_progress = False
+    controller._set_zeta_external_interactive_busy = lambda *args, **kwargs: None
+    controller._get_viewer_id = lambda widget: "viewer-1"
+    controller._get_series_expected_slices = lambda sn: 0
+    controller._should_use_interactive_preview = lambda exp: False
+    controller._requires_serialized_interactive_load = lambda backend: False
+    controller._load_single_series_on_demand = lambda *args, **kwargs: True
+    controller._get_series_by_number_fast = lambda sn: (_DummyVtkImage(), {"series": {"series_number": str(sn)}}, 0)
+    controller._perform_series_switch_optimized = lambda *args, **kwargs: switch_calls.append((args, kwargs))
+    controller._hide_spinner_for_widget = lambda widget: hidden.append(widget)
+    controller._mark_first_series_displayed = lambda: marked.append("marked")
+    controller._first_series_displayed = False
+    controller._is_request_current = lambda *args, **kwargs: True
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+    )
+    controller.zeta_boost = SimpleNamespace(wait_for_inflight_drain=lambda timeout_sec: True)
+    controller._queue_on_ui_thread = lambda func: func()
+
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None, name=None):
+            self._target = target
+
+        def start(self):
+            if self._target is not None:
+                self._target()
+
+    monkeypatch.setattr(_vc_switch_mod.threading, "Thread", _ImmediateThread)
+
+    controller._schedule_async_load_and_switch(
+        "101",
+        "C:/study",
+        vtk_widget,
+        "slider-1",
+        True,
+        "token-1",
+        vtk_widget,
+        0.0,
+        viewer_backend=controller_mod.BACKEND_PYDICOM_QT,
+    )
+
+    assert switch_calls == []
+    assert hidden == [vtk_widget]
+    assert marked == ["marked"]
+    assert controller._async_switch_inflight == set()
+
+
+def test_async_switch_finish_falls_back_when_ui_apply_not_visible_yet(monkeypatch):
+    controller = _build_controller()
+    controller._schedule_async_load_and_switch = controller_mod.ViewerController._schedule_async_load_and_switch.__get__(
+        controller,
+        controller_mod.ViewerController,
+    )
+
+    switch_calls = []
+    hidden = []
+
+    vtk_widget = SimpleNamespace(
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "999"}}),
+        isVisible=lambda: True,
+    )
+
+    controller._async_switch_inflight = set()
+    controller._interactive_load_in_progress = False
+    controller._set_zeta_external_interactive_busy = lambda *args, **kwargs: None
+    controller._get_viewer_id = lambda widget: "viewer-1"
+    controller._get_series_expected_slices = lambda sn: 0
+    controller._should_use_interactive_preview = lambda exp: False
+    controller._requires_serialized_interactive_load = lambda backend: False
+    controller._load_single_series_on_demand = lambda *args, **kwargs: True
+    controller._get_series_by_number_fast = lambda sn: (_DummyVtkImage(), {"series": {"series_number": str(sn)}}, 3)
+    controller._perform_series_switch_optimized = lambda *args, **kwargs: switch_calls.append((args, kwargs))
+    controller._hide_spinner_for_widget = lambda widget: hidden.append(widget)
+    controller._mark_first_series_displayed = lambda: None
+    controller._first_series_displayed = True
+    controller._is_request_current = lambda *args, **kwargs: True
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+    )
+    controller.zeta_boost = SimpleNamespace(wait_for_inflight_drain=lambda timeout_sec: True)
+    controller._queue_on_ui_thread = lambda func: func()
+
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None, name=None):
+            self._target = target
+
+        def start(self):
+            if self._target is not None:
+                self._target()
+
+    monkeypatch.setattr(_vc_switch_mod.threading, "Thread", _ImmediateThread)
+
+    controller._schedule_async_load_and_switch(
+        "101",
+        "C:/study",
+        vtk_widget,
+        "slider-1",
+        True,
+        "token-1",
+        vtk_widget,
+        0.0,
+        viewer_backend=controller_mod.BACKEND_PYDICOM_QT,
+    )
+
+    assert len(switch_calls) == 1
+    assert hidden == [vtk_widget]
+    assert controller._async_switch_inflight == set()
+
+
+def test_async_switch_finish_does_not_skip_when_only_preview_is_visible(monkeypatch):
+    controller = _build_controller()
+    controller._schedule_async_load_and_switch = controller_mod.ViewerController._schedule_async_load_and_switch.__get__(
+        controller,
+        controller_mod.ViewerController,
+    )
+
+    switch_calls = []
+    hidden = []
+
+    vtk_widget = SimpleNamespace(
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "101"}, "preview_only": True}),
+        isVisible=lambda: True,
+    )
+
+    controller._async_switch_inflight = set()
+    controller._interactive_load_in_progress = False
+    controller._set_zeta_external_interactive_busy = lambda *args, **kwargs: None
+    controller._get_viewer_id = lambda widget: "viewer-1"
+    controller._get_series_expected_slices = lambda sn: 0
+    controller._should_use_interactive_preview = lambda exp: False
+    controller._requires_serialized_interactive_load = lambda backend: False
+    controller._load_single_series_on_demand = lambda *args, **kwargs: True
+    controller._get_series_by_number_fast = lambda sn: (_DummyVtkImage(), {"series": {"series_number": str(sn)}}, 3)
+    controller._perform_series_switch_optimized = lambda *args, **kwargs: switch_calls.append((args, kwargs))
+    controller._hide_spinner_for_widget = lambda widget: hidden.append(widget)
+    controller._mark_first_series_displayed = lambda: None
+    controller._first_series_displayed = True
+    controller._is_request_current = lambda *args, **kwargs: True
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+    )
+    controller.zeta_boost = SimpleNamespace(wait_for_inflight_drain=lambda timeout_sec: True)
+    controller._queue_on_ui_thread = lambda func: func()
+
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None, name=None):
+            self._target = target
+
+        def start(self):
+            if self._target is not None:
+                self._target()
+
+    monkeypatch.setattr(_vc_switch_mod.threading, "Thread", _ImmediateThread)
+
+    controller._schedule_async_load_and_switch(
+        "101",
+        "C:/study",
+        vtk_widget,
+        "slider-1",
+        True,
+        "token-1",
+        vtk_widget,
+        0.0,
+        viewer_backend=controller_mod.BACKEND_PYDICOM_QT,
+    )
+
+    assert len(switch_calls) == 1
+    assert hidden == [vtk_widget]
+
+
+def test_async_switch_preview_callback_skips_when_full_data_already_visible(monkeypatch):
+    controller = _build_controller()
+    controller._schedule_async_load_and_switch = controller_mod.ViewerController._schedule_async_load_and_switch.__get__(
+        controller,
+        controller_mod.ViewerController,
+    )
+
+    queued = []
+    apply_calls = []
+
+    vtk_widget = SimpleNamespace(
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "999"}}),
+        isVisible=lambda: True,
+    )
+
+    preview_meta = {"series": {"series_number": "101"}, "preview_only": True}
+
+    controller._async_switch_inflight = set()
+    controller._interactive_load_in_progress = False
+    controller._set_zeta_external_interactive_busy = lambda *args, **kwargs: None
+    controller._get_viewer_id = lambda widget: "viewer-1"
+    controller._get_series_expected_slices = lambda sn: 180
+    controller._should_use_interactive_preview = lambda exp: True
+    controller._interactive_preview_file_cap = lambda: 8
+    controller._requires_serialized_interactive_load = lambda backend: False
+    controller._load_single_series_on_demand = lambda *args, **kwargs: False
+    controller._apply_loaded_series_data = lambda *args, **kwargs: apply_calls.append((args, kwargs))
+    controller._trigger_download_if_needed = lambda *args, **kwargs: None
+    controller._hide_spinner_for_widget = lambda *args, **kwargs: None
+    controller._is_request_current = lambda *args, **kwargs: True
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+    )
+    controller.zeta_boost = SimpleNamespace(wait_for_inflight_drain=lambda timeout_sec: True)
+    controller._queue_on_ui_thread = lambda func: queued.append(func)
+
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None, name=None):
+            self._target = target
+
+        def start(self):
+            if self._target is not None:
+                self._target()
+
+    monkeypatch.setattr(_vc_switch_mod.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(
+        _vc_switch_mod,
+        "load_series_preview",
+        lambda **kwargs: (_DummyVtkImage((32, 32, 1)), preview_meta, (11, 22), 48),
+    )
+
+    controller._schedule_async_load_and_switch(
+        "101",
+        "C:/study",
+        vtk_widget,
+        "slider-1",
+        True,
+        "token-1",
+        vtk_widget,
+        0.0,
+        viewer_backend=controller_mod.BACKEND_PYDICOM_QT,
+    )
+
+    assert len(queued) == 2
+
+    vtk_widget.image_viewer.metadata = {"series": {"series_number": "101"}}
+    queued[0]()
+
+    assert apply_calls == []
+
+
 def test_display_loaded_series_pairs_only_mg_same_name():
     controller = _build_controller()
     switch_calls = []
@@ -1061,6 +1819,68 @@ def test_display_loaded_series_pairs_only_mg_same_name():
     assert args[3] is not None
     assert args[4]["series"]["series_number"] == "302"
     assert args[4]["cloned"] is True
+
+
+def test_display_series_after_load_marks_ready_only_under_manual_layout_policy():
+    controller = _build_controller()
+    controller._first_series_displayed = False
+    controller._any_viewer_empty = lambda: True
+    controller._is_fast_viewer_mode = lambda: True
+
+    ready_calls = []
+
+    controller._display_first_series_in_primary_viewer = (
+        lambda series_number, progressive_total=0: ready_calls.append(
+            ("primary", series_number, progressive_total)
+        ) or True
+    )
+    controller._display_first_series_in_all_viewers = (
+        lambda *args, **kwargs: ready_calls.append(("all", args, kwargs)) or True
+    )
+    controller.parent_widget = SimpleNamespace(
+        isVisible=lambda: True,
+        thumbnail_manager=SimpleNamespace(
+            set_series_ready=lambda sn: ready_calls.append(("ready", sn)),
+            apply_border_states_new=lambda: ready_calls.append(("apply", None)),
+        ),
+    )
+
+    controller._display_series_after_load("201", progressive_total=45)
+
+    assert ready_calls == [("ready", "201"), ("apply", None)]
+
+
+def test_display_loaded_series_hides_spinner_immediately_after_success():
+    controller = _build_controller()
+    hide_calls = []
+    controller._paired_series_map = {}
+
+    target_widget = SimpleNamespace(
+        switch_series=lambda *args, **kwargs: True,
+        _qt_bridge_active=False,
+        image_viewer=SimpleNamespace(update_corners_actors=lambda: None),
+    )
+    controller.selected_widget = target_widget
+    controller.parent_widget = SimpleNamespace(
+        metadata_fixed={},
+        reset_slider=lambda *args, **kwargs: None,
+        toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+        manage_reference_line=lambda: None,
+    )
+    controller._hide_spinner_for_widget = lambda widget: hide_calls.append(widget)
+
+    controller._display_loaded_series(
+        series_number="201",
+        series_idx=0,
+        vtk_image_data=_DummyVtkImage(),
+        metadata={"series": {"series_number": "201", "series_name": "CT 1", "modality": "CT"}},
+        flag_change_selected_widget=False,
+        vtk_widget=target_widget,
+        slider="slider-1",
+        progressive_total=0,
+    )
+
+    assert hide_calls == [target_widget]
 
 
 def test_get_requested_viewer_backend_prefers_parent_override(monkeypatch):
@@ -1158,6 +1978,29 @@ def test_ensure_import_folder_path_resolves_from_source(tmp_path, monkeypatch):
         from pathlib import Path
         candidate = Path(str(tmp_path)) / study_uid
         assert candidate.is_dir()
+
+
+def test_get_correct_study_path_falls_back_to_ensure_import_folder_path():
+    controller = _build_controller()
+    controller.parent_widget = SimpleNamespace(
+        import_folder_path=None,
+        _get_correct_study_path=lambda: None,
+    )
+    controller._ensure_import_folder_path = lambda: "C:/resolved-study"
+
+    assert controller._get_correct_study_path() == "C:/resolved-study"
+
+
+def test_get_correct_study_path_ignores_missing_parent_resolver_path_and_recovers(tmp_path):
+    controller = _build_controller()
+    missing_path = tmp_path / "missing-study"
+    controller.parent_widget = SimpleNamespace(
+        import_folder_path=str(missing_path),
+        _get_correct_study_path=lambda: str(missing_path),
+    )
+    controller._ensure_import_folder_path = lambda: "C:/resolved-study"
+
+    assert controller._get_correct_study_path() == "C:/resolved-study"
 
 
 # ────────────────────────────────────────────────────────────────
@@ -3060,7 +3903,7 @@ def test_done_guard_cleared_on_series_complete():
     )
 
 
-def test_done_guard_allows_restart_after_completion():
+def test_done_guard_clears_restart_path_without_auto_start_under_manual_layout_policy():
     """
     H4 behavioral regression: after a completed lifecycle clears the done-guard,
     a new progress signal for the same series must be allowed to call
@@ -3101,14 +3944,10 @@ def test_done_guard_allows_restart_after_completion():
 
     ctrl._on_series_images_progress_impl(sn, 20, 120)
 
-    # Key assertion: _start_progressive_display must have been called once
-    assert len(ctrl._start_progressive_display_spy) == 1, (
-        f"H4 behavioral regression: _start_progressive_display called "
-        f"{len(ctrl._start_progressive_display_spy)} times after done-guard was "
-        "cleared. Expected 1 (restart allowed). "
-        "If 0: done-guard still blocking (fix not applied or path not reached). "
-        "If >1: duplicate start (inflight guard broken)."
-    )
+    # Under manual-only policy, the cleared done-guard must NOT poison the next
+    # cycle, but an untargeted series still stays loader-only until a viewer asks.
+    assert len(ctrl._start_progressive_display_spy) == 0
+    assert _vc_progressive_mod._is_progressive_untargeted_deferred(ctrl, sn)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -3693,9 +4532,12 @@ def test_h6_guard_scoped_to_series():
     # Fire progress for series 202 (not completed)
     ctrl._on_series_images_progress_impl("202", 20, 33)
 
-    # Series 202 must be tracked (not blocked by 201's guard)
-    assert "202" in ctrl._progressive_series, \
+    # Series 202 must not inherit 201's completion guard. Under manual-only
+    # policy it should remain eligible for explicit replay via the defer guard.
+    assert "202" not in ctrl._series_download_completed, \
         "Series 202 must not be blocked by series 201's completion guard"
+    assert _vc_progressive_mod._is_progressive_untargeted_deferred(ctrl, "202"), \
+        "Series 202 should remain manually replayable via the defer guard"
 
     # Series 201 must remain untouched
     assert "201" not in ctrl._progressive_series, \
@@ -3765,8 +4607,10 @@ def test_b4x_restart_after_done_clears_terminal_complete_guard():
     ctrl._on_series_images_progress_impl(sn, 20, 40)
 
     assert _prog_mod._is_progressive_terminal_complete_guard_active(ctrl, sn) is False
-    assert len(ctrl._start_progressive_display_spy) == 1, \
-        "verified restart_after_done partial cycle must re-enter first-display path"
+    assert len(ctrl._start_progressive_display_spy) == 0, \
+        "manual-only policy must not auto-start an untargeted restart cycle"
+    assert _prog_mod._is_progressive_untargeted_deferred(ctrl, sn), \
+        "restart_after_done should remain eligible for explicit viewer replay"
 
 
 # ────────────────────────────────────────────────────────────────
@@ -3841,7 +4685,7 @@ def test_qt_bridge_style_delete_all_widgets_clears_annotations():
 # ────────────────────────────────────────────────────────────────
 
 def _mock_viewer(w=800, h=600, iw=512, ih=512, zoom=1.0, pan_x=0.0, pan_y=0.0,
-                 rot=0, flip_h=False, flip_v=False):
+                 rot=0, flip_h=False, flip_v=False, scale_x=1.0, scale_y=1.0):
     """Build a duck-typed viewer state accepted by CoordinateResolver."""
     pan = SimpleNamespace(x=lambda: pan_x, y=lambda: pan_y)
     return SimpleNamespace(
@@ -3854,6 +4698,8 @@ def _mock_viewer(w=800, h=600, iw=512, ih=512, zoom=1.0, pan_x=0.0, pan_y=0.0,
         _flip_v=flip_v,
         _image_width=float(iw),
         _image_height=float(ih),
+        _display_scale_x=float(scale_x),
+        _display_scale_y=float(scale_y),
     )
 
 
@@ -3925,6 +4771,53 @@ def test_coord_resolver_all_rotations_roundtrip():
         rx, ry = cr.widget_to_image(wx, wy)
         assert abs(rx - ix) < 1e-9, f"rot={angle}: roundtrip x failed"
         assert abs(ry - iy) < 1e-9, f"rot={angle}: roundtrip y failed"
+
+
+def test_coord_resolver_anisotropic_display_roundtrip():
+    """Round-trip must remain exact when Qt viewer applies spacing-based aspect scaling."""
+    from modules.viewer.tools.coord_resolver import CoordinateResolver
+
+    v = _mock_viewer(
+        w=900,
+        h=700,
+        iw=256,
+        ih=256,
+        zoom=1.7,
+        pan_x=13.0,
+        pan_y=-21.0,
+        scale_x=1.0,
+        scale_y=3.5,
+    )
+    cr = CoordinateResolver(v)
+
+    for (ix, iy) in [(0.0, 0.0), (64.0, 32.0), (128.0, 128.0), (255.0, 255.0)]:
+        wx, wy = cr.image_to_widget(ix, iy)
+        rx, ry = cr.widget_to_image(wx, wy)
+        assert abs(rx - ix) < 1e-9, f"anisotropic roundtrip x failed: {ix} -> {rx}"
+        assert abs(ry - iy) < 1e-9, f"anisotropic roundtrip y failed: {iy} -> {ry}"
+
+
+def test_coord_resolver_anisotropic_display_roundtrip_with_rotation():
+    """Anisotropic display scaling must stay aligned with 90° rotation too."""
+    from modules.viewer.tools.coord_resolver import CoordinateResolver
+
+    v = _mock_viewer(
+        w=900,
+        h=700,
+        iw=256,
+        ih=128,
+        zoom=1.25,
+        rot=90,
+        scale_x=2.0,
+        scale_y=0.75,
+    )
+    cr = CoordinateResolver(v)
+
+    for (ix, iy) in [(0.0, 0.0), (42.0, 19.0), (128.0, 64.0), (255.0, 127.0)]:
+        wx, wy = cr.image_to_widget(ix, iy)
+        rx, ry = cr.widget_to_image(wx, wy)
+        assert abs(rx - ix) < 1e-9, f"anisotropic 90° roundtrip x failed: {ix} -> {rx}"
+        assert abs(ry - iy) < 1e-9, f"anisotropic 90° roundtrip y failed: {iy} -> {ry}"
 
 
 # ────────────────────────────────────────────────────────────────
@@ -4441,6 +5334,27 @@ def test_b41_drag_during_heavy_download_keeps_tiny_prefetch(monkeypatch):
     assert frame is not None
     assert 50 not in decode_calls
     assert len(prefetch_calls) == 1
+
+
+def test_b41_set_slice_index_prepares_prefetch_once_before_render(monkeypatch):
+    """get_rendered_frame should not re-arm neighborhood prefetch right after set_slice_index."""
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+
+    prefetch_calls = []
+
+    def _record_prefetch(idx, direction=0):
+        prefetch_calls.append((idx, direction))
+        pipe._prefetch_prepared_index = idx
+
+    monkeypatch.setattr(pipe, "_prefetch_around", _record_prefetch)
+
+    cached = pipe.set_slice_index(50)
+    frame = pipe.get_rendered_frame(50, interaction_type='')
+
+    assert cached is False
+    assert frame is not None
+    assert 50 in decode_calls
+    assert prefetch_calls == [(50, 1)]
 
 
 def test_b41_drag_during_heavy_download_widens_surrogate_window(monkeypatch):

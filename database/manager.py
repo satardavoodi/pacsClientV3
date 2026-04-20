@@ -1,11 +1,6 @@
 from . import core as database
 import ast
 
-
-def get_connection_database():
-    return database.get_connection_database()
-
-
 def init_database():
     return database.init_database()
 
@@ -906,23 +901,19 @@ def get_series_by_study_uid(study_uid: str) -> list[dict]:
     try:
         with database.get_db_connection() as conn:
             cur = conn.cursor()
-            
-            # First get the study_pk using study_uid
-            cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
-            study_row = cur.fetchone()
-            
-            if not study_row:
-                return []
-            
-        study_pk = study_row[0]
-        
-        # Then get all series for this study_fk
-        cur.execute("SELECT * FROM series WHERE study_fk = ? ORDER BY series_number", (study_pk,))
-        rows = cur.fetchall()
-        
-        # Convert rows to dictionaries
-        columns = [description[0] for description in cur.description]
-        return [dict(zip(columns, row)) for row in rows]
+            cur.execute(
+                """
+                SELECT se.*
+                FROM series AS se
+                JOIN studies AS st ON st.study_pk = se.study_fk
+                WHERE st.study_uid = ?
+                ORDER BY se.series_number
+                """,
+                (study_uid,),
+            )
+            rows = cur.fetchall()
+            columns = [description[0] for description in cur.description]
+            return [dict(zip(columns, row)) for row in rows]
         
     except Exception as e:
         print(f"Error getting series by study UID: {str(e)}")

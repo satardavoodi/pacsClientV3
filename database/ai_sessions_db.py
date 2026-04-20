@@ -41,7 +41,7 @@ import json
 import logging
 import sqlite3
 
-from database._pool import get_db_connection, get_connection_database
+from database._pool import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -61,151 +61,151 @@ def ai_ensure_schema():
       - ai_last_session(study_uid PK, sid)
       - ai_meta(k PK, v)
     """
-    conn = get_connection_database()
-    cur = conn.cursor()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
 
-    # sessions
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ai_sessions(
-            sid TEXT PRIMARY KEY,
-            title TEXT,
-            server_sid TEXT,
-            study_uid TEXT
-        )
-    """)
-    try:
-        cur.execute("SELECT study_uid FROM ai_sessions LIMIT 1")
-    except Exception:
-        cur.execute("ALTER TABLE ai_sessions ADD COLUMN study_uid TEXT")
-
-    try:
-        cur.execute("SELECT pinned FROM ai_sessions LIMIT 1")
-    except Exception:
-        cur.execute("ALTER TABLE ai_sessions ADD COLUMN pinned INTEGER DEFAULT 0")
-        cur.execute("UPDATE ai_sessions SET pinned = 0 WHERE pinned IS NULL")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_sessions_pinned ON ai_sessions(pinned)")
-
-    try:
-        cur.execute("SELECT created_at FROM ai_sessions LIMIT 1")
-    except Exception:
-        cur.execute("ALTER TABLE ai_sessions ADD COLUMN created_at INTEGER")
-        cur.execute("UPDATE ai_sessions SET created_at = strftime('%s','now') WHERE created_at IS NULL")
-
-    try:
-        cur.execute("SELECT updated_at FROM ai_sessions LIMIT 1")
-    except Exception:
-        cur.execute("ALTER TABLE ai_sessions ADD COLUMN updated_at INTEGER")
-        cur.execute("UPDATE ai_sessions SET updated_at = created_at WHERE updated_at IS NULL")
-
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_sessions_study ON ai_sessions(study_uid)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_sessions_updated ON ai_sessions(updated_at)")
-
-    # messages
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ai_messages(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sid TEXT,
-            who TEXT,
-            html TEXT,
-            ts INTEGER,
-            origin TEXT
-        )
-    """)
-    try:
-        cur.execute("SELECT created_at FROM ai_messages LIMIT 1")
-    except Exception:
-        cur.execute("ALTER TABLE ai_messages ADD COLUMN created_at INTEGER")
-        cur.execute("UPDATE ai_messages SET created_at = COALESCE(ts, strftime('%s','now')) WHERE created_at IS NULL")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_messages_sid ON ai_messages(sid)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_messages_created ON ai_messages(created_at)")
-
-    # reports
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ai_reports(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sid TEXT NOT NULL,
-            msg_id INTEGER,
-            study_uid TEXT,
-            kind TEXT DEFAULT 'report',
-            label TEXT,
-            raw_en TEXT NOT NULL,
-            created_at INTEGER
-        )
-    """)
-    try:
-        cur.execute("SELECT created_at FROM ai_reports LIMIT 1")
-    except Exception:
+        # sessions
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ai_sessions(
+                sid TEXT PRIMARY KEY,
+                title TEXT,
+                server_sid TEXT,
+                study_uid TEXT
+            )
+        """)
         try:
-            cur.execute("ALTER TABLE ai_reports ADD COLUMN created_at INTEGER")
-            cur.execute("UPDATE ai_reports SET created_at = strftime('%s','now') WHERE created_at IS NULL")
+            cur.execute("SELECT study_uid FROM ai_sessions LIMIT 1")
         except Exception:
-            pass
+            cur.execute("ALTER TABLE ai_sessions ADD COLUMN study_uid TEXT")
 
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_reports_sid ON ai_reports(sid, created_at, id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_reports_msg_id ON ai_reports(msg_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_reports_study ON ai_reports(study_uid, created_at, id)")
+        try:
+            cur.execute("SELECT pinned FROM ai_sessions LIMIT 1")
+        except Exception:
+            cur.execute("ALTER TABLE ai_sessions ADD COLUMN pinned INTEGER DEFAULT 0")
+            cur.execute("UPDATE ai_sessions SET pinned = 0 WHERE pinned IS NULL")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_sessions_pinned ON ai_sessions(pinned)")
 
-    # last-session per study
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ai_last_session(
-            study_uid TEXT PRIMARY KEY,
-            sid TEXT
-        )
-    """)
+        try:
+            cur.execute("SELECT created_at FROM ai_sessions LIMIT 1")
+        except Exception:
+            cur.execute("ALTER TABLE ai_sessions ADD COLUMN created_at INTEGER")
+            cur.execute("UPDATE ai_sessions SET created_at = strftime('%s','now') WHERE created_at IS NULL")
 
-    # global meta
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ai_meta(
-            k TEXT PRIMARY KEY,
-            v TEXT
-        )
-    """)
+        try:
+            cur.execute("SELECT updated_at FROM ai_sessions LIMIT 1")
+        except Exception:
+            cur.execute("ALTER TABLE ai_sessions ADD COLUMN updated_at INTEGER")
+            cur.execute("UPDATE ai_sessions SET updated_at = created_at WHERE updated_at IS NULL")
 
-    # Reception reports table
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ai_reception_reports(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            patient_id TEXT NOT NULL,
-            study_uid TEXT,
-            html_content TEXT NOT NULL,
-            session_id TEXT,
-            msg_id INTEGER,
-            status TEXT DEFAULT 'pending',
-            created_at INTEGER NOT NULL,
-            read_at INTEGER,
-            sender_info TEXT
-        )
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_patient ON ai_reception_reports(patient_id, status, created_at)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_study ON ai_reception_reports(study_uid, status)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_status ON ai_reception_reports(status, created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_sessions_study ON ai_sessions(study_uid)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_sessions_updated ON ai_sessions(updated_at)")
 
-    # Secretary action audit log
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ai_secretary_actions(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at INTEGER NOT NULL,
-            sid TEXT,
-            source_tab TEXT,
-            command_text TEXT,
-            stt_route_requested TEXT,
-            stt_route_used TEXT,
-            intent TEXT,
-            entities_json TEXT,
-            action_json TEXT,
-            confirmation_required INTEGER DEFAULT 0,
-            confirmed INTEGER DEFAULT 0,
-            status TEXT DEFAULT 'started',
-            error_code TEXT,
-            error_text TEXT,
-            result_count INTEGER DEFAULT 0,
-            latency_ms INTEGER DEFAULT 0
-        )
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_secretary_actions_sid ON ai_secretary_actions(sid, created_at DESC)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_secretary_actions_status ON ai_secretary_actions(status, created_at DESC)")
+        # messages
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ai_messages(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sid TEXT,
+                who TEXT,
+                html TEXT,
+                ts INTEGER,
+                origin TEXT
+            )
+        """)
+        try:
+            cur.execute("SELECT created_at FROM ai_messages LIMIT 1")
+        except Exception:
+            cur.execute("ALTER TABLE ai_messages ADD COLUMN created_at INTEGER")
+            cur.execute("UPDATE ai_messages SET created_at = COALESCE(ts, strftime('%s','now')) WHERE created_at IS NULL")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_messages_sid ON ai_messages(sid)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_messages_created ON ai_messages(created_at)")
 
-    conn.commit()
+        # reports
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ai_reports(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sid TEXT NOT NULL,
+                msg_id INTEGER,
+                study_uid TEXT,
+                kind TEXT DEFAULT 'report',
+                label TEXT,
+                raw_en TEXT NOT NULL,
+                created_at INTEGER
+            )
+        """)
+        try:
+            cur.execute("SELECT created_at FROM ai_reports LIMIT 1")
+        except Exception:
+            try:
+                cur.execute("ALTER TABLE ai_reports ADD COLUMN created_at INTEGER")
+                cur.execute("UPDATE ai_reports SET created_at = strftime('%s','now') WHERE created_at IS NULL")
+            except Exception:
+                pass
+
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_reports_sid ON ai_reports(sid, created_at, id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_reports_msg_id ON ai_reports(msg_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_reports_study ON ai_reports(study_uid, created_at, id)")
+
+        # last-session per study
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ai_last_session(
+                study_uid TEXT PRIMARY KEY,
+                sid TEXT
+            )
+        """)
+
+        # global meta
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ai_meta(
+                k TEXT PRIMARY KEY,
+                v TEXT
+            )
+        """)
+
+        # Reception reports table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ai_reception_reports(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patient_id TEXT NOT NULL,
+                study_uid TEXT,
+                html_content TEXT NOT NULL,
+                session_id TEXT,
+                msg_id INTEGER,
+                status TEXT DEFAULT 'pending',
+                created_at INTEGER NOT NULL,
+                read_at INTEGER,
+                sender_info TEXT
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_patient ON ai_reception_reports(patient_id, status, created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_study ON ai_reception_reports(study_uid, status)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_reception_reports_status ON ai_reception_reports(status, created_at)")
+
+        # Secretary action audit log
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ai_secretary_actions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL,
+                sid TEXT,
+                source_tab TEXT,
+                command_text TEXT,
+                stt_route_requested TEXT,
+                stt_route_used TEXT,
+                intent TEXT,
+                entities_json TEXT,
+                action_json TEXT,
+                confirmation_required INTEGER DEFAULT 0,
+                confirmed INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'started',
+                error_code TEXT,
+                error_text TEXT,
+                result_count INTEGER DEFAULT 0,
+                latency_ms INTEGER DEFAULT 0
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_secretary_actions_sid ON ai_secretary_actions(sid, created_at DESC)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_secretary_actions_status ON ai_secretary_actions(status, created_at DESC)")
+
+        conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -217,60 +217,60 @@ def ai_backfill_sessions_from_messages():
     If a message references a sid that has no ai_sessions row,
     create a minimal stub so it appears in the session list.
     """
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT OR IGNORE INTO ai_sessions(sid)
-        SELECT DISTINCT m.sid
-        FROM ai_messages AS m
-        LEFT JOIN ai_sessions AS s ON s.sid = m.sid
-        WHERE s.sid IS NULL
-    """)
-    conn.commit()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT OR IGNORE INTO ai_sessions(sid)
+            SELECT DISTINCT m.sid
+            FROM ai_messages AS m
+            LEFT JOIN ai_sessions AS s ON s.sid = m.sid
+            WHERE s.sid IS NULL
+        """)
+        conn.commit()
 
 
 def ai_upsert_session(sid: str, title: str | None = None, study_uid: str | None = None):
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO ai_sessions(sid, title, study_uid)
-        VALUES(?, ?, ?)
-        ON CONFLICT(sid) DO UPDATE SET
-            title = COALESCE(?, ai_sessions.title),
-            study_uid = COALESCE(?, ai_sessions.study_uid)
-    """, (sid, title, study_uid, title, study_uid))
-    conn.commit()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO ai_sessions(sid, title, study_uid)
+            VALUES(?, ?, ?)
+            ON CONFLICT(sid) DO UPDATE SET
+                title = COALESCE(?, ai_sessions.title),
+                study_uid = COALESCE(?, ai_sessions.study_uid)
+        """, (sid, title, study_uid, title, study_uid))
+        conn.commit()
 
 
 def ai_fetch_sessions_by_study(study_uid: str) -> list[tuple[str, str]]:
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT sid, COALESCE(title,'New Chat')
-        FROM ai_sessions
-        WHERE study_uid = ?
-        ORDER BY COALESCE(pinned, 0) DESC, COALESCE(updated_at, created_at, rowid) DESC
-    """, (study_uid,))
-    return cur.fetchall()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT sid, COALESCE(title,'New Chat')
+            FROM ai_sessions
+            WHERE study_uid = ?
+            ORDER BY COALESCE(pinned, 0) DESC, COALESCE(updated_at, created_at, rowid) DESC
+        """, (study_uid,))
+        return cur.fetchall()
 
 
 def ai_set_last_session_for_study(study_uid: str, sid: str):
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO ai_last_session(study_uid, sid)
-        VALUES(?, ?)
-        ON CONFLICT(study_uid) DO UPDATE SET sid=excluded.sid
-    """, (study_uid, sid))
-    conn.commit()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO ai_last_session(study_uid, sid)
+            VALUES(?, ?)
+            ON CONFLICT(study_uid) DO UPDATE SET sid=excluded.sid
+        """, (study_uid, sid))
+        conn.commit()
 
 
 def ai_get_last_session_for_study(study_uid: str) -> str | None:
-    conn = get_connection_database()
-    cur = conn.cursor()
-    cur.execute("SELECT sid FROM ai_last_session WHERE study_uid = ?", (study_uid,))
-    row = cur.fetchone()
-    return row[0] if row else None
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT sid FROM ai_last_session WHERE study_uid = ?", (study_uid,))
+        row = cur.fetchone()
+        return row[0] if row else None
 
 
 def ai_update_session_title(sid: str, title: str):

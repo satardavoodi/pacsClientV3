@@ -25,6 +25,24 @@ logger = logging.getLogger(__name__)
 class _VCLayoutMixin:
     """Auto-split mixin — see patient_widget_viewer_controller.py for history."""
 
+    @staticmethod
+    def _viewport_container_styles(active: bool) -> str:
+        if active:
+            return """
+                QFrame#ViewportContainer {
+                    border: 2px solid #60a5fa;
+                    border-radius: 4px;
+                    background-color: rgba(96, 165, 250, 0.08);
+                }
+            """
+        return """
+            QFrame#ViewportContainer {
+                border: 2px solid rgba(156, 163, 175, 0.72);
+                border-radius: 4px;
+                background-color: rgba(15, 23, 42, 0.03);
+            }
+        """
+
     def init_matrix_viewers(self, numbers=None):
         """Initialize matrix of viewers based on layout"""
         if numbers is not None:
@@ -351,13 +369,7 @@ class _VCLayoutMixin:
             container.setFrameStyle(QFrame.Box | QFrame.Plain)
             container.setLineWidth(2)  # Smaller border for inactive
             container.setProperty("active", False)
-            container.setStyleSheet("""
-                QFrame#ViewportContainer {
-                    border: 2px solid #9ca3af;
-                    border-radius: 2px;
-                    background-color: transparent;
-                }
-            """)
+            container.setStyleSheet(self._viewport_container_styles(active=False))
             logger.debug("   âœ… Container created")
             
             # CRITICAL: Add slider as DIRECT CHILD of VTK widget (not container)
@@ -724,13 +736,7 @@ class _VCLayoutMixin:
                 node_viewer_selected.widget.setProperty("active", True)
                 node_viewer_selected.widget.setFrameStyle(QFrame.Box | QFrame.Plain)
                 node_viewer_selected.widget.setLineWidth(2)  # Same as inactive
-                node_viewer_selected.widget.setStyleSheet("""
-                    QFrame#ViewportContainer {
-                        border: 2px solid #60a5fa;
-                        border-radius: 2px;
-                        background-color: transparent;
-                    }
-                """)
+                node_viewer_selected.widget.setStyleSheet(self._viewport_container_styles(active=True))
                 self.set_viewer_to_main_viewer(node_viewer_selected)
 
             else:
@@ -738,13 +744,7 @@ class _VCLayoutMixin:
                 node_viewer.widget.setProperty("active", False)
                 node_viewer.widget.setFrameStyle(QFrame.Box | QFrame.Plain)
                 node_viewer.widget.setLineWidth(2)  # Same as active
-                node_viewer.widget.setStyleSheet("""
-                    QFrame#ViewportContainer {
-                        border: 2px solid #9ca3af;
-                        border-radius: 2px;
-                        background-color: transparent;
-                    }
-                """)
+                node_viewer.widget.setStyleSheet(self._viewport_container_styles(active=False))
 
         self.parent_widget.manage_reference_line()
 

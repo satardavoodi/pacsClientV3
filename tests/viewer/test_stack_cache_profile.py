@@ -13,10 +13,10 @@ def test_stack_cache_profile_changes_with_slice_count():
     assert p200.surrogate_distance > p100.surrogate_distance > p20.surrogate_distance
 
 
-def test_small_stack_prefetch_can_cache_whole_series():
+def test_small_stack_idle_prefetch_can_cache_whole_series():
     p20 = build_stack_cache_profile(20)
 
-    assert p20.fast_prefetch_radius == 19
+    assert p20.fast_prefetch_radius == 4
     assert p20.idle_prefetch_radius == 19
 
 

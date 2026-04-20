@@ -20,7 +20,8 @@ sitk.ImageSeriesReader.SetGlobalWarningDisplay(False)
 from natsort import natsorted
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, get_series_by_study_pk, \
     get_instances_by_series_pk, get_series_by_series_pk, find_series_pk, get_study_by_study_uid, \
-    update_study_counts_by_uid, get_connection_database, get_series_path_with_study_pk_and_series_number
+    update_study_counts_by_uid, get_series_path_with_study_pk_and_series_number
+from database.core import get_db_connection
 from modules.viewer.viewer_backend_config import (
     BACKEND_PYDICOM,
     BACKEND_PYDICOM_QT,
@@ -190,6 +191,21 @@ def _list_unique_dicom_files(folder: Path) -> list:
         seen.add(key)
         uniq.append(p)
     return natsorted(uniq)
+
+
+def _count_dicom_files_fast(folder: Path) -> int:
+    """Count DICOM files with os.scandir to avoid materializing full path lists."""
+    try:
+        count = 0
+        for entry in os.scandir(str(folder)):
+            if not entry.is_file():
+                continue
+            name = entry.name.lower()
+            if name.endswith('.dcm'):
+                count += 1
+        return count
+    except Exception:
+        return 0
 
 
 def _ensure_series_meta(metadata: dict) -> dict:
@@ -404,6 +420,21 @@ def _reconcile_db_instances_with_disk(series_path: Path, instances):
     if not isinstance(instances, list) or not instances:
         return None, False
 
+    # Fast path for pydicom_qt metadata loads: if the DB already has the same
+    # number of instances as the on-disk series, keep the DB ordering and skip
+    # the heavier full directory listing + path-resolution merge work.
+    # Metadata in the DB is already ordered by instance_number.
+    try:
+        disk_count = _count_dicom_files_fast(series_path)
+        if (
+            disk_count > 0
+            and disk_count == len(instances)
+            and all(inst.get("instance_path") for inst in instances)
+        ):
+            return list(instances), False
+    except Exception:
+        pass
+
     dicom_files = _list_unique_dicom_files(series_path)
     if not dicom_files:
         return list(instances), False
@@ -607,24 +638,24 @@ def _backfill_instance_orientation(instances):
             inst_pk = inst.get('instance_pk')
             if inst_pk is not None and (iop is not None or ipp is not None):
                 try:
-                    conn = get_connection_database()
-                    cur = conn.cursor()
-                    cur.execute(
-                        """UPDATE instances
-                           SET image_orientation_patient = COALESCE(image_orientation_patient, ?),
-                               image_position_patient    = COALESCE(image_position_patient, ?),
-                               pixel_spacing             = COALESCE(pixel_spacing, ?),
-                               direction                 = COALESCE(direction, ?)
-                           WHERE instance_pk = ?""",
-                        (
-                            _json.dumps(inst['image_orientation_patient']) if inst.get('image_orientation_patient') else None,
-                            _json.dumps(inst['image_position_patient']) if inst.get('image_position_patient') else None,
-                            _json.dumps(inst['pixel_spacing']) if inst.get('pixel_spacing') else None,
-                            _json.dumps(inst['direction']) if inst.get('direction') else None,
-                            inst_pk,
-                        ),
-                    )
-                    conn.commit()
+                    with get_db_connection() as conn:
+                        cur = conn.cursor()
+                        cur.execute(
+                            """UPDATE instances
+                               SET image_orientation_patient = COALESCE(image_orientation_patient, ?),
+                                   image_position_patient    = COALESCE(image_position_patient, ?),
+                                   pixel_spacing             = COALESCE(pixel_spacing, ?),
+                                   direction                 = COALESCE(direction, ?)
+                               WHERE instance_pk = ?""",
+                            (
+                                _json.dumps(inst['image_orientation_patient']) if inst.get('image_orientation_patient') else None,
+                                _json.dumps(inst['image_position_patient']) if inst.get('image_position_patient') else None,
+                                _json.dumps(inst['pixel_spacing']) if inst.get('pixel_spacing') else None,
+                                _json.dumps(inst['direction']) if inst.get('direction') else None,
+                                inst_pk,
+                            ),
+                        )
+                        conn.commit()
                 except Exception as _db_err:
                     print(f"      WARN: backfill DB update failed for pk={inst_pk}: {_db_err}")
 
@@ -647,20 +678,19 @@ def _get_instances_from_best_group(series_pk: int):
     group 0, we incorrectly fall back to expensive filesystem regrouping.
     """
     try:
-        conn = get_connection_database()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT group_id, COUNT(*) AS cnt
-            FROM instances
-            WHERE series_fk = ?
-            GROUP BY group_id
-            ORDER BY cnt DESC, group_id ASC
-            """,
-            (int(series_pk),)
-        )
-        rows = cur.fetchall() or []
-        conn.close()
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT group_id, COUNT(*) AS cnt
+                FROM instances
+                WHERE series_fk = ?
+                GROUP BY group_id
+                ORDER BY cnt DESC, group_id ASC
+                """,
+                (int(series_pk),)
+            )
+            rows = cur.fetchall() or []
 
         for group_id, cnt in rows:
             if int(cnt or 0) <= 0:

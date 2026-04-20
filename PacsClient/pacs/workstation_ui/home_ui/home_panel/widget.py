@@ -59,7 +59,7 @@ from ..patient_table_widget import PatientTableWidget, COL
 from ..right_panel_widget import RightPanelWidget
 # UPDATED: Now using Zeta Download Manager with v1.0.6 UI design
 from modules.download_manager.ui.main_widget import DownloadManagerWidget
-from PacsClient.utils import get_connection_database, get_all_patients, search_patients_local, find_patient_pk, \
+from PacsClient.utils import get_all_patients, search_patients_local, find_patient_pk, \
     find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 
 # Heavy viewer / AI modules: lazy-import at first use to speed up main-page init.

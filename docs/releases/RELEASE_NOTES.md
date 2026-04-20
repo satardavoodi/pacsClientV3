@@ -1,8 +1,43 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.3.5
-**Release Date:** 2026-04-19
+**Current Stable Version:** v2.3.6
+**Release Date:** 2026-04-20
 **Branch:** main  
+
+---
+
+## v2.3.6 - GitHub Publication / Stable Release Cut (2026-04-20)
+
+### Summary
+
+Publishes the current workspace as **v2.3.6** and synchronizes the release
+metadata so the repository, tag, and GitHub state match the active stable
+version.
+
+### Highlights
+
+- Updated the application version in `main.py` to `2.3.6`
+- Updated the package version in `pyproject.toml` to `2.3.6`
+- Updated the Windows product version in `build_nuitka.py` to `2.3.6`
+- Updated builder package feed and module package manifests under
+  `builder/plugin package/packages/` to `2.3.6`
+- Refreshed current stable references in `README.md`, `docs/README.md`,
+  `builder/docs/WINDOWS_RELEASE_FLOW.md`, and
+  `builder/docs/INSTALLER_QA_CHECKLIST.md`
+- Added `docs/releases/VERSION_2.3.6_RELEASE.md` as the new stable release note
+
+### Validation
+
+- Version metadata updated consistently across app, package, builder, and
+  release-tracking files
+- Repository prepared for Git tag `v2.3.6` and publication to both configured
+  GitHub remotes
+
+### Notes
+
+- This entry records the repository publication state for the `v2.3.6` stable
+  checkpoint.
+- Earlier stable entries remain below as historical context.
 
 ---
 

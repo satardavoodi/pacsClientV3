@@ -181,6 +181,7 @@ class HomeDownloadService:
             _pending_completed: list[str] = []
             _pending_progress: dict[str, tuple[int, int]] = {}
             _last_progress_sent: dict[str, tuple[int, int]] = {}
+            _thumbnail_completed_series: set[str] = set()
             _progress_normalizer = _SeriesProgressNormalizer()
             from PySide6.QtCore import QTimer
             _flush_timer = QTimer()
@@ -254,6 +255,20 @@ class HomeDownloadService:
                     except Exception:
                         pass
 
+            def _complete_thumbnail_now(w, sn_str) -> bool:
+                """Project completion to the thumbnail lane immediately when possible."""
+                if not w or not hasattr(w, "thumbnail_manager"):
+                    return False
+                try:
+                    total_images = _resolve_series_total(sn_str)
+                    w.thumbnail_manager.complete_series_download(
+                        sn_str,
+                        total_images=total_images if total_images > 0 else None,
+                    )
+                    return True
+                except Exception:
+                    return False
+
             def _flush():
                 batch = list(_pending_completed)
                 _pending_completed.clear()
@@ -266,12 +281,8 @@ class HomeDownloadService:
                     return
                 for sn in batch:
                     try:
-                        if hasattr(w, "thumbnail_manager"):
-                            total_images = _resolve_series_total(sn)
-                            w.thumbnail_manager.complete_series_download(
-                                sn,
-                                total_images=total_images if total_images > 0 else None,
-                            )
+                        if sn not in _thumbnail_completed_series and _complete_thumbnail_now(w, sn):
+                            _thumbnail_completed_series.add(sn)
                         _emit_final_progress(w, sn)
                         if hasattr(w, "series_downloaded"):
                             w.series_downloaded.emit(sn)
@@ -339,6 +350,7 @@ class HomeDownloadService:
                     return
                 sn = _resolve_sn(series_uid)
                 _progress_normalizer.mark_started(sn)
+                _thumbnail_completed_series.discard(sn)
                 total_images = _resolve_series_total(sn)
                 _t_dl_start = _time.perf_counter()
                 _logger.info(
@@ -377,6 +389,7 @@ class HomeDownloadService:
                     _pending_progress.pop(sn, None)
                     return
                 if reason == "new_partial_cycle":
+                    _thumbnail_completed_series.discard(sn)
                     w_restart = widget_ref()
                     if w_restart and hasattr(w_restart, "thumbnail_manager"):
                         try:
@@ -438,6 +451,8 @@ class HomeDownloadService:
                             _prev_dm, sn,
                         )
                     w_c._h10_dm_active_series = sn
+                    if sn not in _thumbnail_completed_series and _complete_thumbnail_now(w_c, sn):
+                        _thumbnail_completed_series.add(sn)
                 if not _first_emitted["done"]:
                     _first_emitted["done"] = True
                     _flush_timer.stop()
@@ -448,12 +463,8 @@ class HomeDownloadService:
                     try:
                         w = widget_ref()
                         if w:
-                            if hasattr(w, "thumbnail_manager"):
-                                total_images = _resolve_series_total(sn)
-                                w.thumbnail_manager.complete_series_download(
-                                    sn,
-                                    total_images=total_images if total_images > 0 else None,
-                                )
+                            if sn not in _thumbnail_completed_series and _complete_thumbnail_now(w, sn):
+                                _thumbnail_completed_series.add(sn)
                             _emit_final_progress(w, sn)
                             if hasattr(w, "series_downloaded"):
                                 w.series_downloaded.emit(sn)

@@ -629,6 +629,71 @@ class _VCWarmupMixin:
             self.logger.debug(f"Error displaying first series: {e}")
             return False
 
+    def _display_first_series_in_primary_viewer(self, series_number: str, progressive_total: int = 0) -> bool:
+        """Display the first downloaded series only in the primary viewer.
+
+        FAST progressive first-display should avoid fanning the same partially
+        downloaded series into every viewer. That duplicate startup work creates
+        multiple bridge/pipeline/bootstrap paths for the exact same series even
+        though only one viewer is needed to make the study interactive.
+        """
+        try:
+            series_number = self.parent_widget.resolve_series_key(series_number)
+            vtk_image_data = None
+            metadata = None
+            series_idx = None
+
+            for idx, data in enumerate(self.parent_widget.lst_thumbnails_data):
+                if str(data.get('metadata', {}).get('series', {}).get('series_number')) == str(series_number):
+                    vtk_image_data = data.get('vtk_image_data')
+                    metadata = data.get('metadata')
+                    series_idx = idx
+                    break
+
+            if vtk_image_data is None or metadata is None or series_idx is None:
+                logger.debug(f"⛔ [FIRST DISPLAY PRIMARY] series {series_number} not found in thumbnail cache")
+                return False
+
+            if not self.lst_nodes_viewer:
+                return False
+
+            first_node = self.lst_nodes_viewer[0]
+            vtk_widget = getattr(first_node, 'vtk_widget', None)
+            slider = getattr(first_node, 'slider', None)
+            if vtk_widget is None:
+                return False
+
+            if self.selected_widget is None:
+                self.selected_widget = vtk_widget
+                self.parent_widget.slider = slider
+
+            self._display_loaded_series(
+                series_number=series_number,
+                series_idx=series_idx,
+                vtk_image_data=vtk_image_data,
+                metadata=metadata,
+                flag_change_selected_widget=False,
+                vtk_widget=vtk_widget,
+                slider=slider,
+                progressive_total=progressive_total,
+            )
+
+            self._mark_first_series_displayed()
+            try:
+                from PySide6.QtWidgets import QApplication
+                QApplication.processEvents()
+            except Exception:
+                pass
+            logger.info(
+                "first-display: primary viewer only series=%s progressive_total=%d",
+                series_number,
+                int(progressive_total or 0),
+            )
+            return True
+        except Exception as e:
+            self.logger.debug(f"Error displaying first series in primary viewer: {e}")
+            return False
+
     def _display_loaded_series(self, series_number, series_idx, vtk_image_data, metadata,
                                flag_change_selected_widget, vtk_widget, slider,
                                progressive_total: int = 0):
@@ -710,13 +775,26 @@ class _VCWarmupMixin:
                 if flag_switch:
                     self.parent_widget.reset_slider(target_widget, target_slider)
                     self.parent_widget.toolbar_manager.turn_off_all_tools()
-                    if hasattr(target_widget, 'resizeEvent'):
+                    if (
+                        getattr(target_widget, '_qt_bridge_active', False)
+                        and hasattr(target_widget, '_sync_qt_viewer_presentation')
+                        and not bool(getattr(target_widget, '_qt_switch_refit_applied', False))
+                    ):
+                        QTimer.singleShot(
+                            0,
+                            lambda tw=target_widget: tw._sync_qt_viewer_presentation(refit_view=True),
+                        )
+                    elif (not getattr(target_widget, '_qt_bridge_active', False)) and hasattr(target_widget, 'resizeEvent'):
                         target_widget.resizeEvent(None)
                     if hasattr(target_widget, 'image_viewer') and target_widget.image_viewer:
                         target_widget.image_viewer.update_corners_actors()
                     # Reference lines must be recalculated after every series change
                     try:
                         self.parent_widget.manage_reference_line()
+                    except Exception:
+                        pass
+                    try:
+                        self._hide_spinner_for_widget(target_widget)
                     except Exception:
                         pass
         

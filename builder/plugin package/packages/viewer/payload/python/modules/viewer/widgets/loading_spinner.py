@@ -35,9 +35,10 @@ class LoadingSpinner(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground, False)
         self.setAttribute(Qt.WA_NoSystemBackground, False)
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.raise_()
 
-        # Enable mouse events to block interaction with underlying widgets
+        # Keep overlay visually present but let viewer interaction pass through.
         self.setMouseTracking(True)
         
     def eventFilter(self, obj, event):
@@ -175,17 +176,50 @@ class ViewportSpinner:
     def __init__(self, viewport_widget):
         self.viewport_widget = viewport_widget
         self.spinner = None
+        self.overlay = None
         
     def show_loading(self, message="Loading series..."):
-        """Show loading spinner with message"""
-        if not self.spinner:
-            self.spinner = LoadingSpinner(self.viewport_widget, message)
-        else:
-            self.spinner.set_message(message)
+        """Show branded loading indicator over this viewport."""
+        try:
+            from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
 
-        self.spinner.start_spinning()
-        # Ensure spinner is properly positioned within the viewport
-        self.spinner.center_in_parent()
+            if self.overlay is None:
+                self.overlay = AiPacsLoadingOverlay.show_overlay(
+                    self.viewport_widget,
+                    title="",
+                    status="",
+                    subtitle="",
+                    minimal=True,
+                    pass_through=True,
+                )
+                try:
+                    self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.overlay._sync_geometry()
+                except Exception:
+                    pass
+                self.overlay.show()
+                self.overlay.raise_()
+                try:
+                    self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                except Exception:
+                    pass
+            return
+        except Exception:
+            if not self.spinner:
+                self.spinner = LoadingSpinner(self.viewport_widget, message)
+            else:
+                self.spinner.set_message(message)
+            try:
+                self.spinner.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            except Exception:
+                pass
+
+            self.spinner.start_spinning()
+            self.spinner.center_in_parent()
         
     def show_reset(self, message="Applying reset..."):
         """Show spinner during reset operation"""
@@ -193,11 +227,35 @@ class ViewportSpinner:
         
     def hide_loading(self):
         """Hide the loading spinner"""
+        if self.overlay:
+            try:
+                from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+                AiPacsLoadingOverlay.hide_overlay(self.overlay, fade_ms=0, delay_ms=0)
+            except Exception:
+                try:
+                    self.overlay.hide()
+                    self.overlay.deleteLater()
+                except Exception:
+                    pass
+            finally:
+                self.overlay = None
         if self.spinner:
             self.spinner.stop_spinning()
     
     def cleanup(self):
         """Cleanup spinner resources"""
+        if self.overlay:
+            try:
+                from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+                AiPacsLoadingOverlay.hide_overlay(self.overlay, fade_ms=0, delay_ms=0)
+            except Exception:
+                try:
+                    self.overlay.hide()
+                    self.overlay.deleteLater()
+                except Exception:
+                    pass
+            finally:
+                self.overlay = None
         if self.spinner:
             self.spinner.stop_spinning()
             self.spinner.deleteLater()

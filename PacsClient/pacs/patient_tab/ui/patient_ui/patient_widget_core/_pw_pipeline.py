@@ -30,8 +30,27 @@ class _PWPipelineMixin:
     """Pipeline managers, startup, local series discovery, progressive display."""
 
     def _create_init_overlay(self):
-        """No-op: loading overlay disabled by request."""
-        return
+        """Show the branded empty-layout loader without any text."""
+        try:
+            if getattr(self, '_init_overlay', None) is not None:
+                return self._init_overlay
+
+            from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+
+            anchor = getattr(self, 'center_widget', None) or self
+            self._init_overlay = AiPacsLoadingOverlay.show_overlay(
+                anchor,
+                title="",
+                status="",
+                subtitle="",
+                minimal=True,
+                pass_through=True,
+            )
+            return self._init_overlay
+        except Exception:
+            logger.exception("Failed to create init overlay")
+            self._init_overlay = None
+            return None
 
     def _update_overlay_size(self):
         """Update overlay size to match widget size - ensure it covers everything"""
@@ -105,9 +124,9 @@ class _PWPipelineMixin:
                 # ✅ FLICKER FIX: Re-enable UI updates after pipeline completes
                 self.setUpdatesEnabled(True)
                 self.update()  # Single repaint
-                # Deferred local-data check: if series data already exists on disk
-                # (no download needed), trigger first-series display via signal path.
-                QTimer.singleShot(300, self._check_and_load_local_first_series)
+                self._settle_empty_layout_idle_state()
+                # Manual-only layout policy: keep locally available series in the
+                # thumbnail lane until the user explicitly places them in a viewer.
                 print("✅ Pipeline flag reset to False")
                 
                 # ✅ Register buttons with safeguard after UI is ready
@@ -172,17 +191,39 @@ class _PWPipelineMixin:
         """
         return
 
-    def _check_and_load_local_first_series(self):
-        """Post-pipeline check: if series data exists locally, trigger first display.
+    def _settle_empty_layout_idle_state(self):
+        """Clear startup loading chrome when layouts are intentionally empty.
 
-        Handles the case where a study was previously downloaded (local data
-        exists on disk) but no ``series_downloaded`` signal will fire.  For
-        active server downloads, the signal-driven path in
-        ``load_series_on_demand`` handles display instead.
+        Under the manual-only layout policy, the patient can open with viewers
+        created but no series placed yet. At that point the global init overlay
+        and per-viewport loading GIFs should be removed immediately so the user
+        sees a clean drop-ready layout instead of a fake loading state.
+        """
+        try:
+            if bool(getattr(self, '_first_series_displayed', False)):
+                return
+            self._hide_init_overlay()
+            if hasattr(self, '_hide_viewer_loading_all'):
+                self._hide_viewer_loading_all()
+            try:
+                self.loading_complete.emit()
+            except Exception:
+                pass
+        except Exception:
+            logger.exception("Failed to settle empty-layout idle state")
+
+    def _check_and_load_local_first_series(self):
+        """Discover local series without auto-inserting them into viewers.
+
+        A patient can open with cached local series already present on disk, but
+        Block A/thumbnails must not automatically push those series into Block B
+        layouts.  This method therefore only validates local availability and
+        maintains retry bookkeeping while the viewer shell is being created.
         """
         try:
             # Already displayed — nothing to do
             if self._first_series_displayed:
+                setattr(self, '_local_first_series_retry_count', 0)
                 return
 
             # Widget deleted guard
@@ -197,6 +238,20 @@ class _PWPipelineMixin:
                 return
 
             local_series = self._discover_local_series_candidates()
+
+            viewer_controller = getattr(self, 'viewer_controller', None)
+            viewer_nodes = list(getattr(viewer_controller, 'lst_nodes_viewer', []) or [])
+            if not viewer_nodes:
+                retry_count = int(getattr(self, '_local_first_series_retry_count', 0) or 0)
+                if retry_count < 10:
+                    setattr(self, '_local_first_series_retry_count', retry_count + 1)
+                    logger.info(
+                        "[LOCAL_CHECK] deferring first local series replay: viewers_not_ready retry=%s",
+                        retry_count + 1,
+                    )
+                    QTimer.singleShot(150, self._check_and_load_local_first_series)
+                return
+            setattr(self, '_local_first_series_retry_count', 0)
 
             # [H7-P3] Local series discovery
             try:
@@ -232,12 +287,10 @@ class _PWPipelineMixin:
                 return
 
             first_series = str(local_series[0]["series_number"])
-            print(f"📂 [LOCAL_CHECK] Found local series {first_series} — routing through signal path")
-
-            # Use the same signal-driven path as download completions.
-            # This reaches load_series_on_demand → _async_load_and_display_series
-            # which loads in a background thread and then displays.
-            self.series_downloaded.emit(first_series)
+            print(
+                f"📂 [LOCAL_CHECK] Found local series {first_series} — manual placement required; "
+                f"auto-display disabled"
+            )
         except Exception as e:
             print(f"⚠️ [LOCAL_CHECK] Error: {e}")
 
@@ -314,8 +367,21 @@ class _PWPipelineMixin:
         return series_candidates
 
     def _hide_init_overlay(self):
-        """No-op: loading overlay disabled by request."""
-        return
+        overlay = getattr(self, '_init_overlay', None)
+        if overlay is None:
+            return
+        try:
+            from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+            AiPacsLoadingOverlay.hide_overlay(overlay, fade_ms=0, delay_ms=0)
+        except Exception:
+            logger.exception("Failed to hide init overlay")
+            try:
+                overlay.hide()
+                overlay.deleteLater()
+            except Exception:
+                pass
+        finally:
+            self._init_overlay = None
 
     def pipeline_manager(self, caller, size_init_viewers=(1, 1)):
         _t0 = time.perf_counter()
@@ -769,48 +835,11 @@ class _PWPipelineMixin:
             except RuntimeError:
                 return  # Widget was deleted
 
-            # Prevent flickering by setting updates disabled during layout changes
-            if hasattr(self, 'vtk_layout') and self.vtk_layout:
-                container = self.vtk_layout.parentWidget()
-                if container:
-                    container.setUpdatesEnabled(False)
-
-            # Clean up any existing viewers
-            if self.lst_nodes_viewer:
-                self.cleanup_all_viewers()
-                self.lst_nodes_viewer.clear()
-
-            # Create viewers based on layout
-            number_of_row, number_of_column = layout
-            count = number_of_row * number_of_column
-
-            self.create_some_viewers(count)
-
-            # Apply layout without triggering redraws
-            if layout == (1, 1) and len(self.lst_nodes_viewer) > 0:
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
-                self.change_container_border(0)
-            elif layout == (2, 1) and len(self.lst_nodes_viewer) >= 2:
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 1, 0)
-                self.change_container_border(0)
-            elif layout == (1, 2) and len(self.lst_nodes_viewer) >= 2:
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 0, 1)
-                self.change_container_border(0)
-            elif layout == (2, 2) and len(self.lst_nodes_viewer) >= 4:
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[0].widget, 0, 0)
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[1].widget, 0, 1)
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[2].widget, 1, 0)
-                self.vtk_layout.addWidget(self.lst_nodes_viewer[3].widget, 1, 1)
-                self.change_container_border(0)
-
-            # Re-enable updates and refresh once
-            if hasattr(self, 'vtk_layout') and self.vtk_layout:
-                container = self.vtk_layout.parentWidget()
-                if container:
-                    container.setUpdatesEnabled(True)
-                    container.update()  # Single update instead of multiple redraws
+            # Route first progressive layouts through the same canonical viewer
+            # controller path used by later user layout changes. This keeps the
+            # initial layout's drag-drop/switch wiring identical across all
+            # layouts, including 2x1.
+            self.viewer_controller.apply_multi_viewer(layout, modify_by_user=False)
 
             # Give UI a chance to update
             await asyncio.sleep(0)

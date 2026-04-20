@@ -156,6 +156,8 @@ class QtSliceViewer(QWidget):
         self._zoom: float = 1.0
         self._pan_offset: QPointF = QPointF(0.0, 0.0)
         self._fit_to_viewport: bool = True
+        self._display_scale_x: float = 1.0
+        self._display_scale_y: float = 1.0
 
         # Window/Level interaction state
         self._wl_dragging: bool = False
@@ -228,6 +230,30 @@ class QtSliceViewer(QWidget):
         self._zoom = max(self.MIN_ZOOM, min(self.MAX_ZOOM, float(zoom)))
         self.update()
 
+    def set_pixel_spacing(self, pixel_spacing: Optional[Tuple[float, float]]) -> None:
+        """Set per-axis display scaling derived from DICOM pixel spacing."""
+        row_spacing = 1.0
+        col_spacing = 1.0
+        try:
+            if pixel_spacing is not None:
+                row_spacing = abs(float(pixel_spacing[0])) or 1.0
+                col_spacing = abs(float(pixel_spacing[1])) or 1.0
+        except Exception:
+            row_spacing = 1.0
+            col_spacing = 1.0
+
+        base = min(row_spacing, col_spacing)
+        if base <= 0.0:
+            base = 1.0
+
+        self._display_scale_x = float(col_spacing / base)
+        self._display_scale_y = float(row_spacing / base)
+
+        if self._fit_to_viewport and self._image_width > 0 and self._image_height > 0:
+            self._zoom = self._calculate_fit_zoom()
+            self._pan_offset = QPointF(0.0, 0.0)
+        self.update()
+
     def get_pan_offset(self) -> QPointF:
         return QPointF(self._pan_offset)
 
@@ -280,12 +306,12 @@ class QtSliceViewer(QWidget):
         img_cy = cy + self._pan_offset.y()
 
         # Image top-left in widget space
-        img_left = img_cx - (self._image_width * self._zoom) / 2.0
-        img_top = img_cy - (self._image_height * self._zoom) / 2.0
+        img_left = img_cx - (self._image_width * self._zoom * self._display_scale_x) / 2.0
+        img_top = img_cy - (self._image_height * self._zoom * self._display_scale_y) / 2.0
 
         # Convert to image coordinates
-        img_x = (widget_x - img_left) / self._zoom
-        img_y = (widget_y - img_top) / self._zoom
+        img_x = (widget_x - img_left) / (self._zoom * self._display_scale_x)
+        img_y = (widget_y - img_top) / (self._zoom * self._display_scale_y)
 
         return img_x, img_y
 
@@ -297,11 +323,11 @@ class QtSliceViewer(QWidget):
         img_cx = cx + self._pan_offset.x()
         img_cy = cy + self._pan_offset.y()
 
-        img_left = img_cx - (self._image_width * self._zoom) / 2.0
-        img_top = img_cy - (self._image_height * self._zoom) / 2.0
+        img_left = img_cx - (self._image_width * self._zoom * self._display_scale_x) / 2.0
+        img_top = img_cy - (self._image_height * self._zoom * self._display_scale_y) / 2.0
 
-        wx = img_left + img_x * self._zoom
-        wy = img_top + img_y * self._zoom
+        wx = img_left + img_x * self._zoom * self._display_scale_x
+        wy = img_top + img_y * self._zoom * self._display_scale_y
 
         return wx, wy
 
@@ -503,8 +529,8 @@ class QtSliceViewer(QWidget):
         # Calculate centered position with zoom + pan
         cx = self.width() / 2.0
         cy = self.height() / 2.0
-        scaled_w = self._image_width * self._zoom
-        scaled_h = self._image_height * self._zoom
+        scaled_w = self._image_width * self._zoom * self._display_scale_x
+        scaled_h = self._image_height * self._zoom * self._display_scale_y
 
         dest_x = cx - scaled_w / 2.0 + self._pan_offset.x()
         dest_y = cy - scaled_h / 2.0 + self._pan_offset.y()
@@ -608,6 +634,6 @@ class QtSliceViewer(QWidget):
             return 1.0
         widget_w = max(1, self.width())
         widget_h = max(1, self.height())
-        zoom_x = widget_w / float(self._image_width)
-        zoom_y = widget_h / float(self._image_height)
+        zoom_x = widget_w / float(self._image_width * self._display_scale_x)
+        zoom_y = widget_h / float(self._image_height * self._display_scale_y)
         return min(zoom_x, zoom_y) * 0.95  # 5% margin

@@ -22,6 +22,7 @@ from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
 )
 
 from .contracts import FrameData, GeometryData
+from .dicom_header_scan import DicomHeaderEntry, scan_series_header_entries
 from ._decode_guard import (
     decode_serialisation_guard,
     log_decode_entry,
@@ -613,22 +614,14 @@ class PyDicom2DBackend(QObject):
             return len(self._slices)
 
         existing_paths = {s.path for s in self._slices}
-        new_files = [
-            p for p in series_dir.iterdir()
-            if p.is_file()
-            and p.suffix.lower() in {".dcm", ".dicom", ""}
-            and str(p) not in existing_paths
-        ]
-        if not new_files:
+        new_entries = scan_series_header_entries(
+            self._series_path,
+            existing_paths=existing_paths,
+        )
+        if not new_entries:
             return len(self._slices)
 
-        new_metas: List[_SliceMeta] = []
-        for p in sorted(new_files):
-            try:
-                ds = pydicom.dcmread(str(p), stop_before_pixels=True, force=True)
-                new_metas.append(self._slice_meta_from_ds(str(p), ds))
-            except Exception:
-                continue
+        new_metas = [self._slice_meta_from_entry(entry) for entry in new_entries]
 
         if new_metas:
             self._slices.extend(new_metas)
@@ -641,17 +634,31 @@ class PyDicom2DBackend(QObject):
         return len(self._slices)
 
     def _scan_series_headers(self, series_path: Path) -> List[_SliceMeta]:
-        files = []
-        if series_path.is_dir():
-            files = [p for p in series_path.iterdir() if p.is_file() and p.suffix.lower() in {".dcm", ".dicom", ""}]
-        out: List[_SliceMeta] = []
-        for p in sorted(files):
-            try:
-                ds = pydicom.dcmread(str(p), stop_before_pixels=True, force=True)
-                out.append(self._slice_meta_from_ds(str(p), ds))
-            except Exception:
-                continue
-        return out
+        return [
+            self._slice_meta_from_entry(entry)
+            for entry in scan_series_header_entries(series_path)
+        ]
+
+    def _slice_meta_from_entry(self, entry: DicomHeaderEntry) -> _SliceMeta:
+        return _SliceMeta(
+            path=entry.path,
+            rows=entry.rows,
+            cols=entry.cols,
+            pixel_spacing=entry.pixel_spacing,
+            iop=entry.iop,
+            ipp=entry.ipp,
+            slice_thickness=entry.slice_thickness,
+            spacing_between_slices=entry.spacing_between_slices,
+            photometric=entry.photometric,
+            bits_allocated=entry.bits_allocated,
+            pixel_representation=entry.pixel_representation,
+            samples_per_pixel=entry.samples_per_pixel,
+            window_width=entry.window_width,
+            window_center=entry.window_center,
+            slope=entry.slope,
+            intercept=entry.intercept,
+            instance_number=entry.instance_number,
+        )
 
     def _slice_meta_from_ds(self, path: str, ds: pydicom.Dataset, fallback: Optional[_SliceMeta] = None) -> _SliceMeta:
         rows = int(getattr(ds, "Rows", getattr(fallback, "rows", 0)) or 0)

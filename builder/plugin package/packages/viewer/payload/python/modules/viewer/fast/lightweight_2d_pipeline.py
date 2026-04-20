@@ -625,7 +625,11 @@ class Lightweight2DPipeline(QObject):
     def shutdown(self) -> None:
         """Clean shutdown of background threads."""
         self.close_series()
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        for executor_attr in ("_decode_executor", "_frame_executor"):
+            executor = getattr(self, executor_attr, None)
+            if executor is None:
+                continue
+            executor.shutdown(wait=False, cancel_futures=True)
 
     # ── Private: decode ───────────────────────────────────────────────
 

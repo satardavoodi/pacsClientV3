@@ -157,7 +157,7 @@ def _nt_resume_download_subprocesses() -> None:
             pass
 
 _RENDER_THROTTLE_MS = 16  # ~60fps max render rate
-_SPINNER_HIDE_DELAY_MS = 50  # Delay before hiding spinner to allow final render
+_SPINNER_HIDE_DELAY_MS = 180  # Delay before hiding spinner to allow the loading GIF to be perceived
 _SYNC_MOVE_THROTTLE_MS = 16  # min interval between sync mouse move processing (~60fps)
 
 _DROP_HOVER_ARM_MS = max(0, int(os.getenv("AIPACS_DROP_HOVER_ARM_MS", "120") or "120"))

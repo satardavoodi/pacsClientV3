@@ -334,6 +334,10 @@ class QtViewerBridge:
                 origin=(float(ipp[0]), float(ipp[1]), float(ipp[2])),
                 scalar_range=scalar_range,
             )
+            try:
+                self.qt_viewer.set_pixel_spacing((float(ps[0]), float(ps[1])))
+            except Exception:
+                pass
 
             # Set initial W/L
             ww, wc = self.pipeline.get_default_window_level(0)
@@ -345,6 +349,10 @@ class QtViewerBridge:
             self.renderer._camera._parallel_scale = float(rows) / 2.0
         else:
             self.vtk_image_data = _MockVTKImageData()
+            try:
+                self.qt_viewer.set_pixel_spacing((1.0, 1.0))
+            except Exception:
+                pass
 
         # Store properties for compatibility
         try:

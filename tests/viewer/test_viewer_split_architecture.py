@@ -41,6 +41,7 @@ from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_switch as switch_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_warmup as warmup_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_load as load_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui import _slice_tick_slider as slider_mod
+from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core import _pw_pipeline as pw_pipeline_mod
 
 
 # ── Shared test helpers ────────────────────────────────────────────────
@@ -391,6 +392,29 @@ class TestLayoutSwitching:
         add_calls.clear()
         vc.apply_multi_viewer((1, 1))
         assert len(vc.lst_nodes_viewer) == 1
+
+    def test_apply_multi_viewer_sync_delegates_to_canonical_layout_path(self):
+        vc = _build_controller()
+        calls = []
+        vc.apply_multi_viewer = lambda numbers, modify_by_user=False: calls.append((numbers, modify_by_user))
+
+        vc._apply_multi_viewer_sync((2, 1))
+
+        assert calls == [((2, 1), False)]
+    def test_create_progressive_viewers_delegates_to_canonical_layout_path(self):
+        calls = []
+        widget = SimpleNamespace(
+            logger=_NOOP_LOGGER,
+            isVisible=lambda: True,
+            viewer_controller=SimpleNamespace(
+                apply_multi_viewer=lambda layout, modify_by_user=False: calls.append((layout, modify_by_user))
+            ),
+        )
+
+        import asyncio
+        asyncio.run(pw_pipeline_mod._PWPipelineMixin.create_progressive_viewers(widget, (2, 1)))
+
+        assert calls == [((2, 1), False)]
 
     def test_fallback_viewer_appended_on_exception(self):
         """When new_viewer raises, fallback should be appended once."""
