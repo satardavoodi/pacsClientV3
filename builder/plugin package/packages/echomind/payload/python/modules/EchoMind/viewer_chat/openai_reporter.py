@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import json
 import os
 from datetime import datetime
@@ -8,7 +8,21 @@ import requests
 
 from .api_manager import APIKeyManager, Manage
 from modules.EchoMind.llm_client import chat_completion
-from modules.EchoMind.settings_store import get_llm_backend, get_openai_settings, get_prompt_settings
+from modules.EchoMind.settings_store import get_llm_backend, get_openai_settings, get_prompt_settings, get_proxy_settings
+
+
+def _get_requests_proxies() -> "dict[str, str] | None":
+    """Return a requests-compatible proxies dict when SOCKS5 proxy is configured, else None."""
+    try:
+        cfg = get_proxy_settings()
+        if cfg.get("connection_type") != "socks5":
+            return None
+        port = int(cfg.get("proxy_port") or 2080)
+        proxy_url = f"socks5://127.0.0.1:{port}"
+        return {"http": proxy_url, "https": proxy_url}
+    except Exception:
+        return None
+
 
 # ------------------------------------------------------
 #  Safety helpers (never crash UI if analytics fails)
@@ -1269,7 +1283,7 @@ def reporter(
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -1361,7 +1375,7 @@ Return ONLY the final corrected report text. No analysis, no preface.
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -1427,7 +1441,7 @@ def chat_with_api_key(
     }
     url = "https://api.gapgpt.app/v1/chat/completions"
 
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -1501,7 +1515,7 @@ def ImageQualityAnalyzer(
 
     url = "https://api.gapgpt.app/v1/chat/completions"
 
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
     result = response.json()
 
     if response.status_code != 200:
@@ -1706,7 +1720,7 @@ def BreastExpertAssistant(
 
     url = "https://api.gapgpt.app/v1/chat/completions"
 
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
     result = response.json()
 
     if response.status_code != 200:
@@ -1769,7 +1783,7 @@ STRICT RULES:
     }
 
     url = "https://api.gapgpt.app/v1/chat/completions"
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
     result = response.json()
 
     if response.status_code != 200:
@@ -1963,7 +1977,7 @@ def translate_report(
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -2064,7 +2078,7 @@ def standard_assist_search(
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -2297,7 +2311,7 @@ def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -2454,7 +2468,7 @@ def correction(
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")

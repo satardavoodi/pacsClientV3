@@ -2129,19 +2129,20 @@ class OneChatPage(QWidget):
 
     def _on_hq_all_modality_clicked(self):
         from .api_manager import APIKeyManager
-        manager = APIKeyManager.instance()
-        
-        # ✅ Check validation
-        if not manager.is_validated():
-            print("[Turbo] blocked: API key not validated")
+        # ✅ Check active backend (company OR openai)
+        if not is_active_backend_configured():
+            print("[Turbo] blocked: AI backend not configured")
             self.controller.bubble(
                 "AI ChatBot",
-                "❌ API Key not validated. Please restart application."
+                "❌ AI backend is not configured. Please set your API key in Settings → EchoMind."
             )
             return
-        
-        # Get current key
-        center_key = manager.get_current_key()
+
+        backend, _center_name, center_key = _resolve_active_ai_identity()
+        if not center_key and backend == "company":
+            # Company backend requires a validated key; fall back to manager
+            manager = APIKeyManager.instance()
+            center_key = manager.get_current_key() or ""
 
         if str(getattr(self, "page_mode", "")).lower() not in ("report", "chatgpt"):
             print("[Turbo] blocked: invalid page_mode")
@@ -2178,22 +2179,21 @@ class OneChatPage(QWidget):
             normal_template = (self.composer.get_normal_template_plain_text() or "").strip() or None
         except Exception:
             normal_template = None
-        center_key = os.environ.get("CENTER_Key", "") or ""
 
         # برای لاگ/تاریخچه
         self.controller.bubble("You (⚡Turbo Mode)", user_msg or "(session-based)")
         print(
-            f"[Turbo] sending text_len={len((user_msg or '').strip())} modality={modality}"
+            f"[Turbo] sending backend={backend} text_len={len((user_msg or '').strip())} modality={modality}"
         )
 
         def work():
-
-            return reporter(
+            reporter_fn = openai_direct.reporter if backend == "openai" else reporter
+            return reporter_fn(
                 user_msg=user_msg,
                 modality=modality,
                 normal_template=(normal_template or None),
-                CENTER_Key=center_key,  
-                model="gpt-4.1-mini",
+                CENTER_Key=center_key,
+                model=get_openai_model_for_feature("report", "gpt-5.4") if backend == "openai" else "gpt-4.1-mini",
             )
 
         def ok(res):

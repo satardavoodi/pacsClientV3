@@ -30,9 +30,11 @@ from modules.EchoMind.settings_store import (
     get_llm_backend,
     get_openai_settings,
     get_prompt_settings,
+    get_proxy_settings,
     get_secretary_stt_route,
     save_openai_settings,
     save_prompt_settings,
+    save_proxy_settings,
     set_echomind_api_key,
     set_llm_backend,
     set_secretary_stt_route,
@@ -211,6 +213,7 @@ class EchoMindSettingsWidget(QWidget):
 
         self._build_header()
         self._build_backend_group()
+        self._build_proxy_group()
         self._build_company_auth_group()
         self._build_openai_group()
         self._build_prompt_group()
@@ -261,17 +264,87 @@ class EchoMindSettingsWidget(QWidget):
 
         self.backend_help = self._note_label("")
 
+        self.backend_save_btn = QPushButton("Save Backend Selection")
+        self.backend_save_btn.setProperty("role", "success")
+        self.backend_save_btn.setMaximumWidth(220)
+        self.backend_save_btn.clicked.connect(self._on_save_backend_clicked)
+
+        self.backend_saved_label = QLabel("")
+        self.backend_saved_label.setProperty("valueLabel", True)
+        self.backend_saved_label.setProperty("state", "success")
+        self.backend_saved_label.setVisible(False)
+
         layout.addWidget(QLabel("Backend Provider:"), 0, 0)
         layout.addWidget(self.backend_combo, 0, 1)
         layout.addWidget(QLabel("Current Status:"), 0, 2)
         layout.addWidget(self.backend_status, 0, 3)
         layout.addWidget(self.backend_help, 1, 0, 1, 4)
+
+        save_row = QHBoxLayout()
+        save_row.addWidget(self.backend_save_btn)
+        save_row.addWidget(self.backend_saved_label)
+        save_row.addStretch(1)
+        layout.addLayout(save_row, 2, 0, 1, 4)
+
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(3, 1)
         self._root.addWidget(group)
 
+    def _build_proxy_group(self):
+        self.proxy_group = QGroupBox("Network / Proxy")
+        group = self.proxy_group
+        layout = QGridLayout(group)
+        layout.setHorizontalSpacing(14)
+        layout.setVerticalSpacing(12)
+
+        layout.addWidget(
+            self._note_label(
+                "Applies to both AI PACS EchoMind and OpenAI Direct backend connections. "
+                "When SOCKS5 is selected, all EchoMind API calls are tunnelled through the local proxy at 127.0.0.1. "
+                "Requires the requests[socks] package (PySocks) to be installed."
+            ),
+            0, 0, 1, 4,
+        )
+
+        self.proxy_type_combo = QComboBox()
+        self.proxy_type_combo.addItem("Direct (No Proxy)", userData="direct")
+        self.proxy_type_combo.addItem("SOCKS5 Proxy \u2014 127.0.0.1", userData="socks5")
+        self.proxy_type_combo.setMaximumWidth(300)
+        self.proxy_type_combo.currentIndexChanged.connect(self._on_proxy_type_changed)
+
+        self.proxy_port_label = QLabel("Port:")
+        self.proxy_port_combo = QComboBox()
+        self.proxy_port_combo.addItem("2080", userData=2080)
+        self.proxy_port_combo.addItem("2081", userData=2081)
+        self.proxy_port_combo.addItem("2082", userData=2082)
+        self.proxy_port_combo.setMaximumWidth(120)
+
+        layout.addWidget(QLabel("Connection:"), 1, 0)
+        layout.addWidget(self.proxy_type_combo, 1, 1)
+        layout.addWidget(self.proxy_port_label, 1, 2)
+        layout.addWidget(self.proxy_port_combo, 1, 3)
+
+        self.proxy_save_btn = QPushButton("Save Proxy Settings")
+        self.proxy_save_btn.setProperty("role", "success")
+        self.proxy_save_btn.setMaximumWidth(200)
+        self.proxy_save_btn.clicked.connect(self._on_save_proxy_clicked)
+
+        self.proxy_saved_label = QLabel("")
+        self.proxy_saved_label.setProperty("valueLabel", True)
+        self.proxy_saved_label.setProperty("state", "success")
+        self.proxy_saved_label.setVisible(False)
+
+        save_row = QHBoxLayout()
+        save_row.addWidget(self.proxy_save_btn)
+        save_row.addWidget(self.proxy_saved_label)
+        save_row.addStretch(1)
+        layout.addLayout(save_row, 2, 0, 1, 4)
+
+        layout.setColumnStretch(1, 1)
+        self._root.addWidget(group)
+
     def _build_company_auth_group(self):
-        self.company_auth_group = QGroupBox("AI Backend Authentication")
+        self.company_auth_group = QGroupBox("Company Authentication")
         group = self.company_auth_group
         layout = QVBoxLayout(group)
         layout.setSpacing(12)
@@ -647,6 +720,7 @@ class EchoMindSettingsWidget(QWidget):
 
         self._load_openai_state()
         self._load_prompt_state()
+        self._load_proxy_state()
         self._update_provider_help()
         self._update_backend_help()
         self._update_backend_visibility()
@@ -657,6 +731,34 @@ class EchoMindSettingsWidget(QWidget):
             self._set_not_authenticated_state("No credential saved. Enter your key and click Authenticate.")
 
         self._refresh_usage_for_active_backend()
+
+    def _load_proxy_state(self):
+        cfg = get_proxy_settings()
+        idx = self.proxy_type_combo.findData(str(cfg.get("connection_type") or "direct"))
+        if idx >= 0:
+            self.proxy_type_combo.setCurrentIndex(idx)
+        port = int(cfg.get("proxy_port") or 2080)
+        idx = self.proxy_port_combo.findData(port)
+        if idx >= 0:
+            self.proxy_port_combo.setCurrentIndex(idx)
+        self._on_proxy_type_changed(0)
+
+    def _on_proxy_type_changed(self, _index: int):
+        is_socks5 = str(self.proxy_type_combo.currentData() or "direct") == "socks5"
+        self.proxy_port_label.setVisible(is_socks5)
+        self.proxy_port_combo.setVisible(is_socks5)
+        self.proxy_saved_label.setVisible(False)
+
+    def _on_save_proxy_clicked(self):
+        conn_type = str(self.proxy_type_combo.currentData() or "direct")
+        port = int(self.proxy_port_combo.currentData() or 2080)
+        save_proxy_settings({"connection_type": conn_type, "proxy_port": port})
+        if conn_type == "socks5":
+            label_text = f"SOCKS5 proxy saved: 127.0.0.1:{port}"
+        else:
+            label_text = "Direct connection saved (no proxy)."
+        self.proxy_saved_label.setText(label_text)
+        self.proxy_saved_label.setVisible(True)
 
     def _load_openai_state(self):
         cfg = get_openai_settings()
@@ -775,10 +877,18 @@ class EchoMindSettingsWidget(QWidget):
         self.style().polish(self.openai_status)
 
     def _on_backend_changed(self, _index: int):
-        set_llm_backend(str(self.backend_combo.currentData() or "company"))
         self._update_backend_help()
         self._update_backend_visibility()
+        self.backend_saved_label.setVisible(False)
+
+    def _on_save_backend_clicked(self):
+        backend = str(self.backend_combo.currentData() or "company")
+        set_llm_backend(backend)
+        self._update_backend_status()
         self._refresh_usage_for_active_backend()
+        name = "AI PACS EchoMind" if backend == "company" else "OpenAI Direct"
+        self.backend_saved_label.setText(f"{name} backend saved and active.")
+        self.backend_saved_label.setVisible(True)
 
     def _on_provider_changed(self, _index: int):
         set_secretary_stt_route(str(self.provider_combo.currentData() or "native"))

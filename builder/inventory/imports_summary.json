@@ -392,6 +392,7 @@
     "report_editor_dialog",
     "report_status_dialog",
     "requests",
+    "socks",
     "resampler",
     "resolver",
     "resume_rules",

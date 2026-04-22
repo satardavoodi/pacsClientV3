@@ -17,13 +17,26 @@ from typing import Any
 import requests
 
 from modules.EchoMind.ai_chat_config import GAPGPT_API_URL, GAPGPT_DEFAULT_MODEL, GAPGPT_TIMEOUT
-from modules.EchoMind.settings_store import get_echomind_api_key, get_llm_backend, get_openai_settings
+from modules.EchoMind.settings_store import get_echomind_api_key, get_llm_backend, get_openai_settings, get_proxy_settings
 
 log = logging.getLogger(__name__)
 
 _API_URL = GAPGPT_API_URL
 _DEFAULT_MODEL = GAPGPT_DEFAULT_MODEL
 _DEFAULT_TIMEOUT = GAPGPT_TIMEOUT
+
+
+def _get_requests_proxies() -> "dict[str, str] | None":
+    """Return a requests-compatible proxies dict when SOCKS5 proxy is configured, else None."""
+    try:
+        cfg = get_proxy_settings()
+        if cfg.get("connection_type") != "socks5":
+            return None
+        port = int(cfg.get("proxy_port") or 2080)
+        proxy_url = f"socks5://127.0.0.1:{port}"
+        return {"http": proxy_url, "https": proxy_url}
+    except Exception:
+        return None
 
 
 class LLMError(Exception):
@@ -314,7 +327,7 @@ def chat_completion(
             payload["reasoning_effort"] = str(reasoning_effort).strip()
 
     try:
-        resp = requests.post(session.api_url, json=payload, headers=headers, timeout=timeout)
+        resp = requests.post(session.api_url, json=payload, headers=headers, timeout=timeout, proxies=_get_requests_proxies())
     except requests.exceptions.RequestException as exc:
         raise LLMAPIError(
             f"Network error contacting {session.display_name}: {exc}"
@@ -408,7 +421,7 @@ def test_active_backend_connection(timeout: int = 15) -> dict[str, Any]:
 
     try:
         if session.provider == "openai":
-            resp = requests.get(url, headers=headers, timeout=timeout)
+            resp = requests.get(url, headers=headers, timeout=timeout, proxies=_get_requests_proxies())
         else:
             resp = requests.post(
                 url,
@@ -420,6 +433,7 @@ def test_active_backend_connection(timeout: int = 15) -> dict[str, Any]:
                     "temperature": 0.0,
                 },
                 timeout=timeout,
+                proxies=_get_requests_proxies(),
             )
     except requests.exceptions.RequestException as exc:
         raise LLMAPIError(f"Connection test failed: {exc}") from exc

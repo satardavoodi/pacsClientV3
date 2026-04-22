@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -38,6 +39,8 @@ def _defaults() -> Dict[str, Any]:
         "prompt_image_artifact": "",
         "secretary_stt_provider": "native",  # native | v2t
         "secretary_stt_fallback": True,
+        "connection_type": "direct",  # direct | socks5
+        "proxy_port": 2080,
     }
 
 
@@ -206,3 +209,31 @@ def set_secretary_stt_route(route: str) -> Dict[str, Any]:
     else:
         normalized = "native"
     return save_settings({"secretary_stt_provider": normalized})
+
+
+def get_proxy_settings() -> Dict[str, Any]:
+    settings = load_settings()
+    conn_type = str(settings.get("connection_type") or "direct").strip().lower()
+    if conn_type not in ("direct", "socks5"):
+        conn_type = "direct"
+    port = int(settings.get("proxy_port") or 2080)
+    if port not in (2080, 2081, 2082):
+        port = 2080
+    return {
+        "connection_type": conn_type,
+        "proxy_host": "127.0.0.1",
+        "proxy_port": port,
+    }
+
+
+def save_proxy_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
+    conn_type = str((patch or {}).get("connection_type") or "direct").strip().lower()
+    if conn_type not in ("direct", "socks5"):
+        conn_type = "direct"
+    port = int((patch or {}).get("proxy_port") or 2080)
+    if port not in (2080, 2081, 2082):
+        port = 2080
+    return save_settings({
+        "connection_type": conn_type,
+        "proxy_port": port,
+    })

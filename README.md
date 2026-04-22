@@ -95,6 +95,14 @@ python -m venv .venv_build
 .\.venv_build\Scripts\python build.py
 ```
 
+Build prerequisite for CPU-safe fallback (required for clean full builds):
+
+```powershell
+Get-ChildItem graphics_runtime\opengl32sw.dll, graphics_runtime\osmesa.dll, graphics_runtime\pipe_swrast.dll
+```
+
+If any of these files are missing, `build.py` can fail before packaging because software OpenGL fallback would be incomplete.
+
 Primary build outputs land under `builder/output/`, including staged bundles and the installer when Inno Setup is available. Successful installer builds also emit `INSTALL_NOTES*.txt` and `SHA256*.txt` under `builder/output/installer/`.
 
 The Windows installer is prepared for deployment on other PCs. In `Custom` mode it asks which optional modules should be installed on that workstation, stores the selection in `installation_profile.json`, and uses a GPU probe plus runtime fallback logic so unsupported systems can still run with CPU-safe software OpenGL.

@@ -9,4 +9,5 @@ packaging>=23
 # to trace hidden imports correctly and bundle the DLLs/extensions.
 # Keep in sync with imports_summary.json suggested_hiddenimports.
 psutil>=5.9
+requests[socks]>=2.31.0
 
