@@ -30,6 +30,20 @@ _PROTECTED_DRAG_UNTIL_MS: float = 0.0
 _PROTECTED_DRAG_ACTIVE: bool = False  # Explicit latch; True from begin() to end()
 _PROTECTED_DRAG_BEGIN_MS: float = 0.0
 
+# v2.3.8 R15: Parallel Advanced (VTK) viewer protected-interaction latch.
+# Advanced mode wheel bursts and stack drags call
+# ``record_advanced_protected_interaction(...)`` from the coalesce flush
+# (begin + keepalive per frame) and GC re-enable (end). A separate latch
+# is kept so FAST and Advanced paths stay distinguishable in
+# ``[PROTECTED_*]`` log lines, but ``is_protected_drag_active()`` returns
+# True if EITHER latch is active — so R3 (CACHE_WARM / PREFETCH denial),
+# R4 (progressive grow defer — no-op for Advanced), and R5 (DM progress
+# apply skip) automatically extend to Advanced without touching R5's call
+# site in ``_apply_throttled_progress``.
+_ADVANCED_PROTECTED_ACTIVE: bool = False
+_ADVANCED_PROTECTED_UNTIL_MS: float = 0.0
+_ADVANCED_PROTECTED_BEGIN_MS: float = 0.0
+
 # v2.3.7 R13: cross-process drag-throttle signal.
 # The download subprocess (opt-in) polls this file's mtime to decide
 # whether to temporarily drop its OS priority during a protected drag.
@@ -183,9 +197,85 @@ def keepalive_protected_drag(grace_ms: float = 1500.0) -> None:
 def is_protected_drag_active() -> bool:
     # True while the explicit latch is set OR while the post-release grace
     # window has not yet expired.
-    if _PROTECTED_DRAG_ACTIVE:
+    # v2.3.8 R15: also considers the Advanced (VTK) latch so R3/R4/R5
+    # automatically extend to Advanced wheel/stack interactions.
+    if _PROTECTED_DRAG_ACTIVE or _ADVANCED_PROTECTED_ACTIVE:
         return True
-    return _now_ms() <= float(_PROTECTED_DRAG_UNTIL_MS)
+    now = _now_ms()
+    if now <= float(_PROTECTED_DRAG_UNTIL_MS):
+        return True
+    if now <= float(_ADVANCED_PROTECTED_UNTIL_MS):
+        return True
+    return False
+
+
+def record_advanced_protected_interaction(
+    active: bool,
+    *,
+    grace_ms: float = 0.0,
+    source: str = "",
+) -> None:
+    """Record Advanced (VTK) viewer protected wheel/stack interaction state.
+
+    v2.3.8 R15: Advanced mode's ``_flush_pending_wheel_slice_impl`` is the
+    single per-frame touch point that covers both wheel scrolls and stack
+    drags routed through ``queue_interactive_slice_target``. That flush
+    fires this with ``active=True`` + a 2500ms grace as a combined
+    begin + keepalive signal. The scroll-burst GC re-enable timer
+    (``_reenable_gc_impl``) fires this with ``active=False`` + a 250ms
+    tail grace, mirroring FAST's ``record_protected_drag`` semantics.
+
+    The latch is kept separate from FAST's ``_PROTECTED_DRAG_ACTIVE`` so
+    ``[PROTECTED_*]`` log lines stay distinguishable, but
+    ``is_protected_drag_active()`` OR's both latches so every existing
+    protected-drag policy (R3 admission denial, R4 progressive defer —
+    no-op for Advanced, R5 DM progress apply skip) extends automatically.
+
+    The cross-process R13 drag flag is touched on every ``active=True``
+    call (rate-limited to 200ms internally), so when
+    ``AIPACS_DRAG_SUBPROC_THROTTLE=1`` is enabled, the download subprocess
+    reacts to Advanced drags identically to FAST drags.
+    """
+    global _ADVANCED_PROTECTED_ACTIVE, _ADVANCED_PROTECTED_UNTIL_MS
+    global _ADVANCED_PROTECTED_BEGIN_MS
+    now = _now_ms()
+    grace = max(0.0, float(grace_ms))
+    if active:
+        was_active = _ADVANCED_PROTECTED_ACTIVE
+        _ADVANCED_PROTECTED_ACTIVE = True
+        # Keepalive semantics: only extend the deadline forward.
+        new_deadline = now + grace if grace > 0.0 else 0.0
+        if new_deadline > _ADVANCED_PROTECTED_UNTIL_MS:
+            _ADVANCED_PROTECTED_UNTIL_MS = new_deadline
+        if not was_active:
+            _ADVANCED_PROTECTED_BEGIN_MS = now
+            try:
+                get_system_load_controller().reset_ui_tick_baseline()
+            except Exception:
+                pass
+            _logger.info(
+                "[PROTECTED_ADVANCED] begin source=%s grace_ms=%.0f",
+                source or "?", grace,
+            )
+        # R13 cross-process flag (no-op unless opt-in enabled).
+        _touch_drag_flag()
+    else:
+        was_active = _ADVANCED_PROTECTED_ACTIVE
+        _ADVANCED_PROTECTED_ACTIVE = False
+        # Soft-release tail: keep R3/R5 protection alive for `grace_ms` so
+        # the last few coalesced DM updates don't land inside a nominal
+        # window right after the user releases the mouse.
+        _ADVANCED_PROTECTED_UNTIL_MS = now + grace
+        if was_active:
+            duration_ms = (
+                now - _ADVANCED_PROTECTED_BEGIN_MS
+                if _ADVANCED_PROTECTED_BEGIN_MS > 0.0 else 0.0
+            )
+            _logger.info(
+                "[PROTECTED_ADVANCED] end source=%s duration_ms=%.0f tail_grace_ms=%.0f",
+                source or "?", duration_ms, grace,
+            )
+            _ADVANCED_PROTECTED_BEGIN_MS = 0.0
 
 
 def is_fast_interaction_active() -> bool:

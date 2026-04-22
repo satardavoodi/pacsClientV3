@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 from modules.viewer.fast.stale_frame_guard import should_render_ready_slice
 from modules.viewer.viewer_backend_config import BACKEND_PYDICOM, BACKEND_PYDICOM_QT
+from modules.viewer.fast import ui_throttle as _ui_throttle
 from modules.viewer.fast._decode_guard import (
     h13_check_overlap_before_render,
     h13_get_decode_age_ms,
@@ -94,6 +95,16 @@ class _VWScrollMixin:
             tm = getattr(self.patient_widget, "thumbnail_manager", None)
             if tm is not None and hasattr(tm, "set_scroll_active"):
                 tm.set_scroll_active(False)
+        except Exception:
+            pass
+        # v2.3.8 R15: Release the Advanced protected-interaction latch.
+        # Runs unconditionally (outside the _gc_suppressed guard) because
+        # stack-drag bursts start the GC re-enable timer without flipping
+        # _gc_suppressed. 250ms tail grace mirrors FAST's record_protected_drag.
+        try:
+            _ui_throttle.record_advanced_protected_interaction(
+                False, grace_ms=250.0, source="gc_reenable",
+            )
         except Exception:
             pass
 
@@ -449,6 +460,16 @@ class _VWScrollMixin:
             # non-essential overhead (camera save/restore, style.update_slice).
             self._in_wheel_scroll = source == "wheel"
             self._in_stack_scroll = source == "stack_drag"
+            # v2.3.8 R15: Advanced viewer joins the unified protected-
+            # interaction latch. Per-frame call acts as begin + keepalive.
+            # 2500ms grace covers the 2000ms GC re-enable timer + margin.
+            # R3/R5 extend automatically via is_protected_drag_active().
+            try:
+                _ui_throttle.record_advanced_protected_interaction(
+                    True, grace_ms=2500.0, source=source,
+                )
+            except Exception:
+                pass
             # v2.2.5.1: Mark coalesce flush active so _should_defer_fast_slice_render
             # never re-defers the render.  The timer already waited min_interval.
             self._coalesce_flush_in_progress = True
