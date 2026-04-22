@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from pynetdicom import AE
 from pynetdicom.sop_class import Verification
 
-from PacsClient.utils.utils import get_all_servers, UpdaterDataFromServerToHome
+from PacsClient.utils.utils import get_all_servers, UpdaterDataFromServerToHome, _AIPACS_SERVERS_FILE
 from modules.offline_cloud_server.dialogs import (
     OfflineCloudPackageDialog,
     OfflineCloudServerDialog,
@@ -137,7 +137,7 @@ class ServerSettingsWidget(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.json_file = 'servers.json'
+        self.json_file = _AIPACS_SERVERS_FILE
         self._setup_ui()
         self.load_servers()
         self._load_ai_service_urls()
@@ -869,6 +869,7 @@ class ServerSettingsWidget(QWidget):
             self.delete_btn.setEnabled(False)
 
     def save_to_json(self, servers):
+        self.json_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.json_file, 'w', encoding='utf-8') as f:
             json.dump(servers, f, indent=4)
 

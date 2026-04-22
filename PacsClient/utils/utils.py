@@ -9,7 +9,6 @@ from aipacs_runtime import roaming_config_root, seed_user_config_defaults
 from . import database
 from .offline_cloud import get_all_offline_cloud_servers, get_offline_cloud_server
 
-json_file = 'servers.json'
 from _project_root import PROJECT_ROOT as _ROOT
 if getattr(sys, "frozen", False):
     seed_user_config_defaults()
@@ -17,6 +16,7 @@ if getattr(sys, "frozen", False):
 else:
     CONFIG_DIR = _ROOT / "config"
 SERVERS_FILE = CONFIG_DIR / "servers_address.json"
+_AIPACS_SERVERS_FILE = CONFIG_DIR / "servers.json"
 _SERVERS_FILE_MISSING_WARNED = False
 
 
@@ -212,22 +212,21 @@ def segment_path():
 
 # get special server
 def get_server(server_name):
-    if os.path.exists(json_file):
-        with open(json_file, 'r', encoding='utf-8') as f:
+    if _AIPACS_SERVERS_FILE.exists():
+        with open(_AIPACS_SERVERS_FILE, 'r', encoding='utf-8') as f:
             try:
                 servers = json.load(f)
                 server = next((s for s in servers if s['name'] == server_name), None)
                 return server
             except json.JSONDecodeError:
                 return []
-    print('servers.json does not exist!!')
     return []
 
 
 # get servers from servers.json
 def get_all_servers():
-    if os.path.exists(json_file):
-        with open(json_file, 'r', encoding='utf-8') as f:
+    if _AIPACS_SERVERS_FILE.exists():
+        with open(_AIPACS_SERVERS_FILE, 'r', encoding='utf-8') as f:
             try:
                 return json.load(f)
             except json.JSONDecodeError:
