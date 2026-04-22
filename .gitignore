@@ -3,6 +3,7 @@
 .cursor/
 logs
 servers.json
+!config/servers.json
 test/
 ship.stl
 thumbnails
