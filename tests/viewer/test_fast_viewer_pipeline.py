@@ -49,6 +49,7 @@ def _build_controller():
         isVisible=lambda: True,
         resolve_series_key=lambda value: str(value),
     )
+    controller._get_series_expected_slices = lambda sn: 0
     return controller
 
 
@@ -341,6 +342,17 @@ def test_viewer_has_series_fully_visible_requires_expected_count():
 
     assert controller._viewer_has_series_fully_visible("202", 135) is True
     assert controller._viewer_has_series_fully_visible("202", 136) is False
+
+
+def test_viewer_has_series_fully_visible_without_expected_count_accepts_any_visible_slice():
+    controller = _build_controller()
+    viewer = SimpleNamespace(
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": "202"}}),
+        get_count_of_slices=lambda: 1,
+    )
+    controller.lst_nodes_viewer = [SimpleNamespace(vtk_widget=viewer)]
+
+    assert controller._viewer_has_series_fully_visible("202", 0) is True
 
 
 def test_load_series_on_demand_skips_redundant_post_complete_reload(monkeypatch):
@@ -1780,6 +1792,72 @@ def test_async_switch_preview_callback_skips_when_full_data_already_visible(monk
     assert apply_calls == []
 
 
+def test_enqueue_warmup_subprocess_uses_controller_expected_slice_helper(monkeypatch, tmp_path):
+    controller = _build_controller()
+
+    submits = []
+    starts = []
+    timer_starts = []
+
+    class _FakeMgr:
+        def __init__(self):
+            self.is_alive = False
+            self.pending_count = 0
+
+        def start(self):
+            starts.append("start")
+            self.is_alive = True
+
+        def submit(self, req):
+            submits.append(req)
+            self.pending_count += 1
+            return True
+
+    class _FakeSignal:
+        def connect(self, fn):
+            self._fn = fn
+
+    class _FakeTimer:
+        def __init__(self, parent=None):
+            self.timeout = _FakeSignal()
+            self._active = False
+
+        def setInterval(self, value):
+            self._interval = value
+
+        def isActive(self):
+            return self._active
+
+        def start(self):
+            self._active = True
+            timer_starts.append("start")
+
+    monkeypatch.setattr(_vc_load_mod, "WarmupSubprocessManager", _FakeMgr)
+    monkeypatch.setattr(_vc_load_mod, "QTimer", _FakeTimer)
+
+    study_path = tmp_path / "study"
+    study_path.mkdir(parents=True)
+
+    controller._DL_WARMUP_MAX_SLICES = 64
+    controller._warmup_subprocess_mgr = None
+    controller._warmup_result_timer = None
+    controller._get_correct_study_path = lambda: str(study_path)
+    controller._get_series_expected_slices = lambda sn: 10
+    controller.parent_widget = SimpleNamespace(
+        _get_expected_series_image_count=lambda sn: 999,
+        metadata_fixed={"patient_pk": 10, "study_pk": 20},
+        ordering_by_instances_number=True,
+    )
+    controller._poll_warmup_subprocess_results = lambda: None
+
+    accepted = controller._enqueue_warmup_subprocess("101")
+
+    assert accepted is True
+    assert len(submits) == 1
+    assert starts == ["start"]
+    assert timer_starts == ["start"]
+
+
 def test_display_loaded_series_pairs_only_mg_same_name():
     controller = _build_controller()
     switch_calls = []
@@ -2399,6 +2477,73 @@ def test_on_series_download_fully_complete_routes_terminal_close_through_finaliz
     assert args[:2] == (controller, "31")
     assert kwargs == {"final_count": 50, "viewers": [(viewer, node)], "source": "layer2b_complete"}
     assert exit_calls == []
+
+
+def test_on_series_download_fully_complete_keeps_progressive_tracking_when_final_grow_short():
+    """Layer 2b should stay open when final grow is still short of expected total."""
+    controller = _build_controller()
+    controller._progressive_series = {
+        "41": {"total": 50, "last_grow_count": 40},
+    }
+    controller._completion_sweep_series_set = set()
+    controller._completion_sweep_timer = SimpleNamespace(
+        isActive=lambda: False, start=lambda: None, stop=lambda: None,
+    )
+
+    finalize_calls = []
+    verify_calls = []
+    sweep_calls = []
+    exit_calls = []
+
+    class _ShortLoader:
+        def grow(self):
+            return 45
+
+    viewer = SimpleNamespace(
+        _progressive_mode=True,
+        _progressive_series_number="41",
+        image_viewer=SimpleNamespace(
+            metadata={"series": {"series_number": "41"}},
+            update_corners_actors=lambda: None,
+        ),
+        _lazy_loader=_ShortLoader(),
+        _qt_bridge_active=False,
+        get_count_of_slices=lambda: 45,
+        update_available_slice_count=lambda c: None,
+        exit_progressive_mode=lambda: exit_calls.append("exit"),
+        id_vtk_widget="v41",
+    )
+    node = SimpleNamespace(
+        vtk_widget=viewer,
+        slider=SimpleNamespace(blockSignals=lambda b: None, setMaximum=lambda v: None),
+    )
+    controller.lst_nodes_viewer = [node]
+
+    controller._update_vtk_slice_range = lambda *a, **kw: None
+    controller._refresh_and_sync_metadata = lambda *a, **kw: None
+    controller._invalidate_series_caches = lambda *a, **kw: None
+    controller._update_thumbnail_count = lambda *a, **kw: None
+    controller._completion_verify_series = lambda *a, **kw: verify_calls.append((a, kw))
+    controller._completion_sweep_register = lambda *a, **kw: sweep_calls.append((a, kw))
+
+    import unittest.mock
+    with unittest.mock.patch.object(
+        _vc_progressive_mod,
+        "QTimer",
+        SimpleNamespace(singleShot=lambda *a, **kw: None),
+        create=True,
+    ), unittest.mock.patch.object(
+        _vc_progressive_mod,
+        "_finalize_progressive_series",
+        lambda *args, **kwargs: finalize_calls.append((args, kwargs)) or True,
+    ):
+        controller.on_series_download_fully_complete("41")
+
+    assert finalize_calls == []
+    assert "41" in controller._progressive_series
+    assert exit_calls == []
+    assert len(verify_calls) == 0
+    assert len(sweep_calls) == 1
 
 
 def test_completion_verify_does_not_duplicate_finalize_followup_calls():
@@ -5336,6 +5481,236 @@ def test_b41_drag_during_heavy_download_keeps_tiny_prefetch(monkeypatch):
     assert len(prefetch_calls) == 1
 
 
+def test_b41_notify_drag_started_primes_small_startup_warm_band(monkeypatch):
+    """Drag start should seed only a small neighborhood instead of a wide idle prefetch band."""
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = False
+    pipe._fast_interaction_mode = ''
+    pipe._pixel_cache.clear()
+    pipe._prefetch_around = Lightweight2DPipeline._prefetch_around.__get__(pipe, Lightweight2DPipeline)
+
+    submitted = []
+    monkeypatch.setattr(pipe, "_submit_prefetch", lambda idx, generation=0, request_epoch=0: submitted.append(idx))
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: None)
+    monkeypatch.setattr(pipe_mod, "should_admit", lambda *a, **kw: True)
+
+    pipe.notify_drag_started(center=50)
+
+    assert submitted == [51, 49, 52, 48]
+
+
+def test_b41_drag_prefetch_is_rate_limited_between_scroll_events(monkeypatch):
+    """Fast drag should not keep scheduling a new prefetch neighborhood on every tiny move."""
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._fast_interaction_mode = 'drag'
+    pipe._pixel_cache.clear()
+    pipe._drag_start_boost_until = 0.0
+    pipe._last_prefetch_center = -1
+    pipe._prefetch_around = Lightweight2DPipeline._prefetch_around.__get__(pipe, Lightweight2DPipeline)
+
+    submitted = []
+    monkeypatch.setattr(pipe, "_submit_prefetch", lambda idx, generation=0, request_epoch=0: submitted.append(idx))
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: None)
+    monkeypatch.setattr(pipe_mod, "should_admit", lambda *a, **kw: True)
+
+    pipe._prefetch_around(50, direction=1)
+    pipe._last_prefetch_center = -1
+    pipe._last_drag_prefetch_submit_ts = pipe_mod.time.perf_counter()
+    pipe._prefetch_around(51, direction=1)
+
+    assert submitted == [51]
+
+
+def test_b41_protected_drag_admits_tiny_directional_p1_prefetch(monkeypatch):
+    """Protected stack drag should admit only a tiny P1 directional lane."""
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._fast_interaction_mode = 'drag'
+    pipe._pixel_cache.clear()
+    pipe._drag_start_boost_until = 0.0
+    pipe._last_prefetch_center = -1
+    pipe._prefetch_around = Lightweight2DPipeline._prefetch_around.__get__(pipe, Lightweight2DPipeline)
+    pipe.begin_protected_drag_session()
+
+    submitted = []
+    monkeypatch.setattr(pipe, "_submit_prefetch", lambda idx, generation=0, request_epoch=0: submitted.append(idx))
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: None)
+    monkeypatch.setattr(pipe_mod, "should_admit", lambda *a, **kw: True)
+
+    pipe._prefetch_around(50, direction=1)
+
+    assert submitted == [51, 52, 49]
+
+
+def test_b41_stack_drag_target_generation_invalidates_stale_p1(monkeypatch):
+    """Every accepted stack target should bump generation before P1 admission."""
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._fast_interaction_mode = 'drag'
+    pipe._pixel_cache.clear()
+    pipe._drag_start_boost_until = 0.0
+    pipe._last_prefetch_center = -1
+    pipe._prefetch_around = Lightweight2DPipeline._prefetch_around.__get__(pipe, Lightweight2DPipeline)
+    pipe.begin_protected_drag_session()
+
+    old_gen = pipe._prefetch_generation
+    pipe.begin_stack_drag_target(50, generation=10, direction=1)
+
+    assert pipe._drag_target_generation == 10
+    assert pipe._prefetch_generation == old_gen + 1
+    assert pipe._active_prefetch_targets == set()
+
+
+def test_b41_stack_drag_target_passes_explicit_p01_lane_to_prefetch(monkeypatch):
+    """Protected drag prefetch should obey the scheduler-provided P0/P1 lane exactly."""
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._fast_interaction_mode = 'drag'
+    pipe._pixel_cache.clear()
+    pipe._drag_start_boost_until = 0.0
+    pipe._last_prefetch_center = -1
+    pipe._prefetch_around = Lightweight2DPipeline._prefetch_around.__get__(pipe, Lightweight2DPipeline)
+    pipe.begin_protected_drag_session()
+    pipe.begin_stack_drag_target(50, generation=10, direction=1, p01_indices=(50, 51, 48))
+
+    submitted = []
+    monkeypatch.setattr(pipe, "_submit_prefetch", lambda idx, generation=0, request_epoch=0: submitted.append(idx))
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: None)
+    monkeypatch.setattr(pipe_mod, "should_admit", lambda *a, **kw: True)
+
+    pipe._prefetch_around(50, direction=1)
+
+    assert submitted == [51, 48]
+
+
+def test_b41_protected_drag_session_reports_prefetch_counts(monkeypatch):
+    """Protected drag session summary should expose how much background work escaped during drag."""
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe.begin_protected_drag_session()
+    pipe._decode_executor = SimpleNamespace(submit=lambda *a, **kw: None)
+    pipe._prefetch_pending.clear()
+    pipe._pixel_cache.clear()
+    monkeypatch.setattr(pipe_mod, "get_disk_pixel_cache", lambda: SimpleNamespace(flush_deferred=lambda: 3))
+
+    Lightweight2DPipeline._submit_prefetch(pipe, 12)
+    stats = pipe.end_protected_drag_session()
+
+    assert stats["prefetch_submitted"] == 1
+    assert stats["background_decode_count"] == 0
+    assert stats["deferred_disk_writes_flushed"] == 3
+
+
+def test_b41_stack_settle_warmup_submits_asymmetric_p2_window(monkeypatch):
+    """After drag settle, P2 warmup should reopen a capped directional neighborhood."""
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._pixel_cache.clear()
+
+    submitted = []
+    monkeypatch.setattr(pipe, "_submit_prefetch", lambda idx, generation=0, request_epoch=0: submitted.append(idx))
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: None)
+    monkeypatch.setattr(pipe_mod, "should_admit", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "cap_prefetch_radius", lambda radius, **_kw: radius)
+
+    count = pipe.prepare_stack_settle_warmup(50, direction=1)
+
+    assert count == 16
+    assert submitted == [
+        51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+        49, 48, 47, 46, 45, 44,
+    ]
+    assert pipe._active_prefetch_targets == set(submitted)
+
+
+def test_b41_stack_settle_warmup_uses_reverse_direction(monkeypatch):
+    """P2 settle warmup follows the final stack direction instead of warming symmetrically."""
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._pixel_cache.clear()
+
+    submitted = []
+    monkeypatch.setattr(pipe, "_submit_prefetch", lambda idx, generation=0, request_epoch=0: submitted.append(idx))
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: None)
+    monkeypatch.setattr(pipe_mod, "should_admit", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "cap_prefetch_radius", lambda radius, **_kw: radius)
+
+    count = pipe.prepare_stack_settle_warmup(50, direction=-1)
+
+    assert count == 16
+    assert submitted == [
+        49, 48, 47, 46, 45, 44, 43, 42, 41, 40,
+        51, 52, 53, 54, 55, 56,
+    ]
+
+
+def test_b41_stack_settle_warmup_prefers_frame_prefetch_for_hot_pixels(monkeypatch):
+    """Warm pixel targets should become frame prefetch, not duplicate decode work."""
+    import numpy as np
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._pixel_cache.clear()
+    pipe._pixel_cache[51] = np.zeros((4, 4), dtype=np.int16)
+
+    decoded = []
+    framed = []
+    monkeypatch.setattr(pipe, "_submit_prefetch", lambda idx, generation=0, request_epoch=0: decoded.append(idx))
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: framed.append(idx))
+    monkeypatch.setattr(pipe_mod, "should_admit", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "cap_prefetch_radius", lambda radius, **_kw: 1)
+
+    count = pipe.prepare_stack_settle_warmup(50, direction=1)
+
+    assert count == 2
+    assert framed == [51]
+    assert decoded == [49]
+
+
+def test_b41_stack_settle_warmup_keeps_pending_final_neighbors_active(monkeypatch):
+    """Settle should not cancel/requeue useful P1 work that is already pending."""
+    import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
+
+    pipe, _decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._pixel_cache.clear()
+    pipe._prefetch_pending = {51}
+    pipe._prefetch_generation = 12
+    pipe._prefetch_request_epoch = 3
+
+    submitted = []
+    monkeypatch.setattr(pipe, "_submit_prefetch", lambda idx, generation=0, request_epoch=0: submitted.append((idx, generation, request_epoch)))
+    monkeypatch.setattr(pipe, "_submit_frame_prefetch", lambda idx: None)
+    monkeypatch.setattr(pipe_mod, "should_admit", lambda *a, **kw: True)
+    monkeypatch.setattr(pipe_mod, "cap_prefetch_radius", lambda radius, **_kw: 1)
+
+    count = pipe.prepare_stack_settle_warmup(50, direction=1)
+
+    assert count == 1
+    assert submitted == [(49, 12, 4)]
+    assert pipe._prefetch_generation == 12
+    assert pipe._prefetch_request_epoch == 4
+    assert pipe._active_prefetch_targets == {51, 49}
+
+
 def test_b41_set_slice_index_prepares_prefetch_once_before_render(monkeypatch):
     """get_rendered_frame should not re-arm neighborhood prefetch right after set_slice_index."""
     pipe, decode_calls = _make_b41_pipeline(monkeypatch)
@@ -5816,4 +6191,54 @@ def test_decode_into_cache_uses_subprocess_decode_for_completed_series(monkeypat
 
     assert len(svc_calls) == 1
     assert 3 not in pipe._prefetch_pending
+
+
+def test_b42_default_cache_caps_expand_for_large_series():
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline, PipelineConfig
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._config = PipelineConfig()
+    pipe._slices = [None] * 320
+    pipe._interaction_slice_count_hint = 0
+
+    pixel_limit = pipe._effective_pixel_cache_limit()
+    frame_limit = pipe._effective_frame_cache_limit()
+
+    assert pixel_limit > pipe._config.pixel_cache_size
+    assert frame_limit > pipe._config.frame_cache_size
+    assert pixel_limit <= pipe._config.adaptive_cache_max_size
+    assert frame_limit <= pipe._config.adaptive_cache_max_size
+
+
+def test_b42_explicit_custom_cache_sizes_do_not_auto_expand():
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline, PipelineConfig
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._config = PipelineConfig(pixel_cache_size=32, frame_cache_size=40)
+    pipe._slices = [None] * 320
+    pipe._interaction_slice_count_hint = 0
+
+    assert pipe._effective_pixel_cache_limit() == 32
+    assert pipe._effective_frame_cache_limit() == 40
+
+
+def test_b42_put_pixel_cache_prunes_to_effective_dynamic_limit():
+    from collections import OrderedDict
+    import numpy as np
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline, PipelineConfig
+
+    pipe = Lightweight2DPipeline.__new__(Lightweight2DPipeline)
+    pipe._config = PipelineConfig()
+    pipe._slices = [None] * 320
+    pipe._interaction_slice_count_hint = 0
+    pipe._pixel_cache = OrderedDict()
+    pipe._frame_cache = OrderedDict()
+
+    limit = pipe._effective_pixel_cache_limit()
+    for idx in range(limit + 25):
+        pipe._put_pixel_cache(idx, np.zeros((2, 2), dtype=np.int16))
+
+    assert len(pipe._pixel_cache) == limit
+    assert 0 not in pipe._pixel_cache
+    assert (limit + 24) in pipe._pixel_cache
 

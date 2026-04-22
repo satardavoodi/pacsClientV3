@@ -18,6 +18,7 @@ from modules.viewer.viewer_backend_config import (
 )
 from modules.viewer.boost_viewer_config import load_boost_viewer_enabled
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
+from PacsClient.utils.series_facts import resolve_series_expected_count
 from modules.viewer.fast.lazy_volume_registry import get_loader as get_lazy_loader
 import logging
 
@@ -26,6 +27,43 @@ logger = logging.getLogger(__name__)
 
 class _VCBackendMixin:
     """Auto-split mixin — see patient_widget_viewer_controller.py for history."""
+
+    def _resolve_series_expected_count(self, series_number: str):
+        sn = str(series_number)
+        scan_cap = max(int(self._warmup_max_slices or 0), int(self._prefetch_skip_slices_threshold or 0), 0) + 1
+
+        def _disk_count_fallback(series_key: str) -> int:
+            try:
+                # Final fallback for non-hydrated metadata: lightweight capped on-disk count.
+                # We intentionally stop at threshold+1, because warmup only needs large/not-large.
+                study_path = self._get_correct_study_path()
+                if study_path:
+                    series_dir = Path(study_path) / str(series_key)
+                    if series_dir.exists() and series_dir.is_dir():
+                        cnt = 0
+                        for p in series_dir.iterdir():
+                            if not p.is_file():
+                                continue
+                            sfx = p.suffix.lower()
+                            if sfx == '.dcm':
+                                cnt += 1
+                                if scan_cap > 0 and cnt >= scan_cap:
+                                    return cnt
+                        if cnt > 0:
+                            return cnt
+            except Exception:
+                pass
+            return 0
+
+        return resolve_series_expected_count(
+            sn,
+            uid_to_number_map=getattr(self.parent_widget, '_series_uid_to_number', {}) or {},
+            series_info_map=getattr(self.parent_widget, '_server_series_info', {}) or {},
+            metadata_flat_map=getattr(self, '_metadata_flat_cache', {}) or {},
+            thumbnail_items=getattr(self.parent_widget, 'lst_thumbnails_data', []) or [],
+            series_number_to_index=getattr(self, '_series_number_to_index', {}) or {},
+            disk_count_getter=_disk_count_fallback,
+        )
 
     def _get_requested_viewer_backend(self) -> str:
         try:
@@ -247,86 +285,8 @@ class _VCBackendMixin:
                 pass
 
     def _get_series_expected_slices(self, series_number: str) -> int:
-        sn = str(series_number)
-        scan_cap = max(int(self._warmup_max_slices or 0), int(self._prefetch_skip_slices_threshold or 0), 0) + 1
-        try:
-            # Fast metadata-flat cache (doesn't require VTK loaded)
-            flat = self._metadata_flat_cache.get(sn)
-            if isinstance(flat, dict):
-                if bool(flat.get('preview_only', False)):
-                    ptotal = flat.get('preview_total_instances', 0)
-                    try:
-                        ptotal = int(ptotal)
-                    except Exception:
-                        ptotal = 0
-                    if ptotal > 0:
-                        return ptotal
-                inst = flat.get('instances') or []
-                if isinstance(inst, list) and len(inst) > 0:
-                    return int(len(inst))
-        except Exception:
-            pass
-
-        try:
-            # Direct thumbnail metadata fallback (often contains image_count)
-            idx = self._series_number_to_index.get(sn)
-            if idx is not None and 0 <= int(idx) < len(self.parent_widget.lst_thumbnails_data):
-                item = self.parent_widget.lst_thumbnails_data[int(idx)]
-                meta = item.get('metadata') or {}
-                if isinstance(meta, dict):
-                    if bool(meta.get('preview_only', False)):
-                        ptotal = meta.get('preview_total_instances', 0)
-                        try:
-                            ptotal = int(ptotal)
-                        except Exception:
-                            ptotal = 0
-                        if ptotal > 0:
-                            return ptotal
-                    inst = meta.get('instances') or []
-                    if isinstance(inst, list) and len(inst) > 0:
-                        return int(len(inst))
-                    series_info = meta.get('series') or {}
-                    for key in ('image_count', 'number_of_instances', 'instances_count'):
-                        val = series_info.get(key)
-                        if val is not None:
-                            try:
-                                iv = int(val)
-                                if iv > 0:
-                                    return iv
-                            except Exception:
-                                pass
-        except Exception:
-            pass
-
-        # NOTE: A previous "last resort" fallback called _get_series_by_number_fast(sn)
-        # here.  That triggered _full_cache_get â†’ zeta_boost.get(memory_only=False) on
-        # background warmup threads, causing FULL disk decompression + VTK reconstruction
-        # as a side effect of just counting slices.  This bypassed the engine's priority
-        # queue entirely (every series was already in-memory by the time enqueue ran) and
-        # eliminated the benefit of INTERACTIVE_BUSY.  Removed in favour of the lightweight
-        # on-disk file-count below which is O(n) directory iter, no heavy I/O.
-
-        try:
-            # Final fallback for non-hydrated metadata: lightweight capped on-disk count.
-            # We intentionally stop at threshold+1, because warmup only needs large/not-large.
-            study_path = self._get_correct_study_path()
-            if study_path:
-                series_dir = Path(study_path) / sn
-                if series_dir.exists() and series_dir.is_dir():
-                    cnt = 0
-                    for p in series_dir.iterdir():
-                        if not p.is_file():
-                            continue
-                        sfx = p.suffix.lower()
-                        if sfx == '.dcm':
-                            cnt += 1
-                            if scan_cap > 0 and cnt >= scan_cap:
-                                return cnt
-                    if cnt > 0:
-                        return cnt
-        except Exception:
-            pass
-        return 0
+        resolution = self._resolve_series_expected_count(series_number)
+        return int(resolution.expected_count or 0)
 
     # SOP Class UID prefixes that never contain renderable image pixels.
     _NON_IMAGE_SOP_PREFIXES = (

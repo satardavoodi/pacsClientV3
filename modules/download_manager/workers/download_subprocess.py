@@ -112,6 +112,85 @@ def run_download_subprocess(
         except Exception as _e:
             logger.debug(f"[SP] Could not set process priority: {_e}")
 
+    # ── 1c. v2.3.7 #3: Protected-drag dynamic priority throttle. ─────────────
+    # While the viewer holds a protected stack-drag session, the viewer
+    # process touches {user_data}/cache/.drag_active. A tiny daemon thread
+    # polls that flag and drops this subprocess to IDLE_PRIORITY_CLASS so
+    # the scroll lane gets every last CPU cycle. When the drag ends, the
+    # flag mtime goes stale and we restore BELOW_NORMAL_PRIORITY_CLASS.
+    # Env kill-switch: AIPACS_DRAG_SUBPROC_THROTTLE=0 disables entirely.
+    import os as _os_main
+    import time as _time_main
+    if _sys.platform == "win32" and _os_main.environ.get("AIPACS_DRAG_SUBPROC_THROTTLE", "1") != "0":
+        import threading as _threading
+        import ctypes as _ctypes_poll
+
+        _IDLE_PRIORITY_CLASS = 0x00000040
+        _BELOW_NORMAL_PRIORITY_CLASS_POLL = 0x00004000
+        _DRAG_STALE_MS = 2000.0   # flag older than this → drag over
+        _POLL_INTERVAL = 0.15     # 150ms poll cadence
+
+        def _resolve_flag_path() -> str:
+            try:
+                from aipacs_runtime import user_data_root as _udr
+                return str(_udr() / "cache" / ".drag_active")
+            except Exception:
+                return ""
+
+        def _drag_priority_poller() -> None:
+            _flag_path = _resolve_flag_path()
+            if not _flag_path:
+                return
+            _kernel32_p = _ctypes_poll.windll.kernel32
+            _hproc = _kernel32_p.GetCurrentProcess()
+            _current_class = _BELOW_NORMAL_PRIORITY_CLASS_POLL
+            _cancel = cancel_event
+            while True:
+                try:
+                    if _cancel is not None and _cancel.is_set():
+                        # restore normal priority on exit
+                        try:
+                            _kernel32_p.SetPriorityClass(_hproc, _BELOW_NORMAL_PRIORITY_CLASS_POLL)
+                        except Exception:
+                            pass
+                        return
+                    _drag_active = False
+                    try:
+                        _st = _os_main.stat(_flag_path)
+                        _age_ms = (_time_main.time() - _st.st_mtime) * 1000.0
+                        _drag_active = _age_ms < _DRAG_STALE_MS
+                    except FileNotFoundError:
+                        _drag_active = False
+                    except Exception:
+                        _drag_active = False
+                    _target = _IDLE_PRIORITY_CLASS if _drag_active else _BELOW_NORMAL_PRIORITY_CLASS_POLL
+                    if _target != _current_class:
+                        try:
+                            _kernel32_p.SetPriorityClass(_hproc, _target)
+                            _current_class = _target
+                            logger.info(
+                                "[SP] Priority -> %s (drag_active=%s)",
+                                "IDLE" if _target == _IDLE_PRIORITY_CLASS else "BELOW_NORMAL",
+                                _drag_active,
+                            )
+                        except Exception as _pe:
+                            logger.debug(f"[SP] SetPriorityClass failed: {_pe}")
+                except Exception:
+                    pass
+                _time_main.sleep(_POLL_INTERVAL)
+
+        try:
+            _poller_thread = _threading.Thread(
+                target=_drag_priority_poller,
+                name="aipacs-sp-drag-priority",
+                daemon=True,
+            )
+            _poller_thread.start()
+            logger.info("[SP] Drag-priority poller started (flag polls every 150ms)")
+        except Exception as _te:
+            logger.debug(f"[SP] Could not start drag-priority poller: {_te}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     # ── 2. Lazy imports (nothing Qt-related) ─────────────────────────────────
     import asyncio
     from pathlib import Path as _Path

@@ -232,17 +232,18 @@ class _VCSwitchMixin:
                     expected_instances = 0
                     displayed_count = 0
                     disk_count = 0
+                    completeness = None
                     try:
                         displayed_count = len((current_metadata or {}).get("instances", []) or [])
                         disk_count = self._count_series_files_on_disk(series_number)
-                        if hasattr(self.parent_widget, '_get_expected_series_image_count'):
-                            expected_instances = int(
-                                self.parent_widget._get_expected_series_image_count(series_number) or 0
-                            )
-                        if disk_count > 0 and disk_count > displayed_count:
-                            series_grew = True
-                        if expected_instances > 0 and max(displayed_count, disk_count) < expected_instances:
-                            series_incomplete = True
+                        resolution = self._resolve_series_expected_count(series_number)
+                        expected_instances = int(resolution.expected_count or 0)
+                        completeness = resolution.to_completeness_snapshot(
+                            metadata_count=displayed_count,
+                            disk_count=disk_count,
+                        )
+                        series_grew = completeness.metadata_behind_disk
+                        series_incomplete = completeness.is_incomplete
                     except Exception:
                         pass
                     if (not backend_mismatch) and (not rebuild_needed) and (not series_grew) and (not series_incomplete):

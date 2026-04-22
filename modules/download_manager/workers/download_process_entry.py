@@ -103,6 +103,96 @@ def _run_download_in_process(
         except Exception as _pe:
             logger.debug("  Could not lower process priority: %s", _pe)
 
+    # ── 2c. v2.3.7 R13: Protected-drag dynamic priority throttle. ────────────
+    # While the viewer holds a protected stack-drag session, the viewer
+    # process touches {user_data}/cache/.drag_active. A daemon thread in
+    # this subprocess polls the flag and (when enabled) drops to
+    # IDLE_PRIORITY_CLASS while the drag is active; restores to
+    # BELOW_NORMAL_PRIORITY_CLASS when the flag goes stale.
+    #
+    # DISABLED BY DEFAULT (v2.3.7, reverted after log 99). Empirical
+    # evidence from log 99 (ui_lag_max 412ms vs log 98's 229ms under
+    # comparable load) shows that dropping the subprocess to IDLE while
+    # it holds the multiprocessing.Queue IPC mutex causes priority
+    # inversion: the viewer (ABOVE_NORMAL) blocks waiting on a lock held
+    # by an IDLE-scheduled thread in the subprocess, producing the exact
+    # "event_p95 spikes while handler_p95 stays low" pattern observed.
+    # BELOW_NORMAL is sufficient separation; keep the infrastructure
+    # behind an explicit opt-in in case of future tuning.
+    # Opt-in: AIPACS_DRAG_SUBPROC_THROTTLE=1 to enable.
+    if _sys.platform == "win32" and os.environ.get("AIPACS_DRAG_SUBPROC_THROTTLE", "0") == "1":
+        try:
+            import threading as _threading
+            import ctypes as _ctypes_poll
+
+            _IDLE_PRIORITY_CLASS = 0x00000040
+            _BELOW_NORMAL_PRIORITY_CLASS_POLL = 0x00004000
+            _DRAG_STALE_MS = 2000.0   # flag older than this → drag over
+            _POLL_INTERVAL = 0.15     # 150ms poll cadence
+            _LOG_EXTRA_IPC = {"component": "ipc", "study_uid": study_uid}
+
+            def _resolve_flag_path() -> str:
+                try:
+                    from aipacs_runtime import user_data_root as _udr
+                    return str(_udr() / "cache" / ".drag_active")
+                except Exception:
+                    return ""
+
+            def _drag_priority_poller() -> None:
+                _flag_path = _resolve_flag_path()
+                if not _flag_path:
+                    return
+                _kernel32_p = _ctypes_poll.windll.kernel32
+                _hproc = _kernel32_p.GetCurrentProcess()
+                _current_class = _BELOW_NORMAL_PRIORITY_CLASS_POLL
+                _cancel = cancel_event
+                while True:
+                    try:
+                        if _cancel is not None and _cancel.is_set():
+                            try:
+                                _kernel32_p.SetPriorityClass(_hproc, _BELOW_NORMAL_PRIORITY_CLASS_POLL)
+                            except Exception:
+                                pass
+                            return
+                        _drag_active = False
+                        try:
+                            _st = os.stat(_flag_path)
+                            _age_ms = (time.time() - _st.st_mtime) * 1000.0
+                            _drag_active = _age_ms < _DRAG_STALE_MS
+                        except FileNotFoundError:
+                            _drag_active = False
+                        except Exception:
+                            _drag_active = False
+                        _target = _IDLE_PRIORITY_CLASS if _drag_active else _BELOW_NORMAL_PRIORITY_CLASS_POLL
+                        if _target != _current_class:
+                            try:
+                                _kernel32_p.SetPriorityClass(_hproc, _target)
+                                _current_class = _target
+                                logger.info(
+                                    "[SP] Priority -> %s (drag_active=%s)",
+                                    "IDLE" if _target == _IDLE_PRIORITY_CLASS else "BELOW_NORMAL",
+                                    _drag_active,
+                                    extra=_LOG_EXTRA_IPC,
+                                )
+                            except Exception as _pe:
+                                logger.debug("[SP] SetPriorityClass failed: %s", _pe, extra=_LOG_EXTRA_IPC)
+                    except Exception:
+                        pass
+                    time.sleep(_POLL_INTERVAL)
+
+            _poller_thread = _threading.Thread(
+                target=_drag_priority_poller,
+                name="aipacs-sp-drag-priority",
+                daemon=True,
+            )
+            _poller_thread.start()
+            logger.info(
+                "[SP] Drag-priority poller started (opt-in enabled)",
+                extra=_LOG_EXTRA_IPC,
+            )
+        except Exception as _te:
+            logger.debug("[SP] Could not start drag-priority poller: %s", _te)
+
     try:
         # ── 3. Lazy imports (no Qt in the import chain) ───────────────────────
         from pathlib import Path

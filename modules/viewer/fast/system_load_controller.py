@@ -146,6 +146,20 @@ class SystemLoadController:
                 return 0.0
             return max(0.0, self._ui_lag_ms)
 
+    def reset_ui_tick_baseline(self) -> None:
+        """Clear the UI-tick baseline so the next record_ui_tick() establishes
+        a fresh reference point.
+
+        Without this, ``ui_lag_ms`` leaks between unrelated drag sessions:
+        an idle gap of 10s between two drags would be reported as a 10s lag
+        spike at the start of the second drag, drowning out real signal.
+        Call at the start of each drag session.
+        """
+        with self._lock:
+            self._last_ui_tick_ms = -1.0
+            self._ui_lag_ms = 0.0
+            self._ui_lag_updated_ms = -1.0
+
     def snapshot(
         self,
         *,
@@ -200,7 +214,13 @@ class SystemLoadController:
                 coalesce_interval_ms=interval,
             )
         if work_class is WorkClass.PROGRESS_UPDATE:
-            interval = 400.0 if protected else 200.0
+            if protected and snap.heavy_download_active:
+                fast = snap.fast_interaction_active if fast_interaction_active is None else bool(fast_interaction_active)
+                interval = 750.0 if fast else 500.0
+            elif protected:
+                interval = 500.0
+            else:
+                interval = 200.0
             return WorkPolicy(
                 work_class=work_class,
                 coalesce_interval_ms=interval,
@@ -446,11 +466,13 @@ class SystemLoadController:
         self,
         *,
         heavy_download_active: bool,
+        fast_interaction_active: Optional[bool] = None,
         now_ms: Optional[float] = None,
     ) -> float:
         return self.policy_for(
             WorkClass.PROGRESS_UPDATE,
             heavy_download_active=heavy_download_active,
+            fast_interaction_active=fast_interaction_active,
             now_ms=now_ms,
         ).coalesce_interval_ms
 

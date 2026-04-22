@@ -465,3 +465,40 @@ The available ClearCanvas snapshot supports a strong architectural lesson:
 > **show the shell first, defer deeper loading second, and keep module ownership explicit.**
 
 That principle matches your requested ordering very well and should be the basis for the next round of block-by-block fixes.
+
+---
+
+## 2026-04-20 continuation update
+
+The current continuation summary now lives in:
+
+- `docs/plans/BLOCK_A_B_KPI_CLEARCANVAS_HANDOFF_2026-04-20.md`
+
+### What this review predicted correctly
+
+Two of the next real fixes aligned directly with this review:
+
+1. **Block B first-visible authority was tightened further**
+  - non-essential post-switch work now runs via `_schedule_post_switch_followups(...)`
+  - first-frame display, spinner hide, and Qt presentation repair remain immediate
+
+2. **Runtime-log-driven layout stabilization mattered more than deeper renderer changes**
+  - a fresh-start Qt refit was added in `_vw_series.py`
+  - this fixed the “last inserted series has wrong zoom / under-fit layout” symptom without broad redesign
+
+### KPI interpretation update
+
+Recent manual log review showed:
+
+- first image visible in the low tens of milliseconds,
+- cache-hot drag frames in the sub-millisecond to low-millisecond class,
+- `decode_ms=0.0` on sampled drag frames,
+- but CPU still elevated during overlap.
+
+That strengthens the main thesis of this review:
+
+> the remaining optimization center is control-plane/background pressure, not another first-pass decode optimization.
+
+### ClearCanvas update
+
+The ClearCanvas work remains valid as an architecture and KPI reference, but the real runtime benchmark is still only **prepared/partially simulated**, not fully executed on this machine. The AI-PACS `run_001` / `run_002` captures remain the practical comparison baseline until ClearCanvas becomes buildable.

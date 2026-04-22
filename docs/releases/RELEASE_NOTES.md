@@ -1,43 +1,55 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.3.6
-**Release Date:** 2026-04-20
-**Branch:** main  
+**Current Stable Version:** v2.3.7
+**Release Date:** 2026-04-22
+**Branch:** main
 
 ---
 
-## v2.3.6 - GitHub Publication / Stable Release Cut (2026-04-20)
+## v2.3.7 - Stack-Drag Smoothness Stabilized / R13 Revert (2026-04-22)
 
 ### Summary
 
-Publishes the current workspace as **v2.3.6** and synchronizes the release
-metadata so the repository, tag, and GitHub state match the active stable
-version.
+Finalizes the FAST-viewer stack-drag smoothness work. Worst-case `ui_lag_max`
+on long drags drops from ~412 ms (log 99) to ~280 ms (log 100), and
+short-drag `ui_lag_max` drops from ~150 ms to ~60 ms. Full release notes in
+[`VERSION_2.3.7_RELEASE.md`](VERSION_2.3.7_RELEASE.md).
 
 ### Highlights
 
-- Updated the application version in `main.py` to `2.3.6`
-- Updated the package version in `pyproject.toml` to `2.3.6`
-- Updated the Windows product version in `build_nuitka.py` to `2.3.6`
-- Updated builder package feed and module package manifests under
-  `builder/plugin package/packages/` to `2.3.6`
-- Refreshed current stable references in `README.md`, `docs/README.md`,
-  `builder/docs/WINDOWS_RELEASE_FLOW.md`, and
-  `builder/docs/INSTALLER_QA_CHECKLIST.md`
-- Added `docs/releases/VERSION_2.3.6_RELEASE.md` as the new stable release note
+- **R13 reverted to opt-in** (`AIPACS_DRAG_SUBPROC_THROTTLE=1`). Default-on
+  in the v2.3.7-dev iteration caused a priority-inversion regression on the
+  `multiprocessing.Queue` IPC mutex (viewer at ABOVE_NORMAL blocked on a lock
+  held by an IDLE-scheduled subprocess thread). Unconditional
+  `BELOW_NORMAL_PRIORITY_CLASS` at subprocess startup is retained — it
+  provides viewer/download separation without mutex starvation.
+- **`[SP]` subprocess logs now visible** when R13 is enabled. Each log site
+  passes `extra={"component": "ipc"}` so they bypass the default
+  `component=download` WARNING threshold that was silently dropping them.
+- **Drag hot-path tightening.** `QtViewerBridge._apply_interaction_target()`
+  no longer runs the `has_object` / `request_object` loop when the default
+  `NoopObjectCache` is in place (pure overhead in FAST mode). New
+  `is_noop_object_cache()` probe in `modules/viewer/fast/object_cache.py`.
+- **R14 codified** in `.github/copilot-instructions.md`: surrogate hot-path
+  reads of `_last_surrogate_pixel_idx` / `_surrogate_repeat_count` must use
+  `getattr` to tolerate test stubs that bypass `__init__`.
+- Version metadata bumped 2.3.5 → 2.3.7 across `main.py`, `pyproject.toml`,
+  `build_nuitka.py`, all `builder/plugin package/packages/*/module_package.json`,
+  `README.md`, `docs/README.md`, and the builder docs.
 
 ### Validation
 
-- Version metadata updated consistently across app, package, builder, and
-  release-tracking files
-- Repository prepared for Git tag `v2.3.6` and publication to both configured
-  GitHub remotes
+- 168/168 tests pass across `test_fast_viewer_pipeline.py`,
+  `test_priority_retry_dedup.py`, `test_socket_client_cancellation.py`.
+- Log 100 (PC A, Windows, low-config) shows worst `ui_lag_max_ms` = 280,
+  avg ~150. `handler_p95_ms` ≈ 2 on all drag KPIs. Cache `src=hit` ratio
+  dominant across multi-second drags.
 
 ### Notes
 
-- This entry records the repository publication state for the `v2.3.6` stable
-  checkpoint.
-- Earlier stable entries remain below as historical context.
+- Rules R1–R12, R14 from v2.3.6 remain intact. R13 is the only rule whose
+  default state changed; its infrastructure (viewer-side flag touching,
+  subprocess-side poller, env gate) is preserved behind the opt-in env var.
 
 ---
 

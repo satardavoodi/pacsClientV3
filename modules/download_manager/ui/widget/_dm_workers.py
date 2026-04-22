@@ -411,6 +411,41 @@ class _DMWorkersMixin:
         Performance improvement: 100x reduction in state store calls
         """
         try:
+            # Adapt throttle interval to system load. During protected drag
+            # (user actively stack-scrolling with mouse drag), bump the DM
+            # progress fan-out from 100ms -> 750ms so main-thread slots
+            # aren't firing 10x/second while the user is interacting.
+            # This was the #1 cause of event_p50 == 106-150ms during
+            # drag+download overlap in log 92.
+            #
+            # v2.3.6 game-changer #4: during protected drag, ALSO skip
+            # the apply pass entirely. Each tick chains ~4-5 main-thread
+            # slots (state_store.update + studyProgressUpdated +
+            # seriesProgressUpdated + on_series_progress + per-viewer
+            # progressive handlers), which totals 30-100ms of main-thread
+            # work on slow PCs. Pending updates accumulate in
+            # self._pending_progress and are flushed on the first tick
+            # after the drag releases the protected latch.
+            try:
+                from modules.viewer.fast import ui_throttle as _ui_throttle
+                protected = _ui_throttle.is_protected_drag_active()
+                if protected:
+                    target_interval = 1500
+                elif _ui_throttle.is_heavy_download_active():
+                    target_interval = 200
+                else:
+                    target_interval = 100
+                if self._progress_throttle_timer.interval() != target_interval:
+                    self._progress_throttle_timer.setInterval(target_interval)
+                if protected:
+                    # Keep the timer alive so it re-fires after the drag
+                    # ends, but don't do the expensive apply work now.
+                    if self._pending_progress and not self._progress_throttle_timer.isActive():
+                        self._progress_throttle_timer.start()
+                    return
+            except Exception:
+                pass
+
             if not self._pending_progress:
                 # No pending updates, stop timer
                 self._progress_throttle_timer.stop()

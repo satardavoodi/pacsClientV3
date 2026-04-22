@@ -19,6 +19,7 @@ Version: v1.0.0 (2026-03-02)
 
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import time
@@ -35,6 +36,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QWidget
 
 from modules.viewer.fast.stack_drag_profile import build_stack_drag_profile
+from modules.viewer.fast import ui_throttle
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +137,7 @@ class QtSliceViewer(QWidget):
     """
 
     slice_scroll_requested = Signal(int)        # delta slices
+    stack_drag_target_requested = Signal(int)   # absolute slice target during drag
     stack_drag_state_changed = Signal(bool)     # True=started, False=stopped (B3.3)
     window_level_changed = Signal(float, float) # window, level
     zoom_changed = Signal(float)                # zoom factor
@@ -162,6 +165,9 @@ class QtSliceViewer(QWidget):
     STACK_DRAG_POLICY_ADAPTIVE = "adaptive"
     STACK_DRAG_POLICY_CLEARCANVAS = "clearcanvas_directional"
     STACK_DRAG_EDGE_GRACE_PX = 12.0
+    LARGE_STACK_SKIP_MIN_SLICES = 100
+    LARGE_STACK_SKIP_SPEED_MULTIPLIER = 45.0
+    LARGE_STACK_SKIP_DELTA = 2
     _MEASUREMENT_TOOLS = frozenset({
         "ruler", "angle", "two_line_angle",
         "roi_rect", "roi_circle", "arrow", "text", "eraser",
@@ -233,7 +239,16 @@ class QtSliceViewer(QWidget):
         self._stacked_dragging: bool = False
         self._stacked_last_y: float = 0.0
         self._stacked_accum: float = 0.0
+        self._stacked_last_emitted_target: Optional[int] = None
         self._stacked_first_step_pending: bool = False
+        self._stack_drag_session_active: bool = False
+        self._stack_drag_session_slice_hint: int = 0
+        self._stack_drag_session_threshold_px: float = 0.0
+        self._stack_drag_session_max_steps: int = 1
+        self._stack_drag_session_first_step_scale: float = 0.65
+        self._stack_drag_last_move_monotonic: Optional[float] = None
+        self._stack_drag_speed_px_per_sec: float = 0.0
+        self._stack_drag_skip_lane_active: bool = False
 
         # Current displayed slice index (used by tool controller and coord resolver)
         self._current_slice_index: int = 0
@@ -279,7 +294,7 @@ class QtSliceViewer(QWidget):
     # ── Public API ──────────────────────────────────────────────────────
 
     def set_image(self, qimage: QImage) -> None:
-        """Set the image to display. Converts QImage to QPixmap for fast painting."""
+        """Set the image to display."""
         if qimage is None or qimage.isNull():
             self._pixmap = None
             self._image_width = 0
@@ -506,6 +521,19 @@ class QtSliceViewer(QWidget):
 
         # Stack drag must not carry stale momentum across a live slice-count
         # policy change (for example while progressive download grows).
+        if old_hint != new_hint and self._stack_drag_session_active:
+            logger.debug(
+                "[B3.4_DIAG] STACK_HINT_DEFERRED viewer=%s old=%d new=%d dragging=%s accum=%.2f threshold_px=%.2f max_steps=%d",
+                self._debug_viewer_id,
+                old_hint,
+                new_hint,
+                bool(self._stacked_dragging),
+                float(self._stacked_accum),
+                float(self._stack_drag_session_threshold_px),
+                int(self._stack_drag_session_max_steps),
+            )
+            return
+
         if old_hint != new_hint and (self._stacked_dragging or abs(self._stacked_accum) > 1e-6):
             accum_before = float(self._stacked_accum)
             accum_after = 0.0
@@ -520,7 +548,7 @@ class QtSliceViewer(QWidget):
                     cap = max(0.0, float(new_threshold) * 0.95)
                     if cap > 0.0:
                         accum_after = max(-cap, min(cap, accum_after))
-            logger.info(
+            logger.debug(
                 "[B3.4_DIAG] STACK_HINT_RESET viewer=%s old=%d new=%d dragging=%s accum_before=%.2f accum_after=%.2f preserved=%s",
                 self._debug_viewer_id,
                 old_hint,
@@ -591,6 +619,131 @@ class QtSliceViewer(QWidget):
     def _get_stack_drag_profile(self) -> tuple[float, int]:
         return self._get_stack_drag_profile_for_count(self._total_slices_hint)
 
+    def _get_active_stack_drag_profile(self) -> tuple[float, int, float]:
+        """Return the drag profile currently governing emitted drag steps."""
+        if self._stack_drag_session_active:
+            return (
+                float(max(1.0, self._stack_drag_session_threshold_px)),
+                int(max(1, self._stack_drag_session_max_steps)),
+                float(max(0.1, self._stack_drag_session_first_step_scale)),
+            )
+
+        threshold_px, max_steps = self._get_stack_drag_profile()
+        first_step_scale = float(
+            getattr(
+                build_stack_drag_profile(self._total_slices_hint),
+                'first_step_threshold_scale',
+                0.65,
+            )
+        )
+        return (
+            float(max(1.0, threshold_px)),
+            int(max(1, max_steps)),
+            float(max(0.1, first_step_scale)),
+        )
+
+    def _begin_stack_drag_session(self) -> None:
+        """Freeze drag sensitivity for the lifetime of one drag gesture."""
+        # Signal protected UI mode: pause background work during drag.
+        # Grace window covers the typical max inter-move gap (~1.5s) so the
+        # protection stays armed between moves. Keepalive from mouseMoveEvent
+        # extends it further for long drags.
+        ui_throttle.record_protected_drag(True, grace_ms=1500.0)
+
+        # v2.3.6 game-changer #4: Suppress Python GC during stack drag.
+        # Gen-2 GC pauses can block the main thread 100-500ms on apps with
+        # many objects (our app has multi-viewer + cache + pydicom). That
+        # is the primary cause of event_p50 = 44-368ms gaps in log 94.
+        # The re-enable timer is (re)started on _end_stack_drag_session.
+        try:
+            if not getattr(self, '_gc_suppressed_drag', False):
+                gc.disable()
+                self._gc_suppressed_drag = True
+            # Cancel any pending re-enable; the drag is continuing.
+            timer = getattr(self, '_gc_reenable_timer', None)
+            if timer is not None:
+                try:
+                    timer.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        threshold_px, max_steps = self._get_stack_drag_profile()
+        first_step_scale = float(
+            getattr(
+                build_stack_drag_profile(self._total_slices_hint),
+                'first_step_threshold_scale',
+                0.65,
+            )
+        )
+        self._stack_drag_session_active = True
+        self._stack_drag_session_slice_hint = int(max(0, self._total_slices_hint))
+        self._stack_drag_session_threshold_px = float(max(1.0, threshold_px))
+        self._stack_drag_session_max_steps = int(max(1, max_steps))
+        self._stack_drag_session_first_step_scale = float(max(0.1, first_step_scale))
+        self._stack_drag_last_move_monotonic = time.perf_counter()
+        self._stack_drag_speed_px_per_sec = 0.0
+        self._stack_drag_skip_lane_active = False
+
+    def _end_stack_drag_session(self) -> None:
+        """Clear the frozen drag policy so the next gesture uses fresh hints."""
+        # Clear protected UI mode, but keep a short tail so background work
+        # doesn't reflood the main thread the instant the finger lifts.
+        ui_throttle.record_protected_drag(False, grace_ms=250.0)
+
+        # v2.3.6 game-changer #4: Schedule GC re-enable on a short delay so
+        # a burst of short drags doesn't pay the GC pause tax between them.
+        try:
+            timer = getattr(self, '_gc_reenable_timer', None)
+            if timer is None:
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._reenable_gc_after_drag)
+                self._gc_reenable_timer = timer
+            timer.stop()
+            timer.start(1500)
+        except Exception:
+            pass
+
+        self._stack_drag_session_active = False
+        self._stack_drag_session_slice_hint = 0
+        self._stack_drag_session_threshold_px = 0.0
+        self._stack_drag_session_max_steps = 1
+        self._stack_drag_session_first_step_scale = 0.65
+        self._stack_drag_last_move_monotonic = None
+        self._stack_drag_speed_px_per_sec = 0.0
+        self._stack_drag_skip_lane_active = False
+        self._stacked_last_emitted_target = None
+
+    def _reenable_gc_after_drag(self) -> None:
+        """Re-enable Python GC after stack drag settles (v2.3.6 game-changer #4)."""
+        try:
+            if getattr(self, '_gc_suppressed_drag', False):
+                gc.enable()
+                self._gc_suppressed_drag = False
+        except Exception as exc:
+            logger.warning("qt_slice_viewer: GC re-enable failed: %s", exc)
+
+    def _update_stack_drag_speed(self, dy: float) -> float:
+        """Update smoothed drag speed for the active stack-drag gesture."""
+        now = time.perf_counter()
+        prev = self._stack_drag_last_move_monotonic
+        self._stack_drag_last_move_monotonic = now
+        if prev is None:
+            self._stack_drag_speed_px_per_sec = 0.0
+            return 0.0
+
+        dt = max(1e-4, float(now - prev))
+        instantaneous = abs(float(dy)) / dt
+        prior = float(self._stack_drag_speed_px_per_sec)
+        if prior <= 0.0:
+            smoothed = instantaneous
+        else:
+            smoothed = max(instantaneous, (prior * 0.72) + (instantaneous * 0.28))
+        self._stack_drag_speed_px_per_sec = float(smoothed)
+        return float(smoothed)
+
     @staticmethod
     def _sign(value: float) -> int:
         if value > 0:
@@ -645,7 +798,7 @@ class QtSliceViewer(QWidget):
 
         return float(max(64.0, min(widget_h, rendered_h)))
 
-    def _consume_stack_drag_delta(self, dy: float) -> int:
+    def _consume_stack_drag_delta(self, dy: float, *, speed_px_per_sec: float = 0.0) -> int:
         """Convert vertical drag delta to bounded slice steps.
 
         Wheel scrolling is intentionally precise (±1 slice per event), while
@@ -666,18 +819,15 @@ class QtSliceViewer(QWidget):
                 return -1
             return 0
 
-        threshold_px, max_steps = self._get_stack_drag_profile()
-        threshold_px = max(1.0, float(threshold_px))
-        max_steps = max(1, int(max_steps))
+        threshold_px, max_steps, first_step_scale = self._get_active_stack_drag_profile()
         first_step_pending = bool(self._stacked_first_step_pending)
-        first_step_scale = float(getattr(build_stack_drag_profile(self._total_slices_hint), 'first_step_threshold_scale', 0.65))
         effective_threshold_px = threshold_px * (first_step_scale if first_step_pending else 1.0)
         effective_threshold_px = max(1.0, float(effective_threshold_px))
 
         pending_sign = self._sign(self._stacked_accum)
         incoming_sign = self._sign(dy)
         if pending_sign != 0 and incoming_sign != 0 and pending_sign != incoming_sign:
-            logger.info(
+            logger.debug(
                 "[B3.4_DIAG] STACK_DRAG_REVERSAL viewer=%s pending_sign=%d incoming_sign=%d accum_before=%.2f dy=%.2f",
                 self._debug_viewer_id,
                 pending_sign,
@@ -702,6 +852,16 @@ class QtSliceViewer(QWidget):
             self._stacked_accum = 0.0
             return int(emit_steps)
 
+        if self._should_use_large_stack_skip_lane(
+            dy=dy,
+            raw_steps=raw_steps,
+            threshold_px=threshold_px,
+            speed_px_per_sec=speed_px_per_sec,
+        ):
+            emit_steps = self._sign(float(raw_steps)) * self.LARGE_STACK_SKIP_DELTA
+            self._stacked_accum = 0.0
+            return int(emit_steps)
+
         emit_steps = self._clamp_int(raw_steps, -max_steps, max_steps)
         if abs(raw_steps) > max_steps:
             # Oversized drag events are bounded, not queued. Keep only the
@@ -710,6 +870,50 @@ class QtSliceViewer(QWidget):
         else:
             self._stacked_accum -= float(emit_steps) * threshold_px
         return int(emit_steps)
+
+    def _should_use_large_stack_skip_lane(
+        self,
+        *,
+        dy: float,
+        raw_steps: int,
+        threshold_px: float,
+        speed_px_per_sec: float,
+    ) -> bool:
+        """Return True when drag should switch to the every-other-slice lane.
+
+        UX intent for very large stacks:
+        - wheel remains exact and one-slice precise
+        - slow drag remains exact and one-slice precise
+        - only genuinely fast drag on stacks >100 may move in even steps
+
+        Because the delta is applied relative to the current slice in the
+        bridge, entering this lane naturally preserves parity. If the user
+        wheels once to slice 1, subsequent fast drag steps become 1, 3, 5...
+        without extra state or remapping.
+        """
+        total_slices = int(max(0, self._total_slices_hint))
+        if total_slices <= self.LARGE_STACK_SKIP_MIN_SLICES:
+            self._stack_drag_skip_lane_active = False
+            return False
+        if abs(int(raw_steps)) < 1:
+            self._stack_drag_skip_lane_active = False
+            return False
+        speed_gate_px_per_sec = max(
+            1.0,
+            float(threshold_px) * float(self.LARGE_STACK_SKIP_SPEED_MULTIPLIER),
+        )
+        hold_gate_px_per_sec = speed_gate_px_per_sec * 0.6
+        active = bool(getattr(self, '_stack_drag_skip_lane_active', False))
+        if float(speed_px_per_sec) >= speed_gate_px_per_sec:
+            self._stack_drag_skip_lane_active = True
+            return True
+        if active and float(speed_px_per_sec) >= hold_gate_px_per_sec:
+            return True
+        if abs(float(dy)) >= max(1.0, float(threshold_px) * 2.25):
+            self._stack_drag_skip_lane_active = True
+            return True
+        self._stack_drag_skip_lane_active = False
+        return False
 
     @staticmethod
     def _clamp_int(v: int, lo: int, hi: int) -> int:
@@ -934,8 +1138,10 @@ class QtSliceViewer(QWidget):
                     return
                 self._stacked_dragging = True
                 self._stacked_last_y = pos.y()
+                self._stacked_last_emitted_target = int(self._current_slice_index)
                 self._stacked_accum = 0.0  # accumulated drag pixels
                 self._stacked_first_step_pending = True
+                self._begin_stack_drag_session()
                 self._begin_scroll_interaction()
                 self.stack_drag_state_changed.emit(True)  # B3.3
                 event.accept()
@@ -966,8 +1172,10 @@ class QtSliceViewer(QWidget):
                     return
                 self._stacked_dragging = True
                 self._stacked_last_y = pos.y()
+                self._stacked_last_emitted_target = int(self._current_slice_index)
                 self._stacked_accum = 0.0  # accumulated drag pixels
                 self._stacked_first_step_pending = True
+                self._begin_stack_drag_session()
                 self._begin_scroll_interaction()
                 self.stack_drag_state_changed.emit(True)  # B3.3
                 event.accept()
@@ -1042,17 +1250,10 @@ class QtSliceViewer(QWidget):
             # Stop stack interaction immediately once pointer leaves either
             # the viewer page or the actual image area.
             if not self._is_stack_position_valid(pos):
-                logger.info(
-                    "[B3.4_DIAG] STACK_DRAG_CANCEL viewer=%s slice=%d reason=pointer_left_image accum=%.2f pos=(%.1f,%.1f)",
-                    self._debug_viewer_id,
-                    self._current_slice_index,
-                    float(self._stacked_accum),
-                    float(pos.x()),
-                    float(pos.y()),
-                )
                 self._stacked_dragging = False
                 self._stacked_accum = 0.0
                 self._stacked_first_step_pending = False
+                self._end_stack_drag_session()
                 self._defer_scroll_settle()
                 self.stack_drag_state_changed.emit(False)  # B3.3
                 event.accept()
@@ -1065,13 +1266,30 @@ class QtSliceViewer(QWidget):
                 event.accept()
                 return
 
-            emit_steps = self._consume_stack_drag_delta(dy)
-            if emit_steps != 0:
-                # Emit the full signed delta once so the bridge can apply the
-                # intended movement atomically. Emitting a loop of ±1 signals
-                # makes stack drag vulnerable to event-loop timing drops and
-                # produces the exact "one step then sticks" behavior users saw.
-                self.slice_scroll_requested.emit(int(emit_steps))
+            drag_speed = self._update_stack_drag_speed(dy)
+            # Keep protected-drag window armed for the full duration of the
+            # drag: every delivered mouseMove refreshes the deadline by 1500ms.
+            try:
+                ui_throttle.keepalive_protected_drag(1500.0)
+            except Exception:
+                pass
+            if self._stack_drag_policy == self.STACK_DRAG_POLICY_CLEARCANVAS:
+                emit_steps = self._consume_stack_drag_delta(dy, speed_px_per_sec=drag_speed)
+                if emit_steps != 0:
+                    self.slice_scroll_requested.emit(int(emit_steps))
+            else:
+                emit_steps = self._consume_stack_drag_delta(dy, speed_px_per_sec=drag_speed)
+                if emit_steps != 0:
+                    base_target = self._stacked_last_emitted_target
+                    if base_target is None:
+                        base_target = int(self._current_slice_index)
+                    target_slice = self._clamp_int(
+                        int(base_target) + int(emit_steps),
+                        0,
+                        n - 1,
+                    )
+                    self._stacked_last_emitted_target = int(target_slice)
+                    self.stack_drag_target_requested.emit(int(target_slice))
             event.accept()
             return
 
@@ -1144,6 +1362,7 @@ class QtSliceViewer(QWidget):
                 self._stacked_dragging = False
                 self._zoom_dragging = False
                 if _was_stacking:
+                    self._end_stack_drag_session()
                     self._defer_scroll_settle()
                     self.stack_drag_state_changed.emit(False)  # B3.3
                 event.accept()
@@ -1159,6 +1378,7 @@ class QtSliceViewer(QWidget):
             if self._stacked_dragging:
                 self._stacked_dragging = False
                 self._stacked_first_step_pending = False
+                self._end_stack_drag_session()
                 self._defer_scroll_settle()
                 self.stack_drag_state_changed.emit(False)  # B3.3
                 event.accept()
@@ -1412,7 +1632,7 @@ class QtSliceViewer(QWidget):
     def _on_scroll_stopped(self) -> None:
         """Called shortly after wheel/drag settles — re-enable tool annotations."""
         self._in_wheel_scroll = False
-        logger.info(
+        logger.debug(
             "[B3.4_DIAG] QT_SCROLL_SETTLE viewer=%s slice=%d stacked_dragging=%s accum=%.2f",
             self._debug_viewer_id,
             self._current_slice_index,

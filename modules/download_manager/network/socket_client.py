@@ -50,6 +50,27 @@ from modules.network.socket_token_manager import get_socket_token_manager
 logger = logging.getLogger(__name__)
 _download_progress_aggregator = DownloadProgressAggregator(logger, interval_seconds=2.0)
 
+
+def _cancelled_response(message: str = "Download cancelled (preemption)") -> Dict[str, Any]:
+    """Build a normalized response for expected cancellation/preemption."""
+    return {
+        "status": "cancelled",
+        "message": message,
+        "cancelled": True,
+    }
+
+
+def _is_expected_preemption(exc_or_message: Any) -> bool:
+    """Return True when the exception/message represents expected cancellation."""
+    text = str(exc_or_message or "").lower()
+    if not text:
+        return False
+    return (
+        "preemption" in text
+        or "cancelled via process cancel event" in text
+        or "download cancelled" in text
+    )
+
 # Singleton health monitor instance (shared across all socket clients)
 _health_monitor: Optional[ConnectionHealthMonitor] = None
 
@@ -727,6 +748,16 @@ class SocketDicomClient:
                 raise NetworkError(f"Too many broadcast messages, no response received")
 
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as e:
+                if self.is_cancelled() or _is_expected_preemption(e):
+                    logger.info(f"⏸️ Request cancelled for {endpoint}: {e}")
+                    self.connected = False
+                    if self.socket:
+                        try:
+                            self.socket.close()
+                        except:
+                            pass
+                        self.socket = None
+                    return _cancelled_response()
                 logger.error(f"❌ Connection reset error for {endpoint}: {e}")
                 import traceback
                 logger.error(f"❌ Traceback: {traceback.format_exc()}")
@@ -742,6 +773,16 @@ class SocketDicomClient:
                 self.health_monitor.record_failure()
                 return None
             except Exception as e:
+                if self.is_cancelled() or _is_expected_preemption(e):
+                    logger.info(f"⏸️ Request cancelled for {endpoint}: {e}")
+                    self.connected = False
+                    if self.socket:
+                        try:
+                            self.socket.close()
+                        except:
+                            pass
+                        self.socket = None
+                    return _cancelled_response()
                 logger.error(f"❌ Request error for {endpoint}: {e}")
                 import traceback
                 logger.error(f"❌ Traceback: {traceback.format_exc()}")
@@ -842,12 +883,22 @@ class SocketDicomClient:
         })
         
         if response:
-            logger.info(
-                f"📥 download_batch: status={response.get('status', 'unknown')}",
-                extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
-            )
+            status = response.get('status', 'unknown')
+            if status == 'cancelled':
+                logger.info(
+                    f"⏸️ download_batch cancelled: {response.get('message', 'preemption')}",
+                    extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                )
+            else:
+                logger.info(
+                    f"📥 download_batch: status={status}",
+                    extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                )
         else:
-            logger.warning(f"📥 download_batch: No response received!")
+            if self.is_cancelled():
+                logger.info(f"⏸️ download_batch cancelled before response")
+            else:
+                logger.warning(f"📥 download_batch: No response received!")
         
         return response
     
@@ -996,6 +1047,19 @@ class SocketDicomClient:
             )
             
             logger.debug(f"📦 Batch {batch_idx + 1} response received: {response is not None}")
+
+            if response and response.get('status') == 'cancelled':
+                logger.info(f"⏸️ Batch {batch_idx + 1} cancelled by preemption")
+                return SeriesDownloadResult(
+                    success=False,
+                    series_uid=series_uid,
+                    series_number=series_number,
+                    downloaded=downloaded_count,
+                    skipped=skipped_count,
+                    total=expected_count,
+                    elapsed_seconds=time.time() - start_time,
+                    error_message=response.get('message', 'Download cancelled (preemption)')
+                )
             
             if not response or response.get('status') != 'success':
                 # Better error extraction with full response logging
@@ -1224,7 +1288,7 @@ class SocketDicomClient:
             # R25: Check for cancellation before each attempt
             if self.is_cancelled():
                 logger.info(f"⏸️ Batch download cancelled")
-                return None
+                return _cancelled_response()
             
             request_start = time.time()
             
@@ -1244,6 +1308,9 @@ class SocketDicomClient:
 
                 if response:
                     status = response.get('status', 'unknown')
+                    if status == 'cancelled':
+                        logger.info(f"⏸️ Batch attempt {attempt + 1} cancelled")
+                        return response
                     logger.debug(f"🔄 Response status: {status}")
                     
                     # R30: Record success with latency
@@ -1252,11 +1319,17 @@ class SocketDicomClient:
                     
                     return response
                 else:
+                    if self.is_cancelled():
+                        logger.info(f"⏸️ Attempt {attempt + 1}: Cancelled before response")
+                        return _cancelled_response()
                     logger.warning(f"⚠️ Attempt {attempt + 1}: Empty response")
                     # R30: Record failure
                     self.health_monitor.record_failure()
             
             except Exception as e:
+                if self.is_cancelled() or _is_expected_preemption(e):
+                    logger.info(f"⏸️ Batch download attempt {attempt + 1} cancelled: {e}")
+                    return _cancelled_response()
                 logger.warning(f"⚠️ Batch download attempt {attempt + 1} failed: {e}")
                 self._last_retry_count = attempt + 1
                 import traceback

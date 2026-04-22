@@ -1,10 +1,10 @@
-﻿{
+{
   "format_version": 1,
   "app_name": "AIPacs",
   "module_id": "offline_cloud_server",
   "title": "Offline Cloud Server",
   "tier": "basic",
-  "version": "2.3.6",
+  "version": "2.3.7",
   "package_kind": "core",
   "payload_dir": "payload",
   "python_paths": [

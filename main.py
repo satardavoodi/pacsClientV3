@@ -264,7 +264,7 @@ if __name__ == "__main__":
     configure_diagnostic_logging(process_role="main", force=True)
     logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
 
-    # ── BACKEND_SWITCH v2.3.6: Startup banner ────────────────────────────
+    # ── BACKEND_SWITCH v2.3.7: Startup banner ────────────────────────────
     try:
         from modules.viewer.viewer_backend_config import (
             load_viewer_backend as _load_vb,
@@ -397,6 +397,47 @@ if __name__ == "__main__":
 
     app = _AIPacsApplication(sys.argv)
 
+    # ── CPU BUDGET: Raise main process priority on Windows ───────────────
+    # Windows default NORMAL_PRIORITY_CLASS lets background apps (browsers,
+    # antivirus, Teams, Office) steal CPU from the main UI thread. On low-
+    # config machines this shows up as 75–950ms event-loop lag during drag
+    # even when the app itself would otherwise fit in the budget.
+    #
+    # ABOVE_NORMAL_PRIORITY_CLASS (0x00008000) biases the scheduler toward
+    # AIPacs without preempting system-critical work. We do NOT use HIGH
+    # (0x00000080) — it can starve disk I/O and make downloads slower.
+    #
+    # Override: set AIPACS_PRIORITY=normal to disable, AIPACS_PRIORITY=high
+    # for HIGH_PRIORITY_CLASS on dedicated viewing workstations.
+    # Child processes (decode service, warmup subprocess, DM workers)
+    # are NOT affected — they explicitly set their own priority class.
+    try:
+        if sys.platform == 'win32':
+            _pri_env = os.environ.get('AIPACS_PRIORITY', 'above_normal').strip().lower()
+            _pri_map = {
+                'normal':       0x00000020,   # NORMAL_PRIORITY_CLASS
+                'above_normal': 0x00008000,   # ABOVE_NORMAL_PRIORITY_CLASS
+                'high':         0x00000080,   # HIGH_PRIORITY_CLASS
+            }
+            _pri_class = _pri_map.get(_pri_env, 0x00008000)
+            if _pri_env != 'normal':
+                import ctypes
+                _k32 = ctypes.windll.kernel32
+                _hproc = _k32.GetCurrentProcess()
+                if _k32.SetPriorityClass(_hproc, _pri_class):
+                    logging.getLogger(__name__).info(
+                        "[CPU_BUDGET] Main process priority set to %s (class=0x%X)",
+                        _pri_env, _pri_class,
+                    )
+                else:
+                    logging.getLogger(__name__).warning(
+                        "[CPU_BUDGET] SetPriorityClass failed (err=%d); using Windows default",
+                        _k32.GetLastError(),
+                    )
+    except Exception as _pri_exc:
+        logging.getLogger(__name__).warning("[CPU_BUDGET] Priority boost skipped: %s", _pri_exc)
+    # ─────────────────────────────────────────────────────────────────────
+
     # ========================================================================
     # SINGLE-INSTANCE LOCK: Ensure only one AIPacs instance can run at a time
     # ========================================================================
@@ -418,7 +459,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("2.3.6")
+    app.setApplicationVersion("2.3.7")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -515,5 +556,12 @@ if __name__ == "__main__":
         try:
             from modules.viewer.fast.decode_service import shutdown_decode_service
             shutdown_decode_service()
+        except Exception:
+            pass
+        # Game-changer #1: flush async log listener before process exit so
+        # no records are lost to the queue on shutdown.
+        try:
+            from PacsClient.utils.diagnostic_logging import shutdown_diagnostic_logging
+            shutdown_diagnostic_logging()
         except Exception:
             pass

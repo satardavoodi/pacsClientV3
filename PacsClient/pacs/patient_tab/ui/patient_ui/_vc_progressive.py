@@ -9,6 +9,7 @@ import time
 from PySide6.QtCore import QTimer
 from modules.zeta_boost import ImageSliceBooster
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
+from PacsClient.utils.series_completeness import build_series_completeness_snapshot
 import logging
 
 try:
@@ -1526,7 +1527,13 @@ class _VCProgressiveMixin:
                 return  # don't fall through to step 6 (already cleaned up)
 
         # 6. Check if download completed
-        if admitted_count >= total and total > 0:
+        completion_snapshot = build_series_completeness_snapshot(
+            series_number,
+            expected_count=total,
+            disk_count=new_count,
+            viewer_visible_count=admitted_count,
+        )
+        if total > 0 and completion_snapshot.is_viewer_complete:
             if _finalize_progressive_series(
                 self,
                 series_number,
@@ -1737,7 +1744,12 @@ class _VCProgressiveMixin:
             # v2.2.9.2 â€” only exit progressive if all expected files arrived.
             # If the OS hasn't flushed the last batch, keep progressive mode
             # so that Layer 3 (500ms verify) can pick up the remaining files.
-            if expected_total > 0 and final_count < expected_total:
+            completion_snapshot = build_series_completeness_snapshot(
+                sn,
+                expected_count=expected_total,
+                disk_count=final_count,
+            )
+            if completion_snapshot.is_incomplete:
                 all_viewers_complete = False
                 self.logger.info(
                     "progressive: download-complete but grow incomplete series=%s "
@@ -1916,7 +1928,12 @@ class _VCProgressiveMixin:
                             viewer_sn = ""
                         if viewer_sn != sn:
                             continue
-                        if vtk_w.get_count_of_slices() < cached_disk:
+                        viewer_snapshot = build_series_completeness_snapshot(
+                            sn,
+                            expected_count=cached_disk,
+                            viewer_visible_count=vtk_w.get_count_of_slices(),
+                        )
+                        if not viewer_snapshot.is_viewer_complete:
                             all_ok = False
                             break
                     if all_ok:
@@ -1961,7 +1978,12 @@ class _VCProgressiveMixin:
                 continue
 
             current_count = vtk_w.get_count_of_slices()
-            if current_count >= disk_count:
+            viewer_snapshot = build_series_completeness_snapshot(
+                sn,
+                expected_count=disk_count,
+                viewer_visible_count=current_count,
+            )
+            if viewer_snapshot.is_viewer_complete:
                 self.logger.debug(
                     "completion-verify: series=%s OK (viewer=%d disk=%d)",
                     sn, current_count, disk_count,
@@ -1983,7 +2005,13 @@ class _VCProgressiveMixin:
                     self.logger.info(
                         "completion-verify: series=%s grew to %d", sn, new_count,
                     )
-                    if new_count >= disk_count:
+                    grown_snapshot = build_series_completeness_snapshot(
+                        sn,
+                        expected_count=disk_count,
+                        disk_count=disk_count,
+                        viewer_visible_count=new_count,
+                    )
+                    if grown_snapshot.is_viewer_complete:
                         _finalize_progressive_series(
                             self,
                             sn,
@@ -2080,7 +2108,12 @@ class _VCProgressiveMixin:
 
                 _found_viewer = True
                 current_count = vtk_w.get_count_of_slices()
-                if current_count >= disk_count:
+                viewer_snapshot = build_series_completeness_snapshot(
+                    sn,
+                    expected_count=disk_count,
+                    viewer_visible_count=current_count,
+                )
+                if viewer_snapshot.is_viewer_complete:
                     resolved.add((sn, expected_total))
                     break
 
@@ -2095,7 +2128,13 @@ class _VCProgressiveMixin:
                             "completion-sweep: grew series=%s from %d to %d (disk=%d)",
                             sn, current_count, new_count, disk_count,
                         )
-                        if new_count >= disk_count:
+                        grown_snapshot = build_series_completeness_snapshot(
+                            sn,
+                            expected_count=disk_count,
+                            disk_count=disk_count,
+                            viewer_visible_count=new_count,
+                        )
+                        if grown_snapshot.is_viewer_complete:
                             _finalize_progressive_series(
                                 self,
                                 sn,

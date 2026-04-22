@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import queue
 import struct
 import threading
 import time
@@ -40,6 +41,7 @@ _HEADER_MAGIC = b"APDC"  # AiPacs Disk Cache
 _HEADER_VERSION = 1
 _HEADER_FMT = "<4s B B 2I"  # magic(4) + version(1) + dtype_code(1) + rows(4) + cols(4) = 14 bytes
 _HEADER_SIZE = struct.calcsize(_HEADER_FMT)
+_WRITE_QUEUE_MAXSIZE = 64
 
 _DTYPE_MAP = {
     0: np.int16,
@@ -69,9 +71,17 @@ class DiskPixelCache:
         # OrderedDict: cache_key -> (file_path, size_bytes, last_access)
         self._index: OrderedDict[str, Tuple[Path, int, float]] = OrderedDict()
         self._total_bytes = 0
-        self._write_executor = threading.Thread(target=lambda: None, daemon=True)
-        self._pending_writes: list = []
-        self._write_lock = threading.Lock()
+        self._write_queue: "queue.Queue[Optional[Tuple[str, Path, Path, str, np.ndarray]]]" = queue.Queue(
+            maxsize=_WRITE_QUEUE_MAXSIZE
+        )
+        self._deferred_lock = threading.Lock()
+        self._deferred_writes: "OrderedDict[str, Tuple[str, Path, Path, str, np.ndarray]]" = OrderedDict()
+        self._write_thread = threading.Thread(
+            target=self._write_worker,
+            name="DiskPixelCacheWriter",
+            daemon=True,
+        )
+        self._write_thread.start()
         self._initialized = False
 
     def initialize(self) -> None:
@@ -148,6 +158,8 @@ class DiskPixelCache:
         sop_instance_uid: str,
         study_uid: str,
         arr: np.ndarray,
+        *,
+        defer: bool = False,
     ) -> None:
         """Store a decoded pixel array to disk (async, fire-and-forget)."""
         if not self._initialized:
@@ -161,21 +173,49 @@ class DiskPixelCache:
         target_dir = self._root / study_hash
         target_path = target_dir / f"{key}.apc"
 
-        # Fire-and-forget write on background thread
-        t = threading.Thread(
-            target=self._write_file,
-            args=(key, target_dir, target_path, study_uid, arr.copy()),
-            daemon=True,
-        )
-        t.start()
+        if defer:
+            self._defer_write(key, target_dir, target_path, study_uid, arr)
+            return
+
+        try:
+            self._write_queue.put_nowait((key, target_dir, target_path, study_uid, arr))
+        except queue.Full:
+            logger.debug("[B3.12] Disk pixel cache write dropped: queue full key=%s", key)
+
+    def flush_deferred(self, max_items: Optional[int] = None) -> int:
+        """Move deferred writes into the single writer queue.
+
+        Protected drag uses this to keep the hot path free of noncritical disk
+        writes while still preserving the decoded pixels for later re-open
+        speedups once the drag session settles.
+        """
+        flushed = 0
+        limit = None if max_items is None else max(0, int(max_items))
+        while limit is None or flushed < limit:
+            with self._deferred_lock:
+                try:
+                    key, item = next(iter(self._deferred_writes.items()))
+                except StopIteration:
+                    break
+            try:
+                self._write_queue.put_nowait(item)
+            except queue.Full:
+                break
+            with self._deferred_lock:
+                self._deferred_writes.pop(key, None)
+            flushed += 1
+        return flushed
 
     def clear(self) -> None:
         """Delete all cached files."""
         with self._lock:
             self._index.clear()
             self._total_bytes = 0
+        with self._deferred_lock:
+            self._deferred_writes.clear()
         try:
             import shutil
+            self._drain_write_queue()
             if self._root.exists():
                 shutil.rmtree(self._root)
                 self._root.mkdir(parents=True, exist_ok=True)
@@ -190,9 +230,51 @@ class DiskPixelCache:
                 "entries": len(self._index),
                 "total_mb": self._total_bytes / (1024 * 1024),
                 "max_mb": self._max_size_bytes / (1024 * 1024),
+                "write_queue_depth": self._write_queue.qsize(),
+                "deferred_queue_depth": len(self._deferred_writes),
             }
 
     # ── Private ───────────────────────────────────────────────────────
+
+    def _defer_write(
+        self,
+        key: str,
+        target_dir: Path,
+        target_path: Path,
+        study_uid: str,
+        arr: np.ndarray,
+    ) -> None:
+        """Queue a protected-drag write for later flush via the single writer."""
+        item = (key, target_dir, target_path, study_uid, np.ascontiguousarray(arr).copy())
+        dropped_key = None
+        with self._deferred_lock:
+            self._deferred_writes[key] = item
+            self._deferred_writes.move_to_end(key)
+            while len(self._deferred_writes) > _WRITE_QUEUE_MAXSIZE:
+                dropped_key, _ = self._deferred_writes.popitem(last=False)
+        if dropped_key is not None:
+            logger.debug("[B3.12] Deferred disk cache write dropped: backlog full key=%s", dropped_key)
+
+    def _drain_write_queue(self) -> None:
+        while True:
+            try:
+                self._write_queue.get_nowait()
+                self._write_queue.task_done()
+            except queue.Empty:
+                return
+
+    def _write_worker(self) -> None:
+        while True:
+            item = self._write_queue.get()
+            try:
+                if item is None:
+                    return
+                key, target_dir, target_path, study_uid, arr = item
+                self._write_file(key, target_dir, target_path, study_uid, arr.copy())
+            except Exception:
+                logger.exception("[B3.12] Disk pixel cache writer failed")
+            finally:
+                self._write_queue.task_done()
 
     def _write_file(
         self,

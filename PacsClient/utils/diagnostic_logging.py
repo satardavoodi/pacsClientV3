@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import atexit
 import contextvars
 import logging
-from logging.handlers import RotatingFileHandler
+import queue
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 import os
 import platform
 import sys
@@ -12,12 +14,19 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 
 _LOG_CONTEXT: contextvars.ContextVar[Dict[str, str]] = contextvars.ContextVar("aipacs_log_context", default={})
 _COMPONENT_LEVELS: Dict[str, int] = {}
 _COMPONENT_LEVEL_LOCK = threading.Lock()
+
+# Async logging state — file I/O runs on a background thread so `logger.info()`
+# on the Qt main thread is a non-blocking queue.put(). See game-changer #1
+# (eliminates 50-150ms of synchronous disk I/O per drag cycle).
+_ASYNC_LOG_QUEUE: Optional["queue.Queue[logging.LogRecord]"] = None
+_ASYNC_LOG_LISTENER: Optional[QueueListener] = None
+_ASYNC_LOG_LOCK = threading.Lock()
 
 _DEFAULT_COMPONENT_THRESHOLDS = {
     "viewer": logging.INFO,
@@ -295,6 +304,83 @@ def _ensure_logs_dir() -> Path:
     return logs_dir
 
 
+def _install_async_file_logging(
+    root: logging.Logger,
+    file_handlers: List[logging.Handler],
+) -> None:
+    """Route ``file_handlers`` behind a single QueueListener.
+
+    The foreground (Qt main thread + worker threads) only enqueues LogRecords;
+    actual formatting, filtering, file I/O, and rotation all happen on the
+    dedicated listener thread. This removes synchronous disk I/O from the
+    hot path.
+
+    Safe to call multiple times (e.g. when ``force=True`` re-configures
+    logging): the previous listener is flushed and stopped before a new one
+    is started.
+    """
+    global _ASYNC_LOG_QUEUE, _ASYNC_LOG_LISTENER
+
+    with _ASYNC_LOG_LOCK:
+        # Tear down any previous listener before installing a new one.
+        prev_listener = _ASYNC_LOG_LISTENER
+        _ASYNC_LOG_LISTENER = None
+        _ASYNC_LOG_QUEUE = None
+    if prev_listener is not None:
+        try:
+            prev_listener.stop()
+        except Exception:
+            pass
+
+    # Unbounded queue: we never want to drop diagnostic records. If the
+    # listener falls behind, memory pressure shows up on the listener side,
+    # not as dropped logs on the producer side.
+    log_queue: "queue.Queue[logging.LogRecord]" = queue.Queue(-1)
+
+    # QueueListener owns the real file handlers. respect_handler_level=True
+    # so per-handler levels (DEBUG on both) still gate emission.
+    listener = QueueListener(log_queue, *file_handlers, respect_handler_level=True)
+    listener.daemon = True  # type: ignore[attr-defined]
+    listener.start()
+
+    queue_handler = QueueHandler(log_queue)
+    queue_handler.setLevel(logging.DEBUG)
+    # No formatter/filters on the QueueHandler itself: filters are attached
+    # to the real file handlers and run on the listener thread. Attaching
+    # them here would pay their cost on the main thread and defeat the
+    # purpose of the queue.
+    root.addHandler(queue_handler)
+
+    with _ASYNC_LOG_LOCK:
+        _ASYNC_LOG_QUEUE = log_queue
+        _ASYNC_LOG_LISTENER = listener
+
+
+def shutdown_diagnostic_logging(timeout_s: float = 2.0) -> None:
+    """Flush and stop the async log listener (if any).
+
+    Safe to call from atexit or from main.py's shutdown path. Idempotent.
+    ``timeout_s`` is a soft hint; QueueListener.stop() drains the queue
+    before returning.
+    """
+    global _ASYNC_LOG_QUEUE, _ASYNC_LOG_LISTENER
+    with _ASYNC_LOG_LOCK:
+        listener = _ASYNC_LOG_LISTENER
+        _ASYNC_LOG_LISTENER = None
+        _ASYNC_LOG_QUEUE = None
+    if listener is None:
+        return
+    try:
+        listener.stop()
+    except Exception:
+        pass
+
+
+# Best-effort atexit hook so logs are flushed even when shutdown paths in
+# main.py are bypassed (crashes, os._exit, etc.). Registered once at import.
+atexit.register(shutdown_diagnostic_logging)
+
+
 def configure_diagnostic_logging(process_role: str = "main", force: bool = True) -> str:
     with _COMPONENT_LEVEL_LOCK:
         _COMPONENT_LEVELS.clear()
@@ -324,6 +410,18 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
     max_bytes = int(os.getenv("AIPACS_LOG_MAX_BYTES", str(20 * 1024 * 1024)) or str(20 * 1024 * 1024))
     backup_count = int(os.getenv("AIPACS_LOG_BACKUP_COUNT", "3") or "3")
 
+    # ---- Async file logging (game-changer #1) ----------------------------
+    # File I/O is the single largest source of Qt main-thread stalls during
+    # drag/scroll (50-150ms per cycle from 50+ synchronous logger.info calls).
+    # We route all file handlers behind a QueueHandler: the call site only
+    # does a lock-free queue.put_nowait(); actual disk writes + rotation
+    # happen on a dedicated background listener thread. Filters/formatters
+    # run on the listener thread too, so the main thread only pays the cost
+    # of building the LogRecord (~5-15us).
+    #
+    # Escape hatch: AIPACS_LOG_SYNC=1 reverts to synchronous file handlers.
+    async_enabled = os.getenv("AIPACS_LOG_SYNC", "0").strip().lower() not in ("1", "true", "yes")
+
     viewer_handler = SafeRotatingFileHandler(
         logs_dir / "viewer_diagnostics.log",
         maxBytes=max_bytes,
@@ -334,7 +432,6 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
     viewer_handler.setFormatter(formatter)
     viewer_handler.addFilter(context_filter)
     viewer_handler.addFilter(ViewerOnlyFilter())
-    root.addHandler(viewer_handler)
 
     download_handler = SafeRotatingFileHandler(
         logs_dir / "download_diagnostics.log",
@@ -347,7 +444,12 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
     download_handler.addFilter(context_filter)
     download_handler.addFilter(DownloadOnlyFilter())
     download_handler.addFilter(threshold_filter)
-    root.addHandler(download_handler)
+
+    if async_enabled:
+        _install_async_file_logging(root, [viewer_handler, download_handler])
+    else:
+        root.addHandler(viewer_handler)
+        root.addHandler(download_handler)
 
     app_session_id = os.getenv("AIPACS_ACTION_SESSION_ID") or new_correlation_id("sess")
     os.environ["AIPACS_ACTION_SESSION_ID"] = app_session_id

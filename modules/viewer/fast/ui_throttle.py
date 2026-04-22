@@ -12,6 +12,7 @@ these subsystems directly.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Hashable, Optional
@@ -21,9 +22,62 @@ from modules.viewer.fast.system_load_controller import get_system_load_controlle
 from modules.viewer.fast.system_load_controller import BlockId
 from modules.viewer.fast.system_load_controller import WorkClass
 
+_logger = logging.getLogger("aipacs.ui_throttle")
 
 _LOCK = threading.Lock()
 _LAST_EVENT_MS: dict[Hashable, float] = {}
+_PROTECTED_DRAG_UNTIL_MS: float = 0.0
+_PROTECTED_DRAG_ACTIVE: bool = False  # Explicit latch; True from begin() to end()
+_PROTECTED_DRAG_BEGIN_MS: float = 0.0
+
+# v2.3.7 R13: cross-process drag-throttle signal.
+# The download subprocess (opt-in) polls this file's mtime to decide
+# whether to temporarily drop its OS priority during a protected drag.
+# R13 DISABLED BY DEFAULT after log 99 (priority inversion on the
+# IPC queue mutex caused ui_lag regression 229→412ms). Opt-in:
+# AIPACS_DRAG_SUBPROC_THROTTLE=1 to enable both viewer-side touching
+# and subprocess-side polling.
+_DRAG_FLAG_PATH: Optional[str] = None
+_DRAG_FLAG_LAST_TOUCH_MS: float = 0.0
+_DRAG_FLAG_MIN_INTERVAL_MS: float = 200.0  # rate-limit fs writes
+
+
+def _get_drag_flag_path() -> Optional[str]:
+    global _DRAG_FLAG_PATH
+    if _DRAG_FLAG_PATH is not None:
+        return _DRAG_FLAG_PATH or None
+    import os as _os
+    if _os.environ.get("AIPACS_DRAG_SUBPROC_THROTTLE", "0") != "1":
+        _DRAG_FLAG_PATH = ""
+        return None
+    try:
+        from aipacs_runtime import user_data_root as _udr
+        cache_dir = _udr() / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        _DRAG_FLAG_PATH = str(cache_dir / ".drag_active")
+    except Exception:
+        _DRAG_FLAG_PATH = ""
+    return _DRAG_FLAG_PATH or None
+
+
+def _touch_drag_flag() -> None:
+    """Rate-limited touch of the drag-active flag file (fs mtime = now)."""
+    global _DRAG_FLAG_LAST_TOUCH_MS
+    path = _get_drag_flag_path()
+    if not path:
+        return
+    now = _now_ms()
+    if now - _DRAG_FLAG_LAST_TOUCH_MS < _DRAG_FLAG_MIN_INTERVAL_MS:
+        return
+    _DRAG_FLAG_LAST_TOUCH_MS = now
+    try:
+        # Open-append-close is the cheapest way to update mtime on Windows.
+        with open(path, "ab") as _f:
+            pass
+        import os as _os
+        _os.utime(path, None)
+    except Exception:
+        pass
 
 # Optional per-tab orchestrator for download-session queries.
 # Set by ViewerController on tab init; cleared on teardown.
@@ -56,6 +110,82 @@ def _now_ms() -> float:
 def record_fast_interaction(active: bool, *, grace_ms: float = 250.0) -> None:
     """Record whether the viewer is actively scrolling/dragging."""
     get_system_load_controller().update_fast_interaction(active, grace_ms=grace_ms)
+
+
+def record_protected_drag(active: bool, *, grace_ms: float = 0.0) -> None:
+    """Record whether the viewer is entering/leaving the protected drag lane.
+
+    Protection uses an explicit boolean latch (``_PROTECTED_DRAG_ACTIVE``) for
+    the body of the drag, plus a grace-window deadline (``_PROTECTED_DRAG_UNTIL_MS``)
+    for the tail after the user releases the mouse. Call sites should do:
+
+      * On drag start: ``record_protected_drag(True, grace_ms=1500)``
+      * On each drag-move: ``keepalive_protected_drag(1500)`` (refreshes deadline)
+      * On drag end:   ``record_protected_drag(False, grace_ms=250)``
+
+    Emits ``[PROTECTED_DRAG]`` log lines on state transitions so log files can
+    show exactly when the protected window was active. Also resets the
+    SystemLoadController UI-tick baseline on begin/end so per-drag
+    ``ui_lag_max_ms`` is not polluted by cross-session idle gaps.
+    """
+    global _PROTECTED_DRAG_UNTIL_MS, _PROTECTED_DRAG_ACTIVE, _PROTECTED_DRAG_BEGIN_MS
+    now = _now_ms()
+    grace = max(0.0, float(grace_ms))
+    if active:
+        was_active = _PROTECTED_DRAG_ACTIVE
+        _PROTECTED_DRAG_ACTIVE = True
+        _PROTECTED_DRAG_UNTIL_MS = now + grace if grace > 0.0 else 0.0
+        if not was_active:
+            _PROTECTED_DRAG_BEGIN_MS = now
+            try:
+                get_system_load_controller().reset_ui_tick_baseline()
+            except Exception:
+                pass
+            _logger.info("[PROTECTED_DRAG] begin grace_ms=%.0f", grace)
+        # v2.3.7 #3: always touch the cross-process drag flag so the
+        # download subprocess can drop to IDLE priority promptly.
+        _touch_drag_flag()
+    else:
+        was_active = _PROTECTED_DRAG_ACTIVE
+        _PROTECTED_DRAG_ACTIVE = False
+        # Soft-release: keep protection alive for `grace_ms` tail so the
+        # last few coalesced updates don't land in a nominal window and
+        # cause a visible jitter when the finger lifts.
+        _PROTECTED_DRAG_UNTIL_MS = now + grace
+        if was_active:
+            duration_ms = now - _PROTECTED_DRAG_BEGIN_MS if _PROTECTED_DRAG_BEGIN_MS > 0.0 else 0.0
+            _logger.info(
+                "[PROTECTED_DRAG] end duration_ms=%.0f tail_grace_ms=%.0f",
+                duration_ms,
+                grace,
+            )
+            _PROTECTED_DRAG_BEGIN_MS = 0.0
+
+
+def keepalive_protected_drag(grace_ms: float = 1500.0) -> None:
+    """Refresh the protected-drag deadline without changing the latch.
+
+    Call from the drag-move hook on every mouse-move delivery so the
+    protected window covers the entire drag duration, even drags lasting
+    many seconds. Cheap: single monotonic read + one assignment.
+    """
+    global _PROTECTED_DRAG_UNTIL_MS
+    if not _PROTECTED_DRAG_ACTIVE:
+        return
+    # Keepalive only if the new deadline pushes the window later.
+    new_deadline = _now_ms() + max(0.0, float(grace_ms))
+    if new_deadline > _PROTECTED_DRAG_UNTIL_MS:
+        _PROTECTED_DRAG_UNTIL_MS = new_deadline
+    # v2.3.7 #3: refresh the cross-process drag flag (rate-limited internally).
+    _touch_drag_flag()
+
+
+def is_protected_drag_active() -> bool:
+    # True while the explicit latch is set OR while the post-release grace
+    # window has not yet expired.
+    if _PROTECTED_DRAG_ACTIVE:
+        return True
+    return _now_ms() <= float(_PROTECTED_DRAG_UNTIL_MS)
 
 
 def is_fast_interaction_active() -> bool:
@@ -126,10 +256,18 @@ def progressive_signal_interval_ms() -> float:
 def progress_update_interval_ms() -> float:
     return get_system_load_controller().progress_update_interval_ms(
         heavy_download_active=is_heavy_download_active(),
+        fast_interaction_active=is_fast_interaction_active(),
     )
 
 
 def progressive_grow_interval_ms() -> float:
+    # Under a protected stack drag, defer viewer admission retries so the
+    # grow timer does not wake the main thread every 150ms with deferred
+    # no-op passes.  The drag keepalive grace is 1500ms; a 1500ms retry
+    # interval aligns with that window and still admits the tail-grace
+    # recheck promptly when the drag ends.  (v2.3.6 \u2014 low-config hardening)
+    if is_protected_drag_active():
+        return 1500.0
     return get_system_load_controller().progressive_grow_interval_ms(
         heavy_download_active=is_heavy_download_active(),
         fast_interaction_active=is_fast_interaction_active(),
@@ -149,7 +287,16 @@ def thumbnail_log_interval_ms() -> float:
 
 
 def should_defer_progressive_grow(*, terminal: bool = False) -> bool:
-    """Return True when non-terminal grow work should yield to protected UI."""
+    """Return True when non-terminal grow work should yield to protected UI.
+
+    Terminal completion is NEVER deferred (users must see completion immediately).
+    Non-terminal grow is deferred whenever a stack drag is active so the main
+    thread is not woken by background grow ticks during interaction.  This is
+    especially important on low-config PCs where each grow tick can cost
+    30-80ms.  (v2.3.6 — low-config hardening)
+    """
+    if not terminal and is_protected_drag_active():
+        return True
     return not get_system_load_controller().should_admit(
         WorkClass.PROGRESSIVE_GROW,
         {"terminal": bool(terminal)},
@@ -160,6 +307,8 @@ def should_defer_progressive_grow(*, terminal: bool = False) -> bool:
 
 def should_defer_cache_warm() -> bool:
     """Return True when post-completion cache warm should yield to protected UI."""
+    if is_protected_drag_active():
+        return True
     return not get_system_load_controller().should_admit(
         WorkClass.CACHE_WARM,
         {"key": "cache_warm"},
@@ -177,6 +326,14 @@ def cap_prefetch_radius(base_radius: int, *, fast_interaction_active: bool,
     has finished downloading, the heavy_download_active override is cleared
     so the viewed series gets full prefetch radius even while the study is
     still downloading other series.  (v2.3.5 â€" Fix 2: series-level readiness)
+
+    NOTE: Protected drag is NOT capped to 0 here.  The pipeline's own
+    `_prefetch_around()` already overrides `adaptive_radius` to a tight
+    `_PROTECTED_DRAG_AHEAD_RADIUS` (=2) inside the protected-drag branch,
+    and uses an explicit `should_admit(WorkClass.PREFETCH, ...)` per target.
+    Returning 0 here would prevent the cache from growing during a long
+    drag, leaving the user stuck on stale surrogate frames once they scroll
+    past the initial cached window.  (v2.3.6 \u2014 game-changer #4)
     """
     heavy = is_heavy_download_active()
     if heavy and series_number is not None:
@@ -226,6 +383,21 @@ def should_rate_limit(key: Hashable, min_interval_ms: float, *, force: bool = Fa
 def should_admit(task_type: WorkClass | str, context: Optional[dict] = None) -> bool:
     """Shared admission front door for FAST viewer background work."""
     ctx = dict(context or {})
+    # Block all background work during protected drag (especially PREFETCH and CACHE_WARM)
+    if is_protected_drag_active():
+        if task_type == WorkClass.CACHE_WARM:
+            return False
+        if task_type == WorkClass.PREFETCH:
+            # v2.3.7: pipeline-local P1 lane (tiny directional prefetch during
+            # stack drag) is still admitted so the user's scroll direction has
+            # pixels ready. Everything else (P2+ prefetch) is denied.
+            # See playbook rule R3 and `_prefetch_around` `protected_drag` branch.
+            try:
+                priority = int(ctx.get("priority", 999))
+            except Exception:
+                priority = 999
+            if priority > 1:  # FastWorkPriority.P1_NEIGHBOR == 1
+                return False
     return get_system_load_controller().should_admit(
         task_type,
         ctx,

@@ -1,6 +1,6 @@
 # Installer QA Checklist (PC A / PC B)
 
-Release target for this publication: `v2.3.6` (`2026-04-20`)
+Release target for this publication: `v2.3.7` (`2026-04-22`)
 
 Use this checklist for every Windows installer release to validate functionality and avoid regressions.
 

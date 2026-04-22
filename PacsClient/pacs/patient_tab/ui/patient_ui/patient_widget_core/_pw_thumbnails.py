@@ -12,6 +12,13 @@ import threading
 from pathlib import Path
 from PySide6.QtCore import QTimer, QMetaObject, Qt, Slot
 from PacsClient.pacs.patient_tab.utils import check_and_get_thumbnails
+from PacsClient.utils.series_completeness import build_series_completeness_snapshot
+from PacsClient.utils.series_facts import resolve_series_expected_count
+from PacsClient.utils.series_identity import (
+    get_series_number as _get_series_number,
+    get_series_uid as _get_series_uid,
+    resolve_series_identifier as _resolve_series_identifier,
+)
 
 
 class _PWThumbnailsMixin:
@@ -88,10 +95,10 @@ class _PWThumbnailsMixin:
 
         new_count = 0
         for series in series_list:
-            series_number = str(series.get('series_number', ''))
+            series_number = _get_series_number(series)
             if not series_number:
                 continue
-            series_uid = str(series.get('series_uid') or series.get('series_instance_uid') or '')
+            series_uid = _get_series_uid(series)
             if is_first_call or series_number not in self._server_series_info:
                 # Add the series unconditionally on first call; add only missing
                 # series on subsequent calls so gRPC-fetched image counts are
@@ -342,70 +349,35 @@ class _PWThumbnailsMixin:
 
     def resolve_series_key(self, series_identifier: str) -> str:
         """Resolve series UID to series number when possible."""
-        series_key = str(series_identifier)
-        if series_key.isdigit():
-            return series_key
-
-        mapped = getattr(self, '_series_uid_to_number', {}).get(series_key)
-        if mapped:
-            return str(mapped)
-
-        for series_number, info in getattr(self, '_server_series_info', {}).items():
-            uid = str(info.get('series_uid') or info.get('series_instance_uid') or '')
-            if uid and uid == series_key:
-                return str(series_number)
-
-        return series_key
+        return _resolve_series_identifier(
+            series_identifier,
+            uid_to_number_map=getattr(self, '_series_uid_to_number', {}) or {},
+            series_info_map=getattr(self, '_server_series_info', {}) or {},
+        )
 
     def _get_expected_series_image_count(self, series_identifier: str) -> int:
         """Return expected image count for a series when known (server/local metadata)."""
         try:
-            series_key = self.resolve_series_key(str(series_identifier))
-
-            info = getattr(self, '_server_series_info', {}).get(str(series_key), {}) or {}
-            for key in ('image_count', 'number_of_instances', 'instances_count', 'expected_instances', 'total_instances'):
-                val = info.get(key)
-                if val is not None:
-                    try:
-                        iv = int(val)
-                        if iv > 0:
-                            return iv
-                    except Exception:
-                        pass
-
-            for item in getattr(self, 'lst_thumbnails_data', []) or []:
-                metadata = item.get('metadata') or {}
-                series_info = metadata.get('series') or {}
-                item_series = str(series_info.get('series_number', ''))
-                if item_series != str(series_key):
-                    continue
-
-                if bool(metadata.get('preview_only', False)):
-                    continue
-
-                instances = metadata.get('instances') or []
-                if isinstance(instances, list) and len(instances) > 0:
-                    return int(len(instances))
-
-                for key in ('image_count', 'number_of_instances', 'instances_count'):
-                    val = series_info.get(key)
-                    if val is not None:
-                        try:
-                            iv = int(val)
-                            if iv > 0:
-                                return iv
-                        except Exception:
-                            pass
-
-            return 0
+            resolution = resolve_series_expected_count(
+                series_identifier,
+                uid_to_number_map=getattr(self, '_series_uid_to_number', {}) or {},
+                series_info_map=getattr(self, '_server_series_info', {}) or {},
+                thumbnail_items=getattr(self, 'lst_thumbnails_data', []) or [],
+            )
+            return int(resolution.expected_count or 0)
         except Exception:
             return 0
 
     def _is_series_downloaded(self, series_identifier: str) -> bool:
         """Return True only when local DICOM availability satisfies expected completeness."""
         try:
-            series_key = self.resolve_series_key(str(series_identifier))
-            expected_count = self._get_expected_series_image_count(series_key)
+            resolution = resolve_series_expected_count(
+                series_identifier,
+                uid_to_number_map=getattr(self, '_series_uid_to_number', {}) or {},
+                series_info_map=getattr(self, '_server_series_info', {}) or {},
+                thumbnail_items=getattr(self, 'lst_thumbnails_data', []) or [],
+            )
+            series_key = resolution.series_identifier
             study_path = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
             base_path = Path(study_path) if study_path else Path(self.import_folder_path or "")
             if not base_path or not base_path.exists():
@@ -421,7 +393,7 @@ class _PWThumbnailsMixin:
             if raw_series_path:
                 candidates.append(Path(raw_series_path))
 
-            series_uid = str(info.get('series_uid') or info.get('series_instance_uid') or '')
+            series_uid = _get_series_uid(info)
             if series_uid:
                 candidates.append(base_path / series_uid)
 
@@ -440,10 +412,16 @@ class _PWThumbnailsMixin:
                     sfx = p.suffix.lower()
                     if sfx == '.dcm':
                         dicom_count += 1
-                        if expected_count > 0 and dicom_count >= expected_count:
+                        snapshot = resolution.to_completeness_snapshot(
+                            disk_count=dicom_count,
+                        )
+                        if snapshot.is_disk_complete:
                             return True
 
-                if expected_count <= 0 and dicom_count > 0:
+                snapshot = resolution.to_completeness_snapshot(
+                    disk_count=dicom_count,
+                )
+                if snapshot.is_disk_complete:
                     return True
 
             return False

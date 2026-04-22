@@ -324,15 +324,16 @@ class TestPrefetchInteractionAware:
         assert len(p._submitted_prefetch) == 6
         assert set(p._submitted_prefetch) == {47, 48, 49, 51, 52, 53}
 
-    def test_small_stack_fast_interaction_uses_tighter_radius_four(self):
-        """Small cold-open stacks should admit less background decode during drag."""
+    def test_small_stack_protected_drag_uses_tiny_directional_p1_lane(self):
+        """Protected drag admits two ahead and one behind, not broad warmup."""
         p = _build_pipeline_stub(slice_count=18, radius=5)
         p._fast_interaction = True
         p._fast_interaction_mode = 'drag'
+        p._protected_drag_active = True
         p._estimate_scroll_velocity = lambda: 25.0
         p._prefetch_around(9, direction=1)
 
-        assert set(p._submitted_prefetch) == {10, 11, 12, 13}
+        assert p._submitted_prefetch == [10, 11, 8]
 
     def test_fast_interaction_skips_frame_prefetch(self):
         """During fast_interaction, frame prefetch is skipped for cached slices."""

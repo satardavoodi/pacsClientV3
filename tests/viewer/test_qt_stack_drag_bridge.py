@@ -24,7 +24,13 @@ def _build_reset_bridge_stub(slice_count: int, current_slice: int = 0):
     bridge.qt_viewer = SimpleNamespace(
         _current_slice_index=current_slice,
         set_modality_hint=lambda _mod: None,
+        reset_view_called=0,
     )
+
+    def _reset_view():
+        bridge.qt_viewer.reset_view_called += 1
+
+    bridge.qt_viewer.reset_view = _reset_view
 
     def _build_mock_vtk_data():
         bridge._slice_count = int((bridge.metadata or {}).get("series", {}).get("image_count", bridge._slice_count) or 0)
@@ -64,12 +70,15 @@ def _build_bridge_stub(slice_count: int = 200):
     bridge._current_slice = 0
     bridge._slice_count = slice_count
     bridge._stack_drag_active = True
+    bridge._protected_drag_active = True
     bridge._last_stack_sync_ms = 0.0
     bridge._last_stack_reference_ms = 0.0
     bridge._last_stack_target_slice = None
     bridge._interaction_settle_timer = _FakeTimer()
     bridge._set_slice_calls = []
     bridge._slice_hint_calls = []
+    bridge._drag_metrics = None
+    bridge._last_set_slice_ui_lag_ms = 0.0
     bridge.last_index_slice_saved = 0
     bridge.vtk_widget = None
     bridge.qt_viewer = SimpleNamespace(
@@ -86,7 +95,9 @@ def _build_bridge_stub(slice_count: int = 200):
     bridge.set_slice = _set_slice
 
     from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
+    bridge._apply_interaction_target = types.MethodType(QtViewerBridge._apply_interaction_target, bridge)
     bridge._on_qt_scroll = types.MethodType(QtViewerBridge._on_qt_scroll, bridge)
+    bridge._on_stack_drag_target = types.MethodType(QtViewerBridge._on_stack_drag_target, bridge)
     bridge._get_interaction_slice_count_hint = types.MethodType(QtViewerBridge._get_interaction_slice_count_hint, bridge)
     bridge._sync_interaction_slice_count_hint = types.MethodType(QtViewerBridge._sync_interaction_slice_count_hint, bridge)
     return bridge
@@ -97,6 +108,7 @@ def _build_cleanup_bridge_stub():
     bridge.qt_viewer = SimpleNamespace(
         window_level_changed=_FakeSignal(),
         slice_scroll_requested=_FakeSignal(),
+        stack_drag_target_requested=_FakeSignal(),
         stack_drag_state_changed=_FakeSignal(),
         _scroll_stop_timer=_FakeTimer(),
         cleared=False,
@@ -119,9 +131,46 @@ def _build_cleanup_bridge_stub():
     from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
     bridge._on_qt_wl_changed = types.MethodType(QtViewerBridge._on_qt_wl_changed, bridge)
     bridge._on_qt_scroll = types.MethodType(QtViewerBridge._on_qt_scroll, bridge)
+    bridge._on_stack_drag_target = types.MethodType(QtViewerBridge._on_stack_drag_target, bridge)
     bridge._on_stack_drag_state = types.MethodType(QtViewerBridge._on_stack_drag_state, bridge)
     bridge._disconnect_viewer_signals = types.MethodType(QtViewerBridge._disconnect_viewer_signals, bridge)
     bridge.cleanup = types.MethodType(QtViewerBridge.cleanup, bridge)
+    return bridge
+
+
+def _build_end_fast_bridge_stub():
+    bridge = SimpleNamespace()
+    bridge._current_slice = 42
+    bridge._last_settle_reason = 'stack_drag_stop'
+    bridge._last_stack_direction = -1
+    bridge._warmup_calls = []
+    bridge._thumbnail_states = []
+    bridge._annotations = []
+
+    frame = SimpleNamespace(
+        qimage=object(),
+        window_width=350.0,
+        window_center=45.0,
+        decode_ms=1.0,
+        filter_ms=2.0,
+        wl_ms=3.0,
+    )
+    bridge.pipeline = SimpleNamespace(
+        set_fast_interaction=lambda active: setattr(bridge, '_pipeline_fast', active),
+        get_rendered_frame=lambda idx: frame,
+        prepare_stack_settle_warmup=lambda idx, direction=0: bridge._warmup_calls.append((idx, direction)) or 7,
+    )
+    bridge.qt_viewer = SimpleNamespace(
+        set_image=lambda qimage: setattr(bridge, '_image', qimage),
+        set_window_level_values=lambda ww, wc: setattr(bridge, '_wl', (ww, wc)),
+        update=lambda: setattr(bridge, '_updated', True),
+    )
+    bridge._set_thumbnail_scroll_active = lambda active: bridge._thumbnail_states.append(active)
+    bridge._resume_booster = lambda: setattr(bridge, '_booster_resumed', True)
+    bridge._update_annotations = lambda *args: bridge._annotations.append(args)
+
+    from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
+    bridge.end_fast_interaction = types.MethodType(QtViewerBridge.end_fast_interaction, bridge)
     return bridge
 
 
@@ -202,6 +251,9 @@ class _FakeQtViewer:
         self.geometry = None
         self.shown = False
         self.raised = False
+        self.updated = False
+        self.geometry_updated = False
+        self.repainted = False
 
     def setGeometry(self, rect):
         self.geometry = rect
@@ -211,6 +263,15 @@ class _FakeQtViewer:
 
     def raise_(self):
         self.raised = True
+
+    def update(self):
+        self.updated = True
+
+    def updateGeometry(self):
+        self.geometry_updated = True
+
+    def repaint(self):
+        self.repainted = True
 
 
 class _FakeBridge:
@@ -255,6 +316,7 @@ class _FakeSeriesWidget(_VWSeriesMixin):
         self._qt_bridge_active = old_bridge is not None or old_qt_viewer is not None
         self._qt_viewer_widget = old_qt_viewer
         self.image_viewer = old_bridge
+        self._active_backend = _vw_series_mod.BACKEND_PYDICOM_QT
         self._pending_tool_style_cls = None
         self.slider = None
         self.render_window = _FakeRenderWindow()
@@ -262,6 +324,9 @@ class _FakeSeriesWidget(_VWSeriesMixin):
         self.saved_status_camera = None
         self.current_style = None
         self._protected_parallel_scale = None
+
+    def _update_backend_badge(self):
+        self.backend_badge_updated = True
 
     def cleanup_image_viewer(self, preserve_bound_backend=False):
         self.cleanup_calls.append(bool(preserve_bound_backend))
@@ -483,6 +548,7 @@ class TestQtStackDragBridge:
         assert bridge.qt_viewer._current_slice_index == 7
         assert bridge._wl_scroll_cache_ww is None
         assert bridge._wl_scroll_cache_wc is None
+        assert bridge.qt_viewer.reset_view_called == 0
 
     def test_reset_image_viewer_clamps_preserved_slice_to_new_range(self):
         bridge = _build_reset_bridge_stub(slice_count=20, current_slice=18)
@@ -494,6 +560,21 @@ class TestQtStackDragBridge:
         assert bridge._slice_count == 5
         assert bridge._current_slice == 4
         assert bridge.qt_viewer._current_slice_index == 4
+
+    def test_reset_image_viewer_can_reset_qt_presentation_when_requested(self):
+        bridge = _build_reset_bridge_stub(slice_count=20, current_slice=18)
+
+        bridge.reset_image_viewer(
+            None,
+            {"series": {"image_count": 5, "modality": "CT"}},
+            preserve_slice=4,
+            reset_presentation=True,
+        )
+
+        assert bridge._slice_count == 5
+        assert bridge._current_slice == 4
+        assert bridge.qt_viewer._current_slice_index == 4
+        assert bridge.qt_viewer.reset_view_called == 1
 
     def test_cleanup_disconnects_qt_viewer_signals_and_stops_timers(self):
         bridge = _build_cleanup_bridge_stub()
@@ -508,7 +589,108 @@ class TestQtStackDragBridge:
         assert bridge._last_stack_target_slice is None
         assert bridge.qt_viewer.window_level_changed.disconnected == [bridge._on_qt_wl_changed]
         assert bridge.qt_viewer.slice_scroll_requested.disconnected == [bridge._on_qt_scroll]
+        assert bridge.qt_viewer.stack_drag_target_requested.disconnected == [bridge._on_stack_drag_target]
         assert bridge.qt_viewer.stack_drag_state_changed.disconnected == [bridge._on_stack_drag_state]
+
+    def test_stack_drag_target_renders_direct_absolute_target(self):
+        bridge = _build_bridge_stub(slice_count=200)
+
+        bridge._on_stack_drag_target(27)
+
+        assert bridge._current_slice == 27
+        assert bridge._set_slice_calls == [(27, True, 'drag')]
+
+    def test_stack_drag_target_ignores_repeated_same_target(self):
+        bridge = _build_bridge_stub(slice_count=200)
+
+        bridge._on_stack_drag_target(27)
+        bridge._on_stack_drag_target(27)
+
+        assert bridge._set_slice_calls == [(27, True, 'drag')]
+
+    def test_stack_drag_object_requests_use_series_uid_from_pipeline(self):
+        bridge = _build_bridge_stub(slice_count=200)
+        object_calls = []
+        begin_calls = []
+        bridge.pipeline = SimpleNamespace(
+            _series_uid="series-uid-actual",
+            _series_number="7",
+            set_interaction_slice_count_hint=lambda count: bridge._slice_hint_calls.append(("pipe", int(count))),
+            begin_stack_drag_target=lambda *args, **kwargs: begin_calls.append((args, kwargs)),
+            has_object=lambda series_uid, slice_index: False,
+            request_object=lambda priority, series_uid, slice_index: object_calls.append(
+                (priority, series_uid, slice_index)
+            ) or True,
+        )
+
+        bridge._on_stack_drag_target(27)
+
+        assert object_calls
+        assert {call[1] for call in object_calls} == {"series-uid-actual"}
+        assert begin_calls == [((27,), {"generation": 2, "direction": 0, "p01_indices": (27, 28, 29, 26)})]
+
+    def test_stack_drag_object_requests_skip_local_hits_via_has_object(self):
+        bridge = _build_bridge_stub(slice_count=200)
+        has_calls = []
+        object_calls = []
+
+        def _has_object(series_uid, slice_index):
+            has_calls.append((series_uid, slice_index))
+            return slice_index == 27
+
+        bridge.pipeline = SimpleNamespace(
+            _series_uid="series-uid-actual",
+            _series_number="7",
+            set_interaction_slice_count_hint=lambda count: bridge._slice_hint_calls.append(("pipe", int(count))),
+            begin_stack_drag_target=lambda *_args, **_kwargs: None,
+            has_object=_has_object,
+            request_object=lambda priority, series_uid, slice_index: object_calls.append(
+                (priority, series_uid, slice_index)
+            ) or True,
+        )
+
+        bridge._on_stack_drag_target(27)
+
+        assert has_calls, "drag lane should probe local object availability before escalation"
+        assert ("series-uid-actual", 27) in has_calls
+        assert all(call[2] != 27 for call in object_calls), "local P0 target should not be re-requested"
+        assert object_calls, "missing P1 neighbors should still be escalated"
+
+    def test_stack_drag_object_requests_fallback_when_has_object_missing(self):
+        bridge = _build_bridge_stub(slice_count=200)
+        object_calls = []
+        bridge.pipeline = SimpleNamespace(
+            _series_uid="series-uid-actual",
+            _series_number="7",
+            set_interaction_slice_count_hint=lambda count: bridge._slice_hint_calls.append(("pipe", int(count))),
+            begin_stack_drag_target=lambda *_args, **_kwargs: None,
+            request_object=lambda priority, series_uid, slice_index: object_calls.append(
+                (priority, series_uid, slice_index)
+            ) or True,
+        )
+
+        bridge._on_stack_drag_target(27)
+
+        assert object_calls, "request_object fallback must still work when has_object is not implemented"
+
+    def test_stack_drag_stop_end_fast_interaction_runs_settle_warmup(self):
+        bridge = _build_end_fast_bridge_stub()
+
+        bridge.end_fast_interaction()
+
+        assert bridge._pipeline_fast is False
+        assert bridge._updated is True
+        assert bridge._warmup_calls == [(42, -1)]
+        assert bridge._annotations
+
+    def test_wheel_settle_does_not_run_stack_settle_warmup(self):
+        bridge = _build_end_fast_bridge_stub()
+        bridge._last_settle_reason = 'wheel_scroll'
+
+        bridge.end_fast_interaction()
+
+        assert bridge._pipeline_fast is False
+        assert bridge._warmup_calls == []
 
     def test_start_qt_viewer_cleans_existing_bridge_before_replacement(self, monkeypatch):
         old_bridge = SimpleNamespace(cleanup_called=False)
@@ -548,12 +730,82 @@ class TestQtStackDragBridge:
         assert widget._protected_parallel_scale == 321.0
         assert new_viewer.geometry == (0, 0, 128, 128)
         assert new_viewer.raised is True
-        assert [delay for delay, _ in queued] == [0]
+        assert [delay for delay, _ in queued] == [0, 50, 120, 220]
 
         queued[0][1]()
 
         assert new_bridge.zoom_to_fit_calls == 2
         assert widget._protected_parallel_scale == 321.0
+
+        queued[1][1]()
+        queued[2][1]()
+        queued[3][1]()
+
+        assert new_bridge.zoom_to_fit_calls == 5
+        assert widget._protected_parallel_scale == 321.0
+
+    def test_start_qt_viewer_cleans_existing_vtk_viewer_before_replacement(self, monkeypatch):
+        old_viewer = SimpleNamespace(cleanup_called=False)
+
+        def _cleanup_old_viewer():
+            old_viewer.cleanup_called = True
+
+        old_viewer.cleanup = _cleanup_old_viewer
+        widget = _FakeSeriesWidget(old_bridge=old_viewer, old_qt_viewer=None)
+        widget._qt_bridge_active = False
+        queued = []
+        new_bridge = _FakeBridge(slice_count=10)
+        new_viewer = _FakeQtViewer()
+
+        monkeypatch.setattr(
+            'PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_series._create_qt_viewer_bridge',
+            lambda vtk_widget, metadata, metadata_fixed: (new_bridge, new_viewer),
+        )
+        monkeypatch.setattr(_vw_interactor, '_QtBridgeStyle', _FakeQtBridgeStyle)
+        monkeypatch.setattr(
+            _vw_series_mod.QTimer,
+            'singleShot',
+            lambda delay, fn: queued.append((delay, fn)),
+        )
+
+        widget._start_qt_viewer(metadata={}, metadata_fixed={})
+
+        assert widget.cleanup_calls == [True]
+        assert old_viewer.cleanup_called is True
+        assert widget._active_backend == _vw_series_mod.BACKEND_PYDICOM_QT
+        assert new_viewer.shown is True
+        assert new_viewer.raised is True
+
+    def test_cleanup_image_viewer_preserves_qt_backend_when_requested(self):
+        class _CleanupWidget(_VWSeriesMixin):
+            def __init__(self):
+                self._qt_bridge_active = False
+                self._active_backend = _vw_series_mod.BACKEND_PYDICOM_QT
+                self._lazy_loader = None
+                self._bound_backend_metadata = {"series": {"viewer_backend": _vw_series_mod.BACKEND_PYDICOM_QT}}
+                self._series_generation_id = 1
+                self._lazy_requested_generation = 1
+                self._lazy_requested_slice = None
+                self._qt_viewer_widget = None
+                self.image_viewer = None
+
+            def _dbg_fast_state(self, *_args, **_kwargs):
+                return None
+
+            def _hide_qt_viewer(self):
+                return None
+
+            def _release_bound_lazy_loader(self):
+                self._lazy_loader = None
+
+            def _update_backend_badge(self):
+                return None
+
+        widget = _CleanupWidget()
+
+        widget.cleanup_image_viewer(preserve_bound_backend=True)
+
+        assert widget._active_backend == _vw_series_mod.BACKEND_PYDICOM_QT
 
     def test_default_window_level_sync_does_not_trigger_prefetch(self):
         bridge = _build_window_level_bridge_stub()
@@ -569,3 +821,12 @@ class TestQtStackDragBridge:
         bridge._build_mock_vtk_data()
 
         assert bridge.pipeline_calls == [(400.0, 40.0, False)]
+
+    def test_atomic_drag_delta_preserves_odd_anchor_when_bridge_is_on_slice_one(self):
+        bridge = _build_bridge_stub(slice_count=200)
+        bridge._current_slice = 1
+
+        bridge._on_qt_scroll(2)
+
+        assert bridge._current_slice == 3
+        assert bridge._set_slice_calls == [(3, True, 'drag')]

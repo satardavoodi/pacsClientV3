@@ -1,10 +1,13 @@
 import asyncio
+import logging
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from modules.download_manager.core.enums import DownloadPriority, DownloadStatus
 from modules.download_manager.core.models import DownloadTask, SeriesInfo
 from modules.download_manager.download.series_downloader import SeriesDownloader
+from modules.download_manager.download.progress_tracker import ProgressTracker
 from modules.download_manager.network.socket_client import SocketDicomClient
 from modules.download_manager.state.state_store import DownloadStateStore
 
@@ -64,6 +67,65 @@ def test_send_request_stops_retry_when_cancelled_during_backoff(monkeypatch):
 
     assert client.send_request("GetSeriesImages", {"series_uid": "s1"}) is None
     assert calls == ["once"]
+
+
+def test_send_request_once_returns_cancelled_response_for_expected_preemption(monkeypatch):
+    client = SocketDicomClient(cancel_check=lambda: True)
+    client.connected = True
+
+    monkeypatch.setattr(client, "connect", lambda: True)
+    client.lock = SimpleNamespace(acquire=lambda: None, release=lambda: None)
+
+    class _Socket:
+        def sendall(self, _data):
+            return None
+
+        def close(self):
+            return None
+
+    client.socket = _Socket()
+
+    monkeypatch.setattr(
+        client,
+        "_safe_recv",
+        lambda _size: (_ for _ in ()).throw(RuntimeError("Download cancelled during receive (preemption)")),
+    )
+
+    response = client._send_request_once("GetSeriesImages", {"series_uid": "s1"})
+
+    assert response is not None
+    assert response.get("status") == "cancelled"
+    assert response.get("cancelled") is True
+
+
+def test_download_batch_with_retry_returns_cancelled_response_when_cancelled(monkeypatch):
+    client = SocketDicomClient(cancel_check=lambda: True)
+    client.health_monitor = MagicMock()
+    client.health_monitor.record_success = MagicMock()
+    client.health_monitor.record_failure = MagicMock()
+
+    response = asyncio.run(client._download_batch_with_retry("study-1", "series-1", 0, 10))
+
+    assert response is not None
+    assert response.get("status") == "cancelled"
+    assert response.get("cancelled") is True
+
+
+def test_progress_tracker_cancellation_is_not_logged_as_error(caplog):
+    class DownloadCancelled(Exception):
+        pass
+
+    def _callback(*_args, **_kwargs):
+        raise DownloadCancelled("Cancelled via process cancel event")
+
+    tracker = ProgressTracker(callback=_callback)
+
+    with caplog.at_level(logging.INFO):
+        tracker.report_progress("study-1", "1", 50.0, 5, 10)
+        tracker.force_update()
+
+    assert "Progress callback cancelled" in caplog.text
+    assert "Progress callback error" not in caplog.text
 
 
 def test_series_downloader_reconnect_cancel_returns_preempted_result(monkeypatch, tmp_path):

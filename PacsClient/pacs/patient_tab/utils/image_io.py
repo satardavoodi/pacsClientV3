@@ -1275,19 +1275,28 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
     # working without changes.  Fixed in v2.3.1.
     if allow_lazy_backend and viewer_backend == BACKEND_PYDICOM_QT:
         _qt_meta = None
+        # v2.3.7: fine-grained sub-stage timing to pinpoint the 4s cold-open
+        # slowdown seen in log 96 (load_single_series_total=4022+4389ms).
+        _qt_substage_ms = {}
         if study_pk:
             try:
                 from PacsClient.utils.database import find_series_pk_by_number
+                _t_db = now_ms()
                 _qt_series_pk = find_series_pk_by_number(series_number, study_pk)
                 if _qt_series_pk:
                     _qt_instances = get_instances_by_series_pk(_qt_series_pk, group_id=0)
                     if not _qt_instances:
                         _, _qt_instances = _get_instances_from_best_group(_qt_series_pk)
+                    _qt_substage_ms['db_lookup'] = now_ms() - _t_db
                     if _qt_instances:
+                        _t_meta = now_ms()
                         _qt_meta = _get_cached_metadata(_qt_series_pk, _qt_instances)
+                        _qt_substage_ms['cached_metadata'] = now_ms() - _t_meta
+                        _t_recon = now_ms()
                         _qt_instances_merged, _qt_instances_changed = _reconcile_db_instances_with_disk(
                             series_path, _qt_meta.get('instances', [])
                         )
+                        _qt_substage_ms['reconcile_disk'] = now_ms() - _t_recon
                         if _qt_instances_merged:
                             if _qt_instances_changed:
                                 _qt_meta = {
@@ -1297,20 +1306,25 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                                 }
                             _ensure_series_meta(_qt_meta)['image_count'] = len(_qt_instances_merged)
                         if _metadata_needs_geometry_backfill(_qt_meta):
+                            _t_backfill = now_ms()
                             try:
                                 _backfill_instance_orientation(_qt_meta.get('instances', []))
                             except Exception:
                                 pass
+                            _qt_substage_ms['backfill_orientation'] = now_ms() - _t_backfill
+                        _t_norm = now_ms()
                         try:
                             _normalize_metadata_instances(_qt_meta)
                         except Exception:
                             pass
+                        _qt_substage_ms['normalize'] = now_ms() - _t_norm
             except Exception as _qt_err:
                 logger.warning(
                     "pydicom_qt fast-path DB metadata failed (%s); falling back to ITK pipeline",
                     _qt_err,
                 )
         if _qt_meta is None:
+            _t_hdr = now_ms()
             try:
                 _qt_meta = _build_metadata_headers_only(series_path, series_number)
                 try:
@@ -1322,6 +1336,7 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     "pydicom_qt fast-path header-only metadata failed (%s); falling back to ITK pipeline",
                     _hdr_err,
                 )
+            _qt_substage_ms['headers_only_build'] = now_ms() - _t_hdr
         if _qt_meta and _qt_meta.get('instances'):
             _ensure_series_meta(_qt_meta).setdefault('series_path', str(series_path))
             _annotate_backend_metadata(_qt_meta, BACKEND_PYDICOM_QT, '')
@@ -1336,6 +1351,13 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                 _qt_stub.AllocateScalars(vtk.VTK_SHORT, 1)
             except Exception:
                 _qt_stub = None
+            # v2.3.7: emit sub-stage breakdown so we can see where the 4s goes
+            if _qt_substage_ms:
+                try:
+                    _qt_parts = " ".join(f"{k}={v:.0f}ms" for k, v in _qt_substage_ms.items())
+                    logger.info("[FAST_LOAD_BREAKDOWN] series=%s %s", series_number, _qt_parts)
+                except Exception:
+                    pass
             log_stage_timing(
                 logger,
                 component="viewer",

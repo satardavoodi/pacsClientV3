@@ -221,12 +221,34 @@ def test_progress_update_is_coalesced_until_interval_expires():
         {"key": "series-101"},
         heavy_download_active=True,
         fast_interaction_active=False,
-        now_ms=520.0,
+        now_ms=620.0,
     )
 
     assert first is True
     assert second is False
     assert third is True
+
+
+def test_progress_update_interval_is_slowed_during_download_and_scroll():
+    ctrl = SystemLoadController()
+
+    ctrl.update_fast_interaction(True, now_ms=100.0, grace_ms=250.0)
+
+    assert ctrl.progress_update_interval_ms(
+        heavy_download_active=True,
+        fast_interaction_active=True,
+        now_ms=150.0,
+    ) == 750.0
+
+
+def test_progress_update_interval_is_slowed_during_download_only():
+    ctrl = SystemLoadController()
+
+    assert ctrl.progress_update_interval_ms(
+        heavy_download_active=True,
+        fast_interaction_active=False,
+        now_ms=150.0,
+    ) == 500.0
 
 
 def test_prefetch_is_rejected_when_distance_exceeds_radius_cap():

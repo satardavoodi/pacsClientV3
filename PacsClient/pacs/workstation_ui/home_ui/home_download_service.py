@@ -21,6 +21,7 @@ from typing import Optional
 from PySide6.QtWidgets import QTabWidget
 
 from PacsClient.utils.config import SOURCE_PATH
+from PacsClient.utils.series_identity import resolve_series_identifier as _resolve_series_identifier
 from modules.download_manager.ui.main_widget import DownloadManagerWidget
 
 try:
@@ -194,29 +195,30 @@ class HomeDownloadService:
 
             def _resolve_sn(series_uid_or_number):
                 sn = str(series_uid_or_number)
-                # 1. Quick check: already a known series-number key in thumbnails?
                 w = widget_ref()
                 if w and hasattr(w, "thumbnail_manager"):
                     tm = w.thumbnail_manager
                     if tm:
-                        if sn in tm.series_widgets:
-                            return sn
-                        # 2. Try UID→number map populated during thumbnail creation
-                        mapped = tm._series_uid_to_number.get(sn)
-                        if mapped and str(mapped) in tm.series_widgets:
-                            return str(mapped)
-                # 2b. Fallback to the widget-level UID→number map populated by
-                # set_server_series_info() before thumbnail widgets exist.
-                # During patient open, download progress can arrive before the
-                # thumbnail manager has finished building widgets/its own map.
-                # If we ignore the widget-side map, progress is emitted with the
-                # raw series UID, which does not match viewer series_number.
+                        resolved = _resolve_series_identifier(
+                            sn,
+                            known_series_numbers=getattr(tm, 'series_widgets', {}).keys(),
+                            uid_to_number_map=getattr(tm, '_series_uid_to_number', {}) or {},
+                        )
+                        if resolved and resolved != sn:
+                            return resolved
+                        if resolved and sn in getattr(tm, 'series_widgets', {}):
+                            return resolved
                 if w:
                     try:
-                        widget_uid_map = getattr(w, '_series_uid_to_number', {}) or {}
-                        mapped = widget_uid_map.get(sn)
-                        if mapped:
-                            return str(mapped)
+                        resolved = _resolve_series_identifier(
+                            sn,
+                            uid_to_number_map=getattr(w, '_series_uid_to_number', {}) or {},
+                            series_info_map=getattr(w, '_server_series_info', {}) or {},
+                        )
+                        if resolved and resolved != sn:
+                            return resolved
+                        if resolved:
+                            sn = resolved
                     except Exception:
                         pass
                 # 3. Fallback: resolve via DM task series list (SeriesInfo dataclass)

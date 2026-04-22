@@ -232,3 +232,30 @@ If patient-tab code still imports `ThumbnailMetadataService`, that is acceptable
 - Review complete
 - First structural slice implemented
 - Safe next target: continue Block A cleanup before touching the Block B/C hot path
+
+---
+
+## 2026-04-20 continuation update
+
+Use `docs/plans/BLOCK_A_B_KPI_CLEARCANVAS_HANDOFF_2026-04-20.md` as the current continuation document.
+
+### What changed after this roadmap was written
+
+- Block B hot-path follow-up work was narrowed further in `_vc_switch.py` so first-visible image work stays immediate and lower-priority UI refresh work runs on the next Qt tick.
+- FAST shutdown cleanup in `lightweight_2d_pipeline.py` was corrected and mirrored into the builder payload copy to keep packaged/runtime behavior aligned.
+- A runtime-log-driven Qt startup refit fix landed in `_vw_series.py` to correct the wrong-zoom / under-fit presentation of the last series inserted into the layout.
+- Small-stack FAST interaction policy was tightened in `modules/viewer/fast/stack_cache_profile.py` so stacks `<= 24` now use `fast_prefetch_radius = 4` during active fast interaction.
+
+### Updated practical interpretation
+
+- Block A remains the correct next structural cleanup area when doing architecture work.
+- Block B is in better shape than when this roadmap was first written; it now has a clearer first-frame boundary.
+- The latest KPI direction says remaining work is more about background/control-plane CPU pressure than foreground visible decode.
+
+### Updated next-step rule
+
+Before changing architecture again:
+
+1. capture a fresh runtime log after the small-stack radius change,
+2. verify visible drag remains low-latency and mostly decode-free,
+3. only then choose whether the next move is Block A cleanup or Block B/Block C boundary tightening.

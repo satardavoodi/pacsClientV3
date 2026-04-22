@@ -188,6 +188,12 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
             refresh_table_order=self._refresh_table_order,
             check_auto_resume=self._check_auto_resume,
         )
+        try:
+            from modules.viewer.fast.object_cache import set_object_cache
+            set_object_cache(self)
+            logger.info("[DM-INIT] Registered Download Manager as FAST object cache")
+        except Exception as exc:
+            logger.debug("[DM-INIT] FAST object cache registration skipped: %s", exc)
         
         # Register UI observer
         ui_observer = UIObserver(self)

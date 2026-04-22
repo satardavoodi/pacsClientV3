@@ -1,62 +1,62 @@
 
 ====================================================================================================
   DATABASE MODULE — TEST SUITE
-  Date: 2026-04-05 02:29:56
+  Date: 2026-04-19 17:30:40
   Python: 3.13.5
   Platform: win32
 ====================================================================================================
-02:29:56  INFO     Using temp database: C:\Users\vahid\AppData\Local\Temp\db_test_n5ya9el0\test_dicom.db
-02:29:56  INFO     
+17:30:40  INFO     Using temp database: C:\Users\vahid\AppData\Local\Temp\db_test_4_k2h0z_\test_dicom.db
+17:30:40  INFO     
 ======================================================================
   D1: init_database & Schema
 ======================================================================
-02:29:57  INFO       ✅ D1: init_database & Schema done
+17:30:40  INFO       ✅ D1: init_database & Schema done
 
-02:29:57  INFO     
+17:30:40  INFO     
 ======================================================================
   D2: Connection Pool Safety
 ======================================================================
 ⚠️ Database error in transaction: test rollback
-02:29:57  INFO       ✅ D2: Connection Pool Safety done
+17:30:40  INFO       ✅ D2: Connection Pool Safety done
 
-02:29:57  INFO     
+17:30:40  INFO     
 ======================================================================
   D3: CRUD Operations
 ======================================================================
-02:29:57  INFO       ✅ D3: CRUD Operations done
+17:30:40  INFO       ✅ D3: CRUD Operations done
 
-02:29:57  INFO     
+17:30:40  INFO     
 ======================================================================
   D4: Commit Discipline
 ======================================================================
-02:29:57  INFO       ✅ D4: Commit Discipline done
+17:30:40  INFO       ✅ D4: Commit Discipline done
 
-02:29:57  INFO     
+17:30:40  INFO     
 ======================================================================
   D5: Thread Safety
 ======================================================================
-02:29:57  INFO       ✅ D5: Thread Safety done
+17:30:40  INFO       ✅ D5: Thread Safety done
 
-02:29:57  INFO     
+17:30:40  INFO     
 ======================================================================
   D6: Patient Search
 ======================================================================
 
 [DB_SEARCH] search_patients_local called
-[DB_SEARCH] Returned 13 results
+[DB_SEARCH] Returned 23 results
 
 [DB_SEARCH] search_patients_local called
 [DB_SEARCH] Returned 1 results
 
 [DB_SEARCH] search_patients_local called
 [DB_SEARCH] Returned 0 results
-02:29:57  INFO       ✅ D6: Patient Search done
+17:30:40  INFO       ✅ D6: Patient Search done
 
-02:29:57  INFO     
+17:30:40  INFO     
 ======================================================================
   D7: No PRAGMA read_uncommitted
 ======================================================================
-02:29:57  INFO       ✅ D7: No PRAGMA read_uncommitted done
+17:30:40  INFO       ✅ D7: No PRAGMA read_uncommitted done
 
 
 ====================================================================================================
@@ -66,9 +66,9 @@
   ┌─ Scenario: D1: init_database & Schema
   │Metric                                                    Value Unit       Status
   │──────────────────────────────────────────────────────────────────────────────────
-  │ init_database() latency                                626.786 ms        ── info
+  │ init_database() latency                                151.574 ms        ── info
   │ Required tables exist                                     True           ✅ PASS
-  │ Total tables found                                          43           ── info
+  │ Total tables found                                          70           ── info
   │ FK indexes present                                           4 /4        ✅ PASS
   └──────────────────────────────────────────────────────────────────────────────────
 
@@ -77,14 +77,14 @@
   │──────────────────────────────────────────────────────────────────────────────────
   │ Context manager returns conn to pool                      True           ✅ PASS
   │ Auto-rollback on exception (no leaked data)               True           ✅ PASS
-  │ 10 sequential pool acquire/release                       0.410 ms        ✅ PASS
+  │ 10 sequential pool acquire/release                       0.084 ms        ✅ PASS
   └──────────────────────────────────────────────────────────────────────────────────
 
   ┌─ Scenario: D3: CRUD Operations
   │Metric                                                    Value Unit       Status
   │──────────────────────────────────────────────────────────────────────────────────
   │ insert_patient succeeded                                  True           ✅ PASS
-  │ insert_patient latency                                   1.215 ms        ── info
+  │ insert_patient latency                                   3.200 ms        ── info
   │ find_patient_pk matches                                   True           ✅ PASS
   │ insert_study succeeded                                    True           ✅ PASS
   │ find_study_pk matches                                     True           ✅ PASS
@@ -108,14 +108,14 @@
   │ No errors under 4-thread concurrency                      True           ✅ PASS
   │ All inserts findable across threads                       True           ✅ PASS
   │ Total records written                                       20           ── info
-  │ Concurrent write elapsed                               143.051 ms        ── info
+  │ Concurrent write elapsed                               107.069 ms        ── info
   └──────────────────────────────────────────────────────────────────────────────────
 
   ┌─ Scenario: D6: Patient Search
   │Metric                                                    Value Unit       Status
   │──────────────────────────────────────────────────────────────────────────────────
   │ search_patients_local returns results                     True           ✅ PASS
-  │ Search latency                                           1.681 ms        ── info
+  │ Search latency                                           1.958 ms        ── info
   │ Target patient found in results                           True           ✅ PASS
   │ Search by patient_id works                                True           ✅ PASS
   │ Empty search returns empty list                           True           ✅ PASS

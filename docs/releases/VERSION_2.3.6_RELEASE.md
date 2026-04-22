@@ -1,4 +1,4 @@
-# AIPacs Version 2.3.6 Release
+﻿# AIPacs Version 2.3.6 Release
 **Date:** April 20, 2026
 **Version:** 2.3.6
 **Type:** Stable Release

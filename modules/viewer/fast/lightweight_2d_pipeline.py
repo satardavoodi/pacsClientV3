@@ -40,7 +40,9 @@ from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import PooyanFilte
 from modules.viewer.fast.perf_metrics import PerfMetrics
 from modules.viewer.fast.disk_pixel_cache import get_disk_pixel_cache
 from modules.viewer.fast.decode_service import get_decode_service
+from modules.viewer.fast.object_cache import get_object_cache
 from modules.viewer.fast.stack_cache_profile import build_stack_cache_profile
+from modules.viewer.fast.stack_interaction_scheduler import FastWorkPriority
 from modules.viewer.fast.system_load_controller import WorkClass
 from modules.viewer.fast.dicom_header_scan import DicomHeaderEntry, scan_series_header_entries
 from modules.viewer.fast.ui_throttle import (
@@ -52,6 +54,18 @@ from modules.viewer.fast.ui_throttle import (
 from modules.zeta_boost.cache_engine import _zb_globals
 
 logger = logging.getLogger(__name__)
+
+
+_DEFAULT_PIXEL_CACHE_SIZE = 96
+_DEFAULT_FRAME_CACHE_SIZE = 96
+_DEFAULT_ADAPTIVE_CACHE_MAX_SIZE = 192
+_DRAG_START_WARM_RADIUS = 2
+_DRAG_STEADY_PREFETCH_RADIUS = 1
+_PROTECTED_DRAG_AHEAD_RADIUS = 2
+_PROTECTED_DRAG_BEHIND_RADIUS = 1
+_STACK_SETTLE_AHEAD_RADIUS = 10
+_STACK_SETTLE_BEHIND_RADIUS = 6
+_DRAG_PREFETCH_THROTTLE_S = 0.09
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -117,8 +131,10 @@ class RenderedFrame:
 class PipelineConfig:
     """Configuration for the lightweight 2D pipeline."""
     # Cache sizes
-    pixel_cache_size: int = 96       # raw decoded slices
-    frame_cache_size: int = 96       # rendered QImages
+    pixel_cache_size: int = _DEFAULT_PIXEL_CACHE_SIZE       # raw decoded slices
+    frame_cache_size: int = _DEFAULT_FRAME_CACHE_SIZE       # rendered QImages
+    adaptive_cache_sizing: bool = True
+    adaptive_cache_max_size: int = _DEFAULT_ADAPTIVE_CACHE_MAX_SIZE
     # Prefetch
     prefetch_radius: int = 20        # slices ahead/behind to warm
     prefetch_workers: int = 4        # background decode/render threads
@@ -279,6 +295,13 @@ class Lightweight2DPipeline(QObject):
         self._prefetch_pending: set = set()
         self._frame_prefetch_pending: set = set()
         self._prefetch_lock = threading.Lock()
+        # v2.3.6 GC#5 surrogate-staleness break: when the cache is sparse,
+        # the nearest-cached surrogate can return the SAME pixels for many
+        # consecutive drag targets. The slider moves but the image does
+        # not. Track the last surrogate index and repeat count so we can
+        # escape by paying one synchronous decode after 2 identical hits.
+        self._last_surrogate_pixel_idx: int = -1
+        self._surrogate_repeat_count: int = 0
         self._decode_executor = ThreadPoolExecutor(
             max_workers=self._config.prefetch_workers,
             thread_name_prefix="LW2D-Decode",
@@ -314,9 +337,18 @@ class Lightweight2DPipeline(QObject):
 
         # Series state
         self._series_path: Optional[str] = None
+        self._series_uid: Optional[str] = None
         self._is_open: bool = False
         self._interaction_slice_count_hint: int = 0
         self._drag_start_boost_until: float = 0.0
+        self._last_drag_prefetch_submit_ts: float = 0.0
+        self._protected_drag_active: bool = False
+        self._drag_session_token: int = 0
+        self._drag_target_generation: int = 0
+        self._drag_session_started_at: float = 0.0
+        self._drag_prefetch_submitted: int = 0
+        self._drag_background_decode_count: int = 0
+        self._stack_drag_p01_slices: Tuple[int, ...] = ()
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -340,11 +372,14 @@ class Lightweight2DPipeline(QObject):
         """Open a DICOM series from metadata instances or by scanning directory."""
         self.close_series()
         self._series_path = str(series_path)
+        self._series_uid = None
         # v2.3.5: cache series_number for series-level readiness queries
         self._series_number: Optional[str] = None
         if metadata:
             try:
-                self._series_number = str(metadata.get("series", {}).get("series_number", "") or "")
+                series_meta = metadata.get("series", {}) or {}
+                self._series_number = str(series_meta.get("series_number", "") or "")
+                self._series_uid = str(series_meta.get("series_uid", "") or "") or None
             except Exception:
                 pass
 
@@ -390,9 +425,17 @@ class Lightweight2DPipeline(QObject):
         self._window = None
         self._level = None
         self._series_path = None
+        self._series_uid = None
         self._is_open = False
         self._interaction_slice_count_hint = 0
         self._drag_start_boost_until = 0.0
+        self._last_drag_prefetch_submit_ts = 0.0
+        self._protected_drag_active = False
+        self._drag_target_generation = 0
+        self._drag_session_started_at = 0.0
+        self._drag_prefetch_submitted = 0
+        self._drag_background_decode_count = 0
+        self._stack_drag_p01_slices = ()
         self._first_render_logged = False
         self._filter_first_slices.clear()
         self._scroll_history.clear()
@@ -427,6 +470,97 @@ class Lightweight2DPipeline(QObject):
         )
         self._prefetch_around(idx, direction=0)
 
+    def begin_protected_drag_session(self) -> None:
+        """Enter the strict real-time drag lane for this series."""
+        self._drag_session_token = int(getattr(self, '_drag_session_token', 0) or 0) + 1
+        self._drag_target_generation = int(getattr(self, '_drag_target_generation', 0) or 0) + 1
+        self._protected_drag_active = True
+        self._drag_session_started_at = time.perf_counter()
+        self._drag_prefetch_submitted = 0
+        self._drag_background_decode_count = 0
+        self._stack_drag_p01_slices = ()
+        # v2.3.6 GC#5: reset surrogate-staleness counter at every new
+        # drag session so the first target of a fresh drag is never
+        # blocked by stats from a prior gesture.
+        self._last_surrogate_pixel_idx = -1
+        self._surrogate_repeat_count = 0
+
+    def begin_stack_drag_target(
+        self,
+        target_slice: int,
+        *,
+        generation: int = 0,
+        direction: int = 0,
+        p01_indices: Optional[Sequence[int]] = None,
+    ) -> None:
+        """Mark a new protected stack target and invalidate stale P1 work."""
+        if not bool(getattr(self, '_protected_drag_active', False)):
+            return
+        self._drag_target_generation = int(generation or 0)
+        if p01_indices:
+            lane: list[int] = []
+            seen: set[int] = set()
+            for raw_idx in p01_indices:
+                try:
+                    idx = self._clamp(int(raw_idx))
+                except Exception:
+                    continue
+                if idx in seen:
+                    continue
+                lane.append(idx)
+                seen.add(idx)
+            self._stack_drag_p01_slices = tuple(lane)
+        else:
+            self._stack_drag_p01_slices = ()
+        with self._prefetch_lock:
+            self._prefetch_generation = int(getattr(self, '_prefetch_generation', 0) or 0) + 1
+            self._prefetch_request_epoch = int(getattr(self, '_prefetch_request_epoch', 0) or 0) + 1
+            if not hasattr(self, '_active_prefetch_targets'):
+                self._active_prefetch_targets = set()
+            self._active_prefetch_targets.clear()
+        self._last_prefetch_center = -1
+        try:
+            self._prefetch_prepared_index = int(target_slice)
+        except Exception:
+            self._prefetch_prepared_index = None
+
+    def end_protected_drag_session(self) -> Dict[str, float]:
+        """Exit protected drag mode and return per-session counters."""
+        started_at = float(getattr(self, '_drag_session_started_at', 0.0) or 0.0)
+        duration_s = max(0.0, time.perf_counter() - started_at) if started_at > 0.0 else 0.0
+        flushed_deferred_disk_writes = 0
+        try:
+            flushed_deferred_disk_writes = int(get_disk_pixel_cache().flush_deferred() or 0)
+        except Exception:
+            flushed_deferred_disk_writes = 0
+        stats = {
+            "duration_s": duration_s,
+            "prefetch_submitted": int(getattr(self, '_drag_prefetch_submitted', 0) or 0),
+            "background_decode_count": int(getattr(self, '_drag_background_decode_count', 0) or 0),
+            "deferred_disk_writes_flushed": flushed_deferred_disk_writes,
+        }
+        self._protected_drag_active = False
+        self._drag_target_generation = 0
+        self._drag_session_started_at = 0.0
+        self._drag_prefetch_submitted = 0
+        self._drag_background_decode_count = 0
+        self._stack_drag_p01_slices = ()
+        return stats
+
+    def has_object(self, series_uid: str, slice_index: int) -> bool:
+        """Future object/blob cache boundary for slice-level retrieval."""
+        try:
+            return bool(get_object_cache().has_object(str(series_uid or ""), int(slice_index)))
+        except Exception:
+            return False
+
+    def request_object(self, priority: int, series_uid: str, slice_index: int) -> bool:
+        """Future object/blob cache boundary for prioritized slice fetch."""
+        try:
+            return bool(get_object_cache().request_object(int(priority), str(series_uid or ""), int(slice_index)))
+        except Exception:
+            return False
+
     def get_file_paths(self) -> List[str]:
         return [s.path for s in self._slices]
 
@@ -458,6 +592,7 @@ class Lightweight2DPipeline(QObject):
             # Invalidate rendered-frame cache so new slices get fresh frames;
             # pixel cache is keyed by path so existing decoded pixels are kept.
             self._frame_cache.clear()
+            self._prune_caches_to_effective_limits()
             logger.debug(
                 "lw2d-pipeline refresh_file_list: +%d files total=%d path=%s",
                 len(new_slices), len(self._slices), self._series_path,
@@ -654,7 +789,8 @@ class Lightweight2DPipeline(QObject):
             _pm.record_wl(frame.wl_ms)
         if frame.filter_ms > 0:
             _pm.record_filter(frame.filter_ms)
-        self._ensure_prefetch_prepared(idx)
+        if not (bool(getattr(self, '_protected_drag_active', False)) and interaction_type == 'drag'):
+            self._ensure_prefetch_prepared(idx)
         return frame
 
     def set_fast_interaction(self, fast: bool, interaction_type: str = '') -> None:
@@ -795,6 +931,25 @@ class Lightweight2DPipeline(QObject):
         )
         if nearest_frame is not None:
             nearest_idx, qimg = nearest_frame
+            # v2.3.6 GC#5 staleness-break: if the same surrogate was already
+            # served for the previous 2 consecutive (different) targets,
+            # the user is dragging past the cache edge and sees a frozen
+            # image while the slider moves. Fall through to synchronous
+            # decode once so the actual target pixels appear. Counter is
+            # reset when a new surrogate index is used, so smooth drag
+            # over cached regions still flies.
+            if nearest_idx != idx:
+                _last_surr = getattr(self, '_last_surrogate_pixel_idx', -1)
+                _surr_cnt = getattr(self, '_surrogate_repeat_count', 0)
+                if _last_surr == nearest_idx:
+                    if _surr_cnt >= 2:
+                        self._surrogate_repeat_count = 0
+                        self._last_surrogate_pixel_idx = -1
+                        return None  # force caller to decode
+                    self._surrogate_repeat_count = _surr_cnt + 1
+                else:
+                    self._surrogate_repeat_count = 1
+                    self._last_surrogate_pixel_idx = int(nearest_idx)
             perf_metrics.record_cache_hit()
             perf_metrics.record_frame_render(0.0)
             if logger.isEnabledFor(logging.DEBUG):
@@ -802,9 +957,9 @@ class Lightweight2DPipeline(QObject):
                     "FAST:nearest_cached_frame idx=%d nearest=%d dist=%d",
                     idx, nearest_idx, abs(idx - nearest_idx),
                 )
-            if idx in self._pixel_cache:
+            if idx in self._pixel_cache and not bool(getattr(self, '_protected_drag_active', False)):
                 self._submit_frame_prefetch(idx)
-            else:
+            elif not bool(getattr(self, '_protected_drag_active', False)):
                 self._ensure_prefetch_prepared(idx)
             return self._frame_from_qimage(
                 qimg,
@@ -824,6 +979,19 @@ class Lightweight2DPipeline(QObject):
         if nearest_idx is None:
             return None
 
+        # v2.3.6 GC#5 staleness-break (pixel-cache path, same policy).
+        _last_surr = getattr(self, '_last_surrogate_pixel_idx', -1)
+        _surr_cnt = getattr(self, '_surrogate_repeat_count', 0)
+        if _last_surr == nearest_idx:
+            if _surr_cnt >= 2:
+                self._surrogate_repeat_count = 0
+                self._last_surrogate_pixel_idx = -1
+                return None  # force caller to decode
+            self._surrogate_repeat_count = _surr_cnt + 1
+        else:
+            self._surrogate_repeat_count = 1
+            self._last_surrogate_pixel_idx = int(nearest_idx)
+
         t_surr = time.perf_counter()
         surrogate = self._render_frame_uncached(
             nearest_idx, ww, wc, filter_enabled, record_metrics=False,
@@ -838,7 +1006,8 @@ class Lightweight2DPipeline(QObject):
                 "FAST:nearest_cached idx=%d nearest=%d dist=%d surr_ms=%.1f",
                 idx, nearest_idx, abs(idx - nearest_idx), surr_ms,
             )
-        self._ensure_prefetch_prepared(idx)
+        if not bool(getattr(self, '_protected_drag_active', False)):
+            self._ensure_prefetch_prepared(idx)
         return self._frame_from_qimage(
             surrogate.qimage,
             slice_index=idx,
@@ -961,6 +1130,7 @@ class Lightweight2DPipeline(QObject):
             self._interaction_slice_count_hint = max(0, int(slice_count or 0))
         except Exception:
             self._interaction_slice_count_hint = 0
+        self._prune_caches_to_effective_limits()
 
     def get_pixel_value_at(self, slice_index: int, x: int, y: int) -> Optional[float]:
         """Get raw pixel value at (x, y) in image coordinates."""
@@ -1069,7 +1239,12 @@ class Lightweight2DPipeline(QObject):
             if arr.dtype != np.uint8:
                 arr = np.clip(arr, 0, 255).astype(np.uint8)
             result = np.ascontiguousarray(arr)
-            disk_cache.put(sm.path, study_uid, result)
+            disk_cache.put(
+                sm.path,
+                study_uid,
+                result,
+                defer=bool(getattr(self, '_protected_drag_active', False)),
+            )
             return result
 
         # Apply rescale slope/intercept
@@ -1100,7 +1275,12 @@ class Lightweight2DPipeline(QObject):
             elif arr.dtype not in (np.int16, np.uint16, np.float32):
                 arr = arr.astype(np.int16, copy=False)
             result = np.ascontiguousarray(arr)
-            disk_cache.put(sm.path, study_uid, result)
+            disk_cache.put(
+                sm.path,
+                study_uid,
+                result,
+                defer=bool(getattr(self, '_protected_drag_active', False)),
+            )
             return result
 
         # Slow path: fractional slope or MONOCHROME1 — use float32
@@ -1112,7 +1292,12 @@ class Lightweight2DPipeline(QObject):
             arr = float(arr.max()) + float(arr.min()) - arr
 
         result = np.ascontiguousarray(arr)
-        disk_cache.put(sm.path, study_uid, result)
+        disk_cache.put(
+            sm.path,
+            study_uid,
+            result,
+            defer=bool(getattr(self, '_protected_drag_active', False)),
+        )
         return result
 
     # ── Private: cache management ─────────────────────────────────────
@@ -1205,13 +1390,90 @@ class Lightweight2DPipeline(QObject):
 
     def _put_pixel_cache(self, idx: int, arr: np.ndarray) -> None:
         self._pixel_cache[idx] = arr
-        while len(self._pixel_cache) > self._config.pixel_cache_size:
-            self._pixel_cache.popitem(last=False)
+        self._prune_cache_to_limit(self._pixel_cache, self._effective_pixel_cache_limit())
 
     def _put_frame_cache(self, key: tuple, image: QImage) -> None:
         self._frame_cache[key] = image
-        while len(self._frame_cache) > self._config.frame_cache_size:
-            self._frame_cache.popitem(last=False)
+        self._prune_cache_to_limit(self._frame_cache, self._effective_frame_cache_limit())
+
+    def _prune_cache_to_limit(self, cache: OrderedDict, limit: int) -> None:
+        try:
+            cap = max(1, int(limit or 1))
+        except Exception:
+            cap = 1
+        while len(cache) > cap:
+            cache.popitem(last=False)
+
+    def _prune_caches_to_effective_limits(self) -> None:
+        self._prune_cache_to_limit(self._pixel_cache, self._effective_pixel_cache_limit())
+        self._prune_cache_to_limit(self._frame_cache, self._effective_frame_cache_limit())
+
+    def _effective_pixel_cache_limit(self) -> int:
+        return self._compute_effective_cache_limit(
+            base_limit=getattr(self._config, 'pixel_cache_size', _DEFAULT_PIXEL_CACHE_SIZE),
+            default_limit=_DEFAULT_PIXEL_CACHE_SIZE,
+            kind='pixel',
+        )
+
+    def _effective_frame_cache_limit(self) -> int:
+        return self._compute_effective_cache_limit(
+            base_limit=getattr(self._config, 'frame_cache_size', _DEFAULT_FRAME_CACHE_SIZE),
+            default_limit=_DEFAULT_FRAME_CACHE_SIZE,
+            kind='frame',
+        )
+
+    def _compute_effective_cache_limit(self, *, base_limit: int, default_limit: int, kind: str) -> int:
+        try:
+            base = max(1, int(base_limit or default_limit))
+        except Exception:
+            base = max(1, int(default_limit or 1))
+
+        if not bool(getattr(self._config, 'adaptive_cache_sizing', True)):
+            return base
+
+        # Respect explicitly customized cache sizes. Adaptive growth applies
+        # only to the default auto-managed path so tests and tooling that
+        # intentionally request small caches keep deterministic behavior.
+        if base != int(default_limit):
+            return base
+
+        n = self._effective_policy_slice_count()
+        if n <= 0:
+            return base
+
+        profile = build_stack_cache_profile(n)
+        try:
+            adaptive_max = max(base, int(getattr(self._config, 'adaptive_cache_max_size', _DEFAULT_ADAPTIVE_CACHE_MAX_SIZE) or _DEFAULT_ADAPTIVE_CACHE_MAX_SIZE))
+        except Exception:
+            adaptive_max = max(base, _DEFAULT_ADAPTIVE_CACHE_MAX_SIZE)
+
+        if kind == 'pixel':
+            target = max(
+                base,
+                min(
+                    n,
+                    max(
+                        int(profile.drag_fullscreen_slices) * 2,
+                        int(profile.widened_surrogate_distance) * 4,
+                        int(profile.decode_relevance_window) * 3,
+                        int(profile.idle_prefetch_radius) * 8,
+                    ),
+                ),
+            )
+        else:
+            target = max(
+                base,
+                min(
+                    adaptive_max,
+                    max(
+                        min(n, int(profile.drag_fullscreen_slices) + (int(profile.widened_surrogate_distance) * 2)),
+                        int(profile.decode_relevance_window) * 2,
+                        int(profile.medium_prefetch_radius) * 8,
+                    ),
+                ),
+            )
+
+        return max(base, min(int(target), adaptive_max))
 
     def _effective_policy_slice_count(self) -> int:
         """Return the slice count the current drag/cache policy should use."""
@@ -1229,6 +1491,107 @@ class Lightweight2DPipeline(QObject):
         if getattr(self, '_prefetch_prepared_index', None) == int(idx):
             return
         self._prefetch_around(int(idx), direction=direction)
+
+    def prepare_stack_settle_warmup(self, center: int, *, direction: int = 0) -> int:
+        """Submit a controlled P2 warmup band after protected stack drag settles.
+
+        Active drag is intentionally limited to P0/P1. Once the bridge has
+        rendered the exact final slice and left protected mode, this method
+        reopens a modest, direction-aware neighborhood around that final slice.
+        """
+        if not getattr(self, '_slices', None):
+            return 0
+        if bool(getattr(self, '_protected_drag_active', False)):
+            return 0
+        config = getattr(self, '_config', None)
+        if config is not None and int(getattr(config, 'prefetch_radius', 0) or 0) <= 0:
+            return 0
+
+        n = len(self._slices)
+        if n <= 1:
+            return 0
+        try:
+            center_idx = self._clamp(int(center))
+        except Exception:
+            center_idx = max(0, min(int(center or 0), n - 1))
+        dir_sign = -1 if int(direction or 0) < 0 else 1
+
+        ahead_radius = cap_prefetch_radius(
+            _STACK_SETTLE_AHEAD_RADIUS,
+            fast_interaction_active=False,
+            interaction_mode='settle',
+            series_number=getattr(self, '_series_number', None),
+        )
+        behind_radius = cap_prefetch_radius(
+            _STACK_SETTLE_BEHIND_RADIUS,
+            fast_interaction_active=False,
+            interaction_mode='settle',
+            series_number=getattr(self, '_series_number', None),
+        )
+        ahead_radius = max(0, min(int(ahead_radius), _STACK_SETTLE_AHEAD_RADIUS, n - 1))
+        behind_radius = max(0, min(int(behind_radius), _STACK_SETTLE_BEHIND_RADIUS, n - 1))
+
+        ordered_targets: list[int] = []
+        seen: set[int] = set()
+        for step in range(1, ahead_radius + 1):
+            target = center_idx + (dir_sign * step)
+            if 0 <= target < n and target not in seen:
+                ordered_targets.append(target)
+                seen.add(target)
+        for step in range(1, behind_radius + 1):
+            target = center_idx - (dir_sign * step)
+            if 0 <= target < n and target not in seen:
+                ordered_targets.append(target)
+                seen.add(target)
+        if not ordered_targets:
+            return 0
+
+        series_key = str(
+            getattr(self, '_series_number', None)
+            or getattr(self, '_series_path', None)
+            or 'prefetch'
+        )
+        with self._prefetch_lock:
+            gen = int(getattr(self, '_prefetch_generation', 0) or 0)
+            self._prefetch_request_epoch = int(getattr(self, '_prefetch_request_epoch', 0) or 0) + 1
+            request_epoch = int(self._prefetch_request_epoch)
+            uncached_targets = {
+                idx for idx in ordered_targets
+                if idx not in self._pixel_cache
+            }
+            self._active_prefetch_targets = set(uncached_targets)
+
+        submitted = 0
+        for target in ordered_targets:
+            if not should_admit(
+                WorkClass.PREFETCH,
+                {
+                    "key": f"{series_key}:stack-p2:{center_idx}:{dir_sign}:{target}",
+                    "series_key": series_key,
+                    "distance": abs(target - center_idx),
+                    "interaction_mode": "settle",
+                    "priority": int(FastWorkPriority.P2_SETTLE_WARM),
+                },
+            ):
+                continue
+            if target in self._pixel_cache:
+                self._submit_frame_prefetch(target)
+                submitted += 1
+            elif target in self._prefetch_pending:
+                continue
+            else:
+                self._submit_prefetch(target, gen, request_epoch=request_epoch)
+                submitted += 1
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "FAST:stack_settle_warmup center=%d direction=%d targets=%d submitted=%d",
+                center_idx,
+                dir_sign,
+                len(ordered_targets),
+                submitted,
+            )
+        return submitted
 
     # ── Private: prefetch ─────────────────────────────────────────────
 
@@ -1337,13 +1700,35 @@ class Lightweight2DPipeline(QObject):
         # for foreground decode (nearest-cached surrogate), so background
         # workers have more CPU headroom to fill the cache ahead of scroll.
         interaction_mode = self._fast_interaction
-        if interaction_mode:
+        drag_mode = interaction_mode and getattr(self, '_fast_interaction_mode', '') == 'drag'
+        now = time.perf_counter()
+        drag_start_warmup = bool(direction == 0 and now < float(getattr(self, '_drag_start_boost_until', 0.0) or 0.0))
+        if drag_start_warmup:
+            adaptive_radius = min(adaptive_radius, _DRAG_START_WARM_RADIUS)
+        elif drag_mode:
+            if bool(getattr(self, '_protected_drag_active', False)):
+                adaptive_radius = _PROTECTED_DRAG_AHEAD_RADIUS
+            else:
+                adaptive_radius = min(adaptive_radius, _DRAG_STEADY_PREFETCH_RADIUS)
+            last_drag_submit = float(getattr(self, '_last_drag_prefetch_submit_ts', 0.0) or 0.0)
+            if direction != 0 and (now - last_drag_submit) < _DRAG_PREFETCH_THROTTLE_S:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "FAST:drag_prefetch_throttled center=%d direction=%d dt_ms=%.1f",
+                        center,
+                        direction,
+                        (now - last_drag_submit) * 1000.0,
+                    )
+                return
+            if direction != 0:
+                self._last_drag_prefetch_submit_ts = now
+        elif interaction_mode:
             profile = build_stack_cache_profile(self._effective_policy_slice_count())
             adaptive_radius = min(adaptive_radius, int(profile.fast_prefetch_radius))
 
         # B3.4 diagnostic: log prefetch decisions periodically (every 20 slices)
         if center % 20 == 0:
-            logger.info(
+            logger.debug(
                 "[B3.4_DIAG] PREFETCH center=%d velocity=%.1f radius=%d fast=%s dir=%d",
                 center, velocity, adaptive_radius, self._fast_interaction, direction,
             )
@@ -1361,23 +1746,51 @@ class Lightweight2DPipeline(QObject):
         # Slow/idle: bidirectional
         go_forward = True
         go_backward = True
-        if velocity >= 8.0 and direction != 0:
+        if drag_mode and direction != 0:
+            if direction > 0:
+                go_backward = False
+            else:
+                go_forward = False
+        elif velocity >= 8.0 and direction != 0:
             if direction > 0:
                 go_backward = False
             else:
                 go_forward = False
 
         n = len(self._slices)
+        protected_drag = drag_mode and bool(getattr(self, '_protected_drag_active', False))
+        explicit_p01_lane = tuple(int(idx) for idx in (getattr(self, '_stack_drag_p01_slices', ()) or ()))
+        ordered_targets: list[int] = []
         target_indices: set[int] = set()
-        for offset in range(1, adaptive_radius + 1):
-            if go_forward:
-                fwd = center + offset
-                if 0 <= fwd < n:
-                    target_indices.add(fwd)
-            if go_backward:
-                bwd = center - offset
-                if 0 <= bwd < n:
-                    target_indices.add(bwd)
+        if protected_drag and direction != 0:
+            if explicit_p01_lane:
+                for target in explicit_p01_lane:
+                    if target == center or not (0 <= target < n):
+                        continue
+                    if target in target_indices:
+                        continue
+                    ordered_targets.append(target)
+                    target_indices.add(target)
+            else:
+                if direction > 0:
+                    offsets = [1, 2, -1]
+                else:
+                    offsets = [-1, -2, 1]
+                for offset in offsets:
+                    target = center + offset
+                    if 0 <= target < n and target not in target_indices:
+                        ordered_targets.append(target)
+                        target_indices.add(target)
+        else:
+            for offset in range(1, adaptive_radius + 1):
+                if go_forward:
+                    fwd = center + offset
+                    if 0 <= fwd < n:
+                        target_indices.add(fwd)
+                if go_backward:
+                    bwd = center - offset
+                    if 0 <= bwd < n:
+                        target_indices.add(bwd)
 
         uncached_targets = {
             idx for idx in target_indices
@@ -1407,6 +1820,23 @@ class Lightweight2DPipeline(QObject):
                 )
             return
 
+        if protected_drag and direction != 0:
+            for target in ordered_targets:
+                if not (0 <= target < n) or target in self._pixel_cache:
+                    continue
+                if should_admit(
+                    WorkClass.PREFETCH,
+                    {
+                        "key": f"{series_key}:stack-p1:{center}:{direction}:{target}",
+                        "series_key": series_key,
+                        "distance": abs(target - center),
+                        "interaction_mode": "drag",
+                        "priority": int(FastWorkPriority.P1_NEIGHBOR),
+                    },
+                ):
+                    self._submit_prefetch(target, gen, request_epoch=request_epoch)
+            return
+
         for offset in range(1, adaptive_radius + 1):
             # Forward
             if go_forward:
@@ -1423,7 +1853,7 @@ class Lightweight2DPipeline(QObject):
                             },
                         ):
                             self._submit_prefetch(fwd, gen, request_epoch=request_epoch)
-                    elif not interaction_mode:
+                    elif not interaction_mode and not bool(getattr(self, '_protected_drag_active', False)):
                         self._submit_frame_prefetch(fwd)
             # Backward
             if go_backward:
@@ -1440,7 +1870,7 @@ class Lightweight2DPipeline(QObject):
                             },
                         ):
                             self._submit_prefetch(bwd, gen, request_epoch=request_epoch)
-                    elif not interaction_mode:
+                    elif not interaction_mode and not bool(getattr(self, '_protected_drag_active', False)):
                         self._submit_frame_prefetch(bwd)
 
     def _submit_prefetch(self, idx: int, generation: int = 0, *, request_epoch: int = 0) -> None:
@@ -1449,7 +1879,17 @@ class Lightweight2DPipeline(QObject):
                 return
             self._prefetch_pending.add(idx)
         PerfMetrics.get().record_prefetch_submitted()
-        self._decode_executor.submit(self._decode_into_cache, idx, generation, request_epoch)
+        drag_session_token = 0
+        if bool(getattr(self, '_protected_drag_active', False)):
+            drag_session_token = int(getattr(self, '_drag_session_token', 0) or 0)
+            self._drag_prefetch_submitted = int(getattr(self, '_drag_prefetch_submitted', 0) or 0) + 1
+        self._decode_executor.submit(
+            self._decode_into_cache,
+            idx,
+            generation,
+            request_epoch,
+            drag_session_token,
+        )
 
     def _submit_frame_prefetch(self, idx: int) -> None:
         with self._prefetch_lock:
@@ -1458,7 +1898,13 @@ class Lightweight2DPipeline(QObject):
             self._frame_prefetch_pending.add(idx)
         self._frame_executor.submit(self._render_into_cache, idx)
 
-    def _decode_into_cache(self, idx: int, generation: int = 0, request_epoch: int = 0) -> None:
+    def _decode_into_cache(
+        self,
+        idx: int,
+        generation: int = 0,
+        request_epoch: int = 0,
+        drag_session_token: int = 0,
+    ) -> None:
         # B3.2: generation gate — check BEFORE the expensive pydicom.dcmread.
         # Only fires on true context changes (series close, W/L change).
         if generation > 0 and generation != self._prefetch_generation:
@@ -1546,7 +1992,12 @@ class Lightweight2DPipeline(QObject):
                 )
                 if arr is not None:
                     # Save to disk cache (B3.12)
-                    disk_cache.put(sm.path, study_uid, arr)
+                    disk_cache.put(
+                        sm.path,
+                        study_uid,
+                        arr,
+                        defer=bool(getattr(self, '_protected_drag_active', False)),
+                    )
             # Fallback to in-process decode
             if arr is None:
                 arr = self._decode_slice(idx)
@@ -1564,13 +2015,20 @@ class Lightweight2DPipeline(QObject):
             )
             if distance <= relevance_limit:
                 self._put_pixel_cache(idx, arr)
-                self._submit_frame_prefetch(idx)
+                if not bool(getattr(self, '_protected_drag_active', False)):
+                    self._submit_frame_prefetch(idx)
             else:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
                         "B3.2:discard_stale_decode idx=%d current=%d dist=%d limit=%d",
                         idx, current, distance, relevance_limit,
                     )
+            if (
+                drag_session_token > 0
+                and bool(getattr(self, '_protected_drag_active', False))
+                and drag_session_token == int(getattr(self, '_drag_session_token', 0) or 0)
+            ):
+                self._drag_background_decode_count = int(getattr(self, '_drag_background_decode_count', 0) or 0) + 1
         except Exception:
             pass
         finally:

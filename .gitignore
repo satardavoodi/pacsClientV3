@@ -60,3 +60,18 @@ tools/git/github-network.local.json
 **/secrets*.py
 
 builder/output/
+
+# Runtime / scratch artifacts (v2.3.7)
+log/
+tmp/
+memories/
+_vc_load_check.txt
+# Stray 0-byte files from shell parsing glitches
+markAsCompleted()`
+send(new
+sendTelegramNotification($submission)`
+# Legacy backups / extracted binaries
+*.bak_phase5d
+config/echomind_settings.tmp
+builder/plugin package/packages/run_cd/payload/python/modules/cd_burner/lightViewer.rar
+builder/plugin package/packages/run_cd/payload/python/modules/cd_burner/lightViewer/

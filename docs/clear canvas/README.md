@@ -54,10 +54,11 @@ This folder remains a gathered reference bundle. The planning-oriented documents
 
 If the task is benchmark execution or continuation:
 
-1. `CLEARCANVAS_BENCHMARK_EXECUTION.md`
-2. `../plans/clear-canvas/CLEARCANVAS_KPI_SCORECARD_AND_PLAN_UPDATE.md`
-3. `../plans/clear-canvas/CLEARCANVAS_FULL_REVIEW_AND_KPI_BENCHMARK_PLAN.md`
-4. `CLEARCANVAS_WORKSTATION_COMPARISON.md`
+1. `../plans/BLOCK_A_B_KPI_CLEARCANVAS_HANDOFF_2026-04-20.md`
+2. `CLEARCANVAS_BENCHMARK_EXECUTION.md`
+3. `../plans/clear-canvas/CLEARCANVAS_KPI_SCORECARD_AND_PLAN_UPDATE.md`
+4. `../plans/clear-canvas/CLEARCANVAS_FULL_REVIEW_AND_KPI_BENCHMARK_PLAN.md`
+5. `CLEARCANVAS_WORKSTATION_COMPARISON.md`
 
 If the task is architecture simplification/refactor planning:
 

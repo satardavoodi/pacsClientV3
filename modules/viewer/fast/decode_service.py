@@ -75,7 +75,21 @@ def _is_content_decode_error(exc: Exception) -> bool:
 _ENABLED = os.environ.get("AIPACS_DECODE_SERVICE", "1") != "0"
 
 # Worker config
-_MAX_WORKERS = 1
+# v2.3.6 CPU budget: Allow opt-in parallel decode subprocesses via env.
+# Each extra worker is a full Python interpreter (+~150–250 MB RAM with
+# pydicom+numpy loaded) but runs in parallel on its own core — true GIL
+# bypass for decode. Default stays at 1 to protect low-config PCs. On
+# 8+ core workstations, AIPACS_DECODE_WORKERS=2 roughly halves background
+# cache-fill time during multi-series scroll.
+def _resolve_decode_workers() -> int:
+    override = os.environ.get("AIPACS_DECODE_WORKERS", "").strip()
+    if override.isdigit():
+        n = int(override)
+        if n >= 1:
+            return min(n, 4)  # hard cap: 4 subprocesses
+    return 1
+
+_MAX_WORKERS = _resolve_decode_workers()
 _MAX_TASKS_PER_CHILD = 200  # auto-restart worker after 200 decodes
 _DECODE_TIMEOUT_S = 10.0    # generous timeout for large slices
 _STARTUP_DECODE_TIMEOUT_S = 30.0

@@ -172,7 +172,7 @@ def build_command(spec: ModuleType) -> list[str]:
 
     # Company / product info (optional, nice-to-have in exe properties)
     cmd.append(f"--product-name={app_name}")
-    cmd.append(f"--product-version=2.3.6")
+    cmd.append(f"--product-version=2.3.7")
     cmd.append(f"--company-name=AIPacs")
     cmd.append(f"--file-description={app_name} - Professional Medical Imaging Suite")
 

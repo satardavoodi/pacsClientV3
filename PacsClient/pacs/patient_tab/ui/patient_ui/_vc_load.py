@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, QTimer, QThread, QMetaObject
 from PySide6.QtWidgets import QApplication, QProgressDialog
 from PacsClient.pacs.patient_tab.utils.image_io import load_single_series_by_number
 from PacsClient.pacs.patient_tab.utils import NodeViewer
+from PacsClient.utils.series_completeness import build_series_completeness_snapshot
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing, new_correlation_id, set_log_context
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk, CallerTypes
 from modules.download_manager.core.enums import DownloadPriority
@@ -74,10 +75,12 @@ class _VCLoadMixin:
                 visible_count = int(vtk_w.get_count_of_slices() or 0)
             except Exception:
                 visible_count = 0
-            if expected <= 0:
-                if visible_count > 0:
-                    return True
-            elif visible_count >= expected:
+            snapshot = build_series_completeness_snapshot(
+                sn,
+                expected_count=expected,
+                viewer_visible_count=visible_count,
+            )
+            if snapshot.is_viewer_complete:
                 return True
         return False
 
@@ -884,8 +887,7 @@ class _VCLoadMixin:
             # Slice count check (skip huge series)
             dcm_count = 0
             try:
-                pw = self.parent_widget
-                dcm_count = pw._get_expected_series_image_count(sn) if hasattr(pw, '_get_expected_series_image_count') else 0
+                dcm_count = int(self._get_series_expected_slices(sn) or 0)
             except Exception:
                 pass
             if 0 < dcm_count > self._DL_WARMUP_MAX_SLICES:
@@ -1057,14 +1059,13 @@ class _VCLoadMixin:
             if self._dl_warmup_stop.is_set():
                 break
 
-            # â”€â”€ Get image count from reliable source (server/DB metadata) â”€â”€
+            # â”€â”€ Get image count from shared controller-side metadata path â”€â”€
             dcm_count = 0
             _series_desc = ""
             _series_modality = ""
             try:
-                # Primary: parent_widget._get_expected_series_image_count (server + DB)
                 pw = self.parent_widget
-                dcm_count = pw._get_expected_series_image_count(sn) if hasattr(pw, '_get_expected_series_image_count') else 0
+                dcm_count = int(self._get_series_expected_slices(sn) or 0)
                 # Also grab series description & modality for logging
                 _sinfo = getattr(pw, '_server_series_info', {}).get(sn, {}) or {}
                 _series_desc = _sinfo.get('series_description', '') or _sinfo.get('description', '') or ''

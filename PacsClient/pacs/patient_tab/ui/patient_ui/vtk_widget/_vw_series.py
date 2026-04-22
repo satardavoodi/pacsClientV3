@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 class _VWSeriesMixin:
     """Series lifecycle: start_process_series, switch_series, reset, cleanup."""
 
+    _QT_STARTUP_REFIT_DELAYS_MS = (0, 50, 120, 220)
+
     def _queue_qt_startup_refit(self, bridge) -> None:
         """Re-fit a freshly created Qt viewer on the next event-loop tick.
 
@@ -45,24 +47,58 @@ class _VWSeriesMixin:
         When that happens, the last series dropped into a layout may appear
         under-zoomed until a later UI event triggers another presentation sync.
 
-        Queue exactly one guarded follow-up refit for fresh Qt starts only.
+        Queue a short guarded refit burst for fresh Qt starts only.
         In-place Qt refreshes continue to use the controller-managed refit path.
+
+        ``QTimer.singleShot(0)`` fixed the original under-fit case, but the
+        Block B regression in ``log 83`` shows there are still switch paths
+        where the first follow-up runs before the layout has fully stabilized.
+        A tiny bounded retry window keeps the first visible image authoritative
+        while making the startup refit resilient to one or two late layout
+        passes.
         """
 
-        def _apply() -> None:
+        # v2.3.7: reset the refit-dedupe signature so the first delayed refit
+        # in this burst always runs (host may have reflowed since the initial
+        # zoom_to_fit in _start_qt_viewer). Subsequent delays with identical
+        # host geometry will dedupe in _sync_qt_viewer_presentation.
+        try:
+            self._last_refit_signature = None
+        except Exception:
+            pass
+
+        def _apply(delay_ms: int) -> None:
             try:
                 if not bool(getattr(self, '_qt_bridge_active', False)):
                     return
                 if getattr(self, 'image_viewer', None) is not bridge:
                     return
+                qt_viewer = getattr(self, '_qt_viewer_widget', None)
+                if qt_viewer is not None:
+                    try:
+                        qt_viewer.setGeometry(self.rect())
+                    except Exception:
+                        pass
                 self._sync_qt_viewer_presentation(refit_view=True)
+                if qt_viewer is not None:
+                    try:
+                        qt_viewer.repaint()
+                    except Exception:
+                        pass
+                logger.info(
+                    "[QT_PRESENTATION] startup_refit delay_ms=%d host=%dx%d",
+                    int(delay_ms),
+                    int(max(0, self.width())),
+                    int(max(0, self.height())),
+                )
             except Exception as exc:
                 logger.debug("[QT_PRESENTATION] deferred startup refit failed: %s", exc)
 
-        try:
-            QTimer.singleShot(0, _apply)
-        except Exception:
-            _apply()
+        for delay_ms in self._QT_STARTUP_REFIT_DELAYS_MS:
+            try:
+                QTimer.singleShot(int(delay_ms), lambda d=delay_ms: _apply(int(d)))
+            except Exception:
+                _apply(int(delay_ms))
 
     def _sync_qt_viewer_presentation(self, *, refit_view: bool = False) -> None:
         """Keep the FAST Qt child viewer aligned with the host widget.
@@ -84,6 +120,8 @@ class _VWSeriesMixin:
         try:
             qt_viewer.setGeometry(self.rect())
             qt_viewer.raise_()
+            qt_viewer.updateGeometry()
+            qt_viewer.update()
             if self.slider is not None:
                 self.slider.raise_()
         except Exception:
@@ -92,10 +130,31 @@ class _VWSeriesMixin:
         if not refit_view:
             return
 
+        # v2.3.7: dedupe redundant zoom_to_fit within a refit burst. Log 96
+        # showed 4 identical zoom_to_fit scale=324.64 calls during startup
+        # (host=425x554 on all 4). `_last_refit_signature` is cleared at the
+        # start of `_queue_qt_startup_refit` so the first real refit runs;
+        # subsequent refits on an unchanged host skip the expensive call.
+        try:
+            host_size = (int(self.width()), int(self.height()))
+        except Exception:
+            host_size = None
+
+        if host_size is not None:
+            last_sig = getattr(self, '_last_refit_signature', None)
+            if last_sig is not None and last_sig == host_size:
+                logger.debug(
+                    "[QT_PRESENTATION] zoom_to_fit skipped (dedupe) host=%dx%d",
+                    host_size[0], host_size[1],
+                )
+                return
+
         try:
             new_scale = self.image_viewer.zoom_to_fit()
             if new_scale:
                 self._protected_parallel_scale = float(new_scale)
+                if host_size is not None:
+                    self._last_refit_signature = host_size
                 logger.info("[QT_PRESENTATION] zoom_to_fit scale=%.2f", float(new_scale))
         except Exception as exc:
             logger.debug("[QT_PRESENTATION] zoom_to_fit failed: %s", exc)
@@ -203,8 +262,12 @@ class _VWSeriesMixin:
     def _h7_p6_log(self, path_label: str) -> None:
         """[H7-P6] Viewer state snapshot after switch_series completes."""
         try:
-            _sn = getattr(self, 'series_number', None)
-            _meta = getattr(self, 'metadata', None) or {}
+            _meta = (
+                getattr(self, 'metadata', None)
+                or getattr(self, '_bound_backend_metadata', None)
+                or {}
+            )
+            _sn = getattr(self, 'series_number', None) or _meta.get('series', {}).get('series_number', None)
             _instances = _meta.get('instances', [])
             _series_info = _meta.get('series', {})
             _server_count = _series_info.get('image_count', '?')
@@ -357,14 +420,16 @@ class _VWSeriesMixin:
     def _start_qt_viewer(self, metadata, metadata_fixed):
         """Create and show the Qt-based 2D viewer (VTK-free path)."""
         try:
-            if self._qt_bridge_active or self._qt_viewer_widget is not None:
-                logger.info("qt-viewer replacing existing bridge before restart")
+            if self.image_viewer is not None or self._qt_bridge_active or self._qt_viewer_widget is not None:
+                logger.info("qt-viewer replacing existing viewer before restart")
                 self.cleanup_image_viewer(preserve_bound_backend=True)
 
             bridge, qt_viewer = _create_qt_viewer_bridge(self, metadata, metadata_fixed)
             self.image_viewer = bridge
             self._qt_viewer_widget = qt_viewer
             self._qt_bridge_active = True
+            self._active_backend = BACKEND_PYDICOM_QT
+            self._update_backend_badge()
 
             # Initialize a functional bridge style for toolbar integration
             from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_interactor import _QtBridgeStyle
@@ -398,7 +463,22 @@ class _VWSeriesMixin:
                 logger.warning("could not hide VTK render window: %s", _e)
 
             # Show Qt viewer over the VTK render window
+            try:
+                qt_viewer.setGeometry(self.rect())
+                qt_viewer.updateGeometry()
+            except Exception:
+                pass
             qt_viewer.show()
+            try:
+                qt_viewer.raise_()
+                qt_viewer.update()
+            except Exception:
+                pass
+            if self.slider is not None:
+                try:
+                    self.slider.raise_()
+                except Exception:
+                    pass
             self._sync_qt_viewer_presentation(refit_view=False)
 
             # Render the first slice
@@ -407,6 +487,10 @@ class _VWSeriesMixin:
             bridge.apply_default_window_level(mid_slice)
             bridge.set_slice(mid_slice)
             self._sync_qt_viewer_presentation(refit_view=True)
+            try:
+                qt_viewer.repaint()
+            except Exception:
+                pass
             self._qt_switch_refit_applied = True
             self._queue_qt_startup_refit(bridge)
 
@@ -461,7 +545,11 @@ class _VWSeriesMixin:
         if self._qt_bridge_active and self.image_viewer is not None:
             try:
                 self.viewport_spinner.show_reset("Applying reset...")
-                self.image_viewer.reset_image_viewer(vtk_image_data, metadata)
+                self.image_viewer.reset_image_viewer(
+                    vtk_image_data,
+                    metadata,
+                    reset_presentation=True,
+                )
                 mid_slice = self.get_count_of_slices() // 2
                 if self.slider is not None:
                     self.slider.setValue(mid_slice)
@@ -560,6 +648,7 @@ class _VWSeriesMixin:
 
     def cleanup_image_viewer(self, preserve_bound_backend=False):
         self._dbg_fast_state("cleanup_image_viewer")  # CP7 [FAST-DIAG]
+        _preserved_backend = str(getattr(self, '_active_backend', BACKEND_VTK) or BACKEND_VTK)
         # Hide and release Qt viewer resources if active
         if self._qt_bridge_active:
             self._hide_qt_viewer()
@@ -586,8 +675,8 @@ class _VWSeriesMixin:
             self._lazy_requested_generation = self._series_generation_id
             self._lazy_requested_slice = None
             self._active_backend = BACKEND_VTK
-        elif self._lazy_loader is None:
-            self._active_backend = BACKEND_VTK
+        else:
+            self._active_backend = _preserved_backend
         self._update_backend_badge()
 
         # Run garbage collection to help free memory
