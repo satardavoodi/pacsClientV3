@@ -174,6 +174,7 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     icon=icon_path_app_a(),
+    contents_directory="engine",
 )
 
 coll = COLLECT(

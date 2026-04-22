@@ -171,9 +171,59 @@
 - **`QMetaObject.invokeMethod` for cross-thread UI dispatch in thumbnails** (v2.2.9.2). `set_server_series_info` may be called from a background `threading.Thread`. Use `QMetaObject.invokeMethod(self, "_load_server_thumbnails", Qt.QueuedConnection)` — never `QTimer.singleShot` — since QTimer.singleShot from a non-Qt thread has no event loop and is silently dropped. The `_load_server_thumbnails` and render slots must be decorated with `@Slot()`.
 - **`_thumbnail_load_inflight` guard prevents concurrent thumbnail loads** (v2.2.9.2). Set to `True` in `_load_server_thumbnails` before the worker starts; reset to `False` in the worker's `finally` block. Do NOT schedule another load while this is `True` — it results in duplicate work and may reset pending/ready series border states.
 
+## Build & installation layout (v2.3.7+)
+
+### Install folder layout on end-user machines
+```
+C:\Program Files\AIPacs\
+    AIPacs.exe                     ← launcher only
+    engine\                        ← PyInstaller bundle root (renamed from _internal)
+        base_library.zip
+        PySide6\, vtkmodules\, ...
+        config\installation_profile.json  ← fallback only; canonical is ProgramData
+    Qss\                           ← QSS stylesheets
+
+C:\ProgramData\AIPacs\
+    config\
+        installation_profile.json  ← canonical install config, written by installer
+    module_packages\
+        module_package_feed.json
+        advanced_mpr\              ← optional runtime payloads (not in Program Files)
+        printing\, echomind\, ...
+
+%LOCALAPPDATA%\AIPacs\
+    user_data\                     ← per-user DICOM cache and downloaded studies
+    updates\                       ← update cache
+
+%APPDATA%\AIPacs\config\           ← per-user runtime profile and update sources
+```
+
+### Key files for the build chain
+| File | Purpose |
+|------|---------|
+| `pyproject.toml` | Single source of truth for `version = "X.Y.Z"` |
+| `setup_build_env.ps1` | Creates `.venv_build` on any PC after git clone |
+| `build.bat` | Windows entry point — uses `.venv_build\Scripts\python.exe` when present |
+| `builder/build_release.py` | Orchestrates PyInstaller → staging → Inno Setup |
+| `builder/spec/appA_workstation.spec` | PyInstaller spec; `contents_directory="engine"` in `EXE()` renames `_internal` |
+| `builder/installer/AIPacs_Setup.iss` | Inno Setup 6 script; writes profile + packages to ProgramData |
+| `builder/requirements/build_requirements.txt` | Pinned build toolchain for `.venv_build` (includes `psutil>=5.9`) |
+| `builder/inventory/imports_summary.json` | `suggested_hiddenimports` list read by `load_hiddenimports()` in spec |
+
+### Critical build rules for AI agents
+- **Version flows from `pyproject.toml` only.** `load_version()` reads it via `tomllib`; never hardcode a version in the spec or installer script.
+- **`contents_directory="engine"` belongs in `EXE()`, NOT `COLLECT()`.** PyInstaller silently ignores unknown kwargs on `COLLECT` — the rename only works when set on `EXE`.
+- **`psutil` MUST be in both `.venv_build` AND `suggested_hiddenimports`** (`builder/inventory/imports_summary.json`). It is a top-level import in `single_instance_lock.py`; missing it causes immediate crash on first launch of the built exe.
+- **Any non-optional top-level import added to the codebase must be added to `suggested_hiddenimports`** in `imports_summary.json`. The `unique_imports` section in that file is NOT read by `load_hiddenimports()`.
+- **`installation_profile_path()` returns `%PROGRAMDATA%\AIPacs\config\installation_profile.json`** in frozen mode. `bundled_config_root()` (inside `engine\config\`) is the fallback only — do NOT write the canonical profile there at runtime.
+- **`bundled_module_packages_search_roots()` searches ProgramData first** in frozen Windows mode. The installer deploys all optional module packages to `{commonappdata}\AIPacs\module_packages\` — not inside Program Files.
+- **`program_data_config_root()`** is the new helper in `aipacs_runtime.py` that returns the ProgramData config path. Use it when reading system-wide deployment config.
+- **`InternalConfigDir()` in the installer has a 3-tier fallback:** ProgramData config → `engine\config` → `_internal\config` (legacy). Do NOT collapse this to a single path — it keeps upgrades from old installs working.
+- **Build command:** `.venv_build\Scripts\python.exe build.py` (full build including PyInstaller). Use `--skip-pyinstaller` only if `builder/output/dist/AIPacs/AIPacs.exe` already exists from this session — the `--skip-pyinstaller` flag still cleans staging outputs and re-runs Inno Setup.
+
 ## Build/run/test workflows
 - Run app: `python main.py` (Windows uses software OpenGL flags set in `main.py`).
-- Build executable: `build.bat` → `build.py` (PyInstaller spec `AIPacs.spec`).
+- Build executable: `build.bat` → `build.py` (PyInstaller spec `builder/spec/appA_workstation.spec`). Build venv: `.venv_build` (created by `setup_build_env.ps1`).
 - Tests are ad-hoc scripts like `test_*.py`; there is no single test runner configured.
 - DM tests: `.venv\Scripts\python.exe tests/download_manager/run_dm_test.py` (27 scenarios, 129 assertions — covers state store, coordinator, priority, observer, series-interrupt).
 - DM stress tests: `.venv\Scripts\python.exe tests/download_manager/test_dm_stress.py` (10 heavy-load scenarios H1–H10).
@@ -262,8 +312,14 @@ Worst-case series-switch latency (drag-drop → new series starts): **~batch RTT
 | File | Key class / function | Purpose |
 |------|---------------------|---------|
 | `main.py` | — | App entry; sets OpenGL flags, creates `QEventLoop`, launches `AppHandler` |
-| `aipacs_runtime.py` | `user_data_root()`, `roaming_config_root()` | Path resolution for dev vs PyInstaller |
+| `aipacs_runtime.py` | `user_data_root()`, `roaming_config_root()`, `program_data_config_root()` | Path resolution for dev vs PyInstaller; `installation_profile_path()` → ProgramData in frozen mode; `bundled_module_packages_search_roots()` → ProgramData first |
 | `_project_root.py` | `PROJECT_ROOT` | Canonical root path resolution |
+| `setup_build_env.ps1` | — | Creates `.venv_build` on any PC after git clone; installs pinned build toolchain from `builder/requirements/build_requirements.txt` |
+| `build.bat` | — | Windows build entry point; uses `.venv_build\Scripts\python.exe` when present, falls back to ambient Python with warning |
+| `build.py` | — | Thin launcher; delegates to `builder/build_release.py` |
+| `builder/build_release.py` | `load_version()`, `validate_release_bundle_graphics_runtime()` | Full release orchestration: PyInstaller → DLL validation → staging → Inno Setup |
+| `builder/spec/appA_workstation.spec` | — | PyInstaller spec; `contents_directory="engine"` in `EXE()` renames `_internal` → `engine` |
+| `builder/installer/AIPacs_Setup.iss` | — | Inno Setup 6 script; installs exe + engine/ to Program Files; writes profile + module_packages to ProgramData |
 | `PacsClient/app_handler.py` | `AppHandler` | Login → main window transition |
 | `PacsClient/login/ui/login_ui.py` | `LoginWindow` | Login form UI |
 
@@ -628,6 +684,15 @@ HomePanelWidget (thin controller)
 |------------------------|----------------|
 | App startup | `main.py` → `main()` |
 | Login authentication | `PacsClient/login/ui/login_ui.py` → `LoginWindow` |
+| Build release executable | `build.bat` → `build.py` → `builder/build_release.py` |
+| Set up build environment | `setup_build_env.ps1` → creates `.venv_build` |
+| PyInstaller spec (bundle layout) | `builder/spec/appA_workstation.spec` |
+| Hidden imports list | `builder/inventory/imports_summary.json` → `suggested_hiddenimports` |
+| Install profile written at install | `builder/installer/AIPacs_Setup.iss` → `WriteInstallationProfile()` |
+| Install profile read at runtime | `aipacs_runtime.py` → `installation_profile_path()` |
+| Module packages resolved at runtime | `aipacs_runtime.py` → `bundled_module_packages_search_roots()` |
+| ProgramData config path | `aipacs_runtime.py` → `program_data_config_root()` |
+| Graphics DLL validation (build) | `builder/build_release.py` → `validate_release_bundle_graphics_runtime()` |
 | Patient double-click → open tab | `home_ui.py` → `_on_patient_double_clicked_async()` |
 | Series drag-drop → viewer | `patient_widget_viewer_controller.py` → `change_series_on_viewer()` |
 | Download priority change | `series_intent_coordinator.py` → `request_critical_series()` |

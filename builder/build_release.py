@@ -164,10 +164,12 @@ def validate_release_bundle_graphics_runtime(source_dir: Path) -> None:
     if sys.platform != "win32":
         return
 
+    # Support both "engine" (current) and "_internal" (legacy) bundle layouts
+    engine_dir = source_dir / "engine"
     internal_dir = source_dir / "_internal"
     missing = []
     for name in REQUIRED_RELEASE_GRAPHICS_BINARIES:
-        if (source_dir / name).exists() or (internal_dir / name).exists():
+        if (source_dir / name).exists() or (engine_dir / name).exists() or (internal_dir / name).exists():
             continue
         missing.append(name)
     if not missing:

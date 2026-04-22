@@ -30,8 +30,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - [Workstation Lifecycle](architecture/workstation-lifecycle.md) â€” App startup, session loops, resource lifecycle, shutdown
 - [Database Architecture](architecture/database-architecture.md) â€” Schema, connection pooling, WAL mode, migration strategy
 - [Network Architecture](architecture/network-architecture.md) â€” Socket/gRPC protocol, framing, retry, connection health
-- [Home UI Services](architecture/home-ui-services.md) â€” Thin controller + service layer pattern
-- [Test Catalog](architecture/test-catalog.md) â€” All test suites, scenarios, KPI thresholds, run commands
+- [Home UI Services](architecture/home-ui-services.md) â€” Thin controller + service layer pattern- [Doc Summary](architecture/DOC_SUMMARY.md) â€" One-page structural survey of the entire docs/ tree- [Test Catalog](architecture/test-catalog.md) â€” All test suites, scenarios, KPI thresholds, run commands
 - [tests/README.md](../tests/README.md) â€” Suite map and practical run routing from the repo test folder
 
 ### Pipelines
@@ -71,10 +70,16 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - [Setup & Tooling](development/setup-and-tooling.md) â€” Dependencies, commands, day-to-day workflow
 - [Tools Governance & Roadmap](development/tools-governance-and-roadmap.md) â€” Rules, lifecycle, and 90-day plan for `tools/`
 - [GapGPT API Usage](development/GAPGPT_API_USAGE.md) â€” External AI API reference
+- [T6 Preparation Notes](development/T6_PREPARATION.md) — Lazy-slice callback TOCTOU guard analysis (read-only; no fix needed)
+- [H13 Do-Not-Repeat](development/NEXT_AGENT_DO_NOT_REPEAT.md) — Exhausted approaches from H13 VTK crash investigation
 
 ### Plans
-- [Plans Index](plans/README.md) â€” canonical home for active planning documents and roadmaps
-- [Master Plan](plans/plan.md) â€” current top-level FAST/workstation planning ledger
+- [Plans Index](plans/README.md) — canonical home for active planning documents and roadmaps
+- [Master Plan](plans/plan.md) — current top-level FAST/workstation planning ledger
+- [Next Agent Handoff](plans/NEXT_AGENT_HANDOFF.md) — Current session handoff summary and short-term goals
+- [Next Agent Reading Order](plans/NEXT_AGENT_READING_ORDER.md) — Ordered reading list before making changes
+- [Next Agent Open Questions](plans/NEXT_AGENT_OPEN_QUESTIONS.md) — Outstanding questions for the next work session
+- [Large File Refactoring Roadmap](plans/development/large-file-refactoring-roadmap.md) — P1–P6 large-file split plan
 
 ### Releases
 - [Release Notes](releases/RELEASE_NOTES.md) â€” Current consolidated release history
@@ -84,9 +89,19 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - [Version 2.3.4 Release](releases/VERSION_2.3.4_RELEASE.md) â€” Earlier stable release snapshot
 - [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) â€” Earlier stable release snapshot
 
-### Deployment
-- [Windows Release Flow](../builder/docs/WINDOWS_RELEASE_FLOW.md) â€” Build, stage, and install workflow for shipping to another PC
-- [Installer QA Checklist](../builder/docs/INSTALLER_QA_CHECKLIST.md) â€” Cross-PC validation for module selection, first launch, and graphics fallback
+### Build & Deployment
+- [Windows Release Flow](../builder/docs/WINDOWS_RELEASE_FLOW.md) â€" Build, stage, and install workflow for shipping to another PC
+- [Build Document](../builder/docs/BUILD_DOCUMENT.md) â€" Long-lived PyInstaller packaging knowledge base (VTK, PySide6, SimpleITK notes)
+- [Build Checklist](../builder/docs/BUILD_CHECKLIST.md) â€" Step-by-step pre-release validation checklist
+- [Installer QA Checklist](../builder/docs/INSTALLER_QA_CHECKLIST.md) â€" Cross-PC validation for module selection, first launch, and graphics fallback
+- [Privacy & Data Policy](../builder/docs/PRIVACY_AND_DATA_POLICY.md) â€" What is and is not packaged into the release bundle
+- **Setup scripts** (run on any PC after git clone, before building):
+  - [`setup_env.ps1`](../setup_env.ps1) â€" Creates `.venv` development environment for day-to-day work
+  - [`setup_build_env.ps1`](../setup_build_env.ps1) â€" Creates `.venv_build` release-build environment required by `build.bat`
+- **Build commands:**
+  - `.\build.bat` â€" Full pipeline: PyInstaller â†' stage â†' plugin packages â†' Inno Setup installer
+  - `.\build.bat --skip-pyinstaller` â€" Reuse existing `dist/`, only restage and compile installer
+  - `.\build.bat --skip-installer-compile` â€" Stage but skip Inno Setup (ISCC not required)
 
 ### Archive
 - [Archive Index](archive/README.md) â€” Historical documents (not current truth)
@@ -104,17 +119,40 @@ This is the canonical entrypoint for all project documentation. The docs are org
 
 ```
 docs/
-â”œâ”€â”€ README.md                  â†گ You are here
-â”œâ”€â”€ plans/                     â†گ Canonical home for planning docs and roadmaps
-â”œâ”€â”€ architecture/              â†گ System design, layers, lifecycle
-â”œâ”€â”€ pipelines/                 â†گ Data flow pipelines (image, download, viewer)
-â”œâ”€â”€ stability/                 â†گ Resource lifecycle, cache management, loop patterns
-â”œâ”€â”€ performance/               â†گ Benchmarks, metrics, optimization decisions
-â”œâ”€â”€ modules/                   â†گ Active module catalog
-â”œâ”€â”€ development/               â†گ Setup, tooling, external APIs
-â”œâ”€â”€ releases/                  â†گ Version history
-â”œâ”€â”€ archive/                   â†گ Historical documents (not current truth)
-â””â”€â”€ assets/                    â†گ Images and diagrams
+|-- README.md                    <- You are here
+|-- analysis/                    <- ClearCanvas / Cornerstone comparisons and KPI mapping
+|-- architecture/                <- System design, layers, lifecycle
+|   |-- DOC_SUMMARY.md           <- One-page structural survey of all docs/
+|   `-- ...
+|-- plans/                       <- Canonical home for planning docs and roadmaps
+|   |-- development/             <- File-refactoring roadmaps and migration plans
+|   |-- performance/             <- Ordered KPI-driven phases and stop/go checkpoints
+|   |-- pipelines/               <- Progressive viewer and fast-mode plans
+|   |-- NEXT_AGENT_HANDOFF.md    <- Handoff summary for the next session
+|   |-- NEXT_AGENT_READING_ORDER.md
+|   |-- NEXT_AGENT_OPEN_QUESTIONS.md
+|   `-- ...
+|-- pipelines/                   <- Data flow pipelines (image, download, viewer)
+|-- stability/                   <- Resource lifecycle, cache management, loop patterns
+|-- performance/                 <- Benchmarks, metrics, optimization decisions
+|-- viewer/                      <- FAST vs ADVANCED viewer architecture and debug maps
+|-- modules/                     <- Active module catalog
+|-- development/                 <- Setup, tooling, investigation notes
+|   |-- NEXT_AGENT_DO_NOT_REPEAT.md  <- H13 VTK crash exhausted approaches
+|   |-- T6_PREPARATION.md            <- T6 lazy-slice TOCTOU guard analysis
+|   `-- ...
+|-- releases/                    <- Version history
+|-- archive/                     <- Historical documents (not current truth)
+`-- assets/                      <- Images and diagrams
+
+Build & release infrastructure (separate from docs/):
+  builder/docs/                  <- Build document, checklist, installer QA, release flow
+  builder/spec/                  <- PyInstaller spec
+  builder/installer/             <- Inno Setup .iss
+  builder/plugin package/        <- Plugin package definitions
+  builder/requirements/          <- Pinned build toolchain
+  setup_build_env.ps1            <- Automated .venv_build setup for any PC
+  build.bat / build.py           <- Release pipeline entry points
 ```
 
 ## Documentation Rules

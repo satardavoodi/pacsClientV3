@@ -209,10 +209,20 @@ def module_downloads_root() -> Path:
 
 def bundled_module_packages_search_roots() -> list[Path]:
     roots: list[Path] = []
-    for candidate in (
+    candidates: list[Path] = []
+    # Installer-deployed packages live in ProgramData (shared across users, writable without elevation)
+    if is_frozen() and sys.platform == "win32":
+        candidates.append(
+            Path(os.environ.get("PROGRAMDATA", "C:/ProgramData"))
+            / APP_NAME
+            / MODULE_PACKAGE_DOWNLOADS_DIRNAME
+        )
+    # Legacy / dev fallbacks
+    candidates += [
         install_root() / MODULE_PACKAGE_DOWNLOADS_DIRNAME,
         bundle_root() / MODULE_PACKAGE_DOWNLOADS_DIRNAME,
-    ):
+    ]
+    for candidate in candidates:
         if candidate not in roots:
             roots.append(candidate)
     return roots
@@ -241,6 +251,13 @@ def roaming_config_root() -> Path:
     return bundled_config_root()
 
 
+def program_data_config_root() -> Path:
+    """System-wide deployment config root — writable by installer, readable by all users."""
+    if is_frozen() and sys.platform == "win32":
+        return Path(os.environ.get("PROGRAMDATA", "C:/ProgramData")) / APP_NAME / USER_CONFIG_DIRNAME
+    return bundled_config_root()
+
+
 def user_data_root() -> Path:
     if is_frozen() and sys.platform == "win32":
         return local_state_root() / USER_DATA_DIRNAME
@@ -266,7 +283,7 @@ def advanced_mpr_runtime_root() -> Path:
 
 
 def installation_profile_path() -> Path:
-    return bundled_config_root() / INSTALLATION_PROFILE_FILENAME
+    return program_data_config_root() / INSTALLATION_PROFILE_FILENAME
 
 
 def user_runtime_profile_path() -> Path:
@@ -1540,7 +1557,7 @@ def build_windows_graphics_environment(
         viewer_backend_override = ""
 
     if frozen_runtime:
-        internal_dir = install_root() / "_internal"
+        internal_dir = install_root() / "engine"
         if internal_dir.exists():
             path_prefixes.insert(0, str(internal_dir))
 

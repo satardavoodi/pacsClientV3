@@ -36,17 +36,17 @@ UninstallDisplayIcon={app}\AIPacs.exe
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Types]
-Name: "core"; Description: "Core workstation only (viewer, download manager, education, stitching)"
-Name: "custom"; Description: "Choose optional modules for this PC before installation"; Flags: iscustom
+Name: "core"; Description: "Core workstation (viewer, download manager, education, stitching)"
+Name: "custom"; Description: "Custom — choose optional modules for this workstation"; Flags: iscustom
 
 [Components]
-Name: "core"; Description: "Core platform"; Types: core custom; Flags: fixed
-Name: "optional"; Description: "Optional modules copied into the installer bundle for first-launch activation"; Types: custom
-Name: "optional\advanced_mpr"; Description: "Advanced MPR (3D reconstruction and bundled Slicer runtime)"; Types: custom
-Name: "optional\printing"; Description: "Printing Module (medical print and filming workflows)"; Types: custom
-Name: "optional\run_cd"; Description: "Run CD Module (media export and portable delivery workflows)"; Types: custom
-Name: "optional\web_browser"; Description: "Web Browser Module (embedded web access inside the workstation)"; Types: custom
-Name: "optional\echomind"; Description: "EchoMind Module (assistant and guided workflow features)"; Types: custom
+Name: "core"; Description: "Core platform (always required)"; Types: core custom; Flags: fixed
+Name: "optional"; Description: "Optional modules — copied now, activated on first launch"; Types: custom
+Name: "optional\advanced_mpr"; Description: "Advanced MPR — 3D reconstruction with bundled Slicer runtime (large download)"; Types: custom
+Name: "optional\printing"; Description: "Printing — medical film printing and DICOM export workflows"; Types: custom
+Name: "optional\run_cd"; Description: "Run CD — portable DICOM media export and delivery"; Types: custom
+Name: "optional\web_browser"; Description: "Web Browser — embedded browser access inside the workstation"; Types: custom
+Name: "optional\echomind"; Description: "EchoMind — AI assistant and guided reporting features"; Types: custom
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -54,15 +54,17 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Dirs]
 Name: "{localappdata}\AIPacs\user_data"; Permissions: users-modify
 Name: "{userappdata}\AIPacs\config"; Permissions: users-modify
+Name: "{commonappdata}\AIPacs\config"; Permissions: users-modify
+Name: "{commonappdata}\AIPacs\module_packages"; Permissions: users-modify
 
 [Files]
 Source: "{#StageDir}\core\*"; DestDir: "{app}"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#StageDir}\plugin_packages\module_package_feed.json"; DestDir: "{app}\module_packages"; Components: core; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{app}\module_packages\advanced_mpr"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\printing\*"; DestDir: "{app}\module_packages\printing"; Components: optional\printing; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\run_cd\*"; DestDir: "{app}\module_packages\run_cd"; Components: optional\run_cd; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\web_browser\*"; DestDir: "{app}\module_packages\web_browser"; Components: optional\web_browser; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\echomind\*"; DestDir: "{app}\module_packages\echomind"; Components: optional\echomind; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\module_package_feed.json"; DestDir: "{commonappdata}\AIPacs\module_packages"; Components: core; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\printing\*"; DestDir: "{commonappdata}\AIPacs\module_packages\printing"; Components: optional\printing; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\run_cd\*"; DestDir: "{commonappdata}\AIPacs\module_packages\run_cd"; Components: optional\run_cd; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\web_browser\*"; DestDir: "{commonappdata}\AIPacs\module_packages\web_browser"; Components: optional\web_browser; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\echomind\*"; DestDir: "{commonappdata}\AIPacs\module_packages\echomind"; Components: optional\echomind; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"
@@ -70,6 +72,10 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"; Tasks: desktop
 
 [Run]
 Filename: "{app}\AIPacs.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+
+[Messages]
+; Clarify that Advanced MPR is a large Slicer runtime that activates on first use
+; (cannot add component-specific messages in standard ISS, handled via Code section)
 
 [Code]
 var
@@ -269,29 +275,43 @@ begin
   RefreshExistingInstallState();
 
   ExistingInstallSummaryLabel.Caption :=
-    'Selected install folder:' + #13#10 +
+    'Install folder:' + #13#10 +
     '  ' + WizardDirValue() + #13#10 + #13#10 +
-    'Installed version in this folder:' + #13#10 +
+    'Version found in this folder:' + #13#10 +
     '  ' + InstalledVersionDisplayValue() + #13#10 + #13#10 +
-    'Current installer version:' + #13#10 +
+    'This installer version:' + #13#10 +
     '  {#MyAppVersion}' + #13#10 + #13#10 +
-    'Planned action:' + #13#10 +
+    'Action:' + #13#10 +
     '  ' + InstallActionDisplayValue();
 
   if ExistingInstallWarning <> '' then
     ExistingInstallWarningLabel.Caption := ExistingInstallWarning
   else
     ExistingInstallWarningLabel.Caption :=
-      'No previous AIPacs installation was detected in the selected folder. ' +
-      'Setup will perform a fresh install.';
+      'No previous installation was found in the selected folder. Setup will perform a fresh install.';
 end;
 
 function InternalConfigDir(): String;
 begin
+  // Primary: ProgramData (writable by installer and runtime without elevation)
+  if DirExists(ExpandConstant('{commonappdata}\AIPacs\config')) then
+  begin
+    Result := ExpandConstant('{commonappdata}\AIPacs\config');
+    Exit;
+  end;
+  // Fallback: engine\config (current PyInstaller layout)
+  if DirExists(ExpandConstant('{app}\engine\config')) then
+  begin
+    Result := ExpandConstant('{app}\engine\config');
+    Exit;
+  end;
+  // Legacy fallback: _internal\config (pre-2.3.8 installs)
   if DirExists(ExpandConstant('{app}\_internal\config')) then
-    Result := ExpandConstant('{app}\_internal\config')
-  else
-    Result := ExpandConstant('{app}\config');
+  begin
+    Result := ExpandConstant('{app}\_internal\config');
+    Exit;
+  end;
+  Result := ExpandConstant('{app}\config');
 end;
 
 function AutoDetectGpuSupport(var ErrorMessage: String): Boolean;
@@ -352,25 +372,25 @@ var
   Items: String;
 begin
   Items :=
-    '  - Core platform (always installed)' + #13#10 +
-    '  - Viewer' + #13#10 +
-    '  - Download Manager' + #13#10 +
-    '  - ZetaBoost' + #13#10 +
-    '  - Education Module' + #13#10 +
-    '  - Stitching Module' + #13#10;
+    '  Core platform (always installed)' + #13#10 +
+    '  Viewer' + #13#10 +
+    '  Download Manager' + #13#10 +
+    '  ZetaBoost cache engine' + #13#10 +
+    '  Education' + #13#10 +
+    '  Stitching' + #13#10;
 
-  if OptionalModuleSelected('advanced_mpr') then Items := Items + '  - Advanced MPR (selected)' + #13#10;
-  if OptionalModuleSelected('printing') then Items := Items + '  - Printing Module (selected)' + #13#10;
-  if OptionalModuleSelected('run_cd') then Items := Items + '  - Run CD Module (selected)' + #13#10;
-  if OptionalModuleSelected('web_browser') then Items := Items + '  - Web Browser Module (selected)' + #13#10;
-  if OptionalModuleSelected('echomind') then Items := Items + '  - EchoMind Module (selected)' + #13#10;
+  if OptionalModuleSelected('advanced_mpr') then Items := Items + '  Advanced MPR  [selected]' + #13#10;
+  if OptionalModuleSelected('printing')     then Items := Items + '  Printing  [selected]' + #13#10;
+  if OptionalModuleSelected('run_cd')       then Items := Items + '  Run CD  [selected]' + #13#10;
+  if OptionalModuleSelected('web_browser')  then Items := Items + '  Web Browser  [selected]' + #13#10;
+  if OptionalModuleSelected('echomind')     then Items := Items + '  EchoMind  [selected]' + #13#10;
 
   if not OptionalModuleSelected('advanced_mpr') and
      not OptionalModuleSelected('printing') and
      not OptionalModuleSelected('run_cd') and
      not OptionalModuleSelected('web_browser') and
      not OptionalModuleSelected('echomind') then
-    Result := Items + '  - No optional modules selected for this PC' + #13#10
+    Result := Items + '  No optional modules selected'
   else
     Result := Items;
 end;
@@ -385,27 +405,27 @@ begin
   RefreshExistingInstallState();
 
   if GpuCheckBox.Checked then
-    GraphicsSummary := 'Prefer GPU acceleration'
+    GraphicsSummary := 'GPU acceleration enabled'
   else
-    GraphicsSummary := 'CPU-safe / software OpenGL fallback';
+    GraphicsSummary := 'Software rendering (CPU-safe fallback)';
 
   Result :=
     MemoDirInfo + NewLine + NewLine +
     MemoTypeInfo + NewLine + NewLine +
     MemoComponentsInfo + NewLine + NewLine +
     MemoTasksInfo + NewLine + NewLine +
-    'Version Check:' + NewLine +
-    Space + 'Installed version in selected folder: ' + InstalledVersionDisplayValue() + NewLine +
-    Space + 'Current installer version: {#MyAppVersion}' + NewLine +
-    Space + 'Planned action: ' + InstallActionDisplayValue() + NewLine + NewLine +
-    'Graphics Preference:' + NewLine +
+    'Version:' + NewLine +
+    Space + 'Installed in selected folder: ' + InstalledVersionDisplayValue() + NewLine +
+    Space + 'This installer: {#MyAppVersion}' + NewLine +
+    Space + 'Action: ' + InstallActionDisplayValue() + NewLine + NewLine +
+    'Rendering mode:' + NewLine +
     Space + GraphicsSummary + NewLine + NewLine +
-    'Optional Modules:' + NewLine +
+    'Modules:' + NewLine +
     SelectedModulesSummary() + NewLine +
-    'Install behavior:' + NewLine +
-    Space + 'Selected optional modules are copied now and activated on first launch.' + NewLine +
-    Space + 'Setup compares any existing installed version in the target folder before copying files.' + NewLine +
-    Space + 'A runtime graphics probe will confirm GPU use and fall back safely if needed.';
+    'Notes:' + NewLine +
+    Space + 'Optional modules are copied now and activated automatically on first launch.' + NewLine +
+    Space + 'AIPacs validates graphics support at startup and falls back to software rendering if needed.' + NewLine +
+    Space + 'Additional modules can be installed later from Settings > Installation.';
 end;
 
 procedure InitializeWizard();
@@ -419,8 +439,8 @@ begin
 
   ExistingInstallPage := CreateCustomPage(
     wpSelectDir,
-    'Existing Installation Check',
-    'Review the detected installed version in the selected folder before setup continues.'
+    'Existing Installation',
+    'Setup detected an existing installation in the selected folder. Review the details below before continuing.'
   );
 
   ExistingInstallSummaryLabel := TNewStaticText.Create(ExistingInstallPage.Surface);
@@ -443,8 +463,8 @@ begin
 
   GpuPage := CreateCustomPage(
     wpSelectComponents,
-    'Graphics Acceleration',
-    'Choose whether this workstation should prefer GPU acceleration on this PC.'
+    'Graphics Mode',
+    'Choose the rendering mode for this workstation. This setting is saved locally and can be changed later in Settings.'
   );
 
   GpuCheckBox := TNewCheckBox.Create(GpuPage.Surface);
@@ -452,7 +472,7 @@ begin
   GpuCheckBox.Left := ScaleX(0);
   GpuCheckBox.Top := ScaleY(8);
   GpuCheckBox.Width := GpuPage.SurfaceWidth;
-  GpuCheckBox.Caption := 'This workstation has a compatible GPU and should prefer GPU acceleration';
+  GpuCheckBox.Caption := 'Enable GPU acceleration on this workstation';
   GpuCheckBox.Checked := GpuAutoDetected;
 
   GpuHintLabel := TNewStaticText.Create(GpuPage.Surface);
@@ -465,13 +485,13 @@ begin
   GpuHintLabel.WordWrap := True;
   if GpuAutoDetected then
     GpuHintLabel.Caption :=
-      'Detected a likely compatible GPU on this workstation. ' +
-      'GPU preference has been enabled by default. You can change it now if needed. ' +
-      'AIPacs will still probe graphics support at runtime and safely fall back when required.'
+      'A compatible GPU was detected on this workstation. ' +
+      'GPU acceleration is enabled by default — you can change this if needed. ' +
+      'AIPacs probes graphics support at startup and falls back automatically if the GPU is unavailable.'
   else
     GpuHintLabel.Caption :=
-      'No compatible GPU was detected automatically, or detection could not be completed. ' +
-      'CPU-safe mode is selected by default. You can enable GPU preference manually if this system has a supported GPU.';
+      'No compatible GPU was detected, or detection could not be completed. ' +
+      'Software rendering is selected by default. You can enable GPU acceleration manually if this machine has a supported graphics card.';
 
   if GpuDetectionError <> '' then
     GpuHintLabel.Caption :=
@@ -480,9 +500,8 @@ begin
 
   GpuHintLabel.Caption :=
     GpuHintLabel.Caption + #13#10 + #13#10 +
-    'This setup stores the module choices for this workstation, copies the selected optional packages, ' +
-    'and lets AIPacs validate graphics support again on first launch. ' +
-    'Other packages can still be installed later from Settings -> Installation Module.';
+    'Optional modules selected on the previous page are copied to the installation folder now and activated automatically on first launch. ' +
+    'You can install additional modules later from Settings > Installation.';
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
@@ -501,9 +520,9 @@ begin
     if ExistingInstallAction = 'downgrade' then
       Result :=
         MsgBox(
-          'A newer AIPacs version (' + InstalledVersionDisplayValue() + ') is already installed in this folder.' + #13#10 + #13#10 +
-          'The current installer version is {#MyAppVersion}.' + #13#10 +
-          'Continuing will downgrade the installation. Do you want to continue?',
+          'A newer version (' + InstalledVersionDisplayValue() + ') is already installed in this folder.' + #13#10 + #13#10 +
+          'This installer contains version {#MyAppVersion}.' + #13#10 +
+          'Proceeding will downgrade the existing installation. Continue?',
           mbConfirmation,
           MB_YESNO
         ) = IDYES;
@@ -516,7 +535,7 @@ var
   ProfilePath: String;
   JsonText: String;
 begin
-  ConfigDir := InternalConfigDir();
+  ConfigDir := ExpandConstant('{commonappdata}\AIPacs\config');
   ForceDirectories(ConfigDir);
   ProfilePath := AddBackslash(ConfigDir) + 'installation_profile.json';
 
@@ -571,5 +590,22 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
+  begin
     WriteInstallationProfile();
+
+    if OptionalModuleSelected('advanced_mpr') then
+      MsgBox(
+        'Advanced MPR was included in this installation.' + #13#10 + #13#10 +
+        'Advanced MPR uses a bundled 3D Slicer runtime. ' +
+        'The runtime package has been copied to the module_packages folder in ProgramData and will be activated automatically the first time you open Advanced MPR inside AIPacs.' + #13#10 + #13#10 +
+        'Requirements for Advanced MPR:' + #13#10 +
+        '  - Windows 10 or later (64-bit)' + #13#10 +
+        '  - At least 8 GB RAM (16 GB recommended for large CT volumes)' + #13#10 +
+        '  - Sufficient disk space for the Slicer runtime (~1.5 GB)' + #13#10 +
+        '  - A dedicated GPU is strongly recommended for 3D rendering' + #13#10 + #13#10 +
+        'If activation fails on first launch, restart AIPacs and try again from Settings > Installation.',
+        mbInformation,
+        MB_OK
+      );
+  end;
 end;

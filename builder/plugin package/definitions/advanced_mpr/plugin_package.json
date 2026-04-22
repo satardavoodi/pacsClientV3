@@ -18,5 +18,13 @@
   ],
   "sdk_entrypoint_group": "aipacs.plugins",
   "sdk_entrypoint_name": "advanced_mpr",
-  "notes": "External runtime payload produced from the Slicer-based Advanced MPR build."
+  "system_requirements": {
+    "os": "Windows 10 64-bit or later",
+    "ram_gb_min": 8,
+    "ram_gb_recommended": 16,
+    "disk_gb_min": 2,
+    "gpu_recommended": true,
+    "notes": "Bundled 3D Slicer runtime (~1.5 GB). Activated on first use inside AIPacs. A dedicated GPU is strongly recommended for 3D volume rendering."
+  },
+  "notes": "External runtime payload produced from the Slicer-based Advanced MPR build. Large package — requires dedicated disk space and sufficient RAM. GPU strongly recommended."
 }

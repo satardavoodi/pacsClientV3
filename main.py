@@ -238,7 +238,7 @@ from PacsClient.utils.diagnostic_logging import configure_diagnostic_logging
 # at the top of this file (before any Qt/VTK imports) for maximum compatibility
 
 if __name__ == "__main__":
-    # Set working directory to _internal for PyInstaller builds
+    # Set working directory to the PyInstaller bundle root (engine/) for frozen builds
     if getattr(sys, 'frozen', False):
         # Running as PyInstaller executable
         os.chdir(sys._MEIPASS)

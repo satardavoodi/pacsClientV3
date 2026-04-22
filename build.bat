@@ -11,26 +11,42 @@ echo This script will build the staged Windows release for AIPacs
 echo Please wait while the build process completes...
 echo.
 
-REM Check if Python is installed
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo ❌ Error: Python is not installed or not in PATH
-    echo Please install Python 3.8 or later and try again
-    pause
-    exit /b 1
+REM ---------------------------------------------------------------------------
+REM Resolve the Python interpreter.
+REM Prefer .venv_build (the isolated build environment) over ambient Python so
+REM the build always runs with the correct pinned toolchain regardless of what
+REM Python version or packages are installed system-wide on this machine.
+REM
+REM If .venv_build does not exist yet, run setup_build_env.ps1 first:
+REM   powershell -ExecutionPolicy Bypass -File setup_build_env.ps1
+REM ---------------------------------------------------------------------------
+set "VENV_PYTHON=%~dp0.venv_build\Scripts\python.exe"
+
+if exist "%VENV_PYTHON%" (
+    echo [build] Using build venv: .venv_build\Scripts\python.exe
+    set "BUILD_PYTHON=%VENV_PYTHON%"
+) else (
+    echo [build] .venv_build not found. Falling back to ambient Python.
+    echo [build] For a reproducible build, run setup_build_env.ps1 first.
+    echo.
+    python --version >nul 2>&1
+    if errorlevel 1 (
+        echo ERROR: Python is not installed or not in PATH.
+        echo Run setup_build_env.ps1 to create the build environment.
+        pause
+        exit /b 1
+    )
+    set "BUILD_PYTHON=python"
 )
 
-echo ✅ Python is installed
 echo.
-
-REM Run the build script
-echo Starting build process...
+echo [build] Starting build process...
 echo.
-python build.py
+"%BUILD_PYTHON%" build.py %*
 
 if errorlevel 1 (
     echo.
-    echo ❌ Build failed! Please check the error messages above.
+    echo ERROR: Build failed. Check the error messages above.
     echo.
     pause
     exit /b 1

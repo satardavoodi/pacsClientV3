@@ -13,7 +13,26 @@ python build.py --clean-only
 
 ## Environment Preparation
 
-Recommended release environment:
+### Automated (recommended — works on any PC after git clone)
+
+```powershell
+.\setup_build_env.ps1
+```
+
+This script:
+1. Locates Python 3.13.5+ on the machine.
+2. Creates `.venv_build` at the repo root (if not present).
+3. Installs the pinned build toolchain from `builder/requirements/build_requirements.txt`.
+4. Installs runtime dependencies from `requirements-core.txt`.
+5. Verifies key packages (PyInstaller, PySide6, vtk, pydicom).
+
+Run with `-Force` to recreate `.venv_build` from scratch:
+
+```powershell
+.\setup_build_env.ps1 -Force
+```
+
+### Manual (alternative)
 
 ```powershell
 python -m venv .venv_build
@@ -22,24 +41,44 @@ python -m venv .venv_build
 .\.venv_build\Scripts\python -m pip install -r requirements-core.txt
 ```
 
+`build.bat` automatically uses `.venv_build\Scripts\python.exe` when the venv is present.
 If you already have a runtime `.venv`, you can still build from that environment, but `.venv_build` is the preferred isolated path for repeatable release packaging.
 
 ## Prerequisites
 
-- Python environment with release dependencies.
-- Project runtime dependencies installed from `requirements-core.txt`.
-- PyInstaller available in the active environment.
-- Complete software-render fallback runtime in `graphics_runtime/`:
-  - `opengl32sw.dll`
-  - `osmesa.dll`
-  - `pipe_swrast.dll`
-- Inno Setup 6 installed to compile the final installer executable:
-  - `C:\Program Files (x86)\Inno Setup 6\ISCC.exe` (or)
+- Python 3.13.5+ with the build venv populated (run `setup_build_env.ps1`).
+- All runtime packages installed into `.venv_build` via `requirements-core.txt` —  
+  **including `psutil`** (top-level import in `PacsClient/utils/single_instance_lock.py`; absent = crash on startup of the built exe).
+- PyInstaller 6.11.1 available in `.venv_build`.
+- Software-render fallback DLLs present (found by `detect_software_graphics_support()`):
+  - `opengl32sw.dll` — inside the PySide6 package inside `.venv_build`
+  - `osmesa.dll` — inside `graphics_runtime/`
+  - `pipe_swrast.dll` — inside `graphics_runtime/`
+- Inno Setup 6 at one of:
+  - `C:\Program Files (x86)\Inno Setup 6\ISCC.exe`
   - `C:\Program Files\Inno Setup 6\ISCC.exe`
   - `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`
 
 If Inno Setup is not installed, release staging still succeeds but installer compilation is skipped.
-If any required `graphics_runtime/` DLL is missing, `builder/build_release.py` stops before packaging because CPU-safe fallback would be broken on non-GPU systems.
+If any required graphics DLL is missing, `builder/build_release.py` stops before packaging.
+
+## Version Pipeline
+
+Version flows from a single source of truth:
+
+```
+pyproject.toml  [project] version = "2.3.7"
+       ↓
+build_release.py  load_version()  reads pyproject.toml via tomllib
+       ↓
+ISCC  /DMyAppVersion=2.3.7
+       ↓
+AIPacs_Setup.iss  {#MyAppVersion}  → installation_profile.json  app_version
+       ↓
+aipacs_runtime.py  current_app_version()  reads installation_profile.json
+```
+
+**To bump the version:** change `version` in `pyproject.toml` only — everything else propagates automatically at build time.
 
 ## Output Layout
 
@@ -184,3 +223,60 @@ After a release run:
 For a full pass/fail workflow (including PC A/PC B evidence capture), use:
 
 - `builder/docs/INSTALLER_QA_CHECKLIST.md`
+
+## Advanced MPR — System Requirements
+
+Advanced MPR is a large optional module backed by a bundled 3D Slicer runtime. Its requirements are materially different from the rest of AIPacs:
+
+| Requirement | Minimum | Recommended |
+|-------------|---------|-------------|
+| OS | Windows 10 64-bit | Windows 11 64-bit |
+| RAM | 8 GB | 16 GB |
+| Disk (additional) | 2 GB free | 4 GB free |
+| GPU | Any DirectX 11 | Dedicated GPU (NVIDIA / AMD) |
+| Runtime size | ~1.5 GB | — |
+
+The installer shows a post-install dialog when Advanced MPR was selected, reminding the operator of these requirements. The requirement metadata is also stored in `builder/plugin package/definitions/advanced_mpr/plugin_package.json` under `system_requirements`.
+
+If the Slicer runtime payload was not present at build time, `release_manifest.json` records the payload as missing and the installer will still succeed but the Advanced MPR package folder will be empty. The user will see an activation failure on first use, not a crash.
+
+## `_internal` Folder — Visibility Analysis
+
+When PyInstaller builds a `onedir` bundle, all collected Python packages, `.pyd` extensions, and DLLs are placed in a subfolder. Since PyInstaller 6.0 this subfolder is named `_internal` by default (previously everything was in the same directory as the `.exe`).
+
+This means after installation, `{app}\_internal\` contains — visibly — packages like `PySide6`, `openai`, `numpy`, `vtk`, etc.
+
+**Is renaming possible?**  
+Yes. PyInstaller 6.x exposes `--contents-directory <name>` (CLI flag) and the `contents_directory` argument on the `COLLECT()` call in the `.spec` file. This controls the name of that folder.
+
+**Is it easy?**  
+Yes — one-line change in `builder/spec/appA_workstation.spec`:
+
+```python
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    name="AIPacs",
+    contents_directory="runtime",   # ← add this line; default is "_internal"
+)
+```
+
+Rename it to anything: `runtime`, `app`, `lib`, `core`, etc.  
+The installer also references `{app}\_internal\config` in `InternalConfigDir()` — that path must be updated in `AIPacs_Setup.iss` and `aipacs_runtime.py` to match.
+
+**Would it cause major disruption?**  
+No — provided all references to `_internal` are updated consistently. There are three places to change:
+
+1. `builder/spec/appA_workstation.spec` — add `contents_directory=` to `COLLECT()`.
+2. `builder/installer/AIPacs_Setup.iss` — `InternalConfigDir()` function checks `{app}\_internal\config`.
+3. `aipacs_runtime.py` — any path that resolves `_internal` at runtime (search for `_internal` in that file).
+
+**Does renaming hide the package contents?**  
+It hides the folder name but not the folder contents. The DLLs and `.pyd` files inside are still identifiable by name. Renaming `_internal` to `runtime` makes it less obvious at a glance but does not prevent inspection. If deeper obfuscation is required the options are more invasive (Nuitka compilation, custom bootloader, or commercial protectors) and are out of scope here.
+
+**Current status:** Not yet implemented. The change is safe and low-risk whenever you want to proceed.
+

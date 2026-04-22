@@ -1486,6 +1486,7 @@
     "SimpleITK",
     "SimpleITK._SimpleITK",
     "logging",
+    "psutil",
     "vtkmodules",
     "vtkmodules.all",
     "vtkmodules.qt.QVTKRenderWindowInteractor",
