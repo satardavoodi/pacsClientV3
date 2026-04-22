@@ -97,9 +97,9 @@ def _safe_extend(target: list, values: list) -> None:
         target.append(value)
 
 
-for package_name in ["modules", "database"]:
+for package_name in ["modules", "database", "PacsClient"]:
     try:
-        package_filter = _keep_runtime_module_hiddenimport if package_name == "modules" else (lambda name: True)
+        package_filter = _keep_runtime_module_hiddenimport if package_name in ("modules", "PacsClient") else (lambda name: True)
         _safe_extend(hiddenimports, collect_submodules(package_name, filter=package_filter))
     except Exception:
         pass
