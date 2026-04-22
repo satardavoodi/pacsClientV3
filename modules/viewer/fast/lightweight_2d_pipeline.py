@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -56,9 +57,39 @@ from modules.zeta_boost.cache_engine import _zb_globals
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_PIXEL_CACHE_SIZE = 96
-_DEFAULT_FRAME_CACHE_SIZE = 96
-_DEFAULT_ADAPTIVE_CACHE_MAX_SIZE = 192
+def _env_positive_int(name: str, default: int) -> int:
+    """Read a positive-int env override; fall back to default on any problem."""
+    try:
+        raw = os.environ.get(name)
+        if raw is None or not raw.strip():
+            return int(default)
+        value = int(raw.strip())
+        if value <= 0:
+            return int(default)
+        # Safety cap to prevent runaway memory if someone sets a huge value.
+        return min(value, 4096)
+    except Exception:
+        return int(default)
+
+
+# Cache capacity baselines (v2.3.9, bumped from 96/96/192 in v2.3.8).
+# With adaptive sizing, small series stay small (capped to series length),
+# but large series now get a larger working set so stack drag stays in
+# L1 (RAM) for longer scroll distances without falling through to disk
+# cache or pydicom decode.
+#
+# Per-entry cost (typical 512×512):
+#   pixel_cache: ~0.5 MB (int16/uint16) → 192 entries ≈ 96 MB per viewer
+#   frame_cache: ~0.25 MB (uint8 QImage) → 192 entries ≈ 48 MB per viewer
+# Peak adaptive (per viewer):
+#   384 × (0.5 + 0.25) ≈ 288 MB. A 2×2 layout at peak ≈ 1.15 GB worst case.
+# Env overrides: AIPACS_PIXEL_CACHE_SIZE, AIPACS_FRAME_CACHE_SIZE,
+# AIPACS_ADAPTIVE_CACHE_MAX. Values ≤0 or unset fall back to defaults.
+_DEFAULT_PIXEL_CACHE_SIZE = _env_positive_int("AIPACS_PIXEL_CACHE_SIZE", 192)
+_DEFAULT_FRAME_CACHE_SIZE = _env_positive_int("AIPACS_FRAME_CACHE_SIZE", 192)
+_DEFAULT_ADAPTIVE_CACHE_MAX_SIZE = _env_positive_int(
+    "AIPACS_ADAPTIVE_CACHE_MAX", 384
+)
 _DRAG_START_WARM_RADIUS = 2
 _DRAG_STEADY_PREFETCH_RADIUS = 1
 _PROTECTED_DRAG_AHEAD_RADIUS = 2

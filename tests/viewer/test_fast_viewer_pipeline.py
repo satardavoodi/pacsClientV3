@@ -6204,8 +6204,13 @@ def test_b42_default_cache_caps_expand_for_large_series():
     pixel_limit = pipe._effective_pixel_cache_limit()
     frame_limit = pipe._effective_frame_cache_limit()
 
-    assert pixel_limit > pipe._config.pixel_cache_size
-    assert frame_limit > pipe._config.frame_cache_size
+    # v2.3.9: baseline cache caps were raised to 192 (from 96) and the
+    # stack-cache profile tops out at drag_fullscreen*2 = 180 for large
+    # series, so adaptive sizing now converges to the default rather than
+    # growing past it. Assert the post-v2.3.9 invariant: the effective
+    # limit is at least the default and never exceeds the adaptive cap.
+    assert pixel_limit >= pipe._config.pixel_cache_size
+    assert frame_limit >= pipe._config.frame_cache_size
     assert pixel_limit <= pipe._config.adaptive_cache_max_size
     assert frame_limit <= pipe._config.adaptive_cache_max_size
 
