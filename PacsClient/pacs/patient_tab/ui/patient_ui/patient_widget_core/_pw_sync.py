@@ -844,12 +844,55 @@ class _PWSyncMixin:
                 res.rejection_reason,
             )
 
-        # ── Route: VTK target → reference_line flip-Y path (unchanged) ───────────
+        # ══════════════════════════════════════════════════════════════════════════
+        # ── Route: Advanced/VTK target → reference_line flip-Y path ─────────────
+        #    DO NOT merge with the FAST/Qt path above.
+        # ══════════════════════════════════════════════════════════════════════════
+        #
+        # v2.3.7 (2026-04-22): reverted to the v2.3.1 implementation after a
+        # short-lived rewrite that used project_lps_to_target + axis-aligned
+        # Y-flip produced visible in-plane drift on oblique MR. The user
+        # confirmed the v2.3.1 reference_line path was accurate on the same
+        # studies, so this is the authoritative Advanced VTK-target mapping.
+        #
+        # SPACING CONVENTION (must match manage_reference_line):
+        #   rl_lps_to_target_index(P, ipp, col, row, sx, sy, k) computes:
+        #     I[0] = dot(P - ipp, col) / sx
+        #     I[1] = dot(P - ipp, row) / sy
+        #   Then vtk_t = tgt_orig + tgt_sp * I, so:
+        #     vtk_t[0] = tgt_orig[0] + tgt_sp[0] * dot(...) / sx
+        #   For physical correctness (= tgt_orig[0] + dot(...)), sx MUST equal
+        #   tgt_sp[0].  Using itk_sp (original DICOM spacing) while multiplying
+        #   by tgt_sp introduces a tgt_sp/itk_sp scale error when CT upsampling
+        #   is active — this was the v1.09.1 regression.
+        #   manage_reference_line uses sp[0] = tgt_sp[0] consistently (correct).
+        #
+        # Pipeline:
+        #   n_t      = cross(row_t, col_t)                 (slice normal, LPS)
+        #   ds       = dot(IPP_1 - IPP_0, n_t)             (slice spacing)
+        #   k_float  = dot(P_lps - IPP_0, n_t) / ds
+        #   k_tgt    = round(k_float) clamped to [0, n_slices-1]
+        #   P_proj   = P_lps − dp · n_t                    (project onto plane)
+        #   P_flip_t = rl_apply_flip_y_in_plane(P_proj)    (VTK Y-flip pivot)
+        #   I_t      = rl_lps_to_target_index(P_flip_t, tgt_sp)  ← VTK display spacing
+        #   vtk_t    = tgt_orig + tgt_sp * I_t             (VTK world for sphere)
+        #
+        # This is the exact same coordinate path as reference_line.py, which
+        # guarantees the sync dot lies on the reference line drawn by the
+        # ref-line overlay. See docs/pipelines/IMAGE_PIPELINE_REFERENCE.md
+        # §9 "Tier 1 — DICOM IOP/IPP (primary, v1.09.5)".
         tgt_img   = target_viewer.vtk_image_data
         tgt_orig  = np.asarray(tgt_img.GetOrigin(),     dtype=float)
         tgt_sp    = np.asarray(tgt_img.GetSpacing(),     dtype=float)
         tgt_dims  = np.asarray(tgt_img.GetDimensions(),  dtype=int)
         n_slices  = int(tgt_dims[2])
+
+        # Read original ITK spacing from field data (NOT post-upsample spacing)
+        itk_sp_arr = tgt_img.GetFieldData().GetArray('ITKSpacing')
+        if itk_sp_arr is not None:
+            itk_sp = np.array([itk_sp_arr.GetValue(i) for i in range(3)], dtype=float)
+        else:
+            itk_sp = tgt_sp  # Fallback if field data not found
 
         try:
             t0_inst = target_viewer.metadata['instances'][0]
@@ -881,10 +924,12 @@ class _PWSyncMixin:
         _n_t_class = ['Sagittal', 'Coronal', 'Axial'][int(np.argmax(np.abs(n_t)))]
         logger.info(
             "[SYNC-MAP DICOM] TARGET (VTK): viewer=%s  n_slices=%d  orient=%s\n"
-            "  IOP=%s  IPP[0]=%s  n_t=(%.4f,%.4f,%.4f)  ds=%.4f",
+            "  IOP=%s  IPP[0]=%s  n_t=(%.4f,%.4f,%.4f)  ds=%.4f\n"
+            "  spacing_dicom=%.4f,%.4f  spacing_vtk=%.4f,%.4f  (upsample check)",
             _tgt_id, n_slices, _n_t_class,
-            t_iop, list(ipp_0),
+            list(t_iop), list(ipp_0),
             n_t[0], n_t[1], n_t[2], ds,
+            float(itk_sp[0]), float(itk_sp[1]), float(tgt_sp[0]), float(tgt_sp[1]),
         )
 
         # Closest target slice
@@ -917,7 +962,11 @@ class _PWSyncMixin:
         P_flip_t = reference_line.rl_apply_flip_y_in_plane(
             P_proj, center_t, col_t, row_t)
 
-        # LPS → target VTK display index
+        # LPS → target VTK display index.
+        # Use VTK display spacing (tgt_sp), matching manage_reference_line convention.
+        # rl_lps_to_target_index divides by sx/sy to get display pixel indices;
+        # vtk_t = tgt_orig + tgt_sp * I_t requires those indices to be in tgt_sp units.
+        # itk_sp (original DICOM spacing) is kept for the upsample-check log below only.
         I_t = reference_line.rl_lps_to_target_index(
             P_flip_t, ipp_k, col_t, row_t,
             tgt_sp[0], tgt_sp[1], k_tgt)

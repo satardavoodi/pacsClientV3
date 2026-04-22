@@ -477,6 +477,59 @@ class _VCLoadMixin:
                 except Exception:
                     pass
 
+                # ─── ADVANCED-ONLY REPAIR: empty instances fallback ─────────────
+                # In Advanced (vtk_simpleitk) mode, reference-line and Lock-Sync
+                # read IOP/IPP from metadata['instances'][k]. When the DB/loader
+                # pipeline yields empty instances (observed on studies where DM
+                # inserted rows under a different group_id, or DB metadata was
+                # not fully written), reference lines and sync silently fail.
+                # Rebuild instances by reading DICOM headers directly from disk.
+                # FAST mode exits earlier in load_single_series_by_number and
+                # never reaches this code path, so this change is strictly
+                # Advanced-only.  See copilot-instructions rule: "Advanced and
+                # FAST modes must not interfere with each other."
+                try:
+                    if (
+                        effective_viewer_backend != BACKEND_PYDICOM
+                        and isinstance(metadata, dict)
+                        and not (metadata.get('instances') or [])
+                        and _h7_disk_count > 0
+                    ):
+                        _repair_sp = Path(study_path) / str(series_number)
+                        if _repair_sp.is_dir():
+                            from PacsClient.pacs.patient_tab.utils.image_io import (
+                                _build_metadata_headers_only,
+                                _ensure_series_meta,
+                            )
+                            _repair_meta = _build_metadata_headers_only(_repair_sp, series_number)
+                            if (
+                                isinstance(_repair_meta, dict)
+                                and _repair_meta.get('instances')
+                            ):
+                                _repair_instances = _repair_meta.get('instances') or []
+                                metadata['instances'] = _repair_instances
+                                # Merge/patch series subdict (preserve existing DB fields).
+                                _existing_series = metadata.get('series') or {}
+                                _repair_series = _repair_meta.get('series') or {}
+                                for _k, _v in _repair_series.items():
+                                    if _existing_series.get(_k) in (None, '', 0):
+                                        _existing_series[_k] = _v
+                                metadata['series'] = _existing_series
+                                try:
+                                    _ensure_series_meta(metadata)['image_count'] = len(_repair_instances)
+                                except Exception:
+                                    pass
+                                logger.info(
+                                    "[H7-P4_REPAIR] series=%s rebuilt metadata['instances'] "
+                                    "from disk headers: count=%d backend=%s (advanced-only)",
+                                    _h7_sn, len(_repair_instances), effective_viewer_backend,
+                                )
+                except Exception as _repair_err:
+                    logger.warning(
+                        "[H7-P4_REPAIR] series=%s rebuild failed: %s",
+                        _h7_sn, _repair_err,
+                    )
+
                 _last_vtk_data = vtk_image_data
                 _last_meta = metadata
                 self._apply_loaded_series_data_threadsafe(

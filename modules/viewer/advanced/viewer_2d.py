@@ -7,7 +7,11 @@ from PySide6.QtCore import QTimer
 from vtkmodules.util import numpy_support as vtknp
 import enum
 from PacsClient.pacs.patient_tab.utils import make_corner_actor, DicomTagsActors, read_segment_nifti, BoxManager
-from PacsClient.pacs.patient_tab.utils.dicom_windowing import auto_window_level_from_range, normalize_window_level
+from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
+    auto_window_level_from_array,
+    auto_window_level_from_range,
+    normalize_window_level,
+)
 import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider
 from PySide6.QtCore import Qt
@@ -1445,22 +1449,78 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             # was not yet synced).  Fall back to auto-calc from scalar range.
             instance_metadata = None
 
+        series_num = (self.metadata.get('series') or {}).get('series_number')
+        source = 'none'
         window_width = window_center = None
+        db_ww = db_wc = None
         if instance_metadata is not None:
+            db_ww = instance_metadata.get('window_width')
+            db_wc = instance_metadata.get('window_center')
             window_width, window_center = normalize_window_level(
-                instance_metadata.get('window_width'),
-                instance_metadata.get('window_center'),
-                treat_legacy_placeholder_as_missing=True,
+                db_ww, db_wc, treat_legacy_placeholder_as_missing=True,
             )
+            if window_width is not None and window_center is not None:
+                source = 'db'
+
+        # v2.3.7 per-series W/L fix: when the DB does not have the DICOM
+        # WindowWidth/WindowCenter tag for this instance (older downloads, NULL
+        # columns, legacy placeholders), read it straight from the DICOM file
+        # header — that is the same source FAST mode uses. Chest CT typically
+        # ships different tag values per series (mediastinum WW=400/WC=40,
+        # lung WW=1500/WC=-600); the percentile fallback on chest pixels always
+        # returns a lung-like window because lung air dominates. Reading the
+        # header restores per-series behavior.
+        if window_width is None or window_center is None:
+            ww_hdr, wc_hdr = self._read_window_level_from_dicom_header(
+                instance_metadata,
+            )
+            # If per-instance metadata is missing/stale, scan the series
+            # folder for any DICOM file and read its header — W/L is a
+            # series-level clinical setting, so any instance is sufficient
+            # to establish the per-series default.
+            if (ww_hdr is None or wc_hdr is None):
+                ww_hdr, wc_hdr = self._read_window_level_from_series_folder()
+            if ww_hdr is not None and wc_hdr is not None:
+                window_width, window_center = ww_hdr, wc_hdr
+                source = 'dicom_header'
+                # Cache back into metadata so subsequent slice scrolls hit the
+                # fast path without re-reading the header.
+                if isinstance(instance_metadata, dict):
+                    try:
+                        instance_metadata['window_width'] = ww_hdr
+                        instance_metadata['window_center'] = wc_hdr
+                    except Exception:
+                        pass
 
         if window_width is None or window_center is None:
             if self.vtk_image_data is None:
                 return
-            scalar_range = self.vtk_image_data.GetScalarRange()
-            window_width, window_center = auto_window_level_from_range(
-                scalar_range[0],
-                scalar_range[1],
+            # Last-resort: match FAST mode's per-slice percentile fallback.
+            # This runs only when neither the DB nor the DICOM header has the
+            # tag — so it's the genuine "tag missing from the dataset" case.
+            window_width, window_center = self._auto_window_level_from_current_slice(
+                slice_index,
             )
+            if window_width is not None and window_center is not None:
+                source = 'percentile'
+            if window_width is None or window_center is None:
+                scalar_range = self.vtk_image_data.GetScalarRange()
+                window_width, window_center = auto_window_level_from_range(
+                    scalar_range[0],
+                    scalar_range[1],
+                )
+                source = 'scalar_range'
+
+        try:
+            logger.info(
+                "[WL_DEFAULT] series=%s slice=%s source=%s ww=%.1f wc=%.1f "
+                "db=(%s,%s) instances=%d",
+                series_num, slice_index, source,
+                float(window_width), float(window_center),
+                db_ww, db_wc, len(instances),
+            )
+        except Exception:
+            pass
 
         # VTK vtkSetMacro unconditionally calls Modified() even when the value
         # is identical to the current value. On WARP/software-OpenGL this
@@ -1473,6 +1533,145 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self._wl_scroll_cache_wc = window_center
 
         self.set_window_level(window_width, window_center, flag_default=True)
+
+    def _read_window_level_from_dicom_header(self, instance_metadata):
+        """Read WindowWidth/WindowCenter straight from the DICOM file header.
+
+        Used as a per-series fallback when DB rows lack the tag. Matches the
+        source FAST mode uses (pydicom.dcmread header scan) so both backends
+        produce the same per-series default W/L. Returns (None, None) on any
+        failure. Results are tiny per-series scalars; caller caches into
+        instance_metadata so this runs at most once per instance.
+        """
+        try:
+            if not isinstance(instance_metadata, dict):
+                return None, None
+            path = instance_metadata.get('instance_path')
+            if not path:
+                return None, None
+            if not os.path.isfile(path):
+                return None, None
+            # Lazy-import pydicom — keeps module import cheap and mirrors how
+            # other viewer helpers defer DICOM I/O.
+            import pydicom  # noqa: WPS433 (local import by design)
+            # stop_before_pixels=True is critical — pixel decoding here would
+            # add 10–40 ms to the first slice render. Header read is 1–3 ms.
+            dcm = pydicom.dcmread(path, stop_before_pixels=True, force=True)
+            ww_raw = dcm.get('WindowWidth', None)
+            wc_raw = dcm.get('WindowCenter', None)
+            if ww_raw is None or wc_raw is None:
+                return None, None
+            ww, wc = normalize_window_level(
+                ww_raw, wc_raw, treat_legacy_placeholder_as_missing=True,
+            )
+            return ww, wc
+        except Exception:
+            logger.debug(
+                "W/L DICOM-header fallback failed (path=%s)",
+                (instance_metadata or {}).get('instance_path') if isinstance(instance_metadata, dict) else None,
+                exc_info=True,
+            )
+            return None, None
+
+    def _read_window_level_from_series_folder(self):
+        """Series-level W/L fallback when per-instance metadata is missing.
+
+        W/L is a series-wide clinical tag, so scanning any DICOM file in the
+        series folder is sufficient. Handles the case where the Advanced
+        pipeline built `self.metadata['instances']` as stubs without paths
+        (or as an empty list) but the series folder on disk has usable files.
+        """
+        try:
+            series = self.metadata.get('series') or {}
+            folder = series.get('series_path') or series.get('import_folder_path')
+            if not folder or not os.path.isdir(folder):
+                return None, None
+            import pydicom  # noqa: WPS433
+            # Take the first file sorted by name — Instance_0001.dcm or
+            # similar. Header read stops before pixels (1–3 ms).
+            for name in sorted(os.listdir(folder)):
+                if not name.lower().endswith('.dcm'):
+                    continue
+                path = os.path.join(folder, name)
+                if not os.path.isfile(path):
+                    continue
+                try:
+                    dcm = pydicom.dcmread(path, stop_before_pixels=True, force=True)
+                except Exception:
+                    continue
+                ww_raw = dcm.get('WindowWidth', None)
+                wc_raw = dcm.get('WindowCenter', None)
+                if ww_raw is None or wc_raw is None:
+                    continue
+                ww, wc = normalize_window_level(
+                    ww_raw, wc_raw, treat_legacy_placeholder_as_missing=True,
+                )
+                if ww is not None and wc is not None:
+                    return ww, wc
+            return None, None
+        except Exception:
+            logger.debug("W/L series-folder fallback failed", exc_info=True)
+            return None, None
+
+    def _auto_window_level_from_current_slice(self, slice_index):
+        """Compute default W/L from the 1%/99% percentile of the current slice.
+
+        Mirrors FAST mode's fallback (Lightweight2DPipeline.get_default_window_level)
+        so the Advanced viewer does not collapse every HU-like volume to the
+        hardcoded (400, 40) mediastinal window. Returns (None, None) on any
+        extraction failure so the caller can fall back to scalar-range auto-calc.
+        """
+        try:
+            vtk_img = self.vtk_image_data
+            if vtk_img is None:
+                return None, None
+            point_data = vtk_img.GetPointData()
+            if point_data is None:
+                return None, None
+            scalars = point_data.GetScalars()
+            if scalars is None:
+                return None, None
+            # RGB / multi-component slices are not windowed; skip.
+            if scalars.GetNumberOfComponents() != 1:
+                return None, None
+            dims = vtk_img.GetDimensions()  # (nx, ny, nz)
+            if not dims or len(dims) != 3:
+                return None, None
+            nx, ny, nz = int(dims[0]), int(dims[1]), int(dims[2])
+            if nx <= 0 or ny <= 0 or nz <= 0:
+                return None, None
+            flat = vtknp.vtk_to_numpy(scalars)
+            if flat is None or flat.size != nx * ny * nz:
+                return None, None
+            # VTK flattens point data in (x fastest, y, z slowest) order, so
+            # a reshape to (nz, ny, nx) matches the in-memory layout.
+            volume = flat.reshape((nz, ny, nx))
+            orientation = int(self.GetSliceOrientation())
+            # 2 = XY (axial, z-axis), 1 = XZ (coronal, y-axis), 0 = YZ (sagittal, x-axis)
+            if orientation == 2:
+                axis_len = nz
+                idx = max(0, min(int(slice_index), axis_len - 1))
+                slice_arr = volume[idx, :, :]
+            elif orientation == 1:
+                axis_len = ny
+                idx = max(0, min(int(slice_index), axis_len - 1))
+                slice_arr = volume[:, idx, :]
+            elif orientation == 0:
+                axis_len = nx
+                idx = max(0, min(int(slice_index), axis_len - 1))
+                slice_arr = volume[:, :, idx]
+            else:
+                return None, None
+            if slice_arr.size == 0:
+                return None, None
+            return auto_window_level_from_array(slice_arr, 1.0, 99.0)
+        except Exception:
+            logger.debug(
+                "auto W/L from current slice failed (slice=%s)",
+                slice_index,
+                exc_info=True,
+            )
+            return None, None
 
     def set_window_level(self, window_width, window_center, flag_default=False):
         instances = self.metadata.get('instances') or []

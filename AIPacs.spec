@@ -196,6 +196,9 @@ hiddenimports = [
     'openai',
     'dotenv',
     'python_dotenv',
+
+    # OpenCV - imported lazily inside FAST viewer bridge (_create_qt_viewer_bridge)
+    'cv2',
     
     # Zeta MPR modules - Required for MPR functionality
     'modules.mpr.zeta_mpr',
