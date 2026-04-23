@@ -14,6 +14,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QLabel
 import vtkmodules.all as vtk
 from modules.viewer.viewer_backend_config import (
+    BACKEND_PYDICOM_QT,
     BACKEND_VTK,
     load_viewer_backend,
     resolve_viewer_backend,

@@ -20,6 +20,7 @@ from modules.viewer.gpu_boost import (
 )
 from modules.viewer.viewer_backend_config import (
     BACKEND_PYDICOM,
+    BACKEND_PYDICOM_QT,
     BACKEND_VTK,
     load_viewer_backend,
     save_viewer_backend,

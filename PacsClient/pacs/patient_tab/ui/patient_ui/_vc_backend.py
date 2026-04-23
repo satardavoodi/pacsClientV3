@@ -13,6 +13,7 @@ from PySide6.QtCore import QTimer
 from modules.viewer.viewer_backend_config import (
     BACKEND_VTK,
     BACKEND_PYDICOM,
+    BACKEND_PYDICOM_QT,
     load_viewer_backend,
     resolve_viewer_backend,
 )
