@@ -52,6 +52,11 @@ Name: "optional\echomind"; Description: "EchoMind — AI assistant and guided re
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Dirs]
+; v2.4.3+: User Data lives next to AIPacs.exe and engine\ so it is clearly
+; visible to users in the install folder.  users-modify allows non-admin
+; accounts to write DICOM downloads, cache, AI data, etc. after install.
+Name: "{app}\User Data"; Permissions: users-modify
+; Legacy path kept so upgrade installs do not lose references to old files.
 Name: "{localappdata}\AIPacs\user_data"; Permissions: users-modify
 Name: "{userappdata}\AIPacs\config"; Permissions: users-modify
 Name: "{commonappdata}\AIPacs\config"; Permissions: users-modify

@@ -260,7 +260,10 @@ def program_data_config_root() -> Path:
 
 def user_data_root() -> Path:
     if is_frozen() and sys.platform == "win32":
-        return local_state_root() / USER_DATA_DIRNAME
+        # v2.4.3+: User Data lives next to the executable and engine\ folder,
+        # so users can clearly see and access it in Program Files\AIPacs\.
+        # The installer creates this directory with users-modify permissions.
+        return install_root() / "User Data"
     return bundle_root() / USER_DATA_DIRNAME
 
 
