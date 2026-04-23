@@ -138,6 +138,8 @@ excludes = [
     "pytest",
     "unittest",
     "jupyter",
+    # Dev/test files that must not be bundled into production exe
+    "PacsClient.pacs.patient_tab.utils.test",
 ]
 
 

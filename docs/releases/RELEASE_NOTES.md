@@ -1,8 +1,48 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.4.6
-**Release Date:** 2026-04-23
+**Current Stable Version:** v2.4.7
+**Release Date:** 2026-04-24
 **Branch:** main
+
+---
+
+## v2.4.7 - Build warning cleanup + spec hardening (2026-04-24)
+
+### Summary
+
+Eliminates all actionable build warnings from v2.4.6 log. Three changes:
+1. Inno Setup `Architecture "x64"` deprecation warning fixed.
+2. Dev-only `test.py` excluded from PyInstaller bundle to remove spurious missing-module warnings.
+3. All remaining warnings in `warn-appA_workstation.txt` confirmed as known false positives (third-party optional deps).
+
+### Changes
+
+- **`builder/installer/AIPacs_Setup.iss`**: Changed `ArchitecturesInstallIn64BitMode=x64` to
+  `ArchitecturesInstallIn64BitMode=x64compatible` — resolves Inno Setup 6 deprecation warning.
+- **`builder/spec/appA_workstation.spec`**: Added `PacsClient.pacs.patient_tab.utils.test` to
+  the `excludes` list — removes spurious `missing module named image_filters / utils` warnings
+  that appeared because the dev test file uses bare (non-relative) imports.
+- **`pyproject.toml`**: version bumped to `2.4.7`.
+- **`builder/plugin package/packages/*/module_package.json`**: version bumped to `2.4.7` (all 11 packages).
+- **`builder/docs/BUILD_CHECKLIST.md`**: Added PyInstaller warnings file guidance section and
+  production test file exclusion note.
+
+### Root cause detail
+
+- **Architecture warning**: Inno Setup 6 deprecated the `"x64"` architecture identifier in favour
+  of `"x64compatible"` (handles both native x64 and ARM64 Windows). Using the old identifier
+  caused Inno Setup to emit `Warning: Architecture identifier "x64" is deprecated` and return
+  exit code 1, which could mask real errors.
+- **test.py imports**: `PacsClient/pacs/patient_tab/utils/test.py` is a legacy dev helper that
+  imports `image_filters` and `utils` as bare top-level names (not proper package paths). PyInstaller
+  attempted to trace these imports, emitting top-level `missing module` warnings even though the
+  file is never used in production. Excluding it from the bundle eliminates the noise.
+
+### Validation
+
+- Build log contains no `Architecture identifier` deprecation warning.
+- Build log contains no `missing module named image_filters` or `missing module named utils` entries.
+- All remaining `warn-appA_workstation.txt` entries are third-party optional deps (numpy, pandas, comtypes, anyio, etc.) — confirmed harmless.
 
 ---
 

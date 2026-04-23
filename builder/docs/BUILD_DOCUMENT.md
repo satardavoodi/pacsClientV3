@@ -339,6 +339,28 @@ The installer then deploys them to `%PROGRAMDATA%\AIPacs\module_packages\`.
 - **Validation**: Both pre-build checks in `BUILD_CHECKLIST.md` pass. Build log
   contains no `ModuleNotFoundError`. Installer v2.4.6 = 458.8 MB.
 
+### v2.4.7 — Inno Setup Architecture deprecation + test.py spurious warnings (2026-04-24)
+
+- **App**: appA (installer + build log)
+- **Symptom 1**: Inno Setup emitted `Warning: Architecture identifier "x64" is deprecated.
+  Substituting "x64os", but note that "x64compatible" is preferred` and returned exit code 1.
+- **Symptom 2**: PyInstaller `warn-appA_workstation.txt` contained top-level (non-optional)
+  `missing module named image_filters` and `missing module named utils` entries, which could mask
+  real missing-module problems in future audits.
+- **Root cause 1**: `ArchitecturesInstallIn64BitMode=x64` in `AIPacs_Setup.iss` used the old
+  Inno Setup 6 architecture identifier. Inno Setup substituted `x64os` automatically but warned.
+- **Root cause 2**: `PacsClient/pacs/patient_tab/utils/test.py` is a legacy dev helper with bare
+  (non-relative) top-level imports of `image_filters` and `utils` that do not exist as standalone
+  packages. PyInstaller traced them as missing top-level imports even though the file is never
+  used in production.
+- **Fix**:
+  1. Changed `ArchitecturesInstallIn64BitMode=x64` → `x64compatible` in `builder/installer/AIPacs_Setup.iss`.
+  2. Added `PacsClient.pacs.patient_tab.utils.test` to the `excludes` list in
+     `builder/spec/appA_workstation.spec`.
+- **Validation**: Build log contains no `Architecture identifier` deprecation warning.
+  `warn-appA_workstation.txt` contains no top-level `image_filters` or `utils` entries.
+  All remaining warnings are third-party optional deps (confirmed harmless).
+
 - Add entries here for each build/runtime failure using this template:
   - Date (UTC):
   - App: appA/appB

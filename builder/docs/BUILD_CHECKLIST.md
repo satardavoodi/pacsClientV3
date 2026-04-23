@@ -98,3 +98,15 @@ Inno Setup emits a `PrivilegesRequired` warning when the script uses per-user
 paths (`localappdata`, `userappdata`) while `PrivilegesRequired=admin`. This is
 expected — the installer is intentionally admin-required. The resulting EXE is
 valid; the exit code 1 does not indicate a broken installer.
+
+### PyInstaller warnings file
+The full warnings file is at `builder/output/build/appA_workstation/warn-appA_workstation.txt`.
+All `missing module named numpy._core.*`, `pandas.*`, `comtypes.*`, `anyio.*` etc. are
+**known false positives** from third-party optional deps. Actionable lines are those
+referencing `modules.*` or `PacsClient.*` without `optional` or `conditional` labels.
+
+### Production test file exclusion
+`PacsClient.pacs.patient_tab.utils.test` is excluded from the bundle via the
+`excludes` list in `builder/spec/appA_workstation.spec`. Without this exclusion
+it triggers spurious `missing module named image_filters` / `utils` warnings since
+it imports dev-only helpers as top-level imports.
