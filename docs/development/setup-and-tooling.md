@@ -64,11 +64,22 @@ Run the built-in test shortcut:
 Run a Windows release build:
 
 ```powershell
+# Preferred: use the build venv setup script (creates .venv_build with pinned toolchain)
+.\setup_build_env.ps1
+.venv_build\Scripts\python build.py
+```
+
+Or manually:
+
+```powershell
 python -m venv .venv_build
 .venv_build\Scripts\python -m pip install -r builder\requirements\build_requirements.txt
 .venv_build\Scripts\python -m pip install -r requirements-core.txt
 .venv_build\Scripts\python build.py
 ```
+
+You can also use `build.bat` from the repo root — it selects `.venv_build\Scripts\python.exe`
+automatically when the build venv exists, and falls back to ambient Python with a warning.
 
 Successful installer builds produce:
 

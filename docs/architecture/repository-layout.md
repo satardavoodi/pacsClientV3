@@ -11,7 +11,7 @@
 ### Runtime Configuration and Data Contracts
 
 - `config/`: editable runtime configuration
-- `database/`: schema maintenance scripts and report storage helpers
+- `database/`: connection pool, CRUD layer, and domain-split schema helpers (split into 6 domain modules since v2.2.9.0 — see `docs/development/database-split.md`)
 
 ### Documentation
 

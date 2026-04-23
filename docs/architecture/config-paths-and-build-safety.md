@@ -1,6 +1,6 @@
 # Config Paths & Build Safety Reference
 
-**Last updated:** v2.4.2-patch3 (2026-04-23)
+**Last updated:** v2.4.7 (2026-04-24)
 
 This document is the canonical reference for how each settings/config file is located
 in both developer mode (VS Code / `python main.py`) and the installed build
@@ -102,9 +102,6 @@ Module packages are installed at runtime to `C:\ProgramData\AIPacs\module_packag
 | cd_burner | `modules.cd_burner.cd_burn_dialog` |
 | web_browser | `modules.web_browser` |
 | echomind | `modules.EchoMind.settings_store` |
-
-> **Known issue:** `modules.printing.data` does not exist (see copilot-instructions.md).
-> Printing module fails its healthcheck import.  Do NOT enable printing by default until fixed.
 
 ---
 
