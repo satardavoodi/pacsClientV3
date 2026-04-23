@@ -24,6 +24,9 @@ data/
 # Exception: modules/*/data/ Python packages are source code, not data directories
 !modules/*/data/
 !modules/*/data/**
+# Exception: plugin package data/ subpackages are also source code
+!builder/plugin package/packages/*/payload/python/modules/*/data/
+!builder/plugin package/packages/*/payload/python/modules/*/data/**
 Segments/
 dicom.*
 *.dcm

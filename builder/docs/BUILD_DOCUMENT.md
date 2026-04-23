@@ -238,9 +238,107 @@ This is the long-lived build knowledge base for packaging this repository on Win
   - `hook-simpleitk.py` / `hook-SimpleITK.py`: collect `_SimpleITK` and package binaries
 - Re-audit after any module/plugin loader changes; hiddenimports must evolve with the codebase.
 
-## F) Known Issues + Fixes
+## F) Plugin Package Architecture
 
-- Initial status: no PyInstaller build attempts have been recorded yet in this builder system.
+The AIPacs installer deploys optional modules as self-contained **plugin packages**
+under `%PROGRAMDATA%\AIPacs\module_packages\<name>\`. Each plugin package contains
+a `module_package.json` that declares Python path additions:
+
+```json
+{
+  "python_paths": ["python"]
+}
+```
+
+When a module is enabled, `payload/python/` is prepended to `sys.path` at app
+startup **before** the PyInstaller `engine/` bundle. This means the plugin
+package's `modules.<name>` package **overrides** the bundled copy from `engine/`.
+
+### Dual-Location Rule (critical)
+
+> Any Python subpackage added to `modules/<name>/` MUST also be added (with
+> identical content) to `builder/plugin package/packages/<name>/payload/python/modules/<name>/`.
+
+**Why**: If `data/` (or any subpackage) exists only in the PyInstaller bundle
+but not in the plugin package, `from modules.printing.data import ...` raises
+`ModuleNotFoundError` at runtime on any machine where the module is enabled —
+even though the build log shows no errors and the bundle is correct.
+
+### Runtime resolution order (Printing module example)
+
+```
+Machine with Printing enabled:
+  sys.path = [
+    ...  ← other plugins
+    C:\ProgramData\AIPacs\module_packages\printing\payload\python\  ← WINS
+    ...
+    C:\Program Files\AIPacs\engine\  ← bundled fallback (never reached for modules.printing)
+  ]
+
+Machine without Printing enabled (or dev mode):
+  sys.path = [..., engine/]  ← bundled modules.printing used
+```
+
+### Plugin package locations
+
+| Module | Plugin package path |
+|--------|-------------------|
+| Printing | `builder/plugin package/packages/printing/payload/python/modules/printing/` |
+| EchoMind | `builder/plugin package/packages/echomind/payload/python/modules/EchoMind/` |
+| Download Manager | `builder/plugin package/packages/download_manager/payload/python/modules/download_manager/` |
+
+### `build_release.py` copies plugin packages to stage
+
+`builder/build_release.py` → `materialize_plugin_packages.py` copies each
+`builder/plugin package/packages/<name>/` to
+`builder/output/stage/plugin_packages/<name>/` before Inno Setup runs.
+The installer then deploys them to `%PROGRAMDATA%\AIPacs\module_packages\`.
+
+---
+
+## G) Known Issues + Fixes
+
+### v2.4.5 — `cv2` missing from build venv (2026-04-23)
+
+- **App**: appA (FAST viewer)
+- **Symptom**: `opencv_filter_pipeline.py` raised `ImportError: No module named 'cv2'`
+  at viewer startup. The FAST viewer fell back to the VTK backend and displayed an
+  incorrect "Advanced" badge. Drag-drop was broken.
+- **Root cause**: `opencv-python-headless` was not installed in `.venv_build` and
+  not listed in `suggested_hiddenimports`.
+- **Fix**:
+  1. Added `opencv-python-headless` to `builder/requirements/build_requirements.txt`
+  2. Added `cv2` to `suggested_hiddenimports` in `builder/inventory/imports_summary.json`
+  3. Added guarded import in `modules/viewer/fast/opencv_filter_pipeline.py`:
+     ```python
+     try:
+         import cv2
+     except ImportError:
+         cv2 = None
+     ```
+- **Validation**: FAST viewer starts with pydicom_qt backend; "Advanced" badge only
+  shows when Advanced mode is explicitly selected.
+
+### v2.4.6 — `modules.printing.data` missing (2026-04-23)
+
+- **App**: appA (Printing module)
+- **Symptom**: `ModuleNotFoundError: No module named 'modules.printing.data'` when the
+  Printing module was enabled on an installed machine.
+- **Root cause (two-layer)**:
+  1. `modules/printing/data/` did not exist at all in the main codebase.
+  2. Even after fixing the main codebase, the **plugin package** at
+     `builder/plugin package/packages/printing/payload/python/modules/printing/`
+     had no `data/` directory. Because the plugin is loaded first (see §F), the
+     bundled fix is never reached when the plugin is active.
+- **Fix**:
+  1. Created `modules/printing/data/` with 4 files:
+     `__init__.py`, `series_repository.py`, `filming_manager.py`, `dicom_enrichment.py`
+  2. Created identical `data/` in the plugin package:
+     `builder/plugin package/packages/printing/payload/python/modules/printing/data/`
+  3. Added `!modules/*/data/` exception to `.gitignore` (was blocking the new package).
+- **Validation**: Both pre-build checks in `BUILD_CHECKLIST.md` pass. Build log
+  contains no `ModuleNotFoundError`. Installer v2.4.6 = 458.8 MB.
+
 - Add entries here for each build/runtime failure using this template:
   - Date (UTC):
   - App: appA/appB

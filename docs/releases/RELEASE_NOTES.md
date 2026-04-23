@@ -1,8 +1,84 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.3.7
-**Release Date:** 2026-04-22
+**Current Stable Version:** v2.4.6
+**Release Date:** 2026-04-23
 **Branch:** main
+
+---
+
+## v2.4.6 - Printing Module `data/` Package (2026-04-23)
+
+### Summary
+
+Fixes `ModuleNotFoundError: No module named 'modules.printing.data'` that occurred
+on installed machines when the Printing module was enabled. The root cause was a
+two-layer omission: the `data/` subpackage was missing from both the main codebase
+**and** the plugin package (the canonical production runtime path).
+
+### Changes
+
+- **`modules/printing/data/`** (new): Created 4 files:
+  - `__init__.py` — exports `get_series_for_study`
+  - `series_repository.py` — DB + filesystem DICOM path resolver
+  - `filming_manager.py` — save/load/delete filming page PNG+JSON sidecars
+  - `dicom_enrichment.py` — series list enriched with live on-disk file counts
+- **`builder/plugin package/packages/printing/payload/python/modules/printing/data/`** (new):
+  Identical copy of all 4 files for the plugin package (production runtime override path).
+- **`.gitignore`**: Added `!modules/*/data/` exception so Python packages inside
+  `data/` directories are not accidentally excluded from git.
+- **`builder/docs/BUILD_CHECKLIST.md`**: Added Dual-Location Rule section,
+  pre-build dependency checks, and Inno Setup exit-code-1 false-alarm note.
+- **`builder/docs/BUILD_DOCUMENT.md`**: Added §F Plugin Package Architecture
+  and filled §G Known Issues with v2.4.5 and v2.4.6 documented entries.
+
+### Root cause detail
+
+When the Printing module is enabled, its plugin package prepends
+`payload/python/` to `sys.path` before the PyInstaller `engine/` bundle.
+This means `modules.printing` is loaded from the **plugin package**, not the bundle.
+Fixing only the main codebase (bundled path) is insufficient — the plugin
+package must also carry the `data/` subpackage.
+See `builder/docs/BUILD_DOCUMENT.md §F` for the full Dual-Location Rule.
+
+### Validation
+
+- Both pre-build checks in `BUILD_CHECKLIST.md` pass (main codebase and plugin paths).
+- Build log contains no `ModuleNotFoundError` entries.
+- `ai-pacs installer v2.4.6.exe` = 458.8 MB (2026-04-23).
+
+---
+
+## v2.4.5 - OpenCV / cv2 Dependency Fix (2026-04-23)
+
+### Summary
+
+Fixes `ImportError: No module named 'cv2'` that caused the FAST viewer to fall
+back to the VTK backend on launch, displaying an incorrect "Advanced" badge and
+breaking drag-drop series switching.
+
+### Changes
+
+- **`modules/viewer/fast/opencv_filter_pipeline.py`**: Wrapped `import cv2` in a
+  `try/except ImportError` guard so the module loads gracefully when OpenCV is
+  unavailable at runtime.
+- **`builder/requirements/build_requirements.txt`**: Added `opencv-python-headless`
+  so it is installed in `.venv_build` and bundled by PyInstaller.
+- **`builder/inventory/imports_summary.json`**: Added `cv2` to
+  `suggested_hiddenimports` so PyInstaller explicitly collects the extension module.
+
+### Root cause
+
+`opencv-python-headless` was not listed in the build venv requirements. PyInstaller
+could not collect the `cv2` extension, so it was absent from the installed bundle.
+Without OpenCV the filter pipeline import failed, which propagated up to the
+backend selector and forced VTK fallback.
+
+### Validation
+
+- FAST viewer starts with `BACKEND_PYDICOM_QT` (verified via `[BACKEND_SWITCH]`
+  startup log line).
+- "Advanced" badge only appears when Advanced mode is explicitly selected.
+- `ai-pacs installer v2.4.5.exe` = 458.8 MB (2026-04-23).
 
 ---
 
