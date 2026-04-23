@@ -18,6 +18,8 @@ else:
 SERVERS_FILE = CONFIG_DIR / "servers_address.json"
 _AIPACS_SERVERS_FILE = CONFIG_DIR / "servers.json"
 _SERVERS_FILE_MISSING_WARNED = False
+# Dev-mode: legacy root-level servers.json used before v2.4.2-patch2
+_LEGACY_SERVERS_FILE = _ROOT / "servers.json"
 
 
 def _safe_print(*args, **kwargs):
@@ -228,9 +230,19 @@ def get_all_servers():
     if _AIPACS_SERVERS_FILE.exists():
         with open(_AIPACS_SERVERS_FILE, 'r', encoding='utf-8') as f:
             try:
-                return json.load(f)
+                result = json.load(f)
+                if result:
+                    return result
             except json.JSONDecodeError:
                 return []
+    # Dev-mode fallback: read legacy root-level servers.json if config/ version is absent/empty.
+    # Only active in non-frozen (source) mode; installed app uses %APPDATA% path exclusively.
+    if not getattr(sys, "frozen", False) and _LEGACY_SERVERS_FILE.exists():
+        try:
+            with open(_LEGACY_SERVERS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
     return []
 
 
