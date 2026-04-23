@@ -1486,6 +1486,7 @@
     "PySide6.QtWidgets",
     "SimpleITK",
     "SimpleITK._SimpleITK",
+    "cv2",
     "logging",
     "psutil",
     "vtkmodules",

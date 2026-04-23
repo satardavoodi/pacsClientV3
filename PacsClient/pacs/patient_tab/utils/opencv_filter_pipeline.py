@@ -41,7 +41,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-import cv2
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    cv2 = None  # type: ignore
+    CV2_AVAILABLE = False
 import numpy as np
 from PacsClient.pacs.patient_tab.utils.dicom_windowing import normalize_window_level, window_to_uint8
 
@@ -113,7 +118,7 @@ def pooyan_filter_center(
         If the small-image path fires and ``preserve_dimensions`` is False,
         dimensions are 2× the input.
     """
-    if not params.enabled:
+    if not params.enabled or not CV2_AVAILABLE:
         return image
 
     # Normalise input shape: ensure 2D grayscale
@@ -180,6 +185,11 @@ def pooyan_invert(image: np.ndarray) -> np.ndarray:
     C# code: ``data[i] = (byte)(255 - data[i]);`` for R, G, B, A channels.
     For grayscale uint8 this is simply ``255 - pixel``.
     """
+    if not CV2_AVAILABLE:
+        if image.dtype == np.uint8:
+            return (255 - image).astype(np.uint8)
+        info = np.iinfo(image.dtype) if np.issubdtype(image.dtype, np.integer) else None
+        return (info.max - image).astype(image.dtype) if info is not None else image
     if image.dtype == np.uint8:
         return cv2.bitwise_not(image)
     # For other dtypes, invert within dtype range
@@ -194,19 +204,22 @@ def pooyan_invert(image: np.ndarray) -> np.ndarray:
 # ═══════════════════════════════════════════════════════════════════════════
 
 # C# ColormapTypes → cv2 equivalents
-COLORMAP_LOOKUP = {
-    "Plasma":    cv2.COLORMAP_PLASMA,
-    "Inferno":   cv2.COLORMAP_INFERNO,
-    "Hot Iron":  cv2.COLORMAP_HOT,
-    "Hot":       cv2.COLORMAP_HOT,
-    "Winter":    cv2.COLORMAP_WINTER,
-    "Rainbow 1": cv2.COLORMAP_RAINBOW,
-    "Rainbow":   cv2.COLORMAP_RAINBOW,
-    "Rainbow 2": cv2.COLORMAP_JET,
-    "Jet":       cv2.COLORMAP_JET,
-    "Hsv":       cv2.COLORMAP_HSV,
-    "HSV":       cv2.COLORMAP_HSV,
-}
+if CV2_AVAILABLE:
+    COLORMAP_LOOKUP = {
+        "Plasma":    cv2.COLORMAP_PLASMA,
+        "Inferno":   cv2.COLORMAP_INFERNO,
+        "Hot Iron":  cv2.COLORMAP_HOT,
+        "Hot":       cv2.COLORMAP_HOT,
+        "Winter":    cv2.COLORMAP_WINTER,
+        "Rainbow 1": cv2.COLORMAP_RAINBOW,
+        "Rainbow":   cv2.COLORMAP_RAINBOW,
+        "Rainbow 2": cv2.COLORMAP_JET,
+        "Jet":       cv2.COLORMAP_JET,
+        "Hsv":       cv2.COLORMAP_HSV,
+        "HSV":       cv2.COLORMAP_HSV,
+    }
+else:
+    COLORMAP_LOOKUP = {}
 
 
 def pooyan_fusion(
@@ -233,6 +246,8 @@ def pooyan_fusion(
     np.ndarray
         BGR image (H, W, 3), uint8.
     """
+    if not CV2_AVAILABLE:
+        return image
     if image.ndim == 2:
         bgr = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     else:
@@ -432,7 +447,10 @@ def _map_u8_back_to_original(
     oh, ow = original_slice.shape[:2]
     fh, fw = filtered_u8.shape[:2]
     if (fh, fw) != (oh, ow):
-        filtered_u8 = cv2.resize(filtered_u8, (ow, oh))
+        if CV2_AVAILABLE:
+            filtered_u8 = cv2.resize(filtered_u8, (ow, oh))
+        else:
+            filtered_u8 = filtered_u8[:oh, :ow] if fh >= oh and fw >= ow else filtered_u8
 
     ww, wc = normalize_window_level(
         window_width,

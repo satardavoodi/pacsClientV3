@@ -10,4 +10,5 @@ packaging>=23
 # Keep in sync with imports_summary.json suggested_hiddenimports.
 psutil>=5.9
 requests[socks]>=2.31.0
+opencv-python-headless>=4.5
 
