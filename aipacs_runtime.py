@@ -1592,11 +1592,15 @@ def seed_user_config_defaults() -> None:
 
     dst_root.mkdir(parents=True, exist_ok=True)
     skip_names = {INSTALLATION_PROFILE_FILENAME}
+    # v2.3.3+ migration: always overwrite viewer_backend_settings.json so that
+    # installations that were seeded with the wrong "vtk_simpleitk" default
+    # are corrected to "pydicom_qt" on the next app launch.
+    force_overwrite_names = {"viewer_backend_settings.json"}
     for src in src_root.iterdir():
         if not src.is_file() or src.name in skip_names:
             continue
         dst = dst_root / src.name
-        if not dst.exists():
+        if not dst.exists() or src.name in force_overwrite_names:
             shutil.copy2(src, dst)
 
 

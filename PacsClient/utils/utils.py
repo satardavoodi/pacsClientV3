@@ -219,10 +219,20 @@ def get_server(server_name):
             try:
                 servers = json.load(f)
                 server = next((s for s in servers if s['name'] == server_name), None)
-                return server
+                if server is not None:
+                    return server
             except json.JSONDecodeError:
-                return []
-    return []
+                pass
+    # Dev-mode fallback: check root-level servers.json when config/ version is absent/empty.
+    # Mirrors get_all_servers() fallback so selectable servers resolve correctly in dev mode.
+    if not getattr(sys, "frozen", False) and _LEGACY_SERVERS_FILE.exists():
+        try:
+            with open(_LEGACY_SERVERS_FILE, 'r', encoding='utf-8') as f:
+                servers = json.load(f)
+                return next((s for s in servers if s['name'] == server_name), None)
+        except Exception:
+            pass
+    return None
 
 
 # get servers from servers.json

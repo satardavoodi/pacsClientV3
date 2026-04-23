@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 BACKEND_VTK = "vtk_simpleitk"
 BACKEND_PYDICOM = "pydicom_2d"
 BACKEND_PYDICOM_QT = "pydicom_qt"   # VTK-free 2D via PyDicom + OpenCV + QPainter
-DEFAULT_BACKEND = BACKEND_VTK
+# v2.3.3+: FAST (pydicom_qt) is the default.  Advanced (vtk_simpleitk) must be
+# explicitly requested via viewer_backend_settings.json or force_vtk metadata.
+DEFAULT_BACKEND = BACKEND_PYDICOM_QT
 
 
 def _config_path() -> Path:

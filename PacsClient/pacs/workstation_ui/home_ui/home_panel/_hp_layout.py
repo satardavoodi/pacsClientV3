@@ -254,6 +254,15 @@ class _HPLayoutMixin:
 
             self.secretary_button_widget = SecretaryButtonWidget()
             left_layout.addWidget(self.secretary_button_widget, 1)
+        else:
+            # Reserve the same vertical space so the sidebar layout is not distorted
+            # when EchoMind is not installed.  SecretaryButtonWidget uses
+            # setMinimumHeight(396) + Expanding, so we mirror that exactly.
+            _secretary_placeholder = QWidget()
+            _secretary_placeholder.setMinimumHeight(396)
+            _secretary_placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            _secretary_placeholder.setStyleSheet("background: transparent;")
+            left_layout.addWidget(_secretary_placeholder, 1)
 
         # Auto-search with today's date when page loads
         # from PySide6.QtCore import QTimer
