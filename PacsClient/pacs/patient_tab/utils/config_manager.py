@@ -293,7 +293,11 @@ class ApplicationConfig:
 
 # Global configuration instance
 _config: Optional[ApplicationConfig] = None
-_config_file_path = Path("config/application_config.json")
+try:
+    from PacsClient.utils.config import SOCKET_CONFIG_PATH as _CONF_DIR
+    _config_file_path = Path(_CONF_DIR) / "application_config.json"
+except Exception:
+    _config_file_path = Path(__file__).resolve().parents[4] / "config" / "application_config.json"
 
 
 def get_config() -> ApplicationConfig:

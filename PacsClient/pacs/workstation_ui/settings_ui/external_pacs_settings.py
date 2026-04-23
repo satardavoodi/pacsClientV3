@@ -30,9 +30,14 @@ import asyncio
 
 from .external_pacs_server_dialog import ExternalPacsServerDialog
 
+try:
+    from PacsClient.utils.config import SOCKET_CONFIG_PATH as _SETTINGS_DIR
+except Exception:
+    _SETTINGS_DIR = Path(__file__).resolve().parents[4] / "config"
+
 log = logging.getLogger(__name__)
 
-CONFIG_PATH = Path("config/external_pacs_servers.json")
+CONFIG_PATH = Path(_SETTINGS_DIR) / "external_pacs_servers.json"
 
 # ── Persistence helpers ─────────────────────────────────────────────────────
 
