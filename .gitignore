@@ -21,6 +21,9 @@ cbct-sample/
 **/*.db-wal
 backups/
 data/
+# Exception: modules/*/data/ Python packages are source code, not data directories
+!modules/*/data/
+!modules/*/data/**
 Segments/
 dicom.*
 *.dcm
