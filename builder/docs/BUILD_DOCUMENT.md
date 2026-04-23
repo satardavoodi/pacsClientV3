@@ -123,10 +123,34 @@ This is the long-lived build knowledge base for packaging this repository on Win
   - Document external runtime requirement and expected discovery locations/env vars
   - Do NOT assume stock `Slicer.exe` fallback (audit shows code explicitly rejects stock Slicer fallback)
 
+### Database Package Packaging Notes
+
+- The `database/` **Python package** (project root) is the centralised DB layer: connection pool,
+  schema creation, CRUD operations. It was split from `PacsClient/utils/database.py` in v2.2.9.0.
+- **Coverage in spec (`appA_workstation.spec`)**:
+  - Explicit hiddenimports: `database`, `database.core`, `database.manager`
+  - `collect_submodules("database", filter=lambda name: True)` — no filter, all submodules auto-discovered
+- **Submodules covered** (verified v2.4.7, zero PyInstaller warnings):
+  - `database._pool` — connection pool infrastructure
+  - `database.dicom_db` — patient / study / series / instance CRUD
+  - `database.ai_reception_db` — AI reception report queue
+  - `database.ai_sessions_db` — AI chat sessions and messages
+  - `database.download_progress_db` — download progress tracking
+  - `database.token_usage_db` — LLM token usage accounting
+  - `database.manager` — proxy/convenience layer
+  - `database.migrations.migrate_report_status` — one-off migration script
+- **Dependencies**: all stdlib (`sqlite3`, `logging`, `json`, `threading`, `hashlib`, etc.).
+  No third-party imports — no entries needed in `imports_summary.json`.
+- **IMPORTANT — naming conflict**: `database/**` in §D below refers to runtime **SQLite data
+  files** that must NOT be packaged, NOT this Python package. The Python package IS bundled
+  correctly via `collect_submodules`. Do not add `database/` as an Inno Setup exclusion pattern.
+
 ## D) Privacy / No-Patient-Data Policy
 
 - Non-negotiable: No real patient/runtime data may be embedded in builds.
 - Must exclude runtime/generated data roots and files from packaging.
+- Note: `database/**` below refers to runtime SQLite **data files** (e.g. `dicom.db`),
+  not the `database/` Python package which IS bundled as Python code.
 - Detected must-not-package paths (audit):
 - `Education`
 - `Education/**`

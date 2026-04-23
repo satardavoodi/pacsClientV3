@@ -110,3 +110,63 @@ referencing `modules.*` or `PacsClient.*` without `optional` or `conditional` la
 `excludes` list in `builder/spec/appA_workstation.spec`. Without this exclusion
 it triggers spurious `missing module named image_filters` / `utils` warnings since
 it imports dev-only helpers as top-level imports.
+
+Note: PyInstaller may still report `excluded module named PacsClient.pacs.patient_tab.utils.test
+- imported by main.py (top-level)` in the warnings file. This is a false positive from
+`collect_submodules` static tracing, not a real `main.py` import. "excluded" status means
+the spec rule worked correctly.
+
+---
+
+## Database Module (`database/`)
+
+### Python package vs. runtime data directory
+
+Two things named "database" exist in this project — do NOT confuse them:
+
+| Path | What it is | Build treatment |
+|------|-----------|----------------|
+| `database/` (project root) | Python package — connection pool, schema, CRUD | **Must be bundled** as Python code |
+| Runtime `database/` or `dicom.db` | SQLite data files created at runtime | **Must NOT be bundled** (section D of BUILD_DOCUMENT.md) |
+
+### Coverage audit (verified v2.4.7)
+
+The `database/` Python package is covered by **two mechanisms** in the spec:
+
+1. **Explicit hiddenimports** (`extra=` list in spec):
+   - `database`
+   - `database.core`
+   - `database.manager`
+
+2. **`collect_submodules("database", filter=lambda name: True)`** — no filter applied,
+   so ALL submodules are auto-discovered:
+   - `database._pool`
+   - `database.ai_reception_db`
+   - `database.ai_sessions_db`
+   - `database.dicom_db`
+   - `database.download_progress_db`
+   - `database.token_usage_db`
+   - `database.migrations.migrate_report_status`
+
+### Dependencies (all stdlib — no hiddenimports needed)
+All `database/` modules import only Python standard library: `sqlite3`, `logging`,
+`json`, `threading`, `hashlib`, `contextlib`, `ast`, `random`, `time`, `datetime`.
+No third-party packages. Zero warnings in PyInstaller analysis.
+
+### Adding new database submodules
+New files added to `database/` are automatically picked up by `collect_submodules`.
+No changes to `imports_summary.json` or the spec `extra=` list are needed unless
+the new module imports a **new third-party package** not already in
+`suggested_hiddenimports`.
+
+### Pre-build check
+```powershell
+.venv_build\Scripts\python.exe -c "
+from database import get_db_connection, init_database
+from database._pool import cleanup_connection_pools
+from database.dicom_db import insert_patient
+from database.download_progress_db import get_incomplete_downloads
+from database.ai_reception_db import ai_save_reception_report
+print('database package: OK')
+"
+```
