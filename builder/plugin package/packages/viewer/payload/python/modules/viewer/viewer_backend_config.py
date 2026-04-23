@@ -12,11 +12,16 @@ from pathlib import Path
 from PacsClient.utils.config import SOCKET_CONFIG_PATH
 from aipacs_runtime import SAFE_VIEWER_BACKEND_DEFAULT, SAFE_VIEWER_BACKEND_ENV
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 BACKEND_VTK = "vtk_simpleitk"
 BACKEND_PYDICOM = "pydicom_2d"
 BACKEND_PYDICOM_QT = "pydicom_qt"   # VTK-free 2D via PyDicom + OpenCV + QPainter
-DEFAULT_BACKEND = BACKEND_VTK
+# v2.3.3+: FAST (pydicom_qt) is the default.  Advanced (vtk_simpleitk) must be
+# explicitly requested via viewer_backend_settings.json or force_vtk metadata.
+DEFAULT_BACKEND = BACKEND_PYDICOM_QT
 
 
 def _config_path() -> Path:
@@ -74,7 +79,27 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
     )
     requested_backend = forced_backend if safe_backend_forced else configured_backend
 
-    series_meta = {}
+    # v2.3.3 Stage 2: Emergency escape hatch — revert FAST to the old VTK
+    # lazy-hybrid backend without a code change.  Set the env var to "1"
+    # and restart the application.
+    _force_legacy = os.environ.get("AIPACS_FORCE_PYDICOM_2D", "").strip() == "1"
+    if _force_legacy and requested_backend in {BACKEND_PYDICOM_QT, BACKEND_PYDICOM}:
+        logger.warning(
+            "[BACKEND_SWITCH_V2.3.3] AIPACS_FORCE_PYDICOM_2D=1 — "
+            "overriding %s -> %s (emergency escape hatch)",
+            requested_backend, BACKEND_PYDICOM,
+        )
+        requested_backend = BACKEND_PYDICOM
+
+    # v2.3.3: PYDICOM (pydicom_2d) is deprecated for FAST mode.
+    # Remap to PYDICOM_QT unconditionally.
+    if requested_backend == BACKEND_PYDICOM and not _force_legacy:
+        logger.info(
+            "[BACKEND_SWITCH_V2.3.3] Remapping deprecated BACKEND_PYDICOM "
+            "(%s) -> BACKEND_PYDICOM_QT (%s) for FAST mode",
+            BACKEND_PYDICOM, BACKEND_PYDICOM_QT,
+        )
+        requested_backend = BACKEND_PYDICOM_QT
     instances = []
     if isinstance(metadata, dict):
         raw_series_meta = metadata.get("series")
@@ -107,7 +132,7 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
             backend = BACKEND_VTK
             metadata_complete = False
 
-    if safe_backend_forced and backend == BACKEND_VTK and instances:
+    if safe_backend_forced and backend in {BACKEND_VTK, BACKEND_PYDICOM} and instances:
         backend = BACKEND_PYDICOM_QT
         metadata_complete = True
 

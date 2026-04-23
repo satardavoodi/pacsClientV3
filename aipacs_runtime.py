@@ -1591,6 +1591,10 @@ def seed_user_config_defaults() -> None:
     src_root = bundled_config_root()
     dst_root = roaming_config_root()
     if not src_root.exists():
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "[SEED_CONFIG] bundled config root missing: %s — skipping seed", src_root
+        )
         return
 
     dst_root.mkdir(parents=True, exist_ok=True)
@@ -1599,12 +1603,27 @@ def seed_user_config_defaults() -> None:
     # installations that were seeded with the wrong "vtk_simpleitk" default
     # are corrected to "pydicom_qt" on the next app launch.
     force_overwrite_names = {"viewer_backend_settings.json"}
+    copied, skipped, failed = [], [], []
     for src in src_root.iterdir():
         if not src.is_file() or src.name in skip_names:
             continue
         dst = dst_root / src.name
-        if not dst.exists() or src.name in force_overwrite_names:
-            shutil.copy2(src, dst)
+        try:
+            if not dst.exists() or src.name in force_overwrite_names:
+                shutil.copy2(src, dst)
+                copied.append(src.name)
+            else:
+                skipped.append(src.name)
+        except Exception as _copy_err:
+            failed.append((src.name, str(_copy_err)))
+    import logging as _log
+    _seed_log = _log.getLogger(__name__)
+    _seed_log.info(
+        "[SEED_CONFIG] dst=%s copied=%s skipped=%s failed=%s",
+        dst_root, copied, skipped, failed,
+    )
+    if failed:
+        _seed_log.warning("[SEED_CONFIG] copy failures: %s", failed)
 
 
 def module_enabled_map(profile: dict[str, Any] | None = None) -> dict[str, bool]:

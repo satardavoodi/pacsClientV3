@@ -687,7 +687,7 @@ class _VWBackendMixin:
     def _bind_backend_from_metadata(self, metadata, force_vtk=False, source="bind"):
         # [H11] Probe 1: entry state before any mutation
         self._h11_bind_snapshot("BIND_ENTRY(%s)" % source, metadata)
-        self._selected_backend = load_viewer_backend(default=BACKEND_VTK)
+        self._selected_backend = load_viewer_backend(default=BACKEND_PYDICOM_QT)
         self._bound_backend_metadata = metadata if isinstance(metadata, dict) else None
         series_meta = {}
         if isinstance(metadata, dict):

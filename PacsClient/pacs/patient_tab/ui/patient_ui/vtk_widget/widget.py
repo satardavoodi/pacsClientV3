@@ -118,10 +118,10 @@ class VTKWidget(
         self._lazy_loader_key = None
         _initial_resolution = resolve_viewer_backend(
             metadata=None,
-            settings=load_viewer_backend(default=BACKEND_VTK),
+            settings=load_viewer_backend(default=BACKEND_PYDICOM_QT),
         )
         self._selected_backend = str(
-            _initial_resolution.get("requested_backend", BACKEND_VTK) or BACKEND_VTK
+            _initial_resolution.get("requested_backend", BACKEND_PYDICOM_QT) or BACKEND_PYDICOM_QT
         )
         self._gpu_boost_plan = resolve_gpu_boost_plan(viewer_backend=self._selected_backend)
         self._active_backend = str(

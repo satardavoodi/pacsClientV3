@@ -496,7 +496,7 @@ class ModalityGridConfigWidget(QWidget):
         }
 
         # Load unified viewer mode and sync hidden compat widgets
-        active_backend = load_viewer_backend(default=BACKEND_VTK)
+        active_backend = load_viewer_backend(default=BACKEND_PYDICOM_QT)
         is_fast = active_backend in (BACKEND_PYDICOM, "pydicom_qt")
         mode_idx = self.viewer_mode_combo.findData("fast" if is_fast else "advanced")
         self.viewer_mode_combo.setCurrentIndex(max(0, mode_idx))

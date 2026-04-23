@@ -75,11 +75,11 @@ class _VCBackendMixin:
 
             resolution = resolve_viewer_backend(
                 metadata=None,
-                settings=load_viewer_backend(default=BACKEND_VTK),
+                settings=load_viewer_backend(default=BACKEND_PYDICOM_QT),
             )
-            return str(resolution.get("requested_backend", BACKEND_VTK) or BACKEND_VTK)
+            return str(resolution.get("requested_backend", BACKEND_PYDICOM_QT) or BACKEND_PYDICOM_QT)
         except Exception:
-            return BACKEND_VTK
+            return BACKEND_PYDICOM_QT
 
     def _needs_backend_rebuild(self, metadata: dict, requested_backend: str) -> bool:
         """Return True when current payload cannot satisfy the requested backend."""
