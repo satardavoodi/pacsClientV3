@@ -43,8 +43,9 @@ Use this only when you want the staged resumable Nuitka builder.
   - `builder nuitka/nuitka_build_config.py`
   - `builder nuitka/installer/AIPacs_Nuitka_Setup.iss`
 - Main output root: `builder nuitka/output/`
-- Canonical doc:
+- Canonical docs:
   - `NUITKA_BUILD_PLAN.md`
+  - `NUITKA_BUILD_AGENT_HANDOFF.md`
 
 Typical commands:
 

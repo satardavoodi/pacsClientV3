@@ -6,6 +6,23 @@
 
 ---
 
+## v2.4.4 - Nuitka Pipeline Sync After Docs Reorganization (2026-04-25)
+
+### Summary
+
+Captures post-pull synchronization work for the staged Nuitka pipeline after repository docs/build-structure updates.
+Full release notes in [`VERSION_2.4.4_RELEASE.md`](VERSION_2.4.4_RELEASE.md).
+
+### Highlights
+
+- Pulled latest upstream and synced with updated Python build structure in `builder/`.
+- Kept canonical Nuitka planning in `builder/docs/NUITKA_BUILD_PLAN.md`.
+- Added `builder/docs/NUITKA_BUILD_AGENT_HANDOFF.md` for operator/agent continuity.
+- Updated `builder/docs/README.md` so both Nuitka docs are discoverable in build docs index.
+- Preserved build-system boundary (`builder/` PyInstaller vs `builder nuitka/` Nuitka staged pipeline).
+
+---
+
 ## v2.4.7 - Build warning cleanup + spec hardening (2026-04-24)
 
 ### Summary
