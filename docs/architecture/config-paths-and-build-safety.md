@@ -32,7 +32,7 @@ build to ensure these structures never break again.
 
 | Config file | Read/Write | Owner module | Path strategy | Notes |
 |-------------|-----------|--------------|---------------|-------|
-| `servers.json` | R/W | `utils.py` | `SOCKET_CONFIG_PATH / "servers.json"` | PACS server list; dev falls back to root `servers.json` if config/ is empty |
+| `servers.json` | R/W | `utils.py` | `SOCKET_CONFIG_PATH / "servers.json"` | PACS server list; dev falls back to root `servers.json` if config/ is empty; path fix in v2.4.2-patch2 |
 | `servers_address.json` | R/W | `servers_config.py` | `SOCKET_CONFIG_PATH / "servers_address.json"` | AI service URLs (breast/boneage/seg) |
 | `socket_config.json` | R/W | `socket_config.py` | `SOCKET_CONFIG_PATH / "socket_config.json"` | Socket host/port for DM |
 | `external_pacs_servers.json` | R/W | `external_pacs_settings.py` | `SOCKET_CONFIG_PATH / "external_pacs_servers.json"` | Third-party PACS; **fixed v2.4.2-patch3** |
@@ -66,6 +66,33 @@ config/lightviewer_settings.json    ← N/A (lightviewer uses roaming_config_roo
 ```
 
 > `installation_profile.json` is **excluded** from seeding (it's system-written by the installer).
+
+---
+
+## Known Regression: "Server Not Selected" With Visible Server Name
+
+### Origin (older issue)
+
+- A previous regression (fixed in **v2.4.2-patch2**) came from mixed path usage:
+	some code used relative `servers.json` while other code used the roaming config path.
+	Result: Settings wrote one file, Home UI read another, so selection failed.
+
+### New observed case (v2.4.3)
+
+- In installed runtime logs/config (`%APPDATA%\\AIPacs\\config\\servers.json`), server name
+	entries can contain trailing spaces (example: `"razi "`).
+- Home UI strips combo text before lookup (`"razi"`), but older lookup logic compared names
+	with exact string equality. This mismatch made `get_selectable_server(...)` return `None`,
+	showing "No Server Selected" / "Server Not Found" even though the server appeared in the list.
+
+### Fix
+
+- `PacsClient/utils/utils.py::get_server()` now normalizes names (`strip()`) on both lookup
+	input and stored entries.
+- `PacsClient/pacs/workstation_ui/settings_ui/server_settings.py::save_server()` now trims
+	`name`, `host`, `port`, and `ae_title` before validation and save.
+
+This keeps old saved configs readable and prevents new whitespace-corrupted entries.
 
 ---
 

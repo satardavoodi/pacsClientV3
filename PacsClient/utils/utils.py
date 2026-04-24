@@ -214,11 +214,21 @@ def segment_path():
 
 # get special server
 def get_server(server_name):
+    target_name = str(server_name or "").strip()
+    if not target_name:
+        return None
+
     if _AIPACS_SERVERS_FILE.exists():
         with open(_AIPACS_SERVERS_FILE, 'r', encoding='utf-8') as f:
             try:
                 servers = json.load(f)
-                server = next((s for s in servers if s['name'] == server_name), None)
+                server = next(
+                    (
+                        s for s in servers
+                        if str(s.get('name', '')).strip() == target_name
+                    ),
+                    None,
+                )
                 if server is not None:
                     return server
             except json.JSONDecodeError:
@@ -229,7 +239,13 @@ def get_server(server_name):
         try:
             with open(_LEGACY_SERVERS_FILE, 'r', encoding='utf-8') as f:
                 servers = json.load(f)
-                return next((s for s in servers if s['name'] == server_name), None)
+                return next(
+                    (
+                        s for s in servers
+                        if str(s.get('name', '')).strip() == target_name
+                    ),
+                    None,
+                )
         except Exception:
             pass
     return None

@@ -658,8 +658,12 @@ class ServerSettingsWidget(QWidget):
         self.server_list.setColumnWidth(5, 70)
 
     def save_server(self):
-        if not all([self.name_edit.text(), self.host_edit.text(),
-                    self.port_edit.text(), self.ae_title_edit.text()]):
+        name = self.name_edit.text().strip()
+        host = self.host_edit.text().strip()
+        port = self.port_edit.text().strip()
+        ae_title = self.ae_title_edit.text().strip()
+
+        if not all([name, host, port, ae_title]):
             msg = QMessageBox()
             msg.setWindowIcon(QIcon("PacsClient/login/images/favicon.ico"))
             msg.warning(self, "Error", "All fields are required")
@@ -667,10 +671,10 @@ class ServerSettingsWidget(QWidget):
 
         servers = get_all_servers()
         new_server = {
-            'name': self.name_edit.text(),
-            'host': self.host_edit.text(),
-            'port': self.port_edit.text(),
-            'ae_title': self.ae_title_edit.text()
+            'name': name,
+            'host': host,
+            'port': port,
+            'ae_title': ae_title
         }
 
         selected_items = self.server_list.selectedItems()
