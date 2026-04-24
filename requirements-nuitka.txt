@@ -1,0 +1,4 @@
+-r requirements-core.txt
+nuitka==4.0.8
+ordered-set>=4.1.0
+zstandard>=0.25.0

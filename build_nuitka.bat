@@ -4,29 +4,35 @@ title AIPacs Nuitka Build Script
 
 echo.
 echo ===============================================================================
-echo               AIPacs Application Build Process (Nuitka)
+echo               AIPacs Incremental Build Process (Nuitka)
 echo ===============================================================================
 echo.
-echo This script will build a standalone executable using Nuitka compiler.
-echo Nuitka compiles Python to C for better performance and protection.
+echo This script runs the staged, resumable Nuitka pipeline.
+echo It preserves checkpoints and avoids restarting from zero after failures.
 echo.
 
-REM Check if Python is installed
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo Error: Python is not installed or not in PATH
-    echo Please install Python 3.8 or later and try again
-    pause
-    exit /b 1
+REM Prefer build venv used by release scripts.
+set "PYTHON_EXE=.venv_build\Scripts\python.exe"
+if not exist "%PYTHON_EXE%" (
+    echo .venv_build not found. Running setup_build_env.ps1 ...
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\setup_build_env.ps1"
+    if errorlevel 1 (
+        echo Failed to prepare .venv_build.
+        pause
+        exit /b 1
+    )
 )
-
-echo Python is installed
 echo.
+echo Using build venv Python: %PYTHON_EXE%
 
-REM Run the Nuitka build script
-echo Starting Nuitka build process...
+REM Route to staged orchestrator.
+echo Starting staged Nuitka pipeline...
 echo.
-python build_nuitka.py --clean
+if "%~1"=="" (
+    "%PYTHON_EXE%" "builder nuitka\build_nuitka_release.py" --resume
+) else (
+    "%PYTHON_EXE%" "builder nuitka\build_nuitka_release.py" %*
+)
 
 if errorlevel 1 (
     echo.
@@ -38,14 +44,11 @@ if errorlevel 1 (
 
 echo.
 echo ===============================================================================
-echo                     Nuitka Build Completed Successfully!
+echo                   Nuitka Pipeline Completed Successfully!
 echo ===============================================================================
 echo.
-echo Your application is ready at: dist\AIPacs_nuitka\main.dist\AIPacs.exe
-echo.
-echo Nuitka advantages over PyInstaller:
-echo   - Compiled to native C code (faster startup and execution)
-echo   - Better source code protection (no .pyc files in dist)
-echo   - Smaller binary size in many cases
+echo Check staged outputs at: builder nuitka\output\
+echo For a full smoke check run:
+echo   .venv_build\Scripts\python.exe "builder nuitka\build_nuitka_release.py" --smoke-test
 echo.
 pause

@@ -2,6 +2,8 @@
 
 Current release target: `v2.3.7` (`2026-04-22`)
 
+This document is for the **PyInstaller-based build chain in `builder/`**. It does not describe the staged Nuitka builder in `builder nuitka/`; use `NUITKA_BUILD_PLAN.md` for that flow.
+
 ## Commands
 
 ```powershell
@@ -10,6 +12,8 @@ python build.py --skip-pyinstaller
 python build.py --skip-installer-compile
 python build.py --clean-only
 ```
+
+Do not use `build_nuitka.bat`, `build_nuitka_release.bat`, or `builder nuitka/build_nuitka_release.py` when following this document.
 
 ## Environment Preparation
 

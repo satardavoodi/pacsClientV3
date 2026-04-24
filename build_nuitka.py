@@ -25,8 +25,8 @@ from types import ModuleType
 # Fix encoding for Windows console
 if sys.platform == "win32":
     import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -41,33 +41,45 @@ def print_step(message: str) -> None:
 
 
 def load_spec(spec_path: Path) -> ModuleType:
-    """Import the spec file as a Python module."""
-    spec_obj = importlib.util.spec_from_file_location("nuitka_spec", str(spec_path))
-    if spec_obj is None or spec_obj.loader is None:
+    """Import the spec file as a Python module.
+
+    Uses SourceFileLoader explicitly so that any file extension works
+    (including .spec files — importlib.spec_from_file_location only
+    recognises .py/.pyc by default).
+    """
+    import importlib.machinery
+    loader = importlib.machinery.SourceFileLoader("nuitka_spec", str(spec_path))
+    spec_obj = importlib.util.spec_from_loader("nuitka_spec", loader, origin=str(spec_path))
+    if spec_obj is None:
         raise RuntimeError(f"Cannot load spec file: {spec_path}")
     mod = importlib.util.module_from_spec(spec_obj)
-    spec_obj.loader.exec_module(mod)
+    # __file__ must be set before exec_module so the spec can use Path(__file__)
+    mod.__file__ = str(spec_path)
+    loader.exec_module(mod)
     return mod
 
 
 def check_nuitka() -> bool:
-    """Verify that Nuitka is importable by the current interpreter."""
+    """Verify that Nuitka is available for the current interpreter.
+
+    Uses importlib.metadata for instant check (avoids spawning a subprocess
+    which can take 30-90 s while Python compiles Nuitka's .pyc files on first use).
+    """
     print_step("Checking Nuitka installation")
     print(f"Using interpreter: {sys.executable}")
     try:
-        r = subprocess.run(
-            [sys.executable, "-m", "nuitka", "--version"],
-            capture_output=True, text=True,
-        )
-        if r.returncode == 0:
-            ver = r.stdout.strip().splitlines()[0]
-            print(f"âœ… Nuitka version: {ver}")
-            return True
+        import importlib.metadata
+        ver = importlib.metadata.version("nuitka")
+        print(f"✅ Nuitka version: {ver}")
+        return True
     except Exception:
         pass
-    print("â‌Œ Nuitka is NOT installed for this interpreter")
+    # Quick fallback: find_spec is instant
+    if importlib.util.find_spec("nuitka") is not None:
+        print(f"✅ Nuitka is installed (version unknown)")
+        return True
+    print(f"❌ Nuitka is NOT installed for this interpreter")
     return False
-
 
 def install_nuitka() -> bool:
     """Pip-install Nuitka + ordered-set (recommended companion)."""
@@ -127,7 +139,7 @@ def clean(output_dir: Path) -> None:
     print("âœ… Cleanup completed")
 
 
-# â”€â”€â”€ Command builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â”€â”€â”€ Command builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def build_command(spec: ModuleType) -> list[str]:
     """Translate the spec module into a Nuitka CLI invocation."""
@@ -152,7 +164,8 @@ def build_command(spec: ModuleType) -> list[str]:
     show_mem    = getattr(spec, "SHOW_MEMORY", False)
     report      = getattr(spec, "REPORT_FILE", None)
     extra       = getattr(spec, "EXTRA_FLAGS", [])
-
+    lto         = getattr(spec, "LTO", "auto")
+    
     # Mode
     if onefile:
         cmd.append("--onefile")
@@ -166,13 +179,20 @@ def build_command(spec: ModuleType) -> list[str]:
     # Windows specifics
     if sys.platform == "win32":
         if not win_console:
-            cmd.append("--windows-disable-console")
+            cmd.append("--windows-console-mode=disable")
         if icon and (PROJECT_ROOT / icon).is_file():
             cmd.append(f"--windows-icon-from-ico={icon}")
 
     # Company / product info (optional, nice-to-have in exe properties)
     cmd.append(f"--product-name={app_name}")
-    cmd.append(f"--product-version=2.3.7")
+    # Load version from pyproject.toml (same source of truth as PyInstaller build)
+    try:
+        import tomllib
+        with open(PROJECT_ROOT / "pyproject.toml", "rb") as _f:
+            _ver = tomllib.load(_f).get("project", {}).get("version", "0.0.0")
+    except Exception:
+        _ver = "0.0.0"
+    cmd.append(f"--product-version={_ver}")
     cmd.append(f"--company-name=AIPacs")
     cmd.append(f"--file-description={app_name} - Professional Medical Imaging Suite")
 
@@ -191,6 +211,9 @@ def build_command(spec: ModuleType) -> list[str]:
     # Whole-package includes
     for pkg in include_pkg:
         cmd.append(f"--include-package={pkg}")
+
+    # Force include PySide6 package data
+    cmd.append("--include-package-data=PySide6")
 
     # Data directories
     for src, dst in data_dirs:
@@ -226,7 +249,14 @@ def build_command(spec: ModuleType) -> list[str]:
 
     # Compiler
     if c_compiler:
-        cmd.append(f"--clang" if c_compiler == "clang" else f"--mingw64" if c_compiler == "mingw64" else f"--msvc=latest")
+        if c_compiler == "clang":
+            cmd.append("--clang")
+        elif c_compiler == "mingw64":
+            cmd.append("--mingw64")
+        elif c_compiler == "zig":
+            cmd.append("--zig")
+        else:
+            cmd.append("--msvc=latest")
 
     # Progress
     if show_prog:
@@ -240,6 +270,13 @@ def build_command(spec: ModuleType) -> list[str]:
 
     # Extra verbatim flags
     cmd.extend(extra)
+
+    # LTO
+    if lto in ("yes", "no", "auto"):
+        cmd.append(f"--lto={lto}")
+
+    # Anti-bloat (requires Nuitka >= 1.0)
+    # cmd.append("--anti-bloat")
 
     # Finally the entry point
     cmd.append(entry_point)
@@ -420,9 +457,16 @@ def main() -> bool:
     print_step("Building AIPacs with Nuitka")
     print("This may take a while (10-30 minutes on first build) ...\n")
 
+    # Set LINKFLAGS environment variable for the subprocess
+    env = os.environ.copy()
+    # linker_flags = getattr(spec, "WINDOWS_LINKER_FLAGS", [])
+    # for flag in linker_flags:
+    #     cmd.extend([f"--windows-linker-flags={flag}"])
+
     proc = subprocess.Popen(
         cmd,
         cwd=str(PROJECT_ROOT),
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

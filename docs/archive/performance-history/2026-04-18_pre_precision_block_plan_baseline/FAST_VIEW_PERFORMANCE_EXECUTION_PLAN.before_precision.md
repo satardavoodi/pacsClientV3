@@ -167,7 +167,7 @@ If a change improves one block while making the overall system feel busier, less
 
 This plan is now paired with a block-oriented execution companion:
 
-- `docs/plans/FAST_BLOCK_PERFORMANCE_ARCHITECTURE.md`
+- `docs/plans/performance/FAST_BLOCK_PERFORMANCE_ARCHITECTURE.md`
 
 That companion reframes the FAST work into three functional performance blocks:
 

@@ -284,23 +284,29 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         logger.info(f"[CAMERA INIT]   Spacing: {self.vtk_image_data.GetSpacing()}")
         logger.info(f"[CAMERA INIT]   Origin: {self.vtk_image_data.GetOrigin()}")
         
-        # Use zoom_to_fit for all modalities to ensure each series displays at appropriate scale
         camera = self.renderer.GetActiveCamera()
         camera.ParallelProjectionOn()
-        self.base_zoom_scale = self.zoom_to_fit(skip_render=True)
-        
-        logger.info(f"[CAMERA INIT]   Initial parallel scale (zoom_to_fit): {self.base_zoom_scale:.2f}")
-        logger.info(f"[CAMERA INIT]   Camera position: {camera.GetPosition()}")
-        logger.info(f"[CAMERA INIT]   Camera focal point: {camera.GetFocalPoint()}")
 
-        # â‌Œ FLICKER FIX: Load actors without rendering - will render once at the end
+        # FLICKER FIX: Load actors without rendering - render is deferred to end.
         self.load_top_right_actors(render=False)
         self.load_top_left_actors(render=False)
         self.load_bottom_left_actors(render=False)
         self.load_bottom_right_actors(render=False)
-        
-        # âœ… FLICKER FIX: Single render after all initialization is complete
-        self.image_render_window.Render()
+
+        # ROOT-CAUSE ZOOM FIX (v2.3.8): vtkImageViewer2 has an internal
+        # FirstRender=1 one-shot that fires on the first call to
+        # vtkImageViewer2::Render() and runs InitializeRendererFromImage() ->
+        # renderer.ResetCamera(), which overwrites any ParallelScale we set.
+        # Phase 1: self.Render() goes through the override and consumes
+        # FirstRender (one throwaway ResetCamera fires here).
+        # Phase 2: zoom_to_fit() now applies the correct scale; FirstRender
+        # is 0 so nothing downstream can auto-reset the camera again.
+        self.Render()
+        self.base_zoom_scale = self.zoom_to_fit(skip_render=False)
+
+        logger.info(f"[CAMERA INIT]   Initial parallel scale (zoom_to_fit): {self.base_zoom_scale:.2f}")
+        logger.info(f"[CAMERA INIT]   Camera position: {camera.GetPosition()}")
+        logger.info(f"[CAMERA INIT]   Camera focal point: {camera.GetFocalPoint()}")
 
     def Render(self):
         if getattr(self, "_suppress_render", False):
@@ -1263,26 +1269,27 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # print(f"         â€¢ Render: {_render_call_time:.3f}s")
 
         _zoom_start = time.time()
-        # âœ… CRITICAL FIX: Only restore saved scale for SAME series
-        # For different series, always call zoom_to_fit to calculate proper zoom based on dimensions
-        # This fixes the bug where series with different dimensions appear at wrong zoom levels
+        # ROOT-CAUSE ZOOM FIX (v2.3.8): SetInputData above resets
+        # vtkImageViewer2.FirstRender to 1. Render via the override FIRST so
+        # that one-shot is consumed (its ResetCamera fires on a throwaway
+        # state). Then apply the intended scale; nothing downstream can
+        # auto-reset the camera afterwards.
+        self.Render()  # Phase 1 - consumes FirstRender=1.
         if saved_scale is not None and is_same_series:
             try:
                 camera = self.renderer.GetActiveCamera()
-                camera.SetParallelScale(saved_scale)
+                camera.SetParallelScale(saved_scale)  # Phase 2 - now sticks.
                 logger.info(f"[reset_image_viewer] Same series - restored user zoom: {saved_scale:.2f}")
-                # Optionally save to vtk_widget if it exists
                 if hasattr(self, 'vtk_widget') and self.vtk_widget:
                     self.vtk_widget._protected_parallel_scale = saved_scale
             except Exception as e:
                 logger.warning(f"[reset_image_viewer] Failed to restore scale: {e}, falling back to zoom_to_fit")
                 self.zoom_to_fit(skip_render=True)
         else:
-            # Different series or no saved scale - calculate proper zoom for this series
             self.zoom_to_fit(skip_render=True)
             logger.info(f"[reset_image_viewer] Called zoom_to_fit for {'new' if not is_same_series else 'initial'} series")
-        
-        # Single render after both UpdateDisplayExtent and zoom/scale restore
+
+        # Final render with the correct scale already applied.
         self.image_render_window.Render()
         _zoom_time = time.time() - _zoom_start
         print(f"         â€¢ zoom/scale restore: {_zoom_time:.3f}s")

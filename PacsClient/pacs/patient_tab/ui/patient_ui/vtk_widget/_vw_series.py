@@ -155,7 +155,25 @@ class _VWSeriesMixin:
                 self._protected_parallel_scale = float(new_scale)
                 if host_size is not None:
                     self._last_refit_signature = host_size
-                logger.info("[QT_PRESENTATION] zoom_to_fit scale=%.2f", float(new_scale))
+                # Log components for zoom diagnosis (host geometry + bridge state)
+                try:
+                    qv = getattr(self.image_viewer, 'qt_viewer', None)
+                    img_w = getattr(qv, '_image_width', '?') if qv else '?'
+                    img_h = getattr(qv, '_image_height', '?') if qv else '?'
+                    sx = getattr(qv, '_display_scale_x', '?') if qv else '?'
+                    sy = getattr(qv, '_display_scale_y', '?') if qv else '?'
+                    zoom = getattr(qv, '_zoom', '?') if qv else '?'
+                    logger.info(
+                        "[QT_PRESENTATION] zoom_to_fit scale=%.2f"
+                        " host=%dx%d img=%sx%s scale_xy=(%.3f,%.3f) zoom=%.4f",
+                        float(new_scale), host_size[0], host_size[1] if host_size else 0,
+                        img_w, img_h,
+                        float(sx) if isinstance(sx, float) else 0.0,
+                        float(sy) if isinstance(sy, float) else 0.0,
+                        float(zoom) if isinstance(zoom, float) else 0.0,
+                    )
+                except Exception:
+                    logger.info("[QT_PRESENTATION] zoom_to_fit scale=%.2f", float(new_scale))
         except Exception as exc:
             logger.debug("[QT_PRESENTATION] zoom_to_fit failed: %s", exc)
 

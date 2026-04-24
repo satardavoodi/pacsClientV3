@@ -188,9 +188,21 @@ def _apply_opencv_filter_uint8(
 
 
 def _numpy_to_qimage_gray(arr: np.ndarray, width: int, height: int) -> QImage:
-    """Convert a uint8 grayscale numpy array to QImage."""
+    """Convert a uint8 grayscale numpy array to QImage.
+
+    R17 (v2.3.8): Always derive width/height/bytesPerLine from arr.shape
+    to avoid stride corruption if the caller passes stale dimensions
+    (e.g. OpenCV filter enlarged the buffer but caller still has original
+    sm.rows/cols).
+    """
     arr = np.ascontiguousarray(arr)
-    return QImage(arr.data, width, height, width, QImage.Format.Format_Grayscale8).copy()
+    actual_h, actual_w = arr.shape[:2]
+    if actual_w != int(width) or actual_h != int(height):
+        logger.error(
+            "[R17] QImage dim mismatch: caller passed (w=%d, h=%d) but arr shape is (h=%d, w=%d)",
+            int(width), int(height), actual_h, actual_w,
+        )
+    return QImage(arr.data, actual_w, actual_h, actual_w, QImage.Format.Format_Grayscale8).copy()
 
 
 def _numpy_to_qimage_rgb(arr: np.ndarray, width: int, height: int) -> QImage:
@@ -554,6 +566,9 @@ class Lightweight2DPipeline(QObject):
 
         t_filter = time.perf_counter()
         if filter_enabled:
+            # R17 (v2.3.8): force preserve_dimensions=True in FAST pipeline
+            # (PooyanPacs 2× small-image enlargement corrupts QImage stride
+            # and zoom-to-fit; Qt handles display scaling natively).
             disp = _apply_opencv_filter_uint8(
                 disp,
                 sigma_x=self._config.opencv_sigma_x,
@@ -561,7 +576,7 @@ class Lightweight2DPipeline(QObject):
                 beta=self._config.opencv_beta,
                 invert=self._config.opencv_invert,
                 small_threshold=self._config.opencv_small_threshold,
-                preserve_dimensions=self._config.opencv_preserve_dimensions,
+                preserve_dimensions=True,
             )
         filter_ms = (time.perf_counter() - t_filter) * 1000.0
 

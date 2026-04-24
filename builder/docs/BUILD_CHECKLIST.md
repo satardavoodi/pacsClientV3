@@ -1,5 +1,7 @@
 # Build Checklist
 
+This checklist applies to the **PyInstaller-based builder in `builder/`**. For the staged Nuitka build chain in `builder nuitka/`, use `NUITKA_BUILD_PLAN.md` and its stage-specific commands instead of the commands below.
+
 ## Pre-Build Checks
 
 - Activate or create `.venv_build`
@@ -73,6 +75,15 @@ even though the build log shows no errors.
 - Assemble the optional Advanced MPR runtime if that payload should ship:
   `python tools/slicer/assemble_slicer_runtime.py`
 - Run `python build.py`
+
+PyInstaller-only entrypoints for this checklist:
+- `build.bat`
+- `build.py`
+
+Do not substitute:
+- `build_nuitka.bat`
+- `build_nuitka_release.bat`
+- `builder nuitka/build_nuitka_release.py`
 
 ## Post-Build Verification
 

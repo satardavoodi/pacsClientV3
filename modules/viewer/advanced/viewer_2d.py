@@ -299,24 +299,48 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         logger.info(f"[CAMERA INIT]   Image dimensions: {dims}")
         logger.info(f"[CAMERA INIT]   Spacing: {self.vtk_image_data.GetSpacing()}")
         logger.info(f"[CAMERA INIT]   Origin: {self.vtk_image_data.GetOrigin()}")
-        
-        # Use zoom_to_fit for all modalities to ensure each series displays at appropriate scale
+
         camera = self.renderer.GetActiveCamera()
         camera.ParallelProjectionOn()
-        self.base_zoom_scale = self.zoom_to_fit(skip_render=True)
-        
-        logger.info(f"[CAMERA INIT]   Initial parallel scale (zoom_to_fit): {self.base_zoom_scale:.2f}")
-        logger.info(f"[CAMERA INIT]   Camera position: {camera.GetPosition()}")
-        logger.info(f"[CAMERA INIT]   Camera focal point: {camera.GetFocalPoint()}")
 
-        # â‌Œ FLICKER FIX: Load actors without rendering - will render once at the end
+        # â‌Œ FLICKER FIX: Load actors without rendering â€” render is deferred to
+        # the end of the init sequence (see "ROOT-CAUSE ZOOM FIX" below).
         self.load_top_right_actors(render=False)
         self.load_top_left_actors(render=False)
         self.load_bottom_left_actors(render=False)
         self.load_bottom_right_actors(render=False)
-        
-        # âœ… FLICKER FIX: Single render after all initialization is complete
-        self.image_render_window.Render()
+
+        # --- ROOT-CAUSE ZOOM FIX (v2.3.8) --------------------------------------
+        # vtkImageViewer2 has an internal FirstRender=1 one-shot that fires on the
+        # first call to vtkImageViewer2::Render(). That one-shot runs
+        # InitializeRendererFromImage() which calls renderer.ResetCamera(), and
+        # ResetCamera overwrites any ParallelScale we previously set. Historically
+        # we called zoom_to_fit() BEFORE the first Render, so the correct fit was
+        # silently overwritten by VTK's auto-reset on the next real Render() â€”
+        # which is what every "[set_slice] Zoom change detected! scale=255.5 â†’
+        # reverting to 188.56" warning in the logs was catching.
+        #
+        # The fix is purely an ordering fix, applied once at the source:
+        #   Phase 1 â€” call self.Render() (goes through the vtkImageViewer2.Render
+        #             override). This consumes FirstRender=1 and fires VTK's
+        #             one-shot ResetCamera. After this call, FirstRender=0
+        #             permanently for this viewer.
+        #   Phase 2 â€” apply the correct parallel scale via zoom_to_fit. Because
+        #             FirstRender is now 0, no downstream Render() can auto-reset
+        #             the camera, so the scale persists across every set_slice,
+        #             wheel scroll, stack drag, and idle render.
+        #
+        # This makes every reactive "Zoom change detected â†’ revert" band-aid
+        # (in _vw_scroll.py and _legacy_widget.py) unnecessary, and makes the
+        # various _protected_parallel_scale refresh sites a pure SSoT for
+        # user-driven zoom persistence rather than a corruption-repair layer.
+        self.Render()
+        self.base_zoom_scale = self.zoom_to_fit(skip_render=False)
+        # ----------------------------------------------------------------------
+
+        logger.info(f"[CAMERA INIT]   Initial parallel scale (zoom_to_fit): {self.base_zoom_scale:.2f}")
+        logger.info(f"[CAMERA INIT]   Camera position: {camera.GetPosition()}")
+        logger.info(f"[CAMERA INIT]   Camera focal point: {camera.GetFocalPoint()}")
 
     def Render(self):
         if getattr(self, "_suppress_render", False):
@@ -1301,13 +1325,25 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # print(f"         â€¢ Render: {_render_call_time:.3f}s")
 
         _zoom_start = time.time()
+        # ROOT-CAUSE ZOOM FIX (v2.3.8): When SetInputData was called above for a
+        # new image, vtkImageViewer2.FirstRender is reset to 1. If we call
+        # image_render_window.Render() directly (bypassing the override) and then
+        # set the parallel scale, the next vtkImageViewer2::Render() in the
+        # pipeline (e.g. first set_slice) will consume FirstRender=1 and trigger
+        # InitializeRendererFromImage() â†’ ResetCamera(), wiping our scale.
+        #
+        # Fix: go through self.Render() (the override) FIRST to consume the
+        # FirstRender one-shot. Then apply the intended parallel scale. After
+        # this, no downstream Render() can auto-reset the camera, so the scale
+        # persists across every set_slice / scroll / stack operation.
         # âœ… CRITICAL FIX: Only restore saved scale for SAME series
         # For different series, always call zoom_to_fit to calculate proper zoom based on dimensions
         # This fixes the bug where series with different dimensions appear at wrong zoom levels
+        self.Render()  # Phase 1 â€” consumes FirstRender=1 (fires VTK's auto-reset).
         if saved_scale is not None and is_same_series:
             try:
                 camera = self.renderer.GetActiveCamera()
-                camera.SetParallelScale(saved_scale)
+                camera.SetParallelScale(saved_scale)  # Phase 2 â€” now sticks.
                 logger.info(f"[reset_image_viewer] Same series - restored user zoom: {saved_scale:.2f}")
                 # Optionally save to vtk_widget if it exists
                 if hasattr(self, 'vtk_widget') and self.vtk_widget:
@@ -1319,8 +1355,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             # Different series or no saved scale - calculate proper zoom for this series
             self.zoom_to_fit(skip_render=True)
             logger.info(f"[reset_image_viewer] Called zoom_to_fit for {'new' if not is_same_series else 'initial'} series")
-        
-        # Single render after both UpdateDisplayExtent and zoom/scale restore
+
+        # Final render with the correct scale already applied.
         self.image_render_window.Render()
         _zoom_time = time.time() - _zoom_start
         print(f"         â€¢ zoom/scale restore: {_zoom_time:.3f}s")

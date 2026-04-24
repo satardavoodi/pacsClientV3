@@ -1,3 +1,33 @@
+# ============================================================================
+# Nuitka frozen mode bootstrap
+# ============================================================================
+# Nuitka compiles Python to C but does NOT set sys.frozen or sys._MEIPASS
+# (which PyInstaller sets). This block makes Nuitka builds compatible with
+# the existing aipacs_runtime.is_frozen() detection logic.
+#
+# Safety: This block is a no-op in dev mode and PyInstaller mode.
+# The try/except catches NameError if __compiled__ is not defined.
+# ============================================================================
+try:
+    if __compiled__:  # Nuitka injects __compiled__ into compiled modules
+        import sys
+        import os
+        
+        # Set sys.frozen if not already set (PyInstaller sets it)
+        if not getattr(sys, "frozen", False):
+            sys.frozen = True
+        
+        # Set sys._MEIPASS if not already set (PyInstaller sets it)
+        # For Nuitka standalone, _MEIPASS should point to the bundle root
+        if not hasattr(sys, "_MEIPASS"):
+            sys._MEIPASS = os.path.dirname(os.path.abspath(sys.executable))
+except NameError:
+    # __compiled__ not defined → running as .py (dev mode or PyInstaller)
+    pass
+# ============================================================================
+# End Nuitka bootstrap
+# ============================================================================
+
 import sys
 import os
 import multiprocessing
@@ -5,6 +35,17 @@ import logging
 import subprocess
 import importlib.util
 from pathlib import Path
+
+
+def _maybe_nuitka_smoke_test_exit() -> None:
+    """Fast startup check for staged Nuitka smoke tests."""
+    if os.environ.get("AIPACS_NUITKA_SMOKE_TEST") != "1":
+        return
+    print("[SMOKE] AIPacs startup smoke check reached main bootstrap.")
+    raise SystemExit(0)
+
+
+_maybe_nuitka_smoke_test_exit()
 
 from aipacs_runtime import (
     activate_optional_module_runtime,

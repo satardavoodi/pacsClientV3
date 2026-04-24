@@ -158,12 +158,70 @@ MODULE_CATALOG: list[dict[str, Any]] = [
 
 
 def is_frozen() -> bool:
-    return bool(getattr(sys, "frozen", False))
+    """
+    Detect if running in a frozen/compiled environment.
+    
+    Supports:
+    - PyInstaller (sys.frozen = True)
+    - Nuitka (via __compiled__ marker or sys.__nuitka__ flag)
+    - Dev mode (.py files)
+    
+    Returns:
+        True if frozen/compiled, False if running from source
+    """
+    # PyInstaller detection
+    if getattr(sys, "frozen", False):
+        return True
+    
+    # Nuitka detection - check multiple possible markers
+    # Nuitka may set sys.__nuitka__ or inject __compiled__ into builtins
+    if hasattr(sys, "__nuitka__"):
+        return True
+    
+    try:
+        import builtins
+        if getattr(builtins, "__compiled__", False):
+            return True
+    except Exception:
+        pass
+    
+    # Heuristic fallback: if sys.argv[0] is not a .py file, likely frozen
+    # (but be careful - could be .pyc or other)
+    if sys.argv and not sys.argv[0].endswith((".py", ".pyc")):
+        # Additional check: executable path should look like an .exe on Windows
+        if sys.platform == "win32" and sys.executable.endswith(".exe"):
+            # Final guard: make sure we're not just running 'python.exe script.py'
+            if not sys.argv[0].endswith(".exe"):
+                return False
+            return True
+    
+    return False
 
 
 def bundle_root() -> Path:
+    """
+    Get the root directory of the frozen bundle.
+    
+    In frozen mode:
+    - PyInstaller: returns sys._MEIPASS (extraction directory)
+    - Nuitka standalone: returns directory containing the executable
+    
+    In dev mode:
+    - Returns the directory containing this file (project root)
+    
+    Returns:
+        Path to the bundle root
+    """
     if is_frozen():
-        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+        # PyInstaller sets sys._MEIPASS to the extraction directory
+        if hasattr(sys, "_MEIPASS"):
+            return Path(sys._MEIPASS)
+        
+        # Nuitka standalone: executable is in the bundle root
+        # (no extraction, everything is in the .dist folder)
+        return Path(sys.executable).resolve().parent
+    
+    # Dev mode: this file's parent directory
     return Path(__file__).resolve().parent
 
 

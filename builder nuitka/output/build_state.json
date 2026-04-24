@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "created_at_utc": "2026-04-24T06:58:53.325936+00:00",
+  "completed_stages": [
+    0,
+    1,
+    2
+  ],
+  "stages": {
+    "0": {
+      "name": "Preflight",
+      "status": "completed",
+      "started_at_utc": "2026-04-24T09:08:26.750380+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_00_preflight.log",
+      "finished_at_utc": "2026-04-24T09:08:27.271302+00:00",
+      "command": [],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\build_state.json"
+      ],
+      "report_path": null,
+      "issues": [],
+      "error": "Nuitka is not installed in this interpreter",
+      "notes": [
+        "Preflight checks completed"
+      ]
+    },
+    "1": {
+      "name": "Minimal Core Smoke Build",
+      "status": "completed",
+      "started_at_utc": "2026-04-24T09:23:21.385849+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_01_minimal_core.log",
+      "finished_at_utc": "2026-04-24T09:24:13.364110+00:00",
+      "command": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\.venv_build\\Scripts\\python.exe",
+        "-m",
+        "nuitka",
+        "--standalone",
+        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core",
+        "--output-filename=AIPacs.exe",
+        "--product-name=AIPacs",
+        "--product-version=2.4.8",
+        "--company-name=AIPacs",
+        "--file-description=AIPacs - staged Nuitka build",
+        "--windows-console-mode=disable",
+        "--windows-icon-from-ico=Qss/images/favicon.ico",
+        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\reports\\nuitka_stage_01_minimal_core.xml",
+        "--assume-yes-for-downloads",
+        "--warn-unusual-code",
+        "--warn-implicit-exceptions",
+        "--lto=yes",
+        "--zig",
+        "--include-module=_project_root",
+        "--include-module=aipacs_runtime",
+        "builder nuitka/stage_entrypoints/stage1_minimal_bootstrap.py"
+      ],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core\\stage1_minimal_bootstrap.dist"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core\\stage1_minimal_bootstrap.dist\\AIPacs.exe"
+      ],
+      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\reports\\nuitka_stage_01_minimal_core.xml",
+      "issues": [],
+      "error": "Nuitka command failed with exit code 1. Issues: ['see log'] ",
+      "notes": []
+    },
+    "2": {
+      "name": "Qt Shell Build",
+      "status": "completed",
+      "started_at_utc": "2026-04-24T09:26:59.900509+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_02_qt_shell.log",
+      "finished_at_utc": "2026-04-24T09:27:22.826854+00:00",
+      "command": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\.venv_build\\Scripts\\python.exe",
+        "-m",
+        "nuitka",
+        "--standalone",
+        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell",
+        "--output-filename=AIPacs.exe",
+        "--product-name=AIPacs",
+        "--product-version=2.4.8",
+        "--company-name=AIPacs",
+        "--file-description=AIPacs - staged Nuitka build",
+        "--windows-console-mode=disable",
+        "--windows-icon-from-ico=Qss/images/favicon.ico",
+        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\reports\\nuitka_stage_02_qt_shell.xml",
+        "--assume-yes-for-downloads",
+        "--warn-unusual-code",
+        "--warn-implicit-exceptions",
+        "--lto=no",
+        "--zig",
+        "--enable-plugin=pyside6",
+        "builder nuitka/stage_entrypoints/stage2_qt_shell.py"
+      ],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist\\AIPacs.exe",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist\\PySide6\\qt-plugins\\platforms"
+      ],
+      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\reports\\nuitka_stage_02_qt_shell.xml",
+      "issues": [],
+      "error": "Qt platform plugin folder missing: E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist\\PySide6\\plugins\\platforms",
+      "notes": []
+    },
+    "3": {
+      "name": "Core Package Inclusion",
+      "status": "running",
+      "started_at_utc": "2026-04-24T11:48:39.285353+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_03_core_packages.log"
+    }
+  },
+  "updated_at_utc": "2026-04-24T11:48:39.285361+00:00",
+  "mode": "from_stage",
+  "clean_mode": "none",
+  "current_stage": 3,
+  "failed_stage": null
+}

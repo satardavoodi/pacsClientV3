@@ -2,7 +2,18 @@
 
 Last updated (UTC): `2026-02-23T23:03:54.106807+00:00`
 
-This is the long-lived build knowledge base for packaging this repository on Windows using PyInstaller `onedir`. Re-run the audit (`builder/audit/scripts/run_audit.py`) and regenerate this document (`builder/audit/scripts/generate_build_docs.py`) whenever imports/dependencies/resources/runtime paths change.
+This is the long-lived build knowledge base for packaging this repository on Windows using the **PyInstaller-based builder** in `builder/`. Re-run the audit (`builder/audit/scripts/run_audit.py`) and regenerate this document (`builder/audit/scripts/generate_build_docs.py`) whenever imports/dependencies/resources/runtime paths change.
+
+Active staged Nuitka work is tracked separately in `builder/docs/NUITKA_BUILD_PLAN.md`. Keep this document focused on the long-lived `builder/` PyInstaller/release packaging baseline, and use the Nuitka plan only for `builder nuitka/` status and recovery steps.
+
+## Build-System Boundary
+
+This repo has two independent build roots:
+
+- `builder/` = PyInstaller-based release builder
+- `builder nuitka/` = staged Nuitka builder
+
+When this document says "build" it means the `builder/` chain unless a line explicitly says otherwise.
 
 ## A) Project Overview
 

@@ -12,6 +12,7 @@
     3. Install pinned build toolchain from builder/requirements/build_requirements.txt.
     4. Install project runtime dependencies from requirements-core.txt
        (PyInstaller needs them on the import path to resolve hidden imports and datas).
+    5. Install Nuitka toolchain requirements from requirements-nuitka.txt.
 
     After this script completes, run:
         python build.py           # uses .venv_build automatically via build.bat
@@ -37,6 +38,7 @@ $venvPython        = Join-Path $venvDir "Scripts\python.exe"
 $venvPip           = Join-Path $venvDir "Scripts\pip.exe"
 $buildRequirements = Join-Path $root "builder\requirements\build_requirements.txt"
 $coreRequirements  = Join-Path $root "requirements-core.txt"
+$nuitkaRequirements = Join-Path $root "requirements-nuitka.txt"
 
 if ($Force -and (Test-Path $venvDir)) {
     Write-Host "[setup_build_env] -Force: removing existing .venv_build ..." -ForegroundColor Yellow
@@ -144,10 +146,25 @@ if (Test-Path $coreRequirements) {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Verify key packages
+# 6. Install Nuitka toolchain dependencies
+# ---------------------------------------------------------------------------
+if (Test-Path $nuitkaRequirements) {
+    Write-Host "[setup_build_env] Installing Nuitka toolchain from requirements-nuitka.txt ..." -ForegroundColor Cyan
+    & $venvPython -m pip install -r $nuitkaRequirements --quiet
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "[setup_build_env] Failed to install Nuitka requirements."
+        exit 1
+    }
+    Write-Host "[setup_build_env] Nuitka requirements installed." -ForegroundColor Green
+} else {
+    Write-Warning "[setup_build_env] requirements-nuitka.txt not found. Nuitka builds may fail."
+}
+
+# ---------------------------------------------------------------------------
+# 7. Verify key packages
 # ---------------------------------------------------------------------------
 Write-Host "[setup_build_env] Verifying key packages ..." -ForegroundColor Cyan
-$checks = @("PyInstaller", "PySide6", "vtk", "pydicom")
+$checks = @("PyInstaller", "nuitka", "PySide6", "vtk", "pydicom")
 $allOk = $true
 foreach ($pkg in $checks) {
     $result = & $venvPython -c "import $pkg; print('ok')" 2>&1
@@ -160,7 +177,7 @@ foreach ($pkg in $checks) {
 }
 
 # ---------------------------------------------------------------------------
-# 7. Summary
+# 8. Summary
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "===============================================================================" -ForegroundColor Cyan
@@ -178,6 +195,11 @@ Write-Host "  To build the release:" -ForegroundColor Cyan
 Write-Host "      python build.py"
 Write-Host "  or:"
 Write-Host "      .\build.bat"
+Write-Host ""
+Write-Host "  To build Nuitka release pipeline:" -ForegroundColor Cyan
+Write-Host "      .\build_nuitka_release.bat"
+Write-Host "  or:"
+Write-Host "      .\.venv_build\Scripts\python.exe `"builder nuitka/build_nuitka_release.py`" --resume"
 Write-Host ""
 Write-Host "  The build scripts automatically use .venv_build\Scripts\python.exe." -ForegroundColor Cyan
 Write-Host "  Run this script again with -Force to recreate the build venv from scratch." -ForegroundColor Cyan

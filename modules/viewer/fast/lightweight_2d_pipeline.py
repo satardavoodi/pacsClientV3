@@ -253,9 +253,22 @@ def _numpy_to_qimage_gray(arr: np.ndarray, width: int, height: int) -> QImage:
     We keep *arr* alive by stashing it on the QImage so the buffer is not
     collected before the QImage is discarded.  This avoids a full-frame
     memcpy that .copy() would do (~0.3ms for 512×512, adds up at high fps).
+
+    R17 (v2.3.8): width/height/bytesPerLine MUST match the actual array
+    shape. If a caller passes stale dimensions (e.g. the OpenCV filter
+    enlarged the buffer but the caller still has the original sm.rows/cols),
+    using the caller-supplied width as bytesPerLine corrupts the pixel
+    stride and produces a wrapped/ghosted image. Always derive from
+    arr.shape, and log if the caller was wrong.
     """
     arr = np.ascontiguousarray(arr)
-    qimg = QImage(arr.data, width, height, width, QImage.Format.Format_Grayscale8)
+    actual_h, actual_w = arr.shape[:2]
+    if actual_w != int(width) or actual_h != int(height):
+        logger.error(
+            "[R17] QImage dim mismatch: caller passed (w=%d, h=%d) but arr shape is (h=%d, w=%d) — using arr shape to avoid stride corruption",
+            int(width), int(height), actual_h, actual_w,
+        )
+    qimg = QImage(arr.data, actual_w, actual_h, actual_w, QImage.Format.Format_Grayscale8)
     qimg._np_buffer = arr  # prevent GC of backing memory
     return qimg
 
@@ -1098,6 +1111,13 @@ class Lightweight2DPipeline(QObject):
         filter_is_first = False
         if filter_enabled:
             filter_is_first = idx not in self._filter_first_slices
+            # R17 (v2.3.8): FORCE preserve_dimensions=True in the FAST pipeline.
+            # The PooyanPacs C# filter's 2× small-image enlargement is meant for
+            # a display backbuffer; the FAST Qt pipeline builds its QImage and
+            # zoom-to-fit from sm.rows/cols, so any dimension change by the
+            # filter produces stride-corrupted (wrapped/ghosted) output. Qt's
+            # QGraphicsView handles display-side upscaling natively, so the
+            # enlargement is redundant here anyway.
             disp = _apply_opencv_filter_uint8(
                 disp,
                 sigma_x=self._config.opencv_sigma_x,
@@ -1105,7 +1125,7 @@ class Lightweight2DPipeline(QObject):
                 beta=self._config.opencv_beta,
                 invert=self._config.opencv_invert,
                 small_threshold=self._config.opencv_small_threshold,
-                preserve_dimensions=self._config.opencv_preserve_dimensions,
+                preserve_dimensions=True,
             )
             if filter_is_first:
                 self._filter_first_slices.add(idx)

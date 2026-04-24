@@ -6,17 +6,17 @@ Read in this order before making the next change.
 
 ## Priority 1 — Read first
 
-### 1. `docs/plans/BLOCK_A_B_KPI_CLEARCANVAS_HANDOFF_2026-04-20.md`
+### 1. `docs/plans/analysis/BLOCK_A_B_KPI_CLEARCANVAS_HANDOFF_2026-04-20.md`
 
 **Why first:**  
 This is the current canonical handoff for the block roadmap, KPI interpretation, and ClearCanvas simulation/comparison state.
 
-### 2. `docs/plans/block-structure-roadmap-2026-04-19.md`
+### 2. `docs/plans/implementation/block-structure-roadmap-2026-04-19.md`
 
 **Why second:**  
 This is the clearest block-by-block ownership roadmap and already records the structural Block A work that landed.
 
-### 3. `docs/plans/block-priority-review-clearcanvas-2026-04-19.md`
+### 3. `docs/plans/analysis/block-priority-review-clearcanvas-2026-04-19.md`
 
 **Why third:**  
 This explains the A → B → C priority model, the Block B hardening logic, and why ClearCanvas matters as an ownership reference.
@@ -37,7 +37,7 @@ Focus on:
 **Why:**  
 Use this when checking whether a proposed change is moving the measured performance story in the right direction.
 
-### 6. `docs/clear canvas/CLEARCANVAS_BENCHMARK_EXECUTION.md`
+### 6. `docs/analysis/CLEARCANVAS_BENCHMARK_EXECUTION.md`
 
 **Why:**  
 This is the practical runbook for the ClearCanvas comparison/simulation workflow and its current blockers.

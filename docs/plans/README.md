@@ -11,16 +11,16 @@ This folder is the canonical home for active planning documents, recovery plans,
 ## Current layout
 
 - `plan.md` - master planning ledger
-- `FAST_VIEW_PERFORMANCE_EXECUTION_PLAN.md` - precise execution plan for the next FAST-view performance pass, based on live overlap evidence and ClearCanvas-guided ownership discipline
+- `analysis/` - evaluation notes, block reviews, baselines, and ClearCanvas handoff planning
 - `performance/FAST_STORM_AND_PERFORMANCE_PLAN_vNEXT.md` - canonical next-step FAST storm/performance plan
-- `analysis/` - plan documents tied to analysis work
-- `clear-canvas/` - gathered ClearCanvas plan copies
+- `performance/` - performance roadmaps, KPI playbooks, and execution plans
 - `development/` - development/refactoring plans
 - `implementation/` - implementation/refactor plans
-- `performance/` - performance roadmaps and plan docs
 - `pipelines/` - pipeline planning docs
 - `stability/` - recovery and stabilization plans
 - `viewer/` - viewer-specific migration plans
+
+Build-specific planning no longer lives in `docs/plans/`; use `builder/docs/NUITKA_BUILD_PLAN.md` for the staged Nuitka pipeline.
 
 ## Notes
 
@@ -30,5 +30,5 @@ This folder is the canonical home for active planning documents, recovery plans,
 ## Recommended starting points
 
 - Read `plan.md` for the broader planning ledger and historical context.
-- Read `FAST_VIEW_PERFORMANCE_EXECUTION_PLAN.md` for the current detailed execution sequence and KPI contract.
+- Read `performance/FAST_VIEW_PERFORMANCE_EXECUTION_PLAN.md` for the current detailed execution sequence and KPI contract.
 - Read `performance/FAST_STORM_AND_PERFORMANCE_PLAN_vNEXT.md` for the current canonical next-step performance/orchestration plan.

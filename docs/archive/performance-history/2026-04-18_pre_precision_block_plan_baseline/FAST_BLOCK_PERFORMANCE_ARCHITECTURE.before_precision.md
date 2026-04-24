@@ -4,7 +4,7 @@
 
 This document turns the FAST performance work into a 3-block execution model so the code, workers, scheduling, and KPIs can be reasoned about as stable functional units.
 
-It does **not** replace `docs/plans/FAST_VIEW_PERFORMANCE_EXECUTION_PLAN.md`.
+It does **not** replace `docs/plans/performance/FAST_VIEW_PERFORMANCE_EXECUTION_PLAN.md`.
 It sits on top of it and answers a different question:
 
 - not only **what phase comes next**
@@ -281,7 +281,7 @@ The new canonical machine-readable model is:
 
 The first anti-orphan job inventory for the two highest-risk user flows lives in:
 
-- `docs/plans/FAST_PIPELINE_JOB_BLOCK_INVENTORY.md`
+- `docs/plans/analysis/FAST_PIPELINE_JOB_BLOCK_INVENTORY.md`
 - `tests/performance/pipeline_job_block_model.json`
 
 This gives every block:

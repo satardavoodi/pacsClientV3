@@ -413,6 +413,11 @@ class QtViewerBridge:
             )
             try:
                 self.qt_viewer.set_pixel_spacing((float(ps[0]), float(ps[1])))
+                logger.debug(
+                    "[QT_BRIDGE] _build_mock_vtk_data: series dims=%dx%d slices=%d"
+                    " pixel_spacing=(%.4f,%.4f)",
+                    cols, rows, n_slices, float(ps[0]), float(ps[1]),
+                )
             except Exception:
                 pass
 

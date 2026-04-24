@@ -6,6 +6,6 @@
     "beta": -0.5,
     "enabled": true,
     "invert": false,
-    "preserve_dimensions": false,
+    "preserve_dimensions": true,
     "small_threshold": 280
 }

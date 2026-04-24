@@ -1,0 +1,41 @@
+{
+  "stage": 1,
+  "key": "minimal_core",
+  "title": "Minimal Core Smoke Build",
+  "created_at_utc": "2026-04-24T09:24:13.364331+00:00",
+  "marker_only": true,
+  "command": [
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\.venv_build\\Scripts\\python.exe",
+    "-m",
+    "nuitka",
+    "--standalone",
+    "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core",
+    "--output-filename=AIPacs.exe",
+    "--product-name=AIPacs",
+    "--product-version=2.4.8",
+    "--company-name=AIPacs",
+    "--file-description=AIPacs - staged Nuitka build",
+    "--windows-console-mode=disable",
+    "--windows-icon-from-ico=Qss/images/favicon.ico",
+    "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\reports\\nuitka_stage_01_minimal_core.xml",
+    "--assume-yes-for-downloads",
+    "--warn-unusual-code",
+    "--warn-implicit-exceptions",
+    "--lto=yes",
+    "--zig",
+    "--include-module=_project_root",
+    "--include-module=aipacs_runtime",
+    "builder nuitka/stage_entrypoints/stage1_minimal_bootstrap.py"
+  ],
+  "output_paths": [
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core",
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core\\stage1_minimal_bootstrap.dist"
+  ],
+  "artifact_paths": [
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core\\stage1_minimal_bootstrap.dist\\AIPacs.exe"
+  ],
+  "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_01_minimal_core.log",
+  "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\reports\\nuitka_stage_01_minimal_core.xml",
+  "issues": [],
+  "notes": []
+}

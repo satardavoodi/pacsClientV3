@@ -90,18 +90,24 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) â€” Earlier stable release snapshot
 
 ### Build & Deployment
+- [Build Systems Index](../builder/docs/README.md) â€" Canonical split between the PyInstaller builder and the staged Nuitka builder
 - [Windows Release Flow](../builder/docs/WINDOWS_RELEASE_FLOW.md) â€" Build, stage, and install workflow for shipping to another PC
 - [Build Document](../builder/docs/BUILD_DOCUMENT.md) â€" Long-lived PyInstaller packaging knowledge base (VTK, PySide6, SimpleITK notes)
+- [Nuitka Build Plan](../builder/docs/NUITKA_BUILD_PLAN.md) â€" Staged incremental Nuitka pipeline status, checkpoints, and next execution steps
 - [Build Checklist](../builder/docs/BUILD_CHECKLIST.md) â€" Step-by-step pre-release validation checklist
 - [Installer QA Checklist](../builder/docs/INSTALLER_QA_CHECKLIST.md) â€" Cross-PC validation for module selection, first launch, and graphics fallback
 - [Privacy & Data Policy](../builder/docs/PRIVACY_AND_DATA_POLICY.md) â€" What is and is not packaged into the release bundle
 - **Setup scripts** (run on any PC after git clone, before building):
   - [`setup_env.ps1`](../setup_env.ps1) â€" Creates `.venv` development environment for day-to-day work
   - [`setup_build_env.ps1`](../setup_build_env.ps1) â€" Creates `.venv_build` release-build environment required by `build.bat`
-- **Build commands:**
-  - `.\build.bat` â€" Full pipeline: PyInstaller â†' stage â†' plugin packages â†' Inno Setup installer
-  - `.\build.bat --skip-pyinstaller` â€" Reuse existing `dist/`, only restage and compile installer
-  - `.\build.bat --skip-installer-compile` â€" Stage but skip Inno Setup (ISCC not required)
+- **PyInstaller builder (`builder/`) commands:**
+  - `\.\build.bat` â€" Full pipeline: PyInstaller â†' stage â†' plugin packages â†' Inno Setup installer
+  - `\.\build.bat --skip-pyinstaller` â€" Reuse existing `dist/`, only restage and compile installer
+  - `\.\build.bat --skip-installer-compile` â€" Stage but skip Inno Setup (ISCC not required)
+- **Nuitka builder (`builder nuitka/`) commands:**
+  - `\.\build_nuitka.bat` â€" Route into the staged Nuitka pipeline (resume by default)
+  - `\.\build_nuitka_release.bat` â€" Full Nuitka release wrapper with build-venv bootstrap
+  - `\.\.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py" --resume` â€" Resume the staged Nuitka pipeline directly
 
 ### Archive
 - [Archive Index](archive/README.md) â€” Historical documents (not current truth)
@@ -146,13 +152,16 @@ docs/
 `-- assets/                      <- Images and diagrams
 
 Build & release infrastructure (separate from docs/):
-  builder/docs/                  <- Build document, checklist, installer QA, release flow
+  builder/docs/                  <- Shared build-doc index plus per-builder documentation
+  builder/                       <- PyInstaller-based builder root
   builder/spec/                  <- PyInstaller spec
-  builder/installer/             <- Inno Setup .iss
+  builder/installer/             <- PyInstaller Inno Setup script
   builder/plugin package/        <- Plugin package definitions
   builder/requirements/          <- Pinned build toolchain
-  setup_build_env.ps1            <- Automated .venv_build setup for any PC
-  build.bat / build.py           <- Release pipeline entry points
+  builder nuitka/                <- Separate staged Nuitka builder root
+  setup_build_env.ps1            <- Shared .venv_build setup for both builders
+  build.bat / build.py           <- PyInstaller builder entry points
+  build_nuitka.bat / build_nuitka_release.bat <- Nuitka builder entry points
 ```
 
 ## Documentation Rules
@@ -173,4 +182,5 @@ Build & release infrastructure (separate from docs/):
 
 - `PacsClient/pacs/patient_tab/zeta mpr/` uses a space in the folder name (runtime depends on dynamic imports).
 - Some package-local notes still contain encoding issues or time-bound details.
+- `docs/archive/reference-bundles/clear-canvas/` is an archived duplicate bundle kept only for historical reading order; canonical ClearCanvas docs now live in `docs/analysis/`, `docs/architecture/`, and `docs/plans/`.
 

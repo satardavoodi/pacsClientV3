@@ -846,43 +846,20 @@ class _VWScrollMixin:
                 start_ms=t_slice_apply,
             )
         self.image_viewer.last_index_slice_saved = slice_index
-        
-        # ├ت┼ôظخ CRITICAL: Force restore camera zoom after slice change
-        # Phase 1 fix (v2.2.3.1.6): compare against _protected_parallel_scale
-        # (the user's last explicitly set zoom), not against saved_scale which
-        # was captured at the top of this call and may already include VTK
-        # floating-point drift.  Tolerance widened from 0.001 ├تظبظآ 0.05 so minor
-        # per-frame FP jitter in SetSlice() no longer fires a second Render()
-        # on every scroll (was measured as 60├تظéشظ£80ms extra per scroll in Mode B).
-        # v2.2.3.4.0: Skip during wheel scroll (same rationale as camera save).
-        if not _fast_scroll:
-            try:
-                camera = self.image_viewer.renderer.GetActiveCamera()
-                if saved_scale is not None and camera:
-                    current_scale = camera.GetParallelScale()
-                    _ref_scale = (
-                        self._protected_parallel_scale
-                        if self._protected_parallel_scale is not None
-                        else saved_scale
-                    )
-                    # Only re-render if zoom deviated meaningfully from user's intended scale
-                    if abs(current_scale - _ref_scale) > 0.05:
-                        logger.warning(f"[set_slice] Zoom change detected! scale={current_scale:.4f} ├تظبظآ reverting to {_ref_scale:.4f}")
-                        camera.SetParallelScale(_ref_scale)
-                        self._protected_parallel_scale = _ref_scale
-                        t_render = now_ms()
-                        self.image_viewer.Render()
-                        render_ms = max(0.0, now_ms() - t_render)
-                        if self._should_log_timing(render_ms, "render_complete"):
-                            log_stage_timing(
-                                logger,
-                                component="viewer",
-                                function="VTKWidget.set_slice",
-                                stage="render_complete",
-                                start_ms=t_render,
-                            )
-            except Exception:
-                logger.warning("[H13-S5] Camera zoom restore failed in set_slice", exc_info=True)
+
+        # ROOT-CAUSE ZOOM FIX (v2.3.8): The reactive "Zoom change detected ->
+        # reverting" guard that previously lived here is gone. It was a band-aid
+        # for a real bug in ImageViewer2D.__init__ / reset_image_viewer: a direct
+        # image_render_window.Render() call bypassed vtkImageViewer2's Render
+        # override and left FirstRender=1. The next self.Render() in the pipeline
+        # then consumed FirstRender and ran InitializeRendererFromImage() ->
+        # renderer.ResetCamera(), silently overwriting our zoom_to_fit scale.
+        # Fixed at the source by reordering init so self.Render() is called
+        # BEFORE the real zoom_to_fit (VTK's one-shot ResetCamera fires on a
+        # throwaway state, then SetParallelScale persists). No downstream
+        # restore is needed in either FAST or Advanced/VTK mode -
+        # _protected_parallel_scale remains as SSoT for user-driven zoom
+        # persistence across series switches and explicit user zoom.
 
         # Notify interactor style if it's a ruler style
         # v2.2.3.4.0: Skip during wheel scroll ├تظéشظإ ruler tools are not

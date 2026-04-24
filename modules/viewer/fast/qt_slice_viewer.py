@@ -303,8 +303,16 @@ class QtSliceViewer(QWidget):
             return
 
         self._pixmap = QPixmap.fromImage(qimage)
+        old_w, old_h = self._image_width, self._image_height
         self._image_width = qimage.width()
         self._image_height = qimage.height()
+        # If image dimensions changed (e.g. first frame after series switch) and
+        # fit-to-viewport is active, recalculate zoom immediately so the image
+        # fills the viewport correctly even if zoom_to_fit() is not called
+        # separately (defensive fix for R11 / series-specific zoom regressions).
+        if self._fit_to_viewport and (self._image_width != old_w or self._image_height != old_h):
+            self._zoom = self._calculate_fit_zoom()
+            self._pan_offset = QPointF(0.0, 0.0)
         self.update()
 
     def set_pixmap(self, pixmap: QPixmap) -> None:

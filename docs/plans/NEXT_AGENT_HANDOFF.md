@@ -9,7 +9,7 @@
 
 Start here:
 
-- `docs/plans/BLOCK_A_B_KPI_CLEARCANVAS_HANDOFF_2026-04-20.md`
+- `docs/plans/analysis/BLOCK_A_B_KPI_CLEARCANVAS_HANDOFF_2026-04-20.md`
 
 That file is now the canonical handoff for:
 

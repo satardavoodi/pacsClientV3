@@ -34,7 +34,7 @@ The intent is not to score individual components in isolation. The intent is to 
 
 ### AI-PACS docs and plans
 
-- `docs/plans/FAST_VIEW_PERFORMANCE_EXECUTION_PLAN.md`
+- `docs/plans/performance/FAST_VIEW_PERFORMANCE_EXECUTION_PLAN.md`
 - `docs/plans/performance/FAST_STORM_AND_PERFORMANCE_PLAN_vNEXT.md`
 - `docs/performance/PERFORMANCE_STATUS.md`
 - `docs/performance/WORKLOAD_MODEL.md`
@@ -100,7 +100,7 @@ The practical conclusion is:
 - **subprocesses alone are not the cure**
 - the next wins will come from **ownership collapse, stale-work filtering, and foreground/background separation**
 
-Reviewed against `docs/plans/FAST_VIEW_PERFORMANCE_EXECUTION_PLAN.md`, the current repo state is aligned with **entering Phase 4**, not with treating Phase 3 as still absent. The controller shell for non-interactive admission already exists in-place through `SystemLoadController` + `ui_throttle`; the remaining gap is hardening and measurement proof, which should be handled **after Phase 4**, not before it.
+Reviewed against `docs/plans/performance/FAST_VIEW_PERFORMANCE_EXECUTION_PLAN.md`, the current repo state is aligned with **entering Phase 4**, not with treating Phase 3 as still absent. The controller shell for non-interactive admission already exists in-place through `SystemLoadController` + `ui_throttle`; the remaining gap is hardening and measurement proof, which should be handled **after Phase 4**, not before it.
 
 ---
 
