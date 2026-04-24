@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v2.3.7 (2026-04-22)
+> **Current Stable Version:** v2.4.3 (2026-04-25)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -82,9 +82,10 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - [Large File Refactoring Roadmap](plans/development/large-file-refactoring-roadmap.md) — P1–P6 large-file split plan
 
 ### Releases
-- [Release Notes](releases/RELEASE_NOTES.md) â€” Current consolidated release history
-- [Version 2.3.7 Release](releases/VERSION_2.3.7_RELEASE.md) â€” Stable release notes for the current published version
-- [Version 2.3.6 Release](releases/VERSION_2.3.6_RELEASE.md) â€” Previous stable release snapshot
+- [Release Notes](releases/RELEASE_NOTES.md) — Current consolidated release history
+- [Version 2.4.3 Release](releases/VERSION_2.4.3_RELEASE.md) — Current stable release notes
+- [Version 2.3.7 Release](releases/VERSION_2.3.7_RELEASE.md) — Previous stable release snapshot
+- [Version 2.3.6 Release](releases/VERSION_2.3.6_RELEASE.md) — Earlier stable release snapshot
 - [Version 2.3.5 Release](releases/VERSION_2.3.5_RELEASE.md) â€” Earlier stable release snapshot
 - [Version 2.3.4 Release](releases/VERSION_2.3.4_RELEASE.md) â€” Earlier stable release snapshot
 - [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) â€” Earlier stable release snapshot

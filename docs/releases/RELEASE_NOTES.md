@@ -122,6 +122,40 @@ backend selector and forced VTK fallback.
 
 ---
 
+## v2.4.3 - Incremental Build Pipeline / Installer Artifact Fix (2026-04-25)
+
+### Summary
+
+Hardens the PyInstaller build pipeline with incremental dist-sync, a build lock,
+and correct installer artifact preservation. Subsequent builds after a single
+source-file change complete in under 30 seconds instead of ~5 minutes.
+Full release notes in [`VERSION_2.4.3_RELEASE.md`](VERSION_2.4.3_RELEASE.md).
+
+### Highlights
+
+- **Incremental dist-sync**: PyInstaller writes to `dist_tmp/`, then only changed
+  files are patched into the live `dist/AIPacs/` folder via
+  `sync_dist_bundle_incremental()`. SHA-256 content comparison prevents false
+  copies for timestamp-only changes. Typical result: `1 copied, 9484 skipped`.
+- **Build lock**: `builder/output/.build.lock` prevents two concurrent build
+  processes from racing over the same output directory.
+- **`preserve_installer` fix**: `clean_outputs()` now preserves
+  `builder/output/installer/` on incremental and `--skip-installer-compile` runs,
+  so previously compiled installers survive across build phases. Previously the
+  installer folder was always deleted even when ISCC was not invoked.
+- **Confirmed installer output**: `builder/output/installer/` now consistently
+  contains `ai-pacs installer.exe`, versioned copy, SHA256 checksums, and
+  install notes after a full build.
+- Version metadata bumped `2.3.7 → 2.4.3` in `main.py` and `pyproject.toml`.
+
+### Validation
+
+- `build.py --skip-pyinstaller`: exit code 0, installer produced.
+- Incremental sync: `0 copied, 9484 skipped, 1 removed` after single-file change.
+- `build.py --skip-pyinstaller --skip-installer-compile`: installer folder preserved.
+
+---
+
 ## v2.3.7 - Stack-Drag Smoothness Stabilized / R13 Revert (2026-04-22)
 
 ### Summary
