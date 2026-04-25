@@ -4,7 +4,7 @@
   "module_id": "zeta_boost",
   "title": "ZetaBoost",
   "tier": "basic",
-  "version": "2.4.7",
+  "version": "2.4.3",
   "package_kind": "core",
   "payload_dir": "payload",
   "python_paths": [],

@@ -1,0 +1,20 @@
+{
+  "stage": 8,
+  "key": "plugin_staging",
+  "title": "External Plugin Package Staging",
+  "created_at_utc": "2026-04-25T06:13:05.512083+00:00",
+  "marker_only": true,
+  "command": [],
+  "output_paths": [
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\plugin_packages"
+  ],
+  "artifact_paths": [
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\plugin_packages\\module_package_feed.json"
+  ],
+  "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_08_plugin_staging.log",
+  "report_path": null,
+  "issues": [],
+  "notes": [
+    "Staged plugin packages: advanced_mpr, download_manager, echomind, education, offline_cloud_server, printing, run_cd, stitching, viewer, web_browser, zeta_boost"
+  ]
+}

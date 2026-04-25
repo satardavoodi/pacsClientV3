@@ -181,7 +181,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         self.vtk_image_data = vtk_image_data
 
-        self.vtk_image_data = self._preprocess_vtk_image_data(self.vtk_image_data)
+        # For pydicom_2d (lazy backend), skip preprocessing: it may create a disconnected
+        # vtkImageData copy (e.g. CT upsampling) that severs mark_vtk_modified() signaling.
+        # The viewer is wired directly to the raw numpy-backed source instead.
+        _is_pydicom_lazy = (
+            getattr(getattr(self, 'vtk_widget', None), '_active_backend', None) == 'pydicom_2d'
+        )
+        if not _is_pydicom_lazy:
+            self.vtk_image_data = self._preprocess_vtk_image_data(self.vtk_image_data)
         self._apply_direction_matrix_from_field_data()
         # vtk_image_data = flip_image_y(vtk_image_data)
         # self.vtk_image_data = _display_upsample_xy(self.vtk_image_data)
@@ -212,9 +219,18 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.renderer.SetBackground(0, 0, 0)
 
         # Fast initialization without renders
+        _raw_lazy_vtk = self.vtk_image_data  # capture before ImageReslice may chain
         self.image_reslice = ImageReslice(self.vtk_image_data, self.metadata)
-        self.SetInputData(self.image_reslice.GetOutput())  # without color map (window level)
-        self.vtk_image_data = self.image_reslice.GetOutput()
+        if _is_pydicom_lazy:
+            # Bypass image_reslice: wire viewer directly to the raw numpy-backed source.
+            # mark_vtk_modified() on the source causes the viewer's trivial producer to
+            # detect the MTime increase and re-read numpy scalars on Render() — no
+            # image_reslice.Update() needed per scroll event.
+            self.SetInputData(_raw_lazy_vtk)
+            self.vtk_image_data = _raw_lazy_vtk
+        else:
+            self.SetInputData(self.image_reslice.GetOutput())  # without color map (window level)
+            self.vtk_image_data = self.image_reslice.GetOutput()
         # v2.2.3.1.7: Track which VTK output object the viewer pipeline is connected to.
         # reset_image_viewer compares against this to skip the expensive SetInputData when
         # the same image_reslice object is updated in-place (saves ~1.4s per series switch).
@@ -283,26 +299,44 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         logger.info(f"[CAMERA INIT]   Image dimensions: {dims}")
         logger.info(f"[CAMERA INIT]   Spacing: {self.vtk_image_data.GetSpacing()}")
         logger.info(f"[CAMERA INIT]   Origin: {self.vtk_image_data.GetOrigin()}")
-        
+
         camera = self.renderer.GetActiveCamera()
         camera.ParallelProjectionOn()
 
-        # FLICKER FIX: Load actors without rendering - render is deferred to end.
+        # â‌Œ FLICKER FIX: Load actors without rendering â€” render is deferred to
+        # the end of the init sequence (see "ROOT-CAUSE ZOOM FIX" below).
         self.load_top_right_actors(render=False)
         self.load_top_left_actors(render=False)
         self.load_bottom_left_actors(render=False)
         self.load_bottom_right_actors(render=False)
 
-        # ROOT-CAUSE ZOOM FIX (v2.3.8): vtkImageViewer2 has an internal
-        # FirstRender=1 one-shot that fires on the first call to
-        # vtkImageViewer2::Render() and runs InitializeRendererFromImage() ->
-        # renderer.ResetCamera(), which overwrites any ParallelScale we set.
-        # Phase 1: self.Render() goes through the override and consumes
-        # FirstRender (one throwaway ResetCamera fires here).
-        # Phase 2: zoom_to_fit() now applies the correct scale; FirstRender
-        # is 0 so nothing downstream can auto-reset the camera again.
+        # --- ROOT-CAUSE ZOOM FIX (v2.3.8) --------------------------------------
+        # vtkImageViewer2 has an internal FirstRender=1 one-shot that fires on the
+        # first call to vtkImageViewer2::Render(). That one-shot runs
+        # InitializeRendererFromImage() which calls renderer.ResetCamera(), and
+        # ResetCamera overwrites any ParallelScale we previously set. Historically
+        # we called zoom_to_fit() BEFORE the first Render, so the correct fit was
+        # silently overwritten by VTK's auto-reset on the next real Render() â€”
+        # which is what every "[set_slice] Zoom change detected! scale=255.5 â†’
+        # reverting to 188.56" warning in the logs was catching.
+        #
+        # The fix is purely an ordering fix, applied once at the source:
+        #   Phase 1 â€” call self.Render() (goes through the vtkImageViewer2.Render
+        #             override). This consumes FirstRender=1 and fires VTK's
+        #             one-shot ResetCamera. After this call, FirstRender=0
+        #             permanently for this viewer.
+        #   Phase 2 â€” apply the correct parallel scale via zoom_to_fit. Because
+        #             FirstRender is now 0, no downstream Render() can auto-reset
+        #             the camera, so the scale persists across every set_slice,
+        #             wheel scroll, stack drag, and idle render.
+        #
+        # This makes every reactive "Zoom change detected â†’ revert" band-aid
+        # (in _vw_scroll.py and _legacy_widget.py) unnecessary, and makes the
+        # various _protected_parallel_scale refresh sites a pure SSoT for
+        # user-driven zoom persistence rather than a corruption-repair layer.
         self.Render()
         self.base_zoom_scale = self.zoom_to_fit(skip_render=False)
+        # ----------------------------------------------------------------------
 
         logger.info(f"[CAMERA INIT]   Initial parallel scale (zoom_to_fit): {self.base_zoom_scale:.2f}")
         logger.info(f"[CAMERA INIT]   Camera position: {camera.GetPosition()}")
@@ -847,6 +881,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.dicom_tags_actors.im_hospital_name_actor.SetPosition(right, bottom)
 
     def update_corners_actors(self, update_just_zoom=False, window_height=None):
+        try:
+            self._update_corners_actors_impl(update_just_zoom, window_height)
+        except Exception:
+            logger.warning(
+                "[H13-S5] update_corners_actors exception zoom_only=%s",
+                update_just_zoom,
+                exc_info=True,
+            )
+
+    def _update_corners_actors_impl(self, update_just_zoom=False, window_height=None):
         if update_just_zoom:
             if self.vtk_image_data is None:
                 return
@@ -1038,7 +1082,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     def reset_image_viewer(self, vtk_image_data, metadata):
         import time
         _reset_start = time.time()
-        
+        # Keep a reference to the original raw input. For pydicom_2d the viewer is wired
+        # directly to this source so mark_vtk_modified() MTime signaling works correctly.
+        _src_vtk_image_data = vtk_image_data
+        _is_pydicom_lazy = (
+            getattr(getattr(self, 'vtk_widget', None), '_active_backend', None) == 'pydicom_2d'
+        )
+
         # âœ… CRITICAL: Check if this is the same series or a different series
         # Only preserve zoom scale for the SAME series (user zoom preservation)
         # For different series, always calculate proper zoom based on image dimensions
@@ -1221,7 +1271,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             old_global_warning = vtk.vtkObject.GetGlobalWarningDisplay()
             vtk.vtkObject.GlobalWarningDisplayOff()
             try:
-                self.SetInputData(_current_reslice_output)
+                # For lazy backend, wire viewer directly to the raw numpy-backed source
+                # so mark_vtk_modified() causes the trivial producer to detect the MTime
+                # change and re-read fresh numpy scalars on Render() -- no reslice.Update()
+                # needed per scroll event.
+                _viewer_input = _src_vtk_image_data if _is_pydicom_lazy else _current_reslice_output
+                self.SetInputData(_viewer_input)
             finally:
                 vtk.vtkObject.SetGlobalWarningDisplay(old_global_warning)
                 self._suppress_render = _prev_suppress
@@ -1231,7 +1286,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         else:
             # Same output object â€” pipeline already connected; Modified() propagated.
             print(f"         â€¢ SetInputData: SKIPPED (reslice output unchanged â€” saves ~1.4s)")
-        self.vtk_image_data = _current_reslice_output  # refresh Python-side ref
+        # For lazy backend the viewer input is the raw source; keep Python ref consistent.
+        self.vtk_image_data = _src_vtk_image_data if _is_pydicom_lazy else _current_reslice_output
 
         # Update metadata
         _metadata_start = time.time()
@@ -1269,23 +1325,34 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # print(f"         â€¢ Render: {_render_call_time:.3f}s")
 
         _zoom_start = time.time()
-        # ROOT-CAUSE ZOOM FIX (v2.3.8): SetInputData above resets
-        # vtkImageViewer2.FirstRender to 1. Render via the override FIRST so
-        # that one-shot is consumed (its ResetCamera fires on a throwaway
-        # state). Then apply the intended scale; nothing downstream can
-        # auto-reset the camera afterwards.
-        self.Render()  # Phase 1 - consumes FirstRender=1.
+        # ROOT-CAUSE ZOOM FIX (v2.3.8): When SetInputData was called above for a
+        # new image, vtkImageViewer2.FirstRender is reset to 1. If we call
+        # image_render_window.Render() directly (bypassing the override) and then
+        # set the parallel scale, the next vtkImageViewer2::Render() in the
+        # pipeline (e.g. first set_slice) will consume FirstRender=1 and trigger
+        # InitializeRendererFromImage() â†’ ResetCamera(), wiping our scale.
+        #
+        # Fix: go through self.Render() (the override) FIRST to consume the
+        # FirstRender one-shot. Then apply the intended parallel scale. After
+        # this, no downstream Render() can auto-reset the camera, so the scale
+        # persists across every set_slice / scroll / stack operation.
+        # âœ… CRITICAL FIX: Only restore saved scale for SAME series
+        # For different series, always call zoom_to_fit to calculate proper zoom based on dimensions
+        # This fixes the bug where series with different dimensions appear at wrong zoom levels
+        self.Render()  # Phase 1 â€” consumes FirstRender=1 (fires VTK's auto-reset).
         if saved_scale is not None and is_same_series:
             try:
                 camera = self.renderer.GetActiveCamera()
-                camera.SetParallelScale(saved_scale)  # Phase 2 - now sticks.
+                camera.SetParallelScale(saved_scale)  # Phase 2 â€” now sticks.
                 logger.info(f"[reset_image_viewer] Same series - restored user zoom: {saved_scale:.2f}")
+                # Optionally save to vtk_widget if it exists
                 if hasattr(self, 'vtk_widget') and self.vtk_widget:
                     self.vtk_widget._protected_parallel_scale = saved_scale
             except Exception as e:
                 logger.warning(f"[reset_image_viewer] Failed to restore scale: {e}, falling back to zoom_to_fit")
                 self.zoom_to_fit(skip_render=True)
         else:
+            # Different series or no saved scale - calculate proper zoom for this series
             self.zoom_to_fit(skip_render=True)
             logger.info(f"[reset_image_viewer] Called zoom_to_fit for {'new' if not is_same_series else 'initial'} series")
 
@@ -1313,6 +1380,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
           3) Update corner text
           4) Sync all overlay actors to this slice
         """
+        try:
+            self._set_slice_impl(slice_index, fast_interaction, force_annotations)
+        except Exception:
+            logger.warning(
+                "[H13-S5] ImageViewer2D.set_slice exception slice=%s fast=%s",
+                slice_index, fast_interaction,
+                exc_info=True,
+            )
+
+    def _set_slice_impl(self, slice_index, fast_interaction=False, force_annotations=False):
         _t0 = time.perf_counter_ns()
         _fast = bool(fast_interaction)
         _now_ms = _t0 / 1_000_000.0
@@ -1389,6 +1466,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.Render()
 
     def apply_default_window_level(self, slice_index):
+        try:
+            self._apply_default_window_level_impl(slice_index)
+        except Exception:
+            logger.warning(
+                "[H13-S5] apply_default_window_level exception slice=%s",
+                slice_index,
+                exc_info=True,
+            )
+
+    def _apply_default_window_level_impl(self, slice_index):
         instances = self.metadata.get('instances') or []
         if slice_index < len(instances):
             instance_metadata = instances[slice_index]
@@ -1414,16 +1501,26 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # v2.3.7 per-series W/L fix: when the DB does not have the DICOM
         # WindowWidth/WindowCenter tag for this instance (older downloads, NULL
         # columns, legacy placeholders), read it straight from the DICOM file
-        # header — that is the same source FAST mode uses.
+        # header — that is the same source FAST mode uses. Chest CT typically
+        # ships different tag values per series (mediastinum WW=400/WC=40,
+        # lung WW=1500/WC=-600); the percentile fallback on chest pixels always
+        # returns a lung-like window because lung air dominates. Reading the
+        # header restores per-series behavior.
         if window_width is None or window_center is None:
             ww_hdr, wc_hdr = self._read_window_level_from_dicom_header(
                 instance_metadata,
             )
+            # If per-instance metadata is missing/stale, scan the series
+            # folder for any DICOM file and read its header — W/L is a
+            # series-level clinical setting, so any instance is sufficient
+            # to establish the per-series default.
             if (ww_hdr is None or wc_hdr is None):
                 ww_hdr, wc_hdr = self._read_window_level_from_series_folder()
             if ww_hdr is not None and wc_hdr is not None:
                 window_width, window_center = ww_hdr, wc_hdr
                 source = 'dicom_header'
+                # Cache back into metadata so subsequent slice scrolls hit the
+                # fast path without re-reading the header.
                 if isinstance(instance_metadata, dict):
                     try:
                         instance_metadata['window_width'] = ww_hdr
@@ -1435,6 +1532,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             if self.vtk_image_data is None:
                 return
             # Last-resort: match FAST mode's per-slice percentile fallback.
+            # This runs only when neither the DB nor the DICOM header has the
+            # tag — so it's the genuine "tag missing from the dataset" case.
             window_width, window_center = self._auto_window_level_from_current_slice(
                 slice_index,
             )
@@ -1524,6 +1623,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             if not folder or not os.path.isdir(folder):
                 return None, None
             import pydicom  # noqa: WPS433
+            # Take the first file sorted by name — Instance_0001.dcm or
+            # similar. Header read stops before pixels (1–3 ms).
             for name in sorted(os.listdir(folder)):
                 if not name.lower().endswith('.dcm'):
                     continue

@@ -19,7 +19,9 @@ Version: v1.0.0 (2026-03-02)
 
 from __future__ import annotations
 
+import gc
 import logging
+import os
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -32,6 +34,9 @@ from PySide6.QtGui import (
     QPen, QPixmap, QTransform, QWheelEvent,
 )
 from PySide6.QtWidgets import QWidget
+
+from modules.viewer.fast.stack_drag_profile import build_stack_drag_profile
+from modules.viewer.fast import ui_throttle
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +137,8 @@ class QtSliceViewer(QWidget):
     """
 
     slice_scroll_requested = Signal(int)        # delta slices
+    stack_drag_target_requested = Signal(int)   # absolute slice target during drag
+    stack_drag_state_changed = Signal(bool)     # True=started, False=stopped (B3.3)
     window_level_changed = Signal(float, float) # window, level
     zoom_changed = Signal(float)                # zoom factor
     mouse_moved = Signal(float, float)          # image x, y
@@ -139,6 +146,32 @@ class QtSliceViewer(QWidget):
     # Zoom limits
     MIN_ZOOM = 0.1
     MAX_ZOOM = 20.0
+
+    # Tool modes (set by toolbar via bridge style)
+    TOOL_NONE = ""
+    TOOL_ZOOM = "zoom"
+    TOOL_WINDOW_LEVEL = "window_level"
+    TOOL_PAN = "pan"
+    TOOL_STACKED = "stacked"
+    # Measurement tool modes (dispatched to ToolController)
+    TOOL_RULER = "ruler"
+    TOOL_ANGLE = "angle"
+    TOOL_TWO_LINE_ANGLE = "two_line_angle"
+    TOOL_ROI_RECT = "roi_rect"
+    TOOL_ROI_CIRCLE = "roi_circle"
+    TOOL_ARROW = "arrow"
+    TOOL_TEXT = "text"
+    TOOL_ERASER = "eraser"
+    STACK_DRAG_POLICY_ADAPTIVE = "adaptive"
+    STACK_DRAG_POLICY_CLEARCANVAS = "clearcanvas_directional"
+    STACK_DRAG_EDGE_GRACE_PX = 12.0
+    LARGE_STACK_SKIP_MIN_SLICES = 100
+    LARGE_STACK_SKIP_SPEED_MULTIPLIER = 45.0
+    LARGE_STACK_SKIP_DELTA = 2
+    _MEASUREMENT_TOOLS = frozenset({
+        "ruler", "angle", "two_line_angle",
+        "roi_rect", "roi_circle", "arrow", "text", "eraser",
+    })
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -189,10 +222,79 @@ class QtSliceViewer(QWidget):
         # Each entry: ((x1, y1), (x2, y2), (r, g, b), width)  in image coords
         self._overlay_lines: list = []
 
+        # View rotation / flip (needed by CoordinateResolver)
+        self._rotation_angle: int = 0
+        self._flip_h: bool = False
+        self._flip_v: bool = False
+
+        # Active tool mode (toolbar-selected)
+        self._tool_mode: str = self.TOOL_NONE
+
+        # Zoom-drag interaction state (left-button vertical drag when TOOL_ZOOM)
+        self._zoom_dragging: bool = False
+        self._zoom_start_pos: QPointF = QPointF()
+        self._zoom_start_zoom: float = 1.0
+
+        # Stacked-scroll interaction state (left-button vertical drag → slice scroll)
+        self._stacked_dragging: bool = False
+        self._stacked_last_y: float = 0.0
+        self._stacked_accum: float = 0.0
+        self._stacked_last_emitted_target: Optional[int] = None
+        self._stacked_first_step_pending: bool = False
+        self._stack_drag_session_active: bool = False
+        self._stack_drag_session_slice_hint: int = 0
+        self._stack_drag_session_threshold_px: float = 0.0
+        self._stack_drag_session_max_steps: int = 1
+        self._stack_drag_session_first_step_scale: float = 0.65
+        self._stack_drag_last_move_monotonic: Optional[float] = None
+        self._stack_drag_speed_px_per_sec: float = 0.0
+        self._stack_drag_skip_lane_active: bool = False
+
+        # Current displayed slice index (used by tool controller and coord resolver)
+        self._current_slice_index: int = 0
+
+        # Suppress tool annotation repaint during wheel scroll (perf)
+        self._in_wheel_scroll: bool = False
+        self._scroll_stop_timer = QTimer(self)
+        self._scroll_stop_timer.setSingleShot(True)
+        self._scroll_stop_timer.setInterval(200)
+        self._scroll_stop_timer.timeout.connect(self._on_scroll_stopped)
+
+        # Sync point mode (forwarded to parent VTKWidget for cross-viewer sync)
+        self._sync_mode_active: bool = False
+        # Sync-point dot marker (image coords; None = not visible)
+        self._sync_point_img: Optional[tuple] = None
+
+        # Button-state tracking for combined gestures (L+R = pan)
+        self._left_button_down: bool = False   # track left held for L+R pan detection
+        self._right_button_down: bool = False  # track right held for L+R pan detection
+        self._lr_pan_active: bool = False      # True while L+R simultaneous pan is active
+
+        # Modality hint for W/L sensitivity (set via set_modality_hint;
+        # radiography modalities MG/DX/CR/XR use 10x higher sensitivity)
+        self._modality_hint: str = ""
+
+        # Total-slices hint for stack-drag behavior.
+        # Set by QtViewerBridge; used to scale drag threshold/step limits.
+        #
+        # Default to the slice-adaptive policy. It preserves the predictable
+        # directional feel users expect from ClearCanvas-style stacking while
+        # still adapting drag distance/skip limits to the actual series size.
+        self._total_slices_hint: int = 0
+        self._stack_drag_policy: str = self._normalize_stack_drag_policy(
+            os.environ.get("AIPACS_STACK_DRAG_POLICY", self.STACK_DRAG_POLICY_ADAPTIVE)
+        )
+        self._debug_viewer_id: str = f"q{id(self) & 0xFFFFF:05x}"
+
+        # Measurement tool state
+        self._tool_controller = None   # Optional[ToolController]
+        self._coord_backend = None     # Optional backend for coord resolver
+        self._tool_completed_cb = None  # set by _QtBridgeStyle; fires when placement completes
+
     # ── Public API ──────────────────────────────────────────────────────
 
     def set_image(self, qimage: QImage) -> None:
-        """Set the image to display. Converts QImage to QPixmap for fast painting."""
+        """Set the image to display."""
         if qimage is None or qimage.isNull():
             self._pixmap = None
             self._image_width = 0
@@ -201,8 +303,16 @@ class QtSliceViewer(QWidget):
             return
 
         self._pixmap = QPixmap.fromImage(qimage)
+        old_w, old_h = self._image_width, self._image_height
         self._image_width = qimage.width()
         self._image_height = qimage.height()
+        # If image dimensions changed (e.g. first frame after series switch) and
+        # fit-to-viewport is active, recalculate zoom immediately so the image
+        # fills the viewport correctly even if zoom_to_fit() is not called
+        # separately (defensive fix for R11 / series-specific zoom regressions).
+        if self._fit_to_viewport and (self._image_width != old_w or self._image_height != old_h):
+            self._zoom = self._calculate_fit_zoom()
+            self._pan_offset = QPointF(0.0, 0.0)
         self.update()
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
@@ -231,7 +341,13 @@ class QtSliceViewer(QWidget):
         self.update()
 
     def set_pixel_spacing(self, pixel_spacing: Optional[Tuple[float, float]]) -> None:
-        """Set per-axis display scaling derived from DICOM pixel spacing."""
+        """Set per-axis display scaling derived from DICOM pixel spacing.
+
+        ``pixel_spacing`` is expected as ``(row_spacing_mm, col_spacing_mm)``.
+        The viewer keeps a single user zoom factor but applies per-axis display
+        scaling so anisotropic series (for example localizers or odd-FOV MR)
+        render with the correct on-screen aspect ratio.
+        """
         row_spacing = 1.0
         col_spacing = 1.0
         try:
@@ -293,46 +409,575 @@ class QtSliceViewer(QWidget):
         self.update()
 
     def widget_to_image_coords(self, widget_x: float, widget_y: float) -> Tuple[float, float]:
-        """Convert widget coordinates to image (pixel) coordinates."""
+        """Convert widget coordinates to image (pixel) coordinates.
+
+        Rotation- and flip-aware: delegates to CoordinateResolver so that
+        results are consistent with _paint_image and tool hit-testing.
+        """
         if self._image_width <= 0 or self._image_height <= 0:
             return 0.0, 0.0
-
-        # Widget center
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
-
-        # Image center in widget space (with zoom and pan)
-        img_cx = cx + self._pan_offset.x()
-        img_cy = cy + self._pan_offset.y()
-
-        # Image top-left in widget space
-        img_left = img_cx - (self._image_width * self._zoom * self._display_scale_x) / 2.0
-        img_top = img_cy - (self._image_height * self._zoom * self._display_scale_y) / 2.0
-
-        # Convert to image coordinates
-        img_x = (widget_x - img_left) / (self._zoom * self._display_scale_x)
-        img_y = (widget_y - img_top) / (self._zoom * self._display_scale_y)
-
-        return img_x, img_y
+        from modules.viewer.tools.coord_resolver import CoordinateResolver
+        return CoordinateResolver(self).widget_to_image(widget_x, widget_y)
 
     def image_to_widget_coords(self, img_x: float, img_y: float) -> Tuple[float, float]:
-        """Convert image coordinates to widget coordinates."""
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
+        """Convert image coordinates to widget coordinates.
 
-        img_cx = cx + self._pan_offset.x()
-        img_cy = cy + self._pan_offset.y()
-
-        img_left = img_cx - (self._image_width * self._zoom * self._display_scale_x) / 2.0
-        img_top = img_cy - (self._image_height * self._zoom * self._display_scale_y) / 2.0
-
-        wx = img_left + img_x * self._zoom * self._display_scale_x
-        wy = img_top + img_y * self._zoom * self._display_scale_y
-
-        return wx, wy
+        Rotation- and flip-aware: delegates to CoordinateResolver so that
+        overlay lines and reference lines are positioned consistently with
+        the rendered image in _paint_image.
+        """
+        from modules.viewer.tools.coord_resolver import CoordinateResolver
+        return CoordinateResolver(self).image_to_widget(img_x, img_y)
 
     def get_last_paint_ms(self) -> float:
         return self._last_paint_ms
+
+    @property
+    def tool_controller(self):
+        return self._tool_controller
+
+    @tool_controller.setter
+    def tool_controller(self, ctrl):
+        self._tool_controller = ctrl
+
+    def set_tool_mode(self, mode: str) -> None:
+        """Set the active tool mode (dispatches to ToolController)."""
+        self._tool_mode = mode
+        # Update cursor to match the active tool
+        if mode == self.TOOL_ERASER:
+            self.setCursor(Qt.CursorShape.ForbiddenCursor)  # red-circle = "delete" visual
+        elif mode in self._MEASUREMENT_TOOLS:
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.unsetCursor()
+
+    def get_tool_mode(self) -> str:
+        return self._tool_mode
+
+    def set_coord_backend(self, backend) -> None:
+        """Set the backend used by CoordinateResolver for patient-space measurements."""
+        self._coord_backend = backend
+
+    def set_current_slice_index(self, idx: int) -> None:
+        self._current_slice_index = idx
+
+    def set_rotation(self, angle: int) -> None:
+        self._rotation_angle = angle % 360
+        self.update()
+
+    def set_flip(self, flip_h: bool, flip_v: bool) -> None:
+        self._flip_h = flip_h
+        self._flip_v = flip_v
+        self.update()
+
+    def rotate_left(self) -> None:
+        """Rotate image 90° counter-clockwise."""
+        self._rotation_angle = (self._rotation_angle - 90) % 360
+        self.update()
+
+    def rotate_right(self) -> None:
+        """Rotate image 90° clockwise."""
+        self._rotation_angle = (self._rotation_angle + 90) % 360
+        self.update()
+
+    def flip_horizontal(self) -> None:
+        """Toggle horizontal flip."""
+        self._flip_h = not self._flip_h
+        self.update()
+
+    def flip_vertical(self) -> None:
+        """Toggle vertical flip."""
+        self._flip_v = not self._flip_v
+        self.update()
+
+    def set_sync_mode(self, active: bool) -> None:
+        self._sync_mode_active = active
+        if active:
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            # Restore cursor appropriate for the current tool
+            self.set_tool_mode(self._tool_mode)
+        self.update()
+
+    def set_sync_point(self, img_x: float, img_y: float) -> None:
+        """Show the cross-viewer sync-point red dot at the given image coordinates."""
+        self._sync_point_img = (float(img_x), float(img_y))
+        self.update()
+
+    def hide_sync_point(self) -> None:
+        """Remove the sync-point red dot marker."""
+        self._sync_point_img = None
+        self.update()
+
+    def set_modality_hint(self, modality: str) -> None:
+        """Set the modality for W/L sensitivity adjustment.
+
+        Radiography modalities (MG, DX, CR, XR) use 10x higher W/L sensitivity
+        to make adjustment practical for their large dynamic range.
+        Called by QtViewerBridge when loading or resetting a series.
+        """
+        self._modality_hint = str(modality).upper() if modality else ""
+
+    def set_total_slices_hint(self, total_slices: int) -> None:
+        """Set total slice count hint for adaptive stack-drag behavior."""
+        old_hint = int(max(0, self._total_slices_hint))
+        try:
+            self._total_slices_hint = max(0, int(total_slices))
+        except Exception:
+            self._total_slices_hint = 0
+        new_hint = int(max(0, self._total_slices_hint))
+
+        # Stack drag must not carry stale momentum across a live slice-count
+        # policy change (for example while progressive download grows).
+        if old_hint != new_hint and self._stack_drag_session_active:
+            logger.debug(
+                "[B3.4_DIAG] STACK_HINT_DEFERRED viewer=%s old=%d new=%d dragging=%s accum=%.2f threshold_px=%.2f max_steps=%d",
+                self._debug_viewer_id,
+                old_hint,
+                new_hint,
+                bool(self._stacked_dragging),
+                float(self._stacked_accum),
+                float(self._stack_drag_session_threshold_px),
+                int(self._stack_drag_session_max_steps),
+            )
+            return
+
+        if old_hint != new_hint and (self._stacked_dragging or abs(self._stacked_accum) > 1e-6):
+            accum_before = float(self._stacked_accum)
+            accum_after = 0.0
+            preserve_drag_progress = self._stacked_dragging and new_hint > old_hint and old_hint > 1
+
+            if preserve_drag_progress:
+                old_threshold, _ = self._get_stack_drag_profile_for_count(old_hint)
+                new_threshold, _ = self._get_stack_drag_profile_for_count(new_hint)
+                if old_threshold > 0.0 and new_threshold > 0.0:
+                    progress = accum_before / float(old_threshold)
+                    accum_after = progress * float(new_threshold)
+                    cap = max(0.0, float(new_threshold) * 0.95)
+                    if cap > 0.0:
+                        accum_after = max(-cap, min(cap, accum_after))
+            logger.debug(
+                "[B3.4_DIAG] STACK_HINT_RESET viewer=%s old=%d new=%d dragging=%s accum_before=%.2f accum_after=%.2f preserved=%s",
+                self._debug_viewer_id,
+                old_hint,
+                new_hint,
+                bool(self._stacked_dragging),
+                accum_before,
+                accum_after,
+                bool(preserve_drag_progress),
+            )
+            self._stacked_accum = float(accum_after)
+
+    def set_stack_drag_policy(self, policy: str) -> None:
+        """Override stack-drag policy for A/B testing or compatibility mode.
+
+        Supported policies:
+        - ``adaptive``: current AI-PACS distance-based stack drag (default)
+        - ``clearcanvas_directional``: one slice per non-zero mouse-move event
+        """
+        self._stack_drag_policy = self._normalize_stack_drag_policy(policy)
+
+    @classmethod
+    def _normalize_stack_drag_policy(cls, policy: object) -> str:
+        text = str(policy or "").strip().lower()
+        if text in {
+            "clearcanvas",
+            "clearcanvas_directional",
+            "clearcanvas-directional",
+            "directional",
+            "direction_only",
+            "direction-only",
+        }:
+            return cls.STACK_DRAG_POLICY_CLEARCANVAS
+        return cls.STACK_DRAG_POLICY_ADAPTIVE
+
+    def _get_stack_drag_profile_for_count(self, total_slices: int) -> tuple[float, int]:
+        """Return (threshold_px, max_steps_per_event) for stack drag.
+
+        UX policy:
+        - Wheel: always one slice per notch (no skipping).
+        - Stack drag: threshold scales from visible screen pixels and stack size.
+
+        Design goals:
+        - use actual on-screen drag distance, not arbitrary slice math
+        - small stacks should feel deliberate (larger threshold)
+        - large stacks should feel more responsive (smaller threshold)
+        - one full-height drag should traverse a meaningful portion of the stack
+        - per-event jumps remain capped so drag never feels chaotic
+        """
+        n = int(max(0, total_slices))
+        if self._stack_drag_policy == self.STACK_DRAG_POLICY_CLEARCANVAS:
+            return 1.0, 1
+
+        active_h = self._get_stack_active_height_px()
+
+        if n <= 1:
+            return min(18.0, max(8.0, active_h / 20.0)), 1
+
+        profile = build_stack_drag_profile(n)
+        desired_full_drag_steps = max(
+            1,
+            min(max(1, n - 1), int(profile.drag_fullscreen_slices)),
+        )
+        threshold_px = active_h / float(desired_full_drag_steps)
+        threshold_px = max(3.0, min(32.0, threshold_px))
+
+        return float(threshold_px), int(profile.drag_max_steps_per_event)
+
+    def _get_stack_drag_profile(self) -> tuple[float, int]:
+        return self._get_stack_drag_profile_for_count(self._total_slices_hint)
+
+    def _get_active_stack_drag_profile(self) -> tuple[float, int, float]:
+        """Return the drag profile currently governing emitted drag steps."""
+        if self._stack_drag_session_active:
+            return (
+                float(max(1.0, self._stack_drag_session_threshold_px)),
+                int(max(1, self._stack_drag_session_max_steps)),
+                float(max(0.1, self._stack_drag_session_first_step_scale)),
+            )
+
+        threshold_px, max_steps = self._get_stack_drag_profile()
+        first_step_scale = float(
+            getattr(
+                build_stack_drag_profile(self._total_slices_hint),
+                'first_step_threshold_scale',
+                0.65,
+            )
+        )
+        return (
+            float(max(1.0, threshold_px)),
+            int(max(1, max_steps)),
+            float(max(0.1, first_step_scale)),
+        )
+
+    def _begin_stack_drag_session(self) -> None:
+        """Freeze drag sensitivity for the lifetime of one drag gesture."""
+        # Signal protected UI mode: pause background work during drag.
+        # Grace window covers the typical max inter-move gap (~1.5s) so the
+        # protection stays armed between moves. Keepalive from mouseMoveEvent
+        # extends it further for long drags.
+        ui_throttle.record_protected_drag(True, grace_ms=1500.0)
+
+        # v2.3.6 game-changer #4: Suppress Python GC during stack drag.
+        # Gen-2 GC pauses can block the main thread 100-500ms on apps with
+        # many objects (our app has multi-viewer + cache + pydicom). That
+        # is the primary cause of event_p50 = 44-368ms gaps in log 94.
+        # The re-enable timer is (re)started on _end_stack_drag_session.
+        try:
+            if not getattr(self, '_gc_suppressed_drag', False):
+                gc.disable()
+                self._gc_suppressed_drag = True
+            # Cancel any pending re-enable; the drag is continuing.
+            timer = getattr(self, '_gc_reenable_timer', None)
+            if timer is not None:
+                try:
+                    timer.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        threshold_px, max_steps = self._get_stack_drag_profile()
+        first_step_scale = float(
+            getattr(
+                build_stack_drag_profile(self._total_slices_hint),
+                'first_step_threshold_scale',
+                0.65,
+            )
+        )
+        self._stack_drag_session_active = True
+        self._stack_drag_session_slice_hint = int(max(0, self._total_slices_hint))
+        self._stack_drag_session_threshold_px = float(max(1.0, threshold_px))
+        self._stack_drag_session_max_steps = int(max(1, max_steps))
+        self._stack_drag_session_first_step_scale = float(max(0.1, first_step_scale))
+        self._stack_drag_last_move_monotonic = time.perf_counter()
+        self._stack_drag_speed_px_per_sec = 0.0
+        self._stack_drag_skip_lane_active = False
+
+    def _end_stack_drag_session(self) -> None:
+        """Clear the frozen drag policy so the next gesture uses fresh hints."""
+        # Clear protected UI mode, but keep a short tail so background work
+        # doesn't reflood the main thread the instant the finger lifts.
+        ui_throttle.record_protected_drag(False, grace_ms=250.0)
+
+        # v2.3.6 game-changer #4: Schedule GC re-enable on a short delay so
+        # a burst of short drags doesn't pay the GC pause tax between them.
+        try:
+            timer = getattr(self, '_gc_reenable_timer', None)
+            if timer is None:
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._reenable_gc_after_drag)
+                self._gc_reenable_timer = timer
+            timer.stop()
+            timer.start(1500)
+        except Exception:
+            pass
+
+        self._stack_drag_session_active = False
+        self._stack_drag_session_slice_hint = 0
+        self._stack_drag_session_threshold_px = 0.0
+        self._stack_drag_session_max_steps = 1
+        self._stack_drag_session_first_step_scale = 0.65
+        self._stack_drag_last_move_monotonic = None
+        self._stack_drag_speed_px_per_sec = 0.0
+        self._stack_drag_skip_lane_active = False
+        self._stacked_last_emitted_target = None
+
+    def _reenable_gc_after_drag(self) -> None:
+        """Re-enable Python GC after stack drag settles (v2.3.6 game-changer #4)."""
+        try:
+            if getattr(self, '_gc_suppressed_drag', False):
+                gc.enable()
+                self._gc_suppressed_drag = False
+        except Exception as exc:
+            logger.warning("qt_slice_viewer: GC re-enable failed: %s", exc)
+
+    def _update_stack_drag_speed(self, dy: float) -> float:
+        """Update smoothed drag speed for the active stack-drag gesture."""
+        now = time.perf_counter()
+        prev = self._stack_drag_last_move_monotonic
+        self._stack_drag_last_move_monotonic = now
+        if prev is None:
+            self._stack_drag_speed_px_per_sec = 0.0
+            return 0.0
+
+        dt = max(1e-4, float(now - prev))
+        instantaneous = abs(float(dy)) / dt
+        prior = float(self._stack_drag_speed_px_per_sec)
+        if prior <= 0.0:
+            smoothed = instantaneous
+        else:
+            smoothed = max(instantaneous, (prior * 0.72) + (instantaneous * 0.28))
+        self._stack_drag_speed_px_per_sec = float(smoothed)
+        return float(smoothed)
+
+    @staticmethod
+    def _sign(value: float) -> int:
+        if value > 0:
+            return 1
+        if value < 0:
+            return -1
+        return 0
+
+    def _is_point_in_viewport(self, pos: QPointF) -> bool:
+        """Return True when *pos* is inside the viewer widget bounds."""
+        x = float(pos.x())
+        y = float(pos.y())
+        return (0.0 <= x < float(max(1, self.width())) and
+                0.0 <= y < float(max(1, self.height())))
+
+    def _is_point_in_image_area(self, pos: QPointF, grace_px: float = 0.0) -> bool:
+        """Return True when *pos* maps inside current image bounds.
+
+        Uses rotation/flip-aware coordinate mapping so stack interaction is
+        limited to the displayed image area, not the full widget background.
+        """
+        if self._image_width <= 0 or self._image_height <= 0:
+            return False
+        try:
+            ix, iy = self.widget_to_image_coords(float(pos.x()), float(pos.y()))
+            zoom = float(max(self._zoom, 0.1))
+            grace_img = max(0.0, float(grace_px)) / zoom
+            return (-grace_img <= float(ix) < float(self._image_width) + grace_img and
+                    -grace_img <= float(iy) < float(self._image_height) + grace_img)
+        except Exception:
+            return False
+
+    def _is_stack_position_valid(self, pos: QPointF) -> bool:
+        """Stack drag is valid only while pointer stays in viewer + image area."""
+        return self._is_point_in_viewport(pos) and self._is_point_in_image_area(
+            pos,
+            grace_px=self.STACK_DRAG_EDGE_GRACE_PX,
+        )
+
+    def _get_stack_active_height_px(self) -> float:
+        """Visible on-screen height available for stack drag, in pixels."""
+        widget_h = float(max(64, self.height()))
+        if self._image_width <= 0 or self._image_height <= 0:
+            return widget_h
+
+        base_w = float(self._image_width) * float(max(self._display_scale_x, 1e-9))
+        base_h = float(self._image_height) * float(max(self._display_scale_y, 1e-9))
+        if self._rotation_angle in (90, 270):
+            rendered_h = base_w * float(max(self._zoom, 0.1))
+        else:
+            rendered_h = base_h * float(max(self._zoom, 0.1))
+
+        return float(max(64.0, min(widget_h, rendered_h)))
+
+    def _consume_stack_drag_delta(self, dy: float, *, speed_px_per_sec: float = 0.0) -> int:
+        """Convert vertical drag delta to bounded slice steps.
+
+        Wheel scrolling is intentionally precise (±1 slice per event), while
+        stack drag should feel continuous but still controllable. The stack
+        profile already defines a pixel threshold and a per-event cap; the
+        live drag path must honor both.
+
+        Returns the signed number of slice steps to emit for this mouse move.
+        """
+        if int(max(0, self._total_slices_hint)) <= 1:
+            return 0
+
+        if self._stack_drag_policy == self.STACK_DRAG_POLICY_CLEARCANVAS:
+            self._stacked_accum = 0.0
+            if dy > 0:
+                return 1
+            if dy < 0:
+                return -1
+            return 0
+
+        threshold_px, max_steps, first_step_scale = self._get_active_stack_drag_profile()
+        first_step_pending = bool(self._stacked_first_step_pending)
+        effective_threshold_px = threshold_px * (first_step_scale if first_step_pending else 1.0)
+        effective_threshold_px = max(1.0, float(effective_threshold_px))
+
+        pending_sign = self._sign(self._stacked_accum)
+        incoming_sign = self._sign(dy)
+        if pending_sign != 0 and incoming_sign != 0 and pending_sign != incoming_sign:
+            logger.debug(
+                "[B3.4_DIAG] STACK_DRAG_REVERSAL viewer=%s pending_sign=%d incoming_sign=%d accum_before=%.2f dy=%.2f",
+                self._debug_viewer_id,
+                pending_sign,
+                incoming_sign,
+                float(self._stacked_accum),
+                float(dy),
+            )
+            self._stacked_accum = 0.0
+
+        self._stacked_accum += float(dy)
+        raw_steps = int(self._stacked_accum / effective_threshold_px)
+        if raw_steps == 0:
+            return 0
+
+        if first_step_pending:
+            # Reduce the dead-zone only for the first emitted step of a new
+            # drag gesture, then immediately fall back to the normal threshold.
+            # Keep this startup assist capped to a single slice so the gesture
+            # starts promptly without reintroducing a first-event jump.
+            emit_steps = self._clamp_int(raw_steps, -1, 1)
+            self._stacked_first_step_pending = False
+            self._stacked_accum = 0.0
+            return int(emit_steps)
+
+        if self._should_use_large_stack_skip_lane(
+            dy=dy,
+            raw_steps=raw_steps,
+            threshold_px=threshold_px,
+            speed_px_per_sec=speed_px_per_sec,
+        ):
+            emit_steps = self._sign(float(raw_steps)) * self.LARGE_STACK_SKIP_DELTA
+            self._stacked_accum = 0.0
+            return int(emit_steps)
+
+        emit_steps = self._clamp_int(raw_steps, -max_steps, max_steps)
+        if abs(raw_steps) > max_steps:
+            # Oversized drag events are bounded, not queued. Keep only the
+            # sub-threshold tail so later mouse moves do not inherit momentum.
+            self._stacked_accum -= float(raw_steps) * threshold_px
+        else:
+            self._stacked_accum -= float(emit_steps) * threshold_px
+        return int(emit_steps)
+
+    def _should_use_large_stack_skip_lane(
+        self,
+        *,
+        dy: float,
+        raw_steps: int,
+        threshold_px: float,
+        speed_px_per_sec: float,
+    ) -> bool:
+        """Return True when drag should switch to the every-other-slice lane.
+
+        UX intent for very large stacks:
+        - wheel remains exact and one-slice precise
+        - slow drag remains exact and one-slice precise
+        - only genuinely fast drag on stacks >100 may move in even steps
+
+        Because the delta is applied relative to the current slice in the
+        bridge, entering this lane naturally preserves parity. If the user
+        wheels once to slice 1, subsequent fast drag steps become 1, 3, 5...
+        without extra state or remapping.
+        """
+        total_slices = int(max(0, self._total_slices_hint))
+        if total_slices <= self.LARGE_STACK_SKIP_MIN_SLICES:
+            self._stack_drag_skip_lane_active = False
+            return False
+        if abs(int(raw_steps)) < 1:
+            self._stack_drag_skip_lane_active = False
+            return False
+        speed_gate_px_per_sec = max(
+            1.0,
+            float(threshold_px) * float(self.LARGE_STACK_SKIP_SPEED_MULTIPLIER),
+        )
+        hold_gate_px_per_sec = speed_gate_px_per_sec * 0.6
+        active = bool(getattr(self, '_stack_drag_skip_lane_active', False))
+        if float(speed_px_per_sec) >= speed_gate_px_per_sec:
+            self._stack_drag_skip_lane_active = True
+            return True
+        if active and float(speed_px_per_sec) >= hold_gate_px_per_sec:
+            return True
+        if abs(float(dy)) >= max(1.0, float(threshold_px) * 2.25):
+            self._stack_drag_skip_lane_active = True
+            return True
+        self._stack_drag_skip_lane_active = False
+        return False
+
+    @staticmethod
+    def _clamp_int(v: int, lo: int, hi: int) -> int:
+        return max(int(lo), min(int(hi), int(v)))
+
+    def _emit_tool_completed(self) -> None:
+        """Auto-deactivate after a measurement tool placement completes.
+
+        Mirrors Advanced mode auto_deactivate_tool(): resets tool to TOOL_NONE,
+        deactivates ToolController, and fires the bridge callback so the toolbar
+        button un-highlights and tool_selected is cleared.
+        Called from mousePressEvent / mouseReleaseEvent on PLACING→IDLE transition.
+        """
+        cb = self._tool_completed_cb
+        self._tool_completed_cb = None  # clear before firing to prevent re-entrant calls
+        # Deactivate ToolController so _active_tool is None
+        if self._tool_controller is not None:
+            self._tool_controller.deactivate()
+        # Reset tool mode to default (free navigation)
+        self.set_tool_mode(self.TOOL_NONE)
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                pass
+
+    def _paint_sync_point(self, painter: 'QPainter') -> None:
+        """Paint a red dot at the sync-point image position (above the image layer)."""
+        if self._sync_point_img is None:
+            return
+        img_x, img_y = self._sync_point_img
+        wx, wy = self.image_to_widget_coords(img_x, img_y)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # White halo for contrast on any background
+        painter.setPen(QPen(QColor(255, 255, 255, 200), 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QPointF(wx, wy), 7.0, 7.0)
+        # Filled red dot
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(220, 40, 40, 220))
+        painter.drawEllipse(QPointF(wx, wy), 5.0, 5.0)
+        painter.restore()
+
+    # ── Overlay lines (reference lines) ───────────────────────────────
+
+    def set_overlay_lines(self, lines: list) -> None:
+        """Set reference line overlays. Each entry: (x1, y1, x2, y2, r, g, b, width) in image coords."""
+        self._overlay_lines = lines
+        self.update()
+
+    def clear_overlay_lines(self) -> None:
+        """Remove all reference line overlays."""
+        if self._overlay_lines:
+            self._overlay_lines = []
+            self.update()
 
     # ── Qt Event Handlers ─────────────────────────────────────────────
 
@@ -377,8 +1022,19 @@ class QtSliceViewer(QWidget):
             if self._pixmap is not None and not self._pixmap.isNull():
                 self._paint_image(painter)
 
+            if self._overlay_lines:
+                self._paint_overlay_lines(painter)
+
             if self._show_annotations:
                 self._paint_annotations(painter)
+            if self._tool_controller is not None and not self._in_wheel_scroll:
+                self._paint_tool_annotations(painter)
+
+            if self._sync_mode_active:
+                self._paint_sync_border(painter)
+
+            if self._sync_point_img is not None:
+                self._paint_sync_point(painter)
 
         finally:
             painter.end()
@@ -407,8 +1063,18 @@ class QtSliceViewer(QWidget):
 
         pos = event.position()
 
-        # Right button: Window/Level adjustment
+        # Right button: Window/Level (default) — or pan when Left is also held (L+R pan)
         if event.button() == Qt.MouseButton.RightButton:
+            self._right_button_down = True
+            if self._left_button_down:
+                # L+R simultaneous → pan (matches Advanced mode)
+                self._wl_dragging = False
+                self._lr_pan_active = True
+                self._pan_dragging = True
+                self._pan_start_pos = pos
+                self._pan_start_offset = QPointF(self._pan_offset)
+                event.accept()
+                return
             self._wl_dragging = True
             self._wl_start_pos = pos
             self._wl_start_window = self._current_window
@@ -416,31 +1082,150 @@ class QtSliceViewer(QWidget):
             event.accept()
             return
 
-        # Middle button or Ctrl+Left: Pan
-        if event.button() == Qt.MouseButton.MiddleButton or (
-            event.button() == Qt.MouseButton.LeftButton and event.modifiers() & Qt.KeyboardModifier.ControlModifier
-        ):
-            self._pan_dragging = True
-            self._pan_start_pos = pos
-            self._pan_start_offset = QPointF(self._pan_offset)
+        # Middle button: Zoom (matches Advanced VTK behavior — middle = zoom)
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._zoom_dragging = True
+            self._zoom_start_pos = pos
+            self._zoom_start_zoom = self._zoom
             event.accept()
             return
+
+        # Left button: behavior depends on tool mode
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._left_button_down = True
+            # Sync point mode: forward to parent VTKWidget
+            if self._sync_mode_active:
+                p = self.parent()
+                if p is not None:
+                    p.mousePressEvent(event)
+                return
+
+            # L+R simultaneous → pan (matches Advanced mode)
+            if self._right_button_down:
+                self._wl_dragging = False
+                self._lr_pan_active = True
+                self._pan_dragging = True
+                self._pan_start_pos = pos
+                self._pan_start_offset = QPointF(self._pan_offset)
+                event.accept()
+                return
+
+            # Ctrl+Left always → pan
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self._pan_dragging = True
+                self._pan_start_pos = pos
+                self._pan_start_offset = QPointF(self._pan_offset)
+                event.accept()
+                return
+
+            if self._tool_mode == self.TOOL_ZOOM:
+                self._zoom_dragging = True
+                self._zoom_start_pos = pos
+                self._zoom_start_zoom = self._zoom
+                event.accept()
+                return
+
+            if self._tool_mode == self.TOOL_WINDOW_LEVEL:
+                self._wl_dragging = True
+                self._wl_start_pos = pos
+                self._wl_start_window = self._current_window
+                self._wl_start_level = self._current_level
+                event.accept()
+                return
+
+            if self._tool_mode == self.TOOL_PAN:
+                self._pan_dragging = True
+                self._pan_start_pos = pos
+                self._pan_start_offset = QPointF(self._pan_offset)
+                event.accept()
+                return
+
+            if self._tool_mode == self.TOOL_STACKED:
+                if not self._is_stack_position_valid(pos):
+                    event.accept()
+                    return
+                self._stacked_dragging = True
+                self._stacked_last_y = pos.y()
+                self._stacked_last_emitted_target = int(self._current_slice_index)
+                self._stacked_accum = 0.0  # accumulated drag pixels
+                self._stacked_first_step_pending = True
+                self._begin_stack_drag_session()
+                self._begin_scroll_interaction()
+                self.stack_drag_state_changed.emit(True)  # B3.3
+                event.accept()
+                return
+
+            # Measurement tools: route to ToolController
+            if self._tool_controller is not None and self._tool_mode in self._MEASUREMENT_TOOLS:
+                from modules.viewer.tools.coord_resolver import CoordinateResolver
+                cr = CoordinateResolver(self, self._coord_backend)
+                ix, iy = cr.widget_to_image(pos.x(), pos.y())
+                _was_placing = self._tool_controller.get_preview_state() is not None
+                _is_text_tool = (self._tool_mode == self.TOOL_TEXT)
+                if self._tool_controller.on_mouse_press(ix, iy, self._current_slice_index, cr):
+                    self.update()
+                    # Auto-deactivate when placement completes (matches Advanced auto_deactivate_tool).
+                    # Eraser stays active until the user manually clicks the button again.
+                    if self._tool_mode != self.TOOL_ERASER:
+                        _now_placing = self._tool_controller.get_preview_state() is not None
+                        if _is_text_tool or (_was_placing and not _now_placing):
+                            self._emit_tool_completed()
+                    event.accept()
+                    return
+
+            # Default left-drag (no tool active): stacked scroll (matches Advanced mode)
+            if self._tool_mode == self.TOOL_NONE:
+                if not self._is_stack_position_valid(pos):
+                    event.accept()
+                    return
+                self._stacked_dragging = True
+                self._stacked_last_y = pos.y()
+                self._stacked_last_emitted_target = int(self._current_slice_index)
+                self._stacked_accum = 0.0  # accumulated drag pixels
+                self._stacked_first_step_pending = True
+                self._begin_stack_drag_session()
+                self._begin_scroll_interaction()
+                self.stack_drag_state_changed.emit(True)  # B3.3
+                event.accept()
+                return
 
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         pos = event.position()
 
+        # Sync point mode: forward left-drag to parent VTKWidget
+        if self._sync_mode_active and (event.buttons() & Qt.MouseButton.LeftButton):
+            p = self.parent()
+            if p is not None:
+                p.mouseMoveEvent(event)
+            return
+
+        # Annotation drag — runs before all other left-button handlers
+        if (
+            self._tool_controller is not None
+            and self._tool_controller.is_dragging
+            and (event.buttons() & Qt.MouseButton.LeftButton)
+        ):
+            from modules.viewer.tools.coord_resolver import CoordinateResolver
+            cr = CoordinateResolver(self, self._coord_backend)
+            ix, iy = cr.widget_to_image(pos.x(), pos.y())
+            self._tool_controller.on_mouse_move(ix, iy, self._current_slice_index)
+            self.update()
+            event.accept()
+            return
+
         # Window/Level drag
         if self._wl_dragging:
             dx = pos.x() - self._wl_start_pos.x()
             dy = pos.y() - self._wl_start_pos.y()
-
-            # Sensitivity scaled to image data range
-            sensitivity = max(1.0, self._current_window / 500.0)
+            # Radiography modalities (MG, DX, CR, XR) use 10x W/L sensitivity
+            # for their large dynamic range (matches Advanced mode MG boost)
+            _HIGH_SENS_MOD = frozenset({"MG", "DX", "CR", "XR"})
+            modality_mult = 10.0 if self._modality_hint in _HIGH_SENS_MOD else 1.0
+            sensitivity = max(1.0, self._current_window / 500.0) * modality_mult
             new_window = max(1.0, self._wl_start_window + dx * sensitivity)
             new_level = self._wl_start_level - dy * sensitivity
-
             self._current_window = new_window
             self._current_level = new_level
             self.window_level_changed.emit(new_window, new_level)
@@ -456,21 +1241,180 @@ class QtSliceViewer(QWidget):
             event.accept()
             return
 
+        # Zoom drag
+        if self._zoom_dragging:
+            self._fit_to_viewport = False
+            dy = pos.y() - self._zoom_start_pos.y()
+            factor = 1.0 + (-dy) * 0.005
+            new_zoom = max(self.MIN_ZOOM, min(self.MAX_ZOOM, self._zoom_start_zoom * factor))
+            self._zoom = new_zoom
+            self.zoom_changed.emit(self._zoom)
+            self.update()
+            event.accept()
+            return
+
+        # Stacked scroll drag (vertical movement → slice scroll)
+        if self._stacked_dragging:
+            # Stop stack interaction immediately once pointer leaves either
+            # the viewer page or the actual image area.
+            if not self._is_stack_position_valid(pos):
+                self._stacked_dragging = False
+                self._stacked_accum = 0.0
+                self._stacked_first_step_pending = False
+                self._end_stack_drag_session()
+                self._defer_scroll_settle()
+                self.stack_drag_state_changed.emit(False)  # B3.3
+                event.accept()
+                return
+
+            dy = pos.y() - self._stacked_last_y
+            self._stacked_last_y = pos.y()
+            n = int(max(0, self._total_slices_hint))
+            if n <= 1:
+                event.accept()
+                return
+
+            drag_speed = self._update_stack_drag_speed(dy)
+            # Keep protected-drag window armed for the full duration of the
+            # drag: every delivered mouseMove refreshes the deadline by 1500ms.
+            try:
+                ui_throttle.keepalive_protected_drag(1500.0)
+            except Exception:
+                pass
+            if self._stack_drag_policy == self.STACK_DRAG_POLICY_CLEARCANVAS:
+                emit_steps = self._consume_stack_drag_delta(dy, speed_px_per_sec=drag_speed)
+                if emit_steps != 0:
+                    self.slice_scroll_requested.emit(int(emit_steps))
+            else:
+                emit_steps = self._consume_stack_drag_delta(dy, speed_px_per_sec=drag_speed)
+                if emit_steps != 0:
+                    base_target = self._stacked_last_emitted_target
+                    if base_target is None:
+                        base_target = int(self._current_slice_index)
+                    target_slice = self._clamp_int(
+                        int(base_target) + int(emit_steps),
+                        0,
+                        n - 1,
+                    )
+                    self._stacked_last_emitted_target = int(target_slice)
+                    self.stack_drag_target_requested.emit(int(target_slice))
+            event.accept()
+            return
+
+        # Measurement tool move: update preview
+        if self._tool_controller is not None and self._tool_mode in self._MEASUREMENT_TOOLS:
+            from modules.viewer.tools.coord_resolver import CoordinateResolver
+            cr = CoordinateResolver(self, self._coord_backend)
+            ix, iy = cr.widget_to_image(pos.x(), pos.y())
+            if self._tool_controller.on_mouse_move(ix, iy, self._current_slice_index):
+                self.update()
+                self.mouse_moved.emit(ix, iy)
+                event.accept()
+                return
+
         # Track mouse position in image coords
         img_x, img_y = self.widget_to_image_coords(pos.x(), pos.y())
         self.mouse_moved.emit(img_x, img_y)
 
+        # Hover detection — update cursor when over annotations
+        if self._tool_controller is not None and not self._wl_dragging and not self._pan_dragging:
+            from modules.viewer.tools.coord_resolver import CoordinateResolver
+            cr = CoordinateResolver(self, self._coord_backend)
+            ix, iy = cr.widget_to_image(pos.x(), pos.y())
+            threshold = 12.0 / max(self._zoom, 0.1)
+            if self._tool_controller.on_hover(ix, iy, self._current_slice_index, threshold):
+                self.update()
+            cur_shape = self._tool_controller.get_hover_cursor_shape()
+            if cur_shape == "move":
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+            elif cur_shape == "handle":
+                self.setCursor(Qt.CursorShape.CrossCursor)
+            else:
+                self.unsetCursor()
+
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.RightButton and self._wl_dragging:
-            self._wl_dragging = False
+        # Sync point mode: forward left-release to parent VTKWidget
+        if self._sync_mode_active and event.button() == Qt.MouseButton.LeftButton:
+            p = self.parent()
+            if p is not None:
+                p.mouseReleaseEvent(event)
+            return
+
+        if event.button() == Qt.MouseButton.RightButton:
+            self._right_button_down = False
+            if self._lr_pan_active:
+                # L+R pan ended — clear combined-gesture state
+                self._lr_pan_active = False
+                self._pan_dragging = False
+                self._wl_dragging = False
+                event.accept()
+                return
+            if self._wl_dragging:
+                self._wl_dragging = False
+                event.accept()
+                return
+        if event.button() == Qt.MouseButton.MiddleButton and self._zoom_dragging:
+            self._zoom_dragging = False
             event.accept()
             return
-        if (event.button() == Qt.MouseButton.MiddleButton or event.button() == Qt.MouseButton.LeftButton) and self._pan_dragging:
-            self._pan_dragging = False
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._left_button_down = False
+            if self._lr_pan_active:
+                # L+R pan ended — clear all drag state
+                _was_stacking = self._stacked_dragging
+                self._lr_pan_active = False
+                self._pan_dragging = False
+                self._wl_dragging = False
+                self._stacked_dragging = False
+                self._zoom_dragging = False
+                if _was_stacking:
+                    self._end_stack_drag_session()
+                    self._defer_scroll_settle()
+                    self.stack_drag_state_changed.emit(False)  # B3.3
+                event.accept()
+                return
+            if self._pan_dragging:
+                self._pan_dragging = False
+                event.accept()
+                return
+            if self._zoom_dragging:
+                self._zoom_dragging = False
+                event.accept()
+                return
+            if self._stacked_dragging:
+                self._stacked_dragging = False
+                self._stacked_first_step_pending = False
+                self._end_stack_drag_session()
+                self._defer_scroll_settle()
+                self.stack_drag_state_changed.emit(False)  # B3.3
+                event.accept()
+                return
+        # Finalize annotation drag
+        if event.button() == Qt.MouseButton.LeftButton and self._tool_controller is not None and self._tool_controller.is_dragging:
+            from modules.viewer.tools.coord_resolver import CoordinateResolver
+            cr = CoordinateResolver(self, self._coord_backend)
+            ix, iy = cr.widget_to_image(event.position().x(), event.position().y())
+            self._tool_controller.on_mouse_release(ix, iy, self._current_slice_index)
+            self.update()
             event.accept()
             return
+        # Measurement tool release (end placement step)
+        if event.button() == Qt.MouseButton.LeftButton and self._tool_controller is not None and self._tool_mode in self._MEASUREMENT_TOOLS:
+            from modules.viewer.tools.coord_resolver import CoordinateResolver
+            cr = CoordinateResolver(self, self._coord_backend)
+            ix, iy = cr.widget_to_image(event.position().x(), event.position().y())
+            _was_placing = self._tool_controller.get_preview_state() is not None
+            if self._tool_controller.on_mouse_release(ix, iy, self._current_slice_index):
+                self.update()
+                # Detect ROI drag-release completion (press-drag-release gesture)
+                if self._tool_mode != self.TOOL_ERASER:
+                    _now_placing = self._tool_controller.get_preview_state() is not None
+                    if _was_placing and not _now_placing:
+                        self._emit_tool_completed()
+                event.accept()
+                return
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
@@ -505,6 +1449,8 @@ class QtSliceViewer(QWidget):
             self.update()
         else:
             # Slice scroll
+            self._begin_scroll_interaction()
+            self._defer_scroll_settle()
             slices_delta = -1 if delta > 0 else 1
             self.slice_scroll_requested.emit(slices_delta)
 
@@ -520,25 +1466,62 @@ class QtSliceViewer(QWidget):
     # ── Private: painting ─────────────────────────────────────────────
 
     def _paint_image(self, painter: QPainter) -> None:
-        """Paint the medical image centered with zoom and pan."""
+        """Paint the medical image centered with zoom, pan, rotation and flip.
+
+        Transform order is consistent with CoordinateResolver.image_to_widget:
+          flip (in image space) → rotate (around image centre) → translate to widget centre.
+
+        QPainter pre-multiplies each successive call, so to achieve
+          screen = Translate * Rotate * Scale(flip) * local
+        the CODE order must be: scale/flip first, rotate second, translate last.
+        """
         if self._pixmap is None:
             return
 
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, self._zoom > 1.0)
 
-        # Calculate centered position with zoom + pan
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
+        # Widget centre (rotation anchor) accounting for pan
+        cx = self.width() / 2.0 + self._pan_offset.x()
+        cy = self.height() / 2.0 + self._pan_offset.y()
         scaled_w = self._image_width * self._zoom * self._display_scale_x
         scaled_h = self._image_height * self._zoom * self._display_scale_y
-
-        dest_x = cx - scaled_w / 2.0 + self._pan_offset.x()
-        dest_y = cy - scaled_h / 2.0 + self._pan_offset.y()
-
-        dest_rect = QRectF(dest_x, dest_y, scaled_w, scaled_h)
         src_rect = QRectF(0, 0, self._image_width, self._image_height)
 
+        if self._rotation_angle == 0 and not self._flip_h and not self._flip_v:
+            # Fast path: no transform needed
+            dest_rect = QRectF(cx - scaled_w / 2.0, cy - scaled_h / 2.0, scaled_w, scaled_h)
+            painter.drawPixmap(dest_rect, self._pixmap, src_rect)
+            return
+
+        # Transform path (QPainter post-multiplies each call):
+        #   CODE order  : translate → rotate → scale(flip)
+        #   APPLIED order (to drawn points): scale(flip) → rotate → translate
+        # Effect on image-space origin (0,0): always maps to (cx, cy) in widget coords.
+        # Flip is applied first (in image space), rotate is about the image centre,
+        # then the result is placed at the widget centre — matches CoordinateResolver.
+        painter.save()
+        painter.translate(cx, cy)
+        painter.rotate(float(self._rotation_angle))
+        if self._flip_h:
+            painter.scale(-1.0, 1.0)
+        if self._flip_v:
+            painter.scale(1.0, -1.0)
+        dest_rect = QRectF(-scaled_w / 2.0, -scaled_h / 2.0, scaled_w, scaled_h)
         painter.drawPixmap(dest_rect, self._pixmap, src_rect)
+        painter.restore()
+
+    def _paint_overlay_lines(self, painter: QPainter) -> None:
+        """Paint reference line overlays in widget coordinates."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        for entry in self._overlay_lines:
+            # (x1_img, y1_img, x2_img, y2_img, r, g, b, width)
+            x1i, y1i, x2i, y2i, r, g, b, w = entry
+            wx1, wy1 = self.image_to_widget_coords(x1i, y1i)
+            wx2, wy2 = self.image_to_widget_coords(x2i, y2i)
+            pen = QPen(QColor.fromRgbF(r, g, b), max(1.0, w))
+            painter.setPen(pen)
+            painter.drawLine(QPointF(wx1, wy1), QPointF(wx2, wy2))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
     def _paint_annotations(self, painter: QPainter) -> None:
         """Paint corner text annotations."""
@@ -629,11 +1612,75 @@ class QtSliceViewer(QWidget):
             painter.drawText(int(text_x), int(text_y + fm.ascent()), text)
 
     def _calculate_fit_zoom(self) -> float:
-        """Calculate zoom factor to fit image in widget."""
+        """Calculate zoom factor to fit image in widget, accounting for rotation."""
         if self._image_width <= 0 or self._image_height <= 0:
             return 1.0
         widget_w = max(1, self.width())
         widget_h = max(1, self.height())
-        zoom_x = widget_w / float(self._image_width * self._display_scale_x)
-        zoom_y = widget_h / float(self._image_height * self._display_scale_y)
-        return min(zoom_x, zoom_y) * 0.95  # 5% margin
+        base_w = float(self._image_width) * float(max(self._display_scale_x, 1e-9))
+        base_h = float(self._image_height) * float(max(self._display_scale_y, 1e-9))
+        # For 90°/270° rotations the image occupies transposed dimensions on screen
+        if self._rotation_angle in (90, 270):
+            fit_w = base_h
+            fit_h = base_w
+        else:
+            fit_w = base_w
+            fit_h = base_h
+        return min(widget_w / fit_w, widget_h / fit_h) * 0.95  # 5% margin
+
+    def _begin_scroll_interaction(self) -> None:
+        """Enter the lightweight scroll mode used to suppress overlay churn."""
+        self._in_wheel_scroll = True
+        self._scroll_stop_timer.stop()
+
+    def _defer_scroll_settle(self) -> None:
+        """Keep scroll mode active briefly so settle work happens once."""
+        self._scroll_stop_timer.start()
+
+    def _on_scroll_stopped(self) -> None:
+        """Called shortly after wheel/drag settles — re-enable tool annotations."""
+        self._in_wheel_scroll = False
+        logger.debug(
+            "[B3.4_DIAG] QT_SCROLL_SETTLE viewer=%s slice=%d stacked_dragging=%s accum=%.2f",
+            self._debug_viewer_id,
+            self._current_slice_index,
+            bool(self._stacked_dragging),
+            float(self._stacked_accum),
+        )
+        self.update()
+
+    def keyPressEvent(self, event) -> None:
+        """Route Escape/Delete to ToolController when active."""
+        if self._tool_controller is not None and self._tool_mode in self._MEASUREMENT_TOOLS:
+            from PySide6.QtCore import Qt as QtCore_Qt
+            key = event.key()
+            key_str = None
+            if key == QtCore_Qt.Key.Key_Escape:
+                key_str = "Escape"
+            elif key == QtCore_Qt.Key.Key_Delete:
+                key_str = "Delete"
+            if key_str and self._tool_controller.on_key_press(key_str):
+                self.update()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def _paint_tool_annotations(self, painter: QPainter) -> None:
+        """Render measurement tool overlays via ToolController."""
+        if self._tool_controller is None:
+            return
+        from modules.viewer.tools.coord_resolver import CoordinateResolver
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        cr = CoordinateResolver(self, self._coord_backend)
+        self._tool_controller.render(painter, self._current_slice_index, cr)
+        painter.restore()
+
+    def _paint_sync_border(self, painter: QPainter) -> None:
+        """Draw a coloured border when sync-point mode is active."""
+        painter.save()
+        pen = QPen(QColor(0, 200, 255, 200), 3)   # cyan, 3 px
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
+        painter.restore()

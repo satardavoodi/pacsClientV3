@@ -4,15 +4,18 @@
   "completed_stages": [
     0,
     1,
-    2
+    2,
+    7,
+    8,
+    9
   ],
   "stages": {
     "0": {
       "name": "Preflight",
       "status": "completed",
-      "started_at_utc": "2026-04-24T09:08:26.750380+00:00",
+      "started_at_utc": "2026-04-24T22:16:37.835102+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_00_preflight.log",
-      "finished_at_utc": "2026-04-24T09:08:27.271302+00:00",
+      "finished_at_utc": "2026-04-24T22:16:38.476926+00:00",
       "command": [],
       "output_paths": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output"
@@ -22,7 +25,6 @@
       ],
       "report_path": null,
       "issues": [],
-      "error": "Nuitka is not installed in this interpreter",
       "notes": [
         "Preflight checks completed"
       ]
@@ -114,11 +116,87 @@
       "status": "running",
       "started_at_utc": "2026-04-24T11:48:39.285353+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_03_core_packages.log"
+    },
+    "7": {
+      "name": "Runtime Resources",
+      "status": "completed",
+      "started_at_utc": "2026-04-24T22:19:41.450838+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_07_runtime_resources.log",
+      "finished_at_utc": "2026-04-24T22:19:47.624490+00:00",
+      "command": [],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\core"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\core\\AIPacs.exe"
+      ],
+      "report_path": null,
+      "issues": [],
+      "notes": [
+        "Runtime resources staged",
+        "Qss -> Qss",
+        "Fonts -> Fonts",
+        "json-styles -> json-styles",
+        "config -> config",
+        "modules/cd_burner/assets -> modules/cd_burner/assets",
+        "modules/EchoMind/secretary/catalog -> modules/EchoMind/secretary/catalog",
+        "modules/EchoMind/secretary/prompts -> modules/EchoMind/secretary/prompts",
+        "modules/EchoMind/secretary/module_map.yaml -> modules/EchoMind/secretary",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_script.py -> modules/mpr/advanced_3d_slicer/slicer_custom_app",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/unified_logging.py -> modules/mpr/advanced_3d_slicer/slicer_custom_app",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/branding -> modules/mpr/advanced_3d_slicer/slicer_custom_app/branding",
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/docs -> modules/mpr/advanced_3d_slicer/slicer_custom_app/docs",
+        "generated-files/css/main.css -> Qss/main.qss",
+        "compare:Qss: pyinstaller=yes nuitka=yes",
+        "compare:Fonts: pyinstaller=no nuitka=yes",
+        "compare:config: pyinstaller=no nuitka=yes",
+        "compare:json-styles: pyinstaller=no nuitka=yes"
+      ]
+    },
+    "8": {
+      "name": "External Plugin Package Staging",
+      "status": "completed",
+      "started_at_utc": "2026-04-25T06:13:04.999156+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_08_plugin_staging.log",
+      "finished_at_utc": "2026-04-25T06:13:05.511975+00:00",
+      "command": [],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\plugin_packages"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\plugin_packages\\module_package_feed.json"
+      ],
+      "report_path": null,
+      "issues": [],
+      "notes": [
+        "Staged plugin packages: advanced_mpr, download_manager, echomind, education, offline_cloud_server, printing, run_cd, stitching, viewer, web_browser, zeta_boost"
+      ]
+    },
+    "9": {
+      "name": "Installer Staging",
+      "status": "completed",
+      "started_at_utc": "2026-04-25T06:13:30.646314+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_09_installer_staging.log",
+      "finished_at_utc": "2026-04-25T06:13:30.648108+00:00",
+      "command": [],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\manifest",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\manifest\\installation_profile.json",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\manifest\\release_manifest.json"
+      ],
+      "report_path": null,
+      "issues": [],
+      "notes": [
+        "Installer staging manifests generated"
+      ]
     }
   },
-  "updated_at_utc": "2026-04-24T11:48:39.285361+00:00",
-  "mode": "from_stage",
+  "updated_at_utc": "2026-04-25T06:13:32.676869+00:00",
+  "mode": "fresh",
   "clean_mode": "none",
-  "current_stage": 3,
+  "current_stage": null,
   "failed_stage": null
 }

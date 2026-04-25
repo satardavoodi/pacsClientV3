@@ -1,6 +1,9 @@
 """Lane management: normalize, enqueue, clear pending, lane-locked helpers"""
 # Auto-generated from engine.py — Phase 4 split
+import logging as _logging
 from typing import Optional
+
+_zb_lanes_logger = _logging.getLogger(__name__)
 
 
 class _ZBLanesMixin:
@@ -33,6 +36,10 @@ class _ZBLanesMixin:
         # when Patient B's study is downloading (cross-study ITK saturation fix).
         if (ZetaBoostEngine._global_active_download_count > 0
                 and lane in ("warmup", "background")):
+            _zb_lanes_logger.debug(
+                "FAST:zetaboost_gate lane=%s reason=global_download_active count=%d",
+                lane, ZetaBoostEngine._global_active_download_count,
+            )
             return False
 
         if self._total_inflight_locked() >= self._max_parallel_loads:
@@ -57,6 +64,11 @@ class _ZBLanesMixin:
         # is definitively complete.  This replaces the old timer-based
         # heuristic that could misfire between closely-spaced downloads.
         if not self._study_download_complete and lane in ("warmup", "background"):
+            _zb_lanes_logger.debug(
+                "FAST:zetaboost_gate lane=%s reason=study_download_pending "
+                "study_download_complete=%s intentional=True",
+                lane, self._study_download_complete,
+            )
             return False
         # Legacy timer-based fallback (kept for safety).
         if self._download_active and lane in ("warmup", "background"):

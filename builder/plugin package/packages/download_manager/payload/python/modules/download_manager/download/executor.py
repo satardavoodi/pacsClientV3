@@ -76,6 +76,17 @@ class DownloadExecutor:
         
         logger.info("✅ DownloadExecutor initialized")
 
+    @staticmethod
+    def _is_preemption_result(download_result: DownloadResult, state: Optional[DownloadState]) -> bool:
+        """True when an unsuccessful result represents auto-pause preemption, not failure."""
+        try:
+            if state and state.status == DownloadStatus.PAUSED and state.is_auto_paused:
+                return True
+            message = str(getattr(download_result, 'error_message', '') or '').lower()
+            return 'higher priority download' in message or 'preemption' in message
+        except Exception:
+            return False
+
     def _is_study_complete_on_disk(self, study_uid: str, metadata) -> bool:
         """
         Verify series completeness on disk to prevent false SKIP.
@@ -364,21 +375,41 @@ class DownloadExecutor:
                     completion_callback(study_uid, True)
             
             else:
-                self.state.update(
-                    study_uid,
-                    status=DownloadStatus.FAILED,
-                    error_message=download_result.error_message,
-                    end_time=datetime.now()
-                )
-                
-                logger.error(
-                    f"❌ Download failed: {task.patient_name} - "
-                    f"{download_result.error_message}"
-                )
-                
-                # Completion callback
-                if completion_callback:
-                    completion_callback(study_uid, False)
+                current_state = self.state.get(study_uid)
+                if self._is_preemption_result(download_result, current_state):
+                    logger.warning(
+                        f"⏸️ Download preempted: {task.patient_name} - "
+                        f"{download_result.error_message}"
+                    )
+                    if current_state and not (
+                        current_state.status == DownloadStatus.PAUSED and current_state.is_auto_paused
+                    ):
+                        self.state.update(
+                            study_uid,
+                            status=DownloadStatus.PAUSED,
+                            error_message=download_result.error_message,
+                            is_auto_paused=True,
+                            end_time=None,
+                        )
+                    # Completion callback
+                    if completion_callback:
+                        completion_callback(study_uid, False)
+                else:
+                    self.state.update(
+                        study_uid,
+                        status=DownloadStatus.FAILED,
+                        error_message=download_result.error_message,
+                        end_time=datetime.now()
+                    )
+                    
+                    logger.error(
+                        f"❌ Download failed: {task.patient_name} - "
+                        f"{download_result.error_message}"
+                    )
+                    
+                    # Completion callback
+                    if completion_callback:
+                        completion_callback(study_uid, False)
             
             return download_result
         

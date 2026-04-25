@@ -188,10 +188,17 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
             refresh_table_order=self._refresh_table_order,
             check_auto_resume=self._check_auto_resume,
         )
+        try:
+            from modules.viewer.fast.object_cache import set_object_cache
+            set_object_cache(self)
+            logger.info("[DM-INIT] Registered Download Manager as FAST object cache")
+        except Exception as exc:
+            logger.debug("[DM-INIT] FAST object cache registration skipped: %s", exc)
         
         # Register UI observer
         ui_observer = UIObserver(self)
         self.state_store.register_observer(ui_observer)
+        self._ui_observer = ui_observer
         
         # Theme
         self.theme = get_current_theme()
@@ -284,6 +291,7 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
         
         # Store pending progress updates to batch them
         self._pending_progress: Dict[str, Dict] = {}
+        self._cleaned_up = False
         
         # Speed update timer - updates speed and ETA labels every second
         self._speed_update_timer = QTimer(self)
@@ -293,6 +301,60 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
         
         logger.info("✅ DownloadManagerWidget initialized (v1.0.6 UI style)")
         logger.info("=" * 80)
+
+    def cleanup(self) -> None:
+        """Release timers, observers, network clients, and active workers."""
+        if getattr(self, "_cleaned_up", False):
+            return
+        self._cleaned_up = True
+
+        for timer_name in (
+            "_health_check_timer",
+            "_progress_throttle_timer",
+            "_speed_update_timer",
+        ):
+            timer = getattr(self, timer_name, None)
+            if timer is None:
+                continue
+            try:
+                timer.stop()
+            except Exception:
+                pass
+
+        try:
+            self._pending_progress.clear()
+        except Exception:
+            pass
+
+        try:
+            self.worker_pool.stop_all()
+        except Exception:
+            logger.exception("[DM] Failed to stop worker pool during cleanup")
+
+        try:
+            ui_observer = getattr(self, "_ui_observer", None)
+            if ui_observer is not None:
+                self.state_store.unregister_observer(ui_observer)
+        except Exception:
+            logger.exception("[DM] Failed to unregister UI observer during cleanup")
+
+        try:
+            self.grpc_client.close()
+        except Exception:
+            logger.exception("[DM] Failed to close gRPC client during cleanup")
+
+        try:
+            self._app_theme_manager.themeChanged.disconnect(self._on_app_theme_changed)
+        except Exception:
+            pass
+
+        logger.info("[DM] DownloadManagerWidget cleanup complete")
+
+    def closeEvent(self, event):
+        try:
+            self.cleanup()
+        finally:
+            super().closeEvent(event)
 
     def study_downloads(self):
         """Compatibility for legacy callers expecting a study_downloads list."""

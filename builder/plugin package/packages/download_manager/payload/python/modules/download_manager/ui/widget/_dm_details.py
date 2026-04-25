@@ -257,31 +257,22 @@ class _DMDetailsMixin:
         task = self._tasks.get(study_uid)
         additional_info = self._additional_task_info.get(study_uid, {}) if hasattr(self, '_additional_task_info') else {}
 
-        # If no state, try to get from task (for newly added but not yet started)
+        # If no state, synthesise a minimal one from the task so the details
+        # panel can still render without a separate task-lookup at every call
+        # site.  Only valid DownloadState fields are used here.
         if not state and task:
-            # Create a minimal state for display only (read-only)
             from ...core.models import DownloadState
             state = DownloadState(
                 study_uid=task.study_uid,
-                patient_name=task.patient_name,
-                patient_id=task.patient_id,
-                study_description=task.description,
-                modality=task.modality,
                 status=DownloadStatus.PENDING,
                 priority=DownloadPriority.NORMAL,
                 total_count=task.total_image_count,
-                downloaded_count=0,
-                progress_percent=0.0,
-                completed_series=[],
-                failed_series=[],
-                current_series="",
-                current_series_number="",
-                current_series_total=0,
-                current_series_downloaded=0,
-                current_series_progress=0.0,
-                retry_count=0,
-                error_message=None,
-                is_auto_paused=False
+                total_series_count=len(task.series_list),
+                patient_name=task.patient_name,
+                patient_id=task.patient_id,
+                modality=task.modality,
+                study_date=task.study_date,
+                study_description=task.description,
             )
 
         if not state:
@@ -294,13 +285,17 @@ class _DMDetailsMixin:
         logger.info(f"   Task available: {task is not None}")
         logger.info(f"   Additional info keys: {list(additional_info.keys())}")
 
-        # Update patient info
+        # Update patient info — prefer task for live data, fall back to state
+        # (which now carries patient_id, modality, study_date as of the unified model)
         self.patient_name_label.setText(f"Name: {state.patient_name or 'Unknown'}")
-        self.patient_id_label.setText(f"ID: {task.patient_id if task else '-'}")
+        pid = (task.patient_id if task else None) or getattr(state, 'patient_id', None) or '-'
+        self.patient_id_label.setText(f"ID: {pid}")
         self._reset_reception_fields("Loading...")
         self.url_label.setText(f"Study UID: {state.study_uid}")
-        self.study_date_label.setText(f"Study Date: {task.study_date if task else '-'}")
-        self.modality_label.setText(f"Modality: {task.modality if task else '-'}")
+        study_date = (task.study_date if task else None) or getattr(state, 'study_date', None) or '-'
+        self.study_date_label.setText(f"Study Date: {study_date}")
+        modality = (task.modality if task else None) or getattr(state, 'modality', None) or '-'
+        self.modality_label.setText(f"Modality: {modality}")
         self.study_desc_label.setText(f"Description: {state.study_description or '-'}")
 
         # Update additional patient information from additional_info dict
@@ -367,8 +362,12 @@ class _DMDetailsMixin:
         else:
             self.eta_label.setText("ETA: Unknown")
 
-        # Series count
-        series_count = len(task.series_list) if task else 0
+        # Series count — prefer task (has live list), fall back to state field
+        # (populated at creation time so it's always correct even when task is None)
+        if task:
+            series_count = len(task.series_list)
+        else:
+            series_count = getattr(state, 'total_series_count', 0)
         self.size_label.setText(f"Series: {series_count} | Images: {display_total}")
 
         # Priority
@@ -389,7 +388,10 @@ class _DMDetailsMixin:
         # Update series breakdown
         if task:
             self._update_series_breakdown_from_task(task, state)
-        
+
+        # Sync button states with current download status
+        self._update_button_states(state)
+
         logger.info(f"✅ [DETAILS-PANEL] Details panel updated successfully")
 
     def _log_patient_comprehensive_info(self, study_uid: str, state, task):
@@ -447,61 +449,56 @@ class _DMDetailsMixin:
 
     def _update_button_states(self, state):
         """Update button states based on current download status"""
+        # Guard: buttons may not exist yet (e.g. called before _setup_ui finishes)
+        if not self.start_btn or not self.pause_btn or not self.cancel_btn or not self.retry_btn:
+            return
+
         if not state:
             # Disable all buttons if no state
             self.start_btn.setEnabled(False)
             self.pause_btn.setEnabled(False)
             self.cancel_btn.setEnabled(False)
             self.retry_btn.setEnabled(False)
-            logger.info(f"📋 [BUTTONS] No state - all buttons disabled")
             return
 
         status = state.status
-        logger.info(f"📋 [BUTTONS] Updating button states for status: {status.value}")
+        logger.debug(f"[BUTTONS] Updating button states for status: {status.value}")
 
-        # Enable/disable buttons based on current status
         if status in [DownloadStatus.PENDING, DownloadStatus.VALIDATING, DownloadStatus.DOWNLOADING]:
             # Download is active - enable pause and cancel
             self.start_btn.setEnabled(False)
             self.pause_btn.setEnabled(True)
             self.cancel_btn.setEnabled(True)
             self.retry_btn.setEnabled(False)
-            logger.info(f"✅ [BUTTONS] Active download - pause and cancel enabled")
-        elif status in [DownloadStatus.PAUSED]:
+        elif status == DownloadStatus.PAUSED:
             # Download is paused - enable start and cancel
             self.start_btn.setEnabled(True)
             self.pause_btn.setEnabled(False)
             self.cancel_btn.setEnabled(True)
             self.retry_btn.setEnabled(False)
-            logger.info(f"📋 [BUTTONS] Paused download - start and cancel enabled")
-        elif status in [DownloadStatus.COMPLETED]:
-            # Download is completed - disable start, pause, cancel; enable retry
+        elif status == DownloadStatus.COMPLETED:
+            # Download is completed - only retry makes sense
             self.start_btn.setEnabled(False)
             self.pause_btn.setEnabled(False)
             self.cancel_btn.setEnabled(False)
             self.retry_btn.setEnabled(True)
-            logger.info(f"📋 [BUTTONS] Completed download - retry enabled")
-        elif status in [DownloadStatus.FAILED]:
-            # Download failed - enable retry and cancel
+        elif status == DownloadStatus.FAILED:
+            # Download failed - start (resume) and retry both work
             self.start_btn.setEnabled(True)
             self.pause_btn.setEnabled(False)
             self.cancel_btn.setEnabled(True)
             self.retry_btn.setEnabled(True)
-            logger.info(f"📋 [BUTTONS] Failed download - start, cancel, retry enabled")
-        elif status in [DownloadStatus.CANCELLED]:
-            # Download cancelled - enable start and retry
+        elif status == DownloadStatus.CANCELLED:
+            # Download cancelled - can restart or retry
             self.start_btn.setEnabled(True)
             self.pause_btn.setEnabled(False)
             self.cancel_btn.setEnabled(False)
             self.retry_btn.setEnabled(True)
-            logger.info(f"📋 [BUTTONS] Cancelled download - start and retry enabled")
         else:
-            # Default state - enable start
             self.start_btn.setEnabled(True)
             self.pause_btn.setEnabled(False)
             self.cancel_btn.setEnabled(False)
             self.retry_btn.setEnabled(False)
-            logger.info(f"📋 [BUTTONS] Default state - start enabled")
 
     def _update_series_breakdown_from_task(self, task: DownloadTask, state: DownloadState):
         """Update series breakdown tree from task and state"""
@@ -521,9 +518,18 @@ class _DMDetailsMixin:
             empty_label.setStyleSheet("color: #64748b; font-size: 11px; padding: 8px;")
             self.series_layout.addWidget(empty_label)
         else:
+            # If the whole study is done every series must be done too, even if
+            # the main-process state.completed_series list is incomplete (it is
+            # populated from the subprocess which cannot write our state store).
+            study_fully_complete = state.status == DownloadStatus.COMPLETED
+
             for series_info in task.series_list:
-                is_completed = series_info.series_uid in state.completed_series
-                is_failed = series_info.series_uid in state.failed_series
+                is_completed = (
+                    study_fully_complete
+                    or series_info.series_uid in state.completed_series
+                    or series_info.series_uid in state.skipped_series
+                )
+                is_failed = (not study_fully_complete) and series_info.series_uid in state.failed_series
                 is_current = (
                     state.current_series == series_info.series_uid or
                     state.current_series_number == series_info.series_number
@@ -874,8 +880,21 @@ class _DMDetailsMixin:
         
         # Store speed label reference for later updates
         self._speed_label_widgets[state.study_uid] = speed_label
-        
-        self.download_table.setItem(row, 5, QTableWidgetItem(state.priority.display_name))
+
+        # Priority column — colored label so each tier is visually distinct
+        priority_label = QLabel(state.priority.display_name)
+        priority_label.setAlignment(Qt.AlignCenter)
+        priority_label.setStyleSheet(f"""
+            QLabel {{
+                color: {state.priority.color_hex};
+                font-weight: 700;
+                font-size: 11px;
+                background: transparent;
+                padding: 2px 4px;
+            }}
+        """)
+        priority_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.download_table.setCellWidget(row, 5, priority_label)
         logger.info(f"📥 [ROW-ADD] Populated all cells for row {row}")
 
         # Add action buttons

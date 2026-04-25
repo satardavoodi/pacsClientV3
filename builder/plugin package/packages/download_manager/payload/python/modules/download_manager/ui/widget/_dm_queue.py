@@ -378,14 +378,22 @@ class _DMQueueMixin:
             task = self._tasks.get(study_uid)
 
             display_total = state.total_count or (task.total_image_count if task else 0)
-            display_downloaded = state.downloaded_count
-            display_percent = state.progress_percent
-            if display_percent <= 0 and display_total > 0 and display_downloaded > 0:
-                display_percent = (display_downloaded / display_total) * 100
-            if display_percent < 0:
-                display_percent = 0.0
-            elif display_percent > 100:
+
+            # If the study is fully complete, always display 100 % regardless of
+            # whatever intermediate value the state last held.  This prevents the
+            # badge showing "COMPLETED" while the bar still shows 37 %.
+            if state.status == DownloadStatus.COMPLETED:
                 display_percent = 100.0
+                display_downloaded = display_total
+            else:
+                display_downloaded = state.downloaded_count
+                display_percent = state.progress_percent
+                if display_percent <= 0 and display_total > 0 and display_downloaded > 0:
+                    display_percent = (display_downloaded / display_total) * 100
+                if display_percent < 0:
+                    display_percent = 0.0
+                elif display_percent > 100:
+                    display_percent = 100.0
             
             # Update table progress bar
             try:

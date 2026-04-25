@@ -160,6 +160,14 @@ class LoadingSpinner(QWidget):
         
     def wheelEvent(self, event):
         """Block wheel events from reaching underlying widgets"""
+        print(f"[DIAG-SPINNER-BLOCK] LoadingSpinner blocking wheelEvent! visible={self.isVisible()} parent={type(self.parent()).__name__ if self.parent() else 'None'}", flush=True)
+        import logging as _ls_logging
+        _ls_logger = _ls_logging.getLogger(__name__)
+        _ls_logger.info(
+            "[SPINNER] wheelEvent BLOCKED — spinner visible=%s parent=%s",
+            self.isVisible(),
+            type(self.parent()).__name__ if self.parent() else "None",
+        )
         event.accept()
         
     def keyPressEvent(self, event):
@@ -207,8 +215,15 @@ class ViewportSpinner:
                     self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 except Exception:
                     pass
+            try:
+                if hasattr(self.viewport_widget, '_update_empty_drop_hint_visibility'):
+                    self.viewport_widget._update_empty_drop_hint_visibility()
+            except Exception:
+                pass
             return
         except Exception:
+            # Fall back to the legacy in-widget spinner if the branded overlay
+            # cannot be created for any reason.
             if not self.spinner:
                 self.spinner = LoadingSpinner(self.viewport_widget, message)
             else:
@@ -219,7 +234,13 @@ class ViewportSpinner:
                 pass
 
             self.spinner.start_spinning()
+            # Ensure spinner is properly positioned within the viewport
             self.spinner.center_in_parent()
+            try:
+                if hasattr(self.viewport_widget, '_update_empty_drop_hint_visibility'):
+                    self.viewport_widget._update_empty_drop_hint_visibility()
+            except Exception:
+                pass
         
     def show_reset(self, message="Applying reset..."):
         """Show spinner during reset operation"""
@@ -241,6 +262,11 @@ class ViewportSpinner:
                 self.overlay = None
         if self.spinner:
             self.spinner.stop_spinning()
+        try:
+            if hasattr(self.viewport_widget, '_update_empty_drop_hint_visibility'):
+                self.viewport_widget._update_empty_drop_hint_visibility()
+        except Exception:
+            pass
     
     def cleanup(self):
         """Cleanup spinner resources"""

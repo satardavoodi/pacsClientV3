@@ -1,0 +1,37 @@
+{
+  "stage": 7,
+  "key": "runtime_resources",
+  "title": "Runtime Resources",
+  "created_at_utc": "2026-04-24T22:19:47.624618+00:00",
+  "marker_only": true,
+  "command": [],
+  "output_paths": [
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\core"
+  ],
+  "artifact_paths": [
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\core\\AIPacs.exe"
+  ],
+  "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_07_runtime_resources.log",
+  "report_path": null,
+  "issues": [],
+  "notes": [
+    "Runtime resources staged",
+    "Qss -> Qss",
+    "Fonts -> Fonts",
+    "json-styles -> json-styles",
+    "config -> config",
+    "modules/cd_burner/assets -> modules/cd_burner/assets",
+    "modules/EchoMind/secretary/catalog -> modules/EchoMind/secretary/catalog",
+    "modules/EchoMind/secretary/prompts -> modules/EchoMind/secretary/prompts",
+    "modules/EchoMind/secretary/module_map.yaml -> modules/EchoMind/secretary",
+    "modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_script.py -> modules/mpr/advanced_3d_slicer/slicer_custom_app",
+    "modules/mpr/advanced_3d_slicer/slicer_custom_app/unified_logging.py -> modules/mpr/advanced_3d_slicer/slicer_custom_app",
+    "modules/mpr/advanced_3d_slicer/slicer_custom_app/branding -> modules/mpr/advanced_3d_slicer/slicer_custom_app/branding",
+    "modules/mpr/advanced_3d_slicer/slicer_custom_app/docs -> modules/mpr/advanced_3d_slicer/slicer_custom_app/docs",
+    "generated-files/css/main.css -> Qss/main.qss",
+    "compare:Qss: pyinstaller=yes nuitka=yes",
+    "compare:Fonts: pyinstaller=no nuitka=yes",
+    "compare:config: pyinstaller=no nuitka=yes",
+    "compare:json-styles: pyinstaller=no nuitka=yes"
+  ]
+}

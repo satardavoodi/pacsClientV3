@@ -17,6 +17,16 @@ from vtkmodules.util import numpy_support
 
 from .lazy_volume_registry import register_loader
 from .pydicom_2d_backend import PyDicom2DBackend
+from ._decode_guard import (
+    backing_store_probe,
+    thread_state_canary,
+    h13_write_begin,
+    h13_write_end,
+    h13_get_overlap_stats,
+    _H13_DEEP_COPY,
+    _H13_RENDER_GATE,
+    _H13_KEEPALIVE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +280,10 @@ class PyDicomLazyVolume(QObject):
             2,
             int(os.getenv("AIPACS_PYDICOM_LAZY_WORKERS", str(min(4, max(2, (os.cpu_count() or 4) // 2)))) or "4"),
         )
+        # T3: single-worker override for diagnostics
+        if os.environ.get("AIPACS_PYDICOM_SINGLE_WORKER", ""):
+            self._worker_count = 1
+            logger.info("[T3] Worker count forced to 1 by AIPACS_PYDICOM_SINGLE_WORKER")
 
         self._requests = 0
         self._cache_hits = 0
@@ -281,6 +295,7 @@ class PyDicomLazyVolume(QObject):
         self._requested_slice_idx = 0
         self._last_requested_slice_idx = 0
         self._scroll_direction = 0
+        self._t3_snapshot = None  # H13-T3: keeps render-time numpy snapshot alive
 
         try:
             if hasattr(self.backend, "set_prefetch_radius"):
@@ -308,7 +323,7 @@ class PyDicomLazyVolume(QObject):
         )
         vtk_arr = numpy_support.numpy_to_vtk(
             num_array=flat,
-            deep=False,
+            deep=bool(_H13_DEEP_COPY),
             array_type=_vtk_array_type_for(self.dtype),
         )
         self.vtk_image_data.GetPointData().SetScalars(vtk_arr)
@@ -380,7 +395,7 @@ class PyDicomLazyVolume(QObject):
             return self.slice_count
 
         old_count = self.slice_count
-        logger.info("pydicom-lazy grow: %d -> %d slices", old_count, new_count)
+        logger.info("pydicom-lazy grow: %d -> %d slices (H13-GROW entry)", old_count, new_count)
 
         # Build old→new index mapping from file-path identity.  If a slice that
         # was at old position 5 is now at new position 8, its decoded pixels
@@ -438,6 +453,7 @@ class PyDicomLazyVolume(QObject):
                 new_loaded[:old_count] = old_loaded[:old_count]
 
             # 3. Swap references
+            old_volume_ref = self._volume  # keep ref for T5 keep-alive
             self._volume = new_volume
             self._loaded = new_loaded
             self.slice_count = new_count
@@ -451,12 +467,25 @@ class PyDicomLazyVolume(QObject):
             )
             vtk_arr = numpy_support.numpy_to_vtk(
                 num_array=flat,
-                deep=False,
+                deep=bool(_H13_DEEP_COPY),
                 array_type=_vtk_array_type_for(self.dtype),
             )
             self.vtk_image_data.GetPointData().SetScalars(vtk_arr)
             self.vtk_image_data._numpy_backing_store = self._volume
             self.vtk_image_data.Modified()
+
+            # H13-T5: keep old volume alive to prevent use-after-free
+            # Cap at 5 entries (~2GB worst case for large series) to bound memory.
+            if _H13_KEEPALIVE and old_volume_ref is not None:
+                if not hasattr(self, "_old_volumes_keepalive"):
+                    self._old_volumes_keepalive = []
+                self._old_volumes_keepalive.append(old_volume_ref)
+                if len(self._old_volumes_keepalive) > 5:
+                    self._old_volumes_keepalive = self._old_volumes_keepalive[-5:]
+                logger.info(
+                    "[H13-T5] keepalive old volume, stashed=%d",
+                    len(self._old_volumes_keepalive),
+                )
 
         # 5. Resize request queue if needed
         try:
@@ -480,8 +509,36 @@ class PyDicomLazyVolume(QObject):
         except Exception:
             pass
 
+        # 7. Revive workers that auto-exited after all-decoded (H13-FIX)
+        self._revive_workers_if_needed()
+
         logger.info("pydicom-lazy grow: complete, now %d slices", self.slice_count)
         return self.slice_count
+
+    def _revive_workers_if_needed(self) -> None:
+        """Re-start workers that auto-exited after all slices were decoded.
+
+        Called by ``grow()`` when new slices arrive from progressive download
+        and workers need to resume decoding.
+        """
+        if self._closing.is_set():
+            return
+        living = [w for w in self._workers if w.is_alive()]
+        needed = self._worker_count - len(living)
+        if needed <= 0:
+            return
+        logger.info(
+            "[H13-REVIVE] reviving %d workers (alive=%d target=%d)",
+            needed, len(living), self._worker_count,
+        )
+        for i in range(needed):
+            worker = threading.Thread(
+                target=self._worker_loop,
+                daemon=True,
+                name=f"PyDicomLazyVolumeWorker-revived-{i + 1}",
+            )
+            worker.start()
+            self._workers.append(worker)
 
     def close(self) -> None:
         """Stop workers and release this loader's reference to the volume.
@@ -559,6 +616,15 @@ class PyDicomLazyVolume(QObject):
 
     def get_metrics_snapshot(self) -> Dict[str, float]:
         requests = max(1, int(self._requests))
+        overlap_count, overlap_max_ns = h13_get_overlap_stats()
+        try:
+            qsize = float(self._request_queue.qsize())
+        except Exception:
+            qsize = -1.0
+        try:
+            pending_count = float(len(self._pending))
+        except Exception:
+            pending_count = -1.0
         return {
             "requests": float(self._requests),
             "cache_hits": float(self._cache_hits),
@@ -568,6 +634,12 @@ class PyDicomLazyVolume(QObject):
             "decode_read_ms_total": float(self._decode_read_ms_total),
             "decode_pixel_ms_total": float(self._decode_pixel_ms_total),
             "decode_post_ms_total": float(self._decode_post_ms_total),
+            # H13-P2 / H13-P3 / H13-P5
+            "h13_overlap_count": float(overlap_count),
+            "h13_overlap_max_ms": float(overlap_max_ns) / 1_000_000.0,
+            "h13_queue_depth": qsize,
+            "h13_pending_count": pending_count,
+            "h13_worker_count": float(self._worker_count),
         }
 
     @staticmethod
@@ -674,13 +746,52 @@ class PyDicomLazyVolume(QObject):
         return cache_hit
 
     def mark_vtk_modified(self) -> None:
+        _cnt = getattr(self, '_t3_render_count', 0) + 1
+        self._t3_render_count = _cnt
         try:
-            scalars = self.vtk_image_data.GetPointData().GetScalars()
-            if scalars is not None:
-                scalars.Modified()
-            self.vtk_image_data.Modified()
-        except Exception:
-            pass
+            if _H13_DEEP_COPY:
+                # ── H13-T3: Render-time snapshot ──────────────────────────
+                # Copy the current volume state into an independent numpy
+                # array and re-link VTK scalars to the copy.  This breaks
+                # the shared-memory coupling: workers continue writing to
+                # self._volume (memmap) while VTK Render() reads from the
+                # snapshot.  The snapshot is kept alive by self._t3_snapshot
+                # until the next frame replaces it.
+                if _cnt == 1 or _cnt % 100 == 0:
+                    logger.info(
+                        "[H13-T3-RENDER] deep_copy=True frame=%d slices=%d",
+                        _cnt, self.slice_count,
+                    )
+                vol = self._volume
+                if vol is not None:
+                    flat = (
+                        vol.reshape(-1, self.components).copy()
+                        if self.components > 1
+                        else vol.ravel(order="C").copy()
+                    )
+                    self._t3_snapshot = flat          # prevent GC
+                    vtk_arr = numpy_support.numpy_to_vtk(
+                        num_array=flat,
+                        deep=False,                   # flat is already a copy
+                        array_type=_vtk_array_type_for(self.dtype),
+                    )
+                    self.vtk_image_data.GetPointData().SetScalars(vtk_arr)
+                self.vtk_image_data.Modified()
+            else:
+                if _cnt == 1:
+                    logger.info(
+                        "[H13-T3-RENDER] deep_copy=False frame=%d slices=%d",
+                        _cnt, self.slice_count,
+                    )
+                scalars = self.vtk_image_data.GetPointData().GetScalars()
+                if scalars is not None:
+                    scalars.Modified()
+                self.vtk_image_data.Modified()
+        except Exception as exc:
+            logger.warning(
+                "[H13-T3-RENDER] mark_vtk_modified FAILED frame=%d deep_copy=%s: %s",
+                _cnt, _H13_DEEP_COPY, exc, exc_info=True,
+            )
 
     def _enqueue_slice(self, idx: int, high_priority: bool = False) -> None:
         if self._closing.is_set():
@@ -753,7 +864,10 @@ class PyDicomLazyVolume(QObject):
             vol = self._volume
             if vol is None:
                 return False
-            vol[i] = arr
+            with backing_store_probe("lazy_volume_write"):
+                h13_write_begin(threading.get_ident(), i)
+                vol[i] = arr
+                h13_write_end(i)
             self._loaded[i] = True
             # v2.2.9.2: Do NOT call scalars.Modified() / vtk_image_data.Modified()
             # from the worker thread.  VTK is NOT thread-safe — mutating the
@@ -808,11 +922,18 @@ class PyDicomLazyVolume(QObject):
                         ww, wc = self.backend.get_default_window_level(idx)
                 except Exception:
                     ww = wc = None
+                _t_filter = time.perf_counter()
                 arr2 = apply_pooyan_opencv_to_slice_int16(
                     arr2,
                     self._pooyan_opencv_params,
                     window_center=wc,
                     window_width=ww,
+                )
+                _filter_ms = (time.perf_counter() - _t_filter) * 1000.0
+                logger.debug(
+                    "FAST:lazy_volume_filter_apply slice=%d modality=%s filter_ms=%.2f "
+                    "arr_shape=%s source=prefetch_bake",
+                    idx, modality, _filter_ms, arr2.shape,
                 )
             except ImportError:
                 self._pooyan_opencv_enabled = False
@@ -921,6 +1042,26 @@ class PyDicomLazyVolume(QObject):
             try:
                 item = self._request_queue.get(timeout=0.2)
             except queue.Empty:
+                # ── H13-FIX: Auto-shutdown idle workers ──────────────────
+                # Workers idle in queue.get() keep their Python thread state
+                # registered in the interpreter.  VTK 9.6 PyPI wheel lacks
+                # VTK_PYTHON_FULL_THREADSAFE — its C++ Render()/SetSlice()
+                # release the GIL without proper vtkPythonScopeGilEnsurer.
+                # When idle workers exist, the GIL handoff corrupts thread
+                # state → Fatal "PyThreadState_Get: GIL is released".
+                # Fix: once ALL slices are decoded, workers have no more
+                # useful work — exit the loop to eliminate the thread.  If
+                # grow() adds new slices, it revives workers on demand.
+                if not self._closing.is_set() and self.slice_count > 0:
+                    try:
+                        if bool(np.all(self._loaded[:self.slice_count])):
+                            logger.info(
+                                "[H13-AUTOEXIT] worker %s exiting: all %d slices decoded",
+                                threading.current_thread().name, self.slice_count,
+                            )
+                            break
+                    except Exception:
+                        pass
                 continue
             except Exception:
                 continue
@@ -946,7 +1087,9 @@ class PyDicomLazyVolume(QObject):
                 if not self._is_relevant_request(int(idx)):
                     continue
                 if not self._decoder_failed:
+                    thread_state_canary("lazy_worker", "pre_load")
                     self._load_slice_blocking(int(idx), emit_signal=True)
+                    thread_state_canary("lazy_worker", "post_load")
             except Exception as e:
                 self._decoder_failed = True
                 if not self._decode_failed_emitted:

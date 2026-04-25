@@ -4,6 +4,7 @@
 
 
 import logging
+import time
 
 from PySide6.QtCore import Signal, Qt, QTimer
 
@@ -15,6 +16,119 @@ logger = logging.getLogger(__name__)
 
 class _DMPriorityMixin:
     """Priority & coordination: critical series, viewed series, preemption"""
+
+    def _find_object_request_context(self, series_uid: str):
+        """Return ``(study_uid, series_info)`` for a FAST object request."""
+        uid = str(series_uid or "").strip()
+        if not uid:
+            return None
+        for study_uid, task in dict(getattr(self, '_tasks', {}) or {}).items():
+            for series_info in getattr(task, 'series_list', []) or []:
+                if str(getattr(series_info, 'series_uid', '') or '') == uid:
+                    return str(study_uid), series_info
+        return None
+
+    def _object_file_path_for(self, study_uid: str, series_number: str, slice_index: int):
+        """Map a zero-based viewer slice index to the current local DICOM path."""
+        try:
+            instance_no = max(1, int(slice_index) + 1)
+        except Exception:
+            instance_no = 1
+        return (
+            self.base_output_dir
+            / str(study_uid)
+            / str(series_number)
+            / f"Instance_{instance_no:04d}.dcm"
+        )
+
+    def has_object(self, series_uid: str, slice_index: int) -> bool:
+        """ObjectCache hook: true when the requested slice file is local."""
+        ctx = self._find_object_request_context(series_uid)
+        if ctx is None:
+            return False
+        study_uid, series_info = ctx
+        path = self._object_file_path_for(
+            study_uid,
+            str(getattr(series_info, 'series_number', '') or ''),
+            int(slice_index),
+        )
+        try:
+            return bool(path.exists())
+        except Exception:
+            return False
+
+    def request_object(self, priority: int, series_uid: str, slice_index: int) -> bool:
+        """ObjectCache hook: promote the owning series when a stack target is missing.
+
+        The current socket protocol downloads by series/batch, not arbitrary SOP
+        object.  This method therefore turns P0/P1 stack object requests into the
+        strongest safe intent available today: mark the owning series CRITICAL
+        and trigger the existing series retry/start path, with debounce so drag
+        events cannot flood the Download Manager.
+        """
+        ctx = self._find_object_request_context(series_uid)
+        if ctx is None:
+            return False
+
+        study_uid, series_info = ctx
+        series_number = str(getattr(series_info, 'series_number', '') or '')
+        if not series_number:
+            return False
+        if self.has_object(series_uid, slice_index):
+            return True
+
+        try:
+            pri = int(priority)
+        except Exception:
+            pri = 4
+        # P0 can refresh intent a little sooner; P1+ requests collapse harder.
+        min_interval_s = 0.25 if pri <= 0 else 0.75
+        now = time.monotonic()
+        last_map = getattr(self, '_fast_object_request_last_s', None)
+        if last_map is None:
+            last_map = {}
+            self._fast_object_request_last_s = last_map
+        key = (str(study_uid), series_number)
+        last_t = float(last_map.get(key, 0.0) or 0.0)
+        if now - last_t < min_interval_s:
+            return False
+        last_map[key] = now
+
+        try:
+            self.intent_coordinator.request_critical_series(study_uid, series_number)
+        except Exception as exc:
+            logger.debug(
+                "[FAST-OBJECT] critical-series intent failed study=%s series=%s slice=%s: %s",
+                study_uid[:40],
+                series_number,
+                slice_index,
+                exc,
+            )
+            return False
+
+        try:
+            state = self.state_store.get(study_uid)
+            current_series = str(getattr(state, 'current_series_number', '') or '') if state else ''
+            is_active = bool(getattr(state, 'is_active', False)) if state else False
+            if (not is_active or current_series != series_number) and hasattr(self, '_on_series_retry'):
+                self._on_series_retry(study_uid, series_number, str(series_uid or ''))
+        except Exception as exc:
+            logger.debug(
+                "[FAST-OBJECT] series retry hint failed study=%s series=%s slice=%s: %s",
+                study_uid[:40],
+                series_number,
+                slice_index,
+                exc,
+            )
+
+        logger.debug(
+            "[FAST-OBJECT] requested study=%s series=%s slice=%s priority=%s",
+            study_uid[:40],
+            series_number,
+            slice_index,
+            pri,
+        )
+        return True
 
     def start_priority_download_immediately(
         self,

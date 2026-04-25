@@ -52,10 +52,27 @@ try:
 except ImportError:
     _NUMPY_AVAILABLE = False
 
+import atexit
+
+from modules.viewer.fast._decode_guard import (
+    decode_serialisation_guard,
+    log_decode_entry,
+    log_decode_exit,
+    extract_codec_info,
+    thread_state_canary,
+)
+
+# ---------------------------------------------------------------------------
+# T1 toggle — disable booster entirely via env var
+# ---------------------------------------------------------------------------
+_BOOSTER_DISABLED = bool(os.environ.get("AIPACS_DISABLE_BOOSTER", ""))
+
+_h12_log = __import__("logging").getLogger("aipacs.h12.booster")
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_DEFAULT_WINDOW: int = 20   # slices each side of center
+_DEFAULT_WINDOW: int = int(os.environ.get("AIPACS_BOOSTER_WINDOW", "20"))   # slices each side; override via env for P2 experiment
 _HYSTERESIS: int = 5        # keep extra slices beyond window before evicting
 
 
@@ -101,8 +118,18 @@ class ImageSliceBooster:
     def __init__(self, window: int = _DEFAULT_WINDOW, logger=None) -> None:
         self._window: int = max(1, int(window))
         self._logger = logger
+        # B4.2: programmatic disable — when True, all public methods are no-ops.
+        # Set by ViewerController when FAST backend is active (the pipeline has
+        # its own pixel_cache + disk_cache + prefetch that fully supersede the
+        # booster).  Eliminates one daemon thread, ~20 MB RAM, and GIL
+        # contention per active series.
+        self.disabled: bool = _BOOSTER_DISABLED
         self._lock: threading.Lock = threading.Lock()
         self._cancel: threading.Event = threading.Event()
+        # B3.6: Interaction pause gate — worker waits on this before each decode.
+        # set() = unpaused (go), clear() = paused (block).
+        self._interaction_gate: threading.Event = threading.Event()
+        self._interaction_gate.set()  # initially unpaused
         self._active_series: Optional[str] = None
         self._instance_paths: List[str] = []   # ordered DICOM file paths
         self._center_slice: int = 0
@@ -110,6 +137,7 @@ class ImageSliceBooster:
         # slice_idx → decoded numpy array (dtype uint16 or int16 typically)
         self._pixel_cache: Dict[int, "np.ndarray"] = {}
         self._worker: Optional[threading.Thread] = None
+        atexit.register(self.clear)
 
     # ---------------------------------------------------------------------- public API
 
@@ -135,18 +163,34 @@ class ImageSliceBooster:
         center_slice:
             Initial slice index around which to build the window (0-based).
         """
+        # T1 + B4.2: skip entirely when booster is disabled
+        if self.disabled:
+            return
+
         sn = str(series_number)
         paths: List[str] = list(instance_paths or [])
         total: int = len(paths)
         center: int = max(0, min(int(center_slice), total - 1)) if total > 0 else 0
 
-        # Cancel and join old worker.
+        # Cancel and join old worker (T4 lifecycle hardening + H12-2 logging).
         self._cancel.set()
         if self._worker is not None:
+            old_tid = self._worker.ident
             try:
                 self._worker.join(timeout=0.5)
             except Exception:
                 pass
+            still_alive = self._worker.is_alive()
+            _h12_log.info(
+                "[H12-2] JOIN_RESULT caller=set_active old_tid=%s alive_after_join=%s series=%s",
+                old_tid, still_alive, sn,
+            )
+            if still_alive:
+                _h12_log.warning(
+                    "[H12-2] JOIN_TIMEOUT caller=set_active old_tid=%s — skipping new worker",
+                    old_tid,
+                )
+                return
 
         with self._lock:
             self._active_series = sn
@@ -179,6 +223,8 @@ class ImageSliceBooster:
         Slices outside ``[new_center - WINDOW - HYSTERESIS ..
         new_center + WINDOW + HYSTERESIS]`` are evicted.
         """
+        if self.disabled:
+            return
         sn = str(series_number)
         with self._lock:
             if self._active_series != sn:
@@ -197,10 +243,19 @@ class ImageSliceBooster:
         # Cancel the current worker before mutating the cache.
         self._cancel.set()
         if self._worker is not None:
+            old_tid = self._worker.ident
             try:
                 self._worker.join(timeout=0.3)
             except Exception:
                 pass
+            still_alive = self._worker.is_alive()
+            _h12_log.info(
+                "[H12-2] JOIN_RESULT caller=on_slice_changed old_tid=%s alive_after_join=%s",
+                old_tid, still_alive,
+            )
+            if still_alive:
+                _h12_log.warning("[H12-2] JOIN_TIMEOUT caller=on_slice_changed old_tid=%s", old_tid)
+                return
 
         # Evict slices outside the extended keep-range.
         keep_lo = center - self._window - _HYSTERESIS
@@ -245,6 +300,8 @@ class ImageSliceBooster:
         instance_paths:
             Updated **ordered** list of absolute DICOM file paths.
         """
+        if self.disabled:
+            return
         sn = str(series_number)
         paths: List[str] = list(instance_paths or [])
         with self._lock:
@@ -273,10 +330,19 @@ class ImageSliceBooster:
         if need_restart:
             self._cancel.set()
             if self._worker is not None:
+                old_tid = self._worker.ident
                 try:
                     self._worker.join(timeout=0.3)
                 except Exception:
                     pass
+                still_alive = self._worker.is_alive()
+                _h12_log.info(
+                    "[H12-2] JOIN_RESULT caller=update_paths old_tid=%s alive_after_join=%s",
+                    old_tid, still_alive,
+                )
+                if still_alive:
+                    _h12_log.warning("[H12-2] JOIN_TIMEOUT caller=update_paths old_tid=%s", old_tid)
+                    return
             self._cancel.clear()
             self._worker = threading.Thread(
                 target=self._worker_fn,
@@ -299,10 +365,15 @@ class ImageSliceBooster:
         """Deactivate boosting and discard all cached pixel data immediately."""
         self._cancel.set()
         if self._worker is not None:
+            old_tid = self._worker.ident
             try:
                 self._worker.join(timeout=0.3)
             except Exception:
                 pass
+            _h12_log.info(
+                "[H12-2] JOIN_RESULT caller=clear old_tid=%s alive_after_join=%s",
+                old_tid, self._worker.is_alive(),
+            )
         with self._lock:
             self._active_series = None
             self._instance_paths = []
@@ -311,6 +382,23 @@ class ImageSliceBooster:
             self._total_slices = 0
         self._cancel.clear()
         self._log("CLEARED")
+
+    def pause_for_interaction(self) -> None:
+        """B3.6: Pause the booster worker during active user interaction.
+
+        The worker blocks on ``_interaction_gate`` before each slice decode.
+        Clearing the event makes the worker wait, eliminating GIL contention
+        and stale decode work during scroll/drag.
+        """
+        if self.disabled:
+            return
+        self._interaction_gate.clear()
+
+    def resume_from_interaction(self) -> None:
+        """B3.6: Resume the booster worker after interaction settles."""
+        if self.disabled:
+            return
+        self._interaction_gate.set()
 
     @property
     def active_series(self) -> Optional[str]:
@@ -353,6 +441,23 @@ class ImageSliceBooster:
             if self._cancel.is_set():
                 return
 
+            # B3.6: Wait if paused for user interaction.  Block up to 5s
+            # (will unblock immediately when resume_from_interaction is called
+            # or when _cancel is set).  Re-check cancel after wake.
+            if not self._interaction_gate.is_set():
+                self._interaction_gate.wait(timeout=5.0)
+                if self._cancel.is_set():
+                    return
+
+            # B3.6: Pre-decode position relevance check — skip slices that
+            # are now far from the user's current center.  Catches stale work
+            # when the user scrolled while the worker was paused or decoding
+            # previous slices.
+            with self._lock:
+                _current_center = self._center_slice
+            if abs(idx - _current_center) > self._window:
+                continue
+
             # Skip already-cached slices without holding the lock for long.
             with self._lock:
                 if self._active_series != series_number:
@@ -365,8 +470,16 @@ class ImageSliceBooster:
 
             path = paths[idx]
             try:
-                ds = pydicom.dcmread(str(path), stop_before_pixels=False, force=True)
-                arr: "np.ndarray" = ds.pixel_array
+                thread_state_canary("booster", "pre_decode")
+                log_decode_entry("booster", idx, path)
+                t0 = time.perf_counter()
+                with decode_serialisation_guard():
+                    ds = pydicom.dcmread(str(path), stop_before_pixels=False, force=True)
+                    arr: "np.ndarray" = ds.pixel_array
+                decode_ms = (time.perf_counter() - t0) * 1000.0
+                codec_info = extract_codec_info(ds)
+                log_decode_exit("booster", idx, decode_ms=decode_ms, **codec_info)
+                thread_state_canary("booster", "post_decode")
                 with self._lock:
                     # Double-check series hasn't changed since the read started.
                     if self._active_series != series_number:

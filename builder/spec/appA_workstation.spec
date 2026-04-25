@@ -42,18 +42,7 @@ hiddenimports = load_hiddenimports(
         "database.manager",
         "PacsClient.utils.data_paths",
         "PacsClient.utils.theme_manager",
-        "modules.web_browser",
-        "modules.web_browser.state_store",
-        "modules.web_browser.widget",
-        "modules.EchoMind",
-        "modules.EchoMind.settings_store",
-        "modules.EchoMind.llm_client",
-        "modules.printing",
-        "modules.cd_burner",
         "modules.zeta_boost",
-        "modules.mpr.advanced_3d_slicer",
-        "modules.mpr.advanced_3d_slicer.slicer_launcher",
-        "modules.mpr.advanced_3d_slicer.slicer_custom_app.launch_slicer",
         "pydicom.encoders",
         "pydicom.pixel_data_handlers",
         "pydicom.pixel_data_handlers.numpy_handler",
@@ -84,6 +73,15 @@ def _keep_runtime_module_hiddenimport(name: str) -> bool:
     if any(fragment in name for fragment in deny_fragments):
         return False
     if name.endswith(deny_suffixes):
+        return False
+    optional_prefixes = (
+        "modules.printing",
+        "modules.cd_burner",
+        "modules.web_browser",
+        "modules.EchoMind",
+        "modules.mpr.advanced_3d_slicer",
+    )
+    if any(name == prefix or name.startswith(prefix + ".") for prefix in optional_prefixes):
         return False
     return True
 

@@ -332,7 +332,14 @@ class _DMWorkersMixin:
                         logger.info(f"✅ [PROGRESS] Series {series_number} completed")
                         self.log_message(f"✅ [{study_uid[:10]}...] Series {series_number} completed")
                         self.seriesDownloadCompleted.emit(study_uid, series_uid)
-                        
+
+                        # Update completed_series in main-process state (series_downloader
+                        # lives in a subprocess and cannot reach our state store directly).
+                        _cs_state = self.state_store.get(study_uid)
+                        if _cs_state and not _cs_state.is_terminal:
+                            _updated_cs = list(set(_cs_state.completed_series or []) | {series_uid})
+                            self.state_store.update(study_uid, completed_series=_updated_cs)
+
                         # If the completed series was the viewed (CRITICAL) series,
                         # clear the flag so priority drops back to HIGH.
                         state = self.state_store.get(study_uid)
@@ -404,6 +411,41 @@ class _DMWorkersMixin:
         Performance improvement: 100x reduction in state store calls
         """
         try:
+            # Adapt throttle interval to system load. During protected drag
+            # (user actively stack-scrolling with mouse drag), bump the DM
+            # progress fan-out from 100ms -> 750ms so main-thread slots
+            # aren't firing 10x/second while the user is interacting.
+            # This was the #1 cause of event_p50 == 106-150ms during
+            # drag+download overlap in log 92.
+            #
+            # v2.3.6 game-changer #4: during protected drag, ALSO skip
+            # the apply pass entirely. Each tick chains ~4-5 main-thread
+            # slots (state_store.update + studyProgressUpdated +
+            # seriesProgressUpdated + on_series_progress + per-viewer
+            # progressive handlers), which totals 30-100ms of main-thread
+            # work on slow PCs. Pending updates accumulate in
+            # self._pending_progress and are flushed on the first tick
+            # after the drag releases the protected latch.
+            try:
+                from modules.viewer.fast import ui_throttle as _ui_throttle
+                protected = _ui_throttle.is_protected_drag_active()
+                if protected:
+                    target_interval = 1500
+                elif _ui_throttle.is_heavy_download_active():
+                    target_interval = 200
+                else:
+                    target_interval = 100
+                if self._progress_throttle_timer.interval() != target_interval:
+                    self._progress_throttle_timer.setInterval(target_interval)
+                if protected:
+                    # Keep the timer alive so it re-fires after the drag
+                    # ends, but don't do the expensive apply work now.
+                    if self._pending_progress and not self._progress_throttle_timer.isActive():
+                        self._progress_throttle_timer.start()
+                    return
+            except Exception:
+                pass
+
             if not self._pending_progress:
                 # No pending updates, stop timer
                 self._progress_throttle_timer.stop()
@@ -461,14 +503,27 @@ class _DMWorkersMixin:
                 self.download_completed.emit(study_uid)
                 logger.info("   Signal emitted")
 
-                # Update state to COMPLETED
+                # Update state to COMPLETED — force 100 % so progress bar matches badge.
+                # completed_series is populated from subprocess state; replicate it here
+                # from the task so the series breakdown shows all series as done.
+                task_for_completion = self._tasks.get(study_uid)
+                total_for_completion = (
+                    task_for_completion.total_image_count if task_for_completion else 0
+                ) or (self.state_store.get(study_uid).total_count if self.state_store.get(study_uid) else 0)
+                all_series_uids = [
+                    s.series_uid for s in task_for_completion.series_list
+                ] if task_for_completion else []
                 self.state_store.update(
                     study_uid,
                     status=DownloadStatus.COMPLETED,
+                    progress_percent=100.0,
+                    downloaded_count=total_for_completion,
+                    total_count=total_for_completion,
+                    completed_series=all_series_uids,
                     is_auto_paused=False,
                     viewed_series_number=None  # Clear viewed series on completion
                 )
-                logger.info(f"💾 [DATABASE] Updated study {study_uid[:40]}... to COMPLETED status")
+                logger.info(f"💾 [DATABASE] Updated study {study_uid[:40]}... to COMPLETED status (100 %, {total_for_completion} images)")
                 
                 # CRITICAL FIX: Clean up task state to prevent memory accumulation in high-frequency loops
                 # (1000+ cycles with no cleanup = 1000+ dict entries accumulating)
@@ -483,10 +538,13 @@ class _DMWorkersMixin:
                 # sets state to PENDING before this signal arrives.  Do NOT count
                 # preemptions against auto-retry — just let the pipeline re-queue.
                 state = self.state_store.get(study_uid)
-                if state and state.status == DownloadStatus.PENDING:
+                if state and (
+                    state.status == DownloadStatus.PENDING
+                    or (state.status == DownloadStatus.PAUSED and state.is_auto_paused)
+                ):
                     logger.info(
-                        f"⏸️ [COMPLETION] Ignoring failure for preempted (PENDING) study "
-                        f"{study_uid[:40]}... — will be re-queued automatically"
+                        f"⏸️ [COMPLETION] Ignoring failure for preempted study "
+                        f"{study_uid[:40]}... status={state.status.value} — will be re-queued automatically"
                     )
                     self._refresh_table_order()
                     self._check_auto_resume()

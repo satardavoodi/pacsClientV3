@@ -50,6 +50,27 @@ from modules.network.socket_token_manager import get_socket_token_manager
 logger = logging.getLogger(__name__)
 _download_progress_aggregator = DownloadProgressAggregator(logger, interval_seconds=2.0)
 
+
+def _cancelled_response(message: str = "Download cancelled (preemption)") -> Dict[str, Any]:
+    """Build a normalized response for expected cancellation/preemption."""
+    return {
+        "status": "cancelled",
+        "message": message,
+        "cancelled": True,
+    }
+
+
+def _is_expected_preemption(exc_or_message: Any) -> bool:
+    """Return True when the exception/message represents expected cancellation."""
+    text = str(exc_or_message or "").lower()
+    if not text:
+        return False
+    return (
+        "preemption" in text
+        or "cancelled via process cancel event" in text
+        or "download cancelled" in text
+    )
+
 # Singleton health monitor instance (shared across all socket clients)
 _health_monitor: Optional[ConnectionHealthMonitor] = None
 
@@ -244,6 +265,48 @@ class SocketDicomClient:
         """Reset cancellation flag"""
         with self._cancel_lock:
             self._cancelled = False
+
+    def _sleep_with_cancel(self, total_delay: float, interval_s: float = 0.1) -> bool:
+        """
+        Sleep in small slices so preemption can interrupt reconnect/backoff waits.
+
+        Returns:
+            True if the full delay elapsed, False if cancellation was requested.
+        """
+        if total_delay <= 0:
+            return not self.is_cancelled()
+
+        deadline = time.monotonic() + total_delay
+        while True:
+            if self.is_cancelled():
+                return False
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+
+            time.sleep(min(interval_s, remaining))
+
+    async def _async_sleep_with_cancel(self, total_delay: float, interval_s: float = 0.1) -> bool:
+        """
+        Async variant of `_sleep_with_cancel` for retry paths inside coroutines.
+
+        Returns:
+            True if the full delay elapsed, False if cancellation was requested.
+        """
+        if total_delay <= 0:
+            return not self.is_cancelled()
+
+        deadline = time.monotonic() + total_delay
+        while True:
+            if self.is_cancelled():
+                return False
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+
+            await asyncio.sleep(min(interval_s, remaining))
     
     def connect_with_retry(self, max_retries: int = None, retry_delay: float = None) -> bool:
         """
@@ -260,6 +323,10 @@ class SocketDicomClient:
         base_delay = retry_delay if retry_delay is not None else RECONNECT_BASE_DELAY
 
         for attempt in range(max_retries):
+            if self.is_cancelled():
+                logger.info("⏸️ connect_with_retry cancelled before attempt %s", attempt + 1)
+                return False
+
             if self.connect():
                 if attempt > 0:
                     logger.info(f"✅ Connected after {attempt + 1} attempts")
@@ -277,7 +344,9 @@ class SocketDicomClient:
                     f"⚠️ Connection attempt {attempt + 1}/{max_retries} failed, "
                     f"retrying in {total_delay:.1f}s (backoff={delay:.1f}s + jitter={jitter:.1f}s)..."
                 )
-                time.sleep(total_delay)
+                if not self._sleep_with_cancel(total_delay):
+                    logger.info("⏸️ connect_with_retry cancelled during backoff")
+                    return False
         
         logger.error(f"❌ Failed to connect after {max_retries} attempts")
         return False
@@ -453,10 +522,19 @@ class SocketDicomClient:
                     f"⚠️ send_request({endpoint}) attempt {attempt + 1}/{max_attempts} failed, "
                     f"retrying in {total_delay:.1f}s..."
                 )
-                time.sleep(total_delay)
+                if not self._sleep_with_cancel(total_delay):
+                    logger.info(
+                        f"⏸️ send_request({endpoint}) cancelled during retry backoff"
+                    )
+                    return None
 
                 # Reconnect before next attempt
                 self.disconnect()
+                if self.is_cancelled():
+                    logger.info(
+                        f"⏸️ send_request({endpoint}) cancelled before reconnect"
+                    )
+                    return None
                 if not self.connect():
                     logger.error(f"❌ Reconnect failed before retry {attempt + 2}")
                     # Continue loop – connect() will be retried inside _send_request_once
@@ -670,6 +748,16 @@ class SocketDicomClient:
                 raise NetworkError(f"Too many broadcast messages, no response received")
 
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as e:
+                if self.is_cancelled() or _is_expected_preemption(e):
+                    logger.info(f"⏸️ Request cancelled for {endpoint}: {e}")
+                    self.connected = False
+                    if self.socket:
+                        try:
+                            self.socket.close()
+                        except:
+                            pass
+                        self.socket = None
+                    return _cancelled_response()
                 logger.error(f"❌ Connection reset error for {endpoint}: {e}")
                 import traceback
                 logger.error(f"❌ Traceback: {traceback.format_exc()}")
@@ -685,6 +773,16 @@ class SocketDicomClient:
                 self.health_monitor.record_failure()
                 return None
             except Exception as e:
+                if self.is_cancelled() or _is_expected_preemption(e):
+                    logger.info(f"⏸️ Request cancelled for {endpoint}: {e}")
+                    self.connected = False
+                    if self.socket:
+                        try:
+                            self.socket.close()
+                        except:
+                            pass
+                        self.socket = None
+                    return _cancelled_response()
                 logger.error(f"❌ Request error for {endpoint}: {e}")
                 import traceback
                 logger.error(f"❌ Traceback: {traceback.format_exc()}")
@@ -785,12 +883,22 @@ class SocketDicomClient:
         })
         
         if response:
-            logger.info(
-                f"📥 download_batch: status={response.get('status', 'unknown')}",
-                extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
-            )
+            status = response.get('status', 'unknown')
+            if status == 'cancelled':
+                logger.info(
+                    f"⏸️ download_batch cancelled: {response.get('message', 'preemption')}",
+                    extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                )
+            else:
+                logger.info(
+                    f"📥 download_batch: status={status}",
+                    extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                )
         else:
-            logger.warning(f"📥 download_batch: No response received!")
+            if self.is_cancelled():
+                logger.info(f"⏸️ download_batch cancelled before response")
+            else:
+                logger.warning(f"📥 download_batch: No response received!")
         
         return response
     
@@ -939,6 +1047,19 @@ class SocketDicomClient:
             )
             
             logger.debug(f"📦 Batch {batch_idx + 1} response received: {response is not None}")
+
+            if response and response.get('status') == 'cancelled':
+                logger.info(f"⏸️ Batch {batch_idx + 1} cancelled by preemption")
+                return SeriesDownloadResult(
+                    success=False,
+                    series_uid=series_uid,
+                    series_number=series_number,
+                    downloaded=downloaded_count,
+                    skipped=skipped_count,
+                    total=expected_count,
+                    elapsed_seconds=time.time() - start_time,
+                    error_message=response.get('message', 'Download cancelled (preemption)')
+                )
             
             if not response or response.get('status') != 'success':
                 # Better error extraction with full response logging
@@ -1167,7 +1288,7 @@ class SocketDicomClient:
             # R25: Check for cancellation before each attempt
             if self.is_cancelled():
                 logger.info(f"⏸️ Batch download cancelled")
-                return None
+                return _cancelled_response()
             
             request_start = time.time()
             
@@ -1187,6 +1308,9 @@ class SocketDicomClient:
 
                 if response:
                     status = response.get('status', 'unknown')
+                    if status == 'cancelled':
+                        logger.info(f"⏸️ Batch attempt {attempt + 1} cancelled")
+                        return response
                     logger.debug(f"🔄 Response status: {status}")
                     
                     # R30: Record success with latency
@@ -1195,11 +1319,17 @@ class SocketDicomClient:
                     
                     return response
                 else:
+                    if self.is_cancelled():
+                        logger.info(f"⏸️ Attempt {attempt + 1}: Cancelled before response")
+                        return _cancelled_response()
                     logger.warning(f"⚠️ Attempt {attempt + 1}: Empty response")
                     # R30: Record failure
                     self.health_monitor.record_failure()
             
             except Exception as e:
+                if self.is_cancelled() or _is_expected_preemption(e):
+                    logger.info(f"⏸️ Batch download attempt {attempt + 1} cancelled: {e}")
+                    return _cancelled_response()
                 logger.warning(f"⚠️ Batch download attempt {attempt + 1} failed: {e}")
                 self._last_retry_count = attempt + 1
                 import traceback
@@ -1219,12 +1349,21 @@ class SocketDicomClient:
                         logger.info(f"⚠️ Unhealthy connection - doubling retry delay", extra={"component": "download"})
                     
                     logger.info(f"⏳ Retrying in {delay:.1f}s...", extra={"component": "download"})
-                    await asyncio.sleep(delay)
+                    if not await self._async_sleep_with_cancel(delay):
+                        logger.info("⏸️ Batch retry cancelled during backoff")
+                        return None
+
+                    if self.is_cancelled():
+                        logger.info("⏸️ Batch retry cancelled before reconnect")
+                        return None
                     
                     # Reconnect with backoff
                     logger.info(f"🔌 Reconnecting...", extra={"component": "download"})
                     self.disconnect()
                     if not self.connect_with_retry(max_retries=3):
+                        if self.is_cancelled():
+                            logger.info("⏸️ Batch retry reconnect cancelled")
+                            return None
                         logger.error(f"❌ Reconnection failed")
                         continue
                     logger.info(f"✅ Reconnected", extra={"component": "download"})

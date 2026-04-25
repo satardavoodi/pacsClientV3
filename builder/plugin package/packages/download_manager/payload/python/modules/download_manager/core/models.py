@@ -198,10 +198,16 @@ class DownloadState:
     failed_series: List[str] = field(default_factory=list)
     skipped_series: List[str] = field(default_factory=list)
     
-    # Metadata
+    # Metadata — single source of truth for all display sites (DM details panel,
+    # status bar, series breakdown).  Populated from DownloadTask at create() so
+    # the UI never needs to fall back to a separate task lookup just for labels.
     patient_name: Optional[str] = None
+    patient_id: Optional[str] = None
+    modality: Optional[str] = None
+    study_date: Optional[str] = None
     study_description: Optional[str] = None
-    
+    total_series_count: int = 0   # len(task.series_list) at creation time
+
     # Worker reference
     worker_id: Optional[str] = None
     

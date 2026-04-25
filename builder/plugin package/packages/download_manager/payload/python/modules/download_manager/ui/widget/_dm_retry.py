@@ -34,21 +34,19 @@ class _DMRetryMixin:
 
             # Only pause if the download is currently active
             if state and state.status in [DownloadStatus.PENDING, DownloadStatus.VALIDATING, DownloadStatus.DOWNLOADING]:
-                # Update state to PAUSED first to prevent race conditions
+                # Update state to PAUSED first to keep UI responsive
                 self.state_store.update(
                     study_uid,
                     status=DownloadStatus.PAUSED,
                     is_auto_paused=False
                 )
-                logger.info(f"💾 Database update: {study_uid[:40]}... status changed to PAUSED")
-                logger.info(f"✅ State updated to PAUSED for {study_uid[:40]}...")
+                logger.info(f"💾 State updated to PAUSED for {study_uid[:40]}...")
 
-                # Then stop the worker for this specific study
-                logger.info(f"🛑 Stopping worker for study: {study_uid[:40]}...")
-                worker_stopped = self.worker_pool.stop_worker(study_uid)
-
-                if worker_stopped:
-                    logger.info(f"✅ Worker stopped for {study_uid[:40]}...")
+                # Request worker cancellation non-blocking (worker self-cleans via finished signal)
+                worker = self.worker_pool.get_worker(study_uid)
+                if worker:
+                    worker.request_cancel()
+                    logger.info(f"⏸️ [PAUSE] Cancel requested for worker (non-blocking)")
                 else:
                     logger.info(f"ℹ️ No active worker found for {study_uid[:40]}... (may not be running)")
             else:
@@ -163,9 +161,13 @@ class _DMRetryMixin:
             if state:
                 logger.info(f"📊 Current state before cancel: {state.status.value}, Priority: {state.priority.display_name}")
 
-            # Stop the worker
-            logger.info(f"🛑 Stopping worker for study: {study_uid[:40] if study_uid else 'None'}...")
-            self.worker_pool.stop_worker(study_uid)
+            # Request worker cancellation non-blocking (worker self-cleans via finished signal)
+            worker = self.worker_pool.get_worker(study_uid)
+            if worker:
+                worker.request_cancel()
+                logger.info(f"⏸️ [CANCEL] Cancel requested for worker (non-blocking)")
+            else:
+                logger.info(f"ℹ️ No active worker found for {study_uid[:40] if study_uid else 'None'}...")
 
             # Update state to CANCELLED
             state = self.state_store.get(study_uid)

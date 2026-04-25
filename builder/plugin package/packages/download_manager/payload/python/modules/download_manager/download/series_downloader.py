@@ -80,6 +80,38 @@ class SeriesDownloader:
         self.progress_tracker = ProgressTracker(callback=progress_callback)
         
         logger.info("✅ SeriesDownloader initialized")
+
+    def _build_preempted_result(
+        self,
+        *,
+        study_uid: str,
+        series_list: List[SeriesInfo],
+        completed_series: List[str],
+        skipped_series: List[str],
+        failed_series: List[str],
+        total_downloaded: int,
+        total_skipped: int,
+        start_time: datetime,
+        error_message: str = "Paused for higher priority download (preemption)",
+    ) -> DownloadResult:
+        """Return a standard preemption result and normalize state for auto-resume."""
+        self.state.update(
+            study_uid,
+            status=DownloadStatus.PAUSED,
+            is_auto_paused=True,
+        )
+        return DownloadResult(
+            success=False,
+            study_uid=study_uid,
+            downloaded_series=len(completed_series),
+            skipped_series=len(skipped_series),
+            failed_series=len(failed_series),
+            total_series=len(series_list),
+            downloaded_images=total_downloaded,
+            total_images=sum(s.image_count for s in series_list),
+            elapsed_seconds=(datetime.now() - start_time).total_seconds(),
+            error_message=error_message,
+        )
     
     async def download_all_series(
         self,
@@ -181,25 +213,15 @@ class SeriesDownloader:
                 
                 # Disconnect socket before returning
                 socket_client.disconnect()
-                
-                # Mark as auto-paused for auto-resume later
-                self.state.update(
-                    study_uid, 
-                    status=DownloadStatus.PAUSED,
-                    is_auto_paused=True
-                )
-                
-                return DownloadResult(
-                    success=False,
+                return self._build_preempted_result(
                     study_uid=study_uid,
-                    downloaded_series=len(completed_series),
-                    skipped_series=len(skipped_series),
-                    failed_series=len(failed_series),
-                    total_series=len(series_list),
-                    downloaded_images=total_downloaded,
-                    total_images=sum(s.image_count for s in series_list),
-                    elapsed_seconds=(datetime.now() - start_time).total_seconds(),
-                    error_message="Paused for higher priority download (preemption)"
+                    series_list=series_list,
+                    completed_series=completed_series,
+                    skipped_series=skipped_series,
+                    failed_series=failed_series,
+                    total_downloaded=total_downloaded,
+                    total_skipped=total_skipped,
+                    start_time=start_time,
                 )
             
             # R25: Also check for preemption via rule engine (pending higher priority)
@@ -211,25 +233,16 @@ class SeriesDownloader:
                 
                 # Disconnect socket before returning
                 socket_client.disconnect()
-                
-                # Mark as auto-paused for auto-resume later
-                self.state.update(
-                    study_uid, 
-                    status=DownloadStatus.PAUSED,
-                    is_auto_paused=True
-                )
-                
-                return DownloadResult(
-                    success=False,
+                return self._build_preempted_result(
                     study_uid=study_uid,
-                    downloaded_series=len(completed_series),
-                    skipped_series=len(skipped_series),
-                    failed_series=len(failed_series),
-                    total_series=len(series_list),
-                    downloaded_images=total_downloaded,
-                    total_images=sum(s.image_count for s in series_list),
-                    elapsed_seconds=(datetime.now() - start_time).total_seconds(),
-                    error_message="Paused for higher priority download"
+                    series_list=series_list,
+                    completed_series=completed_series,
+                    skipped_series=skipped_series,
+                    failed_series=failed_series,
+                    total_downloaded=total_downloaded,
+                    total_skipped=total_skipped,
+                    start_time=start_time,
+                    error_message="Paused for higher priority download",
                 )
             
             # ── Re-check viewed series: if the user clicked a different
@@ -321,6 +334,19 @@ class SeriesDownloader:
             if not socket_client.connected:
                 logger.warning(f"    ⚠️ Socket connection lost, attempting to reconnect with backoff...")
                 if not socket_client.connect_with_retry():
+                    if socket_client.is_cancelled() or (self.cancel_check and self.cancel_check()):
+                        logger.info(f"    ⏸️ Reconnect cancelled by preemption for series {series_number}")
+                        socket_client.disconnect()
+                        return self._build_preempted_result(
+                            study_uid=study_uid,
+                            series_list=series_list,
+                            completed_series=completed_series,
+                            skipped_series=skipped_series,
+                            failed_series=failed_series,
+                            total_downloaded=total_downloaded,
+                            total_skipped=total_skipped,
+                            start_time=start_time,
+                        )
                     logger.error(f"    ❌ FAILED: Could not reconnect for series {series_number}")
                     failed_series.append(series_info.series_uid)
                     if state:
@@ -417,6 +443,9 @@ class SeriesDownloader:
                 if not socket_client.connected:
                     logger.info(f"🔌 Reconnecting socket for retry round {retry_round}...")
                     if not socket_client.connect_with_retry():
+                        if socket_client.is_cancelled() or (self.cancel_check and self.cancel_check()):
+                            logger.info(f"⏸️ Retry reconnect cancelled by preemption")
+                            break
                         logger.error(f"❌ Reconnect failed for retry round {retry_round}")
                         break
 
@@ -439,6 +468,10 @@ class SeriesDownloader:
                     # Connection check before each series retry
                     if not socket_client.connected:
                         if not socket_client.connect_with_retry():
+                            if socket_client.is_cancelled() or (self.cancel_check and self.cancel_check()):
+                                logger.info(f"    ⏸️ Retry reconnect cancelled for series {s_num}")
+                                still_failed.append(series_uid)
+                                break
                             logger.error(f"    ❌ Reconnect failed for series {s_num}")
                             still_failed.append(series_uid)
                             continue

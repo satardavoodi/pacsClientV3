@@ -1,0 +1,22 @@
+{
+  "stage": 9,
+  "key": "installer_staging",
+  "title": "Installer Staging",
+  "created_at_utc": "2026-04-25T06:13:30.648201+00:00",
+  "marker_only": true,
+  "command": [],
+  "output_paths": [
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\manifest",
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage"
+  ],
+  "artifact_paths": [
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\manifest\\installation_profile.json",
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\stage\\manifest\\release_manifest.json"
+  ],
+  "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_09_installer_staging.log",
+  "report_path": null,
+  "issues": [],
+  "notes": [
+    "Installer staging manifests generated"
+  ]
+}

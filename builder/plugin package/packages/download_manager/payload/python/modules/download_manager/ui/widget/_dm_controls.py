@@ -167,99 +167,51 @@ class _DMControlsMixin:
 
     def _on_pause(self) -> None:
         """
-        Global Pause - Freeze ALL downloads immediately
+        Global Pause - Freeze ALL downloads immediately (non-blocking).
 
         Behavior:
-        - Pauses ALL downloads regardless of current state
-        - Includes: downloading, waiting, failed, suspended, incomplete, any state
-        - Purpose: Freeze everything and keep in paused state
+        - Requests cancellation on all active workers (sets cancel flags only — non-blocking)
+        - Marks all non-terminal downloads as PAUSED in the state store
+        - Workers self-clean via their ``finished`` signal; UI does NOT wait for them
+
+        CRITICAL: Must NOT call stop_all() here — it blocks the main thread up to
+        5 s/worker and freezes the entire application.
         """
-        logger.info("=" * 80)
-        logger.info("🔵 [BUTTON CLICK] Pause All button clicked")
-        logger.info("⏸ PAUSE PRESSED - Starting global pause")
-        logger.info("=" * 80)
+        logger.info("⏸ PAUSE PRESSED - Starting global pause (non-blocking)")
 
         try:
-            # Step 1: Check worker pool state BEFORE pause
-            logger.info(f"[PAUSE-1] Checking worker pool state...")
-            active_workers = self.worker_pool.get_active_count()
-            logger.info(f"[PAUSE-1] Active workers BEFORE pause: {active_workers}")
+            # Step 1: Request cancellation on all workers — returns immediately
+            cancelled = self.worker_pool.cancel_all_non_blocking()
+            logger.info(f"[PAUSE] Cancel requested for {cancelled} worker(s) (non-blocking)")
 
-            # Step 2: Stop all active workers
-            logger.info(f"[PAUSE-2] Stopping all workers (this may take a few seconds)...")
-            self.worker_pool.stop_all()
-            logger.info(f"[PAUSE-2] ✅ All workers stopped")
-
-            # Step 3: Verify workers stopped
-            active_workers_after_stop = self.worker_pool.get_active_count()
-            logger.info(f"[PAUSE-3] Active workers AFTER stop_all(): {active_workers_after_stop}")
-            if active_workers_after_stop > 0:
-                logger.warning(f"[PAUSE-3] ⚠️ WARNING: {active_workers_after_stop} workers still active!")
-
-            # Step 4: Get ALL downloads
-            logger.info(f"[PAUSE-4] Getting all downloads from state store...")
+            # Step 2: Normalize all non-terminal states to PAUSED
             all_downloads = self.state_store.get_all_downloads()
-            logger.info(f"[PAUSE-4] Total downloads: {len(all_downloads)}")
-
-            # Step 5: Pause everything that's not terminal
-            logger.info(f"[PAUSE-5] Updating download states to PAUSED...")
             paused_count = 0
-            skip_count = 0
-            error_count = 0
-
-            for i, state in enumerate(all_downloads):
+            for state in all_downloads:
                 if not state.is_terminal:
                     try:
-                        logger.info(f"[PAUSE-5.{i}] Pausing: {state.study_uid[:40]}... (current: {state.status.value})")
                         self.state_store.update(
                             state.study_uid,
                             status=DownloadStatus.PAUSED,
                             is_auto_paused=False
                         )
                         paused_count += 1
-                        logger.info(f"[PAUSE-5.{i}] ✅ Paused successfully")
                     except Exception as e:
-                        logger.error(f"[PAUSE-5.{i}] ❌ Error pausing {state.study_uid[:40]}...")
-                        logger.error(f"[PAUSE-5.{i}] Error: {type(e).__name__}: {str(e)}")
-                        error_count += 1
-                else:
-                    logger.info(f"[PAUSE-5.{i}] Skipping terminal state: {state.study_uid[:40]}... ({state.status.value})")
-                    skip_count += 1
+                        logger.error(f"[PAUSE] Error pausing {state.study_uid[:40]}...: {e}")
 
-            # Step 6: Summary
-            logger.info(f"[PAUSE-6] Pause summary:")
-            logger.info(f"[PAUSE-6]   ⏸ Paused: {paused_count}")
-            logger.info(f"[PAUSE-6]   ⏭ Skipped (terminal): {skip_count}")
-            logger.info(f"[PAUSE-6]   ❌ Errors: {error_count}")
-            logger.info(f"[PAUSE-6]   📊 Total: {len(all_downloads)}")
+            logger.info(f"[PAUSE] Paused {paused_count}/{len(all_downloads)} downloads")
 
-            # Step 7: Final verification
-            final_workers = self.worker_pool.get_active_count()
-            logger.info(f"[PAUSE-7] Final active workers: {final_workers}")
-
-            # Step 8: Update UI
-            logger.info(f"[PAUSE-8] Updating status label...")
+            # Step 3: Update UI
             self._update_status_label()
-
-            # Step 9: Refresh table to show updated statuses
-            logger.info(f"[PAUSE-9] Refreshing table order...")
             self._refresh_table_order()
 
-            logger.info("=" * 80)
             logger.info("⏸ PAUSE COMPLETED")
-            logger.info("🟢 [BUTTON SUCCESS] Pause All operation completed successfully")
-            logger.info("=" * 80)
 
         except Exception as e:
-            logger.error("=" * 80)
-            logger.error(f"❌ CRITICAL ERROR IN _on_pause()")
-            logger.error(f"🔴 [BUTTON FAILURE] Pause All operation failed")
-            logger.error(f"Error type: {type(e).__name__}")
-            logger.error(f"Error message: {str(e)}")
+            logger.error(f"❌ CRITICAL ERROR IN _on_pause(): {e}")
             import traceback
-            logger.error(f"Traceback:\n{traceback.format_exc()}")
-            logger.error("=" * 80)
-            raise  # Re-raise to ensure crash is visible
+            logger.error(traceback.format_exc())
+            raise
 
     def _on_clear(self) -> None:
         """Clear completed downloads"""

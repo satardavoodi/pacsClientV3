@@ -226,6 +226,15 @@ On stage failure, output includes:
 - Stage 1 now passes with local Zig 0.15.1.
 - Stage 2 now passes (Qt shell compile + runtime smoke + platform plugin path validation updated for Nuitka layout `PySide6/qt-plugins/platforms`).
 - Stage 3 remains in-progress tuning: long-running compilation exceeds automation timeout window in this session; stage reset with `--clean-stage 3` so next run starts cleanly from stage 3.
+- April 25, 2026 validation: `--stage 0` passes preflight and `--smoke-test` passes on current workspace state.
+- Fixed Stage 7 rerun reliability: `copy_if_exists()` now treats folder-like destinations correctly for file copies, and Stage 7 now recreates `builder nuitka/output/stage/core` each run to avoid stale artifact conflicts.
+- Smoke-test updated for Qt plugin layout compatibility by checking both:
+  - `PySide6/plugins/platforms`
+  - `PySide6/qt-plugins/platforms`
+- Installer parity update: `builder nuitka/installer/AIPacs_Nuitka_Setup.iss` now uses the same installation-profile and setup-state logic as the PyInstaller installer (existing-install detection, GPU page, and `installation_profile.json` writing).
+- Stage 8/9 hardening:
+  - Stage 8 now fails early if `module_package_feed.json` is missing after plugin staging.
+  - Stage 9 now explicitly sets `installer.current_version` in `installation_profile.json`.
 
 ## Next Execution (Current)
 Use the build venv and continue from stage 3:

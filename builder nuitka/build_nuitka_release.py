@@ -432,11 +432,21 @@ def parse_missing_issues(text: str) -> list[str]:
 def copy_if_exists(source: Path, destination: Path) -> bool:
     if not source.exists():
         return False
-    destination.parent.mkdir(parents=True, exist_ok=True)
     if source.is_dir():
+        destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source, destination, dirs_exist_ok=True)
     else:
-        shutil.copy2(source, destination)
+        target = destination
+        # Treat destination as a directory target when it already is one, or
+        # when caller passed a folder-like path without a suffix.
+        if destination.exists() and destination.is_dir():
+            target = destination / source.name
+        elif not destination.exists() and destination.suffix == "":
+            destination.mkdir(parents=True, exist_ok=True)
+            target = destination / source.name
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
     return True
 
 
@@ -826,7 +836,7 @@ def stage_06_full_core(ctx: BuildContext, stage: Stage, log_path: Path) -> Stage
         text = report.read_text(encoding="utf-8", errors="replace")
         forbidden_hits = []
         for module_name in OPTIONAL_PLUGIN_MODULES:
-            pattern = rf"<module[^>]+name=\"{re.escape(module_name)}(?:\.|\")"
+            pattern = rf"<module\s+name=\"{re.escape(module_name)}(?:\.|\")"
             if re.search(pattern, text):
                 forbidden_hits.append(module_name)
         if forbidden_hits:
@@ -845,6 +855,10 @@ def stage_07_runtime_resources(ctx: BuildContext, stage: Stage, log_path: Path) 
         raise StageError(f"Stage 6 dist not found: {stage6_dist}")
 
     core_stage = STAGE_DIR / "core"
+    # Recreate core stage payload from stage 6 each run to avoid stale files
+    # breaking subsequent resource copies.
+    if core_stage.exists():
+        shutil.rmtree(core_stage, ignore_errors=True)
     core_stage.mkdir(parents=True, exist_ok=True)
     shutil.copytree(stage6_dist, core_stage, dirs_exist_ok=True)
 
@@ -886,10 +900,14 @@ def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> 
         shutil.rmtree(plugin_stage, ignore_errors=True)
     shutil.copytree(PLUGIN_PACKAGES_DIR, plugin_stage, dirs_exist_ok=True)
 
+    feed_path = plugin_stage / "module_package_feed.json"
+    if not feed_path.exists():
+        raise StageError(f"Plugin package feed missing after staging: {feed_path}")
+
     package_dirs = sorted([p.name for p in plugin_stage.iterdir() if p.is_dir()])
     return StageResult(
         output_paths=[str(plugin_stage)],
-        artifact_paths=[str(plugin_stage / "module_package_feed.json")],
+        artifact_paths=[str(feed_path)],
         notes=[f"Staged plugin packages: {', '.join(package_dirs)}"],
     )
 
@@ -900,6 +918,9 @@ def stage_09_installer_staging(ctx: BuildContext, stage: Stage, log_path: Path) 
 
     install_profile = default_installation_profile()
     install_profile["app_version"] = ctx.version
+    installer = dict(install_profile.get("installer") or {})
+    installer["current_version"] = ctx.version
+    install_profile["installer"] = installer
     install_profile["generated_at_utc"] = utc_now()
 
     profile_path = manifest_dir / INSTALLATION_PROFILE_FILENAME
@@ -971,9 +992,15 @@ def smoke_test(ctx: BuildContext) -> int:
     if not exe.exists():
         failures.append(f"Missing compiled exe: {exe}")
 
-    qt_platform = full_dist / "PySide6" / "plugins" / "platforms"
-    if not qt_platform.exists():
-        failures.append(f"Missing Qt platform plugins folder: {qt_platform}")
+    qt_platform_candidates = [
+        full_dist / "PySide6" / "plugins" / "platforms",
+        full_dist / "PySide6" / "qt-plugins" / "platforms",
+    ]
+    if not any(path.exists() for path in qt_platform_candidates):
+        failures.append(
+            "Missing Qt platform plugins folder: "
+            + ", ".join(str(path) for path in qt_platform_candidates)
+        )
 
     for dll_name in ("opengl32sw.dll", "osmesa.dll", "pipe_swrast.dll"):
         if not ((full_dist / dll_name).exists() or (STAGE_DIR / "core" / dll_name).exists()):
@@ -986,12 +1013,14 @@ def smoke_test(ctx: BuildContext) -> int:
     plugin_stage = STAGE_DIR / "plugin_packages"
     if not plugin_stage.exists():
         failures.append(f"Missing plugin staging folder: {plugin_stage}")
+    elif not (plugin_stage / "module_package_feed.json").exists():
+        failures.append(f"Missing plugin package feed: {plugin_stage / 'module_package_feed.json'}")
 
     report = REPORTS_DIR / "nuitka_stage_06_full_core.xml"
     if report.exists():
         report_text = report.read_text(encoding="utf-8", errors="replace")
         for module_name in OPTIONAL_PLUGIN_MODULES:
-            pattern = rf"<module[^>]+name=\"{re.escape(module_name)}(?:\.|\")"
+            pattern = rf"<module\s+name=\"{re.escape(module_name)}(?:\.|\")"
             if re.search(pattern, report_text):
                 failures.append(f"Optional module appears compiled in core report: {module_name}")
 

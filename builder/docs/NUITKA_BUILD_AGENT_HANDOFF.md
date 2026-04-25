@@ -71,6 +71,10 @@ Run from repo root:
   - `builder nuitka/output/installer/ai-pacs-nuitka-installer.exe`
 - State shows completed stages 0..10 with no failed stage.
 - Smoke test passes with MSVC-built artifacts.
+- April 25, 2026 re-validation on current branch:
+  - `--stage 0` passes.
+  - `--smoke-test` passes.
+  - Stage 7 rerun conflict (`WinError 183` under `slicer_custom_app`) fixed by safe destination handling and clean rebuild of `output/stage/core` on each Stage 7 run.
 
 ## Critical Rules For Future AI Agents
 

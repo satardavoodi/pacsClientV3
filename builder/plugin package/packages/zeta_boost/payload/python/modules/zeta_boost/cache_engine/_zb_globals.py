@@ -5,6 +5,7 @@ Separated to avoid circular imports -- worker mixins need _GLOBAL_DOWNLOAD_ACTIV
 """
 import os
 import sys
+import time
 
 # ── Global download-activity flag ──────────────────────────────────────────
 # True when ANY study is currently downloading system-wide.
@@ -13,6 +14,7 @@ import sys
 # preventing warmup ITK pipelines from competing with the downloader and UI.
 # Updated by home_ui via set_global_download_active() on download start/end.
 _GLOBAL_DOWNLOAD_ACTIVE: bool = False
+_GLOBAL_DOWNLOAD_LAST_ACTIVE_MS: float = 0.0
 
 
 def set_global_download_active(active: bool) -> None:
@@ -22,8 +24,22 @@ def set_global_download_active(active: bool) -> None:
     inter-series sleep, keeping CPU and GIL free for the viewer and
     download thread even when the download is for a different patient.
     """
-    global _GLOBAL_DOWNLOAD_ACTIVE
+    global _GLOBAL_DOWNLOAD_ACTIVE, _GLOBAL_DOWNLOAD_LAST_ACTIVE_MS
     _GLOBAL_DOWNLOAD_ACTIVE = bool(active)
+    _GLOBAL_DOWNLOAD_LAST_ACTIVE_MS = time.monotonic() * 1000.0
+
+
+def is_heavy_download_active(*, grace_ms: float = 750.0) -> bool:
+    """Return True while download is active or just ended.
+
+    The grace window protects the Qt event loop from short progress bursts that
+    continue to arrive immediately after the global flag flips.
+    """
+    if _GLOBAL_DOWNLOAD_ACTIVE:
+        return True
+    if _GLOBAL_DOWNLOAD_LAST_ACTIVE_MS <= 0:
+        return False
+    return (time.monotonic() * 1000.0 - _GLOBAL_DOWNLOAD_LAST_ACTIVE_MS) < float(grace_ms)
 
 
 def _set_thread_low_priority():

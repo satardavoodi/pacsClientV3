@@ -6,6 +6,8 @@ This is the long-lived build knowledge base for packaging this repository on Win
 
 Active staged Nuitka work is tracked separately in `builder/docs/NUITKA_BUILD_PLAN.md`. Keep this document focused on the long-lived `builder/` PyInstaller/release packaging baseline, and use the Nuitka plan only for `builder nuitka/` status and recovery steps.
 
+Build-coherence note (2026-04-25): optional module packaging policy is aligned toward external package staging for both build systems. PyInstaller spec filtering now excludes optional module families from automatic hiddenimport expansion (`modules.printing`, `modules.cd_burner`, `modules.web_browser`, `modules.EchoMind`, `modules.mpr.advanced_3d_slicer`) so optional activation continues through packaged module payloads and runtime profile state.
+
 ## Build-System Boundary
 
 This repo has two independent build roots:

@@ -33,6 +33,7 @@ Invariants
 
 from __future__ import annotations
 
+from collections import Counter
 from collections import deque
 from dataclasses import asdict, dataclass
 import threading
@@ -113,6 +114,12 @@ class PipelineOrchestrator:
             return self._state == PipelineState.DOWNLOADING
 
     @property
+    def active_download_count(self) -> int:
+        """Number of series currently downloading in this orchestrator."""
+        with self._lock:
+            return len(self._downloading_series)
+
+    @property
     def is_warmup_allowed(self) -> bool:
         """True when ZetaBoost warmup may run (POST_DOWNLOAD or READY)."""
         with self._lock:
@@ -124,6 +131,16 @@ class PipelineOrchestrator:
         with self._lock:
             return self._state == PipelineState.DOWNLOADING
 
+    def is_series_downloading(self, series_number) -> bool:
+        """True when the specific series is still downloading."""
+        with self._lock:
+            return str(series_number) in self._downloading_series
+
+    def is_heavy_download_active(self) -> bool:
+        """True when this orchestrator has active per-series download work."""
+        with self._lock:
+            return self._state == PipelineState.DOWNLOADING and bool(self._downloading_series)
+
     def is_series_downloaded(self, series_number) -> bool:
         with self._lock:
             return (
@@ -134,16 +151,23 @@ class PipelineOrchestrator:
     def snapshot(self) -> dict:
         with self._lock:
             now = time.time()
+            event_counts_by_block = Counter(event.owner_block for event in self._events)
+            event_counts_by_name = Counter(event.event for event in self._events)
+            most_recent_event = asdict(self._events[-1]) if self._events else None
             return {
                 "state": self._state.name,
                 "download_session_active": bool(self._download_session_active),
                 "active_download_count": len(self._downloading_series),
                 "completed_series_count": len(self._completed_series),
+                "transition_seq": self._transition_seq,
                 "study_download_complete": bool(self._study_download_complete),
                 "state_duration_ms": round((now - self._state_enter_ts) * 1000.0, 2),
                 "last_download_age_ms": round((now - self._last_download_ts) * 1000.0, 2) if self._last_download_ts else 0.0,
                 "downloading_series": sorted(self._downloading_series),
                 "completed_series": sorted(self._completed_series),
+                "most_recent_event": most_recent_event,
+                "event_counts_by_block": dict(event_counts_by_block),
+                "event_counts_by_name": dict(event_counts_by_name),
                 "recent_events": [asdict(event) for event in self._events],
             }
 

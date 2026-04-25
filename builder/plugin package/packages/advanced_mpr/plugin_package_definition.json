@@ -21,6 +21,6 @@
   ],
   "sdk_entrypoint_group": "aipacs.plugins",
   "sdk_entrypoint_name": "advanced_mpr",
-  "notes": "External runtime payload produced from the Slicer-based Advanced MPR build.",
-  "definition_path": "C:\\AI-Pacs codes\\aipacs-pydicom2d\\builder\\plugin package\\definitions\\advanced_mpr\\plugin_package.json"
+  "notes": "External runtime payload produced from the Slicer-based Advanced MPR build. Large package — requires dedicated disk space and sufficient RAM. GPU strongly recommended.",
+  "definition_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder\\plugin package\\definitions\\advanced_mpr\\plugin_package.json"
 }

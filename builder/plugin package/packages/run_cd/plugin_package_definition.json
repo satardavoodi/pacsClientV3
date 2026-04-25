@@ -26,5 +26,5 @@
   "sdk_entrypoint_group": "aipacs.plugins",
   "sdk_entrypoint_name": "run_cd",
   "notes": "",
-  "definition_path": "C:\\AI-Pacs codes\\aipacs-pydicom2d\\builder\\plugin package\\definitions\\run_cd\\plugin_package.json"
+  "definition_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder\\plugin package\\definitions\\run_cd\\plugin_package.json"
 }

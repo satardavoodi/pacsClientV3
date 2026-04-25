@@ -45,6 +45,12 @@ class SeriesIntentCoordinator:
         self._check_auto_resume = check_auto_resume
         self._defer_call = defer_call
         self._queue_recheck_ms = queue_recheck_ms
+        # One active priority-start retry chain per study. Without this guard,
+        # repeated viewed-series / CRITICAL requests can spawn overlapping
+        # QTimer retry ladders for the same study, creating a control-plane
+        # storm while the worker pool is still occupied.
+        self._priority_retry_tokens: Dict[str, int] = {}
+        self._priority_retry_seq = 0
 
     def _defer(self, delay_ms: int, callback: Callable[[], None]) -> None:
         if self._defer_call is not None:
@@ -54,6 +60,29 @@ class SeriesIntentCoordinator:
         from PySide6.QtCore import QTimer
 
         QTimer.singleShot(delay_ms, callback)
+
+    def _begin_priority_retry(self, study_uid: str) -> Optional[int]:
+        existing = self._priority_retry_tokens.get(study_uid)
+        if existing is not None:
+            logger.debug(
+                "[INTENT] Priority retry already active for %s (token=%s)",
+                study_uid,
+                existing,
+            )
+            return None
+
+        self._priority_retry_seq += 1
+        token = self._priority_retry_seq
+        self._priority_retry_tokens[study_uid] = token
+        return token
+
+    def _clear_priority_retry(self, study_uid: str, token: Optional[int] = None) -> None:
+        active = self._priority_retry_tokens.get(study_uid)
+        if active is None:
+            return
+        if token is not None and active != token:
+            return
+        self._priority_retry_tokens.pop(study_uid, None)
 
     def request_study_priority(self, study_uid: str, priority: DownloadPriority) -> bool:
         state = self.state_store.get(study_uid)
@@ -192,7 +221,21 @@ class SeriesIntentCoordinator:
         interval_ms: int = 200,
         _attempt: int = 0,
         _recovery: bool = False,
+        _token: Optional[int] = None,
     ) -> None:
+        if _token is None:
+            _token = self._begin_priority_retry(study_uid)
+            if _token is None:
+                return
+        elif self._priority_retry_tokens.get(study_uid) != _token:
+            logger.debug(
+                "[INTENT] Ignoring stale retry callback for %s (token=%s active=%s)",
+                study_uid,
+                _token,
+                self._priority_retry_tokens.get(study_uid),
+            )
+            return
+
         if _attempt >= max_retries:
             logger.warning(
                 "[INTENT] Priority start retry exhausted for %s after %s attempts",
@@ -205,20 +248,25 @@ class SeriesIntentCoordinator:
             if not _recovery:
                 self._defer(
                     5000,
-                    lambda: self.schedule_priority_start_retry(
+                    lambda _token=_token: self.schedule_priority_start_retry(
                         study_uid,
                         max_retries=3,
                         interval_ms=3000,
                         _attempt=0,
                         _recovery=True,
+                        _token=_token,
                     ),
                 )
+            else:
+                self._clear_priority_retry(study_uid, _token)
             return
 
         state = self.state_store.get(study_uid)
         if not state:
+            self._clear_priority_retry(study_uid, _token)
             return
         if state.status not in (DownloadStatus.PENDING, DownloadStatus.PAUSED):
+            self._clear_priority_retry(study_uid, _token)
             return
 
         if self.worker_pool.can_add_worker():
@@ -229,23 +277,27 @@ class SeriesIntentCoordinator:
             if not started:
                 self._defer(
                     interval_ms,
-                    lambda: self.schedule_priority_start_retry(
+                    lambda _token=_token: self.schedule_priority_start_retry(
                         study_uid,
                         max_retries,
                         interval_ms,
                         _attempt + 1,
                         _recovery,
+                        _token,
                     ),
                 )
+            else:
+                self._clear_priority_retry(study_uid, _token)
             return
 
         self._defer(
             interval_ms,
-            lambda: self.schedule_priority_start_retry(
+            lambda _token=_token: self.schedule_priority_start_retry(
                 study_uid,
                 max_retries,
                 interval_ms,
                 _attempt + 1,
                 _recovery,
+                _token,
             ),
         )

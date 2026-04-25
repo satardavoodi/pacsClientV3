@@ -16,6 +16,17 @@ from ..core.constants import PROGRESS_UPDATE_INTERVAL_MS
 logger = logging.getLogger(__name__)
 
 
+def _is_expected_cancellation_exception(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    name = type(exc).__name__.lower()
+    return (
+        name == "downloadcancelled"
+        or "cancelled via process cancel event" in text
+        or "download cancelled" in text
+        or "preemption" in text
+    )
+
+
 @dataclass
 class ProgressUpdate:
     """Progress update data"""
@@ -140,7 +151,10 @@ class ProgressTracker:
                 self.total_updates_sent += 1
             
             except Exception as e:
-                logger.error(f"❌ Progress callback error: {e}")
+                if _is_expected_cancellation_exception(e):
+                    logger.info(f"⏸️ Progress callback cancelled: {e}")
+                else:
+                    logger.error(f"❌ Progress callback error: {e}")
         
         # Clear pending
         self.pending_updates.clear()
@@ -168,7 +182,10 @@ class ProgressTracker:
                             **update.metadata
                         )
                     except Exception as e:
-                        logger.error(f"❌ Progress callback error: {e}")
+                        if _is_expected_cancellation_exception(e):
+                            logger.info(f"⏸️ Progress callback cancelled: {e}")
+                        else:
+                            logger.error(f"❌ Progress callback error: {e}")
                 del self.pending_updates[study_uid]
             else:
                 # Flush all pending
