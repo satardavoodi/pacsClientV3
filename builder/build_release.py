@@ -66,6 +66,13 @@ PACKAGE_IGNORE_PATTERNS = (
 )
 THEME_QSS_SOURCE = PROJECT_ROOT / "generated-files" / "css" / "main.css"
 THEME_QSS_RELATIVE_PATH = Path("Qss") / "main.qss"
+ADVANCED_MPR_REQUIRED_RUNTIME_FILES = (
+    "AIPacsAdvancedViewer.exe",
+    "AIPacsAdvancedViewerLauncherSettings.ini",
+    "bin/Python/startup_script.py",
+    "python-install/Lib/site-packages/numpy/testing/__init__.py",
+    "python-install/Lib/site-packages/pydicom/examples/__init__.py",
+)
 
 
 def print_step(message: str) -> None:
@@ -414,14 +421,30 @@ def stage_advanced_mpr_payload() -> dict[str, object]:
         "reason": "",
     }
 
-    exe_path = runtime_root / "AIPacsAdvancedViewer.exe"
-    if runtime_root.exists() and exe_path.exists():
+    missing: list[str] = []
+    if runtime_root.exists():
+        for relative in ADVANCED_MPR_REQUIRED_RUNTIME_FILES:
+            candidate = runtime_root / relative
+            if not candidate.exists():
+                missing.append(relative)
+    else:
+        missing = list(ADVANCED_MPR_REQUIRED_RUNTIME_FILES)
+
+    if runtime_root.exists() and not missing:
         payload_info["staged"] = True
     else:
-        payload_info["reason"] = (
-            "Advanced MPR runtime was not found. "
-            "Run tools/slicer/assemble_slicer_runtime.py before building the installer payload."
-        )
+        if runtime_root.exists():
+            payload_info["reason"] = (
+                "Advanced MPR runtime is incomplete. Missing required runtime files: "
+                + ", ".join(missing)
+            )
+        else:
+            payload_info["reason"] = (
+                "Advanced MPR runtime was not found. "
+                "Run tools/slicer/assemble_slicer_runtime.py before building the installer payload."
+            )
+
+    payload_info["missing_required_files"] = missing
 
     return payload_info
 
@@ -528,11 +551,14 @@ def build_module_packages(version: str, advanced_payload: dict[str, object]) -> 
             source_root = Path(str(advanced_payload.get("source") or ""))
             if bool(advanced_payload.get("staged")) and source_root.exists():
                 package_dir.mkdir(parents=True, exist_ok=True)
+                # Runtime payloads (Advanced MPR / custom Slicer) must be copied
+                # losslessly. Applying _package_ignore_filter here strips
+                # required runtime folders such as numpy/testing and causes
+                # launch-time import failures (e.g. numpy.testing missing).
                 shutil.copytree(
                     source_root,
                     package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
                     dirs_exist_ok=True,
-                    ignore=_package_ignore_filter,
                 )
                 has_payload = True
         else:
@@ -1052,6 +1078,23 @@ def main() -> int:
 
         core_dir = stage_core_bundle(source_dir, incremental=incremental)
         advanced_payload = stage_advanced_mpr_payload()
+        if not bool(advanced_payload.get("staged")):
+            allow_missing = os.environ.get("AIPACS_ALLOW_MISSING_ADVANCED_MPR", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            reason = str(advanced_payload.get("reason") or "Advanced MPR payload is unavailable.")
+            if allow_missing:
+                print(f"[WARN] {reason}")
+                print("[WARN] Continuing because AIPACS_ALLOW_MISSING_ADVANCED_MPR is enabled.")
+            else:
+                raise SystemExit(
+                    "Advanced MPR runtime payload validation failed. "
+                    + reason
+                    + " Set AIPACS_ALLOW_MISSING_ADVANCED_MPR=1 to bypass deliberately."
+                )
         module_packages = build_module_packages(version, advanced_payload)
         write_manifest(version, core_dir, advanced_payload, module_packages)
 

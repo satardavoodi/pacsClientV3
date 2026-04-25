@@ -1,8 +1,32 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.4.7
-**Release Date:** 2026-04-24
+**Current Stable Version:** v2.4.5
+**Release Date:** 2026-04-25
 **Branch:** main
+
+---
+
+## v2.4.5 - Advanced MPR launch UX + structural FAST refit guard (2026-04-25)
+
+### Summary
+
+Stabilizes Advanced MPR launch UX for long startup times and restores the structural
+fix for the FAST viewer corner-zoom regression in installed builds.
+Full release notes in [`VERSION_2.4.5_RELEASE.md`](VERSION_2.4.5_RELEASE.md).
+
+### Highlights
+
+- Advanced MPR loading overlay now uses user-facing text aligned with product naming:
+  `AI Advanced Analysis is launching` -> `AI Advanced Analysis launched`.
+- Loading overlay now remains visible until launch-readiness is confirmed from runtime
+  startup criteria (not just process spawn):
+  - preferred marker in startup log: `STARTUP SEQUENCE COMPLETED SUCCESSFULLY`
+  - fallback: process remains stable with startup log output.
+- FAST viewer structural fix: startup refit callbacks are now epoch-guarded so stale
+  delayed callbacks from older bursts cannot re-apply an outdated fit and shrink the
+  image into a corner after drag-drop/layout churn.
+- Added build/integration documentation for Advanced MPR runtime packaging and
+  anti-regression validation gates.
 
 ---
 

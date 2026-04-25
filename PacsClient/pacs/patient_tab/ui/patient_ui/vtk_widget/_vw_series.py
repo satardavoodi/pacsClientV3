@@ -67,8 +67,20 @@ class _VWSeriesMixin:
         except Exception:
             pass
 
+        # v2.4.5: stamp each startup-refit burst with a monotonic epoch.
+        # Late callbacks from older bursts must be ignored; otherwise a stale
+        # refit can apply against outdated host geometry and shrink the image
+        # into a corner until the next user interaction.
+        try:
+            self._qt_startup_refit_epoch = int(getattr(self, '_qt_startup_refit_epoch', 0)) + 1
+        except Exception:
+            self._qt_startup_refit_epoch = 1
+        _epoch = int(self._qt_startup_refit_epoch)
+
         def _apply(delay_ms: int) -> None:
             try:
+                if int(getattr(self, '_qt_startup_refit_epoch', 0)) != _epoch:
+                    return
                 if not bool(getattr(self, '_qt_bridge_active', False)):
                     return
                 if getattr(self, 'image_viewer', None) is not bridge:
@@ -86,7 +98,8 @@ class _VWSeriesMixin:
                     except Exception:
                         pass
                 logger.info(
-                    "[QT_PRESENTATION] startup_refit delay_ms=%d host=%dx%d",
+                    "[QT_PRESENTATION] startup_refit epoch=%d delay_ms=%d host=%dx%d",
+                    int(_epoch),
                     int(delay_ms),
                     int(max(0, self.width())),
                     int(max(0, self.height())),

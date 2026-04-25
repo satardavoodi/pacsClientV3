@@ -28,6 +28,47 @@ from typing import Optional, List
 from datetime import datetime
 
 
+def _resolve_user_writable_launch_dir() -> Path:
+    """
+    Resolve a user-writable directory for Advanced MPR launch diagnostics.
+
+    In installed mode, this module may run from Program Files where writing
+    beside the source file is not permitted for standard users.
+    """
+    candidates = []
+
+    try:
+        from aipacs_runtime import user_data_root
+
+        candidates.append(user_data_root() / "logs" / "advanced_mpr")
+    except Exception:
+        pass
+
+    local_appdata = os.getenv("LOCALAPPDATA")
+    if local_appdata:
+        candidates.append(Path(local_appdata) / "AIPacs" / "logs" / "advanced_mpr")
+
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        candidates.append(Path(appdata) / "AIPacs" / "logs" / "advanced_mpr")
+
+    candidates.append(Path(tempfile.gettempdir()) / "AIPacs" / "logs" / "advanced_mpr")
+
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            probe_file = candidate / ".write_probe"
+            probe_file.write_text("ok", encoding="utf-8")
+            probe_file.unlink(missing_ok=True)
+            return candidate
+        except Exception:
+            continue
+
+    fallback = Path(tempfile.gettempdir())
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
 # ============================================================
 # Early Branding via .slicerrc.py
 # ============================================================
@@ -322,7 +363,7 @@ def find_slicer_executable(prefer_custom: bool = True) -> Optional[Path]:
     # CUSTOM APP NOT FOUND - FATAL ERROR (NO FALLBACK TO STOCK SLICER)
     # ========================================================================
     expected_path = script_dir / 'NewMPR2Slicer' / 'build' / 'bin' / 'AIPacsAdvancedViewer.exe'
-    error_file = script_dir / 'NewMPR2Slicer' / 'build' / 'bin' / 'AIPACS_LAUNCH_ERROR.txt'
+    error_file = _resolve_user_writable_launch_dir() / 'AIPACS_LAUNCH_ERROR.txt'
     
     print("")
     print("[AIPACS_LAUNCH] " + "=" * 70)
@@ -386,14 +427,44 @@ def get_startup_script_path() -> Optional[Path]:
         Path to the startup script, or None if not found
     """
     script_dir = Path(__file__).parent.resolve()
-    startup_script = script_dir / "startup_script.py"
-    
-    if startup_script.exists():
-        print(f"[NewMPR2Slicer] [OK] Startup script found: {startup_script}")
-        return startup_script
-    else:
-        print(f"[NewMPR2Slicer] [FAIL] ERROR: Startup script NOT found at: {startup_script}")
-        return None
+
+    # In development, startup_script.py lives next to launch_slicer.py.
+    candidate_paths = [script_dir / "startup_script.py"]
+
+    # In installed PyInstaller builds, this module may be loaded from an
+    # archive path while startup_script.py exists in the Advanced MPR runtime
+    # payload copied to modules_runtime/advanced_mpr/bin/Python.
+    try:
+        from aipacs_runtime import advanced_mpr_runtime_root
+
+        runtime_root = advanced_mpr_runtime_root()
+        candidate_paths.extend([
+            runtime_root / "bin" / "Python" / "startup_script.py",
+            runtime_root / "bin" / "Python" / "slicer" / "startup_script.py",
+        ])
+    except Exception as exc:
+        print(f"[NewMPR2Slicer] Warning: could not query advanced_mpr_runtime_root(): {exc}")
+
+    seen = set()
+    for candidate in candidate_paths:
+        try:
+            resolved = candidate.expanduser().resolve()
+        except Exception:
+            resolved = candidate.expanduser()
+
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        if resolved.exists() and resolved.is_file():
+            print(f"[NewMPR2Slicer] [OK] Startup script found: {resolved}")
+            return resolved
+
+    print("[NewMPR2Slicer] [FAIL] ERROR: startup_script.py not found in any known location")
+    for candidate in candidate_paths:
+        print(f"[NewMPR2Slicer] [FAIL]   tried: {candidate}")
+    return None
 
 
 def validate_layout(layout: str) -> str:
@@ -621,7 +692,8 @@ def launch_slicer(
     viewport_y: Optional[int] = None,
     viewport_width: Optional[int] = None,
     viewport_height: Optional[int] = None,
-) -> int:
+    return_process_handle: bool = False,
+) -> int | tuple[subprocess.Popen, Path]:
     """
     Launch 3D Slicer with our startup script and configuration.
     
@@ -641,9 +713,15 @@ def launch_slicer(
         auto_center: Auto-center slices (default: True)
         wait: If True, wait for the process to complete
         software_rendering: If True, use software rendering (Mesa) instead of GPU
+        return_process_handle: If True and wait=False, return (Popen, log_file)
+            instead of a numeric exit code.
         
     Returns:
-        Process exit code (0 for success), or non-zero on error
+        - wait=True: process exit code.
+        - wait=False and return_process_handle=False: 0 for successful spawn.
+        - wait=False and return_process_handle=True: (process_handle, startup_log_path).
+          This is used by the UI worker to keep the loading overlay visible until
+          startup is truly ready.
     """
     # Validate DICOM directory
     dicom_path = Path(dicom_dir).resolve()
@@ -766,7 +844,7 @@ def launch_slicer(
     try:
         # Create log file with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_dir = Path(__file__).parent / "logs"
+        log_dir = _resolve_user_writable_launch_dir()
         log_dir.mkdir(exist_ok=True)
         log_file = log_dir / f"newmpr2_geometry_{timestamp}.txt"
         
@@ -834,7 +912,7 @@ def launch_slicer(
             
             # Launch with stderr redirected
             log_handle = open(log_file, 'a', encoding='utf-8')
-            subprocess.Popen(
+            proc = subprocess.Popen(
                 cmd, 
                 cwd=str(slicer_exe.parent), 
                 env=env,
@@ -846,6 +924,13 @@ def launch_slicer(
             )
             print(f"3D Slicer started in background (detached).")
             print(f"[AIPACS_LAUNCH] Geometry log will be saved to: {log_file}")
+            if return_process_handle:
+                proc._aipacs_log_handle = log_handle
+                return proc, log_file
+            try:
+                log_handle.close()
+            except Exception:
+                pass
             # Schedule cleanup after a delay (give Slicer time to read the file)
             import threading
             def delayed_cleanup():

@@ -20,8 +20,10 @@ import os
 import sys
 import subprocess
 import threading
+import time
 import json
 import socket
+import logging
 from pathlib import Path
 from typing import Optional, Callable
 
@@ -34,6 +36,8 @@ DEFAULT_LAYOUT = "mpr"
 
 # Default remote port for prewarmed Slicer communication
 DEFAULT_REMOTE_PORT = 47891
+
+logger = logging.getLogger(__name__)
 
 
 def send_remote_command(payload: dict, host: str = "127.0.0.1", port: int = DEFAULT_REMOTE_PORT, timeout: float = 1.5) -> bool:
@@ -347,9 +351,110 @@ class SlicerLauncherWorker(QThread):
         self._remote_payload = remote_payload
         self._process: Optional[subprocess.Popen] = None
     
+    @staticmethod
+    def _find_latest_log() -> Optional[Path]:
+        """Return the path of the most-recently modified Advanced MPR log file, or None."""
+        try:
+            from modules.mpr.advanced_3d_slicer.slicer_custom_app.launch_slicer import _resolve_user_writable_launch_dir
+            log_dir = _resolve_user_writable_launch_dir()
+            log_files = list(log_dir.glob("*.log")) + list(log_dir.glob("*.txt"))
+            if not log_files:
+                return None
+            return max(log_files, key=lambda p: p.stat().st_mtime)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _check_runtime_installed() -> Optional[str]:
+        """
+        Verify that the Advanced MPR runtime is installed in the user runtime directory.
+
+        Returns:
+            None  — runtime is present and healthy.
+            str   — human-readable problem description (actionable, shown directly in dialog).
+        """
+        try:
+            from aipacs_runtime import advanced_mpr_runtime_root
+            runtime_root = advanced_mpr_runtime_root()
+            exe_path = runtime_root / "AIPacsAdvancedViewer.exe"
+            if not runtime_root.exists():
+                return (
+                    "The Advanced MPR module is not installed yet.\n\n"
+                    "To install it:\n"
+                    "  Settings → Installation → Advanced MPR → Install\n\n"
+                    f"Expected runtime folder:\n{runtime_root}"
+                )
+            if not exe_path.exists():
+                return (
+                    "The Advanced MPR runtime is present but incomplete\n"
+                    "(AIPacsAdvancedViewer.exe not found).\n\n"
+                    "Try re-installing the module:\n"
+                    "  Settings → Installation → Advanced MPR → Re-install\n\n"
+                    f"Runtime folder:\n{runtime_root}"
+                )
+        except Exception as exc:
+            # If we cannot even resolve the path, let the normal search continue.
+            print(f"[AIPACS_LAUNCH] _check_runtime_installed: {exc}")
+        return None
+
+    @staticmethod
+    def _wait_until_launch_ready(
+        proc: subprocess.Popen,
+        startup_log: Optional[Path],
+        *,
+        marker: str = "STARTUP SEQUENCE COMPLETED SUCCESSFULLY",
+        timeout_s: float = 90.0,
+        fallback_stable_s: float = 8.0,
+        poll_s: float = 0.25,
+    ) -> tuple[bool, str]:
+        """Wait until runtime startup is truly ready.
+
+        Readiness criterion:
+        1) Preferred: startup marker is observed in runtime log.
+        2) Fallback: process stays alive for ``fallback_stable_s`` and log has output.
+        """
+        start_t = time.monotonic()
+        deadline = start_t + max(1.0, float(timeout_s))
+        fallback_at = start_t + max(1.0, float(fallback_stable_s))
+        saw_log_output = False
+
+        while time.monotonic() < deadline:
+            rc = proc.poll()
+            if rc is not None:
+                return False, f"process exited before ready (exit_code={rc})"
+
+            if startup_log is not None:
+                try:
+                    if startup_log.exists():
+                        if startup_log.stat().st_size > 0:
+                            saw_log_output = True
+                        text = startup_log.read_text(encoding="utf-8", errors="ignore")
+                        if marker in text:
+                            return True, "startup_marker"
+                except Exception:
+                    pass
+
+            if time.monotonic() >= fallback_at and saw_log_output:
+                return True, "stable_process_with_log_output"
+
+            time.sleep(max(0.05, float(poll_s)))
+
+        rc = proc.poll()
+        if rc is not None:
+            return False, f"process exited before ready (exit_code={rc})"
+        return True, "startup_timeout_process_alive"
+
     def run(self):
         """Execute the Slicer launch in a separate thread."""
         try:
+            logger.info(
+                "[AIPACS_LAUNCH] worker_start dicom_dir=%s layout=%s study_id=%s series_uid=%s",
+                self.dicom_dir,
+                self.layout,
+                self.study_id,
+                self.series_uid,
+            )
+
             # ── Try sending a remote command to an already-running instance ──
             # This is done here (worker thread) instead of the main thread so
             # the UI event loop is never blocked by the socket timeout.
@@ -357,10 +462,19 @@ class SlicerLauncherWorker(QThread):
                 try:
                     if send_remote_command(self._remote_payload):
                         print("[AIPACS_LAUNCH] Remote command accepted by running viewer (from worker)")
+                        self.started_signal.emit()
                         self.finished_signal.emit(0)
                         return
                 except Exception as e:
                     print(f"[AIPACS_LAUNCH] Remote command failed: {e}")
+
+            # ── Pre-launch readiness check ────────────────────────────────────
+            problem = self._check_runtime_installed()
+            if problem:
+                print(f"[AIPACS_LAUNCH] Runtime readiness check failed: {problem}")
+                logger.error("[AIPACS_LAUNCH] runtime_readiness_failed: %s", problem)
+                self.error_signal.emit(problem)
+                return
 
             # Import the launcher module (should already be preloaded for speed)
             from modules.mpr.advanced_3d_slicer.slicer_custom_app.launch_slicer import launch_slicer
@@ -393,6 +507,7 @@ class SlicerLauncherWorker(QThread):
             
             if exe is None or not exe.exists():
                 # Custom app not found - FATAL error
+                logger.error("[AIPACS_LAUNCH] executable_not_found resolved_exe=%s", exe)
                 self.error_signal.emit(
                     "AIPacsAdvancedViewer.exe not found!\n\n"
                     "The custom AI-PACS Advanced Viewer has not been built."
@@ -403,13 +518,14 @@ class SlicerLauncherWorker(QThread):
             # Skip slow recursive DICOM scan - we trust the folder from viewport
             dicom_path = Path(self.dicom_dir).resolve()
             if not dicom_path.exists() or not dicom_path.is_dir():
+                logger.error("[AIPACS_LAUNCH] dicom_dir_not_found path=%s", dicom_path)
                 self.error_signal.emit(f"DICOM directory not found:\n{dicom_path}")
                 return
-            
-            self.started_signal.emit()
-            
-            # Launch Slicer with contract parameters
-            exit_code = launch_slicer(
+
+            logger.info("[AIPACS_LAUNCH] launch_begin exe=%s dicom_dir=%s", exe, dicom_path)
+
+            # Launch in detached mode, then wait for a concrete startup-ready signal.
+            launch_result = launch_slicer(
                 dicom_dir=str(dicom_path),
                 layout=self.layout,
                 patient_id=self.patient_id,
@@ -423,12 +539,44 @@ class SlicerLauncherWorker(QThread):
                 viewport_y=self.viewport_y,
                 viewport_width=self.viewport_width,
                 viewport_height=self.viewport_height,
-                wait=True
+                wait=False,
+                return_process_handle=True,
             )
-            
+
+            if not isinstance(launch_result, tuple) or len(launch_result) != 2:
+                self.error_signal.emit("Failed to launch AI Advanced Analysis process.")
+                return
+
+            proc, startup_log = launch_result
+            ready_ok, ready_reason = self._wait_until_launch_ready(proc, startup_log)
+            if not ready_ok:
+                logger.error("[AIPACS_LAUNCH] launch_not_ready: %s", ready_reason)
+                self.error_signal.emit(
+                    "AI Advanced Analysis failed to start correctly.\n\n"
+                    f"Reason: {ready_reason}"
+                )
+                return
+
+            logger.info(
+                "[AIPACS_LAUNCH] launch_ready pid=%s criterion=%s",
+                getattr(proc, "pid", "?"),
+                ready_reason,
+            )
+            self.started_signal.emit()
+
+            exit_code = proc.wait()
+            try:
+                log_handle = getattr(proc, "_aipacs_log_handle", None)
+                if log_handle is not None:
+                    log_handle.close()
+            except Exception:
+                pass
+
             self.finished_signal.emit(exit_code)
+            logger.info("[AIPACS_LAUNCH] launch_finished exit_code=%s", exit_code)
             
         except Exception as e:
+            logger.exception("[AIPACS_LAUNCH] worker_exception")
             self.error_signal.emit(f"Failed to launch Slicer:\n{str(e)}")
 
 
@@ -503,6 +651,14 @@ class SlicerLauncher(QObject):
             True if launch was initiated, False if already running
         """
         print(f"[AIPACS_LAUNCH] SlicerLauncher.launch_with_dicom() called, _is_running={self._is_running}")
+        logger.info(
+            "[AIPACS_LAUNCH] ui_launch_request is_running=%s dicom_dir=%s layout=%s study_id=%s series_uid=%s",
+            self._is_running,
+            dicom_dir,
+            layout,
+            study_id,
+            series_uid,
+        )
 
         # Build remote payload – the worker thread will try sending this
         # to an already-running Slicer instance BEFORE falling back to a
@@ -524,6 +680,7 @@ class SlicerLauncher(QObject):
 
         if self._is_running:
             print("[AIPACS_LAUNCH] BLOCKED - Already running, showing message")
+            logger.warning("[AIPACS_LAUNCH] ui_launch_blocked_already_running")
             QMessageBox.information(
                 self.parent_widget,
                 "Ai-Pacs Viewer Running",
@@ -604,19 +761,27 @@ class SlicerLauncher(QObject):
         self._is_running = True
         self.slicer_started.emit()
         print("[SlicerLauncher] NewMPR2Slicer started successfully")
+        logger.info("[AIPACS_LAUNCH] signal_started")
     
     def _on_finished(self, exit_code: int):
         """Handle Slicer process finished."""
         self._is_running = False
         self.slicer_finished.emit(exit_code)
         print(f"[SlicerLauncher] NewMPR2Slicer closed with exit code: {exit_code}")
-        
+        logger.info("[AIPACS_LAUNCH] signal_finished exit_code=%s", exit_code)
+
         if exit_code != 0:
+            latest_log = SlicerLauncherWorker._find_latest_log()
+            log_hint = (
+                f"\n\nLog file:\n{latest_log}"
+                if latest_log
+                else ""
+            )
             QMessageBox.warning(
                 self.parent_widget,
                 "Ai-Pacs Viewer Closed",
                 f"Ai-Pacs NewMPR2 Viewer closed with exit code: {exit_code}\n"
-                "This may indicate an error occurred."
+                f"This may indicate an error occurred.{log_hint}"
             )
     
     def _on_error(self, error_msg: str):
@@ -624,6 +789,7 @@ class SlicerLauncher(QObject):
         self._is_running = False
         self.slicer_error.emit(error_msg)
         print(f"[SlicerLauncher] Error: {error_msg}")
+        logger.error("[AIPACS_LAUNCH] signal_error %s", error_msg)
         
         QMessageBox.critical(
             self.parent_widget,

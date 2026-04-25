@@ -694,8 +694,8 @@ class _PWAdvancedMixin:
         self._advanced_mpr_loading_overlay = AiPacsLoadingOverlay.show_overlay(
             parent=viewer_area,
             title="AI Pacs Image Analysis",
-            status="AI Pacs is loading 3D Slicer",
-            subtitle="Preparing Advanced MPR and AI segmentation engine",
+            status="AI Advanced Analysis is launching",
+            subtitle="Preparing Advanced MPR runtime and loading the selected study",
         )
 
     def _hide_advanced_mpr_loading_ui(self, *, delay_ms: int = 0) -> None:
@@ -839,14 +839,14 @@ class _PWAdvancedMixin:
             )
 
     def _on_advanced_mpr_started(self) -> None:
-        """3D Slicer process has started — hide the loader after a brief delay
+        """Advanced Analysis process has started — hide the loader after a brief delay
         so the viewer has time to become visible before the overlay fades out."""
         print("[PatientWidget] Advanced MPR started – scheduling loader fade-out")
         # Update status text to indicate success, then fade after 1.5 s
         overlay = getattr(self, '_advanced_mpr_loading_overlay', None)
         if overlay is not None:
-            overlay.set_status("3D Slicer launched successfully")
-        self._hide_advanced_mpr_loading_ui(delay_ms=1500)
+            overlay.set_status("AI Advanced Analysis launched")
+        self._hide_advanced_mpr_loading_ui(delay_ms=800)
         
         # ========== BUTTON SAFEGUARD: End operation on success ==========
         self.button_safeguard.end_operation(success=True, operation_name="Advanced MPR Launch")

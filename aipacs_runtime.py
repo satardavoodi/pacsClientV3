@@ -1293,6 +1293,17 @@ def bootstrap_installer_selected_module_packages(
 
     configured = configured_module_map(profile)
     package_state = module_package_map(profile)
+    install_profile = load_installation_profile()
+    install_package_state = dict((install_profile.get("module_packages") or {}))
+
+    selected_by_installer: set[str] = set()
+    for module_id, state in install_package_state.items():
+        state_map = state if isinstance(state, dict) else {}
+        status = str(state_map.get("status") or "")
+        installed_from = str(state_map.get("installed_from") or "")
+        if status == "selected_for_install" or installed_from == "bundled_setup_selection":
+            selected_by_installer.add(str(module_id))
+
     available = {
         str(package.get("module_id") or ""): package
         for package in discover_bundled_module_packages()
@@ -1300,8 +1311,10 @@ def bootstrap_installer_selected_module_packages(
     }
     installed_records: list[dict[str, Any]] = []
 
-    for module_id, enabled in configured.items():
-        if not enabled:
+    for module_id in module_catalog_map().keys():
+        enabled = bool(configured.get(module_id, False))
+        installer_selected = module_id in selected_by_installer
+        if not enabled and not installer_selected:
             continue
         state = package_state.get(module_id)
         record = _package_record(module_id, state=state, enabled=True)

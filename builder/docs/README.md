@@ -17,6 +17,7 @@ Use this when you want the current Windows release pipeline based on the Python/
 - Main output root: `builder/output/`
 - Canonical docs:
   - `BUILD_DOCUMENT.md`
+  - `ADVANCED_MPR_BUILD_RUNTIME_INTEGRATION.md`
   - `WINDOWS_RELEASE_FLOW.md`
   - `BUILD_CHECKLIST.md`
   - `INSTALLER_QA_CHECKLIST.md`

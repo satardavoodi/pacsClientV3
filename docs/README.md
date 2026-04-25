@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v2.4.4 (2026-04-25)
+> **Current Stable Version:** v2.4.5 (2026-04-25)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -83,7 +83,8 @@ This is the canonical entrypoint for all project documentation. The docs are org
 
 ### Releases
 - [Release Notes](releases/RELEASE_NOTES.md) — Current consolidated release history
-- [Version 2.4.4 Release](releases/VERSION_2.4.4_RELEASE.md) — Current stable release notes
+- [Version 2.4.5 Release](releases/VERSION_2.4.5_RELEASE.md) — Current stable release notes
+- [Version 2.4.4 Release](releases/VERSION_2.4.4_RELEASE.md) — Previous stable release notes
 - [Version 2.4.3 Release](releases/VERSION_2.4.3_RELEASE.md) — Previous stable release snapshot
 - [Version 2.3.6 Release](releases/VERSION_2.3.6_RELEASE.md) — Earlier stable release snapshot
 - [Version 2.3.5 Release](releases/VERSION_2.3.5_RELEASE.md) â€” Earlier stable release snapshot
@@ -92,6 +93,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 
 ### Build & Deployment
 - [Build Systems Index](../builder/docs/README.md) â€" Canonical split between the PyInstaller builder and the staged Nuitka builder
+- [Advanced MPR Build/Runtime Integration](../builder/docs/ADVANCED_MPR_BUILD_RUNTIME_INTEGRATION.md) â€" Canonical anti-regression guide for packaging and launching Advanced MPR
 - [Windows Release Flow](../builder/docs/WINDOWS_RELEASE_FLOW.md) â€" Build, stage, and install workflow for shipping to another PC
 - [Build Document](../builder/docs/BUILD_DOCUMENT.md) â€" Long-lived PyInstaller packaging knowledge base (VTK, PySide6, SimpleITK notes)
 - [Nuitka Build Plan](../builder/docs/NUITKA_BUILD_PLAN.md) â€" Staged incremental Nuitka pipeline status, checkpoints, and next execution steps

@@ -602,7 +602,7 @@ begin
       MsgBox(
         'Advanced MPR was included in this installation.' + #13#10 + #13#10 +
         'Advanced MPR uses a bundled 3D Slicer runtime. ' +
-        'The runtime package has been copied to the module_packages folder in ProgramData and will be activated automatically the first time you open Advanced MPR inside AIPacs.' + #13#10 + #13#10 +
+        'The runtime package has been copied to the module_packages folder in ProgramData and will be prepared automatically in the background on first AIPacs startup (before first use of Advanced MPR).' + #13#10 + #13#10 +
         'Requirements for Advanced MPR:' + #13#10 +
         '  - Windows 10 or later (64-bit)' + #13#10 +
         '  - At least 8 GB RAM (16 GB recommended for large CT volumes)' + #13#10 +

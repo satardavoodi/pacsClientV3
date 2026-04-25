@@ -4,7 +4,7 @@
   "module_id": "advanced_mpr",
   "title": "Advanced MPR",
   "tier": "optional",
-  "version": "2.4.3",
+  "version": "2.4.5",
   "package_kind": "runtime_payload",
   "payload_dir": "",
   "python_paths": [],
@@ -23,3 +23,4 @@
   "sdk_entrypoint_group": "aipacs.plugins",
   "sdk_entrypoint_name": "advanced_mpr"
 }
+
