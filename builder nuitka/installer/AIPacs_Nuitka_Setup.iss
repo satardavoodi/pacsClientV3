@@ -32,7 +32,7 @@ PrivilegesRequired=admin
 DisableReadyMemo=no
 SetupIconFile=..\..\Qss\images\favicon.ico
 LicenseFile=..\..\LICENSE
-UninstallDisplayIcon={app}\AIPacs.exe
+UninstallDisplayIcon={app}\Engine\AIPacs.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -78,11 +78,11 @@ Source: "{#StageDir}\plugin_packages\web_browser\*"; DestDir: "{commonappdata}\A
 Source: "{#StageDir}\plugin_packages\echomind\*"; DestDir: "{commonappdata}\AIPacs\module_packages\echomind"; Components: optional\echomind; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\Engine\AIPacs.exe"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\Engine\AIPacs.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\AIPacs.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Engine\AIPacs.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 var
@@ -230,7 +230,10 @@ end;
 
 function ExistingAppExePath(): String;
 begin
-  Result := AddBackslash(WizardDirValue()) + 'AIPacs.exe';
+  if FileExists(AddBackslash(WizardDirValue()) + 'Engine\AIPacs.exe') then
+    Result := AddBackslash(WizardDirValue()) + 'Engine\AIPacs.exe'
+  else
+    Result := AddBackslash(WizardDirValue()) + 'AIPacs.exe';
 end;
 
 procedure RefreshExistingInstallState();
@@ -307,6 +310,11 @@ begin
     Exit;
   end;
   // Fallback: engine\config (current PyInstaller layout)
+  if DirExists(ExpandConstant('{app}\Engine\config')) then
+  begin
+    Result := ExpandConstant('{app}\Engine\config');
+    Exit;
+  end;
   if DirExists(ExpandConstant('{app}\engine\config')) then
   begin
     Result := ExpandConstant('{app}\engine\config');

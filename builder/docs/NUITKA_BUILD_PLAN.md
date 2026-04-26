@@ -187,6 +187,10 @@ Stage 7 copies runtime resources into staged core bundle and syncs theme qss:
 - config
 - json-styles
 - additional data dirs from spec
+- Final staged core layout now uses:
+  - `core/Engine/` for executable, DLLs, and internal runtime files
+  - `core/User Data/` parallel to `Engine`
+  - `core/Launch AIPacs.cmd` and `core/Launch AIPacs.vbs` as root launchers
 
 It also records basic comparison notes against existing PyInstaller dist when present.
 
@@ -283,6 +287,21 @@ On stage failure, output includes:
     - clean Stage 6 compile: ~30.7 min
     - incremental Stage 6 recompile after small patch: ~9.8 min
     - confirms cache/checkpoint pipeline avoids full restart cost for small changes.
+- April 26, 2026 (installer/runtime structure + optional-module runtime behavior):
+  - Added `--no-deployment-flag=excluded-module-usage` to Stage 6 full-core command so modules excluded by `--nofollow-import-to` can still load externally at runtime (fixes EchoMind startup exclusion crash path).
+  - Updated Nuitka installer layout to launch from `{app}\Engine\AIPacs.exe`.
+  - Updated staged runtime output to produce `Engine + User Data + launcher files`.
+  - Updated frozen runtime path resolution so `User Data` remains parallel to `Engine`.
+  - Advanced MPR status: runtime payload source path is currently missing in this workspace, so package is staged metadata-only (`PAYLOAD_NOT_MATERIALIZED`) until runtime payload files are provided.
+
+## DLL Exposure Reality (Nuitka)
+- Nuitka standalone on Windows still requires many runtime DLLs (`python*.dll`, Qt, VC runtime, extension-module `.pyd`, VTK/SimpleITK dependencies).
+- Full consolidation into a single custom `AIPacs.dll` is not realistically supported for this dependency stack in stable standalone mode.
+- `--onefile` can hide file layout at rest but still extracts runtime files at launch and is harder to debug for medical-imaging native dependencies.
+- Recommended production direction remains:
+  - keep standalone/Engine layout,
+  - reduce visible surface via installer structure and launcher,
+  - keep optional plugins external and versioned.
 
 ## Next Execution (Current)
 Use the build venv and continue from stage 3:

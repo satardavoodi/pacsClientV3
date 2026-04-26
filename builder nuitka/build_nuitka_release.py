@@ -655,6 +655,9 @@ def create_nuitka_command(
         append_mesa_runtime_flags(cmd)
     elif profile == "full_core":
         cmd.append("--enable-plugin=pyside6")
+        # Keep optional plugin modules external while still allowing runtime
+        # imports from external module packages.
+        cmd.append("--no-deployment-flag=excluded-module-usage")
         # Entry-point driven inclusion is significantly more stable for this
         # project than broad forced/include-package lists.
         include_packages = {"pydicom"}
@@ -962,51 +965,77 @@ def stage_07_runtime_resources(ctx: BuildContext, stage: Stage, log_path: Path) 
         raise StageError(f"Stage 6 dist not found: {stage6_dist}")
 
     core_stage = STAGE_DIR / "core"
+    engine_stage = core_stage / "Engine"
     # Recreate core stage payload from stage 6 each run to avoid stale files
     # breaking subsequent resource copies.
     if core_stage.exists():
         shutil.rmtree(core_stage, ignore_errors=True)
     core_stage.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(stage6_dist, core_stage, dirs_exist_ok=True)
+    engine_stage.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(stage6_dist, engine_stage, dirs_exist_ok=True)
 
     copied: list[str] = []
     for src, dst in get_spec_list(ctx.spec, "DATA_DIRS"):
         source_path = PROJECT_ROOT / src
-        destination_path = core_stage / dst
+        destination_path = engine_stage / dst
         if copy_if_exists(source_path, destination_path):
-            copied.append(f"{src} -> {dst}")
+            copied.append(f"{src} -> Engine/{dst}")
 
     theme_css = PROJECT_ROOT / "generated-files" / "css" / "main.css"
     if theme_css.exists():
-        destination = core_stage / "Qss" / "main.qss"
+        destination = engine_stage / "Qss" / "main.qss"
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(theme_css, destination)
-        copied.append("generated-files/css/main.css -> Qss/main.qss")
+        copied.append("generated-files/css/main.css -> Engine/Qss/main.qss")
+
+    launcher_cmd = core_stage / "Launch AIPacs.cmd"
+    launcher_cmd.write_text(
+        "@echo off\n"
+        "setlocal\n"
+        "set \"APP_ROOT=%~dp0\"\n"
+        "start \"\" \"%APP_ROOT%Engine\\AIPacs.exe\" %*\n",
+        encoding="utf-8",
+    )
+    copied.append("Launch AIPacs.cmd")
+
+    launcher_vbs = core_stage / "Launch AIPacs.vbs"
+    launcher_vbs.write_text(
+        'Set fso = CreateObject("Scripting.FileSystemObject")\n'
+        "base = fso.GetParentFolderName(WScript.ScriptFullName)\n"
+        'exePath = base & "\\Engine\\AIPacs.exe"\n'
+        'CreateObject("WScript.Shell").Run """" & exePath & """", 0, False\n',
+        encoding="utf-8",
+    )
+    copied.append("Launch AIPacs.vbs")
 
     # Keep install layout expectations explicit for end users.
     user_data_dir = core_stage / "User Data"
     user_data_dir.mkdir(parents=True, exist_ok=True)
-    copied.append("User Data/ (empty directory placeholder)")
+    copied.append("User Data/ (parallel to Engine)")
 
     pyinstaller_core = PROJECT_ROOT / "builder" / "output" / "dist" / "AIPacs"
     comparison_notes: list[str] = []
     if pyinstaller_core.exists():
         for relative in ("Qss", "Fonts", "config", "json-styles"):
             src_exists = (pyinstaller_core / relative).exists()
-            dst_exists = (core_stage / relative).exists()
+            dst_exists = (engine_stage / relative).exists()
             comparison_notes.append(
-                f"compare:{relative}: pyinstaller={'yes' if src_exists else 'no'} nuitka={'yes' if dst_exists else 'no'}"
+                f"compare:{relative}: pyinstaller={'yes' if src_exists else 'no'} nuitka_engine={'yes' if dst_exists else 'no'}"
             )
 
     return StageResult(
         output_paths=[str(core_stage)],
-        artifact_paths=[str(core_stage / f"{APP_NAME}.exe")],
+        artifact_paths=[
+            str(engine_stage / f"{APP_NAME}.exe"),
+            str(core_stage / "Launch AIPacs.cmd"),
+            str(core_stage / "Launch AIPacs.vbs"),
+        ],
         notes=["Runtime resources staged"] + copied + comparison_notes,
     )
 
 
 def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> StageResult:
-    materialize_plugin_packages(include_runtime_payloads=False)
+    materialize_plugin_packages(include_runtime_payloads=True)
     plugin_stage = STAGE_DIR / "plugin_packages"
     if plugin_stage.exists():
         shutil.rmtree(plugin_stage, ignore_errors=True)
@@ -1031,11 +1060,21 @@ def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> 
     feed_path = plugin_stage / "module_package_feed.json"
     feed_path.write_text(json.dumps(feed_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    stage_notes: list[str] = []
+    advanced_mpr_manifest = plugin_stage / "advanced_mpr" / "module_package.json"
+    if advanced_mpr_manifest.exists():
+        payload_dir = str(json.loads(advanced_mpr_manifest.read_text(encoding="utf-8")).get("payload_dir") or "").strip()
+        if not payload_dir:
+            stage_notes.append(
+                "WARNING: advanced_mpr package staged without runtime payload "
+                "(PAYLOAD_NOT_MATERIALIZED)."
+            )
+
     package_dirs = sorted([p.name for p in plugin_stage.iterdir() if p.is_dir()])
     return StageResult(
         output_paths=[str(plugin_stage)],
         artifact_paths=[str(feed_path)],
-        notes=[f"Staged optional plugin packages: {', '.join(package_dirs)}"],
+        notes=[f"Staged optional plugin packages: {', '.join(package_dirs)}", *stage_notes],
     )
 
 
@@ -1154,11 +1193,11 @@ def smoke_test(ctx: BuildContext) -> int:
         )
 
     for dll_name in ("opengl32sw.dll", "osmesa.dll", "pipe_swrast.dll"):
-        if not ((full_dist / dll_name).exists() or (STAGE_DIR / "core" / dll_name).exists()):
+        if not ((full_dist / dll_name).exists() or (STAGE_DIR / "core" / "Engine" / dll_name).exists()):
             failures.append(f"Missing graphics DLL candidate: {dll_name}")
 
     for relative in ("Qss", "Fonts", "config"):
-        if not (STAGE_DIR / "core" / relative).exists():
+        if not (STAGE_DIR / "core" / "Engine" / relative).exists():
             failures.append(f"Missing staged resource folder: {relative}")
 
     plugin_stage = STAGE_DIR / "plugin_packages"

@@ -227,7 +227,13 @@ def bundle_root() -> Path:
 
 def install_root() -> Path:
     if is_frozen():
-        return Path(sys.executable).resolve().parent
+        exe_dir = Path(sys.executable).resolve().parent
+        # For installer layout:
+        #   {app}\Engine\AIPacs.exe
+        # keep install_root at {app} so User Data remains parallel to Engine.
+        if exe_dir.name.lower() == "engine":
+            return exe_dir.parent
+        return exe_dir
     return bundle_root()
 
 
@@ -318,7 +324,7 @@ def program_data_config_root() -> Path:
 
 def user_data_root() -> Path:
     if is_frozen() and sys.platform == "win32":
-        # v2.4.3+: User Data lives next to the executable and engine\ folder,
+        # v2.4.3+: User Data lives next to the executable Engine\ folder,
         # so users can clearly see and access it in Program Files\AIPacs\.
         # The installer creates this directory with users-modify permissions.
         return install_root() / "User Data"
@@ -1631,9 +1637,10 @@ def build_windows_graphics_environment(
         viewer_backend_override = ""
 
     if frozen_runtime:
-        internal_dir = install_root() / "engine"
-        if internal_dir.exists():
-            path_prefixes.insert(0, str(internal_dir))
+        for internal_dir in (install_root() / "Engine", install_root() / "engine"):
+            if internal_dir.exists():
+                path_prefixes.insert(0, str(internal_dir))
+                break
 
     unique_prefixes: list[str] = []
     seen_prefixes = set()
