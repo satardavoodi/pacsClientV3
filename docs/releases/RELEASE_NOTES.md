@@ -1,8 +1,33 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.4.5
-**Release Date:** 2026-04-25
+**Current Stable Version:** v2.4.5 (patch 2026-04-26)
+**Release Date:** 2026-04-25 / patch 2026-04-26
 **Branch:** main
+
+---
+
+## v2.4.5 patch (2026-04-26) — MPR frozen-build crash + user_data_root writable fallback
+
+### Summary
+
+Post-release patch applied on top of v2.4.5.  No version number bump; the installer
+produced on 2026-04-26 is a corrected v2.4.5 build.
+Full details in [`VERSION_2.4.5_RELEASE.md`](VERSION_2.4.5_RELEASE.md) §Post-release patches.
+
+### Fixes
+
+- **MPR frozen-build crash** — `sys.stdout.flush()` called inside
+  `_log_orientation_info()` crashes with `'NoneType' object has no attribute 'flush'`
+  in no-console PyInstaller builds.  Fixed in `_mpr_orientation.py` and
+  `standard_mpr_viewer_original.py` by returning early when `sys.stdout is None`.
+- **`user_data_root()` writable fallback** — On machines where
+  `Program Files\AIPacs\User Data` is not writable (e.g., non-admin users or strict
+  group policies), the runtime now falls back to `%LOCALAPPDATA%\AIPacs\user_data\`
+  instead of crashing on first write.  Added `_is_path_writable()` helper in
+  `aipacs_runtime.py`.
+- **Build script ASCII-safe print** — `builder/build_release.py` replaced Unicode `→`
+  with ASCII `->` in two print statements to prevent `UnicodeEncodeError` on Windows
+  consoles without UTF-8 mode active.
 
 ---
 

@@ -213,6 +213,10 @@ class _MprOrientationMixin:
 
     def _log_orientation_info(self):
         """Log orientation information for debugging"""
+        import sys as _sys
+        if _sys.stdout is None:
+            # No console in frozen/windowed mode — skip all print/flush debug output
+            return
         try:
             print("=" * 80)
             print("DEBUG: ORIENTATION INFORMATION")

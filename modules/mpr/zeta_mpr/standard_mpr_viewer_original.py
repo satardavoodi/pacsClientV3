@@ -1013,6 +1013,9 @@ class StandardMPRViewer(QWidget):
     def _log_orientation_info(self):
         """Log orientation information for debugging"""
         import sys
+        if sys.stdout is None:
+            # No console in frozen/windowed mode — skip all print/flush debug output
+            return
         try:
             print("=" * 80)
             print("DEBUG: ORIENTATION INFORMATION")

@@ -403,11 +403,11 @@ def stage_core_bundle(source_dir: Path, incremental: bool = False) -> Path:
         copied, skipped, removed = _sync_tree_incremental(source_dir, core_dir)
         print(
             f"[OK] Staged (incremental): {copied} copied, "
-            f"{skipped} skipped, {removed} removed → {core_dir}"
+            f"{skipped} skipped, {removed} removed -> {core_dir}"
         )
     else:
         shutil.copytree(source_dir, core_dir, dirs_exist_ok=True)
-        print(f"[OK] Staged (full copy) → {core_dir}")
+        print(f"[OK] Staged (full copy) -> {core_dir}")
     return core_dir
 
 

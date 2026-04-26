@@ -303,6 +303,19 @@ def _win_dir(env_name: str, fallback_suffix: tuple[str, ...]) -> Path:
     return Path.home().joinpath(*fallback_suffix)
 
 
+def _is_path_writable(path: Path) -> bool:
+    """Best-effort writable probe for runtime storage paths."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".aipacs_write_probe.tmp"
+        with probe.open("w", encoding="utf-8") as handle:
+            handle.write("ok")
+        probe.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
 def local_state_root() -> Path:
     if is_frozen() and sys.platform == "win32":
         return _win_dir("LOCALAPPDATA", ("AppData", "Local")) / APP_NAME
@@ -324,10 +337,13 @@ def program_data_config_root() -> Path:
 
 def user_data_root() -> Path:
     if is_frozen() and sys.platform == "win32":
-        # v2.4.3+: User Data lives next to the executable Engine\ folder,
-        # so users can clearly see and access it in Program Files\AIPacs\.
-        # The installer creates this directory with users-modify permissions.
-        return install_root() / "User Data"
+        # Canonical installed location: Program Files\AIPacs\User Data.
+        # If permissions are missing on a specific machine, fall back to the
+        # per-user LocalAppData path so runtime writes still succeed.
+        preferred = install_root() / "User Data"
+        if _is_path_writable(preferred):
+            return preferred
+        return local_state_root() / USER_DATA_DIRNAME
     return bundle_root() / USER_DATA_DIRNAME
 
 

@@ -7,9 +7,11 @@ or cached by the application.  Software/code folders (PacsClient, modules,
 Qss, Fonts, …) live *outside* this tree and are never mixed with user data.
 
 In **development** the tree lives under ``PROJECT_ROOT/user_data/``.
-In a **PyInstaller build** it lives under ``{InstallDir}\\User Data\\``
+In a **PyInstaller build** it prefers ``{InstallDir}\\User Data\\``
 (e.g. ``C:\\Program Files\\AIPacs\\User Data\\``), visible alongside the
-``engine\\`` folder in the same install directory.
+``engine\\`` folder in the same install directory; if that path is not
+writable on a given machine, it falls back to
+``%LOCALAPPDATA%\\AIPacs\\user_data\\``.
 
 Every module that writes or reads user data MUST import paths from here
 (or from ``PacsClient.utils.config`` which re-exports the most common ones).

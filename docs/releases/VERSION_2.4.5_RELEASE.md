@@ -1,6 +1,98 @@
 # v2.4.5 - Advanced MPR Launch Readiness + FAST Corner-Zoom Regression Fix (2026-04-25)
+# Post-release patch: 2026-04-26 (MPR frozen crash + user_data_root fallback)
+
+## Post-release Patches (2026-04-26)
+
+Applied as uncommitted changes on top of the 2026-04-25 tag; embedded in the
+installer rebuilt on 2026-04-26 (`ai-pacs installer v2.4.5.exe`).
+
+### Fix 1 — MPR viewer crash in frozen (no-console) builds
+
+**Symptom:** Zeta MPR viewer crash on launch in the installed build with:
+```
+AttributeError: 'NoneType' object has no attribute 'flush'
+```
+
+**Root cause:** `StandardMPRViewer.__init__` (in `widget.py` line 141) calls
+`self._log_orientation_info()`.  That method calls `print()` + `sys.stdout.flush()`
+approximately 16 times across two files.  In a PyInstaller windowed/no-console build
+`sys.stdout is None`, so `.flush()` raises `AttributeError`.
+
+**Fix:** Added an early-return guard at the top of `_log_orientation_info()` in both
+affected files:
+
+```python
+import sys as _sys
+if _sys.stdout is None:
+    # No console in frozen/windowed mode — skip all print/flush debug output
+    return
+```
+
+**Files changed:**
+- `modules/mpr/zeta_mpr/mpr_viewer/_mpr_orientation.py`
+- `modules/mpr/zeta_mpr/standard_mpr_viewer_original.py`
+
+**Rule for future callers:** Any `print()` or `sys.stdout.flush()` inside a method
+that runs during `__init__` of a widget that is constructed in the installed build
+MUST be guarded by `if sys.stdout is None: return` (or use `logger.debug()` instead
+of `print()`).  This applies to ALL debug-logging helpers called unconditionally from
+`__init__` paths — not only in the MPR viewer.
+
+**Verified:** Dev-mode regression test simulated `sys.stdout = None` and confirmed
+the guard path exits cleanly (`mpr_stdout_none_guard=ok`).
+
+---
+
+### Fix 2 — `user_data_root()` writable fallback
+
+**Symptom:** On machines where `C:\Program Files\AIPacs\User Data\` is not writable
+(non-admin user, strict group policy, or UAC restrictions), any first write to user
+data (DB, pixel cache, DICOM downloads) raised `PermissionError` and the app crashed
+or produced a blank/frozen viewer.
+
+**Root cause:** `aipacs_runtime.user_data_root()` (frozen branch) unconditionally
+returned `install_root() / "User Data"` without checking writeability.
+
+**Fix:** Added `_is_path_writable(path)` helper in `aipacs_runtime.py` that performs
+a `mkdir` + write-probe + unlink cycle.  `user_data_root()` now:
+1. Tries `Program Files\AIPacs\User Data` (preferred — visible, alongside `engine\`).
+2. If not writable, falls back to `%LOCALAPPDATA%\AIPacs\user_data\`.
+
+```python
+preferred = install_root() / "User Data"
+if _is_path_writable(preferred):
+    return preferred
+return local_state_root() / USER_DATA_DIRNAME
+```
+
+**Files changed:**
+- `aipacs_runtime.py` — `_is_path_writable()` added; `user_data_root()` updated.
+- `PacsClient/utils/data_paths.py` — module docstring updated to document fallback.
+
+**Rule:** Any code that resolves a user-data path MUST call `user_data_root()` (or a
+function derived from it) — never hardcode `install_root() / "User Data"` directly.
+The writable fallback is transparent to all callers because they only see the
+resolved `Path` object.
+
+---
+
+### Fix 3 — Build script ASCII-safe print statements
+
+**Symptom:** On Windows consoles without UTF-8 mode (`PYTHONUTF8=1` not set),
+`builder/build_release.py` raised `UnicodeEncodeError` when printing status lines
+containing the Unicode right-arrow character `→`.
+
+**Fix:** Replaced `→` with ASCII `->` in two `print()` calls in
+`builder/build_release.py` (`stage_core_bundle` function).
+
+**Rule:** `build_release.py` output goes to arbitrary consoles and CI logs that may
+not be UTF-8.  Use only printable ASCII in its `print()` / log statements, or use
+`PYTHONUTF8=1` in the canonical build command (both are now in place).
+
+---
 
 ## Summary
+
 
 This release resolves two user-visible regressions reported from installed builds:
 
