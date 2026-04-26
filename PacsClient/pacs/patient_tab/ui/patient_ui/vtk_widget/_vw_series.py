@@ -538,38 +538,55 @@ class _VWSeriesMixin:
             self._update_backend_badge()
             raise
 
-    def _hide_qt_viewer(self):
-        """Hide and cleanup the Qt viewer widget if it exists."""
+    def _hide_qt_viewer(self, *, restore_vtk_surface: bool = True):
+        """Hide and cleanup the Qt viewer widget if it exists.
+
+        During Qt-to-Qt series replacement, keep the VTK native surface hidden to
+        avoid a one-frame fallback where stale VTK content can appear behind the
+        new Qt viewer until the next interaction.
+        """
         if self._qt_viewer_widget is not None:
+            _old_qt_viewer = self._qt_viewer_widget
             try:
-                _scroll_timer = getattr(self._qt_viewer_widget, '_scroll_stop_timer', None)
+                _scroll_timer = getattr(_old_qt_viewer, '_scroll_stop_timer', None)
                 if _scroll_timer is not None:
                     _scroll_timer.stop()
             except Exception:
                 pass
             try:
-                self._qt_viewer_widget.hide()
+                _old_qt_viewer.setUpdatesEnabled(False)
             except Exception:
                 pass
             try:
-                self._qt_viewer_widget.deleteLater()
+                _old_qt_viewer.hide()
+            except Exception:
+                pass
+            try:
+                # Detach immediately so layout/paint can no longer route through
+                # the old viewer while deleteLater waits for the event loop.
+                _old_qt_viewer.setParent(None)
+            except Exception:
+                pass
+            try:
+                _old_qt_viewer.deleteLater()
             except Exception:
                 pass
             self._qt_viewer_widget = None
-        # Restore VTK render window and WA_PaintOnScreen for VTK path
-        try:
-            from PySide6.QtCore import Qt as _Qt
-            self.setAttribute(_Qt.WidgetAttribute.WA_PaintOnScreen, True)
-            rw = getattr(self, 'render_window', None) or getattr(self, '_RenderWindow', None)
-            if rw is not None:
-                if hasattr(rw, 'SetOffScreenRendering'):
-                    rw.SetOffScreenRendering(False)
-                w, h = self.width(), self.height()
-                rw.SetSize(w, h)
-                if hasattr(rw, 'SetShowWindow'):
-                    rw.SetShowWindow(True)
-        except Exception:
-            pass
+        if restore_vtk_surface:
+            # Restore VTK render window and WA_PaintOnScreen for VTK path.
+            try:
+                from PySide6.QtCore import Qt as _Qt
+                self.setAttribute(_Qt.WidgetAttribute.WA_PaintOnScreen, True)
+                rw = getattr(self, 'render_window', None) or getattr(self, '_RenderWindow', None)
+                if rw is not None:
+                    if hasattr(rw, 'SetOffScreenRendering'):
+                        rw.SetOffScreenRendering(False)
+                    w, h = self.width(), self.height()
+                    rw.SetSize(w, h)
+                    if hasattr(rw, 'SetShowWindow'):
+                        rw.SetShowWindow(True)
+            except Exception:
+                pass
 
     def reset_image(self, vtk_image_data, metadata):  # reload image
         # ظ¤ظ¤ Qt backend: re-open pipeline on same series ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤
@@ -682,7 +699,10 @@ class _VWSeriesMixin:
         _preserved_backend = str(getattr(self, '_active_backend', BACKEND_VTK) or BACKEND_VTK)
         # Hide and release Qt viewer resources if active
         if self._qt_bridge_active:
-            self._hide_qt_viewer()
+            _restore_vtk_surface = not (
+                bool(preserve_bound_backend) and _preserved_backend == BACKEND_PYDICOM_QT
+            )
+            self._hide_qt_viewer(restore_vtk_surface=_restore_vtk_surface)
             self._qt_bridge_active = False
 
         # Check if image_viewer exists before cleanup (for progressive download dummy viewers)
