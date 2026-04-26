@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v2.4.5 (2026-04-25)
+> **Current Stable Version:** v2.4.6 (2026-04-26)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -83,7 +83,8 @@ This is the canonical entrypoint for all project documentation. The docs are org
 
 ### Releases
 - [Release Notes](releases/RELEASE_NOTES.md) — Current consolidated release history
-- [Version 2.4.5 Release](releases/VERSION_2.4.5_RELEASE.md) — Current stable release notes
+- [Version 2.4.6 Release](releases/VERSION_2.4.6_RELEASE.md) — Current stable release notes
+- [Version 2.4.5 Release](releases/VERSION_2.4.5_RELEASE.md) — Previous stable release notes
 - [Version 2.4.4 Release](releases/VERSION_2.4.4_RELEASE.md) — Previous stable release notes
 - [Version 2.4.3 Release](releases/VERSION_2.4.3_RELEASE.md) — Previous stable release snapshot
 - [Version 2.3.6 Release](releases/VERSION_2.3.6_RELEASE.md) — Earlier stable release snapshot
