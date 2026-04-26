@@ -103,5 +103,18 @@ See [`VERSION_2.4.5_RELEASE.md`](VERSION_2.4.5_RELEASE.md) for full details of:
 | Version | 2.4.6 |
 | Date | 2026-04-26 |
 | Branch | main |
-| Commit | 55cc0314 |
+| Commit | b57fb327 |
 | Base | v2.4.5 + 2026-04-26 patch |
+
+### Packaging Confirmation (PyInstaller + Inno Setup)
+
+Release packaging for v2.4.6 completed successfully on 2026-04-26.
+
+- Build command exited with code 0.
+- Inno Setup reported `Successful compile (5194.984 sec)`.
+- Generated installers:
+  - `builder/output/installer/ai-pacs installer.exe`
+  - `builder/output/installer/ai-pacs installer v2.4.6.exe`
+
+This confirms the Advanced MPR runtime guard changes are included in the
+produced installer artifacts used for installation validation.
