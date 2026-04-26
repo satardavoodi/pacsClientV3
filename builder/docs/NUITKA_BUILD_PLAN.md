@@ -1,7 +1,7 @@
 # Nuitka Incremental Build Plan
 
 Status: In Progress (checkpoint pipeline implemented)
-Updated: April 24, 2026
+Updated: April 25, 2026
 
 This document is for the **Nuitka build chain in `builder nuitka/`** only.
 
@@ -87,21 +87,21 @@ Stages are implemented in `builder nuitka/build_nuitka_release.py`.
 Run from project root.
 
 - Full staged run:  
-  `python "builder nuitka/build_nuitka_release.py"`
+  `.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py"`
 - Resume from first failed/incomplete stage:  
-  `python "builder nuitka/build_nuitka_release.py" --resume`
+  `.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py" --resume`
 - Run from selected stage onward:  
-  `python "builder nuitka/build_nuitka_release.py" --from-stage 5`
+  `.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py" --from-stage 5`
 - Run only one stage (debugging):  
-  `python "builder nuitka/build_nuitka_release.py" --stage 2`
+  `.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py" --stage 2`
 - Run with explicit compiler override (when Zig/MSVC behavior differs):  
-  `python "builder nuitka/build_nuitka_release.py" --stage 1 --compiler msvc`
+  `.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py" --stage 1 --compiler msvc`
 - Clean one stage artifacts only:  
-  `python "builder nuitka/build_nuitka_release.py" --clean-stage 5`
+  `.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py" --clean-stage 5`
 - Clean all Nuitka outputs only:  
-  `python "builder nuitka/build_nuitka_release.py" --clean-all`
+  `.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py" --clean-all`
 - Post-build smoke checks:  
-  `python "builder nuitka/build_nuitka_release.py" --smoke-test`
+  `.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py" --smoke-test`
 
 Batch wrappers:
 - `build_nuitka_release.bat` now auto-bootstraps `.venv_build` if missing and auto-installs `requirements-nuitka.txt` if Nuitka toolchain is missing.
@@ -151,9 +151,11 @@ Project-local cache roots:
 - `builder nuitka/output/ccache/`
 
 Configured behavior:
-- Nuitka `--cache-dir` points into `output/nuitka-cache`
-- `CCACHE_DIR` / `CLCACHE_DIR` exported to `output/ccache`
-- no `--remove-output` in stage commands
+- Nuitka 4.0.8 does not support `--cache-dir`, so output/cache control is done by
+  preserving stage build/dist/report folders and Nuitka's own managed cache.
+- `CCACHE_DIR` / `CLCACHE_DIR` env overrides are intentionally disabled in the
+  orchestrator because they produced unstable artifacts in this toolchain.
+- no `--remove-output` in stage commands.
 
 ## Requirements Strategy
 - Added `requirements-nuitka.txt` as the dedicated Nuitka build layer:
@@ -200,6 +202,17 @@ It also records basic comparison notes against existing PyInstaller dist when pr
 
 Manual checks are still required for full clinical workflows.
 
+## Cross-Build Coherence Check
+After PyInstaller and Nuitka staging complete, run:
+
+`python builder/scripts/check_build_coherence.py`
+
+This verifies:
+- both stage outputs contain required installer/profile/feed artifacts
+- `installation_profile.json` module map and version fields match
+- optional plugin package feed/module directories match in both build systems
+- Nuitka stage 6 report does not compile optional plugin module families into core
+
 ## Failure Recovery
 On stage failure, output includes:
 - failed stage name/number
@@ -235,6 +248,41 @@ On stage failure, output includes:
 - Stage 8/9 hardening:
   - Stage 8 now fails early if `module_package_feed.json` is missing after plugin staging.
   - Stage 9 now explicitly sets `installer.current_version` in `installation_profile.json`.
+- State coherence hardening:
+  - `--resume` now always starts from the first incomplete stage number, even if old `failed_stage` metadata exists.
+  - Re-running any stage now marks all downstream completed stages as `stale` in `build_state.json`, so resume naturally rebuilds affected downstream stages instead of trusting stale completion flags.
+- April 25, 2026 runtime startup diagnosis:
+  - Observed installer/runtime launch failure reproduced from `builder nuitka/output/stage/core/AIPacs.exe`.
+  - Root cause captured: recursion loop in lazy database shims under frozen PySide/Shiboken introspection (`RecursionError` through `database.__getattr__` / `PacsClient.utils.database.__getattr__`).
+  - Mitigation applied in source shims: dunder-attribute fast-fail + import-in-progress guards for:
+    - `database/__init__.py`
+    - `PacsClient/utils/database.py`
+    - `PacsClient/utils/db_manager.py`
+  - Stage 7 now creates `User Data/` explicitly in staged core so installer output layout includes it predictably.
+- Stage 10 artifact handling corrected to keep Nuitka installer outputs/metadata under `builder nuitka/output/installer/` without PyInstaller path/name normalization.
+- April 25, 2026 stability tuning:
+  - Removed forced `CC/CXX/LINK` Zig override; pipeline now lets Nuitka choose its managed Zig toolchain (0.16.x).
+  - Removed forced compiler-cache env overrides (`CCACHE_DIR`/`CLCACHE_DIR`) due unstable artifacts.
+  - Narrowed `--nofollow-import-to` to optional plugin module families only (`modules.*`), avoiding stdlib-side effects.
+  - Removed deprecated `--enable-plugin=numpy` usage.
+  - Full-core command switched to entrypoint-driven inclusion (no giant forced include lists).
+  - Stage 6 smoke launch is now warning-only (recorded in stage notes) so compile checkpoint is preserved even when runtime triage is still needed.
+  - Added startup guard in `main.py` for missing pydicom encoder plugin modules to prevent hard crash during plugin registration.
+  - Stage 6 now compiles reliably and preserves checkpoint; remaining runtime issues should be triaged incrementally from stage 6 without rebuilding from stage 0.
+- April 25, 2026 (v2.4.5 sync + focused Stage 6 fix):
+  - Synced local branch with latest `origin/main` changes that include Python-build updates for Advanced MPR/plugin packaging consistency.
+  - Resolved plugin package descriptor merge conflicts by keeping 2.4.5 metadata (`module_package.json` versions aligned with Python build).
+  - Stage 6 `full_core` command now force-includes available pydicom encoder modules (including `pydicom.encoders.gdcm` and related handlers) to fix frozen runtime import failures.
+  - Fixed optional-plugin boundary startup crash by making `PacsClient.pacs.workstation_ui.home_ui` import-safe when EchoMind is excluded from compiled core.
+  - Verified requested focused execution path:
+    - `--clean-stage 6`
+    - `--stage 6`
+    - `--from-stage 7`
+    - followed by validation rebuild (`--stage 6`, `--from-stage 7`) and `--smoke-test` pass.
+  - Observed incremental build behavior in practice:
+    - clean Stage 6 compile: ~30.7 min
+    - incremental Stage 6 recompile after small patch: ~9.8 min
+    - confirms cache/checkpoint pipeline avoids full restart cost for small changes.
 
 ## Next Execution (Current)
 Use the build venv and continue from stage 3:
