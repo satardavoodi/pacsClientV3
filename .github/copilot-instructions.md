@@ -1,6 +1,6 @@
 ﻿# AIPacs Copilot Instructions
 
-**Current Stable Version:** v2.3.7 (2026-04-22) — stack-drag smoothness stabilized; R13 reverted to opt-in after log 99 priority-inversion regression; drag hot-path ObjectCache noop loop elided; all infrastructure for R8/R9/R12/R14 retained. See `docs/releases/VERSION_2.3.7_RELEASE.md`, `docs/plans/STACK_DRAG_PLAYBOOK_v2.3.6.md`, and `docs/plans/CURRENT_KPIS_v2.3.6.md` (KPI baselines still apply; log 100 ui_lag worst 280 ms, avg ~150 ms).
+**Current Stable Version:** v2.4.6 (2026-04-26) — Advanced MPR stale runtime payload guard; fail-fast check blocks launch when installed `startup_script.py` is outdated (missing remote-command-server markers), preventing silent four-up/fourth-box fallback behavior. See `docs/releases/VERSION_2.4.6_RELEASE.md`. Inherits all v2.4.5 fixes (Advanced MPR launch UX, FAST corner-zoom structural fix, MPR frozen crash guard, `user_data_root()` writable fallback, build ASCII-safe print).
 
 **In-flight (dev):** v2.3.8 R15 — Advanced (VTK) viewer joins the unified protected-interaction latch so R3/R4/R5 auto-extend to Advanced wheel/stack bursts. See R15 below.
 

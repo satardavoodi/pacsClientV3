@@ -1,8 +1,34 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.4.5 (patch 2026-04-26)
-**Release Date:** 2026-04-25 / patch 2026-04-26
+**Current Stable Version:** v2.4.6 (2026-04-26)
+**Release Date:** 2026-04-26
 **Branch:** main
+
+---
+
+## v2.4.6 (2026-04-26) — Advanced MPR runtime compatibility guard
+
+### Summary
+
+Adds a fail-fast startup check that blocks the Advanced MPR module from launching
+when the installed runtime payload (`startup_script.py`) is outdated.  Before this
+fix, a stale runtime silently caused the Advanced Viewer to open in a generic
+four-up / fourth-box layout instead of the correct Advanced MPR mode.
+Full details in [`VERSION_2.4.6_RELEASE.md`](VERSION_2.4.6_RELEASE.md).
+
+### Fix
+
+- **Advanced MPR stale runtime payload guard** — `SlicerLauncherWorker._check_runtime_installed()`
+  now calls a new `_validate_runtime_startup_script(runtime_root)` step that verifies
+  the three required remote-command-server markers in `startup_script.py`.  If any
+  marker is absent, launch is blocked and a clear reinstall dialog is shown to the user.
+  **File:** `modules/mpr/advanced_3d_slicer/slicer_launcher.py`
+
+### Verification
+
+Confirmed on installed build (2026-04-26):
+- Stale runtime → dialog shows incompatible-runtime message; no process launched.
+- After module reinstall → Advanced MPR launches correctly in Advanced MPR mode.
 
 ---
 
