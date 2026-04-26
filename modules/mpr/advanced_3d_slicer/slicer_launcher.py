@@ -365,6 +365,53 @@ class SlicerLauncherWorker(QThread):
             return None
 
     @staticmethod
+    def _validate_runtime_startup_script(runtime_root: Path) -> Optional[str]:
+        """Validate the installed startup script signature for launch compatibility.
+
+        Installed-only regressions can happen when a stale Advanced MPR runtime payload
+        remains in modules_runtime while the workstation launcher code has been updated.
+        In that state Slicer may open in a generic four-up/fourth-box flow instead of the
+        intended Advanced MPR startup path.
+        """
+        startup_script = runtime_root / "bin" / "Python" / "startup_script.py"
+        if not startup_script.exists():
+            return (
+                "The Advanced MPR runtime is missing startup_script.py.\n\n"
+                "Try re-installing the module:\n"
+                "  Settings -> Installation -> Advanced MPR -> Re-install\n\n"
+                f"Expected file:\n{startup_script}"
+            )
+
+        try:
+            startup_text = startup_script.read_text(encoding="utf-8", errors="ignore")
+        except Exception as exc:
+            return (
+                "The Advanced MPR startup script could not be read.\n\n"
+                "Try re-installing the module:\n"
+                "  Settings -> Installation -> Advanced MPR -> Re-install\n\n"
+                f"File:\n{startup_script}\n\n"
+                f"Read error: {exc}"
+            )
+
+        required_markers = (
+            "_REMOTE_SERVER_STARTED",
+            "NEWMPR2_REMOTE_PORT",
+            "start_remote_command_server",
+        )
+        missing = [marker for marker in required_markers if marker not in startup_text]
+        if missing:
+            return (
+                "The installed Advanced MPR runtime is outdated and incompatible with this workstation build.\n\n"
+                "Symptom: launch may fall back to an unexpected four-up/fourth-box behavior instead of Advanced MPR mode.\n\n"
+                "Fix:\n"
+                "  Settings -> Installation -> Advanced MPR -> Re-install\n\n"
+                f"Runtime file:\n{startup_script}\n"
+                f"Missing compatibility markers: {', '.join(missing)}"
+            )
+
+        return None
+
+    @staticmethod
     def _check_runtime_installed() -> Optional[str]:
         """
         Verify that the Advanced MPR runtime is installed in the user runtime directory.
@@ -392,6 +439,10 @@ class SlicerLauncherWorker(QThread):
                     "  Settings → Installation → Advanced MPR → Re-install\n\n"
                     f"Runtime folder:\n{runtime_root}"
                 )
+
+            startup_problem = SlicerLauncherWorker._validate_runtime_startup_script(runtime_root)
+            if startup_problem:
+                return startup_problem
         except Exception as exc:
             # If we cannot even resolve the path, let the normal search continue.
             print(f"[AIPACS_LAUNCH] _check_runtime_installed: {exc}")
