@@ -99,6 +99,17 @@ MODULE_CATALOG: list[dict[str, Any]] = [
         "healthcheck_import": "modules.offline_cloud_server.service",
     },
     {
+        "id": "data_analysis",
+        "title": "Data Analysis",
+        "tier": "optional",
+        "default_enabled": True,
+        "component": "basic\\data_analysis",
+        "package_kind": "bundled_unlock",
+        "package_python_paths": ["python"],
+        "package_sources": ["modules/data_analysis"],
+        "healthcheck_import": "modules.data_analysis",
+    },
+    {
         "id": "advanced_mpr",
         "title": "Advanced MPR",
         "tier": "optional",

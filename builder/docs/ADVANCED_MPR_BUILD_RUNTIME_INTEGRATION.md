@@ -10,13 +10,24 @@ ship partially, or regress in installed builds.
 
 1. Runtime source assembled on build machine:
 - Source root: `advanced_mpr_runtime_root()` (resolved in `aipacs_runtime.py`)
+- Nuitka/PyInstaller package materialization can override this with
+  `AIPACS_ADVANCED_MPR_RUNTIME_SOURCE=<built Slicer runtime root>`.
+- Runtime source resolution order for package materialization:
+  1. `AIPACS_ADVANCED_MPR_RUNTIME_SOURCE`
+  2. `advanced_mpr_runtime_root()`
+  3. developer-machine fallback:
+     `%LOCALAPPDATA%\AIPacs\modules_runtime\advanced_mpr`
 
 2. Build validation gate:
 - `builder/build_release.py` -> `stage_advanced_mpr_payload()` checks required files.
 - Build must fail if required runtime files are missing (unless explicit override env is used).
+- `builder/materialize_plugin_packages.py --include-runtime-payloads` uses the same required-file contract before copying `advanced_mpr/payload`.
+- Nuitka Stage 08 fails fast if Advanced MPR is selected for packaging but the payload is missing or incomplete. Use `AIPACS_ALLOW_MISSING_ADVANCED_MPR=1` only for deliberate non-Advanced-MPR builds.
 
 3. Staging:
 - Staged under `builder/output/stage/plugin_packages/advanced_mpr/payload/`
+- Nuitka staging path:
+  `builder nuitka/output/stage/plugin_packages/advanced_mpr/payload/`
 
 4. Installer deployment:
 - Installed payload root:
@@ -83,6 +94,11 @@ If check fails, show actionable message and do not launch.
 ## Do-Not-Regress Rules
 
 - Do not remove required runtime file checks from `build_release.py`.
+- Do not remove the `AIPACS_ADVANCED_MPR_RUNTIME_SOURCE` override from
+  `builder/materialize_plugin_packages.py`; it is the reliable way to point
+  the builders at an assembled custom Slicer runtime.
+- Do not weaken Nuitka Stage 08 to silently accept metadata-only Advanced MPR
+  packages unless `AIPACS_ALLOW_MISSING_ADVANCED_MPR=1` is intentionally set.
 - Do not revert launch readiness gating to immediate `started` on spawn.
 - Do not write launcher diagnostics to Program Files writable paths.
   Use user-writable log location from `_resolve_user_writable_launch_dir()`.

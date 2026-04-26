@@ -8,16 +8,28 @@ import importlib as _importlib
 import sys as _sys
 
 _manager = None
+_loading_manager = False
 
 
 def _ensure_manager():
-    global _manager
+    global _manager, _loading_manager
     if _manager is None:
-        _manager = _importlib.import_module("database.manager")
+        if _loading_manager:
+            existing = _sys.modules.get("database.manager")
+            if existing is not None:
+                return existing
+            raise AttributeError("database.manager import is in progress")
+        _loading_manager = True
+        try:
+            _manager = _importlib.import_module("database.manager")
+        finally:
+            _loading_manager = False
     return _manager
 
 
 def __getattr__(name):
+    if name.startswith("__"):
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     mod = _ensure_manager()
     try:
         val = getattr(mod, name)
@@ -30,4 +42,7 @@ def __getattr__(name):
 
 
 def __dir__():
-    return dir(_ensure_manager())
+    try:
+        return dir(_ensure_manager())
+    except Exception:
+        return []

@@ -1,20 +1,20 @@
 {
   "format_version": 1,
   "app_name": "AIPacs",
-  "module_id": "advanced_mpr",
-  "title": "Advanced MPR",
+  "module_id": "data_analysis",
+  "title": "Data Analysis",
   "tier": "optional",
   "version": "2.4.6",
-  "package_kind": "runtime_payload",
+  "package_kind": "bundled_unlock",
   "payload_dir": "payload",
   "python_paths": [
     "python"
   ],
   "requires_restart": true,
-  "healthcheck_import": "",
-  "healthcheck_path": "AIPacsAdvancedViewer.exe",
+  "healthcheck_import": "modules.data_analysis",
+  "healthcheck_path": "",
   "integration_points": [
-    "patient.advanced_mpr_launcher",
+    "workstation.data_analysis_tab",
     "external.runtime"
   ],
   "install_channels": [
@@ -23,5 +23,5 @@
     "store"
   ],
   "sdk_entrypoint_group": "aipacs.plugins",
-  "sdk_entrypoint_name": "advanced_mpr"
+  "sdk_entrypoint_name": "data_analysis"
 }

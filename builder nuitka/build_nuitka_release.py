@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +63,27 @@ OPTIONAL_PLUGIN_MODULES = [
     "modules.web_browser",
     "modules.EchoMind",
     "modules.mpr.advanced_3d_slicer",
+    "modules.data_analysis",
+]
+
+ALLOW_MISSING_ADVANCED_MPR_ENV = "AIPACS_ALLOW_MISSING_ADVANCED_MPR"
+ADVANCED_MPR_REQUIRED_RUNTIME_FILES = (
+    "AIPacsAdvancedViewer.exe",
+    "AIPacsAdvancedViewerLauncherSettings.ini",
+    "bin/Python/startup_script.py",
+    "python-install/Lib/site-packages/numpy/testing/__init__.py",
+    "python-install/Lib/site-packages/pydicom/examples/__init__.py",
+)
+
+NATIVE_AUDIT_PACKAGES = [
+    "pandas",
+    "matplotlib",
+    "cv2",
+    "vtkmodules",
+    "SimpleITK",
+    "PySide6",
+    "numpy",
+    "PIL",
 ]
 
 
@@ -474,6 +496,77 @@ def run_command_with_log(
     return int(process.returncode)
 
 
+def build_root_launcher_exe(ctx: BuildContext, core_stage: Path, log_path: Path) -> Path:
+    launcher_src = core_stage / "_launcher_root.py"
+    launcher_exe = core_stage / f"{APP_NAME}.exe"
+
+    launcher_src.write_text(
+        textwrap.dedent(
+            """
+            from __future__ import annotations
+
+            import subprocess
+            import sys
+            from pathlib import Path
+
+
+            def _message_box(text: str) -> None:
+                try:
+                    import ctypes
+
+                    ctypes.windll.user32.MessageBoxW(0, text, "AIPacs Launcher", 0x10)
+                except Exception:
+                    pass
+
+
+            def main() -> int:
+                root = Path(sys.argv[0]).resolve().parent
+                engine_exe = root / "Engine" / "AIPacs.exe"
+                if not engine_exe.exists():
+                    _message_box(f"Engine executable not found:\\n{engine_exe}")
+                    return 1
+
+                try:
+                    subprocess.Popen([str(engine_exe), *sys.argv[1:]], cwd=str(engine_exe.parent))
+                    return 0
+                except Exception as exc:
+                    _message_box(f"Failed to start engine:\\n{exc}")
+                    return 1
+
+
+            if __name__ == "__main__":
+                raise SystemExit(main())
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "nuitka",
+        "--onefile",
+        f"--output-dir={core_stage}",
+        f"--output-filename={APP_NAME}.exe",
+        "--windows-console-mode=disable",
+        str(launcher_src),
+    ]
+    icon = getattr(ctx.spec, "ICON", "")
+    if icon and (PROJECT_ROOT / icon).exists():
+        cmd.insert(-1, f"--windows-icon-from-ico={icon}")
+
+    rc = run_command_with_log(cmd, cwd=PROJECT_ROOT, log_path=log_path)
+    if rc != 0 or not launcher_exe.exists():
+        raise StageError(f"Failed to build root launcher executable: {launcher_exe}")
+    launcher_src.unlink(missing_ok=True)
+    for suffix in (".build", ".dist", ".onefile-build"):
+        cleanup_dir = core_stage / f"_launcher_root{suffix}"
+        if cleanup_dir.exists():
+            shutil.rmtree(cleanup_dir, ignore_errors=True)
+    return launcher_exe
+
+
 def parse_missing_issues(text: str) -> list[str]:
     patterns = [
         r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]",
@@ -515,6 +608,10 @@ def copy_if_exists(source: Path, destination: Path) -> bool:
             destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
     return True
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def get_spec_list(spec: ModuleType, name: str) -> list[Any]:
@@ -660,9 +757,18 @@ def create_nuitka_command(
         cmd.append("--no-deployment-flag=excluded-module-usage")
         # Entry-point driven inclusion is significantly more stable for this
         # project than broad forced/include-package lists.
-        include_packages = {"pydicom"}
+        include_packages = {
+            "pydicom",
+            # settings_ui is imported lazily via package __getattr__/import_module.
+            # Force include to avoid runtime "No module named ...settings_ui.settings_ui".
+            "PacsClient.pacs.workstation_ui.settings_ui",
+        }
         forced = existing_modules(
             [
+                # Optional Web Browser stays external, but its PySide6
+                # QtWebEngine native runtime must live in the compiled Engine.
+                "PySide6.QtWebEngineCore",
+                "PySide6.QtWebEngineWidgets",
                 "pydicom",
                 "pydicom.encoders",
                 "pydicom.encoders.base",
@@ -973,6 +1079,9 @@ def stage_07_runtime_resources(ctx: BuildContext, stage: Stage, log_path: Path) 
     core_stage.mkdir(parents=True, exist_ok=True)
     engine_stage.mkdir(parents=True, exist_ok=True)
     shutil.copytree(stage6_dist, engine_stage, dirs_exist_ok=True)
+    nested_user_data = engine_stage / "User Data"
+    if nested_user_data.exists():
+        shutil.rmtree(nested_user_data, ignore_errors=True)
 
     copied: list[str] = []
     for src, dst in get_spec_list(ctx.spec, "DATA_DIRS"):
@@ -987,6 +1096,9 @@ def stage_07_runtime_resources(ctx: BuildContext, stage: Stage, log_path: Path) 
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(theme_css, destination)
         copied.append("generated-files/css/main.css -> Engine/Qss/main.qss")
+
+    launcher_exe = build_root_launcher_exe(ctx, core_stage, log_path)
+    copied.append(f"{launcher_exe.name} (root launcher exe)")
 
     launcher_cmd = core_stage / "Launch AIPacs.cmd"
     launcher_cmd.write_text(
@@ -1027,6 +1139,7 @@ def stage_07_runtime_resources(ctx: BuildContext, stage: Stage, log_path: Path) 
         output_paths=[str(core_stage)],
         artifact_paths=[
             str(engine_stage / f"{APP_NAME}.exe"),
+            str(launcher_exe),
             str(core_stage / "Launch AIPacs.cmd"),
             str(core_stage / "Launch AIPacs.vbs"),
         ],
@@ -1061,14 +1174,35 @@ def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> 
     feed_path.write_text(json.dumps(feed_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     stage_notes: list[str] = []
-    advanced_mpr_manifest = plugin_stage / "advanced_mpr" / "module_package.json"
-    if advanced_mpr_manifest.exists():
-        payload_dir = str(json.loads(advanced_mpr_manifest.read_text(encoding="utf-8")).get("payload_dir") or "").strip()
-        if not payload_dir:
-            stage_notes.append(
-                "WARNING: advanced_mpr package staged without runtime payload "
-                "(PAYLOAD_NOT_MATERIALIZED)."
+    if "advanced_mpr" in optional_ids:
+        advanced_mpr_dir = plugin_stage / "advanced_mpr"
+        advanced_mpr_manifest = advanced_mpr_dir / "module_package.json"
+        allow_missing_advanced_mpr = _env_truthy(ALLOW_MISSING_ADVANCED_MPR_ENV)
+        if not advanced_mpr_manifest.exists():
+            raise StageError(f"Advanced MPR package manifest missing: {advanced_mpr_manifest}")
+
+        manifest_data = json.loads(advanced_mpr_manifest.read_text(encoding="utf-8"))
+        payload_dir_name = str(manifest_data.get("payload_dir") or "").strip()
+        payload_dir = advanced_mpr_dir / payload_dir_name if payload_dir_name else None
+        missing_required = (
+            list(ADVANCED_MPR_REQUIRED_RUNTIME_FILES)
+            if payload_dir is None
+            else [relative for relative in ADVANCED_MPR_REQUIRED_RUNTIME_FILES if not (payload_dir / relative).exists()]
+        )
+        if missing_required:
+            message = (
+                "Advanced MPR runtime payload is not materialized for Nuitka Stage 08. "
+                "Set AIPACS_ADVANCED_MPR_RUNTIME_SOURCE to the built Slicer runtime root "
+                "before running Stage 08. Missing required files: "
+                + ", ".join(missing_required)
             )
+            if allow_missing_advanced_mpr:
+                stage_notes.append(f"WARNING: {message} Continuing because {ALLOW_MISSING_ADVANCED_MPR_ENV}=1.")
+            else:
+                raise StageError(
+                    message
+                    + f". To bypass deliberately, set {ALLOW_MISSING_ADVANCED_MPR_ENV}=1."
+                )
 
     package_dirs = sorted([p.name for p in plugin_stage.iterdir() if p.is_dir()])
     return StageResult(
@@ -1196,6 +1330,18 @@ def smoke_test(ctx: BuildContext) -> int:
         if not ((full_dist / dll_name).exists() or (STAGE_DIR / "core" / "Engine" / dll_name).exists()):
             failures.append(f"Missing graphics DLL candidate: {dll_name}")
 
+    web_package = STAGE_DIR / "plugin_packages" / "web_browser" / "module_package.json"
+    if web_package.exists():
+        webengine_required = [
+            full_dist / "PySide6" / "QtWebEngineWidgets.pyd",
+            full_dist / "PySide6" / "QtWebEngineCore.pyd",
+            full_dist / "QtWebEngineProcess.exe",
+            full_dist / "qt6webenginewidgets.dll",
+            full_dist / "qt6webenginecore.dll",
+        ]
+        if not all(path.exists() for path in webengine_required):
+            failures.append("Web Browser package is staged, but QtWebEngine runtime files are missing from Engine")
+
     for relative in ("Qss", "Fonts", "config"):
         if not (STAGE_DIR / "core" / "Engine" / relative).exists():
             failures.append(f"Missing staged resource folder: {relative}")
@@ -1246,6 +1392,209 @@ def smoke_test(ctx: BuildContext) -> int:
     print(" 1) Launch full executable and verify login/main shell behavior")
     print(" 2) Run one DICOM load and one viewer interaction")
     print(" 3) Validate installer staging under builder nuitka/output/stage")
+    return 0
+
+
+def _native_audit_package_presence(relative_path: str) -> set[str]:
+    normalized = relative_path.replace("\\", "/")
+    parts = [part.lower() for part in normalized.split("/")]
+    top_level = parts[0] if parts else ""
+    filename = parts[-1] if parts else ""
+    stem = Path(filename).stem.lower()
+    present: set[str] = set()
+
+    package_patterns = {
+        "pandas": {"top": {"pandas", "pandas.libs"}, "stem": set()},
+        "matplotlib": {"top": {"matplotlib", "mpl_toolkits"}, "stem": set()},
+        "cv2": {"top": {"cv2"}, "stem": {"cv2"}},
+        "vtkmodules": {"top": {"vtkmodules", "vtk.libs"}, "stem": set()},
+        "SimpleITK": {"top": {"simpleitk"}, "stem": {"_simpleitk", "simpleitk"}},
+        "PySide6": {"top": {"pyside6", "shiboken6"}, "stem": {"pyside6", "shiboken6"}},
+        "numpy": {"top": {"numpy", "numpy.libs"}, "stem": {"_numpy"}},
+        "PIL": {"top": {"pil", "pillow"}, "stem": set()},
+    }
+    for display_name, patterns in package_patterns.items():
+        if top_level in patterns["top"] or any(part in patterns["top"] for part in parts):
+            present.add(display_name)
+            continue
+        if stem in patterns["stem"] or any(stem.startswith(prefix + ".") for prefix in patterns["stem"]):
+            present.add(display_name)
+    return present
+
+
+def _native_audit_optional_presence(relative_path: str) -> set[str]:
+    normalized = relative_path.replace("\\", "/").lower()
+    optional_patterns = {
+        "advanced_mpr": ("modules/mpr/advanced_3d_slicer", "advanced_mpr"),
+        "printing": ("modules/printing",),
+        "run_cd": ("modules/cd_burner", "modules/run_cd", "cd_burner", "run_cd"),
+        "web_browser": ("modules/web_browser", "web_browser"),
+        "echomind": ("modules/echomind", "modules/echomind", "echomind"),
+    }
+    found: set[str] = set()
+    for module_id, needles in optional_patterns.items():
+        if any(needle in normalized for needle in needles):
+            found.add(module_id)
+    return found
+
+
+def _read_stage_06_report_presence() -> dict[str, bool]:
+    report_path = REPORTS_DIR / "nuitka_stage_06_full_core.xml"
+    presence = {module_name: False for module_name in OPTIONAL_PLUGIN_MODULES}
+    if not report_path.exists():
+        return presence
+    report_text = report_path.read_text(encoding="utf-8", errors="replace")
+    for module_name in OPTIONAL_PLUGIN_MODULES:
+        pattern = rf"<module\s+name=\"{re.escape(module_name)}(?:\.|\")"
+        presence[module_name] = bool(re.search(pattern, report_text))
+    return presence
+
+
+def audit_native_footprint(_ctx: BuildContext) -> int:
+    print_header("Nuitka Native Footprint Audit")
+    engine_dir = STAGE_DIR / "core" / "Engine"
+    if not engine_dir.exists():
+        print(f"[FAIL] Staged Engine folder not found: {engine_dir}")
+        print('Run: python "builder nuitka/build_nuitka_release.py" --from-stage 7')
+        return 1
+
+    native_files = sorted(
+        [path for path in engine_dir.rglob("*") if path.is_file() and path.suffix.lower() in {".dll", ".pyd"}],
+        key=lambda path: path.relative_to(engine_dir).as_posix().lower(),
+    )
+    dll_files = [path for path in native_files if path.suffix.lower() == ".dll"]
+    pyd_files = [path for path in native_files if path.suffix.lower() == ".pyd"]
+
+    top_folders: Counter[str] = Counter()
+    package_hits: dict[str, set[str]] = {name: set() for name in NATIVE_AUDIT_PACKAGES}
+    optional_hits: dict[str, set[str]] = {
+        "advanced_mpr": set(),
+        "printing": set(),
+        "run_cd": set(),
+        "web_browser": set(),
+        "echomind": set(),
+    }
+
+    relative_files: list[str] = []
+    for path in native_files:
+        relative = path.relative_to(engine_dir).as_posix()
+        relative_files.append(relative)
+        top_level = relative.split("/", 1)[0] if "/" in relative else "(Engine root)"
+        top_folders[top_level] += 1
+
+        for package_name in _native_audit_package_presence(relative):
+            package_hits[package_name].add(relative)
+        for module_id in _native_audit_optional_presence(relative):
+            optional_hits[module_id].add(relative)
+
+    previous_path = REPORTS_DIR / "native_footprint.json"
+    previous_files: set[str] = set()
+    if previous_path.exists():
+        try:
+            previous_payload = json.loads(previous_path.read_text(encoding="utf-8"))
+            previous_files = set(previous_payload.get("native_files") or [])
+        except Exception:
+            previous_files = set()
+
+    current_files = set(relative_files)
+    added = sorted(current_files - previous_files)
+    removed = sorted(previous_files - current_files)
+
+    optional_report_presence = _read_stage_06_report_presence()
+    audit_payload = {
+        "schema_version": 1,
+        "generated_at_utc": utc_now(),
+        "engine_dir": str(engine_dir),
+        "summary": {
+            "dll_count": len(dll_files),
+            "pyd_count": len(pyd_files),
+            "native_file_count": len(native_files),
+        },
+        "largest_native_folders": [
+            {"folder": folder, "count": count} for folder, count in top_folders.most_common(25)
+        ],
+        "package_presence": {
+            package_name: {
+                "present": bool(files),
+                "native_file_count": len(files),
+                "examples": sorted(files)[:25],
+            }
+            for package_name, files in package_hits.items()
+        },
+        "optional_plugin_presence": {
+            module_id: {
+                "native_path_present": bool(files),
+                "native_file_count": len(files),
+                "examples": sorted(files)[:25],
+            }
+            for module_id, files in optional_hits.items()
+        },
+        "optional_plugin_report_presence": optional_report_presence,
+        "comparison_to_previous": {
+            "previous_report": str(previous_path) if previous_files else None,
+            "added_count": len(added) if previous_files else 0,
+            "removed_count": len(removed) if previous_files else 0,
+            "added_examples": added[:50] if previous_files else [],
+            "removed_examples": removed[:50] if previous_files else [],
+        },
+        "native_files": relative_files,
+    }
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    json_path = REPORTS_DIR / "native_footprint.json"
+    md_path = REPORTS_DIR / "native_footprint.md"
+    json_path.write_text(json.dumps(audit_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    markdown_lines = [
+        "# Nuitka Native Footprint Audit",
+        "",
+        f"Generated: `{audit_payload['generated_at_utc']}`",
+        f"Engine: `{engine_dir}`",
+        "",
+        "## Summary",
+        "",
+        f"- DLL files: `{len(dll_files)}`",
+        f"- PYD files: `{len(pyd_files)}`",
+        f"- Total native files: `{len(native_files)}`",
+        "",
+        "## Largest Native Folders",
+        "",
+    ]
+    for item in audit_payload["largest_native_folders"][:15]:
+        markdown_lines.append(f"- `{item['folder']}`: `{item['count']}`")
+
+    markdown_lines.extend(["", "## Key Package Presence", ""])
+    for package_name, payload in audit_payload["package_presence"].items():
+        status = "present" if payload["present"] else "not detected"
+        markdown_lines.append(f"- `{package_name}`: {status}, native files `{payload['native_file_count']}`")
+
+    markdown_lines.extend(["", "## Optional Plugin Boundary", ""])
+    for module_id, payload in audit_payload["optional_plugin_presence"].items():
+        status = "native paths present" if payload["native_path_present"] else "no native paths detected"
+        markdown_lines.append(f"- `{module_id}`: {status}")
+    for module_name, present in optional_report_presence.items():
+        if present:
+            markdown_lines.append(f"- WARNING: `{module_name}` appears in Stage 6 Nuitka report")
+
+    markdown_lines.extend(
+        [
+            "",
+            "## Comparison To Previous Audit",
+            "",
+            f"- Added native files: `{audit_payload['comparison_to_previous']['added_count']}`",
+            f"- Removed native files: `{audit_payload['comparison_to_previous']['removed_count']}`",
+            "",
+            "This audit is warning-only. Use it to decide whether a dependency reduction is safe before changing Stage 6 include/exclude rules.",
+            "",
+        ]
+    )
+    md_path.write_text("\n".join(markdown_lines), encoding="utf-8")
+
+    print(f"[OK] Native audit written: {json_path}")
+    print(f"[OK] Native audit summary: {md_path}")
+    print(f"DLL: {len(dll_files)} | PYD: {len(pyd_files)} | Total native: {len(native_files)}")
+    for folder, count in top_folders.most_common(8):
+        print(f" - {folder}: {count}")
     return 0
 
 
@@ -1330,6 +1679,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clean-stage", type=int, dest="clean_stage", help="Delete output/log/checkpoint for one stage")
     parser.add_argument("--clean-all", action="store_true", help="Delete only builder nuitka/output artifacts")
     parser.add_argument("--smoke-test", action="store_true", help="Run staged smoke checks without rebuilding")
+    parser.add_argument(
+        "--audit-native-footprint",
+        action="store_true",
+        help="Write a warning-only DLL/PYD footprint report for staged Nuitka core",
+    )
     parser.add_argument(
         "--compiler",
         choices=["auto", "zig", "msvc", "mingw64", "clang"],
@@ -1461,6 +1815,9 @@ def main() -> int:
 
     if args.smoke_test:
         return smoke_test(ctx)
+
+    if args.audit_native_footprint:
+        return audit_native_footprint(ctx)
 
     return run_pipeline(ctx)
 

@@ -23,12 +23,25 @@ Full details in [`VERSION_2.4.6_RELEASE.md`](VERSION_2.4.6_RELEASE.md).
   the three required remote-command-server markers in `startup_script.py`.  If any
   marker is absent, launch is blocked and a clear reinstall dialog is shown to the user.
   **File:** `modules/mpr/advanced_3d_slicer/slicer_launcher.py`
+- **Nuitka Advanced MPR package bridge** — the Nuitka external `advanced_mpr`
+  package now includes both the Slicer runtime payload and the Python bridge at
+  `payload/python/modules/mpr/advanced_3d_slicer`, with `python_paths: ["python"]`.
+  This fixes installed Nuitka launch errors where the core could not import
+  `modules.mpr.advanced_3d_slicer`.
+- **Nuitka FAST/OpenCV verification** — the staged Nuitka `Engine/` now verifies
+  `cv2.pyd`, `opencv_videoio_ffmpeg4130_64.dll`, and
+  `config/pooyan_opencv_filter.json` for FAST mode parity.
+- **Nuitka plugin/core boundary** — `modules.data_analysis` is staged as an
+  external module package to keep analytics dependencies out of the compiled
+  Nuitka core.
 
 ### Verification
 
 Confirmed on installed build (2026-04-26):
 - Stale runtime → dialog shows incompatible-runtime message; no process launched.
 - After module reinstall → Advanced MPR launches correctly in Advanced MPR mode.
+- Nuitka checks passed: `--smoke-test`, `check_module_plugin_readiness.py`, and
+  `check_build_coherence.py`.
 
 ---
 

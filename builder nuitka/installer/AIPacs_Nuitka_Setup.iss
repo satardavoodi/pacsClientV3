@@ -11,6 +11,8 @@
 #ifndef InstallerBaseName
   #define InstallerBaseName "ai-pacs-nuitka-installer"
 #endif
+#define AdvancedMprPayloadExe StageDir + "\plugin_packages\advanced_mpr\payload\AIPacsAdvancedViewer.exe"
+#define AdvancedMprAvailable FileExists(AdvancedMprPayloadExe)
 
 [Setup]
 ; DIFFERENT GUID from PyInstaller version to allow coexistence
@@ -32,7 +34,7 @@ PrivilegesRequired=admin
 DisableReadyMemo=no
 SetupIconFile=..\..\Qss\images\favicon.ico
 LicenseFile=..\..\LICENSE
-UninstallDisplayIcon={app}\Engine\AIPacs.exe
+UninstallDisplayIcon={app}\AIPacs.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -44,7 +46,9 @@ Name: "custom"; Description: "Custom — choose optional modules for this workst
 [Components]
 Name: "core"; Description: "Core platform (always required)"; Types: core custom; Flags: fixed
 Name: "optional"; Description: "Optional modules — copied now, activated on first launch"; Types: custom
+#if AdvancedMprAvailable
 Name: "optional\advanced_mpr"; Description: "Advanced MPR — 3D reconstruction with bundled Slicer runtime (large download)"; Types: custom
+#endif
 Name: "optional\printing"; Description: "Printing — medical film printing and DICOM export workflows"; Types: custom
 Name: "optional\run_cd"; Description: "Run CD — portable DICOM media export and delivery"; Types: custom
 Name: "optional\web_browser"; Description: "Web Browser — embedded browser access inside the workstation"; Types: custom
@@ -70,19 +74,24 @@ Source: "{#StageDir}\core\*"; DestDir: "{app}"; Components: core; Flags: ignorev
 ; Module package feed (registry of available optional modules)
 Source: "{#StageDir}\plugin_packages\module_package_feed.json"; DestDir: "{commonappdata}\AIPacs\module_packages"; Components: core; Flags: ignoreversion skipifsourcedoesntexist
 
+; Default-enabled external package used to keep analytics dependencies out of Engine
+Source: "{#StageDir}\plugin_packages\data_analysis\*"; DestDir: "{commonappdata}\AIPacs\module_packages\data_analysis"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+
 ; Optional module packages (same as PyInstaller build - plugin system is build-agnostic)
+#if AdvancedMprAvailable
 Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+#endif
 Source: "{#StageDir}\plugin_packages\printing\*"; DestDir: "{commonappdata}\AIPacs\module_packages\printing"; Components: optional\printing; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\run_cd\*"; DestDir: "{commonappdata}\AIPacs\module_packages\run_cd"; Components: optional\run_cd; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\web_browser\*"; DestDir: "{commonappdata}\AIPacs\module_packages\web_browser"; Components: optional\web_browser; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\echomind\*"; DestDir: "{commonappdata}\AIPacs\module_packages\echomind"; Components: optional\echomind; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\Engine\AIPacs.exe"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\Engine\AIPacs.exe"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Engine\AIPacs.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\AIPacs.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 var
@@ -118,6 +127,13 @@ end;
 
 function OptionalModuleSelected(const ModuleId: String): Boolean;
 begin
+#if !AdvancedMprAvailable
+  if ModuleId = 'advanced_mpr' then
+  begin
+    Result := False;
+    Exit;
+  end;
+#endif
   Result := WizardIsComponentSelected('optional\' + ModuleId);
 end;
 
@@ -571,6 +587,7 @@ begin
     '    "zeta_boost": true,' + #13#10 +
     '    "education": true,' + #13#10 +
     '    "stitching": true,' + #13#10 +
+    '    "data_analysis": true,' + #13#10 +
     '    "advanced_mpr": ' + BoolToJson(OptionalModuleSelected('advanced_mpr')) + ',' + #13#10 +
     '    "printing": ' + BoolToJson(OptionalModuleSelected('printing')) + ',' + #13#10 +
     '    "run_cd": ' + BoolToJson(OptionalModuleSelected('run_cd')) + ',' + #13#10 +
@@ -583,6 +600,7 @@ begin
     '    "zeta_boost": {"module_id":"zeta_boost","title":"ZetaBoost","tier":"basic","package_kind":"core","status":"core","installed_from":"core_bundle","requires_restart":false},' + #13#10 +
     '    "education": {"module_id":"education","title":"Education Module","tier":"basic","package_kind":"core","status":"core","installed_from":"core_bundle","requires_restart":false},' + #13#10 +
     '    "stitching": {"module_id":"stitching","title":"Stitching Module","tier":"basic","package_kind":"core","status":"core","installed_from":"core_bundle","requires_restart":false},' + #13#10 +
+    '    "data_analysis": {"module_id":"data_analysis","title":"Data Analysis","tier":"optional","package_kind":"bundled_unlock","status":"selected_for_install","installed_from":"bundled_setup_selection","requires_restart":true},' + #13#10 +
     '    "advanced_mpr": {"module_id":"advanced_mpr","title":"Advanced MPR","tier":"optional","package_kind":"runtime_payload","status":"' + OptionalModuleStatusValue('advanced_mpr') + '","installed_from":"' + OptionalModuleSourceValue('advanced_mpr') + '","requires_restart":true},' + #13#10 +
     '    "printing": {"module_id":"printing","title":"Printing Module","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('printing') + '","installed_from":"' + OptionalModuleSourceValue('printing') + '","requires_restart":true},' + #13#10 +
     '    "run_cd": {"module_id":"run_cd","title":"Run CD Module","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('run_cd') + '","installed_from":"' + OptionalModuleSourceValue('run_cd') + '","requires_restart":true},' + #13#10 +

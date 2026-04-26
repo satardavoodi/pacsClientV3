@@ -6,7 +6,6 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-import pandas as pd
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QObject, QEventLoop
 from PySide6.QtGui import QStandardItemModel, QStandardItem, QMovie
 from PySide6.QtWidgets import (
@@ -22,6 +21,7 @@ from PacsClient.utils.config import CLINICAL_CSV_PATH, ATTACHMENT_PATH
 from modules.viewer.interactor_styles import ToolAccess
 from PacsClient.pacs.patient_tab.utils import BoxManager, show_message
 from PacsClient.utils.utils import load_mg_ai_runs
+from modules.ai_imaging.ai_module_ui.csv_table import read_csv_table
 
 # ------------------------------ Custom Events ------------------------------
 
@@ -81,8 +81,8 @@ def _remove_if_exists(boxes, cand, tol=1e-4):
     return False
 
 
-def update_csv(csv_path: str, row: pd.DataFrame, *, status: bool, corner_ijk_points):
-    df = pd.read_csv(csv_path)
+def update_csv(csv_path: str, row, *, status: bool, corner_ijk_points):
+    df = read_csv_table(csv_path)
 
     # پیدا کردن ردیف هدف (بهتره با dicom_full_path)
     target_idx = None
@@ -98,7 +98,7 @@ def update_csv(csv_path: str, row: pd.DataFrame, *, status: bool, corner_ijk_poi
     for col in ("box", "new_box", "removed"):
         if col not in df.columns:
             df[col] = ""
-        if df[col].dtype != object:
+        if getattr(df[col], "dtype", object) != object:
             df[col] = df[col].astype(object)
 
     # پارس ستون‌ها

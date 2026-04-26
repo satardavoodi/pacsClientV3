@@ -460,6 +460,7 @@ def _package_ignore_filter(_directory: str, names: list[str]) -> set[str]:
         "doc",
         "examples",
         "example",
+        "build",
         ".pytest_cache",
         ".mypy_cache",
     ):
@@ -560,6 +561,7 @@ def build_module_packages(version: str, advanced_payload: dict[str, object]) -> 
                     package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
                     dirs_exist_ok=True,
                 )
+                _copy_package_source_tree(package_dir, list(definition.get("source_paths") or []))
                 has_payload = True
         else:
             package_dir.mkdir(parents=True, exist_ok=True)

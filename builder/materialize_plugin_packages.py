@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -19,6 +20,15 @@ from aipacs_runtime import (
     advanced_mpr_runtime_root,
 )
 from builder.plugin_package_registry import PLUGIN_PACKAGES_DIR, load_plugin_package_definitions
+
+ADVANCED_MPR_RUNTIME_SOURCE_ENV = "AIPACS_ADVANCED_MPR_RUNTIME_SOURCE"
+ADVANCED_MPR_REQUIRED_RUNTIME_FILES = (
+    "AIPacsAdvancedViewer.exe",
+    "AIPacsAdvancedViewerLauncherSettings.ini",
+    "bin/Python/startup_script.py",
+    "python-install/Lib/site-packages/numpy/testing/__init__.py",
+    "python-install/Lib/site-packages/pydicom/examples/__init__.py",
+)
 
 
 def load_version() -> str:
@@ -48,7 +58,7 @@ def _copy_source_tree(package_dir: Path, source_dirs: list[str]) -> bool:
                 source,
                 destination,
                 dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "tests", "docs"),
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "tests", "docs", "build"),
             )
         else:
             shutil.copy2(source, destination)
@@ -56,27 +66,76 @@ def _copy_source_tree(package_dir: Path, source_dirs: list[str]) -> bool:
     return copied
 
 
+def _local_appdata_advanced_mpr_runtime_root() -> Path:
+    base = os.environ.get("LOCALAPPDATA")
+    root = Path(base) if base else Path.home() / "AppData" / "Local"
+    return root / APP_NAME / "modules_runtime" / "advanced_mpr"
+
+
+def _runtime_payload_candidates(module_id: str) -> list[Path]:
+    if module_id != "advanced_mpr":
+        return []
+
+    candidates: list[Path] = []
+    override = os.environ.get(ADVANCED_MPR_RUNTIME_SOURCE_ENV, "").strip()
+    if override:
+        candidates.append(Path(override).expanduser())
+
+    candidates.append(advanced_mpr_runtime_root())
+    candidates.append(_local_appdata_advanced_mpr_runtime_root())
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
 def _runtime_payload_source(module_id: str) -> Path | None:
+    candidates = _runtime_payload_candidates(module_id)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0] if candidates else None
+
+
+def _missing_runtime_payload_files(module_id: str, source_root: Path | None) -> list[str]:
     if module_id == "advanced_mpr":
-        runtime_root = advanced_mpr_runtime_root()
-        if runtime_root.exists():
-            return runtime_root
-    return None
+        if source_root is None or not source_root.exists():
+            return list(ADVANCED_MPR_REQUIRED_RUNTIME_FILES)
+        return [relative for relative in ADVANCED_MPR_REQUIRED_RUNTIME_FILES if not (source_root / relative).exists()]
+    return []
 
 
 def _write_runtime_payload_placeholder(package_dir: Path, definition: dict[str, object]) -> None:
-    source_root = _runtime_payload_source(str(definition["module_id"]))
+    module_id = str(definition["module_id"])
+    source_root = _runtime_payload_source(module_id)
+    missing = _missing_runtime_payload_files(module_id, source_root)
+    candidates = _runtime_payload_candidates(module_id)
     lines = [
-        f"Module: {definition['module_id']}",
+        f"Module: {module_id}",
         "Payload materialization skipped.",
         "",
         "This package is prepared for an external runtime payload and keeps a pointer",
         "to the live runtime source instead of copying it into builder/plugin package/packages.",
         "",
+        f"Runtime source override env: {ADVANCED_MPR_RUNTIME_SOURCE_ENV}",
+        f"Selected source: {source_root or 'not found'}",
+        "Candidate sources:",
+        *[f"  - {candidate}" for candidate in candidates],
+        "",
+        "Missing required files:",
+        *[f"  - {relative}" for relative in missing],
+        "",
         "Run:",
+        f"  set {ADVANCED_MPR_RUNTIME_SOURCE_ENV}=<built Slicer runtime root>",
         "  python builder/materialize_plugin_packages.py --include-runtime-payloads",
         "",
-        f"Expected source: {source_root or 'not found'}",
+        "The runtime root must contain AIPacsAdvancedViewer.exe and its launcher/runtime files.",
     ]
     (package_dir / "PAYLOAD_NOT_MATERIALIZED.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -99,12 +158,19 @@ def materialize_plugin_packages(*, include_runtime_payloads: bool = False) -> li
             has_payload = _copy_source_tree(package_dir, list(definition.get("source_paths") or []))
         elif build_strategy == "runtime_payload":
             runtime_source = _runtime_payload_source(module_id)
-            if include_runtime_payloads and runtime_source is not None and runtime_source.exists():
+            missing_runtime_files = _missing_runtime_payload_files(module_id, runtime_source)
+            if (
+                include_runtime_payloads
+                and runtime_source is not None
+                and runtime_source.exists()
+                and not missing_runtime_files
+            ):
                 shutil.copytree(
                     runtime_source,
                     package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
                     dirs_exist_ok=True,
                 )
+                _copy_source_tree(package_dir, list(definition.get("source_paths") or []))
                 has_payload = True
             else:
                 _write_runtime_payload_placeholder(package_dir, definition)

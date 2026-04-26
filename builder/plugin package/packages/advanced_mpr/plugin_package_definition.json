@@ -6,8 +6,13 @@
   "tier": "optional",
   "package_kind": "runtime_payload",
   "build_strategy": "runtime_payload",
-  "source_paths": [],
-  "python_paths": [],
+  "source_paths": [
+    "modules/mpr/__init__.py",
+    "modules/mpr/advanced_3d_slicer"
+  ],
+  "python_paths": [
+    "python"
+  ],
   "healthcheck_import": "",
   "healthcheck_path": "AIPacsAdvancedViewer.exe",
   "integration_points": [

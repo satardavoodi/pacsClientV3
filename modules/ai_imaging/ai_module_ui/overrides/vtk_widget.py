@@ -1,9 +1,9 @@
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
-import pandas as pd
 from PacsClient.utils.config import ATTACHMENT_PATH
 from pathlib import Path, PureWindowsPath
 from PacsClient.pacs.patient_tab.utils import BoxManager, TYPES_VIEWER
 from PacsClient.utils.utils import load_mg_ai_manifest
+from modules.ai_imaging.ai_module_ui.csv_table import concat_tables, read_csv_table
 import asyncio
 import os
 import threading
@@ -522,11 +522,11 @@ class AIVTKWidget(VTKWidget):
         if cached and cached.get("mtime") == mtime:
             return cached.get("df")
 
-        df = pd.read_csv(path)
+        df = read_csv_table(path)
         self._csv_cache[key] = {"mtime": mtime, "df": df}
         return df
 
-    def _get_series_ai_cached(self, df: pd.DataFrame, check_all_rows=False):
+    def _get_series_ai_cached(self, df, check_all_rows=False):
         try:
             series_uid = self.image_viewer.metadata['series'].get('series_uid')
         except Exception:
@@ -670,7 +670,7 @@ class AIVTKWidget(VTKWidget):
         except Exception:
             return None, None
 
-    def get_series_ai_data_from_df(self, df: pd.DataFrame, check_all_rows=False):
+    def get_series_ai_data_from_df(self, df, check_all_rows=False):
         series_uid = self.image_viewer.metadata['series'].get('series_uid')
         series_num = self.image_viewer.metadata['series'].get('series_number', 'N/A')
         lst_dicom_path = df["dicom_full_path"]
@@ -799,7 +799,7 @@ class AIVTKWidget(VTKWidget):
         except Exception:
             return None
 
-    def extract_value_field(self, df: pd.DataFrame, field='box') -> list:
+    def extract_value_field(self, df, field='box') -> list:
         try:
             series_ai_data = self._get_series_ai_cached(df, check_all_rows=False)
             if series_ai_data is not None:
@@ -983,8 +983,8 @@ class AIVTKWidget(VTKWidget):
             if isinstance(lst_ai_data, list):
                 if len(lst_ai_data) == 0:
                     return None
-                # Concatenate all DataFrames in the list
-                lst_ai_data = pd.concat(lst_ai_data, ignore_index=True)
+                # Concatenate the matching CSV rows without pulling pandas into the core.
+                lst_ai_data = concat_tables(lst_ai_data)
             
             lst_ai_data = lst_ai_data.to_dict()
             print('lst_ai_data:lst_ai_data:', lst_ai_data)

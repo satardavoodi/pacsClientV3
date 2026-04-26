@@ -67,6 +67,9 @@ tools/git/github-network.local.json
 **/secrets*.py
 
 builder/output/
+builder nuitka/output/
+builder/plugin package/packages/advanced_mpr/payload/
+modules/mpr/advanced_3d_slicer/slicer_custom_app/NewMPR2Slicer/build/
 
 # Runtime / scratch artifacts (v2.3.7)
 log/

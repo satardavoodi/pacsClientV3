@@ -4,7 +4,7 @@
   "module_id": "viewer",
   "title": "Viewer",
   "tier": "basic",
-  "version": "2.4.5",
+  "version": "2.4.6",
   "package_kind": "core",
   "payload_dir": "payload",
   "python_paths": [],
@@ -21,4 +21,3 @@
   "sdk_entrypoint_group": "aipacs.plugins",
   "sdk_entrypoint_name": "viewer"
 }
-

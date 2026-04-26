@@ -7,6 +7,11 @@ from launching when the installed runtime payload is outdated.  Before this fix,
 a stale `startup_script.py` in the installed runtime caused Slicer to open in a
 generic four-up / fourth-box layout instead of the intended Advanced MPR mode.
 
+This release also records the synchronized Nuitka packaging work completed after
+the latest pull: the staged Nuitka builder now carries the compiled core plus
+external Python/plugin packages consistently, including the Advanced MPR runtime
+payload and its Python bridge.
+
 This version also inherits all patches from v2.4.5 (2026-04-25 / patch 2026-04-26).
 
 ---
@@ -93,6 +98,85 @@ See [`VERSION_2.4.5_RELEASE.md`](VERSION_2.4.5_RELEASE.md) for full details of:
 - MPR frozen-build crash fix (`sys.stdout is None` guard)
 - `user_data_root()` writable fallback to `%LOCALAPPDATA%`
 - Build script ASCII-safe print statements
+
+---
+
+## Nuitka Release Packaging Sync
+
+### Scope
+
+The Nuitka build remains separate from the PyInstaller/Python build:
+
+- `builder/` is the Python/PyInstaller release builder.
+- `builder nuitka/` is the staged/checkpointed Nuitka builder.
+- Optional plugins remain external Python/runtime packages in both build systems.
+
+### Advanced MPR
+
+Advanced MPR is a customized 3D Slicer runtime package and is not compiled into
+the Nuitka core.  For v2.4.6 the Nuitka package was fixed so installed builds
+receive both required pieces:
+
+- Slicer runtime files at `advanced_mpr/payload/`
+- Python bridge files at `advanced_mpr/payload/python/modules/mpr/advanced_3d_slicer`
+
+The `advanced_mpr` package manifest now declares `python_paths: ["python"]`.
+Without this bridge path, installed Nuitka builds failed with:
+
+```text
+No module named 'modules.mpr.advanced_3d_slicer'
+```
+
+The source project now also has the assembled runtime available locally at:
+
+```text
+modules/mpr/advanced_3d_slicer/slicer_custom_app/NewMPR2Slicer/build
+```
+
+That directory is intentionally Git-ignored because it is a generated binary
+runtime payload (~0.81 GB), not source code.
+
+### Data Analysis / Native Footprint
+
+`modules.data_analysis` was moved out of the compiled Nuitka core and into the
+shared external module-package flow.  This keeps analytics dependencies such as
+`pandas` and Python `matplotlib` out of the core `Engine/` folder while preserving
+default module availability through package staging.
+
+### FAST / OpenCV
+
+Nuitka staging now verifies the OpenCV runtime required by FAST mode:
+
+- `Engine/cv2/cv2.pyd`
+- `Engine/cv2/opencv_videoio_ffmpeg4130_64.dll`
+- `Engine/config/pooyan_opencv_filter.json`
+
+The staged `pooyan_opencv_filter.json` is checked against the source config.
+The build-time smoke verified the filter function with OpenCV `4.13.0`, preserving
+input shape/dtype and changing pixel values as expected.
+
+### Installer Layout
+
+The Nuitka installer uses the cleaner installed layout:
+
+- root `AIPacs.exe` launcher
+- `Engine/` containing compiled core/runtime DLL/PYD files
+- `User Data/` parallel to `Engine/`
+- optional plugin packages installed externally through ProgramData/module package flow
+
+### Validation
+
+Validated after the Stage 08/09/10 Nuitka rebuild:
+
+- `python "builder nuitka/build_nuitka_release.py" --smoke-test`
+- `python builder/scripts/check_module_plugin_readiness.py`
+- `python builder/scripts/check_build_coherence.py`
+
+Latest local Nuitka installer produced during validation:
+
+- `builder nuitka/output/installer/ai-pacs-nuitka-installer.exe`
+- Size: `592,817,513` bytes
+- SHA256: `3E7062AED3A1DFE6DD21734422838554BCD9D622B226FA2CFA87BD3B69788010`
 
 ---
 

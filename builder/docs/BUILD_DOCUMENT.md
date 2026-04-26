@@ -8,6 +8,10 @@ Active staged Nuitka work is tracked separately in `builder/docs/NUITKA_BUILD_PL
 
 Build-coherence note (2026-04-25): optional module packaging policy is aligned toward external package staging for both build systems. PyInstaller spec filtering now excludes optional module families from automatic hiddenimport expansion (`modules.printing`, `modules.cd_burner`, `modules.web_browser`, `modules.EchoMind`, `modules.mpr.advanced_3d_slicer`) so optional activation continues through packaged module payloads and runtime profile state.
 
+Cross-build validation command (PyInstaller vs Nuitka staged outputs):
+- `python builder/scripts/check_build_coherence.py`
+- Use this before release sign-off to confirm matching module/profile/feed state and optional-plugin boundary behavior.
+
 ## Build-System Boundary
 
 This repo has two independent build roots:
