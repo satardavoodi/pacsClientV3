@@ -36,7 +36,7 @@ import pytest
 _FV_DIR = str(Path(__file__).parent)
 if _FV_DIR not in sys.path:
     sys.path.insert(0, _FV_DIR)
-from helpers import build_fake_metadata, _insert_fake_series
+from helpers import build_fake_metadata, generate_uid, _insert_fake_series
 
 
 # ─── DB-01  Schema ────────────────────────────────────────────────────────────
@@ -101,7 +101,6 @@ class TestInsertQuery:
 
     def test_db05_empty_series_returns_zero(self, in_memory_db):
         conn, insert_fn = in_memory_db
-        from pydicom.uid import generate_uid
         cur = conn.execute(
             "INSERT INTO patients (patient_id, patient_name) VALUES (?,?)",
             ("PAT002", "Empty^Patient"),

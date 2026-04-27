@@ -168,6 +168,8 @@ class QtSliceViewer(QWidget):
     LARGE_STACK_SKIP_MIN_SLICES = 100
     LARGE_STACK_SKIP_SPEED_MULTIPLIER = 45.0
     LARGE_STACK_SKIP_DELTA = 2
+    LARGE_STACK_SKIP_DELTA_BOOST_1 = 3
+    LARGE_STACK_SKIP_DELTA_BOOST_2 = 4
     _MEASUREMENT_TOOLS = frozenset({
         "ruler", "angle", "two_line_angle",
         "roi_rect", "roi_circle", "arrow", "text", "eraser",
@@ -866,18 +868,70 @@ class QtSliceViewer(QWidget):
             threshold_px=threshold_px,
             speed_px_per_sec=speed_px_per_sec,
         ):
-            emit_steps = self._sign(float(raw_steps)) * self.LARGE_STACK_SKIP_DELTA
+            emit_steps = self._sign(float(raw_steps)) * self._get_large_stack_skip_delta(
+                speed_px_per_sec=speed_px_per_sec,
+                threshold_px=threshold_px,
+            )
             self._stacked_accum = 0.0
             return int(emit_steps)
 
-        emit_steps = self._clamp_int(raw_steps, -max_steps, max_steps)
-        if abs(raw_steps) > max_steps:
+        dynamic_cap = self._get_speed_boosted_step_cap(
+            base_max_steps=max_steps,
+            speed_px_per_sec=speed_px_per_sec,
+            threshold_px=threshold_px,
+        )
+        emit_steps = self._clamp_int(raw_steps, -dynamic_cap, dynamic_cap)
+        if abs(raw_steps) > dynamic_cap:
             # Oversized drag events are bounded, not queued. Keep only the
             # sub-threshold tail so later mouse moves do not inherit momentum.
             self._stacked_accum -= float(raw_steps) * threshold_px
         else:
             self._stacked_accum -= float(emit_steps) * threshold_px
         return int(emit_steps)
+
+    def _get_large_stack_skip_delta(
+        self,
+        *,
+        speed_px_per_sec: float,
+        threshold_px: float,
+    ) -> int:
+        """Return skip-lane step size for very fast drag on large stacks."""
+        total_slices = int(max(0, self._total_slices_hint))
+        speed = float(max(0.0, speed_px_per_sec))
+        threshold = float(max(1.0, threshold_px))
+
+        # Keep default every-other behavior for normal "fast" movement.
+        delta = int(self.LARGE_STACK_SKIP_DELTA)
+        # On very large stacks, allow bigger jumps only at clearly higher speeds.
+        if total_slices >= 180 and speed >= (threshold * 120.0):
+            delta = int(self.LARGE_STACK_SKIP_DELTA_BOOST_1)
+        if total_slices >= 260 and speed >= (threshold * 165.0):
+            delta = int(self.LARGE_STACK_SKIP_DELTA_BOOST_2)
+        return int(max(2, min(6, delta)))
+
+    def _get_speed_boosted_step_cap(
+        self,
+        *,
+        base_max_steps: int,
+        speed_px_per_sec: float,
+        threshold_px: float,
+    ) -> int:
+        """Allow higher per-event cap only for high-speed drag on large stacks."""
+        cap = int(max(1, base_max_steps))
+        total_slices = int(max(0, self._total_slices_hint))
+        speed = float(max(0.0, speed_px_per_sec))
+        threshold = float(max(1.0, threshold_px))
+
+        # Low/medium stacks keep the original bounded cap.
+        if total_slices < 140:
+            return cap
+        # First boost: large studies and clearly fast drag.
+        if speed >= (threshold * 95.0):
+            cap = max(cap, base_max_steps + 1)
+        # Second boost: very large studies with very high drag speed.
+        if total_slices >= 220 and speed >= (threshold * 140.0):
+            cap = max(cap, base_max_steps + 2)
+        return int(max(1, min(6, cap)))
 
     def _should_use_large_stack_skip_lane(
         self,

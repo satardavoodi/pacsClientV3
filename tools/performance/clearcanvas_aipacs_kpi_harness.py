@@ -76,6 +76,54 @@ _FAST_QT_SCROLL_STAGE_RE = re.compile(
     r"sync_ms=(?P<sync>[0-9.]+)\s+reference_ms=(?P<reference>[0-9.]+)\s+"
     r"drag=(?P<drag>True|False)\s+interaction=(?P<interaction>\w+)"
 )
+_FAST_DRAG_KPI_RE = re.compile(
+    r"\[FAST_DRAG_KPI\].*?duration_s=(?P<duration>[0-9.]+)\s+targets=(?P<targets>\d+)\s+"
+    r"event_p50_ms=(?P<event_p50>[0-9.]+)\s+event_p95_ms=(?P<event_p95>[0-9.]+)\s+"
+    r"handler_p50_ms=(?P<handler_p50>[0-9.]+)\s+handler_p95_ms=(?P<handler_p95>[0-9.]+)\s+"
+    r"ui_lag_max_ms=(?P<ui_lag_max>[0-9.]+)\s+prefetch_per_s=(?P<prefetch_per_s>[0-9.]+)\s+"
+    r"background_decode_count=(?P<background_decode_count>\d+)"
+)
+_ADVANCED_SCROLL_SUBTIMING_RE = re.compile(
+    r"viewer-scroll sub-timing:\s+SetSlice=(?P<set_slice>[0-9.]+)ms\s+"
+    r"WL=(?P<wl>[0-9.]+)ms\s+corners=(?P<corners>[0-9.]+)ms\s+"
+    r"Render=(?P<render>[0-9.]+)ms\s+total=(?P<total>[0-9.]+)ms"
+)
+_STAGE_TIMING_RE = re.compile(
+    r"component=(?P<component>\w+)\s+role=(?P<role>[^|]+)\s+\|.*?"
+    r"fn=(?P<function>\S+)\s+stage=(?P<stage>\S+)\s+result=(?P<result>\S+)\s+\|.*?"
+    r"stage-timing duration_ms=(?P<duration>[0-9.]+)(?P<fields>.*)"
+)
+_KV_FIELD_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>[^\s|]+)")
+_BACKEND_RESOLVE_RE = re.compile(
+    r"viewer-backend .*?requested=(?P<requested>\S+)\s+chosen=(?P<chosen>\S+)"
+)
+_DOWNLOAD_IMPACT_RE = re.compile(
+    r"download-impact-window .*?delay_ms=(?P<delay>[0-9.]+)\s+"
+    r"elapsed_ms=(?P<elapsed>[0-9.]+)\s+active_workers=(?P<active_workers>\d+)"
+)
+_THUMBNAIL_END_RE = re.compile(
+    r"thumbnail_pipeline event=end .*?dl_ms=(?P<duration>[0-9.]+)"
+)
+_ZETABOOST_RE = re.compile(
+    r"\[ZetaBoost\].*?entries=(?P<entries>\d+)\s+bytes=(?P<bytes>[0-9.]+)MB/"
+    r"(?P<budget>[0-9.]+)MB\s+queued=(?P<queued>\d+)\s+inflight=(?P<inflight>\d+)"
+)
+_PRIORITY_RETRY_EXHAUSTED_RE = re.compile(
+    r"Priority start retry exhausted .*? after (?:recovery )?(?:attempts=)?(?P<attempts>\d+)(?: attempts)?"
+)
+_SEND_REQUEST_RETRY_RE = re.compile(
+    r"send_request\((?P<endpoint>[^)]+)\) attempt (?P<attempt>\d+)/(?P<max>\d+) failed"
+)
+_SEND_REQUEST_FAILED_RE = re.compile(
+    r"send_request\((?P<endpoint>[^)]+)\) failed after (?P<attempts>\d+) attempts"
+)
+_DOWNLOAD_PIPELINE_SUMMARY_RE = re.compile(
+    r"download-pipeline-summary .*?disk_write_ms=(?P<disk_write>[0-9.]+)\s+"
+    r"decode_ms=(?P<decode>[0-9.]+)\s+decompress_ms=(?P<decompress>[0-9.]+)"
+)
+_VIEWER_DATA_STAGE_RE = re.compile(
+    r"viewer-data stage=(?P<stage>\w+)\s+duration_ms=(?P<duration>[0-9.]+)(?P<fields>.*)"
+)
 _COMPLETE_RE = re.compile(r"progressive-fast: series=(?P<series>\S+) COMPLETE")
 _CACHE_WARM_RE = re.compile(r"progressive-fast: series=(?P<series>\S+) cache-warm dispatched")
 _DUPLICATE_TERMINAL_RE = re.compile(r"duplicate terminal progress ignored series=(?P<series>\S+)")
@@ -98,6 +146,10 @@ def _percentile(values: Iterable[float], pct: float) -> float:
     lo = int(idx)
     hi = min(lo + 1, len(data) - 1)
     return data[lo] + (idx - lo) * (data[hi] - data[lo])
+
+
+def _parse_kv_fields(text: str) -> Dict[str, str]:
+    return {m.group("key"): m.group("value") for m in _KV_FIELD_RE.finditer(text or "")}
 
 
 def _ensure_parent(path: Path) -> None:
@@ -277,15 +329,63 @@ def parse_aipacs_log_text(text: str) -> Dict[str, Any]:
     first_image_ms: List[float] = []
     scroll_total_ms: List[float] = []
     scroll_decode_ms: List[float] = []
+    fast_cached_display_ms: List[float] = []
+    fast_drag_event_p50_ms: List[float] = []
+    fast_drag_event_p95_ms: List[float] = []
+    fast_drag_handler_p95_ms: List[float] = []
+    fast_drag_ui_lag_max_ms: List[float] = []
+    fast_drag_prefetch_per_s: List[float] = []
+    fast_drag_background_decode_count: List[float] = []
+    advanced_set_slice_ms: List[float] = []
+    advanced_wl_ms: List[float] = []
+    advanced_render_ms: List[float] = []
+    advanced_total_ms: List[float] = []
+    db_stage_ms: List[float] = []
+    db_read_stage_ms: List[float] = []
+    db_write_stage_ms: List[float] = []
+    main_thread_db_fast_interaction_ms: List[float] = []
+    main_thread_db_advanced_interaction_ms: List[float] = []
+    main_thread_db_all_ms: List[float] = []
+    grpc_stage_ms: List[float] = []
+    socket_request_total_ms: List[float] = []
+    server_connect_ms: List[float] = []
+    main_thread_blocking_io_ms: List[float] = []
+    download_impact_elapsed_ms: List[float] = []
+    dicom_file_write_ms: List[float] = []
+    dicom_file_write_summary_ms: List[float] = []
+    dicom_file_read_ms: List[float] = []
+    dicom_file_write_bytes_total = 0
+    main_thread_disk_scan_ms: List[float] = []
+    main_thread_disk_scan_fast_interaction_ms: List[float] = []
+    main_thread_disk_scan_advanced_interaction_ms: List[float] = []
+    thumbnail_generation_ms: List[float] = []
+    zeta_cache_bytes_mb: List[float] = []
+    zeta_cache_budget_mb: List[float] = []
+    zeta_queue_depths: List[float] = []
+    process_rss_samples_mb: List[float] = []
+    available_ram_samples_mb: List[float] = []
+    subprocess_count_samples: List[int] = []
+    viewer_switch_total_ms: List[float] = []
+    progressive_grow_apply_ms: List[float] = []
+    completion_verify_ms: List[float] = []
+    advanced_series_load_total_ms_samples: List[float] = []
+    stale_request_drop_count = 0
+    duplicate_load_suppressed_count = 0
     src_counts: Counter[str] = Counter()
     complete_counts: Counter[str] = Counter()
     cache_warm_counts: Counter[str] = Counter()
     duplicate_terminal_counts: Counter[str] = Counter()
+    viewer_mode_counts: Counter[str] = Counter()
+    stage_counts: Counter[str] = Counter()
+    db_caller_area_counts: Counter[str] = Counter()
+    db_viewer_mode_counts: Counter[str] = Counter()
+    download_counts: Counter[str] = Counter()
     stack_drag_active = False
     stack_drag_total_ms: List[float] = []
     stack_drag_decode_ms: List[float] = []
     stack_drag_decode_hitch_total_ms: List[float] = []
     stack_drag_nondecode_hitch_total_ms: List[float] = []
+    fast_foreground_decode_during_drag_count = 0
     set_slice_stage_hitch_count = 0
     set_slice_stage_frame_max_ms = 0.0
     set_slice_stage_display_max_ms = 0.0
@@ -299,14 +399,124 @@ def parse_aipacs_log_text(text: str) -> Dict[str, Any]:
     qt_scroll_stage_reference_max_ms = 0.0
 
     for line in text.splitlines():
+        if "component=download" in line or "SocketDicomClient" in line or "GrpcMetadataClient" in line:
+            viewer_mode_counts["Shared"] += 1
+        if "pydicom_qt" in line or "[FAST_" in line or "QtViewerBridge" in line or "qt-viewer-bridge" in line:
+            viewer_mode_counts["FAST_QT"] += 1
+        if "pydicom_2d" in line or "PyDicomLazyVolume" in line:
+            viewer_mode_counts["FAST_LAZY_VTK"] += 1
+        if "vtk_simpleitk" in line or "ImageViewer2D" in line or "viewer-scroll sub-timing" in line:
+            viewer_mode_counts["Advanced"] += 1
+
         if _STACK_DRAG_START_RE.search(line):
             stack_drag_active = True
         elif _STACK_DRAG_STOP_RE.search(line) or _STACK_DRAG_SETTLE_RE.search(line):
             stack_drag_active = False
 
+        m = _BACKEND_RESOLVE_RE.search(line)
+        if m:
+            chosen = str(m.group("chosen"))
+            if chosen == "pydicom_qt":
+                viewer_mode_counts["FAST_QT"] += 1
+            elif chosen == "pydicom_2d":
+                viewer_mode_counts["FAST_LAZY_VTK"] += 1
+            elif chosen == "vtk_simpleitk":
+                viewer_mode_counts["Advanced"] += 1
+
         m = _FIRST_IMAGE_RE.search(line)
         if m:
             first_image_ms.append(float(m.group("total")))
+
+        m = _FAST_DRAG_KPI_RE.search(line)
+        if m:
+            fast_drag_event_p50_ms.append(float(m.group("event_p50")))
+            fast_drag_event_p95_ms.append(float(m.group("event_p95")))
+            fast_drag_handler_p95_ms.append(float(m.group("handler_p95")))
+            fast_drag_ui_lag_max_ms.append(float(m.group("ui_lag_max")))
+            fast_drag_prefetch_per_s.append(float(m.group("prefetch_per_s")))
+            fast_drag_background_decode_count.append(float(m.group("background_decode_count")))
+
+        m = _ADVANCED_SCROLL_SUBTIMING_RE.search(line)
+        if m:
+            advanced_set_slice_ms.append(float(m.group("set_slice")))
+            advanced_wl_ms.append(float(m.group("wl")))
+            advanced_render_ms.append(float(m.group("render")))
+            advanced_total_ms.append(float(m.group("total")))
+
+        m = _STAGE_TIMING_RE.search(line)
+        if m:
+            duration_ms = float(m.group("duration"))
+            component = str(m.group("component")).strip().lower()
+            role = str(m.group("role")).strip().lower()
+            function = str(m.group("function"))
+            stage = str(m.group("stage"))
+            fields = _parse_kv_fields(m.group("fields"))
+            stage_counts[f"{component}.{function}.{stage}"] += 1
+            if component == "db":
+                db_stage_ms.append(duration_ms)
+                query_type = str(fields.get("query_type", "mixed")).lower()
+                if "read" in query_type or "select" in query_type:
+                    db_read_stage_ms.append(duration_ms)
+                elif "write" in query_type or "insert" in query_type or "update" in query_type:
+                    db_write_stage_ms.append(duration_ms)
+                caller_area = str(fields.get("caller_area", "unknown"))
+                viewer_mode = str(fields.get("viewer_mode", "unknown"))
+                db_caller_area_counts[caller_area] += 1
+                db_viewer_mode_counts[viewer_mode] += 1
+                if role == "main":
+                    main_thread_db_all_ms.append(duration_ms)
+                    if caller_area == "fast_interaction":
+                        main_thread_db_fast_interaction_ms.append(duration_ms)
+                    elif caller_area == "advanced_interaction":
+                        main_thread_db_advanced_interaction_ms.append(duration_ms)
+            if "grpc" in function.lower():
+                grpc_stage_ms.append(duration_ms)
+            if function == "SocketDicomClient.send_request" and stage == "request_total":
+                socket_request_total_ms.append(duration_ms)
+            if (
+                component == "download"
+                and function == "SocketDicomClient.download_series"
+                and stage == "dicom_file_write_batch"
+            ):
+                disk_write_value = _to_float(fields.get("disk_write_ms"))
+                dicom_file_write_ms.append(disk_write_value if disk_write_value is not None else duration_ms)
+                download_counts["dicom_file_write_batch_count"] += 1
+                try:
+                    dicom_file_write_bytes_total += int(float(fields.get("bytes", "0")))
+                except ValueError:
+                    pass
+            if component == "download" and stage == "dicom_header_decode_total":
+                dicom_file_read_ms.append(duration_ms)
+                download_counts["dicom_file_read_batch_count"] += 1
+            if component in {"download", "viewer"} and stage == "resource_probe":
+                rss_mb = _to_float(fields.get("process_rss_mb"))
+                if rss_mb is not None:
+                    process_rss_samples_mb.append(rss_mb)
+                available_mb = _to_float(fields.get("available_ram_mb"))
+                if available_mb is not None:
+                    available_ram_samples_mb.append(available_mb)
+                try:
+                    subprocess_count = int(float(fields.get("subprocess_count", "0")))
+                    subprocess_count_samples.append(subprocess_count)
+                except ValueError:
+                    pass
+            if component == "viewer" and stage == "viewer_event_total":
+                viewer_switch_total_ms.append(duration_ms)
+            if component == "viewer" and stage == "progressive_grow_apply":
+                progressive_grow_apply_ms.append(duration_ms)
+            if component == "viewer" and stage == "completion_verify":
+                completion_verify_ms.append(duration_ms)
+            if (
+                component == "viewer"
+                and stage == "load_single_series_total"
+                and fields.get("source", "") in {"db_path", "filesystem_path"}
+            ):
+                advanced_series_load_total_ms_samples.append(duration_ms)
+            if component != "db" and "connect" in stage.lower():
+                server_connect_ms.append(duration_ms)
+            if role == "main" and component in {"db", "download", "ipc"}:
+                main_thread_blocking_io_ms.append(duration_ms)
+
         m = _SCROLL_RE.search(line)
         if m:
             total_ms = float(m.group("total"))
@@ -317,6 +527,8 @@ def parse_aipacs_log_text(text: str) -> Dict[str, Any]:
             if stack_drag_active:
                 stack_drag_total_ms.append(total_ms)
                 stack_drag_decode_ms.append(decode_ms)
+                if decode_ms > 0.0:
+                    fast_foreground_decode_during_drag_count += 1
                 if total_ms >= _STACK_HITCH_TOTAL_MS:
                     if decode_ms >= _STACK_DECODE_HITCH_DECODE_MS:
                         stack_drag_decode_hitch_total_ms.append(total_ms)
@@ -334,6 +546,11 @@ def parse_aipacs_log_text(text: str) -> Dict[str, Any]:
         m = _FAST_SET_SLICE_STAGE_RE.search(line)
         if m:
             total_ms = float(m.group("total"))
+            decode_ms = float(m.group("decode"))
+            filter_ms = float(m.group("filter"))
+            wl_ms = float(m.group("wl"))
+            if decode_ms == 0.0 and filter_ms == 0.0 and wl_ms == 0.0:
+                fast_cached_display_ms.append(float(m.group("display")))
             if total_ms >= _STACK_HITCH_TOTAL_MS:
                 set_slice_stage_hitch_count += 1
                 set_slice_stage_frame_max_ms = max(set_slice_stage_frame_max_ms, float(m.group("frame")))
@@ -360,14 +577,87 @@ def parse_aipacs_log_text(text: str) -> Dict[str, Any]:
         if m:
             duplicate_terminal_counts[str(m.group("series"))] += 1
 
+        m = _DOWNLOAD_IMPACT_RE.search(line)
+        if m:
+            download_impact_elapsed_ms.append(float(m.group("elapsed")))
+
+        m = _DOWNLOAD_PIPELINE_SUMMARY_RE.search(line)
+        if m:
+            dicom_file_write_summary_ms.append(float(m.group("disk_write")))
+
+        m = _VIEWER_DATA_STAGE_RE.search(line)
+        if m:
+            viewer_data_stage = str(m.group("stage"))
+            viewer_data_duration_ms = float(m.group("duration"))
+            stage_counts[f"viewer.image_io.load_single_series_by_number.{viewer_data_stage}"] += 1
+            if viewer_data_stage == "disk_read":
+                dicom_file_read_ms.append(viewer_data_duration_ms)
+                download_counts["dicom_file_read_batch_count"] += 1
+            if viewer_data_stage in {"path_resolution", "path_scan", "group_images"} and "role=main" in line:
+                main_thread_disk_scan_ms.append(viewer_data_duration_ms)
+                if stack_drag_active and ("pydicom_qt" in line or "[FAST_" in line or "QtViewerBridge" in line):
+                    main_thread_disk_scan_fast_interaction_ms.append(viewer_data_duration_ms)
+                elif stack_drag_active and ("vtk_simpleitk" in line or "ImageViewer2D" in line):
+                    main_thread_disk_scan_advanced_interaction_ms.append(viewer_data_duration_ms)
+
+        m = _THUMBNAIL_END_RE.search(line)
+        if m:
+            thumbnail_generation_ms.append(float(m.group("duration")))
+
+        m = _ZETABOOST_RE.search(line)
+        if m:
+            zeta_cache_bytes_mb.append(float(m.group("bytes")))
+            zeta_cache_budget_mb.append(float(m.group("budget")))
+            zeta_queue_depths.append(float(m.group("queued")) + float(m.group("inflight")))
+
+        m = _PRIORITY_RETRY_EXHAUSTED_RE.search(line)
+        if m:
+            download_counts["priority_retry_exhausted_count"] += 1
+            download_counts["priority_retry_exhausted_attempts_total"] += int(m.group("attempts"))
+            download_counts["priority_retry_exhausted_attempts_max"] = max(
+                download_counts["priority_retry_exhausted_attempts_max"],
+                int(m.group("attempts")),
+            )
+        if "Socket connection lost" in line:
+            download_counts["socket_lost_count"] += 1
+        if "Worker error:" in line:
+            download_counts["worker_error_count"] += 1
+            if "preemption" in line.lower() or "higher priority" in line.lower():
+                download_counts["preemption_worker_error_count"] += 1
+        if "preemption" in line.lower() or "higher priority" in line.lower():
+            download_counts["expected_preemption_signal_count"] += 1
+        if "Invalid transition" in line:
+            download_counts["invalid_state_transition_count"] += 1
+        if "Skipped" in line and "DICOM files with read errors" in line:
+            download_counts["dicom_read_error_skip_count"] += 1
+        if "download_batch: No response" in line:
+            download_counts["download_batch_no_response_count"] += 1
+        if "stale_request_drop" in line:
+            stale_request_drop_count += 1
+        if "duplicate_load_suppressed" in line:
+            duplicate_load_suppressed_count += 1
+        m = _SEND_REQUEST_RETRY_RE.search(line)
+        if m:
+            download_counts["send_request_retry_count"] += 1
+        m = _SEND_REQUEST_FAILED_RE.search(line)
+        if m:
+            download_counts["send_request_failed_count"] += 1
+
     duplicate_complete = sum(max(0, count - 1) for count in complete_counts.values())
     duplicate_cache_warm = sum(max(0, count - 1) for count in cache_warm_counts.values())
     total_scroll = len(scroll_total_ms)
     decode_zero = sum(1 for value in scroll_decode_ms if value == 0.0)
     total_stack_drag = len(stack_drag_total_ms)
     stack_drag_decode_zero = sum(1 for value in stack_drag_decode_ms if value == 0.0)
+    total_fast_drag_kpi = len(fast_drag_event_p95_ms)
+    fast_prefetch_zero_drag_count = sum(1 for value in fast_drag_prefetch_per_s if value == 0.0)
+    dicom_file_write_metric_ms = dicom_file_write_ms or dicom_file_write_summary_ms
 
     return {
+        "viewer_mode_counts": dict(viewer_mode_counts),
+        "stage_timing_counts": dict(stage_counts),
+        "db_caller_area_counts": dict(db_caller_area_counts),
+        "db_viewer_mode_counts": dict(db_viewer_mode_counts),
         "first_image_visible_ms": round(_percentile(first_image_ms, 50), 2),
         "first_image_visible_p95_ms": round(_percentile(first_image_ms, 95), 2),
         "set_slice_present_p50_ms": round(_percentile(scroll_total_ms, 50), 2),
@@ -400,6 +690,85 @@ def parse_aipacs_log_text(text: str) -> Dict[str, Any]:
         "cache_warm_duplicate_count": duplicate_cache_warm,
         "unique_completed_series_count": len(complete_counts),
         "duplicate_terminal_guard_hits": sum(duplicate_terminal_counts.values()),
+        "fast_first_image_visible_ms": round(_percentile(first_image_ms, 50), 2),
+        "fast_drag_kpi_sample_count": total_fast_drag_kpi,
+        "fast_drag_event_p50_ms": round(_percentile(fast_drag_event_p50_ms, 50), 2),
+        "fast_drag_event_p95_ms": round(_percentile(fast_drag_event_p95_ms, 95), 2),
+        "fast_drag_handler_p95_ms": round(_percentile(fast_drag_handler_p95_ms, 95), 2),
+        "fast_drag_ui_lag_p95_ms": round(_percentile(fast_drag_ui_lag_max_ms, 95), 2),
+        "fast_drag_ui_lag_max_ms": round(max(fast_drag_ui_lag_max_ms) if fast_drag_ui_lag_max_ms else 0.0, 2),
+        "fast_prefetch_zero_drag_ratio_pct": round((fast_prefetch_zero_drag_count / total_fast_drag_kpi) * 100.0, 2) if total_fast_drag_kpi else 0.0,
+        "fast_background_decode_count": int(sum(fast_drag_background_decode_count)),
+        "fast_foreground_decode_during_drag_count": int(fast_foreground_decode_during_drag_count),
+        "fast_cached_display_p95_ms": round(_percentile(fast_cached_display_ms, 95), 2),
+        "fast_pixel_cache_hit_ratio_pct": round((src_counts.get("hit", 0) / total_scroll) * 100.0, 2) if total_scroll else 0.0,
+        "fast_frame_cache_hit_ratio_pct": round((src_counts.get("hit", 0) / total_scroll) * 100.0, 2) if total_scroll else 0.0,
+        "advanced_stack_sample_count": len(advanced_total_ms),
+        "advanced_stack_event_p95_ms": round(_percentile(advanced_total_ms, 95), 2),
+        "advanced_series_load_total_ms": round(_percentile(advanced_series_load_total_ms_samples, 95), 2),
+        "advanced_series_load_total_ms_p50": round(_percentile(advanced_series_load_total_ms_samples, 50), 2),
+        "advanced_first_image_visible_ms": round(_percentile(advanced_series_load_total_ms_samples, 50), 2),
+        "advanced_render_p95_ms": round(_percentile(advanced_total_ms, 95), 2),
+        "advanced_vtk_render_ms_p95": round(_percentile(advanced_render_ms, 95), 2),
+        "advanced_simpleitk_load_ms_p95": round(_percentile(advanced_series_load_total_ms_samples, 95), 2),
+        "advanced_whole_series_cache_hit_ratio_pct": 0.0,
+        "advanced_set_slice_p95_ms": round(_percentile(advanced_set_slice_ms, 95), 2),
+        "advanced_wl_p95_ms": round(_percentile(advanced_wl_ms, 95), 2),
+        "db_transaction_scope_p95_ms": round(_percentile(db_stage_ms, 95), 2),
+        "db_stage_timing_sample_count": len(db_stage_ms),
+        "db_read_transaction_p95_ms": round(_percentile(db_read_stage_ms, 95), 2),
+        "db_write_transaction_p95_ms": round(_percentile(db_write_stage_ms, 95), 2),
+        "db_busy_retry_count": download_counts.get("db_busy_retry_count", 0),
+        "main_thread_db_ms": round(sum(main_thread_db_all_ms), 2),
+        "main_thread_db_p95_ms": round(_percentile(main_thread_db_all_ms, 95), 2),
+        "main_thread_db_ms_during_fast_drag": round(sum(main_thread_db_fast_interaction_ms), 2),
+        "main_thread_db_ms_during_advanced_stack": round(sum(main_thread_db_advanced_interaction_ms), 2),
+        "server_connect_ms": round(_percentile(server_connect_ms, 95), 2),
+        "grpc_metadata_fetch_ms": round(_percentile(grpc_stage_ms, 95), 2),
+        "socket_batch_rtt_p95_ms": round(_percentile(socket_request_total_ms, 95), 2),
+        "download_throughput_mb_s": 0.0,
+        "socket_lost_count": int(download_counts.get("socket_lost_count", 0)),
+        "download_progress_write_rate_per_s": 0.0,
+        "dicom_file_write_ms_p95": round(_percentile(dicom_file_write_metric_ms, 95), 2),
+        "dicom_file_write_batch_count": int(download_counts.get("dicom_file_write_batch_count", 0)),
+        "dicom_file_write_bytes_total": int(dicom_file_write_bytes_total),
+        "dicom_file_read_ms_p95": round(_percentile(dicom_file_read_ms, 95), 2),
+        "dicom_file_read_batch_count": int(download_counts.get("dicom_file_read_batch_count", 0)),
+        "main_thread_disk_scan_ms": round(sum(main_thread_disk_scan_ms), 2),
+        "main_thread_disk_scan_p95_ms": round(_percentile(main_thread_disk_scan_ms, 95), 2),
+        "main_thread_disk_scan_ms_during_fast_drag": round(sum(main_thread_disk_scan_fast_interaction_ms), 2),
+        "main_thread_disk_scan_ms_during_advanced_stack": round(sum(main_thread_disk_scan_advanced_interaction_ms), 2),
+        "thumbnail_generation_ms_p95": round(_percentile(thumbnail_generation_ms, 95), 2),
+        "process_rss_peak_mb": round(max(process_rss_samples_mb) if process_rss_samples_mb else 0.0, 2),
+        "available_ram_min_mb": round(min(available_ram_samples_mb) if available_ram_samples_mb else 0.0, 2),
+        "subprocess_count": int(max(subprocess_count_samples) if subprocess_count_samples else 0),
+        "main_thread_blocking_io_ms": round(sum(main_thread_blocking_io_ms), 2),
+        "main_thread_blocking_io_p95_ms": round(_percentile(main_thread_blocking_io_ms, 95), 2),
+        "download_impact_elapsed_p95_ms": round(_percentile(download_impact_elapsed_ms, 95), 2),
+        "priority_retry_exhausted_count": int(download_counts.get("priority_retry_exhausted_count", 0)),
+        "priority_retry_exhausted_attempts_max": int(download_counts.get("priority_retry_exhausted_attempts_max", 0)),
+        "preemption_worker_error_count": int(download_counts.get("preemption_worker_error_count", 0)),
+        "download_preemption_fail_count": int(download_counts.get("preemption_worker_error_count", 0)),
+        "worker_error_count": int(download_counts.get("worker_error_count", 0)),
+        "expected_preemption_signal_count": int(download_counts.get("expected_preemption_signal_count", 0)),
+        "invalid_state_transition_count": int(download_counts.get("invalid_state_transition_count", 0)),
+        "send_request_retry_count": int(download_counts.get("send_request_retry_count", 0)),
+        "send_request_failed_count": int(download_counts.get("send_request_failed_count", 0)),
+        "download_batch_no_response_count": int(download_counts.get("download_batch_no_response_count", 0)),
+        "dicom_read_error_skip_count": int(download_counts.get("dicom_read_error_skip_count", 0)),
+        "zeta_cache_bytes_peak_mb": round(max(zeta_cache_bytes_mb) if zeta_cache_bytes_mb else 0.0, 2),
+        "zeta_cache_budget_peak_mb": round(max(zeta_cache_budget_mb) if zeta_cache_budget_mb else 0.0, 2),
+        "zeta_queue_depth_p95": round(_percentile(zeta_queue_depths, 95), 2),
+        "viewer_switch_total_ms_p50": round(_percentile(viewer_switch_total_ms, 50), 2),
+        "viewer_switch_total_ms_p95": round(_percentile(viewer_switch_total_ms, 95), 2),
+        "viewer_switch_sample_count": len(viewer_switch_total_ms),
+        "progressive_grow_apply_ms_p50": round(_percentile(progressive_grow_apply_ms, 50), 2),
+        "progressive_grow_apply_ms_p95": round(_percentile(progressive_grow_apply_ms, 95), 2),
+        "progressive_grow_sample_count": len(progressive_grow_apply_ms),
+        "completion_verify_ms_p95": round(_percentile(completion_verify_ms, 95), 2),
+        "completion_verify_sample_count": len(completion_verify_ms),
+        "stale_request_drop_count": stale_request_drop_count,
+        "duplicate_load_suppressed_count": duplicate_load_suppressed_count,
     }
 
 
@@ -833,7 +1202,7 @@ def summarize_payload_by_block(payload: Dict[str, Any], model: Dict[str, Any]) -
 
 def block_summary_to_markdown(summary: Dict[str, Any]) -> str:
     lines = [
-        "# FAST Block KPI Summary",
+        "# Unified Viewer Block KPI Summary",
         "",
         f"- Viewer: `{summary.get('viewer', 'unknown')}`",
         f"- Source mode: `{summary.get('source_mode', '')}`",

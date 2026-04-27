@@ -13,14 +13,30 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
-import pydicom
-import pydicom.uid
-from pydicom.dataset import Dataset, FileDataset
-from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+import pytest
+
+try:
+    import numpy as np
+except ModuleNotFoundError:
+    np = None
+
+try:
+    import pydicom
+    import pydicom.uid
+    from pydicom.dataset import Dataset, FileDataset
+    from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+except ModuleNotFoundError:
+    pydicom = None
+    Dataset = object
+    FileDataset = object
+    ExplicitVRLittleEndian = "1.2.840.10008.1.2.1"
+
+    def generate_uid() -> str:
+        return f"2.25.{uuid.uuid4().int}"
 
 # ─── ensure project root on path ─────────────────────────────────────────────
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
@@ -43,6 +59,9 @@ def _make_dicom_slice(
     z_pos: float = 0.0,
 ) -> Dataset:
     """Build a minimal valid in-memory DICOM Dataset for one slice."""
+    if np is None or pydicom is None:
+        pytest.skip("numpy and pydicom are required to synthesize DICOM pixel data")
+
     series_uid = series_uid or generate_uid()
     study_uid = study_uid or generate_uid()
 

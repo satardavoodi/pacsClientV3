@@ -237,15 +237,25 @@ class SeriesIntentCoordinator:
             return
 
         if _attempt >= max_retries:
-            logger.warning(
-                "[INTENT] Priority start retry exhausted for %s after %s attempts",
-                study_uid,
-                max_retries,
-            )
+            state = self.state_store.get(study_uid)
+            if state and state.status not in (DownloadStatus.PENDING, DownloadStatus.PAUSED):
+                logger.info(
+                    "[INTENT] Priority retry chain ended for %s (state=%s)",
+                    study_uid,
+                    state.status,
+                )
+                self._clear_priority_retry(study_uid, _token)
+                return
+
             # v2.2.9.2 — schedule one deferred recovery round instead of giving up.
             # Covers the case where a dying worker takes >18 s to release its pool slot
             # (e.g. stuck in socket I/O).  Recovery round: 3 retries × 3 s after 5 s delay.
             if not _recovery:
+                logger.info(
+                    "[INTENT] Priority start retry entering recovery for %s after %s attempts",
+                    study_uid,
+                    max_retries,
+                )
                 self._defer(
                     5000,
                     lambda _token=_token: self.schedule_priority_start_retry(
@@ -258,6 +268,26 @@ class SeriesIntentCoordinator:
                     ),
                 )
             else:
+                state_error_l = str(getattr(state, "error_message", "") or "").lower() if state else ""
+                expected_preemption_window = bool(
+                    state
+                    and (
+                        state.is_auto_paused
+                        or "preemption" in state_error_l
+                        or "higher priority" in state_error_l
+                    )
+                )
+                if expected_preemption_window:
+                    logger.info(
+                        "[INTENT] Priority retry chain ended in expected preemption window for %s",
+                        study_uid,
+                    )
+                else:
+                    logger.warning(
+                        "[INTENT] Priority start retry exhausted for %s after recovery attempts=%s",
+                        study_uid,
+                        max_retries,
+                    )
                 self._clear_priority_retry(study_uid, _token)
             return
 

@@ -781,27 +781,35 @@ class ThumbnailManager(QObject):
         except Exception:
             return False
 
-    def _apply_compact_progress_state(self, widget, series_key: str, progress_percent: float, status_text: str = ""):
-        """Cheap thumbnail update path: no glass overlay churn for background series."""
+    def _apply_compact_progress_state(self, widget, series_key: str, progress_percent: float, status_text: str = "") -> bool:
+        """Cheap thumbnail update path: no glass overlay churn for background series.
+
+        Returns True only when something changed and a repaint is warranted.
+        """
         try:
             if widget is None:
-                return
+                return False
+            changed = False
 
             if hasattr(widget, 'progress_overlay'):
                 try:
-                    widget.progress_overlay.setVisible(False)
+                    changed = self._set_widget_visible_if_needed(widget.progress_overlay, False) or changed
                 except RuntimeError:
-                    return
+                    return False
 
             if hasattr(widget, 'glass_overlay'):
                 try:
-                    widget.glass_overlay.setVisible(False)
+                    changed = self._set_widget_visible_if_needed(widget.glass_overlay, False) or changed
                 except RuntimeError:
-                    return
+                    return False
 
             if status_text:
                 try:
-                    self._set_series_count_label_text(series_key, status_text)
+                    count_label = getattr(widget, 'count_label', None)
+                    desired_text = str(status_text)
+                    if count_label is None or count_label.text() != desired_text:
+                        self._set_series_count_label_text(series_key, desired_text)
+                        changed = True
                 except Exception:
                     pass
 
@@ -809,19 +817,21 @@ class ThumbnailManager(QObject):
                 try:
                     progress_border = widget.progress_border
                     if progress_percent >= 100:
-                        progress_border.setDownloading(False)
-                        progress_border.setReady(True)
+                        changed = self._set_progress_border_downloading_if_needed(progress_border, False) or changed
+                        changed = self._set_progress_border_ready_if_needed(progress_border, True) or changed
                     elif progress_percent > 0:
-                        progress_border.setDownloading(True)
+                        changed = self._set_progress_border_downloading_if_needed(progress_border, True) or changed
                 except RuntimeError:
-                    return
+                    return False
 
-            try:
-                widget.update()
-            except RuntimeError:
-                return
+            if changed:
+                try:
+                    widget.update()
+                except RuntimeError:
+                    return False
+            return changed
         except Exception:
-            return
+            return False
 
     @staticmethod
     def _set_widget_visible_if_needed(widget, visible: bool) -> bool:

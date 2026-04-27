@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from tools.performance.clearcanvas_aipacs_kpi_harness import (
     REPO_ROOT,
     _resolve_stack_drag_policy,
@@ -72,6 +74,53 @@ def test_parse_aipacs_log_text_tracks_set_slice_and_scroll_stage_hitches():
     assert metrics["qt_scroll_stage_sync_max_ms"] == 3.8
 
 
+def test_parse_aipacs_log_text_tracks_unified_fast_advanced_and_shared_metrics():
+    text = """
+    2026-04-23 | INFO | component=viewer role=main | modules.viewer.fast.qt_viewer_bridge.set_slice | action=sess study=s series=1 job=- viewevt=v fn=- stage=- result=- | FAST:first_image_visible series=1 slice=0 decode_ms=3.0 total_ms=42.0
+    2026-04-23 | INFO | component=viewer role=main | modules.viewer.fast.qt_viewer_bridge._emit_drag | action=sess study=s series=1 job=- viewevt=v fn=- stage=- result=- | [FAST_DRAG_KPI] bridge=b1 viewer=q1 duration_s=2.000 targets=20 event_p50_ms=44.0 event_p95_ms=121.0 handler_p50_ms=2.0 handler_p95_ms=9.0 ui_lag_max_ms=210.0 prefetch_per_s=0.0 background_decode_count=3
+    2026-04-23 | INFO | component=viewer role=main | modules.viewer.advanced.viewer_2d._set_slice_impl | action=sess study=s series=2 job=- viewevt=v fn=ImageViewer2D.set_slice stage=sub_timing result=- | viewer-scroll sub-timing: SetSlice=13.4ms WL=0.7ms corners=0.1ms Render=16.3ms total=30.5ms
+    2026-04-23 | INFO | component=db role=download-subprocess | modules.download_manager.download.series_downloader.log_stage_timing | action=sess study=s series=2 job=j viewevt=- fn=SeriesDownloader._save_series_instances_to_db stage=batch_insert_instances result=ok | stage-timing duration_ms=37.25 query_type=write caller_area=shared_download viewer_mode=Shared
+    2026-04-23 | INFO | component=db role=main | database._pool.log_stage_timing | action=sess study=s series=1 job=- viewevt=v fn=database.get_db_connection stage=transaction_scope result=ok | stage-timing duration_ms=6.50 query_type=mixed caller_area=fast_interaction viewer_mode=FAST caller_module=modules.viewer.fast.qt_viewer_bridge caller_function=set_slice thread_role=main
+    2026-04-23 | INFO | component=download role=download-subprocess | modules.download_manager.network.socket_client.log_stage_timing | action=sess study=s series=2 job=j viewevt=- fn=SocketDicomClient.send_request stage=request_total result=ok | stage-timing duration_ms=88.5
+    2026-04-23 | INFO | component=download role=download-subprocess | modules.download_manager.network.socket_client.log_stage_timing | action=sess study=s series=2 job=j viewevt=- fn=SocketDicomClient.download_series stage=dicom_file_write_batch result=ok | stage-timing duration_ms=44.0 files=5 bytes=102400 disk_write_ms=7.50 query_type=disk_write viewer_mode=Shared
+    2026-04-23 | INFO | component=download role=download-subprocess | modules.download_manager.download.series_downloader.log_stage_timing | action=sess study=s series=2 job=j viewevt=- fn=SeriesDownloader._save_series_instances_to_db stage=dicom_header_decode_total result=ok | stage-timing duration_ms=12.0 files=5 query_type=disk_read viewer_mode=Shared
+    2026-04-23 | INFO | component=download role=download-subprocess | modules.download_manager.network.socket_client.download_series | action=sess study=s series=2 job=j viewevt=- fn=- stage=- result=- | download-pipeline-summary series=2 elapsed_s=1.20 disk_write_ms=22.00 decode_ms=30.00 decompress_ms=0.00
+    2026-04-23 | INFO | component=viewer role=main | PacsClient.pacs.patient_tab.utils.image_io.load_single_series_by_number | action=sess study=s series=2 job=- viewevt=v fn=- stage=group_images result=- | viewer-data stage=group_images duration_ms=4.25
+    2026-04-23 | WARNING | component=download role=main | modules.download_manager.coordinator.series_intent_coordinator.schedule_priority_start_retry | action=sess study=s series=2 job=- viewevt=v fn=- stage=- result=- | [INTENT] Priority start retry exhausted for s after 3 attempts
+    2026-04-23 | ERROR | component=download role=main | modules.download_manager.ui.widget._dm_workers._on_worker_error | action=sess study=s series=2 job=- viewevt=v fn=- stage=- result=- | Worker error: s - Paused for higher priority download (preemption)
+    2026-04-23 | INFO | component=viewer role=main | PacsClient.pacs.patient_tab.utils.thumbnail_manager.complete_series_download | action=sess study=- series=- job=- viewevt=- fn=- stage=- result=- | FAST:thumbnail_pipeline event=end series=1 t_abs=100.0 dl_ms=74.3
+    """
+
+    metrics = parse_aipacs_log_text(text)
+
+    assert metrics["fast_first_image_visible_ms"] == 42.0
+    assert metrics["fast_drag_event_p95_ms"] == 121.0
+    assert metrics["fast_prefetch_zero_drag_ratio_pct"] == 100.0
+    assert metrics["advanced_stack_event_p95_ms"] == 30.5
+    assert metrics["advanced_vtk_render_ms_p95"] == 16.3
+    assert metrics["db_transaction_scope_p95_ms"] == 35.71
+    assert metrics["db_stage_timing_sample_count"] == 2
+    assert metrics["db_write_transaction_p95_ms"] == 37.25
+    assert metrics["db_caller_area_counts"]["shared_download"] == 1
+    assert metrics["db_caller_area_counts"]["fast_interaction"] == 1
+    assert metrics["db_viewer_mode_counts"]["FAST"] == 1
+    assert metrics["main_thread_db_ms_during_fast_drag"] == 6.5
+    assert metrics["socket_batch_rtt_p95_ms"] == 88.5
+    assert metrics["dicom_file_write_ms_p95"] == 7.5
+    assert metrics["dicom_file_write_batch_count"] == 1
+    assert metrics["dicom_file_write_bytes_total"] == 102400
+    assert metrics["dicom_file_read_ms_p95"] == 12.0
+    assert metrics["dicom_file_read_batch_count"] == 1
+    assert metrics["main_thread_disk_scan_ms"] == 4.25
+    assert metrics["main_thread_disk_scan_p95_ms"] == 4.25
+    assert metrics["priority_retry_exhausted_count"] == 1
+    assert metrics["preemption_worker_error_count"] == 1
+    assert metrics["thumbnail_generation_ms_p95"] == 74.3
+    assert metrics["viewer_mode_counts"]["FAST_QT"] >= 1
+    assert metrics["viewer_mode_counts"]["Advanced"] >= 1
+    assert metrics["viewer_mode_counts"]["Shared"] >= 1
+
+
 def test_compare_payloads_flags_aipacs_overhead():
     left = {
         "viewer": "AI-PACS",
@@ -138,6 +187,7 @@ def test_resolve_stack_drag_policy_prefers_cli_then_step_then_scenario():
 
 
 def test_run_pattern_step_stack_drag_uses_qt_viewer_policy(monkeypatch):
+    pytest.importorskip("PySide6")
     calls = []
 
     class DummyPipeline:

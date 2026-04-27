@@ -44,6 +44,12 @@ _PROGRESSIVE_STATE_AWAITING = "AWAITING"
 _PROGRESSIVE_STATE_PROGRESSIVE = "PROGRESSIVE"
 _PROGRESSIVE_STATE_COMPLETING = "COMPLETING"
 _PROGRESSIVE_STATE_DONE = "DONE"
+_FAST_PROGRESSIVE_INTERACTION_COOLDOWN_S = 1.25
+_FAST_PROGRESSIVE_NONTERMINAL_GROW_MIN_INTERVAL_MS = 900.0
+_FAST_PROGRESSIVE_NONTERMINAL_GROW_MAX_INTERVAL_MS = 2500.0
+_FAST_PROGRESSIVE_FINALIZE_DEFER_BASE_MS = 350
+_FAST_PROGRESSIVE_FINALIZE_DEFER_STEP_MS = 200
+_FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES = 6
 
 
 def _h10_log_progressive_mutation(obj, fn_name: str, mutated_sn: str, action: str):
@@ -282,6 +288,60 @@ def _should_defer_progressive_grow(*, terminal: bool = False) -> bool:
     return bool(_ui_should_defer_progressive_grow(terminal=terminal))
 
 
+def _is_timer_active(timer_obj) -> bool:
+    """Best-effort timer active probe that also works with test doubles."""
+    if timer_obj is None:
+        return False
+    try:
+        return bool(timer_obj.isActive())
+    except Exception:
+        return bool(getattr(timer_obj, "_active", False))
+
+
+def _is_fast_progressive_interaction_hot(viewers: list) -> bool:
+    """True when FAST interaction is still active/settling for any viewer.
+
+    This is intentionally conservative: if drag/wheel settle windows are still
+    active, defer non-terminal progressive grow so expensive grow/remap work
+    does not compete with immediate interaction responsiveness.
+    """
+    for vtk_w, _ in viewers or []:
+        if not bool(getattr(vtk_w, "_qt_bridge_active", False)):
+            continue
+        bridge = getattr(vtk_w, "image_viewer", None)
+        if bridge is None:
+            continue
+        if bool(getattr(bridge, "_stack_drag_active", False)):
+            return True
+        if bool(getattr(bridge, "_protected_drag_active", False)):
+            return True
+        if _is_timer_active(getattr(bridge, "_interaction_settle_timer", None)):
+            return True
+        qt_viewer = getattr(bridge, "qt_viewer", None)
+        if _is_timer_active(getattr(qt_viewer, "_scroll_stop_timer", None)):
+            return True
+        pipeline = getattr(bridge, "pipeline", None)
+        if bool(getattr(pipeline, "_fast_interaction", False)):
+            return True
+        # Keep non-terminal progressive grow deferred for a short cooldown
+        # after the last wheel/drag event to avoid immediate grow/remap
+        # contention during micro-pauses in active stack sessions.
+        try:
+            recent_hot_probe = getattr(bridge, "is_recent_interaction_hot", None)
+            if callable(recent_hot_probe):
+                if bool(recent_hot_probe(_FAST_PROGRESSIVE_INTERACTION_COOLDOWN_S)):
+                    return True
+            else:
+                last_evt = float(getattr(bridge, "_last_interaction_event_monotonic", 0.0) or 0.0)
+                if last_evt > 0.0:
+                    age_s = float(time.perf_counter() - last_evt)
+                    if age_s <= float(_FAST_PROGRESSIVE_INTERACTION_COOLDOWN_S):
+                        return True
+        except Exception:
+            pass
+    return False
+
+
 def _should_defer_cache_warm() -> bool:
     """Helper front door for post-completion cache-warm deferral decisions."""
     return bool(_ui_should_defer_cache_warm())
@@ -411,6 +471,15 @@ def _clear_progressive_finalized(obj, series_number: str) -> None:
     _get_progressive_finalized_series_set(obj).discard(str(series_number))
 
 
+def _get_progressive_finalize_defer_set(obj):
+    """Return or lazily create the in-flight finalize defer guard set."""
+    guard = getattr(obj, '_progressive_finalize_defer_pending', None)
+    if guard is None:
+        guard = set()
+        setattr(obj, '_progressive_finalize_defer_pending', guard)
+    return guard
+
+
 def _finalize_progressive_series(
     obj,
     series_number: str,
@@ -419,6 +488,7 @@ def _finalize_progressive_series(
     viewers: list | None = None,
     source: str,
     dispatch_cache_warm: bool = False,
+    _defer_retry: int = 0,
 ) -> bool:
     """Single terminal authority for progressive completion.
 
@@ -432,17 +502,6 @@ def _finalize_progressive_series(
             sn, source,
         )
         return False
-
-    _mark_progressive_finalized(obj, sn)
-    _mark_progressive_terminal_complete_guard(obj, sn)
-    _mark_series_download_completed(obj, sn)
-    _set_progressive_lifecycle_state(
-        obj,
-        sn,
-        _PROGRESSIVE_STATE_COMPLETING,
-        source="_finalize_progressive_series",
-        reason=source,
-    )
 
     matched_viewers = list(viewers or [])
     if not matched_viewers:
@@ -459,6 +518,70 @@ def _finalize_progressive_series(
                 viewer_sn = ""
             if viewer_sn == sn or getattr(vtk_w, "_progressive_series_number", None) == sn:
                 matched_viewers.append((vtk_w, node))
+
+    # Do not run terminal finalize work while FAST interaction is still hot.
+    # This specifically avoids UI stalls when completion arrives during/just
+    # after stack drag on the same viewed series.
+    if matched_viewers and _is_fast_progressive_interaction_hot(matched_viewers):
+        if _defer_retry < _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES:
+            pending = _get_progressive_finalize_defer_set(obj)
+            if sn not in pending:
+                pending.add(sn)
+                delay_ms = int(
+                    _FAST_PROGRESSIVE_FINALIZE_DEFER_BASE_MS
+                    + (_defer_retry * _FAST_PROGRESSIVE_FINALIZE_DEFER_STEP_MS)
+                )
+
+                def _retry_finalize(
+                    _sn=sn,
+                    _final_count=int(final_count),
+                    _source=str(source),
+                    _dispatch=bool(dispatch_cache_warm),
+                    _next_retry=int(_defer_retry) + 1,
+                ):
+                    try:
+                        _get_progressive_finalize_defer_set(obj).discard(_sn)
+                    except Exception:
+                        pass
+                    try:
+                        _finalize_progressive_series(
+                            obj,
+                            _sn,
+                            final_count=_final_count,
+                            viewers=None,
+                            source=_source,
+                            dispatch_cache_warm=_dispatch,
+                            _defer_retry=_next_retry,
+                        )
+                    except Exception as _rf_exc:
+                        getattr(obj, 'logger', logger).debug(
+                            "progressive: deferred finalize retry failed series=%s source=%s retry=%d: %s",
+                            _sn, _source, _next_retry, _rf_exc,
+                        )
+
+                QTimer.singleShot(delay_ms, _retry_finalize)
+            getattr(obj, 'logger', logger).debug(
+                "progressive: finalize deferred interaction-hot series=%s source=%s retry=%d",
+                sn, source, _defer_retry + 1,
+            )
+            return False
+        getattr(obj, 'logger', logger).warning(
+            "progressive: finalize forcing after defer retries series=%s source=%s retry=%d",
+            sn, source, _defer_retry,
+        )
+
+    _get_progressive_finalize_defer_set(obj).discard(sn)
+
+    _mark_progressive_finalized(obj, sn)
+    _mark_progressive_terminal_complete_guard(obj, sn)
+    _mark_series_download_completed(obj, sn)
+    _set_progressive_lifecycle_state(
+        obj,
+        sn,
+        _PROGRESSIVE_STATE_COMPLETING,
+        source="_finalize_progressive_series",
+        reason=source,
+    )
 
     for vtk_w, _node in matched_viewers:
         try:
@@ -574,6 +697,7 @@ class _VCProgressiveMixin:
                     "progressive: duplicate terminal progress ignored series=%s downloaded=%d total=%d guard=finalized",
                     sn, downloaded, total,
                 )
+                logger.debug("progressive: duplicate_load_suppressed series=%s guard=finalized", sn)
                 return
             if _is_progressive_terminal_complete_guard_active(self, sn):
                 _set_progressive_lifecycle_state(
@@ -640,6 +764,7 @@ class _VCProgressiveMixin:
                     "[H7-P7] series=%s downloaded=%d total=%d action=rejected_H6_completed",
                     sn, downloaded, total,
                 )
+                logger.debug("progressive: stale_request_drop series=%s guard=H6_completed", sn)
                 return
 
         # Block B optimization: untargeted FAST background series should remain
@@ -1143,6 +1268,7 @@ class _VCProgressiveMixin:
         """Inner implementation called by _flush_progressive_grow."""
         is_fast = self._is_fast_viewer_mode()
         admit_batch = _get_progressive_admit_batch_size(self)
+        now_mono_ms = float(time.perf_counter() * 1000.0)
 
         for sn, info in list(self._progressive_series.items()):
             pending = info.get("pending_downloaded", 0)
@@ -1159,6 +1285,51 @@ class _VCProgressiveMixin:
                 visible_target = pending
                 if not is_terminal and admit_batch > 0:
                     visible_target = min(pending, last_grow + admit_batch)
+                if not is_terminal and _is_fast_progressive_interaction_hot(viewers):
+                    info["pending_downloaded"] = pending
+                    if not self._progressive_grow_timer.isActive():
+                        _restart_progressive_grow_timer(
+                            self,
+                            max(_progressive_grow_interval_ms(), 500.0),
+                        )
+                    self.logger.debug(
+                        "progressive-fast: interaction-hot defer series=%s pending=%d total=%d",
+                        sn, pending, total,
+                    )
+                    continue
+                if not is_terminal:
+                    pending_delta = max(0, int(pending) - int(last_grow))
+                    last_tick_ms = float(info.get("_last_nonterminal_grow_mono_ms", 0.0) or 0.0)
+                    last_cost_ms = float(info.get("_last_nonterminal_grow_cost_ms", 0.0) or 0.0)
+                    min_interval_ms = float(_FAST_PROGRESSIVE_NONTERMINAL_GROW_MIN_INTERVAL_MS)
+                    if pending_delta < max(1, int(admit_batch) * 2):
+                        # Small visible deltas do not need immediate expensive refresh.
+                        min_interval_ms = max(min_interval_ms, 1300.0)
+                    if last_cost_ms >= 250.0:
+                        # If previous grow was heavy, widen the gap before next grow.
+                        min_interval_ms = max(
+                            min_interval_ms,
+                            min(
+                                float(_FAST_PROGRESSIVE_NONTERMINAL_GROW_MAX_INTERVAL_MS),
+                                last_cost_ms * 2.0,
+                            ),
+                        )
+                    if last_tick_ms > 0.0:
+                        elapsed_ms = max(0.0, now_mono_ms - last_tick_ms)
+                        if elapsed_ms < min_interval_ms:
+                            info["pending_downloaded"] = pending
+                            delay_ms = max(
+                                _progressive_grow_interval_ms(),
+                                min_interval_ms - elapsed_ms,
+                            )
+                            if not self._progressive_grow_timer.isActive():
+                                _restart_progressive_grow_timer(self, delay_ms)
+                            self.logger.debug(
+                                "progressive-fast: nonterminal cadence defer series=%s pending=%d "
+                                "last_grow=%d elapsed_ms=%.1f min_interval_ms=%.1f last_cost_ms=%.1f",
+                                sn, pending, last_grow, elapsed_ms, min_interval_ms, last_cost_ms,
+                            )
+                            continue
                 if _should_defer_progressive_grow(terminal=is_terminal):
                     info["pending_downloaded"] = pending
                     if not self._progressive_grow_timer.isActive():
@@ -1173,12 +1344,15 @@ class _VCProgressiveMixin:
                 # Guard: prevent exceptions from escaping the QTimer callback.
                 # One-time-per-series traceback log avoids 150ms log spam.
                 try:
-                    self._grow_progressive_fast(
+                    grow_cost_ms = float(self._grow_progressive_fast(
                         sn,
                         pending,
                         viewers,
                         visible_count=visible_target,
-                    )
+                    ) or 0.0)
+                    if not is_terminal:
+                        info["_last_nonterminal_grow_mono_ms"] = float(time.perf_counter() * 1000.0)
+                        info["_last_nonterminal_grow_cost_ms"] = float(max(0.0, grow_cost_ms))
                     if visible_target < pending:
                         self.logger.debug(
                             "progressive-fast: admission gate series=%s visible=%d pending=%d total=%d batch=%d",
@@ -1325,6 +1499,7 @@ class _VCProgressiveMixin:
         """
         info = self._progressive_series.get(series_number, {})
         total = info.get("total", 0)
+        _t_grow = now_ms()
         target_visible_count = max(
             0,
             min(
@@ -1441,6 +1616,18 @@ class _VCProgressiveMixin:
             "progressive-fast: grew series=%s visible=%d actual=%d/%d",
             series_number, admitted_count, new_count, total,
         )
+        log_stage_timing(
+            self.logger,
+            component="viewer",
+            function="ViewerController._grow_progressive_fast",
+            stage="progressive_grow_apply",
+            start_ms=_t_grow,
+            series=str(series_number),
+            admitted=admitted_count,
+            actual=new_count,
+            total=total,
+        )
+        grow_total_ms = float(now_ms() - _t_grow)
 
         # â”€â”€ Stale-grow guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # loader.grow() may return fewer slices than expected if the OS has
@@ -1524,6 +1711,7 @@ class _VCProgressiveMixin:
                     except Exception:
                         pass
                 self._update_thumbnail_count(series_number, new_count)
+                return grow_total_ms
                 return  # don't fall through to step 6 (already cleaned up)
 
         # 6. Check if download completed
@@ -1545,6 +1733,7 @@ class _VCProgressiveMixin:
                 self.logger.info(
                     "progressive-fast: series=%s COMPLETE (%d slices)", series_number, new_count
                 )
+        return grow_total_ms
 
     async def _grow_progressive_viewer_async(self, series_number: str, expected_count: int):
         """Background: reload partial series from disk and grow viewers in-place."""
@@ -1894,11 +2083,12 @@ class _VCProgressiveMixin:
         still shows fewer slices than files on disk (OS flush delay), does
         one more loader.grow() + slider update and retries up to 3 times.
 
-        v2.2.9.2 â€” invalidates disk count cache before checking to avoid
+        v2.2.9.2 — invalidates disk count cache before checking to avoid
         stale 1s-TTL values.  Also exits progressive mode and cleans up
         tracking info when grow succeeds (Layer 2b may have left them active).
         """
         sn = str(series_number)
+        _t_verify = now_ms()
         if _is_progressive_finalized(self, sn):
             self.logger.debug(
                 "completion-verify: series=%s SKIPPED -- already finalized",
@@ -2018,6 +2208,18 @@ class _VCProgressiveMixin:
                             final_count=new_count,
                             viewers=[(vtk_w, node)],
                             source='layer3_verify',
+                        )
+                        log_stage_timing(
+                            self.logger,
+                            component="viewer",
+                            function="ViewerController._completion_verify_series_impl",
+                            stage="completion_verify",
+                            start_ms=_t_verify,
+                            series=sn,
+                            result="grew_ok",
+                            retry=_retry,
+                            disk_count=disk_count,
+                            new_count=new_count,
                         )
                         return  # success
             except Exception as exc:

@@ -1,20 +1,22 @@
 {
-  "version": "2026-04-17",
-  "purpose": "FAST performance KPIs grouped by functional Block 1/2/3 ownership.",
+  "version": "2026-04-27",
+  "purpose": "Unified viewer performance KPIs grouped by shared Block A infrastructure and mode-specific Block B/C viewer ownership.",
   "blocks": [
     {
       "id": "block_1_data_services",
-      "label": "Block 1 - Data services",
-      "role": "Download, thumbnail/right-panel projection, DICOM/header persistence, DB/storage writes, and deferred external metadata.",
-      "position": "Upstream producer feeding data/state into Block 2 through Block 3 scheduling.",
+      "label": "Block A - Shared data services",
+      "applies_to": ["FAST_QT", "FAST_LAZY_VTK", "Advanced"],
+      "role": "Shared download, thumbnail, server, socket/gRPC, DICOM/header persistence, DB/storage writes, logs, and progress state.",
+      "position": "Mode-neutral upstream producer feeding FAST and Advanced through the same support path.",
       "preferred_worker_model": {
         "main_process": "Orchestrator decisions and lightweight UI projection only.",
         "background": [
           "download subprocesses",
           "database/storage background work",
-          "warmup subprocess"
+          "thumbnail background work",
+          "bounded log queue/listener"
         ],
-        "rule": "Do not let thumbnail UI or cosmetic work compete with download correctness."
+        "rule": "Do not duplicate DB, disk, server, or download paths per viewer mode."
       },
       "metrics": [
         {
@@ -34,52 +36,179 @@
         {
           "key": "read_mb_delta",
           "label": "Read MB delta",
-          "goal": "Track storage/network pressure by scenario",
+          "goal": "Track shared storage pressure by scenario",
           "source": "process_summary",
           "status": "existing"
         },
         {
           "key": "write_mb_delta",
           "label": "Write MB delta",
-          "goal": "Track persistence churn by scenario",
+          "goal": "Track shared persistence churn by scenario",
           "source": "process_summary",
           "status": "existing"
         },
         {
-          "key": "download_preemption_fail_count",
-          "label": "Download preemption fail count",
+          "key": "db_transaction_scope_p95_ms",
+          "label": "DB transaction/stage p95",
+          "goal": "<10ms reads; <50ms writes when measured",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "db_read_transaction_p95_ms",
+          "label": "DB read transaction p95",
+          "goal": "<10ms",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "db_write_transaction_p95_ms",
+          "label": "DB write transaction p95",
+          "goal": "<50ms",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "main_thread_db_ms_during_fast_drag",
+          "label": "Main-thread DB during FAST drag",
+          "goal": "0ms",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "main_thread_db_ms_during_advanced_stack",
+          "label": "Main-thread DB during Advanced stack",
+          "goal": "0ms",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "db_busy_retry_count",
+          "label": "DB busy retry count",
+          "goal": "0 during viewer interaction",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "grpc_metadata_fetch_ms",
+          "label": "gRPC metadata fetch p95",
+          "goal": "Track server metadata latency",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "socket_batch_rtt_p95_ms",
+          "label": "Socket request/batch p95",
+          "goal": "Track DICOM transfer roundtrip",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "socket_lost_count",
+          "label": "Socket lost count",
+          "goal": "Classify expected cancel vs real network loss",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "priority_retry_exhausted_count",
+          "label": "Priority retry exhausted count",
+          "goal": "0 for expected preemption",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "preemption_worker_error_count",
+          "label": "Preemption surfaced as worker error",
           "goal": "0",
-          "source": "planned log/process metric",
-          "status": "planned"
+          "source": "log_metrics",
+          "status": "existing"
         },
         {
-          "key": "thumbnail_start_count",
-          "label": "Thumbnail start transitions",
-          "goal": "1 per series",
-          "source": "planned UI projection metric",
-          "status": "planned"
+          "key": "thumbnail_generation_ms_p95",
+          "label": "Thumbnail generation p95",
+          "goal": "Never block viewer interaction",
+          "source": "log_metrics",
+          "status": "existing"
         },
         {
-          "key": "thumbnail_complete_count",
-          "label": "Thumbnail complete transitions",
-          "goal": "1 per series",
-          "source": "planned UI projection metric",
-          "status": "planned"
+          "key": "dicom_file_write_ms_p95",
+          "label": "DICOM file write p95",
+          "goal": "Track shared download storage latency; lower is better",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "dicom_file_write_batch_count",
+          "label": "DICOM write batch samples",
+          "goal": "Nonzero during fresh downloads",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "dicom_file_write_bytes_total",
+          "label": "DICOM write bytes total",
+          "goal": "Track shared storage volume",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "dicom_file_read_ms_p95",
+          "label": "DICOM file/header read p95",
+          "goal": "Track shared DICOM read latency; lower is better",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "dicom_file_read_batch_count",
+          "label": "DICOM read batch samples",
+          "goal": "Nonzero during header persistence or viewer/storage read phases",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "main_thread_disk_scan_ms",
+          "label": "Main-thread disk scan total",
+          "goal": "Track path/group scan cost; must be 0 during active interaction",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "main_thread_disk_scan_ms_during_fast_drag",
+          "label": "Main-thread disk scan during FAST drag",
+          "goal": "0ms",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "main_thread_disk_scan_ms_during_advanced_stack",
+          "label": "Main-thread disk scan during Advanced stack",
+          "goal": "0ms",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "main_thread_blocking_io_ms",
+          "label": "Main-thread shared I/O total",
+          "goal": "0 during interaction windows",
+          "source": "log_metrics",
+          "status": "existing"
         }
       ]
     },
     {
       "id": "block_2_viewer_hot_path",
-      "label": "Block 2 - Viewer hot path",
-      "role": "Decode, filter, render, and present the FAST viewer image.",
-      "position": "Latency-critical visible path consuming the smallest possible image-ready payload.",
+      "label": "Block B - Mode-specific viewer hot path",
+      "applies_to": ["FAST_QT", "FAST_LAZY_VTK", "Advanced"],
+      "role": "Decode, filter, render, and present the visible image. FAST and Advanced must be measured separately.",
+      "position": "Latency-critical visible path consuming shared Block A data through backend-specific engines.",
       "preferred_worker_model": {
-        "main_process": "Direct present path in QtViewerBridge.set_slice().",
+        "main_process": "Presentation only; no blocking shared-service work.",
         "background": [
-          "background prefetch threads",
-          "decode subprocess only where it removes real GIL contention"
+          "FAST prefetch/decode where it avoids foreground misses",
+          "Advanced VTK/SimpleITK warmup where memory allows"
         ],
-        "rule": "Visible interaction must never queue behind non-interactive work."
+        "rule": "Do not replace one mode's rendering/filtering method with the other's."
       },
       "metrics": [
         {
@@ -90,61 +219,83 @@
           "status": "existing"
         },
         {
+          "key": "fast_first_image_visible_ms",
+          "label": "FAST first image visible",
+          "goal": "Trend downward without quality loss",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "fast_cached_display_p95_ms",
+          "label": "FAST cached display p95",
+          "goal": "<15ms",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "fast_foreground_decode_during_drag_count",
+          "label": "FAST foreground decode during drag",
+          "goal": "Reduce by >=50%",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
           "key": "set_slice_present_p95_ms",
-          "label": "set_slice present p95",
+          "label": "FAST set_slice present p95",
           "goal": "<16ms ideal; <24ms local; <30ms overlap",
           "source": "kpis/log_metrics",
           "status": "existing"
         },
         {
-          "key": "set_slice_present_max_ms",
-          "label": "set_slice present max",
-          "goal": "Track visible hitch spikes",
-          "source": "kpis/log_metrics",
-          "status": "existing"
-        },
-        {
           "key": "decode_p95_ms",
-          "label": "Decode p95",
+          "label": "FAST decode p95",
           "goal": "Trend downward without harming correctness",
           "source": "kpis",
           "status": "existing"
         },
         {
           "key": "frame_render_p95_ms",
-          "label": "Frame render p95",
+          "label": "FAST frame render p95",
           "goal": "<15ms warm path target",
           "source": "kpis",
           "status": "existing"
         },
         {
-          "key": "slow_frame_count_16ms",
-          "label": "Slow frame count >16ms",
-          "goal": "Approach 0 in controlled scenarios",
-          "source": "kpis",
+          "key": "advanced_stack_event_p95_ms",
+          "label": "Advanced stack event p95",
+          "goal": "Measure separately from FAST",
+          "source": "log_metrics",
           "status": "existing"
         },
         {
-          "key": "stack_drag_decode_hitch_count",
-          "label": "Stack-drag decode hitch count",
-          "goal": "0 preferred",
+          "key": "advanced_vtk_render_ms_p95",
+          "label": "Advanced VTK render p95",
+          "goal": "Track VTK rendering tail latency",
           "source": "log_metrics",
           "status": "existing"
+        },
+        {
+          "key": "advanced_simpleitk_load_ms_p95",
+          "label": "Advanced SimpleITK load p95",
+          "goal": "Track full-series load cost when emitted",
+          "source": "log_metrics",
+          "status": "planned"
         }
       ]
     },
     {
       "id": "block_3_cache_scroll_orchestration",
-      "label": "Block 3 - Cache, scroll, orchestration",
-      "role": "Admission control, progressive lifecycle, cache/scroll policy, redraw ordering, and inter-block scheduling.",
-      "position": "Control plane between Block 1 and Block 2.",
+      "label": "Block C - Cache, scroll, orchestration",
+      "applies_to": ["FAST_QT", "FAST_LAZY_VTK", "Advanced"],
+      "role": "Admission control, progressive lifecycle, cache/scroll policy, redraw ordering, and shared-to-mode boundary control.",
+      "position": "Control plane between shared Block A and mode-specific Block B.",
       "preferred_worker_model": {
         "main_process": "Policy, scheduling, lifecycle ownership, and redraw sequencing.",
         "background": [
           "timers",
           "coalesced deferred work only after admission"
         ],
-        "rule": "Own the when, not the heavy compute."
+        "rule": "Share orchestration and resource admission; keep cache internals mode-specific."
       },
       "metrics": [
         {
@@ -156,10 +307,52 @@
         },
         {
           "key": "cache_hit_ratio_pct",
-          "label": "Cache hit ratio",
+          "label": "FAST cache hit ratio",
           "goal": "High enough to suppress foreground decode during interaction",
           "source": "kpis",
           "status": "existing"
+        },
+        {
+          "key": "fast_pixel_cache_hit_ratio_pct",
+          "label": "FAST pixel cache hit ratio",
+          "goal": "High enough to suppress foreground decode",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "fast_frame_cache_hit_ratio_pct",
+          "label": "FAST frame cache hit ratio",
+          "goal": "High enough for warm scroll",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "fast_prefetch_zero_drag_ratio_pct",
+          "label": "FAST zero-prefetch drag ratio",
+          "goal": "<25%",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "fast_drag_event_p95_ms",
+          "label": "FAST drag event p95",
+          "goal": "<120ms",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "fast_drag_ui_lag_p95_ms",
+          "label": "FAST drag UI lag p95",
+          "goal": "<200ms",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
+          "key": "advanced_whole_series_cache_hit_ratio_pct",
+          "label": "Advanced whole-series cache hit ratio",
+          "goal": "Track separately from FAST lazy cache",
+          "source": "log_metrics",
+          "status": "planned"
         },
         {
           "key": "terminal_completion_duplicate_count",
@@ -176,8 +369,15 @@
           "status": "existing"
         },
         {
+          "key": "stack_drag_decode_hitch_count",
+          "label": "FAST stack-drag decode hitch count",
+          "goal": "0 preferred",
+          "source": "log_metrics",
+          "status": "existing"
+        },
+        {
           "key": "stack_drag_nondecode_hitch_count",
-          "label": "Stack-drag non-decode hitch count",
+          "label": "FAST stack-drag non-decode hitch count",
           "goal": "0 preferred",
           "source": "log_metrics",
           "status": "existing"
@@ -187,6 +387,13 @@
           "label": "Longest UI gap",
           "goal": "Trend toward <20ms p95 equivalent",
           "source": "kpis",
+          "status": "existing"
+        },
+        {
+          "key": "zeta_cache_bytes_peak_mb",
+          "label": "Zeta cache bytes peak",
+          "goal": "Stay within assigned memory profile",
+          "source": "log_metrics",
           "status": "existing"
         },
         {
@@ -206,7 +413,7 @@
         "block_2_viewer_hot_path",
         "block_3_cache_scroll_orchestration"
       ],
-      "intent": "Viewer-first local benchmark with minimal Block 1 pressure."
+      "intent": "Viewer-first local benchmark with minimal shared Block A pressure."
     },
     {
       "id": "aipacs_live_download_overlap",
@@ -215,7 +422,7 @@
         "block_2_viewer_hot_path",
         "block_3_cache_scroll_orchestration"
       ],
-      "intent": "Full overlap scenario where all three blocks compete and must be scheduled by the orchestrator."
+      "intent": "Full overlap scenario where shared Block A competes with mode-specific viewer work."
     },
     {
       "id": "aipacs_stack_drag_policy_compare",
@@ -223,7 +430,15 @@
         "block_2_viewer_hot_path",
         "block_3_cache_scroll_orchestration"
       ],
-      "intent": "Scroll/cache policy stress where Block 3 protects Block 2 during rapid navigation."
+      "intent": "FAST scroll/cache policy stress where Block C protects Block B during rapid navigation."
+    },
+    {
+      "id": "advanced_local_viewing",
+      "primary_blocks": [
+        "block_2_viewer_hot_path",
+        "block_3_cache_scroll_orchestration"
+      ],
+      "intent": "Advanced VTK/SimpleITK local viewing benchmark measured separately from FAST."
     }
   ]
 }

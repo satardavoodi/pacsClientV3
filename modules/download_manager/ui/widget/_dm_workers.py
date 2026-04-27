@@ -664,33 +664,42 @@ class _DMWorkersMixin:
         3. Check for auto-retry (in case this download should retry)
         4. Start the next pending download
         """
-        logger.error(f"❌ [ERROR] Worker error: {study_uid[:40] if study_uid else 'None'}... - {error_message}")
-
-        # If this study was auto-paused (preemption), do not mark it as FAILED.
-        # Also detect coordinator series-interrupt: the coordinator overrides
-        # state to PENDING before the worker's error signal arrives, so check
-        # for PENDING status with a preemption-related error message.
         current_state = self.state_store.get(study_uid)
-        _is_classic_preemption = (
+        _error_l = str(error_message or "").lower()
+        _has_preemption_marker = (
+            "preemption" in _error_l
+            or "higher priority download" in _error_l
+        )
+        _is_user_cancel = "cancelled by user" in _error_l
+        _is_classic_preemption = bool(
             current_state
             and current_state.status == DownloadStatus.PAUSED
             and current_state.is_auto_paused
         )
-        _is_series_interrupt_preemption = (
+        _is_series_interrupt_preemption = bool(
             current_state
-            and current_state.status == DownloadStatus.PENDING
-            and error_message
-            and "preemption" in error_message.lower()
-        )
-        if _is_classic_preemption or _is_series_interrupt_preemption:
-            logger.info(
-                f"⏸️ [ERROR] Ignoring error for preempted study {study_uid[:40]}... "
-                f"(classic={_is_classic_preemption}, series_interrupt={_is_series_interrupt_preemption})"
+            and current_state.status in (
+                DownloadStatus.PENDING,
+                DownloadStatus.VALIDATING,
+                DownloadStatus.DOWNLOADING,
             )
-            # Allow the pipeline to continue for other downloads.
+            and _has_preemption_marker
+        )
+        # Classic preemption: state was already flipped to PAUSED+is_auto_paused by the
+        # coordinator/executor before the worker finished — no message marker needed.
+        _is_expected_preemption = bool(
+            (_has_preemption_marker or _is_classic_preemption) and not _is_user_cancel
+        )
+        if _is_expected_preemption:
+            logger.info(
+                f"Expected preemption worker completion for {study_uid[:40]}... "
+                f"(classic={_is_classic_preemption}, series_interrupt={_is_series_interrupt_preemption}, "
+                f"state={getattr(current_state, 'status', None)})"
+            )
             self._check_auto_resume()
             QTimer.singleShot(0, self._start_next_pending)
             return
+        logger.error(f"❌ [ERROR] Worker error: {study_uid[:40] if study_uid else 'None'}... - {error_message}")
 
         # Update state to FAILED before emitting signal
         self.state_store.update(

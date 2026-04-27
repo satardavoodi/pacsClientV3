@@ -348,6 +348,7 @@ class QtViewerBridge:
         self._last_stack_reference_ms: float = 0.0
         self._last_stack_target_slice: Optional[int] = None
         self._last_stack_direction: int = 0
+        self._last_interaction_event_monotonic: float = 0.0
         self._protected_drag_active: bool = False
         self._stack_scheduler = StackInteractionScheduler()
         self._drag_metrics: Optional[Dict[str, Any]] = None
@@ -498,6 +499,23 @@ class QtViewerBridge:
         except Exception:
             pass
         return count
+
+    def _mark_interaction_event(self) -> None:
+        """Record a monotonic timestamp for the latest user interaction event."""
+        try:
+            self._last_interaction_event_monotonic = float(time.perf_counter())
+        except Exception:
+            self._last_interaction_event_monotonic = 0.0
+
+    def is_recent_interaction_hot(self, window_s: float = 1.0) -> bool:
+        """Return True when interaction activity occurred in the recent window."""
+        try:
+            last = float(getattr(self, '_last_interaction_event_monotonic', 0.0) or 0.0)
+            if last <= 0.0:
+                return False
+            return (time.perf_counter() - last) <= float(max(0.0, window_s))
+        except Exception:
+            return False
 
     # ── B3.6: booster interaction gate ──────────────────────────────────
     _booster_paused: bool = False
@@ -1233,6 +1251,7 @@ class QtViewerBridge:
 
     def _apply_interaction_target(self, target_slice: int, *, interaction_type: str) -> bool:
         t_total = time.perf_counter()
+        self._mark_interaction_event()
         nav_limit = int(self._slice_count)
         try:
             vtk_widget = getattr(self, 'vtk_widget', None)
@@ -1438,6 +1457,7 @@ class QtViewerBridge:
 
     def _on_stack_drag_state(self, active: bool) -> None:
         """B3.4: Track stack-drag state for context-aware policy."""
+        self._mark_interaction_event()
         self._stack_drag_active = active
         self._protected_drag_active = active
         record_protected_drag(active)
@@ -1548,6 +1568,7 @@ class QtViewerBridge:
             pass
 
     def _on_stack_drag_target(self, target_slice: int) -> None:
+        self._mark_interaction_event()
         metrics = self._drag_metrics
         if metrics is not None:
             now = time.perf_counter()
@@ -1570,6 +1591,7 @@ class QtViewerBridge:
         The unified settle timer fires end_fast_interaction() 200ms after the
         last event from either source.
         """
+        self._mark_interaction_event()
         apply_target = getattr(self, '_apply_interaction_target', None)
         if apply_target is None:
             apply_target = QtViewerBridge._apply_interaction_target.__get__(self, type(self))

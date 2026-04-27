@@ -2881,6 +2881,175 @@ def test_flush_progressive_grow_defers_nonterminal_work_during_protected_ui(monk
     assert controller._progressive_series["12"]["pending_downloaded"] == 20
 
 
+def test_fast_progressive_interaction_hot_respects_recent_interaction_cooldown(monkeypatch):
+    """Recent interaction timestamps should keep non-terminal grow deferred."""
+    bridge = SimpleNamespace(
+        _stack_drag_active=False,
+        _protected_drag_active=False,
+        _interaction_settle_timer=SimpleNamespace(isActive=lambda: False),
+        qt_viewer=SimpleNamespace(_scroll_stop_timer=SimpleNamespace(isActive=lambda: False)),
+        pipeline=SimpleNamespace(_fast_interaction=False),
+        _last_interaction_event_monotonic=100.0,
+    )
+    viewers = [(SimpleNamespace(_qt_bridge_active=True, image_viewer=bridge), SimpleNamespace())]
+
+    monkeypatch.setattr(_vc_progressive_mod.time, "perf_counter", lambda: 100.8)
+    assert _vc_progressive_mod._is_fast_progressive_interaction_hot(viewers) is True
+
+    monkeypatch.setattr(_vc_progressive_mod.time, "perf_counter", lambda: 101.8)
+    assert _vc_progressive_mod._is_fast_progressive_interaction_hot(viewers) is False
+
+
+def test_flush_progressive_grow_defers_nonterminal_work_for_recent_stack_activity(monkeypatch):
+    """Non-terminal grow should defer when stack interaction cooled down only recently."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _prog_mod
+
+    controller = _build_progressive_controller(sn="12x", total=120, pending=48)
+    timer_starts = []
+    timer_intervals = []
+    timer_active = {"value": False}
+    controller._progressive_grow_timer = SimpleNamespace(
+        isActive=lambda: timer_active["value"],
+        start=lambda: (timer_starts.append("start"), timer_active.__setitem__("value", True)),
+        setInterval=lambda value: timer_intervals.append(value),
+        stop=lambda: None,
+    )
+    controller._progressive_grow_timer_default_interval_ms = 150
+    grow_calls = []
+    controller._grow_progressive_fast = lambda sn, pending, viewers, **kwargs: grow_calls.append(
+        (sn, pending, viewers, kwargs)
+    )
+    hot_bridge = SimpleNamespace(
+        _stack_drag_active=False,
+        _protected_drag_active=False,
+        _interaction_settle_timer=SimpleNamespace(isActive=lambda: False),
+        qt_viewer=SimpleNamespace(_scroll_stop_timer=SimpleNamespace(isActive=lambda: False)),
+        pipeline=SimpleNamespace(_fast_interaction=False),
+        is_recent_interaction_hot=lambda window_s=1.0: True,
+    )
+    controller._find_progressive_viewers = lambda sn_: [(
+        SimpleNamespace(_qt_bridge_active=True, image_viewer=hot_bridge),
+        SimpleNamespace(slider=None),
+    )]
+
+    monkeypatch.setattr(
+        _prog_mod,
+        "_ui_should_defer_progressive_grow",
+        lambda *, terminal=False: False,
+    )
+    monkeypatch.setattr(
+        _prog_mod,
+        "_ui_progressive_grow_interval_ms",
+        lambda: 150.0,
+    )
+
+    controller._flush_progressive_grow_impl()
+
+    assert grow_calls == []
+    assert timer_starts == ["start"]
+    assert timer_intervals == [500]
+    assert controller._progressive_series["12x"]["pending_downloaded"] == 48
+
+
+def test_flush_progressive_grow_defers_nonterminal_work_for_recent_heavy_grow(monkeypatch):
+    """Heavy recent non-terminal grow should enforce a cooldown before next grow."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _prog_mod
+
+    controller = _build_progressive_controller(sn="12y", total=240, pending=80)
+    controller._progressive_series["12y"]["last_grow_count"] = 56
+    controller._progressive_series["12y"]["_last_nonterminal_grow_mono_ms"] = 1200.0
+    controller._progressive_series["12y"]["_last_nonterminal_grow_cost_ms"] = 700.0
+
+    timer_starts = []
+    timer_intervals = []
+    timer_active = {"value": False}
+    controller._progressive_grow_timer = SimpleNamespace(
+        isActive=lambda: timer_active["value"],
+        start=lambda: (timer_starts.append("start"), timer_active.__setitem__("value", True)),
+        setInterval=lambda value: timer_intervals.append(value),
+        stop=lambda: None,
+    )
+    grow_calls = []
+    controller._grow_progressive_fast = lambda sn, pending, viewers, **kwargs: grow_calls.append(
+        (sn, pending, viewers, kwargs)
+    )
+    cool_bridge = SimpleNamespace(
+        _stack_drag_active=False,
+        _protected_drag_active=False,
+        _interaction_settle_timer=SimpleNamespace(isActive=lambda: False),
+        qt_viewer=SimpleNamespace(_scroll_stop_timer=SimpleNamespace(isActive=lambda: False)),
+        pipeline=SimpleNamespace(_fast_interaction=False),
+        is_recent_interaction_hot=lambda window_s=1.0: False,
+    )
+    controller._find_progressive_viewers = lambda sn_: [(
+        SimpleNamespace(_qt_bridge_active=True, image_viewer=cool_bridge),
+        SimpleNamespace(slider=None),
+    )]
+
+    monkeypatch.setattr(_prog_mod.time, "perf_counter", lambda: 2.0)  # now_mono_ms=2000
+    monkeypatch.setattr(
+        _prog_mod,
+        "_ui_should_defer_progressive_grow",
+        lambda *, terminal=False: False,
+    )
+    monkeypatch.setattr(
+        _prog_mod,
+        "_ui_progressive_grow_interval_ms",
+        lambda: 150.0,
+    )
+
+    controller._flush_progressive_grow_impl()
+
+    assert grow_calls == []
+    assert timer_starts == ["start"]
+    assert timer_intervals == [600]
+    assert controller._progressive_series["12y"]["pending_downloaded"] == 80
+
+
+def test_flush_progressive_grow_records_nonterminal_grow_cost_for_adaptive_cadence(monkeypatch):
+    """Successful non-terminal grow should record cadence timestamps and cost."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _prog_mod
+
+    controller = _build_progressive_controller(sn="12z", total=240, pending=64)
+    controller._progressive_series["12z"]["last_grow_count"] = 32
+    controller._progressive_admit_batch_size = 8
+
+    cool_bridge = SimpleNamespace(
+        _stack_drag_active=False,
+        _protected_drag_active=False,
+        _interaction_settle_timer=SimpleNamespace(isActive=lambda: False),
+        qt_viewer=SimpleNamespace(_scroll_stop_timer=SimpleNamespace(isActive=lambda: False)),
+        pipeline=SimpleNamespace(_fast_interaction=False),
+        is_recent_interaction_hot=lambda window_s=1.0: False,
+    )
+    controller._find_progressive_viewers = lambda sn_: [(
+        SimpleNamespace(_qt_bridge_active=True, image_viewer=cool_bridge),
+        SimpleNamespace(slider=None),
+    )]
+
+    grow_calls = []
+    controller._grow_progressive_fast = lambda sn, pending, viewers, **kwargs: (
+        grow_calls.append((sn, pending, kwargs.get("visible_count"))),
+        420.0,
+    )[1]
+
+    perf_values = iter([10.0, 11.0])  # now_mono_ms then post-grow timestamp
+    monkeypatch.setattr(_prog_mod.time, "perf_counter", lambda: next(perf_values))
+    monkeypatch.setattr(
+        _prog_mod,
+        "_ui_should_defer_progressive_grow",
+        lambda *, terminal=False: False,
+    )
+
+    controller._flush_progressive_grow_impl()
+
+    assert len(grow_calls) == 1
+    assert grow_calls[0] == ("12z", 64, 40)
+    info = controller._progressive_series["12z"]
+    assert info["_last_nonterminal_grow_mono_ms"] == 11000.0
+    assert info["_last_nonterminal_grow_cost_ms"] == 420.0
+
+
 def test_flush_progressive_grow_allows_terminal_work_under_protected_ui(monkeypatch):
     """Terminal grow should still run so completion is not hidden by deferral."""
     from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_progressive as _prog_mod

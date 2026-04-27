@@ -49,6 +49,43 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# ── Phase 7: viewer-side resource probe (module-level throttle, max 1 per 5 s) ──
+_VIEWER_RESOURCE_PROBE_LAST_T: float = 0.0
+
+
+def _emit_viewer_resource_probe() -> None:
+    """Throttled psutil probe for the main viewer process → viewer_diagnostics.log."""
+    global _VIEWER_RESOURCE_PROBE_LAST_T
+    import time as _time
+    _now = _time.monotonic()
+    if _now - _VIEWER_RESOURCE_PROBE_LAST_T < 5.0:
+        return
+    _VIEWER_RESOURCE_PROBE_LAST_T = _now
+    try:
+        import psutil
+        proc = psutil.Process()
+        rss_mb = proc.memory_info().rss / (1024.0 * 1024.0)
+        available_ram_mb = psutil.virtual_memory().available / (1024.0 * 1024.0)
+        subprocess_count = len(proc.children(recursive=True))
+        thread_count = proc.num_threads()
+        log_stage_timing(
+            logger,
+            component="viewer",
+            function="image_io.load_single_series_by_number",
+            stage="resource_probe",
+            start_ms=now_ms(),
+            process_rss_mb=f"{rss_mb:.2f}",
+            available_ram_mb=f"{available_ram_mb:.2f}",
+            subprocess_count=subprocess_count,
+            thread_count=thread_count,
+            viewer_mode="Shared",
+            query_type="resource_probe",
+            level=logging.WARNING,
+            min_ms=0.0,
+        )
+    except Exception:
+        return
+
 
 def _is_itk_region_mismatch_error(exc: Exception) -> bool:
     msg = str(exc).lower()
@@ -181,16 +218,25 @@ _DECODER_PREFLIGHT_LOGGED = False
 
 def _list_unique_dicom_files(folder: Path) -> list:
     """Return unique DICOM files under folder (case-insensitive), naturally sorted."""
-    raw = list(folder.glob("*.dcm")) + list(folder.glob("*.DCM"))
-    uniq = []
-    seen = set()
-    for p in raw:
-        key = str(p).lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append(p)
-    return natsorted(uniq)
+    try:
+        # Single-pass scandir is cheaper than dual glob+materialize for large series folders.
+        uniq = []
+        seen = set()
+        for entry in os.scandir(str(folder)):
+            if not entry.is_file():
+                continue
+            name = entry.name
+            if not name.lower().endswith('.dcm'):
+                continue
+            p = Path(entry.path)
+            key = str(p).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append(p)
+        return natsorted(uniq)
+    except Exception:
+        return []
 
 
 def _count_dicom_files_fast(folder: Path) -> int:
@@ -1204,24 +1250,42 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
     # Path resolution
     _path_start = time.time()
     series_path = Path(f'{study_path}/{series_number}')
+    _path_scan_mode = "direct_path"
+    _path_scan_ms = 0.0
+    _path_scan_candidates = 0
+    _path_scan_probes = 0
+    _path_scan_matches = 0
     
     if not series_path.exists():
         # Try alternative naming patterns
         study_path_obj = Path(study_path)
+        _path_scan_mode = "fallback_resolution"
 
         if _study_root_matches_series_number(study_path_obj, series_number):
             series_path = study_path_obj
+            _path_scan_mode = "study_root_match"
         else:
             # Look for series folder with the series number in the name
+            _scan_start = time.time()
             potential_series_folders = []
+            _candidate_dirs = 0
+            _dicom_probe_calls = 0
+            _path_scan_mode = "folder_scan"
             for item in study_path_obj.iterdir():
                 if item.is_dir():
+                    _candidate_dirs += 1
                     # Check if directory name contains the series number
                     if str(series_number) in item.name:
-                        # Check if it has DICOM files
-                        dicom_files = _list_unique_dicom_files(item)
-                        if dicom_files:
+                        # Probe with a fast count instead of listing all DICOM files.
+                        _dicom_probe_calls += 1
+                        if _count_dicom_files_fast(item) > 0:
                             potential_series_folders.append(item)
+
+            _scan_time = time.time() - _scan_start
+            _path_scan_ms = _scan_time * 1000.0
+            _path_scan_candidates = _candidate_dirs
+            _path_scan_probes = _dicom_probe_calls
+            _path_scan_matches = len(potential_series_folders)
 
             if potential_series_folders:
                 # Sort by folder name and take the first one
@@ -1239,17 +1303,38 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
 
                 if series_path_from_db and Path(series_path_from_db).exists():
                     series_path = Path(series_path_from_db)
+                    _path_scan_mode = "db_series_path"
                     print(f"      Using series path from DB: {series_path}")
                 else:
                     # Last fallback: try to find series folder by number pattern
                     series_name = find_series_folder_by_series_number(study_path, series_number)
                     if series_name:
                         series_path = Path(f'{study_path}/{series_name}')
+                        _path_scan_mode = "series_name_fallback"
                     else:
+                        logger.info(
+                            "viewer-data stage=path_scan duration_ms=%.2f candidates=%d probes=%d matches=%d mode=%s",
+                            _path_scan_ms,
+                            _path_scan_candidates,
+                            _path_scan_probes,
+                            _path_scan_matches,
+                            "not_found",
+                            extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "path_scan"},
+                        )
                         error_msg = f'Series {series_number} not found in study {study_path}'
                         print(f'ERROR: {error_msg}')
                         # Instead of raising error, return None
                         return
+
+    logger.info(
+        "viewer-data stage=path_scan duration_ms=%.2f candidates=%d probes=%d matches=%d mode=%s",
+        _path_scan_ms,
+        _path_scan_candidates,
+        _path_scan_probes,
+        _path_scan_matches,
+        _path_scan_mode,
+        extra={"component": "viewer", "function": "image_io.load_single_series_by_number", "stage": "path_scan"},
+    )
     
     _path_time = time.time() - _path_start
     print(f"      Path resolution: {_path_time:.3f}s")
@@ -1260,10 +1345,13 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
     )
     
     # Check if series_path exists after all attempts
+    _emit_viewer_resource_probe()
+
+    # Check if series_path exists after all attempts
     if not series_path or not series_path.exists():
         print(f"      ERROR: Series folder not found after all attempts: series {series_number}")
         return
-    
+
     print(f"      Loading from: {series_path}")
 
     # ─── FAST EARLY EXIT: pydicom_qt skips the entire ITK + SimpleITK pipeline ────

@@ -532,6 +532,26 @@ class SeriesDownloader:
                     f"{len(failed_series)} still failed"
                 )
 
+        # R25b: If cancellation happened mid-series (socket returned failure without
+        # raising), the cancel flag is now set — return a proper preempted result so
+        # the executor sees error_message with "preemption" instead of None.
+        if self.cancel_check and self.cancel_check():
+            logger.info(
+                f"⏸️ Download cancelled (preemption) detected after series loop "
+                f"({len(completed_series)} completed, {len(failed_series)} failed)"
+            )
+            socket_client.disconnect()
+            return self._build_preempted_result(
+                study_uid=study_uid,
+                series_list=series_list,
+                completed_series=completed_series,
+                skipped_series=skipped_series,
+                failed_series=failed_series,
+                total_downloaded=total_downloaded,
+                total_skipped=total_skipped,
+                start_time=start_time,
+            )
+
         # Calculate elapsed time
         elapsed = (datetime.now() - start_time).total_seconds()
         
@@ -751,8 +771,33 @@ class SeriesDownloader:
             _series_pk_ref = series_pk  # capture for closure before entering threads
             def _read_one_header(dcm_file):
                 """Read one DICOM header; return instance dict or None on error."""
+                # Only read the specific tags we need — skipping all others is 3-5x
+                # faster than a full stop_before_pixels read for large CT headers.
+                _INSTANCE_TAGS = [
+                    0x00080018,  # SOPInstanceUID
+                    0x00200013,  # InstanceNumber
+                    0x00280010,  # Rows
+                    0x00280011,  # Columns
+                    0x00281050,  # WindowCenter
+                    0x00281051,  # WindowWidth
+                    0x00200037,  # ImageOrientationPatient
+                    0x00200032,  # ImagePositionPatient
+                    0x00280030,  # PixelSpacing
+                    0x00180050,  # SliceThickness
+                    0x00180088,  # SpacingBetweenSlices
+                    0x00281052,  # RescaleIntercept
+                    0x00281053,  # RescaleSlope
+                    0x00280100,  # BitsAllocated
+                    0x00280103,  # PixelRepresentation
+                    0x00280006,  # PlanarConfiguration (is_rgb indicator)
+                    0x00280004,  # PhotometricInterpretation (is_rgb indicator)
+                ]
                 try:
-                    dcm = pydicom.dcmread(dcm_file, stop_before_pixels=True)
+                    dcm = pydicom.dcmread(
+                        dcm_file,
+                        stop_before_pixels=True,
+                        specific_tags=_INSTANCE_TAGS,
+                    )
                     sop_uid = dcm.get('SOPInstanceUID', str(dcm_file))
                     instance_number = dcm.get('InstanceNumber', 0)
                     rows = dcm.get('Rows', 0)

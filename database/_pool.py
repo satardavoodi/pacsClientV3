@@ -15,7 +15,9 @@ Split from database/core.py (v2.2.8.0 → v2.2.9.0).
 
 import contextlib
 import logging
+import os
 import sqlite3
+import sys
 import threading
 from typing import Optional
 
@@ -51,6 +53,72 @@ _max_pool_size = 5
 logger = logging.getLogger(__name__)
 
 
+def _db_timing_min_ms() -> float:
+    try:
+        return max(0.0, float(os.getenv("AIPACS_DB_TIMING_MIN_MS", "1.0") or "1.0"))
+    except Exception:
+        return 1.0
+
+
+def _classify_db_caller() -> dict:
+    """Classify the external caller at the shared DB boundary."""
+    try:
+        frame = sys._getframe(2)
+    except Exception:
+        frame = None
+
+    module = ""
+    function = ""
+    for _ in range(14):
+        if frame is None:
+            break
+        module = str(frame.f_globals.get("__name__", "") or "")
+        function = str(frame.f_code.co_name or "")
+        if module and module != __name__ and module != "contextlib" and not module.startswith("logging"):
+            break
+        frame = frame.f_back
+
+    mod_l = module.lower()
+    fn_l = function.lower().lstrip("_")
+    caller_area = "other"
+    viewer_mode = "Shared"
+    query_type = "mixed"
+
+    if fn_l.startswith(("get_", "find_", "fetch_", "load_", "select_", "check_")) or "select" in fn_l:
+        query_type = "read"
+    elif (
+        fn_l.startswith(("insert_", "update_", "delete_", "complete_", "clear_", "save_", "bulk_insert", "bulk_update"))
+        or "insert" in fn_l
+        or "update" in fn_l
+    ):
+        query_type = "write"
+    elif fn_l.startswith(("init_", "ensure_", "migrate_")):
+        query_type = "write"
+
+    if "download_manager" in mod_l or "download_progress" in mod_l:
+        caller_area = "shared_download"
+    elif mod_l.startswith("database") or "pacsclient.utils.database" in mod_l:
+        caller_area = "shared_db_helper"
+    elif "modules.viewer.fast" in mod_l or "pydicom_qt" in mod_l or "lightweight_2d" in mod_l:
+        caller_area = "fast_interaction" if any(token in fn_l for token in ("scroll", "slice", "drag")) else "fast_load_setup"
+        viewer_mode = "FAST"
+    elif "modules.viewer.advanced" in mod_l:
+        caller_area = "advanced_interaction" if any(token in fn_l for token in ("scroll", "slice", "window_level")) else "advanced_load_setup"
+        viewer_mode = "Advanced"
+    elif "patient_tab" in mod_l or "image_io" in mod_l:
+        caller_area = "viewer_load_setup"
+        viewer_mode = "Viewer"
+
+    return {
+        "caller_area": caller_area,
+        "viewer_mode": viewer_mode,
+        "caller_module": module,
+        "caller_function": function,
+        "query_type": query_type,
+        "thread_role": "main" if threading.current_thread() is threading.main_thread() else "worker",
+    }
+
+
 # ── Public context manager ────────────────────────────────────────────────────
 
 @contextlib.contextmanager
@@ -58,6 +126,7 @@ def get_db_connection():
     """Context manager for database connections with automatic cleanup and pooling."""
     conn = None
     t_txn = now_ms()
+    caller_info = _classify_db_caller()
     try:
         conn = _get_pooled_connection()
         yield conn
@@ -81,8 +150,8 @@ def get_db_connection():
             function="database.get_db_connection",
             stage="transaction_scope",
             start_ms=t_txn,
-            query_type="mixed",
-            min_ms=5.0,
+            min_ms=_db_timing_min_ms(),
+            **caller_info,
         )
 
 

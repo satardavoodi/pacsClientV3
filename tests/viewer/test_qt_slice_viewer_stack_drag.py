@@ -162,6 +162,16 @@ class TestQtSliceViewerStackDrag:
         assert viewer._consume_stack_drag_delta(threshold * 4.0, speed_px_per_sec=threshold * 90.0) == 2
         assert viewer._stacked_accum == 0.0
 
+    def test_large_stack_very_fast_drag_can_use_three_slice_skip_lane(self):
+        viewer = QtSliceViewer()
+        viewer.resize(512, 512)
+        viewer.set_stack_drag_policy("adaptive")
+        viewer.set_total_slices_hint(220)
+        threshold, _ = viewer._get_stack_drag_profile()
+
+        assert viewer._consume_stack_drag_delta(threshold * 4.0, speed_px_per_sec=threshold * 130.0) == 3
+        assert viewer._stacked_accum == 0.0
+
     def test_large_stack_fast_drag_can_enter_skip_lane_from_small_per_event_moves(self):
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
@@ -246,6 +256,21 @@ class TestQtSliceViewerStackDrag:
         # Only the sub-threshold tail may remain; capped overflow must not
         # create momentum for later mouse moves.
         assert 0.0 <= abs(viewer._stacked_accum) < threshold
+
+    def test_high_speed_large_stack_allows_higher_bounded_per_event_cap(self):
+        viewer = QtSliceViewer()
+        viewer.resize(512, 512)
+        viewer.set_stack_drag_policy("adaptive")
+        viewer.set_total_slices_hint(220)
+        threshold, max_steps = viewer._get_stack_drag_profile()
+
+        viewer._stacked_first_step_pending = False
+
+        emit = viewer._consume_stack_drag_delta(
+            threshold * (max_steps + 8),
+            speed_px_per_sec=threshold * 150.0,
+        )
+        assert emit == max_steps + 2
 
     def test_first_drag_step_uses_smaller_start_threshold_without_burst(self):
         viewer = QtSliceViewer()

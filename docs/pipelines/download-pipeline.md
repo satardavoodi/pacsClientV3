@@ -1,6 +1,6 @@
 # Download Pipeline
 
-> **Version:** v2.3.3 | **Updated:** 2026-04-14
+> **Version:** v2.3.3 | **Updated:** 2026-04-27
 
 ## Overview
 
@@ -158,6 +158,13 @@ Layer 3: Per-series retry loop (series_downloader.py)
   أ¢â€‌â€‌أ¢â€‌â‚¬ Reconnects socket between retry rounds via connect_with_retry()
   أ¢â€‌â€‌أ¢â€‌â‚¬ If reconnect fails because cancellation/preemption was requested, the round exits as auto-pause/preemption instead of being counted as a hard failure
 ```
+
+## 2026-04-27 Operational Notes (Phase 5/6)
+
+- `SocketDicomClient.download_series` emits per-series `stage=dicom_file_write_batch` at WARNING level with `files`, `bytes`, and `disk_write_ms` so canonical `download_diagnostics.log` always carries write telemetry.
+- KPI fields now expected from canonical parse: `dicom_file_write_batch_count`, `dicom_file_write_bytes_total`, and `dicom_file_write_ms_p95`.
+- `SeriesIntentCoordinator.schedule_priority_start_retry` classifies recovery exhaustion as expected preemption when either `is_auto_paused` is true or state `error_message` contains `preemption`/`higher priority` markers.
+- `_dm_workers._on_worker_error` keeps preemption-marker completions on the expected path (non-failure), while explicit user-cancel errors remain failure-visible.
 
 ## Validation Rules (R17) أ¢â‚¬â€‌ Duplicate/Resume Detection
 

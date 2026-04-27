@@ -13,8 +13,9 @@ def test_resolve_viewer_backend_honors_safe_backend_override(monkeypatch):
     resolution = backend_config.resolve_viewer_backend(metadata=None, settings=backend_config.BACKEND_VTK)
 
     assert resolution["configured_backend"] == backend_config.BACKEND_VTK
-    assert resolution["requested_backend"] == backend_config.BACKEND_PYDICOM
-    assert resolution["backend"] == backend_config.BACKEND_PYDICOM
+    assert resolution["requested_backend"] == backend_config.BACKEND_PYDICOM_QT
+    assert resolution["backend"] == backend_config.BACKEND_VTK
+    assert resolution["metadata_complete"] is False
     assert resolution["safe_backend_forced"] is True
 
 

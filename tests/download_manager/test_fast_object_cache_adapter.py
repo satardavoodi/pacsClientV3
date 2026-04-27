@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+
+import pytest
 
 from modules.download_manager.core.enums import DownloadPriority, DownloadStatus
 from modules.download_manager.core.models import DownloadTask, SeriesInfo
 from modules.download_manager.state.state_store import DownloadStateStore
-from modules.download_manager.ui.widget._dm_priority import _DMPriorityMixin
+
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("PySide6") is None,
+    reason="PySide6 is required for download-manager UI priority adapter tests",
+)
+
+if importlib.util.find_spec("PySide6") is not None:
+    from modules.download_manager.ui.widget._dm_priority import _DMPriorityMixin
+else:
+    class _DMPriorityMixin:
+        pass
 
 
 class _ObjectCacheAdapter(_DMPriorityMixin):

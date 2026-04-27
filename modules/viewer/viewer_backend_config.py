@@ -49,7 +49,10 @@ def _normalize_backend(value: str, default: str = DEFAULT_BACKEND) -> str:
     backend = str(value or "").strip().lower()
     if backend in {BACKEND_VTK, BACKEND_PYDICOM, BACKEND_PYDICOM_QT}:
         return backend
-    return str(default or DEFAULT_BACKEND).strip().lower() or DEFAULT_BACKEND
+    fallback = str(default or "").strip().lower()
+    if fallback in {BACKEND_VTK, BACKEND_PYDICOM, BACKEND_PYDICOM_QT}:
+        return fallback
+    return "" if default == "" else DEFAULT_BACKEND
 
 
 def resolve_viewer_backend(metadata=None, settings=None) -> dict:
@@ -160,7 +163,7 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
         "safe_backend_forced": safe_backend_forced,
         "safe_backend_reason": (
             "Software OpenGL runtime is unavailable, so the workstation is forcing "
-            f"{forced_backend or SAFE_VIEWER_BACKEND_DEFAULT} as the safe CPU viewer backend."
+            f"{requested_backend or SAFE_VIEWER_BACKEND_DEFAULT} as the safe CPU viewer backend."
             if safe_backend_forced
             else ""
         ),

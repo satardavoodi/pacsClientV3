@@ -60,6 +60,21 @@ def now_ms() -> float:
     return time.perf_counter() * 1000.0
 
 
+def get_log_context() -> Dict[str, str]:
+    return dict(_LOG_CONTEXT.get())
+
+
+def _format_timing_fields(fields: Dict[str, object]) -> str:
+    parts: List[str] = []
+    for key, value in fields.items():
+        if value is None:
+            continue
+        safe_key = str(key).replace(" ", "_")
+        safe_value = str(value).replace("\\", "/").replace(" ", "_").replace("|", "_")
+        parts.append(f"{safe_key}={safe_value}")
+    return " ".join(parts)
+
+
 def log_stage_timing(
     logger_: logging.Logger,
     *,
@@ -77,7 +92,11 @@ def log_stage_timing(
         return elapsed_ms
     extra = {"component": component, "function": function, "stage": stage, "result": result}
     extra.update({k: v for k, v in fields.items() if v is not None})
-    logger_.log(level, "stage-timing duration_ms=%.2f", elapsed_ms, extra=extra)
+    suffix = _format_timing_fields(fields)
+    if suffix:
+        logger_.log(level, "stage-timing duration_ms=%.2f %s", elapsed_ms, suffix, extra=extra)
+    else:
+        logger_.log(level, "stage-timing duration_ms=%.2f", elapsed_ms, extra=extra)
     return elapsed_ms
 
 
@@ -143,6 +162,12 @@ class DownloadOnlyFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         component = getattr(record, "component", _infer_component(record.name))
         return component == "download"
+
+
+class DbOnlyFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        component = getattr(record, "component", _infer_component(record.name))
+        return component == "db"
 
 
 class SafeRotatingFileHandler(RotatingFileHandler):
@@ -445,11 +470,24 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
     download_handler.addFilter(DownloadOnlyFilter())
     download_handler.addFilter(threshold_filter)
 
+    db_handler = SafeRotatingFileHandler(
+        logs_dir / "db_diagnostics.log",
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    db_handler.setLevel(logging.DEBUG)
+    db_handler.setFormatter(formatter)
+    db_handler.addFilter(context_filter)
+    db_handler.addFilter(DbOnlyFilter())
+    db_handler.addFilter(threshold_filter)
+
     if async_enabled:
-        _install_async_file_logging(root, [viewer_handler, download_handler])
+        _install_async_file_logging(root, [viewer_handler, download_handler, db_handler])
     else:
         root.addHandler(viewer_handler)
         root.addHandler(download_handler)
+        root.addHandler(db_handler)
 
     app_session_id = os.getenv("AIPACS_ACTION_SESSION_ID") or new_correlation_id("sess")
     os.environ["AIPACS_ACTION_SESSION_ID"] = app_session_id

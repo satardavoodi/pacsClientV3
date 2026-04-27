@@ -156,6 +156,7 @@ class SocketDicomClient:
         self._batch_size_cap = max(1, int(os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_CAP", "10") or "10"))
         self._inter_batch_pause_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_INTER_BATCH_PAUSE_MS", "3") or "3") / 1000.0)
         self._post_request_yield_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_POST_REQUEST_YIELD_MS", "5") or "5") / 1000.0)
+        self._last_resource_probe_ts = 0.0
         
         logger.info(
             f"🔌 SocketDicomClient initialized ({self.host}:{self.port})",
@@ -210,6 +211,41 @@ class SocketDicomClient:
             return f"Authentication error: {ascii_only}" if ascii_only else "Authentication error"
 
         return message
+
+    def _emit_resource_probe(self, *, viewer_mode: str = "Shared", level: int = logging.WARNING) -> None:
+        """Emit lightweight resource probe samples at most once per 5 seconds."""
+        now_monotonic = time.monotonic()
+        if now_monotonic - self._last_resource_probe_ts < 5.0:
+            return
+        self._last_resource_probe_ts = now_monotonic
+
+        try:
+            import psutil  # local import to keep startup path lean
+
+            proc = psutil.Process()
+            rss_mb = proc.memory_info().rss / (1024.0 * 1024.0)
+            available_ram_mb = psutil.virtual_memory().available / (1024.0 * 1024.0)
+            subprocess_count = len(proc.children(recursive=True))
+            thread_count = proc.num_threads()
+
+            log_stage_timing(
+                logger,
+                component="download",
+                function="SocketDicomClient.download_series",
+                stage="resource_probe",
+                start_ms=now_ms(),
+                process_rss_mb=f"{rss_mb:.2f}",
+                available_ram_mb=f"{available_ram_mb:.2f}",
+                subprocess_count=subprocess_count,
+                thread_count=thread_count,
+                viewer_mode=viewer_mode,
+                query_type="resource_probe",
+                level=level,
+                min_ms=0.0,
+            )
+        except Exception:
+            # Probe failures must never affect download behavior.
+            return
     
     def disconnect(self) -> None:
         """Disconnect from server"""
@@ -957,6 +993,7 @@ class SocketDicomClient:
         total_disk_write_ms = 0.0
         total_decode_ms = 0.0
         total_decompress_ms = 0.0
+        total_write_bytes = 0
         
         # Ensure we're connected before starting batches
         logger.info(f"🔌 Ensuring socket connection...")
@@ -1101,6 +1138,11 @@ class SocketDicomClient:
                 extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
             )
             
+            batch_write_stage_start = now_ms()
+            batch_disk_write_ms = 0.0
+            batch_write_bytes = 0
+            batch_files_written = 0
+
             for _inst_idx, instance_data in enumerate(instances):
                 dicom_data_b64 = instance_data.get('dicom_data', '')
                 is_compressed = instance_data.get('is_compressed', False)
@@ -1128,7 +1170,6 @@ class SocketDicomClient:
                     continue
                 
                 try:
-                    t_write = time.monotonic()
                     # Decode base64
                     t_decode = now_ms()
                     dicom_bytes = base64.b64decode(dicom_data_b64)
@@ -1144,11 +1185,17 @@ class SocketDicomClient:
                     file_path.parent.mkdir(parents=True, exist_ok=True)
                     
                     # Save file
+                    t_write = time.monotonic()
                     with open(file_path, 'wb') as f:
                         f.write(dicom_bytes)
+                    write_elapsed_ms = (time.monotonic() - t_write) * 1000.0
                     
                     downloaded_count += 1
-                    total_disk_write_ms += (time.monotonic() - t_write) * 1000.0
+                    total_disk_write_ms += write_elapsed_ms
+                    batch_disk_write_ms += write_elapsed_ms
+                    batch_write_bytes += len(dicom_bytes)
+                    total_write_bytes += len(dicom_bytes)
+                    batch_files_written += 1
                     
                 except Exception as e:
                     logger.error(f"❌ Error saving instance {instance_number}: {e}")
@@ -1196,6 +1243,22 @@ class SocketDicomClient:
                 # consecutive base64 decode calls without stalling ~50 ms.
                 if _inst_idx > 0 and _inst_idx % 3 == 0:
                     await asyncio.sleep(0.002)
+
+            if batch_files_written:
+                log_stage_timing(
+                    logger,
+                    component="download",
+                    function="SocketDicomClient.download_series",
+                    stage="dicom_file_write_batch",
+                    start_ms=batch_write_stage_start,
+                    files=batch_files_written,
+                    bytes=batch_write_bytes,
+                    disk_write_ms=f"{batch_disk_write_ms:.2f}",
+                    query_type="disk_write",
+                    viewer_mode="Shared",
+                    level=logging.INFO,
+                    min_ms=0.0,
+                )
             
             # Check if more batches are needed (server pagination)
             has_more = data.get('has_more', False)
@@ -1210,6 +1273,27 @@ class SocketDicomClient:
 
             batch_idx += 1
             batch_start += batch_size
+
+        # Download diagnostics default to WARNING threshold. Emit one summary
+        # write-stage sample per series at WARNING so KPI parsers can
+        # consistently observe disk write telemetry in canonical logs.
+        if total_disk_write_ms > 0.0 and downloaded_count > 0:
+            synthetic_start_ms = now_ms() - total_disk_write_ms
+            log_stage_timing(
+                logger,
+                component="download",
+                function="SocketDicomClient.download_series",
+                stage="dicom_file_write_batch",
+                start_ms=synthetic_start_ms,
+                files=downloaded_count,
+                bytes=total_write_bytes,
+                disk_write_ms=f"{total_disk_write_ms:.2f}",
+                query_type="disk_write",
+                viewer_mode="Shared",
+                level=logging.WARNING,
+                min_ms=0.0,
+            )
+            self._emit_resource_probe(viewer_mode="Shared", level=logging.WARNING)
         
         elapsed = time.time() - start_time
         

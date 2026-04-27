@@ -3,6 +3,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from modules.download_manager.coordinator.series_intent_coordinator import SeriesIntentCoordinator
 from modules.download_manager.core.enums import DownloadPriority, DownloadStatus
 from modules.download_manager.core.models import DownloadResult, DownloadTask, PatientInfo, SeriesInfo, StudyMetadata
@@ -232,6 +234,7 @@ def test_executor_keeps_auto_paused_state_for_preemption_result(tmp_path):
 
 
 def test_worker_completed_ignores_auto_paused_failure(monkeypatch):
+    pytest.importorskip("PySide6")
     from modules.download_manager.ui.widget import _dm_workers as _dm_workers_mod
 
     store = DownloadStateStore()
@@ -262,3 +265,237 @@ def test_worker_completed_ignores_auto_paused_failure(monkeypatch):
     assert calls["refresh"] == 1
     assert calls["resume"] == 1
     assert scheduled == [0]
+
+
+def test_worker_error_ignores_preemption_during_validating(monkeypatch):
+    pytest.importorskip("PySide6")
+    from modules.download_manager.ui.widget import _dm_workers as _dm_workers_mod
+
+    store = DownloadStateStore()
+    task = _make_task_with_series("study-worker-preempt-validating")
+    store.create(task)
+    store.update(task.study_uid, status=DownloadStatus.VALIDATING, is_auto_paused=False)
+
+    scheduled = []
+    calls = {"resume": 0, "start_next": 0, "failed_emit": 0, "retry": 0}
+    monkeypatch.setattr(_dm_workers_mod.QTimer, "singleShot", lambda delay, fn: scheduled.append(delay))
+
+    dummy = SimpleNamespace(
+        state_store=store,
+        _check_auto_resume=lambda: calls.__setitem__("resume", calls["resume"] + 1),
+        _start_next_pending=lambda: calls.__setitem__("start_next", calls["start_next"] + 1),
+        _check_auto_retry=lambda: calls.__setitem__("retry", calls["retry"] + 1),
+        download_failed=SimpleNamespace(emit=lambda *_args, **_kwargs: calls.__setitem__("failed_emit", calls["failed_emit"] + 1)),
+        log_message=lambda *_args, **_kwargs: None,
+    )
+
+    _dm_workers_mod._DMWorkersMixin._on_worker_error(
+        dummy,
+        task.study_uid,
+        "Download cancelled (preemption)",
+    )
+
+    state = store.get(task.study_uid)
+    assert state is not None
+    assert state.status == DownloadStatus.VALIDATING
+    assert calls["resume"] == 1
+    assert calls["failed_emit"] == 0
+    assert calls["retry"] == 0
+    assert scheduled == [0]
+
+
+def test_priority_retry_recovery_exhausted_autopaused_does_not_warn(caplog):
+    store = DownloadStateStore()
+    task = _make_task("study-retry-autopaused")
+    store.create(task)
+    store.update(
+        task.study_uid,
+        status=DownloadStatus.PAUSED,
+        is_auto_paused=True,
+    )
+
+    coordinator = SeriesIntentCoordinator(
+        state_store=store,
+        rule_engine=_RuleEngineStub(),
+        worker_pool=_PoolBusy(),
+        tasks_ref={task.study_uid: task},
+        pause_downloads_for_preemption=lambda _uids: None,
+        start_download_worker=lambda _uid: False,
+        start_next_pending=lambda: None,
+        refresh_table_order=lambda: None,
+        check_auto_resume=lambda: None,
+        defer_call=lambda _delay, _cb: None,
+    )
+
+    with caplog.at_level("INFO"):
+        coordinator.schedule_priority_start_retry(
+            task.study_uid,
+            max_retries=0,
+            _recovery=True,
+        )
+
+    assert "Priority start retry exhausted" not in caplog.text
+    assert "expected preemption window" in caplog.text
+
+
+def test_priority_retry_recovery_exhausted_preemption_error_does_not_warn(caplog):
+    store = DownloadStateStore()
+    task = _make_task("study-retry-preemption-error")
+    store.create(task)
+    store.update(
+        task.study_uid,
+        status=DownloadStatus.PENDING,
+        is_auto_paused=False,
+        error_message="Paused for higher priority download (preemption)",
+    )
+
+    coordinator = SeriesIntentCoordinator(
+        state_store=store,
+        rule_engine=_RuleEngineStub(),
+        worker_pool=_PoolBusy(),
+        tasks_ref={task.study_uid: task},
+        pause_downloads_for_preemption=lambda _uids: None,
+        start_download_worker=lambda _uid: False,
+        start_next_pending=lambda: None,
+        refresh_table_order=lambda: None,
+        check_auto_resume=lambda: None,
+        defer_call=lambda _delay, _cb: None,
+    )
+
+    with caplog.at_level("INFO"):
+        coordinator.schedule_priority_start_retry(
+            task.study_uid,
+            max_retries=0,
+            _recovery=True,
+        )
+
+    assert "Priority start retry exhausted" not in caplog.text
+    assert "expected preemption window" in caplog.text
+
+
+def test_worker_error_ignores_preemption_marker_in_failed_state(monkeypatch):
+    pytest.importorskip("PySide6")
+    from modules.download_manager.ui.widget import _dm_workers as _dm_workers_mod
+
+    store = DownloadStateStore()
+    task = _make_task_with_series("study-worker-preempt-failed")
+    store.create(task)
+    store.update(task.study_uid, status=DownloadStatus.FAILED, is_auto_paused=False)
+
+    scheduled = []
+    calls = {"resume": 0, "start_next": 0, "failed_emit": 0, "retry": 0}
+    monkeypatch.setattr(_dm_workers_mod.QTimer, "singleShot", lambda delay, fn: scheduled.append(delay))
+
+    dummy = SimpleNamespace(
+        state_store=store,
+        _check_auto_resume=lambda: calls.__setitem__("resume", calls["resume"] + 1),
+        _start_next_pending=lambda: calls.__setitem__("start_next", calls["start_next"] + 1),
+        _check_auto_retry=lambda: calls.__setitem__("retry", calls["retry"] + 1),
+        download_failed=SimpleNamespace(emit=lambda *_args, **_kwargs: calls.__setitem__("failed_emit", calls["failed_emit"] + 1)),
+        log_message=lambda *_args, **_kwargs: None,
+    )
+
+    _dm_workers_mod._DMWorkersMixin._on_worker_error(
+        dummy,
+        task.study_uid,
+        "FAILED: Download cancelled (preemption)",
+    )
+
+    state = store.get(task.study_uid)
+    assert state is not None
+    assert state.status == DownloadStatus.FAILED
+    assert calls["resume"] == 1
+    assert calls["failed_emit"] == 0
+    assert calls["retry"] == 0
+    assert scheduled == [0]
+
+
+def test_worker_error_none_message_with_classic_preemption_state(monkeypatch):
+    """R25b: When error_message is the 'no error message' fallback but the state
+    is already PAUSED+is_auto_paused (classic preemption), the worker error handler
+    must treat it as an expected preemption — NOT log ERROR or emit download_failed."""
+    pytest.importorskip("PySide6")
+    from modules.download_manager.ui.widget import _dm_workers as _dm_workers_mod
+
+    store = DownloadStateStore()
+    task = _make_task_with_series("study-worker-none-msg-preempt")
+    store.create(task)
+    store.update(
+        task.study_uid,
+        status=DownloadStatus.PAUSED,
+        is_auto_paused=True,
+    )
+
+    scheduled = []
+    calls = {"resume": 0, "start_next": 0, "failed_emit": 0, "retry": 0}
+    monkeypatch.setattr(_dm_workers_mod.QTimer, "singleShot", lambda delay, fn: scheduled.append(delay))
+
+    dummy = SimpleNamespace(
+        state_store=store,
+        _check_auto_resume=lambda: calls.__setitem__("resume", calls["resume"] + 1),
+        _start_next_pending=lambda: calls.__setitem__("start_next", calls["start_next"] + 1),
+        _check_auto_retry=lambda: calls.__setitem__("retry", calls["retry"] + 1),
+        download_failed=SimpleNamespace(emit=lambda *_args, **_kwargs: calls.__setitem__("failed_emit", calls["failed_emit"] + 1)),
+        log_message=lambda *_args, **_kwargs: None,
+    )
+
+    # Simulate the "Download failed (no error message)" fallback from download_process_worker.py
+    _dm_workers_mod._DMWorkersMixin._on_worker_error(
+        dummy,
+        task.study_uid,
+        "Download failed (no error message)",
+    )
+
+    # Should be treated as classic preemption: no ERROR emit, no FAILED state update
+    state = store.get(task.study_uid)
+    assert state is not None
+    assert state.status == DownloadStatus.PAUSED, "State must remain PAUSED for classic preemption"
+    assert state.is_auto_paused is True
+    assert calls["resume"] == 1, "_check_auto_resume must be called"
+    assert calls["failed_emit"] == 0, "download_failed.emit must NOT be called for preemption"
+    assert calls["retry"] == 0
+    assert scheduled == [0]
+
+
+def test_worker_error_none_message_without_preemption_state_logs_error(monkeypatch):
+    """R25b negative: When error_message is None and state is NOT classic preemption,
+    the handler must still log ERROR and emit download_failed (real failure path)."""
+    pytest.importorskip("PySide6")
+    from modules.download_manager.ui.widget import _dm_workers as _dm_workers_mod
+
+    store = DownloadStateStore()
+    task = _make_task_with_series("study-worker-none-msg-real-fail")
+    store.create(task)
+    store.update(
+        task.study_uid,
+        status=DownloadStatus.DOWNLOADING,
+        is_auto_paused=False,
+    )
+
+    scheduled = []
+    calls = {"resume": 0, "start_next": 0, "failed_emit": 0, "retry": 0}
+    monkeypatch.setattr(_dm_workers_mod.QTimer, "singleShot", lambda delay, fn: scheduled.append(delay))
+
+    dummy = SimpleNamespace(
+        state_store=store,
+        _check_auto_resume=lambda: calls.__setitem__("resume", calls["resume"] + 1),
+        _start_next_pending=lambda: calls.__setitem__("start_next", calls["start_next"] + 1),
+        _check_auto_retry=lambda: calls.__setitem__("retry", calls["retry"] + 1),
+        download_failed=SimpleNamespace(emit=lambda *_args, **_kwargs: calls.__setitem__("failed_emit", calls["failed_emit"] + 1)),
+        log_message=lambda *_args, **_kwargs: None,
+    )
+
+    _dm_workers_mod._DMWorkersMixin._on_worker_error(
+        dummy,
+        task.study_uid,
+        "Download failed (no error message)",
+    )
+
+    # Real failure: state updated to FAILED, download_failed emitted
+    state = store.get(task.study_uid)
+    assert state is not None
+    assert state.status == DownloadStatus.FAILED, "State must be FAILED for a real failure"
+    assert calls["failed_emit"] == 1, "download_failed.emit must be called for real failure"
+    assert calls["resume"] == 1
+    assert calls["retry"] == 1
+    assert 0 in scheduled

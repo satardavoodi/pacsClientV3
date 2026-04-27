@@ -14,16 +14,32 @@ import os
 import struct
 import sys
 import threading
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
-import pydicom
-import pydicom.uid
 import pytest
-from pydicom.dataset import Dataset, FileDataset
-from pydicom.sequence import Sequence
-from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+
+try:
+    import numpy as np
+except ModuleNotFoundError:
+    np = None
+
+try:
+    import pydicom
+    import pydicom.uid
+    from pydicom.dataset import Dataset, FileDataset
+    from pydicom.sequence import Sequence
+    from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+except ModuleNotFoundError:
+    pydicom = None
+    Dataset = object
+    FileDataset = object
+    Sequence = list
+    ExplicitVRLittleEndian = "1.2.840.10008.1.2.1"
+
+    def generate_uid() -> str:
+        return f"2.25.{uuid.uuid4().int}"
 
 # ─── ensure project root on path ─────────────────────────────────────────────
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
@@ -59,6 +75,9 @@ def _make_dicom_slice(
     z_pos: float = 0.0,
 ) -> Dataset:
     """Build a minimal valid in-memory DICOM Dataset for one slice."""
+    if np is None or pydicom is None:
+        pytest.skip("numpy and pydicom are required to synthesize DICOM pixel data")
+
     series_uid = series_uid or generate_uid()
     study_uid = study_uid or generate_uid()
 
@@ -130,6 +149,9 @@ def make_dicom_series(tmp_path):
         modality: str = "CT",
         subdir: str = "series_001",
     ) -> Tuple[Path, List[Path]]:
+        if np is None or pydicom is None:
+            pytest.skip("numpy and pydicom are required to synthesize DICOM series")
+
         series_uid = generate_uid()
         study_uid = generate_uid()
         out_dir = tmp_path / subdir
