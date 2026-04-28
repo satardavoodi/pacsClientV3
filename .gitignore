@@ -67,6 +67,7 @@ tools/git/github-network.local.json
 **/secrets*.py
 
 builder/output/
+builder/.state/
 builder nuitka/output/
 builder/plugin package/packages/advanced_mpr/payload/
 modules/mpr/advanced_3d_slicer/slicer_custom_app/NewMPR2Slicer/build/

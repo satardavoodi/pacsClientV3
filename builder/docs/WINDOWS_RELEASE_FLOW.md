@@ -1,6 +1,6 @@
 # Windows Release Flow
 
-Current release target: `v2.3.7` (`2026-04-22`)
+Current release target: `v2.4.7` (`2026-04-28`)
 
 This document is for the **PyInstaller-based build chain in `builder/`**. It does not describe the staged Nuitka builder in `builder nuitka/`; use `NUITKA_BUILD_PLAN.md` for that flow.
 
@@ -11,9 +11,65 @@ python build.py
 python build.py --skip-pyinstaller
 python build.py --skip-installer-compile
 python build.py --clean-only
+python builder/run_resumable_build.py --status
+python builder/run_resumable_build.py
+python builder/run_resumable_build.py --from-stage 2
 ```
 
 Do not use `build_nuitka.bat`, `build_nuitka_release.bat`, or `builder nuitka/build_nuitka_release.py` when following this document.
+
+## Resumable Staged Flow (PyInstaller)
+
+If long installer compiles are interrupted (terminal crash, OOM, VS Code restart), use:
+
+`builder/run_resumable_build.py`
+
+Stages:
+
+1. `stage_dist_stage_packages_updates`
+1. `stage_installer_compile`
+
+Behavior:
+
+- Persists stage progress in `builder/.state/build_resume_state.json`.
+- If stage 1 already succeeded, rerun starts directly from stage 2.
+- If stage 2 fails, stage 1 outputs are preserved and not rebuilt.
+
+Typical usage:
+
+```powershell
+# show current resume checkpoint
+python builder/run_resumable_build.py --status
+
+# run from next unfinished stage
+python builder/run_resumable_build.py
+
+# reuse existing dist to avoid full PyInstaller rerun
+python builder/run_resumable_build.py --only-stage 1 --reuse-dist
+
+# retry installer stage only
+python builder/run_resumable_build.py --from-stage 2
+
+# run one stage only
+python builder/run_resumable_build.py --only-stage 2
+```
+
+The runner auto-sets:
+
+- `AIPACS_ALLOW_MISSING_ADVANCED_MPR=1`
+- `PYTHONUTF8=1`
+
+so failed retries remain deterministic across terminals.
+
+If VS Code or terminal crashes after a successful PyInstaller pass, prefer `--reuse-dist` to continue from the existing `builder/output/dist/AIPacs` bundle instead of restarting the longest step.
+
+Recommended agent workflow:
+
+1. Run stage 1 once and do not interrupt it.
+2. If stage 1 succeeds, use stage 2 only for retries.
+3. If VS Code or the terminal crashes after PyInstaller completed, prefer `--reuse-dist` over rerunning PyInstaller.
+4. Treat `KeyboardInterrupt`, terminal OOM, or VS Code restart as infrastructure interruption, not as proof the build script is wrong.
+5. Do not delete `builder/output/dist/` after a successful stage 1 unless a full clean rebuild is intentionally required.
 
 ## Environment Preparation
 
@@ -71,11 +127,11 @@ If any required graphics DLL is missing, `builder/build_release.py` stops before
 Version flows from a single source of truth:
 
 ```
-pyproject.toml  [project] version = "2.3.7"
+pyproject.toml  [project] version = "2.4.7"
        ↓
 build_release.py  load_version()  reads pyproject.toml via tomllib
        ↓
-ISCC  /DMyAppVersion=2.3.7
+ISCC  /DMyAppVersion=2.4.7
        ↓
 AIPacs_Setup.iss  {#MyAppVersion}  → installation_profile.json  app_version
        ↓

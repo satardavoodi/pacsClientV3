@@ -25,7 +25,7 @@ DisableProgramGroupPage=yes
 OutputDir={#InstallerOutputDir}
 OutputBaseFilename={#InstallerBaseName}
 Compression=lzma2/ultra64
-SolidCompression=yes
+SolidCompression=no
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
@@ -71,7 +71,7 @@ Source: "{#StageDir}\core\*"; DestDir: "{app}"; Components: core; Flags: ignorev
 Source: "{#StageDir}\plugin_packages\module_package_feed.json"; DestDir: "{commonappdata}\AIPacs\module_packages"; Components: core; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\data_analysis\*"; DestDir: "{commonappdata}\AIPacs\module_packages\data_analysis"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 #if AdvancedMprAvailable
-Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr"; Excludes: "*.pyc,*.pyo,*.pyd.orig,*\__pycache__\*,*\.pytest_cache\*,*\.mypy_cache\*,*\tests\*,*\docs\*,*\examples\*"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 #endif
 Source: "{#StageDir}\plugin_packages\printing\*"; DestDir: "{commonappdata}\AIPacs\module_packages\printing"; Components: optional\printing; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\run_cd\*"; DestDir: "{commonappdata}\AIPacs\module_packages\run_cd"; Components: optional\run_cd; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist

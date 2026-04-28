@@ -170,6 +170,7 @@ def clean_outputs(
     preserve_build: bool = False,
     preserve_stage: bool = False,
     preserve_installer: bool = False,
+    preserve_plugin_stage: bool = False,
 ) -> None:
     """Remove generated release outputs.
 
@@ -211,7 +212,10 @@ def clean_outputs(
     # derived artifacts and must be rebuilt from scratch to avoid stale package
     # directories or manifest files surviving across builds.
     if preserve_stage and STAGE_DIR.exists():
-        for derived_stage_dir in (MANIFEST_DIR, STAGED_PLUGIN_PACKAGE_DIR):
+        derived_stage_dirs = [MANIFEST_DIR]
+        if not preserve_plugin_stage:
+            derived_stage_dirs.append(STAGED_PLUGIN_PACKAGE_DIR)
+        for derived_stage_dir in derived_stage_dirs:
             if derived_stage_dir.exists():
                 shutil.rmtree(derived_stage_dir, ignore_errors=True)
 
@@ -535,7 +539,11 @@ def _write_package_feed(target_dir: Path, version: str, package_index: list[dict
     )
 
 
-def build_module_packages(version: str, advanced_payload: dict[str, object]) -> list[dict[str, object]]:
+def build_module_packages(
+    version: str,
+    advanced_payload: dict[str, object],
+    reuse_staged_payload: bool = False,
+) -> list[dict[str, object]]:
     print_step("Building module packages")
     PACKAGE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     STAGED_PLUGIN_PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -544,13 +552,21 @@ def build_module_packages(version: str, advanced_payload: dict[str, object]) -> 
     for definition in load_plugin_package_definitions(optional_only=True):
         module_id = str(definition["module_id"])
         package_dir = STAGED_PLUGIN_PACKAGE_DIR / module_id
-        if package_dir.exists():
+        build_strategy = str(definition.get("build_strategy") or "")
+        can_reuse_runtime_payload = (
+            reuse_staged_payload
+            and build_strategy == "runtime_payload"
+            and (package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME).exists()
+        )
+        if package_dir.exists() and not can_reuse_runtime_payload:
             shutil.rmtree(package_dir, ignore_errors=True)
 
         has_payload = False
-        if str(definition.get("build_strategy") or "") == "runtime_payload":
+        if build_strategy == "runtime_payload":
             source_root = Path(str(advanced_payload.get("source") or ""))
-            if bool(advanced_payload.get("staged")) and source_root.exists():
+            if can_reuse_runtime_payload:
+                has_payload = True
+            elif bool(advanced_payload.get("staged")) and source_root.exists():
                 package_dir.mkdir(parents=True, exist_ok=True)
                 # Runtime payloads (Advanced MPR / custom Slicer) must be copied
                 # losslessly. Applying _package_ignore_filter here strips
@@ -1053,6 +1069,7 @@ def main() -> int:
             preserve_build=incremental,
             preserve_stage=incremental,
             preserve_installer=(incremental or args.skip_installer_compile),
+            preserve_plugin_stage=(incremental and args.skip_pyinstaller),
         )
         version = load_version()
         source_dir = DIST_DIR / "AIPacs"
@@ -1097,7 +1114,11 @@ def main() -> int:
                     + reason
                     + " Set AIPACS_ALLOW_MISSING_ADVANCED_MPR=1 to bypass deliberately."
                 )
-        module_packages = build_module_packages(version, advanced_payload)
+        module_packages = build_module_packages(
+            version,
+            advanced_payload,
+            reuse_staged_payload=(incremental and args.skip_pyinstaller),
+        )
         write_manifest(version, core_dir, advanced_payload, module_packages)
 
         installer_artifacts: dict[str, str] = {}

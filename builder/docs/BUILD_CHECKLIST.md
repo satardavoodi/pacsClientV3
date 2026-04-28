@@ -74,11 +74,21 @@ even though the build log shows no errors.
 
 - Assemble the optional Advanced MPR runtime if that payload should ship:
   `python tools/slicer/assemble_slicer_runtime.py`
-- Run `python build.py`
+- Preferred release command:
+  `python builder/run_resumable_build.py`
+- Fast recovery commands:
+  - `python builder/run_resumable_build.py --status`
+  - `python builder/run_resumable_build.py --from-stage 2`
+  - `python builder/run_resumable_build.py --only-stage 1 --reuse-dist`
+- Legacy direct commands still valid:
+  - `python build.py`
+  - `python build.py --skip-pyinstaller`
+  - `python build.py --skip-installer-compile`
 
 PyInstaller-only entrypoints for this checklist:
 - `build.bat`
 - `build.py`
+- `builder/run_resumable_build.py`
 
 Do not substitute:
 - `build_nuitka.bat`
@@ -89,6 +99,10 @@ Do not substitute:
 
 - Verify `builder/output/stage/core/AIPacs.exe` exists
 - Verify `builder/output/stage/manifest/release_manifest.json` marks optional payloads correctly
+- Verify `builder/output/updates/update_feed.json` exists
+- Verify resumable state (when using the staged runner):
+  - `builder/.state/build_resume_state.json`
+  - `last_success_stage` should be `2` after a fully successful build
 - If `ISCC.exe` is available, verify installers:
   - `builder/output/installer/ai-pacs installer.exe`
   - `builder/output/installer/ai-pacs installer v<version>.exe`
@@ -109,6 +123,16 @@ Inno Setup emits a `PrivilegesRequired` warning when the script uses per-user
 paths (`localappdata`, `userappdata`) while `PrivilegesRequired=admin`. This is
 expected — the installer is intentionally admin-required. The resulting EXE is
 valid; the exit code 1 does not indicate a broken installer.
+
+### Interruption recovery rules
+- If PyInstaller was interrupted before `Release staging complete`, rerun stage 1.
+- If installer compile was interrupted after stage 1 succeeded, rerun stage 2 only.
+- If a terminal or VS Code session crashes, do not assume the build is broken; first inspect:
+  - `builder/output/.build_release.lock`
+  - `builder/.state/build_resume_state.json`
+  - `builder/output/installer/`
+- If `ISCC` is still actively growing `ai-pacs installer.exe`, let it continue.
+- If `ISCC` is alive but installer size and CPU remain flat for an extended sample window, terminate the stale owner and retry stage 2 only.
 
 ### PyInstaller warnings file
 The full warnings file is at `builder/output/build/appA_workstation/warn-appA_workstation.txt`.

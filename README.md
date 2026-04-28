@@ -105,4 +105,18 @@ If any of these files are missing, `build.py` can fail before packaging because 
 
 Primary build outputs land under `builder/output/`, including staged bundles and the installer when Inno Setup is available. Successful installer builds also emit `INSTALL_NOTES*.txt` and `SHA256*.txt` under `builder/output/installer/`.
 
+Build stability guardrail (regression check): after any release build, verify the output structure includes `dist`, `stage`, `packages`, and `updates` under `builder/output/`. If `updates` is missing, run:
+
+```powershell
+.\.venv_build\Scripts\python.exe build.py --skip-pyinstaller --skip-installer-compile
+```
+
+This revalidates publish/staging from the existing `dist` bundle and is the canonical non-installer completeness check.
+
+If Inno Setup fails with `Error 32` on `builder/output/installer/ai-pacs installer.exe`, stop any stale `ISCC.exe` process and rerun:
+
+```powershell
+.\.venv_build\Scripts\python.exe build.py --skip-pyinstaller
+```
+
 The Windows installer is prepared for deployment on other PCs. In `Custom` mode it asks which optional modules should be installed on that workstation, stores the selection in `installation_profile.json`, and uses a GPU probe plus runtime fallback logic so unsupported systems can still run with CPU-safe software OpenGL.
