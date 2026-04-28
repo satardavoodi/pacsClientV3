@@ -782,6 +782,131 @@ def parse_aipacs_log_file(path: Path) -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Overlap-scenario parser (F0.2)
+#
+# Parses the [OVERLAP_SCENARIO] log tag emitted by Lightweight2DPipeline when
+# `is_heavy_download_active() and not is_viewed_series_complete(series_number)`.
+# Tag format (introduced in plan step F2.1):
+#
+#   [OVERLAP_SCENARIO] frame idx=<int> cache=<hit|surrogate|decode>
+#       decode_ms=<f> wl_ms=<f> total_ms=<f> settled=<True|False>
+#
+# Optional trailing key=value fields are tolerated (and ignored) so future
+# extensions do not break the parser.
+#
+# This parser is intentionally separate from parse_aipacs_log_text so that:
+#   - the existing parser surface stays byte-identical (no regression),
+#   - overlap KPIs can be computed/inspected in isolation.
+# ---------------------------------------------------------------------------
+
+_OVERLAP_TAG_RE = re.compile(
+    r"\[OVERLAP_SCENARIO\]\s+frame\s+"
+    r"idx=(?P<idx>\d+)\s+"
+    r"cache=(?P<cache>hit|surrogate|decode)\s+"
+    r"decode_ms=(?P<decode>[0-9.]+)\s+"
+    r"wl_ms=(?P<wl>[0-9.]+)\s+"
+    r"total_ms=(?P<total>[0-9.]+)\s+"
+    r"settled=(?P<settled>True|False)"
+)
+
+
+def parse_overlap_log_text(text: str) -> Dict[str, Any]:
+    """Extract overlap-scenario KPIs from runtime log text.
+
+    Returns a payload with the canonical overlap_* keys defined in
+    docs/performance/FAST_VIEWER_KPI_CATALOG.md (Phase F0.2).
+
+    All values are best-effort; if zero overlap samples were observed the
+    KPIs are emitted as 0.0 / 0 with `sample_count = 0` so downstream
+    diff tooling can detect the empty-run case explicitly.
+    """
+    total_ms: List[float] = []
+    decode_ms: List[float] = []
+    wl_ms: List[float] = []
+    cache_counts: Counter[str] = Counter()
+    settled_counts: Counter[str] = Counter()
+    timeline_seconds: List[float] = []  # filled from leading "[ts]" if present
+    # foreground_wait is reported by a different (future) tag; kept as 0.0
+    # until F4.x ships its own [OVERLAP_FG_WAIT] sub-tag.
+    foreground_wait_ms: List[float] = []
+
+    # Optional leading-timestamp probe: most diagnostic logs begin with
+    # "YYYY-MM-DD HH:MM:SS,mmm" or "[HH:MM:SS.mmm]". We only need a
+    # monotonic ordinal, so we use the line index as a fallback when no
+    # timestamp is present.
+    for line_idx, raw in enumerate(text.splitlines()):
+        m = _OVERLAP_TAG_RE.search(raw)
+        if not m:
+            continue
+        try:
+            total_ms.append(float(m.group("total")))
+            decode_ms.append(float(m.group("decode")))
+            wl_ms.append(float(m.group("wl")))
+        except (TypeError, ValueError):
+            continue
+        cache_counts[m.group("cache")] += 1
+        settled_counts[m.group("settled")] += 1
+        timeline_seconds.append(float(line_idx))
+
+    sample_count = len(total_ms)
+    cache_hits = cache_counts.get("hit", 0) + cache_counts.get("surrogate", 0)
+    cache_hit_ratio = (cache_hits / sample_count * 100.0) if sample_count else 0.0
+
+    # Foreground wait p95: placeholder until dedicated tag exists.
+    fg_wait_p95 = _percentile(foreground_wait_ms, 95.0) if foreground_wait_ms else 0.0
+
+    # Slow-frame share: total_ms > 16 ms.
+    slow_frame_count = sum(1 for v in total_ms if v > 16.0)
+    slow_frame_pct = (slow_frame_count / sample_count * 100.0) if sample_count else 0.0
+
+    # Effective FPS: 1000 / median total_ms (clamp to 0 when empty).
+    if total_ms:
+        median_total = _percentile(total_ms, 50.0)
+        effective_fps = (1000.0 / median_total) if median_total > 0 else 0.0
+    else:
+        effective_fps = 0.0
+
+    # Pixel-hash match percentages are populated only by the F1 harness;
+    # the runtime log cannot observe them directly. Emit as None so the
+    # diff tooling can distinguish "not measured" from "0%".
+    return {
+        "overlap_sample_count": sample_count,
+        "overlap_set_slice_present_p95_ms": round(_percentile(total_ms, 95.0), 2),
+        "overlap_set_slice_present_p50_ms": round(_percentile(total_ms, 50.0), 2),
+        "overlap_decode_p95_ms": round(_percentile(decode_ms, 95.0), 2),
+        "overlap_decode_p50_ms": round(_percentile(decode_ms, 50.0), 2),
+        "overlap_wl_p95_ms": round(_percentile(wl_ms, 95.0), 2),
+        "overlap_cache_hit_ratio_pct": round(cache_hit_ratio, 2),
+        "overlap_cache_breakdown": {
+            "hit": cache_counts.get("hit", 0),
+            "surrogate": cache_counts.get("surrogate", 0),
+            "decode": cache_counts.get("decode", 0),
+        },
+        "overlap_settled_breakdown": {
+            "settled_true": settled_counts.get("True", 0),
+            "settled_false": settled_counts.get("False", 0),
+        },
+        "overlap_slow_frame_count_16ms": slow_frame_count,
+        "overlap_slow_frame_pct_16ms": round(slow_frame_pct, 2),
+        "overlap_effective_fps": round(effective_fps, 2),
+        "overlap_foreground_wait_p95_ms": round(fg_wait_p95, 2),
+        "overlap_pixel_hash_match_pct_settled": None,
+        "overlap_pixel_hash_match_pct_surrogate": None,
+    }
+
+
+def parse_overlap_log_file(path: Path) -> Dict[str, Any]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    return {
+        "viewer": "AI-PACS",
+        "mode": "overlap-log-parse",
+        "scenario": "aipacs_live_download_overlap",
+        "log_path": str(path),
+        "overlap_metrics": parse_overlap_log_text(text),
+    }
+
+
 def _normalize_headless_kpis(snapshot: Dict[str, Any], process_summary: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "first_image_visible_ms": round(float(snapshot.get("first_image_ms", 0.0)), 2),
@@ -1563,6 +1688,17 @@ def _cmd_parse_aipacs_log(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_parse_overlap_log(args: argparse.Namespace) -> int:
+    """F0.2: extract overlap-scenario KPIs from a runtime log file."""
+    payload = parse_overlap_log_file(Path(args.log))
+    if getattr(args, "scenario", None):
+        payload["scenario"] = str(args.scenario)
+    out = Path(args.output) if args.output else _default_output("overlap_kpi", "json")
+    _write_json(out, payload)
+    print(out)
+    return 0
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
     left = json.loads(Path(args.left).read_text(encoding="utf-8"))
     right = json.loads(Path(args.right).read_text(encoding="utf-8"))
@@ -1660,6 +1796,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_parse.add_argument("--log", required=True)
     p_parse.add_argument("--output")
     p_parse.set_defaults(func=_cmd_parse_aipacs_log)
+
+    p_overlap = sub.add_parser(
+        "parse-overlap-log",
+        help="Extract overlap-scenario KPIs ([OVERLAP_SCENARIO] tag) from a log file",
+    )
+    p_overlap.add_argument("--log", required=True)
+    p_overlap.add_argument(
+        "--scenario",
+        default="aipacs_live_download_overlap",
+        help="Scenario id stored in the output payload",
+    )
+    p_overlap.add_argument("--output")
+    p_overlap.set_defaults(func=_cmd_parse_overlap_log)
 
     p_compare = sub.add_parser("compare", help="Compare two KPI JSON payloads")
     p_compare.add_argument("--left", required=True)
