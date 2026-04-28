@@ -178,7 +178,7 @@ Any performance work targeting the "downloading same series + stacking same seri
 
 **Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F1.
 
-## Overlap log tag `[OVERLAP_SCENARIO]` (F2.1, 2026-04-28)
+## Overlap log tag `[OVERLAP_SCENARIO]` (F2.1, 2026-04-28; F2.1b extension 2026-04-29)
 
 To make the "download same series + stack same series" KPIs observable from a normal production run without enabling DEBUG, `Lightweight2DPipeline.get_rendered_frame()` emits a structured INFO line at all three return paths (cached frame / surrogate / synchronous decode) when both:
 
@@ -187,13 +187,20 @@ To make the "download same series + stack same series" KPIs observable from a no
 
 Sampled 1-in-N (default 5) via env var `AIPACS_OVERLAP_LOG_SAMPLE`. Sampling protects log volume; default ≈ 20 % of overlap frames produce a tag.
 
+**F2.1b sentinel-emit bypass (2026-04-29).** Live-run capture on 2026-04-28 23:01 produced exactly 2 overlap samples — both surrogate, zero decode — over a real drag burst, while the same drag's `[FAST_DRAG_KPI]` summary reported `event_p95=607.9 ms` / `ui_lag_max=363.9 ms`. The 1-in-N sampler is too sparse to capture decode-cache misses (the only path > 1 ms). `_maybe_emit_overlap_tag` now bypasses the sampler when:
+
+- `cache=decode` — every foreground decode emits unconditionally (still gated by min-gap, see below).
+- `_overlap_force_emit_next` is set — armed at drag-begin (`set_fast_interaction(False → True)`) and drag-end (`set_fast_interaction(True → False)`) so each drag burst contributes ≥1 sample even on cache-warm rides.
+
+A 50 ms min-gap (`_OVERLAP_FORCE_EMIT_MIN_GAP_MS`) prevents log storm if many decode misses fire back-to-back. Sampled (non-forced) emits are unaffected by the gap.
+
 **Format (verbatim, must remain stable for the harness regex):**
 
 ```
-[OVERLAP_SCENARIO] frame idx=<int> cache=<hit|surrogate|decode> decode_ms=<float> wl_ms=<float> total_ms=<float> settled=<True|False>
+[OVERLAP_SCENARIO] frame idx=<int> cache=<hit|surrogate|decode> decode_ms=<float> wl_ms=<float> total_ms=<float> settled=<True|False> sentinel=<reason>
 ```
 
-`settled=True` means the user is NOT in fast-interaction (drag/wheel) at emission time — i.e. either the overlap-coalesce settle frame after release, or a non-interactive call.
+The trailing `sentinel=<reason>` field was added in F2.1b. `<reason>` is one of `decode`, `drag_begin`, `drag_end`, or `-` (for sampled / non-boundary frames). Old logs without this field are still accepted by the parser regex (the field is optional). `settled=True` means the user is NOT in fast-interaction (drag/wheel) at emission time — i.e. either the overlap-coalesce settle frame after release, or a non-interactive call.
 
 **Parsed by:** [tools/performance/clearcanvas_aipacs_kpi_harness.py](tools/performance/clearcanvas_aipacs_kpi_harness.py) → `parse_overlap_log_text` / `parse_overlap_log_file`. CLI:
 
@@ -201,9 +208,58 @@ Sampled 1-in-N (default 5) via env var `AIPACS_OVERLAP_LOG_SAMPLE`. Sampling pro
 .venv\Scripts\python.exe tools\performance\clearcanvas_aipacs_kpi_harness.py parse-overlap-log --log <path-to-viewer_diagnostics.log>
 ```
 
-**Contract test:** `tests/performance/test_overlap_kpi_parser.py::test_parse_overlap_log_text_matches_production_emit_format` round-trips the exact emit format (with `diagnostic_logging` prefix) through the harness parser. If you change the emit format string in `Lightweight2DPipeline._maybe_emit_overlap_tag`, this test will fail until the harness regex is reconciled.
+**F2.4b — `[FAST_DRAG_KPI]` aggregation (2026-04-29).** The same parser also ingests end-of-burst summaries emitted by `qt_viewer_bridge._log_drag_metrics_summary`. These are 100% sampled (one per drag) and carry the real-world Qt event-loop / UI-lag KPIs the per-frame `[OVERLAP_SCENARIO]` tag cannot measure. New keys in the parser payload:
 
-**Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F2.1.
+| Key | Meaning |
+|---|---|
+| `overlap_drag_burst_count` | Number of `[FAST_DRAG_KPI]` lines parsed. |
+| `overlap_drag_event_p95_max_ms` | Max `event_p95_ms` across bursts. **Tier-2 north star.** |
+| `overlap_drag_event_p95_p95_ms` | p95 of the per-burst `event_p95_ms` list. |
+| `overlap_drag_handler_p95_max_ms` | Max `handler_p95_ms` across bursts. |
+| `overlap_drag_ui_lag_max_max_ms` | Max `ui_lag_max_ms` across bursts. **Tier-2 north star.** |
+| `overlap_drag_ui_lag_max_p95_ms` | p95 of per-burst `ui_lag_max_ms`. |
+| `overlap_drag_prefetch_per_s_avg` | Mean `prefetch_per_s` across bursts. |
+| `overlap_drag_background_decode_count_total` | Sum of `background_decode_count`. R3 invariant: must stay 0. |
+
+And new sentinel-visibility keys (F2.1b):
+
+| Key | Meaning |
+|---|---|
+| `overlap_sentinel_emit_count` | Total forced (non-`-`) sentinel emits. |
+| `overlap_sentinel_breakdown.decode` | Forced emits at decode-cache miss. |
+| `overlap_sentinel_breakdown.drag_begin` | Forced emits at `set_fast_interaction(True)`. |
+| `overlap_sentinel_breakdown.drag_end` | Forced emits at `set_fast_interaction(False)`. |
+| `overlap_sentinel_breakdown.other` | Catch-all for future reasons. |
+
+**Contract tests:** `tests/performance/test_overlap_kpi_parser.py` — 25 tests total. Production-format round-trip is now covered by both `test_parse_overlap_log_text_matches_production_emit_format` (legacy emit) and `test_parse_overlap_log_text_matches_production_emit_format_with_sentinel` (current emit with `sentinel=` field). If you change the emit format string in `Lightweight2DPipeline._maybe_emit_overlap_tag`, both contract tests must be reconciled.
+
+**Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F2.1 / F2.1b / F2.4 / F2.4b.
+
+### Retargeted KPI tier (post-2026-04-29 live run)
+
+The overlap analysis tracks two layers:
+
+**Tier-1 — synthetic, harsh-preset anchor (`overlap_baseline_v0_synthetic_harsh.json`)** — canonical for F3–F10 commit gating:
+
+| KPI | Harsh v0 | Target | Source |
+|---|---|---|---|
+| `overlap_decode_only_p95_ms` | 13.94 | ≤7.0 | `cache=decode` `total_ms` p95 |
+| `overlap_decode_only_max_ms` | 77.67 | ≤40.0 | `cache=decode` `total_ms` max |
+| `overlap_decode_sample_share_pct` | 4.45 | ≤2.5 | `decode / total × 100` |
+| `overlap_slow_frame_count_16ms` | 3 / 30 s | ≤1 / 30 s | frames > 16 ms |
+
+**Tier-2 — real-world (mandatory for "Final target" claim)**:
+
+| KPI | Live 2026-04-28 | Target |
+|---|---|---|
+| `overlap_drag_event_p95_max_ms` | 607.9 | ≤300 |
+| `overlap_drag_ui_lag_max_max_ms` | 363.9 | ≤180 |
+| `overlap_drag_handler_p95_max_ms` | 3.7 | ≤16 (no regression) |
+| `overlap_drag_background_decode_count_total` | 0 | 0 (R3 invariant) |
+| `overlap_settled_present_p95_ms` | 1 sample (TBD) | populate to ≥30 samples |
+| `overlap_sentinel_breakdown.decode` | 0 (pre-F2.1b) | ≥1 per drag-with-decode |
+
+Demoted (kept in payload for compat, NOT a target): `overlap_set_slice_present_p95_ms`, `overlap_decode_p95_ms` (all-samples), `overlap_effective_fps`, `overlap_cache_hit_ratio_pct`.
 
 ---
 

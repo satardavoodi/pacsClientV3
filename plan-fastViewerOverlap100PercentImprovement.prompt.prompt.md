@@ -300,6 +300,67 @@ The plan reaches "Final target" (formerly "100% improvement") when:
 
 ---
 
+## Live-run findings (2026-04-29)
+
+A real-world drag was captured on PC A against series 303 (the user's representative case) with the exact production config (no env overrides, default `AIPACS_OVERLAP_LOG_SAMPLE=5`). The log contains exactly **2** `[OVERLAP_SCENARIO]` samples and **2** `[FAST_DRAG_KPI]` end-of-burst summaries — and they tell completely different stories:
+
+| Source | KPI | Burst 1 | Burst 2 | Plan implication |
+|---|---|---|---|---|
+| `[FAST_DRAG_KPI]` (real-world) | `event_p95_ms` | **607.9** | 328.3 | Qt event-loop spacing, NOT pipeline compute. New Tier-2 north star. |
+| `[FAST_DRAG_KPI]` (real-world) | `ui_lag_max_ms` | 0.0 | **363.9** | The actual user-perceived spike. Pipeline compute is irrelevant when the loop blocks. |
+| `[FAST_DRAG_KPI]` (real-world) | `handler_p95_ms` | 3.7 | 3.2 | Pipeline-side per-frame work is fine. The handler is NOT the bottleneck. |
+| `[FAST_DRAG_KPI]` (real-world) | `prefetch_per_s` | 0.0 | 0.0 | Prefetch is dark during these drags — confirms F6 has unexploited headroom. |
+| `[FAST_DRAG_KPI]` (real-world) | `background_decode_count` | 0 | 0 | No background decodes ran — surrogate path is fully covering navigation. |
+| `[OVERLAP_SCENARIO]` (per-frame) | total samples | 2 | (same window) | 1-in-N sampler at default 5 produced **zero** decode samples. KPI distribution is unmeasurable. |
+| Progressive grow apply | duration | — | **54.27 ms** at 23:01:26.792 | Inside burst 2's drag window, terminal `_grow_progressive_fast` ran. R4 says terminal grow is uncapped, but 54 ms is a likely contributor to the 363.9 ms ui_lag spike. |
+
+### Three pivots driven by the live run
+
+**Pivot 1 — Synthetic compute-time KPIs are insufficient.** `overlap_decode_only_p95_ms` (13.94 ms harsh anchor) is dwarfed by the real-world `event_p95_ms=607.9 ms`. The Qt event-loop / paint / blit / progressive-grow stack contributes far more user-visible latency than the pipeline compute path. Synthetic gating is still required for repeatability, but a phase cannot claim "Final target" without a Tier-2 real-world KPI bar.
+
+**Pivot 2 — F2.1b sentinel emits are now BLOCKING for measurement.** The default 1-in-N sampling produced zero decode samples in a real drag. Without sentinel emits, no real-world `overlap_decode_only_*` KPI value is meaningful and F0.5b cannot be captured. F2.1b is promoted from "follow-up" to "next-blocking step" and lands in the same commit as the live-run plan refinement.
+
+**Pivot 3 — Terminal progressive grow during active drag is suspect.** Burst 2's 54.27 ms grow apply landed inside the drag window. R4 (copilot-instructions) says "terminal completion is never deferred — user must see download complete," which is correct in spirit but the grow is being applied via the same Qt event loop the drag handler is competing for. This becomes the new optional step **F11** (deferred until F0.5b real-world capture confirms it as a top-3 contributor).
+
+### New Tier-2 KPIs (real-world, mandatory for "Final target" claim)
+
+These are extracted by `parse_overlap_log_text` from `[FAST_DRAG_KPI]` lines added in F2.4b (committed alongside F2.1b):
+
+| KPI | Live 2026-04-28 value | Target | Source |
+|---|---|---|---|
+| `overlap_drag_event_p95_max_ms` | 607.9 | **≤300** (≥50% drop) | end-of-burst summary, max across bursts |
+| `overlap_drag_ui_lag_max_max_ms` | 363.9 | **≤180** (≥50% drop) | end-of-burst summary, max across bursts |
+| `overlap_drag_handler_p95_max_ms` | 3.7 | hold ≤16 ms (no regression) | end-of-burst summary, max across bursts |
+| `overlap_drag_background_decode_count_total` | 0 | hold at 0 (R3) | sum across bursts |
+| `overlap_sentinel_emit_count` (decode share) | 0 (no F2.1b yet) | ≥1 per drag | F2.1b sentinel breakdown |
+
+### Plan delta — Step F2.1b is in this commit
+
+`Lightweight2DPipeline._maybe_emit_overlap_tag` now bypasses the 1-in-N sampler when:
+
+- `cache=decode` (always — every foreground decode is a candidate user-visible spike).
+- `_overlap_force_emit_next` is True (set by `set_fast_interaction(True)` at drag-begin and `set_fast_interaction(False)` at drag-end).
+
+A 50 ms min-gap (`_OVERLAP_FORCE_EMIT_MIN_GAP_MS`) prevents log storm if many decode misses fire back-to-back. The new emit format appends `sentinel=<reason>` (`decode` / `drag_begin` / `drag_end` / `-` for sampled). Parser regex made the field optional so old logs still parse. Plugin-package mirror updated; SHA256 parity verified.
+
+### Plan delta — New Step F11 (optional, deferred)
+
+**F11 — Defer terminal progressive grow during active drag.** Modify `_grow_progressive_fast` / `_flush_progressive_grow_impl` so terminal completion is delayed up to 250 ms past the drag-end deadline (`is_protected_drag_active()` False), instead of firing immediately at `seriesDownloadCompleted`. R4 must be relaxed from "terminal is never deferred" to "terminal is deferred only while a drag is active and only up to 250 ms past drag-end". **Status:** `optional`. **Trigger:** F0.5b real-world capture must confirm progressive-grow apply > 20 ms inside ≥1 drag burst. **Risk:** small UX delay on download-complete confetti for users mid-drag. **Rollback:** trivial flag flip.
+
+### Updated Phase F2 status
+
+| Step | Status | Commit |
+|---|---|---|
+| F2.1 | DONE | `9f180262` |
+| F2.1b | NEW — DONE in this commit | TBD |
+| F2.2 | DEFERRED — superseded by F2.4 | — |
+| F2.3 | DONE | `b9da77ed` |
+| F2.4 | DONE | `fea7f9b1` |
+| F2.4b | NEW — DONE in this commit | TBD |
+| F11 | NEW — OPTIONAL, deferred | — |
+
+---
+
 ## Phase F0 — Baseline & Tooling
 
 **Phase goal:** Establish a reproducible overlap baseline and the parser pipeline so every later step has a numeric before/after.

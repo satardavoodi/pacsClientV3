@@ -407,6 +407,14 @@ class Lightweight2DPipeline(QObject):
 
         # F2.1: 1-in-N counter for [OVERLAP_SCENARIO] KPI emission.
         self._overlap_log_counter: int = 0
+        # F2.1b: sentinel emit flags + min-gap guard. When True, the next
+        # _maybe_emit_overlap_tag call bypasses the 1-in-N sampler exactly
+        # once. cache=decode emits always bypass via cache_source check.
+        # _overlap_last_force_emit_ms throttles forced emits to avoid log
+        # storms if e.g. a series of decode misses happens back-to-back.
+        self._overlap_force_emit_next: bool = False
+        self._overlap_force_emit_reason: str = ""
+        self._overlap_last_force_emit_ms: float = 0.0
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -854,6 +862,11 @@ class Lightweight2DPipeline(QObject):
         self._maybe_emit_overlap_tag(frame, "decode")
         return frame
 
+    # F2.1b: minimum gap between forced (sentinel) emits, in milliseconds.
+    # Prevents log storm if many decode misses fire back-to-back. Sampled
+    # emits (1-in-N) are unaffected by this guard.
+    _OVERLAP_FORCE_EMIT_MIN_GAP_MS = 50.0
+
     def _maybe_emit_overlap_tag(self, frame: RenderedFrame, cache_source: str) -> None:
         """F2.1: Emit a parsable [OVERLAP_SCENARIO] KPI line during the
         download+scroll overlap on the same incomplete series.
@@ -862,12 +875,19 @@ class Lightweight2DPipeline(QObject):
         so the harness in tools/performance/ can ingest the existing
         viewer_diagnostics.log without enabling DEBUG. No-op when the
         overlap condition is not met.
+
+        F2.1b sentinel bypasses the sampler (still gated by min-gap):
+          - cache=decode: every foreground decode is a potential user-
+            visible spike; capture all so KPIs can measure tail latency
+            even when sample_rate=5 produces zero decode samples in a
+            short real-world drag (observed in 2026-04-28 23:01 run).
+          - drag-begin: first frame after set_fast_interaction(True).
+          - drag-end: first frame after set_fast_interaction(False); used
+            to populate overlap_settled_present_p95_ms.
         """
         try:
             counter = int(getattr(self, "_overlap_log_counter", 0)) + 1
             self._overlap_log_counter = counter
-            if _OVERLAP_LOG_SAMPLE_N <= 0 or counter % _OVERLAP_LOG_SAMPLE_N != 0:
-                return
             sn = getattr(self, "_series_number", None)
             if not sn:
                 return
@@ -875,15 +895,46 @@ class Lightweight2DPipeline(QObject):
                 return
             if is_viewed_series_complete(sn):
                 return
+
+            # F2.1b: decide if this call must bypass the 1-in-N sampler.
+            force_emit = False
+            force_reason = ""
+            if str(cache_source) == "decode":
+                force_emit = True
+                force_reason = "decode"
+            elif bool(getattr(self, "_overlap_force_emit_next", False)):
+                force_emit = True
+                force_reason = str(getattr(self, "_overlap_force_emit_reason", "") or "sentinel")
+
+            if force_emit:
+                # Apply min-gap guard so back-to-back decode misses do not
+                # flood the log. Sampled emits are unaffected.
+                now_ms = time.perf_counter() * 1000.0
+                last_ms = float(getattr(self, "_overlap_last_force_emit_ms", 0.0) or 0.0)
+                if last_ms > 0.0 and (now_ms - last_ms) < self._OVERLAP_FORCE_EMIT_MIN_GAP_MS:
+                    # Drop forced emit but still consume the boundary flag
+                    # so we do not emit on a later non-boundary frame.
+                    self._overlap_force_emit_next = False
+                    self._overlap_force_emit_reason = ""
+                    return
+                self._overlap_last_force_emit_ms = now_ms
+                # Consume one-shot flag.
+                self._overlap_force_emit_next = False
+                self._overlap_force_emit_reason = ""
+            else:
+                if _OVERLAP_LOG_SAMPLE_N <= 0 or counter % _OVERLAP_LOG_SAMPLE_N != 0:
+                    return
+
             settled = not bool(getattr(self, "_fast_interaction", False))
             logger.info(
-                "[OVERLAP_SCENARIO] frame idx=%d cache=%s decode_ms=%.2f wl_ms=%.2f total_ms=%.2f settled=%s",
+                "[OVERLAP_SCENARIO] frame idx=%d cache=%s decode_ms=%.2f wl_ms=%.2f total_ms=%.2f settled=%s sentinel=%s",
                 int(getattr(frame, "slice_index", -1)),
                 str(cache_source),
                 float(getattr(frame, "decode_ms", 0.0) or 0.0),
                 float(getattr(frame, "wl_ms", 0.0) or 0.0),
                 float(getattr(frame, "total_ms", 0.0) or 0.0),
                 bool(settled),
+                str(force_reason or "-"),
             )
         except Exception:
             # Never let instrumentation break the render path.
@@ -891,10 +942,19 @@ class Lightweight2DPipeline(QObject):
 
     def set_fast_interaction(self, fast: bool, interaction_type: str = '') -> None:
         """Set fast-interaction mode. When True, filter is skipped during scroll."""
-        self._fast_interaction = bool(fast)
+        prev = bool(getattr(self, "_fast_interaction", False))
+        new_state = bool(fast)
+        self._fast_interaction = new_state
         self._fast_interaction_mode = str(interaction_type or '') if fast else ''
         if not fast:
             self._drag_start_boost_until = 0.0
+        # F2.1b: arm sentinel emit at drag-begin / drag-end boundaries.
+        if new_state and not prev:
+            self._overlap_force_emit_next = True
+            self._overlap_force_emit_reason = "drag_begin"
+        elif prev and not new_state:
+            self._overlap_force_emit_next = True
+            self._overlap_force_emit_reason = "drag_end"
 
     def rerender_current_filtered(self) -> Optional[RenderedFrame]:
         """Re-render current slice with filter enabled (called on scroll-stop).

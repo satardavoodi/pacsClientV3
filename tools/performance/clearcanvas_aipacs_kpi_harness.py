@@ -808,6 +808,10 @@ _OVERLAP_TAG_RE = re.compile(
     r"wl_ms=(?P<wl>[0-9.]+)\s+"
     r"total_ms=(?P<total>[0-9.]+)\s+"
     r"settled=(?P<settled>True|False)"
+    # F2.1b: optional sentinel reason for forced (always-emit) samples.
+    # Older logs (pre-F2.1b) do not have this field; the trailing group
+    # is non-capturing-optional so the parser tolerates both shapes.
+    r"(?:\s+sentinel=(?P<sentinel>\S+))?"
 )
 
 # F2.3: leading diagnostic-logging timestamp probe. Production emits
@@ -883,9 +887,24 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
     # Slow-frame (>16ms) breakdown by cache source for retarget plan KPI
     # 'overlap_slow_frame_source_breakdown'.
     slow_frame_by_cache: Dict[str, int] = {"hit": 0, "surrogate": 0, "decode": 0}
+    # F2.1b: count sentinel-emit reasons so the harness can verify that
+    # forced emits (decode / drag_begin / drag_end) are reaching the log.
+    sentinel_counts: Counter[str] = Counter()
     # foreground_wait is reported by a different (future) tag; kept as 0.0
     # until F4.x ships its own [OVERLAP_FG_WAIT] sub-tag.
     foreground_wait_ms: List[float] = []
+
+    # F2.4b (post-live-run-2026-04-29): aggregate end-of-burst summaries
+    # from [FAST_DRAG_KPI] lines so the same parse_overlap_log_text call
+    # surfaces real-world Qt event-loop and UI-lag KPIs alongside the
+    # per-frame [OVERLAP_SCENARIO] aggregates. These end-of-burst lines
+    # are 100% sampled (one per drag) so log volume is not a concern.
+    drag_event_p95_ms: List[float] = []
+    drag_handler_p95_ms: List[float] = []
+    drag_ui_lag_max_ms: List[float] = []
+    drag_prefetch_per_s: List[float] = []
+    drag_background_decode_count_total: int = 0
+    drag_burst_count: int = 0
 
     # Optional leading-timestamp probe: most diagnostic logs begin with
     # "YYYY-MM-DD HH:MM:SS,mmm" or "YYYY-MM-DD HH:MM:SS.uuuuuu". F2.3 uses
@@ -922,6 +941,31 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
             decode_only_ms.append(t_decode)
         if t_total > 16.0 and cache_src in slow_frame_by_cache:
             slow_frame_by_cache[cache_src] += 1
+        # F2.1b: track sentinel reason if present (older logs have no group).
+        sentinel_reason = m.groupdict().get("sentinel")
+        if sentinel_reason and sentinel_reason != "-":
+            sentinel_counts[sentinel_reason] += 1
+
+    # F2.4b: scan [FAST_DRAG_KPI] end-of-burst lines independently. These
+    # are emitted by qt_viewer_bridge._log_drag_metrics_summary at drag-
+    # end; one line per burst; not gated by overlap predicate. We include
+    # them in the overlap payload because the live 2026-04-28 run showed
+    # event_p95=607.9ms / ui_lag_max=363.9ms during overlap, which the
+    # per-frame [OVERLAP_SCENARIO] tag cannot capture (it only reports
+    # pipeline compute time, not Qt event-loop spacing).
+    for raw in text.splitlines():
+        m_drag = _FAST_DRAG_KPI_RE.search(raw)
+        if not m_drag:
+            continue
+        try:
+            drag_event_p95_ms.append(float(m_drag.group("event_p95")))
+            drag_handler_p95_ms.append(float(m_drag.group("handler_p95")))
+            drag_ui_lag_max_ms.append(float(m_drag.group("ui_lag_max")))
+            drag_prefetch_per_s.append(float(m_drag.group("prefetch_per_s")))
+            drag_background_decode_count_total += int(m_drag.group("background_decode_count"))
+            drag_burst_count += 1
+        except (TypeError, ValueError):
+            continue
 
     sample_count = len(total_ms)
     cache_hits = cache_counts.get("hit", 0) + cache_counts.get("surrogate", 0)
@@ -1002,6 +1046,37 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
         "overlap_foreground_wait_p95_ms": round(fg_wait_p95, 2),
         "overlap_pixel_hash_match_pct_settled": None,
         "overlap_pixel_hash_match_pct_surrogate": None,
+        # F2.1b: sentinel emit visibility — counts of decode / drag_begin
+        # / drag_end forced emits in the parsed window. Pre-F2.1b logs
+        # have no sentinel field and report zeros across the board.
+        "overlap_sentinel_breakdown": {
+            "decode": sentinel_counts.get("decode", 0),
+            "drag_begin": sentinel_counts.get("drag_begin", 0),
+            "drag_end": sentinel_counts.get("drag_end", 0),
+            "other": sum(v for k, v in sentinel_counts.items()
+                         if k not in ("decode", "drag_begin", "drag_end")),
+        },
+        "overlap_sentinel_emit_count": sum(sentinel_counts.values()),
+        # F2.4b: real-world Tier-2 KPIs from [FAST_DRAG_KPI] end-of-burst
+        # summaries. These are the metrics the user actually perceives
+        # (Qt event-loop spacing, ui_lag_max). The per-frame [OVERLAP_*]
+        # tag CANNOT measure these — it only reports pipeline compute
+        # time. Live 2026-04-28 23:01 run showed event_p95=607.9ms /
+        # ui_lag_max=363.9ms during overlap, none of which is visible
+        # in the per-frame totals.
+        "overlap_drag_burst_count": drag_burst_count,
+        "overlap_drag_event_p95_max_ms": round(max(drag_event_p95_ms), 2)
+            if drag_event_p95_ms else 0.0,
+        "overlap_drag_event_p95_p95_ms": round(_percentile(drag_event_p95_ms, 95.0), 2),
+        "overlap_drag_handler_p95_max_ms": round(max(drag_handler_p95_ms), 2)
+            if drag_handler_p95_ms else 0.0,
+        "overlap_drag_ui_lag_max_max_ms": round(max(drag_ui_lag_max_ms), 2)
+            if drag_ui_lag_max_ms else 0.0,
+        "overlap_drag_ui_lag_max_p95_ms": round(_percentile(drag_ui_lag_max_ms, 95.0), 2),
+        "overlap_drag_prefetch_per_s_avg": round(
+            sum(drag_prefetch_per_s) / len(drag_prefetch_per_s), 2
+        ) if drag_prefetch_per_s else 0.0,
+        "overlap_drag_background_decode_count_total": drag_background_decode_count_total,
     }
 
 

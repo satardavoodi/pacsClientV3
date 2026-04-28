@@ -363,3 +363,136 @@ def test_overlap_kpis_empty_payload_includes_new_fields():
         "surrogate": 0,
         "decode": 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# F2.1b sentinel-emit + F2.4b drag-KPI tests (live-run-2026-04-29 retarget).
+# ---------------------------------------------------------------------------
+
+
+def test_overlap_kpis_sentinel_field_optional_for_old_logs():
+    """F2.1b: pre-F2.1b emits have no `sentinel=` field. Parser must
+    accept them and report sentinel breakdown of all-zeros."""
+    text = _build_log(
+        "[OVERLAP_SCENARIO] frame idx=1 cache=hit decode_ms=0.0 wl_ms=0.5 total_ms=1.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=2 cache=surrogate decode_ms=0.0 wl_ms=0.5 total_ms=0.6 settled=False",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_sample_count"] == 2
+    assert payload["overlap_sentinel_emit_count"] == 0
+    assert payload["overlap_sentinel_breakdown"] == {
+        "decode": 0, "drag_begin": 0, "drag_end": 0, "other": 0,
+    }
+
+
+def test_overlap_kpis_sentinel_field_captured_when_present():
+    """F2.1b: production emits with sentinel reasons must be aggregated
+    into overlap_sentinel_breakdown by reason."""
+    text = _build_log(
+        "[OVERLAP_SCENARIO] frame idx=1 cache=hit decode_ms=0.0 wl_ms=0.5 total_ms=1.0 settled=False sentinel=-",
+        "[OVERLAP_SCENARIO] frame idx=2 cache=decode decode_ms=18.0 wl_ms=2.0 total_ms=22.0 settled=False sentinel=decode",
+        "[OVERLAP_SCENARIO] frame idx=3 cache=decode decode_ms=20.0 wl_ms=2.0 total_ms=25.0 settled=False sentinel=decode",
+        "[OVERLAP_SCENARIO] frame idx=4 cache=surrogate decode_ms=0.0 wl_ms=0.5 total_ms=0.7 settled=False sentinel=drag_begin",
+        "[OVERLAP_SCENARIO] frame idx=5 cache=hit decode_ms=0.0 wl_ms=1.4 total_ms=3.5 settled=True sentinel=drag_end",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_sample_count"] == 5
+    assert payload["overlap_sentinel_emit_count"] == 4  # excludes the "-" sentinel
+    assert payload["overlap_sentinel_breakdown"]["decode"] == 2
+    assert payload["overlap_sentinel_breakdown"]["drag_begin"] == 1
+    assert payload["overlap_sentinel_breakdown"]["drag_end"] == 1
+    assert payload["overlap_sentinel_breakdown"]["other"] == 0
+
+
+def test_overlap_kpis_mixed_old_and_new_format_lines():
+    """F2.1b: a single log window may straddle an in-place upgrade. The
+    parser must accept both shapes interleaved without errors."""
+    text = _build_log(
+        "[OVERLAP_SCENARIO] frame idx=1 cache=hit decode_ms=0.0 wl_ms=0.5 total_ms=1.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=2 cache=decode decode_ms=18.0 wl_ms=2.0 total_ms=22.0 settled=False sentinel=decode",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_sample_count"] == 2
+    assert payload["overlap_sentinel_breakdown"]["decode"] == 1
+
+
+def test_overlap_kpis_drag_kpi_aggregation_from_fast_drag_kpi_lines():
+    """F2.4b: parse_overlap_log_text must surface real-world Tier-2 KPIs
+    from [FAST_DRAG_KPI] end-of-burst lines (event_p95, ui_lag_max,
+    handler_p95, prefetch_per_s, background_decode_count). Live
+    2026-04-28 run had event_p95=607.9 ms / ui_lag_max=363.9 ms which
+    the per-frame [OVERLAP_SCENARIO] tag cannot capture."""
+    text = _build_log(
+        "[FAST_DRAG_KPI] bridge=B1 viewer=V1 duration_s=1.287 targets=1 "
+        "event_p50_ms=31.0 event_p95_ms=607.9 handler_p50_ms=3.7 "
+        "handler_p95_ms=3.7 ui_lag_max_ms=0.0 prefetch_per_s=0.0 "
+        "background_decode_count=0",
+        "[FAST_DRAG_KPI] bridge=B1 viewer=V1 duration_s=0.771 targets=7 "
+        "event_p50_ms=68.0 event_p95_ms=328.3 handler_p50_ms=2.8 "
+        "handler_p95_ms=3.2 ui_lag_max_ms=363.9 prefetch_per_s=0.0 "
+        "background_decode_count=0",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_drag_burst_count"] == 2
+    assert payload["overlap_drag_event_p95_max_ms"] == pytest.approx(607.9, abs=0.01)
+    assert payload["overlap_drag_ui_lag_max_max_ms"] == pytest.approx(363.9, abs=0.01)
+    assert payload["overlap_drag_handler_p95_max_ms"] == pytest.approx(3.7, abs=0.01)
+    assert payload["overlap_drag_background_decode_count_total"] == 0
+
+
+def test_overlap_kpis_drag_kpi_zero_when_no_fast_drag_lines():
+    """F2.4b: payload must contain the new keys with zero-defaults even
+    when no [FAST_DRAG_KPI] lines are present, so diff tooling can
+    detect the empty case explicitly."""
+    payload = parse_overlap_log_text("")
+    assert payload["overlap_drag_burst_count"] == 0
+    assert payload["overlap_drag_event_p95_max_ms"] == 0.0
+    assert payload["overlap_drag_ui_lag_max_max_ms"] == 0.0
+    assert payload["overlap_drag_handler_p95_max_ms"] == 0.0
+    assert payload["overlap_drag_background_decode_count_total"] == 0
+
+
+def test_overlap_kpis_drag_kpi_independent_from_overlap_predicate():
+    """F2.4b: [FAST_DRAG_KPI] lines are not gated by overlap predicate
+    (incomplete-series-during-active-download); they appear in every
+    drag burst. The parser must aggregate them regardless of whether
+    [OVERLAP_SCENARIO] samples are present."""
+    text = _build_log(
+        "[FAST_DRAG_KPI] bridge=B1 viewer=V1 duration_s=2.0 targets=10 "
+        "event_p50_ms=10.0 event_p95_ms=100.0 handler_p50_ms=2.0 "
+        "handler_p95_ms=4.0 ui_lag_max_ms=50.0 prefetch_per_s=5.0 "
+        "background_decode_count=3",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_sample_count"] == 0  # no [OVERLAP_SCENARIO] lines
+    assert payload["overlap_drag_burst_count"] == 1
+    assert payload["overlap_drag_event_p95_max_ms"] == pytest.approx(100.0, abs=0.01)
+    assert payload["overlap_drag_ui_lag_max_max_ms"] == pytest.approx(50.0, abs=0.01)
+    assert payload["overlap_drag_background_decode_count_total"] == 3
+
+
+def test_parse_overlap_log_text_matches_production_emit_format_with_sentinel():
+    """F2.1b contract test: the NEW production emit format from
+    Lightweight2DPipeline._maybe_emit_overlap_tag (with trailing
+    `sentinel=<reason>` field) MUST be parseable."""
+    text = _build_log(
+        "2026-04-29 10:00:00.123456 | INFO     | pid=17452 tid=27692 | "
+        "component=viewer role=main | "
+        "modules.viewer.fast.lightweight_2d_pipeline._maybe_emit_overlap_tag | "
+        "action=- study=- series=303 job=- viewevt=- fn=- stage=- result=- | "
+        "[OVERLAP_SCENARIO] frame idx=42 cache=decode decode_ms=18.50 "
+        "wl_ms=2.10 total_ms=22.00 settled=False sentinel=decode",
+        "2026-04-29 10:00:00.234567 | INFO     | pid=17452 tid=27692 | "
+        "component=viewer role=main | "
+        "modules.viewer.fast.lightweight_2d_pipeline._maybe_emit_overlap_tag | "
+        "action=- study=- series=303 job=- viewevt=- fn=- stage=- result=- | "
+        "[OVERLAP_SCENARIO] frame idx=43 cache=hit decode_ms=0.00 "
+        "wl_ms=1.40 total_ms=3.50 settled=True sentinel=drag_end",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_sample_count"] == 2, (
+        "F2.1b emitter format with sentinel= MUST be parseable; either "
+        "the emit format drifted or the harness regex did."
+    )
+    assert payload["overlap_sentinel_breakdown"]["decode"] == 1
+    assert payload["overlap_sentinel_breakdown"]["drag_end"] == 1
