@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "case_id": "filter_off_mono1",
+  "filter_enabled": false,
+  "photometric": "MONOCHROME1",
+  "n_slices": 10,
+  "rows": 64,
+  "cols": 64,
+  "rendered_meta_first": {
+    "width": 64,
+    "height": 64,
+    "photometric": "MONOCHROME1",
+    "window_width": 400.0,
+    "window_center": 40.0
+  },
+  "hashes": [
+    "e4eacb2386b2b6221049b13c6a92e10a65887f53cecf7990bc9a42fbf5366b05",
+    "23768ed23a8bcbe7d5236f00a7e2fa513c9d64b2b94dcc11928dccfd030dda7f",
+    "8f5f671d7fd1a7799ab9e3d1e49386f8b944a23cf4bc05cc0f1b424646de0cb6",
+    "c9ec4603f7fc3cb9a0551e8d765a365e3eae16fbdedb145756f8c9662c93eace",
+    "d50af14946cbc70724f0aaad35f610ae17c57c881dcfd4ef491e423c8f833247",
+    "5405d6bf2d916ab6757d60fb5b63062227e28d3a4e5b9b8b3e23ed717b0f8b8f",
+    "9468977ad3242130ae9c1eada4d9c9385253e465d34d628d45080e90efbd5625",
+    "3922d835f6c8a7970c870c1bf2e08cedca52284ae06494a134b1ab9d38aa99b4",
+    "39e267181e4caf41371501a9aa2f21d16a7160a3da9cbb72f947cfda2856bdd0",
+    "17e62e37e84de784084694cedde3c57b1b623d780512aaf8ae5785ebaa3b0d8a"
+  ]
+}
