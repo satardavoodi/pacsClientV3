@@ -145,3 +145,35 @@ Required Advanced metrics:
 - Do not accept faster background throughput if hard-interactive KPIs regress.
 - Shared-service changes must be measured for both FAST and Advanced.
 - Rendering and filter metrics must stay mode-specific.
+
+## Overlap pixel-quality gate (F1.3, 2026-04-28)
+
+Any performance work targeting the "downloading same series + stacking same series" overlap scenario must not regress image quality. The gate is enforced by a deterministic pixel-hash regression bundle that runs offscreen Qt + synthetic DICOM (no UI required, ~12 s).
+
+**Run the bundle locally before commit:**
+
+```powershell
+.\tools\dev\run_overlap_regression.ps1
+```
+
+**Tests in the bundle (25 total):**
+
+| Path | Purpose |
+|------|---------|
+| [tests/viewer/test_overlap_pixel_quality.py](tests/viewer/test_overlap_pixel_quality.py) | F1.1 — settled rendering byte-equal to golden across 4 cases (filter on/off × MONOCHROME1/2). |
+| [tests/viewer/test_overlap_pixel_quality_drag.py](tests/viewer/test_overlap_pixel_quality_drag.py) | F1.2 — drag-mode validity (every served frame is the rendering of *some* slice), surrogate proximity (≤±10), settle exactness on release. |
+| [tests/performance/test_overlap_kpi_parser.py](tests/performance/test_overlap_kpi_parser.py) | F0.2 — `parse_overlap_log_text` shape, malformed-line tolerance, file round-trip. |
+| [tests/performance/test_clearcanvas_aipacs_kpi_harness.py](tests/performance/test_clearcanvas_aipacs_kpi_harness.py) | KPI harness regression (existing). |
+
+**Gate scope (must run before merging changes to):**
+
+- `modules/viewer/fast/lightweight_2d_pipeline.py`
+- `modules/viewer/fast/qt_viewer_bridge.py`
+- `modules/viewer/fast/qt_slice_viewer.py`
+- Their plugin-package mirrors under `builder/plugin package/packages/viewer/payload/python/modules/viewer/fast/`
+
+**Re-capturing goldens:** only with `.\tools\dev\run_overlap_regression.ps1 -Capture` AND a deliberate human review of the JSON diff under `tests/viewer/golden/`. A hash change is by definition a user-visible image change.
+
+**Red-team verification:** to confirm the gate detects breakage, temporarily change the FAST W/L LUT or filter dimensions and re-run — settled hashes must drift. Revert and re-run — bundle must return green.
+
+**Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F1.
