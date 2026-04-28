@@ -4,7 +4,7 @@ Date: 2026-04-28
 Owner: FAST viewer team
 Scope: FAST mode only (`pydicom_qt`). Advanced viewer untouched. Only shared services that demonstrably impact overlap scenario are in scope.
 Primary scenario: user is stacking (drag/wheel) on a series whose download is still in progress.
-Goal: ≥50% reduction on each of the four Tier-1 synthetic KPIs (`overlap_decode_only_p95_ms`, `overlap_decode_only_max_ms`, `overlap_decode_sample_share_pct`, `overlap_slow_frame_count_16ms`) measured on the harsh-preset synthetic anchor, **plus** no regression on the real-world Tier-2 KPIs (`overlap_settled_present_p95_ms`, `ui_event_loop_lag_ms`, F1 drag-mode pixel hash). The legacy north star `overlap_set_slice_present_p95_ms` was retired on 2026-04-29 — see "Plan retarget — post-F0.5 anchor (2026-04-29)" — because the harsh synthetic anchor already reports it at 0.0 ms (surrogate path dominates the all-samples p95). Image-quality regression is ruled out by Phase F1.
+Goal: ≥50% reduction on each of the four Tier-1 synthetic KPIs (`overlap_decode_only_p95_ms`, `overlap_decode_only_max_ms`, `overlap_decode_sample_share_pct`, `overlap_slow_frame_count_16ms`) measured on the harsh-preset synthetic anchor, **plus** ≥50% reduction on the two real-world Tier-2 north stars (`overlap_drag_event_p95_max_ms`, `overlap_drag_ui_lag_max_max_ms`) extracted from `[FAST_DRAG_KPI]` end-of-burst summaries (added in F2.4b, 2026-04-29), **plus** no regression on the supporting Tier-2 KPIs (`overlap_drag_handler_p95_max_ms`, `overlap_drag_background_decode_count_total` = 0 R3 invariant, `overlap_settled_present_p95_ms`, F1 drag-mode pixel hash). The legacy north stars `overlap_set_slice_present_p95_ms` and the standalone `ui_event_loop_lag_ms` p95 were retired on 2026-04-29 — see "Plan retarget — post-F0.5 anchor (2026-04-29)" and "Live-run findings (2026-04-29)" — because the harsh synthetic anchor already reports `set_slice_present` at 0.0 ms (surrogate path dominates the all-samples p95) and because the live-run capture showed Qt event-loop spacing (`event_p95_ms=607.9`, `ui_lag_max_ms=363.9`) is the dominant user-visible spike, not the per-frame `ui_event_loop_lag_ms` callback estimate. Image-quality regression is ruled out by Phase F1.
 
 ---
 
@@ -257,14 +257,20 @@ Two layers — synthetic-canonical and real-world-canonical:
 | 1 | `overlap_decode_only_max_ms` | 77.67 | **≤40.0** (≥48% drop) | Tail control — single bad frame = perceptible. |
 | 1 | `overlap_decode_sample_share_pct` | 4.45 | **≤2.5** (≥44% drop) | Fewer foreground decodes = fewer spike opportunities. |
 | 1 | `overlap_slow_frame_count_16ms` | 3 over 30 s | **≤1 over 30 s** | User-visible frame budget metric. |
-| 2 | `overlap_settled_present_p95_ms` | 1 sample (TBD) | Establish in F0.5b (real-world) | End-of-drag re-render latency. |
+| 2 | `overlap_drag_event_p95_max_ms` | 607.9 (live 2026-04-28) | **≤300** (≥50% drop) | Real-world Qt event-loop spacing — primary north star (F2.4b). |
+| 2 | `overlap_drag_ui_lag_max_max_ms` | 363.9 (live 2026-04-28) | **≤180** (≥50% drop) | Real-world UI-callback lag — primary north star (F2.4b). |
+| 2 | `overlap_drag_handler_p95_max_ms` | 3.7 (live 2026-04-28) | hold ≤16 ms (no regression) | Pipeline-side per-frame work budget. |
+| 2 | `overlap_drag_background_decode_count_total` | 0 (live 2026-04-28) | hold at 0 | R3 invariant (PREFETCH/CACHE_WARM denied during drag). |
+| 2 | `overlap_settled_present_p95_ms` | 1 sample (TBD) | Establish in F0.5b (≥30 samples) | End-of-drag re-render latency. |
 
 **Real-world (added as F0.5b; runs the actual app):**
 
 | KPI | Why real-world only |
 |---|---|
+| `overlap_drag_event_p95_max_ms` / `overlap_drag_ui_lag_max_max_ms` | `[FAST_DRAG_KPI]` end-of-burst summaries are 100% sampled but only emit during real Qt drag bursts; synthetic runner has no Qt event loop. |
+| `overlap_drag_handler_p95_max_ms` / `overlap_drag_background_decode_count_total` | Same source — confirms handler budget and R3 invariant under real load. |
 | `overlap_settled_present_p95_ms` (≥30 settled samples) | Synthetic runner doesn't drive enough settled re-renders. |
-| Qt event-loop lag (`ui_event_loop_lag_ms`) during overlap | Synthetic runner skips Qt paint/blit/event loop entirely. |
+| `overlap_sentinel_breakdown.decode` (≥1 per drag-with-decode) | F2.1b sentinel emits — without this we cannot prove decode-cache misses are being captured under real load. |
 | `process_rss_mb` peak during overlap | Real DM subprocess + Qt allocations. |
 | Visual quality (drag-mode hash gate from F1.2) | Confirms no regression. |
 
@@ -283,7 +289,9 @@ A phase ships when **both**:
 
 The plan reaches "Final target" (formerly "100% improvement") when:
 - All four Tier-1 synthetic KPIs hit their targets above on the harsh anchor, **AND**
-- F0.5b real-world capture confirms no regression on `overlap_settled_present_p95_ms` and `ui_event_loop_lag_ms`, **AND**
+- F0.5b real-world capture shows `overlap_drag_event_p95_max_ms ≤ 300` and `overlap_drag_ui_lag_max_max_ms ≤ 180` (≥50% drop from the 2026-04-28 live anchor), **AND**
+- F0.5b real-world capture confirms no regression on `overlap_drag_handler_p95_max_ms` (≤16 ms), `overlap_drag_background_decode_count_total` (=0, R3 invariant), and `overlap_settled_present_p95_ms`, **AND**
+- F0.5b real-world capture has `overlap_sentinel_breakdown.decode ≥ 1` for any drag burst that hit a decode-cache miss (F2.1b sampler sanity check), **AND**
 - Drag-mode pixel hash gate from F1.2 stays green.
 
 ### Plan deltas from this retarget
@@ -1389,11 +1397,15 @@ After F10.1 we expect (re-targeted on the F0.5 harsh-preset synthetic anchor —
 
 **Tier 2 — real-world anchor (added in F0.5b; required for "Final target" claim):**
 
-| KPI | Source | Final target |
-|---|---|---|
-| `overlap_settled_present_p95_ms` (≥30 settled samples) | real-world capture | establish on F0.5b, then ≥30% drop |
-| `ui_event_loop_lag_ms` p95 during overlap | real-world capture | ≤25 ms |
-| Drag-mode pixel hash (F1.2 gate) | drag-mode harness | unchanged (no regression) |
+| KPI | Source | Live 2026-04-28 | Final target |
+|---|---|---|---|
+| `overlap_drag_event_p95_max_ms` | `[FAST_DRAG_KPI]` (F2.4b) | 607.9 | **≤300** (≥50% drop) |
+| `overlap_drag_ui_lag_max_max_ms` | `[FAST_DRAG_KPI]` (F2.4b) | 363.9 | **≤180** (≥50% drop) |
+| `overlap_drag_handler_p95_max_ms` | `[FAST_DRAG_KPI]` (F2.4b) | 3.7 | hold ≤16 ms |
+| `overlap_drag_background_decode_count_total` | `[FAST_DRAG_KPI]` (F2.4b) | 0 | hold at 0 (R3 invariant) |
+| `overlap_settled_present_p95_ms` (≥30 settled samples) | real-world capture | 1 sample (TBD) | establish on F0.5b, then ≥30% drop |
+| `overlap_sentinel_breakdown.decode` (per drag-with-decode) | `[OVERLAP_SCENARIO]` sentinel (F2.1b) | 0 (pre-F2.1b) | ≥1 |
+| Drag-mode pixel hash (F1.2 gate) | drag-mode harness | green | unchanged (no regression) |
 
 **Compat-only (kept in payload, NOT a target):**
 
