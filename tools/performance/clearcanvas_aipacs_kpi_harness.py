@@ -810,6 +810,48 @@ _OVERLAP_TAG_RE = re.compile(
     r"settled=(?P<settled>True|False)"
 )
 
+# F2.3: leading diagnostic-logging timestamp probe. Production emits
+# "YYYY-MM-DD HH:MM:SS.uuuuuu" (dot, microseconds); the synthetic runner's
+# default asctime emits "YYYY-MM-DD HH:MM:SS,mmm" (comma, milliseconds).
+# Both shapes are captured. The fractional component is normalized to
+# seconds (float) so the parser does not care which form is present.
+_OVERLAP_TS_RE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})\s+"
+    r"(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})"
+    r"(?:[.,](?P<frac>\d{1,6}))?"
+)
+
+
+def _parse_overlap_timestamp_seconds(line: str) -> Optional[float]:
+    """Return monotonic-ish seconds-since-epoch for a log line, or None.
+
+    Used by ``parse_overlap_log_text`` to derive ``overlap_effective_fps``
+    from wall-clock spacing of [OVERLAP_SCENARIO] samples (F2.3). We only
+    need a relative ordinal so we accept either microsecond or millisecond
+    precision and ignore the date when computing deltas across same-day
+    runs (callers always operate on a single contiguous log window).
+    """
+    m = _OVERLAP_TS_RE.match(line)
+    if not m:
+        return None
+    try:
+        h = int(m.group("h"))
+        mi = int(m.group("m"))
+        s = int(m.group("s"))
+        frac_str = m.group("frac") or ""
+        # Pad/truncate to microseconds.
+        frac_us = int((frac_str + "000000")[:6]) if frac_str else 0
+        # Date is included so cross-day runs don't wrap; treat as days*86400.
+        # We avoid datetime parsing to keep the harness import-free.
+        y, mo, d = (int(x) for x in m.group("date").split("-"))
+        # A simple ordinal: (y * 372 + mo * 31 + d) is monotonic for the
+        # narrow window we care about (single capture session). Multiply
+        # by seconds-per-day to keep units consistent with h/m/s/frac.
+        day_ord = (y * 372 + mo * 31 + d) * 86400.0
+        return day_ord + h * 3600.0 + mi * 60.0 + s + frac_us / 1_000_000.0
+    except (TypeError, ValueError):
+        return None
+
 
 def parse_overlap_log_text(text: str) -> Dict[str, Any]:
     """Extract overlap-scenario KPIs from runtime log text.
@@ -827,14 +869,16 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
     cache_counts: Counter[str] = Counter()
     settled_counts: Counter[str] = Counter()
     timeline_seconds: List[float] = []  # filled from leading "[ts]" if present
+    wall_seconds: List[float] = []  # F2.3: seconds-since-epoch per overlap sample
     # foreground_wait is reported by a different (future) tag; kept as 0.0
     # until F4.x ships its own [OVERLAP_FG_WAIT] sub-tag.
     foreground_wait_ms: List[float] = []
 
     # Optional leading-timestamp probe: most diagnostic logs begin with
-    # "YYYY-MM-DD HH:MM:SS,mmm" or "[HH:MM:SS.mmm]". We only need a
-    # monotonic ordinal, so we use the line index as a fallback when no
-    # timestamp is present.
+    # "YYYY-MM-DD HH:MM:SS,mmm" or "YYYY-MM-DD HH:MM:SS.uuuuuu". F2.3 uses
+    # the wall-clock delta between the first and last overlap sample to
+    # compute effective fps so the value reflects real frame cadence
+    # rather than per-sample compute time.
     for line_idx, raw in enumerate(text.splitlines()):
         m = _OVERLAP_TAG_RE.search(raw)
         if not m:
@@ -848,6 +892,9 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
         cache_counts[m.group("cache")] += 1
         settled_counts[m.group("settled")] += 1
         timeline_seconds.append(float(line_idx))
+        ts = _parse_overlap_timestamp_seconds(raw)
+        if ts is not None:
+            wall_seconds.append(ts)
 
     sample_count = len(total_ms)
     cache_hits = cache_counts.get("hit", 0) + cache_counts.get("surrogate", 0)
@@ -860,10 +907,28 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
     slow_frame_count = sum(1 for v in total_ms if v > 16.0)
     slow_frame_pct = (slow_frame_count / sample_count * 100.0) if sample_count else 0.0
 
-    # Effective FPS: 1000 / median total_ms (clamp to 0 when empty).
-    if total_ms:
+    # Effective FPS — F2.3:
+    #   primary: wall-clock delta between first and last sample timestamp
+    #            captured from the diagnostic_logging prefix. This reflects
+    #            real frame cadence (frames per second of wall time), not
+    #            per-frame compute time.
+    #   fallback: if <2 timestamps were parsed (e.g. the log lines did not
+    #            carry a leading asctime, as in unit-test fixtures built
+    #            via _build_log), fall back to the legacy formula
+    #            1000 / median(total_ms).
+    effective_fps_source = "none"
+    if len(wall_seconds) >= 2:
+        wall_span = wall_seconds[-1] - wall_seconds[0]
+        if wall_span > 0:
+            effective_fps = (len(wall_seconds) - 1) / wall_span
+            effective_fps_source = "wall_clock"
+        else:
+            effective_fps = 0.0
+    elif total_ms:
         median_total = _percentile(total_ms, 50.0)
         effective_fps = (1000.0 / median_total) if median_total > 0 else 0.0
+        if effective_fps > 0:
+            effective_fps_source = "median_total_ms"
     else:
         effective_fps = 0.0
 
@@ -890,6 +955,7 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
         "overlap_slow_frame_count_16ms": slow_frame_count,
         "overlap_slow_frame_pct_16ms": round(slow_frame_pct, 2),
         "overlap_effective_fps": round(effective_fps, 2),
+        "overlap_effective_fps_source": effective_fps_source,
         "overlap_foreground_wait_p95_ms": round(fg_wait_p95, 2),
         "overlap_pixel_hash_match_pct_settled": None,
         "overlap_pixel_hash_match_pct_surrogate": None,

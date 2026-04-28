@@ -57,6 +57,8 @@ Run these as a single named bundle `pytest -m regression_overlap` (label added i
 | `series_switch_ms` (warm) | +5% | drag-drop responsiveness |
 | `thumbnail_first_paint_ms` | +5% | sidebar responsiveness |
 | `download_throughput_mb_s` | -3% (default config) / -10% (F9 opt-in only) | DM cooperation must not steal throughput |
+| `overlap_priority_handoff_latency_ms` (drag-drop → critical worker started, p95) | -50% vs F3.5 baseline; absolute ceiling 5 s | added F3.5 |
+| `overlap_priority_retry_exhaustion_rate` (warnings per 10 drag-drops during overlap) | ≤0.05 (≈1 in 20) on PC A; 0 on idle baseline | added F3.5 |
 | `overlap_pixel_hash_match_pct` (settled) | 100% absolute | hard gate |
 | `overlap_pixel_hash_match_pct` (surrogate) | ≥99% absolute | hard gate |
 
@@ -76,6 +78,7 @@ Run these as a single named bundle `pytest -m regression_overlap` (label added i
 | F1 | Image-Quality Regression Harness | 3 | Low | F0 |
 | F2 | Overlap KPI lane in production code | 2 | Low | F0 |
 | F3 | Pre-queue cancellation guard | 3 | Low-Med | F0, F1 |
+| F3.5 | DM priority-handoff stall during overlap | 4 | Low-Med | F0, F2, F3 |
 | F4 | Foreground decode lane separation | 3 | Med | F1, F3 |
 | F5 | In-flight decode coalescing | 2 | Med | F1, F4 |
 | F6 | Frame prefetch during protected drag | 4 | Med (highest leverage) | F1, F2, F4 |
@@ -83,6 +86,106 @@ Run these as a single named bundle `pytest -m regression_overlap` (label added i
 | F8 | Header pre-warm via DM completion hook | 2 | Low | F1 |
 | F9 | DM disk-flush backpressure (opt-in) | 3 | Med | F1, F6 |
 | F10 | Acceptance, Documentation, Release | 3 | Low | all |
+
+---
+
+## Progress snapshot & plan revision (2026-04-28)
+
+This section captures what has actually shipped, what was learned, and the plan deltas that follow. It is appended in-place rather than rewriting the original phases so the audit trail is preserved.
+
+### Commits landed (in order)
+
+| Phase | Commit | Status | Notes |
+|---|---|---|---|
+| F0.2 | `bb8294fa` | DONE | overlap parser + `parse_overlap_log_text` |
+| F1.1 | `f3118ad4` | DONE | golden hash capture (settled) |
+| F1.2 | `4bdb422f` | DONE | drag-mode harness variant (surrogate ≥ 99%) |
+| F1.3 | `fbb9d105` | DONE | regression bundle wrapper `tools/dev/run_overlap_regression.ps1` (26 tests, ~9–13 s) |
+| F2.1 | `9f180262` | DONE | `[OVERLAP_SCENARIO]` emit at 3 return paths in `Lightweight2DPipeline.get_rendered_frame` |
+| F0.4 | `ddb773cf` | DONE | `tools/performance/synthetic_overlap_runner.py` + smoke test |
+
+Mirror parity verified for F2.1 (SHA256 match `C8D5893F…CCEAA1A`). F0.x / F1.x / F2.x changes touch only `tools/`, `tests/`, `docs/`, and `modules/viewer/fast/lightweight_2d_pipeline.py` (mirrored).
+
+### Real F0.4 synthetic baseline (committed as `overlap_baseline_v0_synthetic.json`)
+
+Runner config: 5 s @ 30 Hz set_slice, 10 Hz drip-feed, sample_rate=1, 60 slices 256×256.
+
+| KPI | Original plan target table | **Actual synthetic v0** | Implication |
+|---|---|---|---|
+| `overlap_set_slice_present_p95_ms` | v0=155, target ≤77 | **11.68** | Already 7× better than target. v0=155 was speculative. |
+| `overlap_decode_p95_ms` | v0=208, target ≤105 | **10.78** | Same — speculative. |
+| `overlap_cache_hit_ratio_pct` | v0=52, target ≥85 | **86.67** | Already past target. F7 widening may not be needed. |
+| `overlap_cache_breakdown` | n/a | hit=37, surrogate=93, decode=20 | Surrogate dominates as designed (R1+B3.7). |
+| `overlap_slow_frame_pct_16ms` | n/a | 2.67% | 4 frames / 150 — acceptable. |
+| `overlap_effective_fps` | v0=16, target ≥30 | **0.0** | **Parser bug** — fps comes back zero; needs F2.x fix (see Revision item R3 below). |
+| `overlap_pixel_hash_match_pct` (settled / surrogate) | 100 / ≥99 | null / null | Synthetic runner doesn't capture hashes; F1.x covers this in tests, not in KPI JSON. |
+
+### Production F2.1 verification (2026-04-28 23:01)
+
+Live run produced exactly **2** `[OVERLAP_SCENARIO]` lines for a real drag burst on a partially-downloaded series. Both were `cache=surrogate`, `settled=False`. This is functionally correct (R7 sampling, default 1-in-5) but **statistically thin** for KPI capture from organic user runs.
+
+### Findings that drive plan revision
+
+**R1. The original v0 baseline numbers (155 / 52 / 98 / 16) cannot be reproduced and should be treated as estimates, not measurements.** The synthetic v0 shows the FAST pipeline is already very close to the original "final targets" because subsequent rules (R1 surrogate-staleness break, R12 P1 prefetch, B3.7 nearest-cached surrogate, B3.12 disk pixel cache) shipped between when the original baseline was measured and now. Conclusion: the **definition of "100% improvement"** must be re-anchored on either (a) a real PC A manual repro OR (b) a deliberately harsher synthetic preset.
+
+**R2. The current synthetic preset is too kind to the pipeline.** drip_hz=10 + set_slice_hz=30 with 60 slices means within ~6 s the cache is fully populated and the rest of the run is mostly cache hits and surrogates. The realistic overlap scenario — 200+ slice series, sub-1 Hz drip during slow network, sustained 60+ Hz drag — is not exercised. Plan adjustment: **add a "harsh" preset** as an additional F0.4 invocation rather than as a new phase.
+
+**R3. `overlap_effective_fps = 0.0` is a parser defect**, not a real measurement. The harness `parse_overlap_log_text` derives fps from sample timestamps; the synthetic runner emits `total_ms` but not wall-clock spacing the parser can use. Plan adjustment: **fix in F2.x**, not in a phase by itself.
+
+**R4. F2.1 sampling produces too few production samples for organic capture.** Either (a) accept that synthetic runs are the canonical KPI lane and manual runs are sanity checks, or (b) add "sentinel" emits at decision boundaries (decode-fallback, drag-begin, drag-end, direction-flip) that bypass the 1-in-N sampler. Plan adjustment: **option (a) is canonical; option (b) is a small F2.x follow-up.**
+
+**R5. F3 (FAST pipeline cancellation guards) and F3.5 (DM coordinator priority handoff) touch disjoint code paths and have no shared state.** They can proceed in parallel; the only ordering constraint is that F3.5.4 (default-on flip) waits for F3 baselines so cross-PC measurements are clean.
+
+**R6. Cross-PC validation has not yet exercised PC B for any committed F-step.** F0.3 was the first cross-PC step and is still pending. Plan adjustment: **state explicitly that committed work up to and including F2.1 / F0.4 has been validated on PC A only**; the F0.3 cross-PC pass is the gating step before F3 can claim any baseline-relative win.
+
+### Plan deltas (additive, no prior commit invalidated)
+
+**Add Step F0.5 — Real-world v0 anchor (new).** Replace the speculative 155/52/98/16 numbers in the plan with one of:
+- (a) PC A manual overlap repro → commit `overlap_baseline_v0_real.json`. Procedure as F0.1 but with `AIPACS_OVERLAP_LOG_SAMPLE=1` and a series ≥200 slices, network throttled to ~10 MB/s. **Preferred.**
+- (b) If (a) is impractical, run synthetic with **harsh preset**: `--duration 30 --set-slice-hz 60 --drip-hz 1 --n-slices 240 --rows 512 --cols 512 --sample-rate 1`. Commit as `overlap_baseline_v0_synthetic_harsh.json`.
+- Whichever is captured, **rewrite the target table** in F0.2 (and the Success snapshot at the bottom of the plan) so "100% improvement" means ≥50% reduction relative to the new v0, not the speculative one. Done-When: a single canonical v0 JSON is referenced by every later phase.
+
+**Add Step F0.6 — Harsh-preset CLI flag in synthetic runner (new, small).** In `tools/performance/synthetic_overlap_runner.py`, add `--preset {default,harsh,realistic}` that bundles `--set-slice-hz/--drip-hz/--n-slices/--rows/--cols`. Default keeps current behavior. Done-When: smoke test covers all three presets.
+
+**Refine Step F0.4 — mark numbers as committed; freeze runner version at F0.4 until F0.6 lands.** No code change — documentation refinement only. The runner JSON includes `runner.version="F0.4"`; bump to `"F0.6"` only when the preset flag lands.
+
+**Refine Step F2.1 — add a "sentinel emit" sub-step F2.1b (new).** In `Lightweight2DPipeline.get_rendered_frame`, the existing 1-in-N sampler is unchanged, but four boundary sites bypass the sampler and always emit:
+- decode-fallback path (always emit when `cache=decode`),
+- first frame after `set_fast_interaction(True, ...)` (drag-begin),
+- first frame after `set_fast_interaction(False, ...)` (drag-end),
+- direction-flip detected in `_prefetch_around` (emit at next render call).
+Guard each with a per-pipeline boolean to ensure exactly one emit per boundary. Mirror to plugin package. Tests: extend `test_overlap_kpi_parser.py` to assert sentinel coverage. **Risk:** small log-volume increase; F2.1's ui_lag rule still holds because emits go through the queued listener (R7).
+
+**Refine Step F2.2 — reclassify as optional sanity check.** If F0.5 captures a real-world v0, F2.2's manual re-baseline becomes a sanity confirmation, not a blocking step. Plan rewording: "Recommended; not a phase gate."
+
+**Refine Step F0.1 — reclassify as optional.** Synthetic v0 (F0.4) + real-world anchor (F0.5) supersede the original F0.1 manual procedure. F0.1 is kept in the document for completeness but marked **optional** in the success snapshot.
+
+**Refine Step F0.3 — retarget to synthetic.** Cross-PC parity check uses `synthetic_overlap_runner.py` on PC B with the **same preset as PC A's anchor**. Manual scenario remains optional. This decouples F0.3 from human availability on PC B.
+
+**Refine Step F2.x — fix `overlap_effective_fps` parser (small).** In `tools/performance/clearcanvas_aipacs_kpi_harness.py::parse_overlap_log_text`, derive fps from the timestamp delta between first and last sample (using the diagnostic_logging timestamp prefix), not from intra-line `total_ms`. Add a regression test in `tests/performance/test_overlap_kpi_parser.py`. Tracked as **F2.3** (new step, after F2.2). Done-When: synthetic runner output reports a non-zero fps.
+
+**Refine Phase F7 (adaptive surrogate radius) — status: candidate for deferral.** If the real-world v0 (F0.5) shows `overlap_cache_hit_ratio_pct ≥ 85` already, F7 has no measurable upside and should be **skipped** rather than risking R1 (surrogate-staleness break) regressions. Decision moved into F0.5's Done-When: "if cache_hit_ratio ≥ 85 on real v0, mark F7 deferred and document in `OVERLAP_KPI_BASELINE.md`."
+
+**Refine Phase F3.5 — split F3.5.2 risk explicitly.** F3.5.1 instrumentation will reveal whether the production exhaustion is dominated by (i) peer-worker stuck >27 s OR (ii) reclamation race. If exclusively (i), F3.5.2 ships only the wall-clock budget extension (low risk) and the reclamation-race CAS is deferred to a follow-up step F3.5.5 (or dropped). If both, F3.5.2 ships as currently written. **Done-When for F3.5.1 must include this branch decision** before F3.5.2 starts coding.
+
+**Add parallelism note to Phase Index:** F3 and F3.5 may proceed in parallel; F3.5.4 default-on flip waits for F3 baselines to land so the F3.5 measurement is taken on a stable FAST pipeline.
+
+### Status of pending phases (after this revision)
+
+| Phase | New status | Blocking |
+|---|---|---|
+| F0.1 | OPTIONAL (manual sanity) | none |
+| F0.3 | RETARGETED to synthetic on PC B | none — can run now |
+| **F0.5** | **NEW — BLOCKING for F3+ baselines** | none — can run now |
+| **F0.6** | NEW — small, ship before F0.5 if option (b) chosen | none |
+| F2.1b | NEW — sentinel emits | F2.1 (done) |
+| F2.2 | OPTIONAL sanity | F0.5 |
+| F2.3 | NEW — fps parser fix | F0.4 (done) |
+| F3 | unchanged | F0.5, F2.3 |
+| F3.5 | unchanged (split risk per F3.5.1 branch decision) | F0.5 (for clean cross-PC measurement) |
+| F4–F6 | unchanged | F3 |
+| F7 | CONDITIONAL — may be deferred if F0.5 shows cache_hit_ratio ≥ 85 | F0.5 |
+| F8–F10 | unchanged | predecessors |
 
 ---
 
@@ -422,6 +525,193 @@ Run these as a single named bundle `pytest -m regression_overlap` (label added i
 **Success criteria:** ≥40% reduction in `overlap_cancelled_task_ratio` confirmed on both PCs.
 
 **Done-When:** baseline v2 committed; delta documented.
+
+---
+
+## Phase F3.5 — DM priority-handoff stall during overlap
+
+**Phase goal:** Eliminate the silent failure mode where a drag-dropped (CRITICAL-promoted) series fails to start a download worker within the documented retry window, surfacing as `[INTENT] Priority start retry exhausted ... after recovery attempts=3` warnings. Three independent production sessions on 2026-04-28 (study `...85689` series=202, `...85688` series=202, `...85691` series=302) all hit this exhaustion, indicating it is systematic, not noise. The user observed first image appearing within ~1 s (progressive cache covered the gap) but the CRITICAL download for the dragged series never started — a direct overlap-scenario failure.
+
+**Root-cause summary (pre-investigation hypothesis, to be confirmed in F3.5.1):**
+- `SeriesIntentCoordinator.schedule_priority_start_retry` (`modules/download_manager/coordinator/series_intent_coordinator.py`) runs a primary 90-attempt × 200 ms loop (= 18 s window). On primary exhaustion it enters a single "recovery" round of 3 attempts × 3000 ms (= 9 s) with `_recovery=True`. Total nominal window ≈ 27 s.
+- The exhaustion warning fires only when (a) primary 90 attempts AND (b) recovery 3 attempts both fail to find a free pool slot AND (c) the study state at end is NOT `is_auto_paused` and the error_message does not contain `preemption|higher priority`. The `recovery attempts=3` text is the recovery sub-counter, not the main budget — but the warning currently does not say which counter exhausted, which is what made the prior log read ("only 3 attempts") confusing.
+- Likely failure modes: (i) the worker that needs to release the pool slot is stuck in long socket I/O (>27 s on a slow batch), (ii) the worker did release but `_start_next_pending` never picked the CRITICAL study because of a state-store race (PENDING ↔ PAUSED transitions during preemption), (iii) the pool-freed event-driven callback (`on_worker_removed` → `_start_next_pending`) and the poller raced with a state update that briefly took the study out of the eligible set.
+- Whatever the cause, the expected user-visible behavior is: dragged series goes CRITICAL → starts downloading within seconds. The current behavior is: dragged series remains PENDING for 27+ s and then permanently abandons critical promotion (until the next coordinator wake-up, which may or may not come).
+
+**Scope justification (FAST viewer focus):** This bug is in the DM coordinator, not the FAST pipeline. It is included in the FAST overlap plan because it directly degrades the same-study overlap scenario: when the user drag-drops a partially-downloaded series during another download, they expect the new series to take priority and finish quickly. A 27 s + abandonment latency for that handoff is exactly the overlap responsiveness regression this plan exists to fix. Scope limited to the priority-handoff path; broader DM rework is out of scope.
+
+**Cross-cutting invariants (must hold across F3.5):**
+- DM tests `tests/download_manager/run_dm_test.py` S1–S27 must stay green every step.
+- `tests/download_manager/test_dm_stress.py` H1–H10 stays green.
+- `tests/load/run_load_test.py` L1–L11 stays green (covers preemption + pool-freed callback).
+- No change to default behavior unless explicitly behind an env flag; rollback is `git revert` per step.
+- R-rules R20–R26 in F10.2 step expand to R20–R28 to absorb F3.5 emissions.
+
+### Step F3.5.1 — Diagnose & instrument the priority-handoff path
+
+**Goal:** Turn the silent stall into a measurable, parseable signal so the harness can baseline `overlap_priority_handoff_latency_ms` and so the next steps have ground-truth data on which exit branch is hit.
+
+**Actions:**
+1. Read `schedule_priority_start_retry` end-to-end and document the actual control flow in a sub-section of `docs/architecture/network-architecture.md` § "DM coordinator priority-handoff path". Include: the 90 × 200 ms primary window, the 3 × 3000 ms recovery window, the `_token` / `_priority_retry_tokens` map staleness check, the `is_auto_paused` / preemption-error-message expected-window branch, and the interaction with the `WorkerPool.on_worker_removed` event-driven callback.
+2. In `series_intent_coordinator.py`, add a structured INFO line `[INTENT_PRIORITY] tag=<begin|tick|defer|recover|exhaust|started> study=<uid> series=<sn> attempt=<i>/<max> recovery=<bool> pool_busy=<bool> pool_capacity=<used>/<total> state=<status> auto_paused=<bool> elapsed_ms=<int> token=<int>` at:
+   - `_begin_priority_retry` (tag=begin, elapsed_ms=0).
+   - Each retry tick before the `can_add_worker` check (tag=tick).
+   - The `_defer` schedule paths (tag=defer).
+   - Recovery transition (tag=recover).
+   - Both exhaust branches (tag=exhaust, with a new `branch=primary|recovery` field) — change the existing WARNING to also include `branch=recovery` so log parsers can distinguish primary vs recovery exhaustion.
+   - `_start_download_worker` success path (tag=started, with `elapsed_ms` from begin).
+3. INFO emission must use `extra={"component": "download"}` so it routes through the queued listener (does not block the main thread per R7) and is consistently parseable.
+4. `elapsed_ms` is computed from a per-token timestamp dict `_priority_retry_started_ms[study_uid]` populated in `_begin_priority_retry` and removed in `_clear_priority_retry`. Bound the dict via existing token cleanup; no separate eviction needed.
+5. Default-off env flag `AIPACS_INTENT_PRIORITY_TRACE=0` (when `0`, only `begin`, `recover`, `exhaust`, `started` are emitted; when `1`, every tick is emitted). Document in copilot-instructions.md F10.2 R-rule list.
+
+**Structures to change:**
+- `modules/download_manager/coordinator/series_intent_coordinator.py` — add tagged emit helper + 6 emit sites + `_priority_retry_started_ms` dict. Mirror copy under `builder/plugin package/packages/download_manager/payload/python/modules/download_manager/coordinator/series_intent_coordinator.py` updated in same commit.
+- `tools/performance/clearcanvas_aipacs_kpi_harness.py` — new parser `parse_priority_handoff_log_text(text) -> {samples, p50_ms, p95_ms, exhaustion_count, primary_exhaust_count, recovery_exhaust_count, started_count}` covering the `[INTENT_PRIORITY]` lines.
+- `docs/architecture/network-architecture.md` — new sub-section.
+- `docs/pipelines/download-pipeline.md` — short reference to the new log tag.
+
+**KPIs to review (snapshot only this step):**
+- `overlap_priority_handoff_latency_ms` (p50, p95) — drag-drop begin → started, parsed from `[INTENT_PRIORITY] tag=started elapsed_ms=...`.
+- `overlap_priority_retry_primary_exhaust_count`, `overlap_priority_retry_recovery_exhaust_count` — per session.
+
+**Measurement tools:**
+- KPI harness (extended).
+- A new contract test `tests/performance/test_priority_handoff_kpi_parser.py` round-trips the exact emit format, mirroring `test_overlap_kpi_parser.py` (F2.1). Must include one round-trip per tag and assert the parser handles the diagnostic_logging prefix.
+
+**Tests:**
+- New: `tests/performance/test_priority_handoff_kpi_parser.py` (≥6 tests covering each tag + exhaust branch field).
+- Regression: `tests/download_manager/run_dm_test.py` S22 (coordinator latency) — must still measure <5 ms on the negotiate path.
+- Regression: full DM and load bundles green.
+- New: `tests/download_manager/test_priority_handoff_instrumentation.py` (≥3 tests) verifying that a stub coordinator emits the expected sequence (`begin → tick* → started`) with monotonic `elapsed_ms` and that `_priority_retry_started_ms` is cleared on success and on exhaust.
+
+**Documentation:**
+- `docs/architecture/network-architecture.md` — handoff path diagram.
+- `docs/pipelines/download-pipeline.md` — log tag reference.
+- `.github/copilot-instructions.md` Test coverage map — add the two new test files.
+
+**Success criteria:**
+- Production log run (PC A overlap repro) emits at least one full `begin … started` chain with `elapsed_ms` populated.
+- KPI harness parses the new lines with zero `unparsed_lines` for `[INTENT_PRIORITY]` records.
+- All regression bundles green per the global no-regression matrix.
+- No change to existing DM behavior: only added emit + dict + parser.
+
+**Done-When:**
+- Commit `[F3.5.1]` with mirror copy + parser + tests + docs landed.
+- `overlap_priority_handoff_latency_ms` line appears in `OVERLAP_KPI_BASELINE.md` snapshot v2.5 (post-F3 baseline + this instrumentation; can be the same JSON file with new fields).
+
+### Step F3.5.2 — Reconcile retry budget and add early-exit on cancelled-while-pool-busy
+
+**Goal:** Make the priority-handoff actually succeed in the dominant production failure mode (peer worker takes longer than 27 s to release, OR the released worker is immediately reclaimed by a non-CRITICAL pending task before the CRITICAL retry ticks).
+
+**Actions:**
+1. **Decision-tree fix (no heuristic).** Replace the recovery-round exit condition with: "keep retrying until either (a) `state.status` no longer eligible (DOWNLOADING / COMPLETED / CANCELLED), or (b) the worker_pool slot has been freed AND the study still has not started after one extra `interval_ms` tick (indicates structural reclamation race, see step 2), or (c) hard absolute timeout `_priority_handoff_hard_timeout_ms` (default 60 000 ms) reached." The 90 + 3 split becomes a single capped poller against a wall-clock budget; the warning text changes from `recovery attempts=N` to `total elapsed_ms=N hard_timeout_ms=M reason=<pool_busy|reclaimed|state_lost>`.
+2. **Reclamation-race fix.** When a CRITICAL retry ticks and finds `worker_pool.can_add_worker() == True` but `_start_download_worker` returns False (already-pending different study claimed the slot in the same event-loop pass), atomically transition the CRITICAL study back to PENDING and trigger `_start_next_pending` AT THE FRONT of the priority queue (i.e., a one-shot priority-aware reorder rather than FIFO scan). Implementation: extend `_start_next_pending` with an optional `prefer_study_uid` parameter; the retry path passes the CRITICAL study uid when reclamation is detected.
+3. **Default-off cohort.** Behavior change is gated by env var `AIPACS_INTENT_HANDOFF_V2=0`. When `0`, the legacy 90 + 3 split runs unchanged. When `1`, the new wall-clock + reclamation-aware path runs. Defaults stay legacy until F3.5.4 baseline confirms no regression. Documented in copilot-instructions.md.
+4. **Coordinator latency contract preserved.** S22 must still measure <5 ms on the negotiate path; the new logic only changes the *retry tail*, not the negotiation entry path.
+5. **Mirror parity** for the coordinator file.
+
+**Structures to change:**
+- `modules/download_manager/coordinator/series_intent_coordinator.py` (+ mirror).
+- `modules/download_manager/core/constants.py` — add `INTENT_HANDOFF_HARD_TIMEOUT_MS = 60000` and `INTENT_HANDOFF_V2_DEFAULT = False`.
+- `modules/download_manager/state/state_store.py` — only if reclamation-race fix needs an atomic compare-and-swap helper for status (`update_if_status(uid, expected, new) -> bool`); add it as additive method, do not change `update`.
+
+**KPIs to review:**
+- `overlap_priority_handoff_latency_p95_ms` — must drop ≥50% vs F3.5.1 baseline OR achieve absolute ceiling 5 000 ms (whichever is met first).
+- `overlap_priority_retry_recovery_exhaust_count` — must drop to 0 in the synthetic 20-drag-drop repro.
+- `overlap_set_slice_present_p95_ms` — must NOT regress vs F3 baseline (handoff change must not steal main-thread time).
+- `download_throughput_mb_s` — must stay within −3% (the new path may briefly contend on the state-store CAS).
+
+**Measurement tools:**
+- KPI harness (parser from F3.5.1).
+- A new synthetic harness `tools/performance/synthetic_priority_handoff_runner.py` that drives 20 simulated drag-drop priority promotions with a held pool slot (peer worker mocked to release after 25 s) and reports the parsed KPIs. Pattern follows `synthetic_overlap_runner.py` (F0.4).
+
+**Tests:**
+- New: `tests/download_manager/test_priority_handoff_v2.py` — at least: (a) primary path success (worker freed at 5 s), (b) hard-timeout path (worker never frees → exhaust at 60 s with reason=`pool_busy`), (c) reclamation-race path (`prefer_study_uid` wins), (d) legacy mode (env=0) behavior unchanged, (e) S22 latency contract.
+- Regression: full DM (S1–S27), DM stress (H1–H10), load (L1–L11), network bundle.
+- Regression: F1 overlap pixel-quality bundle (no FAST viewer code touched, but the bundle must be green to attest unchanged).
+
+**Documentation:**
+- `docs/architecture/network-architecture.md` — update handoff path diagram with the wall-clock + reclamation branches.
+- `docs/pipelines/download-pipeline.md` — new R-rule note "Priority handoff wall-clock budget".
+- `.github/copilot-instructions.md` § Critical rules — new R-rule (placeholder for F10.2 to renumber): "Priority handoff retry uses a single wall-clock budget (default 60 s) under `AIPACS_INTENT_HANDOFF_V2=1`; legacy 90+3 split is the default until F3.5.4 baseline confirms."
+
+**Success criteria:**
+- All new tests green.
+- All regression bundles green per the global no-regression matrix.
+- With `AIPACS_INTENT_HANDOFF_V2=1`, synthetic 20-drag-drop produces 0 exhaustion warnings.
+- With `AIPACS_INTENT_HANDOFF_V2=0`, behavior matches commit prior to this step (negative test).
+
+**Done-When:**
+- Commit `[F3.5.2]` with mirror copy.
+- Synthetic JSON `priority_handoff_v2_pre.json` and `priority_handoff_v2_post.json` committed under `generated-files/benchmarks/`.
+
+### Step F3.5.3 — Drag-drop UX guardrail when handoff still fails
+
+**Goal:** Even with F3.5.2, a 60 s hard-timeout exhaustion is *possible* in the wild (network stall on the peer worker). When it happens, the user must know — silently abandoning a CRITICAL drag-drop is the worst UX. Add a minimal, non-intrusive UX guardrail.
+
+**Actions:**
+1. On exhaust (`tag=exhaust reason=pool_busy|reclaimed|state_lost`), the coordinator emits a Qt signal `priorityHandoffFailed(study_uid: str, series_number: int, reason: str)` (new signal on `SeriesIntentCoordinator`).
+2. `DownloadManagerWidget` connects to this signal and surfaces a passive toast in the DM table row (status column shows `Priority stalled — click to retry`). Click → `request_critical_series` is re-issued with a fresh token; legacy `_dm_notify_last_ts` cooldown (500 ms) is bypassed for this manual retry only.
+3. ViewerController consumes the same signal (already a DM observer) only to log; no viewer-side popup. The 60 s ceiling should make this rare; popups would feel worse than the current silent failure.
+4. Default-on for the toast (visible UX is the safer default once the underlying bug is fixed); env flag `AIPACS_INTENT_HANDOFF_TOAST=1` to disable for headless runs.
+5. Keep the WARNING log line; the toast is additive.
+
+**Structures to change:**
+- `modules/download_manager/coordinator/series_intent_coordinator.py` — new signal.
+- `modules/download_manager/ui/widget/_dm_priority.py` — signal connection + toast row.
+- `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_viewer_controller.py` — passive logger only.
+- Mirror copies for all touched files.
+
+**KPIs to review:**
+- `overlap_priority_retry_exhaustion_rate` — must remain ≤0.05 (≈1 in 20 drag-drops in synthetic stress).
+- `series_switch_ms` (warm) — must stay within +5%.
+- `cpu_p95_pct` (idle) — toast widget must be inert when no exhaustion event.
+
+**Measurement tools:** existing harness + synthetic runner from F3.5.2.
+
+**Tests:**
+- New: `tests/download_manager/test_priority_handoff_signal.py` — signal fires exactly once per exhaustion; manual-retry path bypasses cooldown; default-off env disables toast.
+- New: `tests/ui_services/test_dm_priority_handoff_toast.py` — widget renders + click handler invokes `request_critical_series`.
+- Regression: full DM bundle, load bundle, F1 bundle, smoke imports.
+
+**Documentation:**
+- `docs/architecture/home-ui-services.md` — add note (DM widget is in module_packages, but ViewerController integration touches home_ui).
+- `.github/copilot-instructions.md` — R-rule placeholder "Priority handoff exhaustion surfaces a toast, never silent".
+
+**Success criteria:**
+- Toast renders in synthetic stress when forced exhaustion is induced; click triggers a successful re-promotion (with worker freed before this manual retry's hard timeout).
+- All regression bundles green.
+
+**Done-When:** Commit `[F3.5.3]` with mirror copy and tests.
+
+### Step F3.5.4 — Default-on rollout and cross-PC verification
+
+**Goal:** Flip `AIPACS_INTENT_HANDOFF_V2` default to `1` and lock in the F3.5 baseline.
+
+**Actions:**
+1. Change `INTENT_HANDOFF_V2_DEFAULT = True` in `core/constants.py` (+ mirror).
+2. Run synthetic_priority_handoff_runner on PC A and PC B; commit both JSONs as `priority_handoff_v2_pcA.json` and `priority_handoff_v2_pcB.json` under `generated-files/benchmarks/`.
+3. Run the full overlap repro on PC A and PC B (drag-drop during heavy download on a real study). Capture viewer + download diagnostics logs and parse with the harness; verify zero `[INTENT] Priority start retry exhausted` warnings.
+4. If either PC shows even one exhaustion, do NOT flip default; revert step 1 and open a follow-up step F3.5.5 to dig deeper. Per global rule 5 (cross-PC), both PCs must be clean before declaring done.
+
+**Structures to change:**
+- `modules/download_manager/core/constants.py` (+ mirror).
+- `docs/performance/OVERLAP_KPI_BASELINE.md` — add v3.5 row.
+
+**KPIs to review:** all overlap_* + priority_handoff_*.
+
+**Tests:** all from F3.5.1, F3.5.2, F3.5.3 + the global no-regression matrix.
+
+**Documentation:**
+- `docs/releases/RELEASE_NOTES.md` — entry for F3.5 default-on.
+- `.github/copilot-instructions.md` — promote the F3.5 R-rule placeholder to a permanent R-rule (numbered in F10.2).
+
+**Success criteria:**
+- ≥50% reduction in `overlap_priority_handoff_latency_p95_ms` vs F3.5.1 baseline (PC A and PC B).
+- Zero `Priority start retry exhausted` warnings across both PC overlap repros.
+- All regression bundles green.
+
+**Done-When:** Commit `[F3.5.4]` with both PC JSONs + baseline doc updated; `AIPACS_INTENT_HANDOFF_V2=1` is the default.
 
 ---
 
@@ -837,7 +1127,7 @@ Run these as a single named bundle `pytest -m regression_overlap` (label added i
 
 **Goal:** Add all new R-rules generated in F3–F9 to the canonical rule list.
 
-**Actions:** consolidate R-rules emitted in each step; assign R20–R26 numbers; insert under "v2.3.6 stack-drag smoothness rules".
+**Actions:** consolidate R-rules emitted in each step; assign R20–R28 numbers (R20–R26 for F3–F9; R27–R28 for F3.5 priority-handoff); insert under "v2.3.6 stack-drag smoothness rules".
 
 **Structures to change:** `.github/copilot-instructions.md`.
 
@@ -900,6 +1190,7 @@ Every step is one commit. If any checklist item fails after merge, the step's co
 | Phase | Worst-case failure | Detection | Rollback |
 |---|---|---|---|
 | F3 | Stale gen check causes legitimate prefetch to be rejected | `overlap_prefetch_admitted_per_s` drops to 0 | Revert single commit |
+| F3.5 | Wall-clock budget hides a real cancel hang OR reclamation-race fix corrupts state-store CAS | `priority_handoff_p95_ms` worsens, OR DM stress H1–H10 fails, OR S22 latency contract breaks | Set `AIPACS_INTENT_HANDOFF_V2=0` (env flip, no code revert needed); if state-store CAS is implicated, `git revert` the F3.5.2 commit |
 | F4 | New executor leaks threads on series close | `thread_count_p95` grows over time in F5.2 stress | Disable executor + fall back to in-line |
 | F5 | Event leak / deadlock | RSS grows; hangs in 60-min stress | Single-commit revert |
 | F6 | Frame prefetch races W/L change → wrong WL on screen | F1 pixel hash diff | Revert F6.2 only; F6.1 (admission rule) is harmless if unused |
@@ -917,12 +1208,14 @@ After F10.1 we expect (approximate, from PC A synthetic + manual):
 
 | KPI | v0 baseline | Final target | Expected (modeled) |
 |---|---|---|---|
-| `overlap_set_slice_present_p95_ms` | 155 | ≤77 | ~50–60 |
-| `overlap_decode_p95_ms` | 208 | ≤105 | ~70–90 |
-| `overlap_cache_hit_ratio_pct` | 52 | ≥85 | ~85–90 |
-| `overlap_cancelled_task_ratio` | 98 | ≤30 | ~25–35 |
-| `overlap_effective_fps` | 16 | ≥30 | ~30–40 |
+| `overlap_set_slice_present_p95_ms` | 155 (speculative; see Revision R1) | ≤77 | ~50–60 |
+| `overlap_decode_p95_ms` | 208 (speculative) | ≤105 | ~70–90 |
+| `overlap_cache_hit_ratio_pct` | 52 (speculative) | ≥85 | ~85–90 |
+| `overlap_cancelled_task_ratio` | 98 (speculative) | ≤30 | ~25–35 |
+| `overlap_effective_fps` | 16 (speculative; parser fix in F2.3) | ≥30 | ~30–40 |
 | `overlap_pixel_hash_match_pct` (settled) | n/a | 100 | 100 |
 | `overlap_pixel_hash_match_pct` (surrogate) | n/a | ≥99 | ≥99 |
 
 This represents ≥100% improvement (i.e., halving) on the primary KPI and the secondary cache/fps KPIs, with image-quality regression ruled out by Phase F1.
+
+**Important caveat (added 2026-04-28):** The v0 baseline column above predates the F0.4 synthetic measurement and the post-2.3.x rule additions (R1, R12, B3.7, B3.12). The synthetic v0 (committed) shows `set_slice_p95=11.68`, `cache_hit_ratio=86.67`, `slow_frame_pct=2.67`. Until F0.5 captures a real-world or harsh-synthetic v0, treat this Success snapshot as **aspirational**, not a contract. F0.5 rewrites this table with measured numbers and revises "Final target" to mean ≥50% reduction relative to those measured numbers — see "Progress snapshot & plan revision" section above.

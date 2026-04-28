@@ -178,3 +178,90 @@ def test_parse_overlap_log_text_matches_production_emit_format():
         "settled_true": 1,
         "settled_false": 2,
     }
+
+
+# ─── F2.3: effective_fps wall-clock derivation ─────────────────────────────
+
+
+def test_effective_fps_uses_wall_clock_delta_when_timestamps_present():
+    """F2.3: when log lines carry a YYYY-MM-DD HH:MM:SS.uuuuuu prefix,
+    fps is derived from (n-1) / (last_ts - first_ts), not from median
+    total_ms. This matches real frame cadence regardless of how cheap
+    the per-frame compute is.
+
+    The synthetic baseline reported overlap_effective_fps=0.00 because
+    the previous implementation used 1000/median(total_ms) and many
+    surrogate samples report total_ms=0.00 → division by zero collapse.
+    """
+    # 5 samples spaced 100ms apart starting at 22:10:11.000000
+    # → wall span = 0.4s, fps = (5-1)/0.4 = 10.0
+    text = _build_log(
+        "2026-04-28 22:10:11.000000 | INFO | x | "
+        "[OVERLAP_SCENARIO] frame idx=1 cache=surrogate decode_ms=0.00 wl_ms=0.00 total_ms=0.00 settled=False",
+        "2026-04-28 22:10:11.100000 | INFO | x | "
+        "[OVERLAP_SCENARIO] frame idx=2 cache=surrogate decode_ms=0.00 wl_ms=0.00 total_ms=0.00 settled=False",
+        "2026-04-28 22:10:11.200000 | INFO | x | "
+        "[OVERLAP_SCENARIO] frame idx=3 cache=hit decode_ms=0.00 wl_ms=1.00 total_ms=2.00 settled=False",
+        "2026-04-28 22:10:11.300000 | INFO | x | "
+        "[OVERLAP_SCENARIO] frame idx=4 cache=hit decode_ms=0.00 wl_ms=1.00 total_ms=2.00 settled=False",
+        "2026-04-28 22:10:11.400000 | INFO | x | "
+        "[OVERLAP_SCENARIO] frame idx=5 cache=hit decode_ms=0.00 wl_ms=1.00 total_ms=2.00 settled=False",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_sample_count"] == 5
+    assert payload["overlap_effective_fps_source"] == "wall_clock"
+    assert payload["overlap_effective_fps"] == pytest.approx(10.0, rel=0.01)
+
+
+def test_effective_fps_falls_back_to_median_when_no_timestamps():
+    """F2.3: untimestamped fixtures (test fixtures built via _build_log)
+    must still produce a non-zero fps via the legacy 1000/median formula.
+    """
+    text = _build_log(
+        "[OVERLAP_SCENARIO] frame idx=1 cache=hit decode_ms=0.0 wl_ms=1.0 total_ms=4.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=2 cache=hit decode_ms=0.0 wl_ms=1.0 total_ms=4.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=3 cache=hit decode_ms=0.0 wl_ms=1.0 total_ms=4.0 settled=False",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_effective_fps_source"] == "median_total_ms"
+    assert payload["overlap_effective_fps"] == pytest.approx(250.0, rel=0.01)
+
+
+def test_effective_fps_supports_comma_milliseconds_format():
+    """F2.3: the synthetic runner default asctime emits
+    ``YYYY-MM-DD HH:MM:SS,mmm`` (comma + 3-digit ms) instead of the
+    production microsecond form. Both must parse identically.
+    """
+    text = _build_log(
+        "2026-04-28 22:10:11,000 | INFO | x | "
+        "[OVERLAP_SCENARIO] frame idx=1 cache=hit decode_ms=0.0 wl_ms=1.0 total_ms=2.0 settled=False",
+        "2026-04-28 22:10:11,500 | INFO | x | "
+        "[OVERLAP_SCENARIO] frame idx=2 cache=hit decode_ms=0.0 wl_ms=1.0 total_ms=2.0 settled=False",
+        "2026-04-28 22:10:12,000 | INFO | x | "
+        "[OVERLAP_SCENARIO] frame idx=3 cache=hit decode_ms=0.0 wl_ms=1.0 total_ms=2.0 settled=False",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_effective_fps_source"] == "wall_clock"
+    # 3 samples over 1.0s wall span = 2 fps
+    assert payload["overlap_effective_fps"] == pytest.approx(2.0, rel=0.01)
+
+
+def test_effective_fps_zero_for_empty_input():
+    payload = parse_overlap_log_text("")
+    assert payload["overlap_effective_fps"] == 0.0
+    assert payload["overlap_effective_fps_source"] == "none"
+
+
+def test_effective_fps_zero_when_all_timestamps_identical():
+    """Defensive: if every sample has the same timestamp (degenerate
+    capture), we cannot derive a wall-clock rate and must report 0.0
+    rather than a division-by-zero or nan.
+    """
+    text = _build_log(
+        "2026-04-28 22:10:11.000000 | INFO | x | "
+        "[OVERLAP_SCENARIO] frame idx=1 cache=hit decode_ms=0.0 wl_ms=1.0 total_ms=2.0 settled=False",
+        "2026-04-28 22:10:11.000000 | INFO | x | "
+        "[OVERLAP_SCENARIO] frame idx=2 cache=hit decode_ms=0.0 wl_ms=1.0 total_ms=2.0 settled=False",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_effective_fps"] == 0.0

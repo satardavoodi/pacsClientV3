@@ -270,7 +270,7 @@ def run_synthetic_overlap(
         elapsed = time.perf_counter() - started
         payload["runner"] = {
             "name": "synthetic_overlap_runner",
-            "version": "F0.4",
+            "version": "F0.6",
             "duration_s": round(elapsed, 3),
             "frames_driven": frame_count,
             "set_slice_hz": int(set_slice_hz),
@@ -317,17 +317,26 @@ def _build_argparser() -> argparse.ArgumentParser:
         prog="synthetic_overlap_runner",
         description="F0.4 — headless reproducer for the FAST overlap scenario.",
     )
-    p.add_argument("--duration", type=float, default=5.0,
-                   help="Drag-burst duration in seconds (default: 5.0).")
-    p.add_argument("--set-slice-hz", type=int, default=30,
-                   help="Synthetic stack-drag rate in Hz (default: 30).")
-    p.add_argument("--drip-hz", type=int, default=10,
-                   help="Mid-download arrival simulation rate (accepted but no-op in v0).")
-    p.add_argument("--sample-rate", type=int, default=1,
-                   help="AIPACS_OVERLAP_LOG_SAMPLE value (default: 1 = every frame).")
-    p.add_argument("--n-slices", type=int, default=60)
-    p.add_argument("--rows", type=int, default=256)
-    p.add_argument("--cols", type=int, default=256)
+    p.add_argument("--preset", choices=("default", "harsh", "realistic"),
+                   default="default",
+                   help="F0.6: bundle of (duration / set-slice-hz / drip-hz / "
+                        "n-slices / rows / cols / sample-rate). 'default' "
+                        "preserves v0 behavior; 'harsh' simulates 200+ slice "
+                        "series + slow drip + sustained 60 Hz drag (used by "
+                        "F0.5 anchor capture); 'realistic' approximates a "
+                        "typical CT review session. Explicit per-flag "
+                        "arguments override the preset.")
+    p.add_argument("--duration", type=float, default=None,
+                   help="Drag-burst duration in seconds (preset default).")
+    p.add_argument("--set-slice-hz", type=int, default=None,
+                   help="Synthetic stack-drag rate in Hz (preset default).")
+    p.add_argument("--drip-hz", type=int, default=None,
+                   help="Mid-download arrival simulation rate (preset default).")
+    p.add_argument("--sample-rate", type=int, default=None,
+                   help="AIPACS_OVERLAP_LOG_SAMPLE value (preset default).")
+    p.add_argument("--n-slices", type=int, default=None)
+    p.add_argument("--rows", type=int, default=None)
+    p.add_argument("--cols", type=int, default=None)
     p.add_argument("--output", type=Path,
                    default=Path("overlap_baseline_v0_synthetic.json"),
                    help="Output JSON path (default: overlap_baseline_v0_synthetic.json).")
@@ -336,25 +345,82 @@ def _build_argparser() -> argparse.ArgumentParser:
     return p
 
 
+# F0.6: preset definitions. Keys must match the kwargs of run_synthetic_overlap.
+# 'default' is identical to the v0 F0.4 baseline. 'harsh' is the F0.5 anchor
+# preset (200+ slices, slow drip, sustained 60 Hz drag, 30 s window). 'realistic'
+# approximates a typical CT review session (medium drip, moderate drag).
+_PRESETS: Dict[str, Dict[str, Any]] = {
+    "default": {
+        "duration_s": 5.0,
+        "set_slice_hz": 30,
+        "drip_hz": 10,
+        "sample_rate": 1,
+        "n_slices": 60,
+        "rows": 256,
+        "cols": 256,
+    },
+    "harsh": {
+        "duration_s": 30.0,
+        "set_slice_hz": 60,
+        "drip_hz": 1,
+        "sample_rate": 1,
+        "n_slices": 240,
+        "rows": 512,
+        "cols": 512,
+    },
+    "realistic": {
+        "duration_s": 15.0,
+        "set_slice_hz": 45,
+        "drip_hz": 5,
+        "sample_rate": 5,
+        "n_slices": 150,
+        "rows": 512,
+        "cols": 512,
+    },
+}
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = _build_argparser().parse_args(argv)
+    # Resolve preset → per-flag override order. None means "use preset value".
+    preset = _PRESETS[args.preset]
+    cli_overrides = {
+        "duration_s": args.duration,
+        "set_slice_hz": args.set_slice_hz,
+        "drip_hz": args.drip_hz,
+        "sample_rate": args.sample_rate,
+        "n_slices": args.n_slices,
+        "rows": args.rows,
+        "cols": args.cols,
+    }
+    resolved = {k: (v if v is not None else preset[k]) for k, v in cli_overrides.items()}
     payload = run_synthetic_overlap(
-        duration_s=args.duration,
-        set_slice_hz=args.set_slice_hz,
-        drip_hz=args.drip_hz,
-        sample_rate=args.sample_rate,
-        n_slices=args.n_slices,
-        rows=args.rows,
-        cols=args.cols,
+        duration_s=resolved["duration_s"],
+        set_slice_hz=resolved["set_slice_hz"],
+        drip_hz=resolved["drip_hz"],
+        sample_rate=resolved["sample_rate"],
+        n_slices=resolved["n_slices"],
+        rows=resolved["rows"],
+        cols=resolved["cols"],
         output_path=args.output,
         keep_log=args.keep_log,
     )
+    # Stamp the preset name into the runner section so JSON consumers can
+    # distinguish baseline vs anchor captures without reading every CLI flag.
+    runner_meta = payload.setdefault("runner", {})
+    runner_meta["preset"] = args.preset
+    if args.output is not None:
+        try:
+            args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            pass
     metrics = payload.get("overlap_metrics", {})
-    print(f"[F0.4] frames_driven={payload.get('runner', {}).get('frames_driven')} "
+    print(f"[F0.6] preset={args.preset} "
+          f"frames_driven={payload.get('runner', {}).get('frames_driven')} "
           f"sample_count={metrics.get('overlap_sample_count')} "
           f"cache_breakdown={metrics.get('overlap_cache_breakdown')} "
           f"settled_breakdown={metrics.get('overlap_settled_breakdown')}")
-    print(f"[F0.4] wrote {args.output}")
+    print(f"[F0.6] wrote {args.output}")
     return 0
 
 
