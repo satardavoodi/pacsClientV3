@@ -1,0 +1,42 @@
+{
+  "viewer": "AI-PACS",
+  "mode": "overlap-log-parse",
+  "scenario": "aipacs_live_download_overlap",
+  "log_path": "C:\\Users\\vahid\\AppData\\Local\\Temp\\aipacs_synth_overlap_mz08hcmm\\overlap.log",
+  "overlap_metrics": {
+    "overlap_sample_count": 150,
+    "overlap_set_slice_present_p95_ms": 11.68,
+    "overlap_set_slice_present_p50_ms": 0.0,
+    "overlap_decode_p95_ms": 10.78,
+    "overlap_decode_p50_ms": 0.0,
+    "overlap_wl_p95_ms": 1.2,
+    "overlap_cache_hit_ratio_pct": 86.67,
+    "overlap_cache_breakdown": {
+      "hit": 37,
+      "surrogate": 93,
+      "decode": 20
+    },
+    "overlap_settled_breakdown": {
+      "settled_true": 1,
+      "settled_false": 149
+    },
+    "overlap_slow_frame_count_16ms": 4,
+    "overlap_slow_frame_pct_16ms": 2.67,
+    "overlap_effective_fps": 0.0,
+    "overlap_foreground_wait_p95_ms": 0.0,
+    "overlap_pixel_hash_match_pct_settled": null,
+    "overlap_pixel_hash_match_pct_surrogate": null
+  },
+  "runner": {
+    "name": "synthetic_overlap_runner",
+    "version": "F0.4",
+    "duration_s": 9.781,
+    "frames_driven": 149,
+    "set_slice_hz": 30,
+    "drip_hz": 10,
+    "sample_rate": 1,
+    "n_slices": 60,
+    "rows": 256,
+    "cols": 256
+  }
+}

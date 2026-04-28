@@ -204,3 +204,57 @@ Sampled 1-in-N (default 5) via env var `AIPACS_OVERLAP_LOG_SAMPLE`. Sampling pro
 **Contract test:** `tests/performance/test_overlap_kpi_parser.py::test_parse_overlap_log_text_matches_production_emit_format` round-trips the exact emit format (with `diagnostic_logging` prefix) through the harness parser. If you change the emit format string in `Lightweight2DPipeline._maybe_emit_overlap_tag`, this test will fail until the harness regex is reconciled.
 
 **Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F2.1.
+
+---
+
+## Headless overlap reproducer (F0.4, 2026-04-28)
+
+A no-Qt, no-DM synthetic runner that produces ``[OVERLAP_SCENARIO]`` log
+samples on any developer machine without requiring a live download or human
+stack-drag input. Used to smoke-validate F2.1 instrumentation, parser
+regression, and to seed ``overlap_baseline_v0_synthetic.json`` between
+human-captured baselines.
+
+**Script:** `tools/performance/synthetic_overlap_runner.py`
+
+**CLI:**
+
+```powershell
+.venv\Scripts\python.exe tools\performance\synthetic_overlap_runner.py `
+    --duration 5 --output overlap_baseline_v0_synthetic.json
+```
+
+**What it does:**
+
+1. Materialises a deterministic 60-slice 256x256 MONOCHROME2 series under
+   a temp dir (slope=1, intercept=-1024, fixed per-slice RNG seed).
+2. Sets ``AIPACS_OVERLAP_LOG_SAMPLE=1`` (every overlap return path emits a
+   tag) and reloads ``Lightweight2DPipeline`` so the new sample rate is
+   picked up by the module constant.
+3. Activates the heavy_download gate via
+   ``modules.zeta_boost.cache_engine._zb_globals.set_global_download_active(True)``.
+4. Runs a ``set_fast_interaction(True, "drag")`` burst at 30 Hz for the
+   requested duration, sweeping the slice index 0 -> N -> 0.
+5. Settles via ``set_fast_interaction(False)`` and renders one final frame.
+6. Parses the captured log via ``parse_overlap_log_file`` from the KPI
+   harness and writes JSON.
+
+**Determinism caveat (per plan):** pixel data is byte-identical run to run,
+but ``decode_ms`` / ``wl_ms`` / ``total_ms`` and the exact
+hit/surrogate/decode breakdown depend on host CPU and prefetch worker
+scheduling. Treat the synthetic baseline as a smoke-level signal that
+should land within ~30% of human-captured baselines on the same machine.
+The runner does NOT simulate real network arrival ordering or disk-flush
+timing - the entire series is on disk before the drag loop starts.
+
+**Smoke test:**
+`tests/performance/test_synthetic_overlap_runner.py::test_synthetic_overlap_runner_smoke`
+runs a 1.0s burst over 20 slices at 128x128 and asserts:
+
+* Total runtime < 60s (plan F0.4 success criterion).
+* JSON file matches the in-memory return payload.
+* ``overlap_sample_count >= 5``.
+* ``sum(cache_breakdown.values()) == overlap_sample_count``.
+* ``sum(settled_breakdown.values()) == overlap_sample_count``.
+
+**Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F0.4.
