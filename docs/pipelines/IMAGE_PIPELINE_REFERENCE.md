@@ -1129,6 +1129,46 @@ re-introduce the frozen image regression.**
 
 ---
 
+### Rule 12: Prefetch cancellation gates fire BEFORE `executor.submit` (v2.4.6 / F3.1 — 2026-04-29)
+
+**Files:** `modules/viewer/fast/lightweight_2d_pipeline.py::_submit_prefetch` and
+the plugin-package mirror at
+`builder/plugin package/packages/viewer/payload/python/modules/viewer/fast/lightweight_2d_pipeline.py`.
+
+`Lightweight2DPipeline._submit_prefetch(idx, generation, request_epoch)` evaluates
+three pre-queue cancellation gates BEFORE adding `idx` to `_prefetch_pending` and
+BEFORE calling `self._decode_executor.submit(...)`. If any gate fires, the call
+increments `PerfMetrics.cancelled_task` and returns without touching the executor:
+
+1. **Generation gate** — `generation > 0 and generation != self._prefetch_generation`.
+   `_prefetch_generation` is bumped on series close, W/L change, and other context
+   resets. A stale generation token means the work is from a previous context.
+
+2. **Request-epoch gate** — `request_epoch > 0 and request_epoch != self._prefetch_request_epoch
+   and idx not in self._active_prefetch_targets`. Only the newest admitted prefetch
+   neighborhood continues, unless `idx` was explicitly registered as an active target.
+
+3. **Distance gate** — `abs(idx - self._current_index) > _max_distance` where
+   `_max_distance = 6` during fast interaction (matches the slack window used by
+   the post-decode guard) and `self._config.prefetch_radius` otherwise. Tasks whose
+   target slice is far from the current view are dropped before they hit the
+   decode worker.
+
+The matching post-decode guards inside `_decode_into_cache` REMAIN INTACT as a
+safety net for tasks that pass these checks but become stale in flight (the user
+can scroll mid-decode). Do NOT remove the post-decode guards — they cover the
+in-flight scroll-past case that the pre-queue gates cannot see.
+
+Do NOT add `record_prefetch_submitted()` to the rejection paths — pre-queue
+rejections never submitted, so the submitted/cancelled ratio in
+`PerfMetrics.snapshot()` correctly reflects only work that reached the executor.
+
+Test: `tests/viewer/test_prefetch_pre_queue_cancel.py` (9 tests). The F1 overlap
+regression bundle (`tools/dev/run_overlap_regression.ps1`, 43 tests) must remain
+green for any change to this method.
+
+---
+
 ## 12. Appendix: Numerical Worked Example
 
 ### Setup: Axial CT scan

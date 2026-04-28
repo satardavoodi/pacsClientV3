@@ -181,7 +181,7 @@ Guard each with a per-pipeline boolean to ensure exactly one emit per boundary. 
 | F2.1b | NEW — sentinel emits | F2.1 (done) |
 | F2.2 | OPTIONAL sanity | F0.5 |
 | F2.3 | NEW — fps parser fix | F0.4 (done) |
-| F3 | unchanged | F0.5, F2.3 |
+| F3 | F3.1 DONE — F3.2/F3.3 pending | F0.5 (real-world parity), F2.3 (done) |
 | F3.5 | unchanged (split risk per F3.5.1 branch decision) | F0.5 (for clean cross-PC measurement) |
 | F4–F6 | unchanged | F3 |
 | F7 | CONDITIONAL — may be deferred if F0.5 shows cache_hit_ratio ≥ 85 | F0.5 |

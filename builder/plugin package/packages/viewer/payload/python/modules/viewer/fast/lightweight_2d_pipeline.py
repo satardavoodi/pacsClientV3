@@ -2037,6 +2037,40 @@ class Lightweight2DPipeline(QObject):
                         self._submit_frame_prefetch(bwd)
 
     def _submit_prefetch(self, idx: int, generation: int = 0, *, request_epoch: int = 0) -> None:
+        # F3.1 (2026-04-29) — pre-queue cancellation gates. Reject stale
+        # tasks BEFORE `executor.submit` so they never burn IPC + pickle +
+        # worker dispatch cost. Three gates mirror the post-decode guards
+        # in `_decode_into_cache`:
+        #   (1) generation gate — series close / W/L change invalidates work.
+        #   (2) request-epoch gate — only the newest admitted neighborhood
+        #       continues, unless this idx is in the active-target set.
+        #   (3) distance gate — user has scrolled past this slice already.
+        # Post-decode guards in `_decode_into_cache` remain intact as a
+        # safety net for tasks that pass these checks but become stale
+        # in flight. Cancellations bump `cancelled_task` for KPI parity
+        # with the post-decode counters.
+        with self._prefetch_lock:
+            current_gen = self._prefetch_generation
+            active_epoch = self._prefetch_request_epoch
+            active_target_hit = idx in self._active_prefetch_targets
+        if generation > 0 and generation != current_gen:
+            PerfMetrics.get().record_cancelled_task()
+            return
+        if (
+            request_epoch > 0
+            and request_epoch != active_epoch
+            and not active_target_hit
+        ):
+            PerfMetrics.get().record_cancelled_task()
+            return
+        current = self._current_index
+        _max_distance = (
+            6 if self._fast_interaction else self._config.prefetch_radius
+        )
+        if abs(idx - current) > _max_distance:
+            PerfMetrics.get().record_cancelled_task()
+            return
+
         with self._prefetch_lock:
             if idx in self._pixel_cache or idx in self._prefetch_pending:
                 return
