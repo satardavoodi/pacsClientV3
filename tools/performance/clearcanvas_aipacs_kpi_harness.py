@@ -870,6 +870,19 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
     settled_counts: Counter[str] = Counter()
     timeline_seconds: List[float] = []  # filled from leading "[ts]" if present
     wall_seconds: List[float] = []  # F2.3: seconds-since-epoch per overlap sample
+    # F2.4 (post-F0.5 retarget): per-source total_ms buckets so the harness
+    # can report tail latency for the path that actually drives user-visible
+    # spikes (decode-cache-miss) without it being washed out by the 95%+ of
+    # surrogate samples reporting total_ms <= 1ms.
+    total_ms_by_cache: Dict[str, List[float]] = {"hit": [], "surrogate": [], "decode": []}
+    total_ms_by_settled: Dict[str, List[float]] = {"True": [], "False": []}
+    # decode_ms collected only from cache=decode samples (the only path
+    # where decode_ms is non-zero by construction). Surfaces the "real"
+    # decode tail without dilution.
+    decode_only_ms: List[float] = []
+    # Slow-frame (>16ms) breakdown by cache source for retarget plan KPI
+    # 'overlap_slow_frame_source_breakdown'.
+    slow_frame_by_cache: Dict[str, int] = {"hit": 0, "surrogate": 0, "decode": 0}
     # foreground_wait is reported by a different (future) tag; kept as 0.0
     # until F4.x ships its own [OVERLAP_FG_WAIT] sub-tag.
     foreground_wait_ms: List[float] = []
@@ -884,17 +897,31 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
         if not m:
             continue
         try:
-            total_ms.append(float(m.group("total")))
-            decode_ms.append(float(m.group("decode")))
-            wl_ms.append(float(m.group("wl")))
+            t_total = float(m.group("total"))
+            t_decode = float(m.group("decode"))
+            t_wl = float(m.group("wl"))
         except (TypeError, ValueError):
             continue
-        cache_counts[m.group("cache")] += 1
-        settled_counts[m.group("settled")] += 1
+        total_ms.append(t_total)
+        decode_ms.append(t_decode)
+        wl_ms.append(t_wl)
+        cache_src = m.group("cache")
+        settled_key = m.group("settled")
+        cache_counts[cache_src] += 1
+        settled_counts[settled_key] += 1
         timeline_seconds.append(float(line_idx))
         ts = _parse_overlap_timestamp_seconds(raw)
         if ts is not None:
             wall_seconds.append(ts)
+        # F2.4 splits.
+        if cache_src in total_ms_by_cache:
+            total_ms_by_cache[cache_src].append(t_total)
+        if settled_key in total_ms_by_settled:
+            total_ms_by_settled[settled_key].append(t_total)
+        if cache_src == "decode":
+            decode_only_ms.append(t_decode)
+        if t_total > 16.0 and cache_src in slow_frame_by_cache:
+            slow_frame_by_cache[cache_src] += 1
 
     sample_count = len(total_ms)
     cache_hits = cache_counts.get("hit", 0) + cache_counts.get("surrogate", 0)
@@ -935,6 +962,9 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
     # Pixel-hash match percentages are populated only by the F1 harness;
     # the runtime log cannot observe them directly. Emit as None so the
     # diff tooling can distinguish "not measured" from "0%".
+    decode_sample_count = cache_counts.get("decode", 0)
+    decode_sample_share = (decode_sample_count / sample_count * 100.0) if sample_count else 0.0
+    settled_total = total_ms_by_settled["True"]
     return {
         "overlap_sample_count": sample_count,
         "overlap_set_slice_present_p95_ms": round(_percentile(total_ms, 95.0), 2),
@@ -954,6 +984,19 @@ def parse_overlap_log_text(text: str) -> Dict[str, Any]:
         },
         "overlap_slow_frame_count_16ms": slow_frame_count,
         "overlap_slow_frame_pct_16ms": round(slow_frame_pct, 2),
+        "overlap_slow_frame_source_breakdown": dict(slow_frame_by_cache),
+        # F2.4 retarget KPIs — split tail latency by cache source so the
+        # decode-cache-miss path (the only one >1ms in the harsh anchor)
+        # is not washed out by the surrogate-dominated mean.
+        "overlap_hit_present_p95_ms": round(_percentile(total_ms_by_cache["hit"], 95.0), 2),
+        "overlap_surrogate_present_p95_ms": round(_percentile(total_ms_by_cache["surrogate"], 95.0), 2),
+        "overlap_decode_only_p95_ms": round(_percentile(total_ms_by_cache["decode"], 95.0), 2),
+        "overlap_decode_only_max_ms": round(max(total_ms_by_cache["decode"]), 2)
+            if total_ms_by_cache["decode"] else 0.0,
+        "overlap_decode_sample_count": decode_sample_count,
+        "overlap_decode_sample_share_pct": round(decode_sample_share, 2),
+        "overlap_settled_present_p95_ms": round(_percentile(settled_total, 95.0), 2),
+        "overlap_settled_sample_count": len(settled_total),
         "overlap_effective_fps": round(effective_fps, 2),
         "overlap_effective_fps_source": effective_fps_source,
         "overlap_foreground_wait_p95_ms": round(fg_wait_p95, 2),

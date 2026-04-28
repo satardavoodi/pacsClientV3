@@ -4,7 +4,7 @@ Date: 2026-04-28
 Owner: FAST viewer team
 Scope: FAST mode only (`pydicom_qt`). Advanced viewer untouched. Only shared services that demonstrably impact overlap scenario are in scope.
 Primary scenario: user is stacking (drag/wheel) on a series whose download is still in progress.
-Goal: ≥100% improvement (i.e., halve) on at least two of `overlap_set_slice_present_p95_ms`, `overlap_cache_hit_ratio_pct` (raise), `overlap_effective_fps` (raise) — without any image-quality regression.
+Goal: ≥50% reduction on each of the four Tier-1 synthetic KPIs (`overlap_decode_only_p95_ms`, `overlap_decode_only_max_ms`, `overlap_decode_sample_share_pct`, `overlap_slow_frame_count_16ms`) measured on the harsh-preset synthetic anchor, **plus** no regression on the real-world Tier-2 KPIs (`overlap_settled_present_p95_ms`, `ui_event_loop_lag_ms`, F1 drag-mode pixel hash). The legacy north star `overlap_set_slice_present_p95_ms` was retired on 2026-04-29 — see "Plan retarget — post-F0.5 anchor (2026-04-29)" — because the harsh synthetic anchor already reports it at 0.0 ms (surrogate path dominates the all-samples p95). Image-quality regression is ruled out by Phase F1.
 
 ---
 
@@ -186,6 +186,117 @@ Guard each with a per-pipeline boolean to ensure exactly one emit per boundary. 
 | F4–F6 | unchanged | F3 |
 | F7 | CONDITIONAL — may be deferred if F0.5 shows cache_hit_ratio ≥ 85 | F0.5 |
 | F8–F10 | unchanged | predecessors |
+
+---
+
+## Plan retarget — post-F0.5 anchor (2026-04-29)
+
+The harsh-preset synthetic anchor (committed at `2489af61` as `overlap_baseline_v0_synthetic_harsh.json`) showed that the previously-named primary KPI `overlap_set_slice_present_p95_ms` is **already 0.0 ms** in the worst synthetic scenario (30 s @ 60 Hz drag, 240 slices @ 512×512, drip 1 Hz). The surrogate path (R1 + B3.7) makes the per-frame compute time of in-drag frames structurally <1 ms; that KPI is no longer a meaningful north star. Re-targeting follows.
+
+### Why the old north star is dead
+
+The harness payload over `total_ms` averages **all** samples — and the harsh anchor was 95.55% surrogate/hit and 4.45% decode. The 95.55% are sub-1 ms, so the p95 over the full population is 0.0. The 4.45% decode tail is where every user-visible spike lives, and it was being washed out at the aggregate level.
+
+### New parser KPIs (committed in F2.4)
+
+`tools/performance/clearcanvas_aipacs_kpi_harness.py::parse_overlap_log_text` now emits per-cache-source splits so the plan can target the path that actually drives spikes. New keys (added in this commit):
+
+- `overlap_decode_only_p95_ms` — p95 of `total_ms` for `cache=decode` samples only.
+- `overlap_decode_only_max_ms` — max `total_ms` for `cache=decode` samples.
+- `overlap_decode_sample_count` — number of `cache=decode` samples in the run.
+- `overlap_decode_sample_share_pct` — `decode / total` × 100.
+- `overlap_settled_present_p95_ms` — p95 of `total_ms` for `settled=True` samples.
+- `overlap_settled_sample_count` — number of `settled=True` samples.
+- `overlap_surrogate_present_p95_ms` — p95 of `total_ms` for `cache=surrogate` samples.
+- `overlap_hit_present_p95_ms` — p95 of `total_ms` for `cache=hit` samples.
+- `overlap_slow_frame_count_16ms` — already existed; promoted to a primary KPI.
+- `overlap_slow_frame_source_breakdown` — `{hit, surrogate, decode}` count of frames > 16 ms.
+
+All new keys appear in the empty-input payload with safe defaults so existing diff tooling never sees missing fields. Parser tests: 18 total green (13 prior + 5 new F2.4).
+
+### Anchor numbers (re-captured against the new parser)
+
+`overlap_baseline_v0_synthetic_harsh.json` — preset=harsh, runner.version=F0.6, n=1797 samples:
+
+| KPI | Harsh anchor value | Notes |
+|---|---|---|
+| `overlap_decode_only_p95_ms` | **13.94** | Real tail latency for foreground decode. |
+| `overlap_decode_only_max_ms` | **77.67** | Worst single foreground decode in 30 s. |
+| `overlap_decode_sample_count` | **80** | |
+| `overlap_decode_sample_share_pct` | **4.45** | |
+| `overlap_settled_sample_count` | 1 | Synthetic runner barely exercises settled path; needs real-world capture. |
+| `overlap_settled_present_p95_ms` | 7.94 | Single-sample artifact — not yet a stable measurement. |
+| `overlap_hit_present_p95_ms` | 0.0 | Cache hit is essentially free (expected). |
+| `overlap_surrogate_present_p95_ms` | 0.0 | Surrogate is essentially free (expected, validates R1). |
+| `overlap_slow_frame_count_16ms` | **3** | 3 / 1797 = 0.17%. |
+| `overlap_slow_frame_source_breakdown` | `{hit:0, surrogate:0, decode:3}` | **100% of slow frames are decode-cache misses.** |
+| `overlap_effective_fps` (wall_clock) | 59.59 | Confirms drag rate; not a target. |
+| `overlap_set_slice_present_p95_ms` (legacy) | 0.0 | **Demoted from primary; kept for backward compat.** |
+| `overlap_cache_hit_ratio_pct` | 95.58 | (hit + surrogate) / total. |
+
+`overlap_baseline_v0_synthetic.json` — preset=default, n=149 samples:
+
+| KPI | Default anchor value |
+|---|---|
+| `overlap_decode_only_p95_ms` | 14.12 |
+| `overlap_decode_only_max_ms` | **91.38** |
+| `overlap_decode_sample_share_pct` | 12.75 |
+| `overlap_slow_frame_count_16ms` | 1 (from `decode`) |
+
+The smaller default preset lets prefetch warm less of the volume → higher decode share. Both anchors agree on the qualitative shape: decode-cache misses are the only source of >16 ms frames.
+
+### New primary KPIs (north stars)
+
+Two layers — synthetic-canonical and real-world-canonical:
+
+**Synthetic (canonical for F3–F10 commit gating):**
+
+| Tier | KPI | Harsh v0 | Target | Rationale |
+|---|---|---|---|---|
+| 1 | `overlap_decode_only_p95_ms` | 13.94 | **≤7.0** (≥50% drop) | The path that produces every visible spike. |
+| 1 | `overlap_decode_only_max_ms` | 77.67 | **≤40.0** (≥48% drop) | Tail control — single bad frame = perceptible. |
+| 1 | `overlap_decode_sample_share_pct` | 4.45 | **≤2.5** (≥44% drop) | Fewer foreground decodes = fewer spike opportunities. |
+| 1 | `overlap_slow_frame_count_16ms` | 3 over 30 s | **≤1 over 30 s** | User-visible frame budget metric. |
+| 2 | `overlap_settled_present_p95_ms` | 1 sample (TBD) | Establish in F0.5b (real-world) | End-of-drag re-render latency. |
+
+**Real-world (added as F0.5b; runs the actual app):**
+
+| KPI | Why real-world only |
+|---|---|
+| `overlap_settled_present_p95_ms` (≥30 settled samples) | Synthetic runner doesn't drive enough settled re-renders. |
+| Qt event-loop lag (`ui_event_loop_lag_ms`) during overlap | Synthetic runner skips Qt paint/blit/event loop entirely. |
+| `process_rss_mb` peak during overlap | Real DM subprocess + Qt allocations. |
+| Visual quality (drag-mode hash gate from F1.2) | Confirms no regression. |
+
+### Demoted / non-targets
+
+- `overlap_set_slice_present_p95_ms` — KEPT in payload (compat) but **NOT a target** any more. Will be reported in PR descriptions for context only.
+- `overlap_decode_p95_ms` (the old "all-samples" decode metric) — KEPT for compat but non-target; replaced by `overlap_decode_only_p95_ms` for gating.
+- `overlap_effective_fps` — kept for context; capped at the synthetic drag rate so it cannot improve beyond ~60 in synthetic runs.
+- `overlap_cache_hit_ratio_pct` — already 95.58% in the harsh anchor; F7's adaptive-radius work is **deferred** unless real-world F0.5b shows a different picture (per Revision R6 / F7 conditional).
+
+### What the new gating looks like
+
+A phase ships when **both**:
+1. ≥1 Tier-1 synthetic KPI moves toward target by ≥10% **and** no Tier-1 KPI regresses by >5% on the harsh anchor.
+2. The F1 regression bundle stays green.
+
+The plan reaches "Final target" (formerly "100% improvement") when:
+- All four Tier-1 synthetic KPIs hit their targets above on the harsh anchor, **AND**
+- F0.5b real-world capture confirms no regression on `overlap_settled_present_p95_ms` and `ui_event_loop_lag_ms`, **AND**
+- Drag-mode pixel hash gate from F1.2 stays green.
+
+### Plan deltas from this retarget
+
+**Add Step F0.5b — Real-world overlap anchor with new KPIs (new, BLOCKING for "Final target" claim).** Run actual app on PC A, drive a download+drag scenario on a ≥200-slice series with `AIPACS_OVERLAP_LOG_SAMPLE=1`. Parse with the F2.4 harness. Commit as `overlap_baseline_v0_real.json`. Required to populate `overlap_settled_present_p95_ms` with ≥30 samples. Done-When: the JSON has `overlap_settled_sample_count >= 30` and is referenced from the Success snapshot below. **NOT BLOCKING** for F3 / F3.5 / F4–F6 commit gating (which uses synthetic harsh anchor) — only blocking for the final "we're done" claim.
+
+**Refine F2.1b — sentinel emits become more important.** With decode samples being the gating KPI, capturing every decode sample (instead of 1-in-N sampling) materially improves measurement precision. F2.1b now bypasses the 1-in-N sampler specifically for `cache=decode` AND drag-end (`set_fast_interaction(False)`) paths. Mirror to plugin package; tests added in F2.1b's own commit.
+
+**Refine F3 / F3.5 / F4–F6 success criteria.** Replace every reference to `overlap_set_slice_present_p95_ms` as "primary KPI" with `overlap_decode_only_p95_ms` + `overlap_slow_frame_count_16ms`. F3.5 cancellation work specifically targets `overlap_decode_sample_share_pct` (cancelled prefetches → fewer foreground decodes when the cache misses).
+
+**Refine F7 conditionality.** F7 (adaptive surrogate radius) only ships if the real-world F0.5b capture shows `overlap_cache_hit_ratio_pct < 90%`. Synthetic harsh shows 95.58% so F7 is currently in the **deferred** column.
+
+**Defer F2.2 indefinitely.** With per-source KPIs in place, the manual re-baseline F2.2 was supposed to provide loses its purpose. Mark as `deferred — superseded by F2.4`.
 
 ---
 
@@ -1204,18 +1315,32 @@ Every step is one commit. If any checklist item fails after merge, the step's co
 
 ## Success snapshot
 
-After F10.1 we expect (approximate, from PC A synthetic + manual):
+After F10.1 we expect (re-targeted on the F0.5 harsh-preset synthetic anchor — see "Plan retarget — post-F0.5 anchor (2026-04-29)"):
 
-| KPI | v0 baseline | Final target | Expected (modeled) |
-|---|---|---|---|
-| `overlap_set_slice_present_p95_ms` | 155 (speculative; see Revision R1) | ≤77 | ~50–60 |
-| `overlap_decode_p95_ms` | 208 (speculative) | ≤105 | ~70–90 |
-| `overlap_cache_hit_ratio_pct` | 52 (speculative) | ≥85 | ~85–90 |
-| `overlap_cancelled_task_ratio` | 98 (speculative) | ≤30 | ~25–35 |
-| `overlap_effective_fps` | 16 (speculative; parser fix in F2.3) | ≥30 | ~30–40 |
-| `overlap_pixel_hash_match_pct` (settled) | n/a | 100 | 100 |
-| `overlap_pixel_hash_match_pct` (surrogate) | n/a | ≥99 | ≥99 |
+**Tier 1 — synthetic harsh anchor (canonical commit gate):**
 
-This represents ≥100% improvement (i.e., halving) on the primary KPI and the secondary cache/fps KPIs, with image-quality regression ruled out by Phase F1.
+| KPI | Harsh v0 | Final target | Modeled | Source |
+|---|---|---|---|---|
+| `overlap_decode_only_p95_ms` | 13.94 | **≤7.0** (≥50% drop) | 5–7 | F2.4 anchor |
+| `overlap_decode_only_max_ms` | 77.67 | **≤40.0** (≥48% drop) | 30–40 | F2.4 anchor |
+| `overlap_decode_sample_share_pct` | 4.45 | **≤2.5** (≥44% drop) | 1.5–2.5 | F2.4 anchor |
+| `overlap_slow_frame_count_16ms` (per 30 s) | 3 | **≤1** | 0–1 | F2.4 anchor |
 
-**Important caveat (added 2026-04-28):** The v0 baseline column above predates the F0.4 synthetic measurement and the post-2.3.x rule additions (R1, R12, B3.7, B3.12). The synthetic v0 (committed) shows `set_slice_p95=11.68`, `cache_hit_ratio=86.67`, `slow_frame_pct=2.67`. Until F0.5 captures a real-world or harsh-synthetic v0, treat this Success snapshot as **aspirational**, not a contract. F0.5 rewrites this table with measured numbers and revises "Final target" to mean ≥50% reduction relative to those measured numbers — see "Progress snapshot & plan revision" section above.
+**Tier 2 — real-world anchor (added in F0.5b; required for "Final target" claim):**
+
+| KPI | Source | Final target |
+|---|---|---|
+| `overlap_settled_present_p95_ms` (≥30 settled samples) | real-world capture | establish on F0.5b, then ≥30% drop |
+| `ui_event_loop_lag_ms` p95 during overlap | real-world capture | ≤25 ms |
+| Drag-mode pixel hash (F1.2 gate) | drag-mode harness | unchanged (no regression) |
+
+**Compat-only (kept in payload, NOT a target):**
+
+- `overlap_set_slice_present_p95_ms` — averages all samples; harsh anchor already shows 0.0 because surrogate dominates.
+- `overlap_decode_p95_ms` — same dilution problem; superseded by `overlap_decode_only_p95_ms`.
+- `overlap_effective_fps` — capped at synthetic drag rate.
+- `overlap_cache_hit_ratio_pct` — already 95.58% in harsh anchor; F7 deferred unless real-world disagrees.
+
+This represents ≥50% reduction on every Tier-1 KPI, which (because the prior speculative-baseline framing of "halving") is the new operational meaning of "100% improvement". Image-quality regression is ruled out by Phase F1's drag-mode + settled hash gates.
+
+**Caveat retained:** The original v0 column (155 / 52 / 98 / 16) is **fully retired** as of F2.4 / F0.5. All references downstream of this section have been re-pointed to either the harsh synthetic anchor or the real-world anchor produced in F0.5b. Any phase doc still referencing `overlap_set_slice_present_p95_ms` as a primary target predates 2026-04-29 and should be read with the retarget section in mind.

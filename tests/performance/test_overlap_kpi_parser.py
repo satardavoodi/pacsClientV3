@@ -265,3 +265,101 @@ def test_effective_fps_zero_when_all_timestamps_identical():
     )
     payload = parse_overlap_log_text(text)
     assert payload["overlap_effective_fps"] == 0.0
+
+# ─── F2.4: cache-source-split KPIs (post-F0.5 retarget) ─────────────────────
+
+
+def test_overlap_kpis_include_per_source_present_p95():
+    """F2.4: parser must emit per-cache-source p95 of total_ms so the plan
+    can target the decode-cache-miss tail without it being washed out by
+    the surrogate-dominated mean.
+    """
+    text = _build_log(
+        "[OVERLAP_SCENARIO] frame idx=1 cache=hit decode_ms=0.0 wl_ms=0.5 total_ms=1.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=2 cache=hit decode_ms=0.0 wl_ms=0.5 total_ms=2.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=3 cache=surrogate decode_ms=0.0 wl_ms=0.5 total_ms=0.5 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=4 cache=surrogate decode_ms=0.0 wl_ms=0.5 total_ms=0.6 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=5 cache=decode decode_ms=20.0 wl_ms=2.0 total_ms=25.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=6 cache=decode decode_ms=18.0 wl_ms=2.0 total_ms=22.0 settled=False",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_hit_present_p95_ms"] >= 1.0
+    assert payload["overlap_hit_present_p95_ms"] <= 2.0
+    assert payload["overlap_surrogate_present_p95_ms"] >= 0.5
+    assert payload["overlap_surrogate_present_p95_ms"] <= 0.6
+    assert payload["overlap_decode_only_p95_ms"] >= 22.0
+    assert payload["overlap_decode_only_p95_ms"] <= 25.0
+    assert payload["overlap_decode_only_max_ms"] == pytest.approx(25.0, abs=0.01)
+
+
+def test_overlap_kpis_decode_sample_share_and_count():
+    """F2.4: decode sample count + share are first-class KPIs because
+    the retargeted plan optimizes for reducing the share (currently
+    4.4% in the harsh anchor)."""
+    text = _build_log(
+        "[OVERLAP_SCENARIO] frame idx=1 cache=hit decode_ms=0.0 wl_ms=0.5 total_ms=1.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=2 cache=surrogate decode_ms=0.0 wl_ms=0.5 total_ms=0.6 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=3 cache=surrogate decode_ms=0.0 wl_ms=0.5 total_ms=0.6 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=4 cache=decode decode_ms=20.0 wl_ms=2.0 total_ms=25.0 settled=False",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_decode_sample_count"] == 1
+    assert payload["overlap_decode_sample_share_pct"] == pytest.approx(25.0, abs=0.01)
+
+
+def test_overlap_kpis_settled_present_p95_and_count():
+    """F2.4: settled=true frames are the user-visible end-of-drag re-render.
+    The harness exposes their tail latency separately so the plan can
+    target it without it being averaged into the in-drag surrogate flood.
+    """
+    text = _build_log(
+        "[OVERLAP_SCENARIO] frame idx=1 cache=surrogate decode_ms=0.0 wl_ms=0.5 total_ms=0.5 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=2 cache=surrogate decode_ms=0.0 wl_ms=0.5 total_ms=0.6 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=3 cache=decode decode_ms=18.0 wl_ms=2.0 total_ms=21.0 settled=True",
+        "[OVERLAP_SCENARIO] frame idx=4 cache=decode decode_ms=20.0 wl_ms=2.0 total_ms=24.0 settled=True",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_settled_sample_count"] == 2
+    assert payload["overlap_settled_present_p95_ms"] >= 21.0
+    assert payload["overlap_settled_present_p95_ms"] <= 24.0
+
+
+def test_overlap_kpis_slow_frame_source_breakdown():
+    """F2.4: when a frame breaches the 16ms slow-frame threshold the
+    parser records which cache source produced it so plan reviewers can
+    see at a glance whether the tail is a decode-miss problem or a
+    surrogate W/L problem.
+    """
+    text = _build_log(
+        "[OVERLAP_SCENARIO] frame idx=1 cache=hit decode_ms=0.0 wl_ms=0.5 total_ms=1.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=2 cache=surrogate decode_ms=0.0 wl_ms=0.5 total_ms=18.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=3 cache=decode decode_ms=20.0 wl_ms=2.0 total_ms=25.0 settled=False",
+        "[OVERLAP_SCENARIO] frame idx=4 cache=decode decode_ms=22.0 wl_ms=2.0 total_ms=27.0 settled=True",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_slow_frame_count_16ms"] == 3
+    assert payload["overlap_slow_frame_source_breakdown"] == {
+        "hit": 0,
+        "surrogate": 1,
+        "decode": 2,
+    }
+
+
+def test_overlap_kpis_empty_payload_includes_new_fields():
+    """F2.4: empty input must still emit the new keys with safe defaults
+    so downstream diff tooling never sees missing fields.
+    """
+    payload = parse_overlap_log_text("")
+    assert payload["overlap_hit_present_p95_ms"] == 0.0
+    assert payload["overlap_surrogate_present_p95_ms"] == 0.0
+    assert payload["overlap_decode_only_p95_ms"] == 0.0
+    assert payload["overlap_decode_only_max_ms"] == 0.0
+    assert payload["overlap_decode_sample_count"] == 0
+    assert payload["overlap_decode_sample_share_pct"] == 0.0
+    assert payload["overlap_settled_sample_count"] == 0
+    assert payload["overlap_settled_present_p95_ms"] == 0.0
+    assert payload["overlap_slow_frame_source_breakdown"] == {
+        "hit": 0,
+        "surrogate": 0,
+        "decode": 0,
+    }

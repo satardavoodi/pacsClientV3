@@ -2,27 +2,40 @@
   "viewer": "AI-PACS",
   "mode": "overlap-log-parse",
   "scenario": "aipacs_live_download_overlap",
-  "log_path": "C:\\Users\\vahid\\AppData\\Local\\Temp\\aipacs_synth_overlap_lxcjf5mj\\overlap.log",
+  "log_path": "C:\\Users\\vahid\\AppData\\Local\\Temp\\aipacs_synth_overlap_7f7jqwz6\\overlap.log",
   "overlap_metrics": {
-    "overlap_sample_count": 1787,
+    "overlap_sample_count": 1797,
     "overlap_set_slice_present_p95_ms": 0.0,
     "overlap_set_slice_present_p50_ms": 0.0,
     "overlap_decode_p95_ms": 0.0,
     "overlap_decode_p50_ms": 0.0,
     "overlap_wl_p95_ms": 0.0,
-    "overlap_cache_hit_ratio_pct": 95.58,
+    "overlap_cache_hit_ratio_pct": 95.55,
     "overlap_cache_breakdown": {
-      "hit": 536,
-      "surrogate": 1172,
-      "decode": 79
+      "hit": 538,
+      "surrogate": 1179,
+      "decode": 80
     },
     "overlap_settled_breakdown": {
       "settled_true": 1,
-      "settled_false": 1786
+      "settled_false": 1796
     },
-    "overlap_slow_frame_count_16ms": 1,
-    "overlap_slow_frame_pct_16ms": 0.06,
-    "overlap_effective_fps": 59.59,
+    "overlap_slow_frame_count_16ms": 3,
+    "overlap_slow_frame_pct_16ms": 0.17,
+    "overlap_slow_frame_source_breakdown": {
+      "hit": 0,
+      "surrogate": 0,
+      "decode": 3
+    },
+    "overlap_hit_present_p95_ms": 0.0,
+    "overlap_surrogate_present_p95_ms": 0.0,
+    "overlap_decode_only_p95_ms": 13.94,
+    "overlap_decode_only_max_ms": 77.67,
+    "overlap_decode_sample_count": 80,
+    "overlap_decode_sample_share_pct": 4.45,
+    "overlap_settled_present_p95_ms": 7.94,
+    "overlap_settled_sample_count": 1,
+    "overlap_effective_fps": 59.99,
     "overlap_effective_fps_source": "wall_clock",
     "overlap_foreground_wait_p95_ms": 0.0,
     "overlap_pixel_hash_match_pct_settled": null,
@@ -31,8 +44,8 @@
   "runner": {
     "name": "synthetic_overlap_runner",
     "version": "F0.6",
-    "duration_s": 43.264,
-    "frames_driven": 1786,
+    "duration_s": 40.97,
+    "frames_driven": 1796,
     "set_slice_hz": 60,
     "drip_hz": 1,
     "sample_rate": 1,
