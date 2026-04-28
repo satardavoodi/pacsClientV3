@@ -128,3 +128,53 @@ def test_parse_overlap_log_text_pixel_hash_keys_are_none():
     payload = parse_overlap_log_text(text)
     assert payload["overlap_pixel_hash_match_pct_settled"] is None
     assert payload["overlap_pixel_hash_match_pct_surrogate"] is None
+
+
+def test_parse_overlap_log_text_matches_production_emit_format():
+    """F2.1 contract test: the production emit format
+    (Lightweight2DPipeline._maybe_emit_overlap_tag) MUST be parseable.
+
+    The production format wraps the tag with a structured logging prefix
+    of the form ``YYYY-MM-DD HH:MM:SS.uuuuuu | INFO | ... | <message>``.
+    The parser must locate the tag inside that line and extract the
+    KPI fields verbatim. If this test fails, either the emitter format
+    changed or the harness regex drifted -- both should be reconciled
+    before merging.
+    """
+    text = _build_log(
+        # Verbatim shape of the diagnostic_logging formatter prefix +
+        # the exact format string from
+        # Lightweight2DPipeline._maybe_emit_overlap_tag.
+        "2026-04-28 22:10:11.123456 | INFO     | pid=17452 tid=27692 | "
+        "component=viewer role=main | "
+        "modules.viewer.fast.lightweight_2d_pipeline._maybe_emit_overlap_tag | "
+        "action=- study=- series=202 job=- viewevt=- fn=- stage=- result=- | "
+        "[OVERLAP_SCENARIO] frame idx=42 cache=hit decode_ms=0.00 wl_ms=1.40 "
+        "total_ms=3.20 settled=False",
+        "2026-04-28 22:10:11.234567 | INFO     | pid=17452 tid=27692 | "
+        "component=viewer role=main | "
+        "modules.viewer.fast.lightweight_2d_pipeline._maybe_emit_overlap_tag | "
+        "action=- study=- series=202 job=- viewevt=- fn=- stage=- result=- | "
+        "[OVERLAP_SCENARIO] frame idx=43 cache=surrogate decode_ms=0.00 "
+        "wl_ms=1.80 total_ms=5.20 settled=False",
+        "2026-04-28 22:10:11.345678 | INFO     | pid=17452 tid=27692 | "
+        "component=viewer role=main | "
+        "modules.viewer.fast.lightweight_2d_pipeline._maybe_emit_overlap_tag | "
+        "action=- study=- series=202 job=- viewevt=- fn=- stage=- result=- | "
+        "[OVERLAP_SCENARIO] frame idx=44 cache=decode decode_ms=18.50 wl_ms=2.10 "
+        "total_ms=22.00 settled=True",
+    )
+    payload = parse_overlap_log_text(text)
+    assert payload["overlap_sample_count"] == 3, (
+        "F2.1 emitter format must be parseable by the F0.2 harness; "
+        "either the emit format drifted or the harness regex did."
+    )
+    assert payload["overlap_cache_breakdown"] == {
+        "hit": 1,
+        "surrogate": 1,
+        "decode": 1,
+    }
+    assert payload["overlap_settled_breakdown"] == {
+        "settled_true": 1,
+        "settled_false": 2,
+    }

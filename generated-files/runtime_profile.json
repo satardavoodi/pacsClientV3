@@ -1,7 +1,7 @@
 {
   "app_name": "AIPacs",
   "app_version": "",
-  "generated_at_utc": "2026-04-23T18:24:27.603788+00:00",
+  "generated_at_utc": "2026-04-28T18:21:58.523196+00:00",
   "installer": {
     "current_version": "",
     "detected_existing_version": "",
@@ -15,6 +15,7 @@
     "education": true,
     "stitching": true,
     "offline_cloud_server": true,
+    "data_analysis": true,
     "advanced_mpr": false,
     "printing": false,
     "run_cd": false,
@@ -106,6 +107,20 @@
       "requires_restart": false,
       "warning": ""
     },
+    "data_analysis": {
+      "module_id": "data_analysis",
+      "title": "Data Analysis",
+      "tier": "optional",
+      "package_kind": "bundled_unlock",
+      "status": "not_installed",
+      "installed_version": "",
+      "installed_from": "",
+      "installed_at_utc": "",
+      "runtime_path": "",
+      "archive_name": "",
+      "requires_restart": true,
+      "warning": ""
+    },
     "advanced_mpr": {
       "module_id": "advanced_mpr",
       "title": "Advanced MPR",
@@ -183,7 +198,7 @@
     "last_detected_gpu": false,
     "last_probe_backend": "",
     "last_probe_device": "",
-    "last_probe_utc": "2026-04-23T18:24:27.602635Z",
+    "last_probe_utc": "2026-04-28T18:21:58.520830Z",
     "last_execution_mode": "cpu_software_opengl",
     "last_software_rendering_status": "ready",
     "last_software_rendering_warning": ""

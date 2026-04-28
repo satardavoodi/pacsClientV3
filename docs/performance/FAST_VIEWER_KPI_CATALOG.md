@@ -177,3 +177,30 @@ Any performance work targeting the "downloading same series + stacking same seri
 **Red-team verification:** to confirm the gate detects breakage, temporarily change the FAST W/L LUT or filter dimensions and re-run — settled hashes must drift. Revert and re-run — bundle must return green.
 
 **Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F1.
+
+## Overlap log tag `[OVERLAP_SCENARIO]` (F2.1, 2026-04-28)
+
+To make the "download same series + stack same series" KPIs observable from a normal production run without enabling DEBUG, `Lightweight2DPipeline.get_rendered_frame()` emits a structured INFO line at all three return paths (cached frame / surrogate / synchronous decode) when both:
+
+- `is_heavy_download_active()` returns `True`, AND
+- `is_viewed_series_complete(self._series_number)` returns `False`.
+
+Sampled 1-in-N (default 5) via env var `AIPACS_OVERLAP_LOG_SAMPLE`. Sampling protects log volume; default ≈ 20 % of overlap frames produce a tag.
+
+**Format (verbatim, must remain stable for the harness regex):**
+
+```
+[OVERLAP_SCENARIO] frame idx=<int> cache=<hit|surrogate|decode> decode_ms=<float> wl_ms=<float> total_ms=<float> settled=<True|False>
+```
+
+`settled=True` means the user is NOT in fast-interaction (drag/wheel) at emission time — i.e. either the overlap-coalesce settle frame after release, or a non-interactive call.
+
+**Parsed by:** [tools/performance/clearcanvas_aipacs_kpi_harness.py](tools/performance/clearcanvas_aipacs_kpi_harness.py) → `parse_overlap_log_text` / `parse_overlap_log_file`. CLI:
+
+```powershell
+.venv\Scripts\python.exe tools\performance\clearcanvas_aipacs_kpi_harness.py parse-overlap-log --log <path-to-viewer_diagnostics.log>
+```
+
+**Contract test:** `tests/performance/test_overlap_kpi_parser.py::test_parse_overlap_log_text_matches_production_emit_format` round-trips the exact emit format (with `diagnostic_logging` prefix) through the harness parser. If you change the emit format string in `Lightweight2DPipeline._maybe_emit_overlap_tag`, this test will fail until the harness regex is reconciled.
+
+**Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F2.1.

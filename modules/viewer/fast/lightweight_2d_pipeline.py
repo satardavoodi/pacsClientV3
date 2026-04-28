@@ -98,6 +98,17 @@ _STACK_SETTLE_AHEAD_RADIUS = 10
 _STACK_SETTLE_BEHIND_RADIUS = 6
 _DRAG_PREFETCH_THROTTLE_S = 0.09
 
+# F2.1 (2026-04-28): structured per-frame KPI tag for the
+# "download + scroll same series" overlap scenario. We sample 1-in-N
+# get_rendered_frame() calls at INFO level when both:
+#   (1) a heavy download is active (ui_throttle.is_heavy_download_active())
+#   (2) the currently viewed series is NOT yet complete
+# so the harness (tools/performance/clearcanvas_aipacs_kpi_harness.py
+# parse_overlap_log_text) can derive overlap-specific KPIs from the
+# normal viewer_diagnostics.log without enabling DEBUG. Default sample
+# rate is 1-in-5; override with AIPACS_OVERLAP_LOG_SAMPLE.
+_OVERLAP_LOG_SAMPLE_N = _env_positive_int("AIPACS_OVERLAP_LOG_SAMPLE", 5)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Data classes
@@ -393,6 +404,9 @@ class Lightweight2DPipeline(QObject):
         self._drag_prefetch_submitted: int = 0
         self._drag_background_decode_count: int = 0
         self._stack_drag_p01_slices: Tuple[int, ...] = ()
+
+        # F2.1: 1-in-N counter for [OVERLAP_SCENARIO] KPI emission.
+        self._overlap_log_counter: int = 0
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -786,6 +800,7 @@ class Lightweight2DPipeline(QObject):
             _pm,
         )
         if cached_frame is not None:
+            self._maybe_emit_overlap_tag(cached_frame, "hit")
             return cached_frame
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
@@ -818,6 +833,7 @@ class Lightweight2DPipeline(QObject):
             _pm,
         )
         if surrogate_frame is not None:
+            self._maybe_emit_overlap_tag(surrogate_frame, "surrogate")
             return surrogate_frame
         # ── End B3.7 ──────────────────────────────────────────────────
 
@@ -835,7 +851,43 @@ class Lightweight2DPipeline(QObject):
             _pm.record_filter(frame.filter_ms)
         if not (bool(getattr(self, '_protected_drag_active', False)) and interaction_type == 'drag'):
             self._ensure_prefetch_prepared(idx)
+        self._maybe_emit_overlap_tag(frame, "decode")
         return frame
+
+    def _maybe_emit_overlap_tag(self, frame: RenderedFrame, cache_source: str) -> None:
+        """F2.1: Emit a parsable [OVERLAP_SCENARIO] KPI line during the
+        download+scroll overlap on the same incomplete series.
+
+        Sampled 1-in-N (env AIPACS_OVERLAP_LOG_SAMPLE, default 5) at INFO
+        so the harness in tools/performance/ can ingest the existing
+        viewer_diagnostics.log without enabling DEBUG. No-op when the
+        overlap condition is not met.
+        """
+        try:
+            counter = int(getattr(self, "_overlap_log_counter", 0)) + 1
+            self._overlap_log_counter = counter
+            if _OVERLAP_LOG_SAMPLE_N <= 0 or counter % _OVERLAP_LOG_SAMPLE_N != 0:
+                return
+            sn = getattr(self, "_series_number", None)
+            if not sn:
+                return
+            if not is_heavy_download_active():
+                return
+            if is_viewed_series_complete(sn):
+                return
+            settled = not bool(getattr(self, "_fast_interaction", False))
+            logger.info(
+                "[OVERLAP_SCENARIO] frame idx=%d cache=%s decode_ms=%.2f wl_ms=%.2f total_ms=%.2f settled=%s",
+                int(getattr(frame, "slice_index", -1)),
+                str(cache_source),
+                float(getattr(frame, "decode_ms", 0.0) or 0.0),
+                float(getattr(frame, "wl_ms", 0.0) or 0.0),
+                float(getattr(frame, "total_ms", 0.0) or 0.0),
+                bool(settled),
+            )
+        except Exception:
+            # Never let instrumentation break the render path.
+            pass
 
     def set_fast_interaction(self, fast: bool, interaction_type: str = '') -> None:
         """Set fast-interaction mode. When True, filter is skipped during scroll."""
