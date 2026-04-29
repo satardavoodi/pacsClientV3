@@ -131,6 +131,11 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
     seriesDownloadStarted = Signal(str, str, str)  # study_uid, series_uid, series_desc
     seriesProgressUpdated = Signal(str, str, int, int)  # study_uid, series_uid, downloaded, total
     seriesDownloadCompleted = Signal(str, str)  # study_uid, series_uid
+    # F3.5.3 — emitted on Qt main thread when a priority-handoff retry chain
+    # exhausts. Args: (study_uid, series_number, reason). UI can connect to
+    # show a "stalled" indicator with click-to-retry. Always emitted unless
+    # the env-gated DM observer is fully disabled (default-on).
+    priorityHandoffFailed = Signal(str, str, str)
 
     def __init__(self, base_output_dir: Path, parent=None):
         """
@@ -188,6 +193,34 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
             refresh_table_order=self._refresh_table_order,
             check_auto_resume=self._check_auto_resume,
         )
+        # F3.5.3 — register priority-handoff failure observer (default-on).
+        # Set AIPACS_INTENT_HANDOFF_TOAST_DISABLE=1 to opt out (e.g. for
+        # automated tests that want only the coordinator-side signal).
+        # Stalled studies are tracked in `_stalled_priority_studies` so the
+        # UI layer can inspect or re-render at any time, and a manual retry
+        # is exposed via `retry_stalled_priority(study_uid)`.
+        self._stalled_priority_studies: Dict[str, Dict[str, str]] = {}
+        try:
+            import os as _os_f353
+            _toast_disabled = _os_f353.environ.get(
+                "AIPACS_INTENT_HANDOFF_TOAST_DISABLE", "0"
+            ).strip() == "1"
+            if not _toast_disabled:
+                self.intent_coordinator.register_priority_handoff_failed_callback(
+                    self._on_priority_handoff_failed_from_coordinator
+                )
+                logger.info(
+                    "[DM-INIT] Registered F3.5.3 priority-handoff failure observer"
+                )
+            else:
+                logger.info(
+                    "[DM-INIT] F3.5.3 priority-handoff failure observer disabled "
+                    "via AIPACS_INTENT_HANDOFF_TOAST_DISABLE=1"
+                )
+        except Exception as exc:
+            logger.warning(
+                "[DM-INIT] Failed to register F3.5.3 failure observer: %s", exc
+            )
         try:
             from modules.viewer.fast.object_cache import set_object_cache
             set_object_cache(self)
@@ -302,6 +335,92 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
         logger.info("✅ DownloadManagerWidget initialized (v1.0.6 UI style)")
         logger.info("=" * 80)
 
+    # ────────────────────────────────────────────────────────────────────
+    # F3.5.3 — Priority-handoff failure UX guardrail
+    # ────────────────────────────────────────────────────────────────────
+    def _on_priority_handoff_failed_from_coordinator(
+        self, study_uid: str, series_number: str, reason: str
+    ) -> None:
+        """Coordinator → DM observer entry point.
+
+        Invoked from the coordinator's emit helper. May be called from any
+        thread (the coordinator is plain Python and runs on whatever thread
+        triggered the timer fallback). Marshal to the Qt main thread before
+        emitting the widget-level signal.
+        """
+        try:
+            QTimer.singleShot(
+                0,
+                lambda u=str(study_uid), s=str(series_number or ""), r=str(reason): (
+                    self._handle_priority_handoff_failed_on_main(u, s, r)
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "[DM] Failed to marshal priority_handoff_failed to main thread"
+            )
+
+    def _handle_priority_handoff_failed_on_main(
+        self, study_uid: str, series_number: str, reason: str
+    ) -> None:
+        """Main-thread handler for priority-handoff failure.
+
+        Records the stalled study so the UI can render a "stalled — click to
+        retry" indicator and emits ``priorityHandoffFailed`` for external
+        observers (e.g. ViewerController passive logger).
+        """
+        try:
+            self._stalled_priority_studies[str(study_uid)] = {
+                "series_number": str(series_number or ""),
+                "reason": str(reason or ""),
+            }
+        except Exception:
+            pass
+        try:
+            self.priorityHandoffFailed.emit(
+                str(study_uid), str(series_number or ""), str(reason or "")
+            )
+        except Exception:
+            logger.exception(
+                "[DM] priorityHandoffFailed signal emit failed for %s",
+                study_uid,
+            )
+        logger.warning(
+            "[DM] Priority handoff stalled for study=%s series=%s reason=%s",
+            study_uid[:40] if study_uid else "",
+            series_number,
+            reason,
+        )
+
+    def retry_stalled_priority(self, study_uid: str) -> bool:
+        """Manual retry of a stalled priority handoff (e.g. from a UI click).
+
+        F3.5.3 contract:
+        - Forces the V2 wall-clock retry path even when
+          ``AIPACS_INTENT_HANDOFF_V2`` is unset/0, by calling the V2 entry
+          point directly.
+        - Bypasses the per-series viewer-notify cooldown — this is a manual
+          user action, not an automatic drag-drop notification.
+        - Clears the stalled-study record on successful chain start.
+        """
+        uid = str(study_uid or "").strip()
+        if not uid:
+            return False
+        record = self._stalled_priority_studies.pop(uid, None)
+        try:
+            self.intent_coordinator._schedule_priority_start_retry_v2(uid)
+        except Exception:
+            logger.exception("[DM] retry_stalled_priority failed for %s", uid)
+            # Restore record so user can retry again.
+            if record is not None:
+                self._stalled_priority_studies[uid] = record
+            return False
+        logger.info(
+            "[DM] retry_stalled_priority dispatched V2 retry for study=%s",
+            uid[:40],
+        )
+        return True
+
     def cleanup(self) -> None:
         """Release timers, observers, network clients, and active workers."""
         if getattr(self, "_cleaned_up", False):
@@ -337,6 +456,18 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
                 self.state_store.unregister_observer(ui_observer)
         except Exception:
             logger.exception("[DM] Failed to unregister UI observer during cleanup")
+
+        # F3.5.3 — unregister priority-handoff failure observer.
+        try:
+            coord = getattr(self, "intent_coordinator", None)
+            if coord is not None:
+                coord.unregister_priority_handoff_failed_callback(
+                    self._on_priority_handoff_failed_from_coordinator
+                )
+        except Exception:
+            logger.exception(
+                "[DM] Failed to unregister F3.5.3 failure observer during cleanup"
+            )
 
         try:
             self.grpc_client.close()

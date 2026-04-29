@@ -1476,12 +1476,45 @@ class _VCLoadMixin:
                             "dm-notify: viewed series=%s study=%s → CRITICAL",
                             _sn, _uid[:30],
                         )
+
+                    # F3.5.3 — passive observer: connect once per DM widget so
+                    # the viewer log carries a WARNING when a priority handoff
+                    # stalls. No popup, no UI state change — pure logging.
+                    if not getattr(dm, '_vc_handoff_observer_attached', False):
+                        sig = getattr(dm, 'priorityHandoffFailed', None)
+                        if sig is not None:
+                            try:
+                                sig.connect(self._on_dm_priority_handoff_failed_log)
+                                dm._vc_handoff_observer_attached = True
+                            except Exception:
+                                pass
                 except Exception as exc:
                     self.logger.debug("dm-notify: deferred failed for series=%s: %s", _sn, exc)
 
             QTimer.singleShot(0, _deferred_dm_notify)
         except Exception as exc:
             self.logger.debug("dm-notify: failed for series=%s: %s", series_number, exc)
+
+    def _on_dm_priority_handoff_failed_log(
+        self, study_uid: str, series_number: str, reason: str
+    ) -> None:
+        """F3.5.3 passive logger — WARNING-level log when DM signals a stalled handoff.
+
+        Pure logging slot. No popup, no viewer state change. Connected once
+        per DM widget by ``_notify_dm_viewed_series``. The DM widget is the
+        active UX surface (toast row + retry button) — viewer just records
+        that the user noticed.
+        """
+        try:
+            self.logger.warning(
+                "[F3.5.3] DM priority handoff stalled (passive observer): "
+                "study=%s series=%s reason=%s",
+                (str(study_uid)[:40] if study_uid else ""),
+                series_number,
+                reason,
+            )
+        except Exception:
+            pass
 
     def _trigger_download_if_needed(self, series_number: str):
         """Trigger server download if series not available locally"""

@@ -80,6 +80,14 @@ class SeriesIntentCoordinator:
         # [INTENT_PRIORITY] log emissions and is the source of
         # overlap_priority_handoff_latency_ms in the KPI harness.
         self._priority_retry_started_ms: Dict[str, float] = {}
+        # F3.5.3 — observer callbacks invoked when a priority-handoff retry
+        # chain exhausts (legacy recovery OR V2 wall-clock). Each callback
+        # receives (study_uid: str, series_number: str, reason: str). The
+        # coordinator stays plain-Python (no QObject inheritance); UI
+        # observers are responsible for marshaling to the Qt main thread
+        # via QTimer.singleShot(0, ...). Callback exceptions are isolated
+        # per callback so one buggy observer cannot break the others.
+        self._priority_handoff_failed_callbacks: list = []
 
     def _defer(self, delay_ms: int, callback: Callable[[], None]) -> None:
         if self._defer_call is not None:
@@ -115,6 +123,48 @@ class SeriesIntentCoordinator:
             return
         self._priority_retry_tokens.pop(study_uid, None)
         self._priority_retry_started_ms.pop(study_uid, None)
+
+    # ────────────────────────────────────────────────────────────────────
+    # F3.5.3 — Priority-handoff failure observer API (callback-based)
+    # ────────────────────────────────────────────────────────────────────
+    def register_priority_handoff_failed_callback(self, callback: Callable[[str, str, str], None]) -> None:
+        """Register a callback invoked when a priority-handoff retry chain
+        exhausts. Idempotent — duplicate registrations are ignored.
+
+        Callback signature: ``callback(study_uid, series_number, reason)``
+        where ``reason`` is one of: ``"recovery_exhausted"`` (legacy chain),
+        ``"pool_busy"`` / ``"reclaimed"`` / ``"state_lost"`` / ``"timeout"``
+        (V2 chain). UI observers MUST marshal to the Qt main thread.
+        """
+        if callback is None or callback in self._priority_handoff_failed_callbacks:
+            return
+        self._priority_handoff_failed_callbacks.append(callback)
+
+    def unregister_priority_handoff_failed_callback(self, callback: Callable[[str, str, str], None]) -> None:
+        """Unregister a previously-registered failure callback. No-op if not present."""
+        try:
+            self._priority_handoff_failed_callbacks.remove(callback)
+        except ValueError:
+            pass
+
+    def _emit_priority_handoff_failed(self, study_uid: str, reason: str) -> None:
+        """Fire all registered failure observers. Errors are isolated per callback."""
+        if not self._priority_handoff_failed_callbacks:
+            return
+        try:
+            state = self.state_store.get(study_uid)
+            series_number = str(getattr(state, "viewed_series_number", "") or "") if state else ""
+        except Exception:
+            series_number = ""
+        # Iterate over a snapshot so observers can unregister themselves safely.
+        for cb in list(self._priority_handoff_failed_callbacks):
+            try:
+                cb(study_uid, series_number, reason)
+            except Exception as exc:
+                logger.warning(
+                    "[INTENT] priority_handoff_failed callback raised: %s",
+                    exc,
+                )
 
     def _emit_intent_priority(
         self,
@@ -434,6 +484,11 @@ class SeriesIntentCoordinator:
                     recovery=True,
                     branch="recovery",
                 )
+                # F3.5.3 — notify UX observers of priority-handoff failure.
+                # Suppress in expected-preemption windows where the chain
+                # ended because the study was intentionally paused.
+                if not expected_preemption_window:
+                    self._emit_priority_handoff_failed(study_uid, "recovery_exhausted")
                 self._clear_priority_retry(study_uid, _token)
             return
 
@@ -605,6 +660,9 @@ class SeriesIntentCoordinator:
                 branch="v2",
                 reason=reason,
             )
+            # F3.5.3 — notify UX observers (skip expected-preemption windows).
+            if not expected_preemption_window:
+                self._emit_priority_handoff_failed(study_uid, reason)
             self._clear_priority_retry(study_uid, token)
             return
 
@@ -620,6 +678,8 @@ class SeriesIntentCoordinator:
                 branch="v2",
                 reason="state_lost",
             )
+            # F3.5.3 — notify UX observers (state_lost is unexpected by definition).
+            self._emit_priority_handoff_failed(study_uid, "state_lost")
             self._clear_priority_retry(study_uid, token)
             return
         if state.status not in (DownloadStatus.PENDING, DownloadStatus.PAUSED):

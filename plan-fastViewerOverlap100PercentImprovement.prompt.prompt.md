@@ -369,6 +369,72 @@ A 50 ms min-gap (`_OVERLAP_FORCE_EMIT_MIN_GAP_MS`) prevents log storm if many de
 
 ---
 
+## Cross-PC log analysis (2026-04-29 PM)
+
+Fresh production diagnostic logs from PC A (developer / home / 32 GB / internet) and PC B (LAN / 64 GB) were parsed for `[INTENT]`, `[INTENT_PRIORITY]`, `[OVERLAP_SCENARIO]`, and `[FAST_DRAG_KPI]` markers. The findings sharpen the F3.5 plan and immediately re-prioritise the next coding step.
+
+### Raw counts
+
+| Marker | PC A | PC B | Notes |
+|---|---:|---:|---|
+| Legacy `[INTENT] Priority start retry exhausted` (lifetime, 2026-04-02 → 04-29) | **759** | **0** | PC A peak 168 events on 04-05; today 2 events still firing on installed build. PC B: zero across log lifetime. |
+| F3.5.1 structured `[INTENT_PRIORITY]` | 0 | 0 | Confirms neither installed build carries commit `0bdf4fae` or later. |
+| Latest session timestamp | 2026-04-29 09:44:50 | 2026-04-29 09:39:47 | Both ran today. |
+
+### Sample today-PC-A signature
+
+```
+2026-04-29 09:44:11 | WARNING | series_intent_coordinator.schedule_priority_start_retry |
+  [INTENT] Priority start retry exhausted for <study> after recovery attempts=3
+2026-04-29 09:44:47 | ERROR   | series_downloader.download_all_series |
+  ❌ FAILED: Download cancelled (preemption)
+2026-04-29 09:44:47 | WARNING | executor.execute_download |
+  ⏸️ Download preempted: <patient> - Paused for higher priority download (preemption)
+```
+
+A primary-chain exhaust (≈ 9:44:11) followed 36 s later by a successful preemption on a sibling series of the same study. The recovery branch was never reached on this specific event.
+
+### Implications (sharpening prior assumptions)
+
+**S1. F3.5.2 targets a real, chronic production failure.** 759 lifetime events on PC A, with peak day 168/d, prove the legacy 90×200 ms primary + 3×3000 ms recovery split is exhausting under WAN tail latency. F3.5.2's 60 s wall-clock budget directly addresses the dominant failure mode. Plan deltas in the 2026-04-28 revision speculated about "three independent sessions" — the actual lifetime number is 759, two orders of magnitude larger.
+
+**S2. PC B is structurally not a useful validation surface for F3.5 success criteria.** LAN throughput finishes batches well inside the legacy 18 s primary cap; PC B has never hit the failure mode. F3.5.4's cross-PC gating must be re-read as: "PC A confirms reduction; PC B confirms no regression on a path that never failed there." Do not block F3.5.4 on PC B exhibiting the legacy failure — by construction it will not.
+
+**S3. F3.5.1 instrumentation is not yet observed in production.** Both PCs run a build older than `0bdf4fae`. To collect the F3.5.1 baseline measurement called out in F3.5.4's Done-When, PC A must be rebuilt and reinstalled from at least `0bdf4fae` (F3.5.1 only) or `30365119` (F3.5.1 + F3.5.2 with env=0 default). The F3.5.4 plan delta below makes this explicit.
+
+**S4. The F3.5.2 "branch decision" called out in 2026-04-28 R8 is now answered.** Lifetime PC A logs show legacy exhausts cluster around the primary chain (the warning text matches `recovery attempts=3` because that is the recovery sub-counter spelled out at exit) — but without F3.5.1 structured `branch=primary|recovery` partition we cannot quantify the primary-vs-recovery share from the legacy text alone. The synthetic F3.5.2 baseline `priority_handoff_v2_pre.json` already captured 20 primary-chain exits and 0 recovery exits on the 25 s peer-hold scenario, so the wall-clock budget is justified independently. The reclamation-race CAS path remains in F3.5.2 because the synthetic post baseline observed 12 reclaimed defers (3 races × 4 ticks/window) — both sub-paths are non-zero in synthetic and therefore both are kept.
+
+### Updated Phase F3.5 status (after this analysis)
+
+| Step | Status | Commit | Notes |
+|---|---|---|---|
+| F3.5.1 | DONE | `0bdf4fae` | Instrumentation, KPI parser, 7 instrumentation tests + 15 parser tests. |
+| F3.5.2 | DONE | `30365119` | Wall-clock V2 + reclamation-race CAS, env-gated default-off. 9 V2 tests + 10 V2 parser tests + synthetic pre/post baselines committed. |
+| F3.5.3 | NEXT — coding now | TBD | UX guardrail. Findings above sharpen the trigger condition (lifetime 759 events ⇒ toast must be default-on, not opt-in, even though dev policy is to default new behaviour off). |
+| F3.5.4 | BLOCKED on PC A reinstall | — | Done-When now requires "PC A installed build = `30365119` or later AND F3.5.1 instrumentation observed in production logs for ≥1 day." |
+| F3.5.5 | NEW — CONDITIONAL | — | Only triggered if F3.5.4's PC A soak shows `recovery_exhaust_count > 0` AND `v2_exhaust_pool_busy_count > 0` simultaneously. "Pool starvation under wall-clock budget" follow-up; otherwise dropped. |
+
+### F3.5.3 refinements driven by these findings
+
+The original F3.5.3 step (2026-04-28) called for a passive toast with `AIPACS_INTENT_HANDOFF_TOAST=1` opt-out. The 759-event production signal changes the bar:
+
+1. **Toast remains additive to the existing WARNING log** (no behavioural removal of legacy diagnostics).
+2. **Default is ON** but the env name flips to `AIPACS_INTENT_HANDOFF_TOAST_DISABLE=1` (positive-default convention so headless test runs disable explicitly). Inverts the prior name; chosen for clarity.
+3. **Manual retry path uses the same V2 wall-clock budget as the original chain** (60 s) — not the legacy 90+3 split, even when env=0. Rationale: a user-initiated re-promotion should always use the most-likely-to-succeed path; otherwise the toast click reproduces the original failure.
+4. **One signal, no fan-out duplication.** `priorityHandoffFailed(study_uid, series_number, reason)` is the sole emit; DM widget consumes for UI, ViewerController consumes for log only. No new viewer-side popup.
+5. **Cooldown bypass narrowed:** the `_dm_notify_last_ts` 500 ms cooldown is bypassed for *manual-retry-from-toast-click* only, not for any subsequent automatic re-promotion. This prevents accidental loop if the underlying network condition persists.
+6. **Test surface mirrors F3.5.2:** new `tests/download_manager/test_priority_handoff_signal.py` covers signal-fires-once, signal-fires-with-correct-reason for each of the four V2 reasons (`pool_busy|reclaimed|state_lost|timeout`), manual-retry uses V2 path, and env-disable suppresses widget connection.
+
+### F3.5.4 deltas
+
+Done-When revised:
+- PC A installed build is `30365119` or later (not just dev tree).
+- ≥1 day of PC A production usage with F3.5.1 instrumentation captured.
+- KPI harness on PC A diagnostics shows `recovery_exhaust_count == 0` (proof that V2 handles what legacy would have failed) AND `v2_total_exhaust_count` ≤ baseline `recovery_exhaust_count` × 0.20 (≥80% reduction) — measured over the same number of drag-drop promotions.
+- PC B re-defined as no-regression smoke only (not symmetric proof).
+
+---
+
 ## Phase F0 — Baseline & Tooling
 
 **Phase goal:** Establish a reproducible overlap baseline and the parser pipeline so every later step has a numeric before/after.
@@ -827,13 +893,15 @@ A 50 ms min-gap (`_OVERLAP_FORCE_EMIT_MIN_GAP_MS`) prevents log storm if many de
 
 ### Step F3.5.3 — Drag-drop UX guardrail when handoff still fails
 
+> **Refined 2026-04-29 PM** — see "Cross-PC log analysis (2026-04-29 PM)" → "F3.5.3 refinements" for the six-point delta. Default-on, positive-default env flag, manual-retry uses V2 wall-clock budget regardless of env=0/1, narrowed cooldown bypass, four-reason test surface.
+
 **Goal:** Even with F3.5.2, a 60 s hard-timeout exhaustion is *possible* in the wild (network stall on the peer worker). When it happens, the user must know — silently abandoning a CRITICAL drag-drop is the worst UX. Add a minimal, non-intrusive UX guardrail.
 
 **Actions:**
-1. On exhaust (`tag=exhaust reason=pool_busy|reclaimed|state_lost`), the coordinator emits a Qt signal `priorityHandoffFailed(study_uid: str, series_number: int, reason: str)` (new signal on `SeriesIntentCoordinator`).
-2. `DownloadManagerWidget` connects to this signal and surfaces a passive toast in the DM table row (status column shows `Priority stalled — click to retry`). Click → `request_critical_series` is re-issued with a fresh token; legacy `_dm_notify_last_ts` cooldown (500 ms) is bypassed for this manual retry only.
+1. On exhaust (`tag=exhaust reason=pool_busy|reclaimed|state_lost|timeout`), the coordinator emits a Qt signal `priorityHandoffFailed(study_uid: str, series_number: int, reason: str)` (new signal on `SeriesIntentCoordinator`). Emitted from BOTH the legacy recovery-exhaust path AND every V2 exhaust path so toast surfaces regardless of `AIPACS_INTENT_HANDOFF_V2`.
+2. `DownloadManagerWidget` connects to this signal and surfaces a passive toast in the DM table row (status column shows `Priority stalled — click to retry`). Click → `request_critical_series` is re-issued with a fresh token; legacy `_dm_notify_last_ts` cooldown (500 ms) is bypassed for this manual retry only. The manual retry forces V2 path for the new chain (`_intent_handoff_v2_enabled()` is overridden inside that one call).
 3. ViewerController consumes the same signal (already a DM observer) only to log; no viewer-side popup. The 60 s ceiling should make this rare; popups would feel worse than the current silent failure.
-4. Default-on for the toast (visible UX is the safer default once the underlying bug is fixed); env flag `AIPACS_INTENT_HANDOFF_TOAST=1` to disable for headless runs.
+4. Default-on for the toast; env flag `AIPACS_INTENT_HANDOFF_TOAST_DISABLE=1` (positive-default name) to disable for headless test runs. Disable suppresses the DM widget signal connection — the coordinator still emits the signal so observers (logging) keep working.
 5. Keep the WARNING log line; the toast is additive.
 
 **Structures to change:**
