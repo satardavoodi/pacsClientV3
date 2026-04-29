@@ -166,6 +166,27 @@ Layer 3: Per-series retry loop (series_downloader.py)
 - `SeriesIntentCoordinator.schedule_priority_start_retry` classifies recovery exhaustion as expected preemption when either `is_auto_paused` is true or state `error_message` contains `preemption`/`higher priority` markers.
 - `_dm_workers._on_worker_error` keeps preemption-marker completions on the expected path (non-failure), while explicit user-cancel errors remain failure-visible.
 
+### Priority-handoff diagnostic tag (F3.5.1, v2.4.7)
+
+`SeriesIntentCoordinator._emit_intent_priority` produces a stable `[INTENT_PRIORITY]` log line at six points in the priority retry chain. Format:
+
+```
+[INTENT_PRIORITY] tag=<TAG> study=<UID> series=<SN> attempt=<N>/<M> recovery=<BOOL>
+                  pool_busy=<BOOL> pool_capacity=<U>/<T> state=<S>
+                  auto_paused=<BOOL> elapsed_ms=<INT> token=<INT> [branch=<B>]
+```
+
+Tags:
+
+- `begin` — first chain entry, immediately after `_begin_priority_retry` reserves the token.
+- `tick` — continuation entry within an active chain (verbose; gated by `AIPACS_INTENT_PRIORITY_TRACE=1`).
+- `defer` — handoff has rescheduled itself because the worker pool is full or a reclamation race rejected the start (verbose; gated).
+- `recover branch=primary` — primary 90×200ms chain expired, transitioning to recovery 3×3000ms chain.
+- `exhaust branch=primary|recovery` — chain attempts hit the cap; emitted before classifying as auto-pause/preemption-expected.
+- `started` — `start_download_worker` returned `True`; carries cumulative `elapsed_ms` from the `begin` event.
+
+`tick` and `defer` are suppressed unless the env flag `AIPACS_INTENT_PRIORITY_TRACE=1` is set, so production logs stay quiet by default while still capturing all state transitions (`begin`, `recover`, `exhaust`, `started`). The KPI harness (`tools/performance/clearcanvas_aipacs_kpi_harness.py parse-priority-handoff-log`) consumes this format and produces `overlap_priority_handoff_latency_p50_ms`, `overlap_priority_handoff_latency_p95_ms`, `overlap_priority_handoff_pool_busy_ratio_pct`, and primary/recovery exhaust counts. Format is contract-tested by `tests/performance/test_priority_handoff_kpi_parser.py`; instrumentation behavior (begin → started, exhaust clears `_priority_retry_started_ms`, dedup) is verified by `tests/download_manager/test_priority_handoff_instrumentation.py`.
+
 ## Validation Rules (R17) أ¢â‚¬â€‌ Duplicate/Resume Detection
 
 Located in `modules/download_manager/rules/validation_rules.py`:

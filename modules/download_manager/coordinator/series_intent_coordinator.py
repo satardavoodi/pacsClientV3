@@ -7,12 +7,19 @@ so callers do not independently mutate queue state.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from dataclasses import replace
 from typing import Callable, Dict, Optional
 
 from ..core.enums import DownloadPriority, DownloadStatus, PreemptionAction
 
 logger = logging.getLogger(__name__)
+
+# F3.5.1 — env-gated verbose tracing. When 0 (default), only begin / recover /
+# exhaust / started tags are emitted. When 1, every tick / defer is emitted as well.
+_INTENT_TRACE_ENABLED = os.environ.get("AIPACS_INTENT_PRIORITY_TRACE", "0") == "1"
+_INTENT_VERBOSE_TAGS = {"tick", "defer"}
 
 
 class SeriesIntentCoordinator:
@@ -51,6 +58,11 @@ class SeriesIntentCoordinator:
         # storm while the worker pool is still occupied.
         self._priority_retry_tokens: Dict[str, int] = {}
         self._priority_retry_seq = 0
+        # F3.5.1 — wall-clock timestamp (time.monotonic seconds) of the moment
+        # the retry chain began for each study. Drives elapsed_ms in
+        # [INTENT_PRIORITY] log emissions and is the source of
+        # overlap_priority_handoff_latency_ms in the KPI harness.
+        self._priority_retry_started_ms: Dict[str, float] = {}
 
     def _defer(self, delay_ms: int, callback: Callable[[], None]) -> None:
         if self._defer_call is not None:
@@ -74,6 +86,8 @@ class SeriesIntentCoordinator:
         self._priority_retry_seq += 1
         token = self._priority_retry_seq
         self._priority_retry_tokens[study_uid] = token
+        # F3.5.1 — record begin timestamp BEFORE first emit so elapsed_ms is 0.
+        self._priority_retry_started_ms[study_uid] = time.monotonic()
         return token
 
     def _clear_priority_retry(self, study_uid: str, token: Optional[int] = None) -> None:
@@ -83,6 +97,74 @@ class SeriesIntentCoordinator:
         if token is not None and active != token:
             return
         self._priority_retry_tokens.pop(study_uid, None)
+        self._priority_retry_started_ms.pop(study_uid, None)
+
+    def _emit_intent_priority(
+        self,
+        *,
+        tag: str,
+        study_uid: str,
+        attempt: int = 0,
+        max_attempts: int = 0,
+        recovery: bool = False,
+        pool_busy: bool = False,
+        branch: Optional[str] = None,
+    ) -> None:
+        """Emit a structured `[INTENT_PRIORITY]` log line for KPI harness parsing.
+
+        Format (stable; round-tripped by tests/performance/test_priority_handoff_kpi_parser.py):
+            [INTENT_PRIORITY] tag=<TAG> study=<UID40> series=<SN> attempt=<N>/<M>
+              recovery=<BOOL> pool_busy=<BOOL> pool_capacity=<U>/<T> state=<S>
+              auto_paused=<BOOL> elapsed_ms=<INT> token=<INT> [branch=<B>]
+
+        Verbose tags (tick / defer) are suppressed unless
+        AIPACS_INTENT_PRIORITY_TRACE=1.
+        """
+        if tag in _INTENT_VERBOSE_TAGS and not _INTENT_TRACE_ENABLED:
+            return
+        try:
+            state = self.state_store.get(study_uid)
+        except Exception:
+            state = None
+        started_ms = self._priority_retry_started_ms.get(study_uid)
+        if started_ms is None:
+            elapsed_ms = 0
+        else:
+            elapsed_ms = int((time.monotonic() - started_ms) * 1000)
+        try:
+            active = len(getattr(self.worker_pool, "active_workers", {}) or {})
+            cap = int(getattr(self.worker_pool, "max_workers", 0))
+        except Exception:
+            active = 0
+            cap = 0
+        pool_capacity = f"{active}/{cap}"
+        if state is not None:
+            status_attr = getattr(state, "status", None)
+            status = getattr(status_attr, "value", str(status_attr)) if status_attr is not None else "missing"
+            auto = bool(getattr(state, "is_auto_paused", False))
+            series = getattr(state, "viewed_series_number", None) or ""
+        else:
+            status = "missing"
+            auto = False
+            series = ""
+        token = self._priority_retry_tokens.get(study_uid, 0)
+        uid_short = (study_uid[:40] if study_uid else "") or ""
+        parts = [
+            f"[INTENT_PRIORITY] tag={tag}",
+            f"study={uid_short}",
+            f"series={series}",
+            f"attempt={attempt}/{max_attempts}",
+            f"recovery={recovery}",
+            f"pool_busy={pool_busy}",
+            f"pool_capacity={pool_capacity}",
+            f"state={status}",
+            f"auto_paused={auto}",
+            f"elapsed_ms={elapsed_ms}",
+            f"token={token}",
+        ]
+        if branch is not None:
+            parts.append(f"branch={branch}")
+        logger.info(" ".join(parts), extra={"component": "download"})
 
     def request_study_priority(self, study_uid: str, priority: DownloadPriority) -> bool:
         state = self.state_store.get(study_uid)
@@ -227,6 +309,14 @@ class SeriesIntentCoordinator:
             _token = self._begin_priority_retry(study_uid)
             if _token is None:
                 return
+            # F3.5.1 — emit chain-begin marker (only on first entry).
+            self._emit_intent_priority(
+                tag="begin",
+                study_uid=study_uid,
+                attempt=0,
+                max_attempts=max_retries,
+                recovery=_recovery,
+            )
         elif self._priority_retry_tokens.get(study_uid) != _token:
             logger.debug(
                 "[INTENT] Ignoring stale retry callback for %s (token=%s active=%s)",
@@ -235,6 +325,15 @@ class SeriesIntentCoordinator:
                 self._priority_retry_tokens.get(study_uid),
             )
             return
+        else:
+            # Continued tick (token reused). Verbose-only.
+            self._emit_intent_priority(
+                tag="tick",
+                study_uid=study_uid,
+                attempt=_attempt,
+                max_attempts=max_retries,
+                recovery=_recovery,
+            )
 
         if _attempt >= max_retries:
             state = self.state_store.get(study_uid)
@@ -255,6 +354,15 @@ class SeriesIntentCoordinator:
                     "[INTENT] Priority start retry entering recovery for %s after %s attempts",
                     study_uid,
                     max_retries,
+                )
+                # F3.5.1 — primary chain expired; entering recovery round.
+                self._emit_intent_priority(
+                    tag="recover",
+                    study_uid=study_uid,
+                    attempt=_attempt,
+                    max_attempts=max_retries,
+                    recovery=False,
+                    branch="primary",
                 )
                 self._defer(
                     5000,
@@ -288,6 +396,15 @@ class SeriesIntentCoordinator:
                         study_uid,
                         max_retries,
                     )
+                # F3.5.1 — recovery chain expired (always emit; branch=recovery).
+                self._emit_intent_priority(
+                    tag="exhaust",
+                    study_uid=study_uid,
+                    attempt=_attempt,
+                    max_attempts=max_retries,
+                    recovery=True,
+                    branch="recovery",
+                )
                 self._clear_priority_retry(study_uid, _token)
             return
 
@@ -305,6 +422,15 @@ class SeriesIntentCoordinator:
 
             started = self._start_download_worker(study_uid)
             if not started:
+                # Slot reportedly free but start failed — likely reclamation race.
+                self._emit_intent_priority(
+                    tag="defer",
+                    study_uid=study_uid,
+                    attempt=_attempt,
+                    max_attempts=max_retries,
+                    recovery=_recovery,
+                    pool_busy=False,
+                )
                 self._defer(
                     interval_ms,
                     lambda _token=_token: self.schedule_priority_start_retry(
@@ -317,9 +443,26 @@ class SeriesIntentCoordinator:
                     ),
                 )
             else:
+                # F3.5.1 — success: record total handoff latency.
+                self._emit_intent_priority(
+                    tag="started",
+                    study_uid=study_uid,
+                    attempt=_attempt,
+                    max_attempts=max_retries,
+                    recovery=_recovery,
+                )
                 self._clear_priority_retry(study_uid, _token)
             return
 
+        # Pool busy — defer and try again.
+        self._emit_intent_priority(
+            tag="defer",
+            study_uid=study_uid,
+            attempt=_attempt,
+            max_attempts=max_retries,
+            recovery=_recovery,
+            pool_busy=True,
+        )
         self._defer(
             interval_ms,
             lambda _token=_token: self.schedule_priority_start_retry(

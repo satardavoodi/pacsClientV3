@@ -88,6 +88,16 @@ _ADVANCED_SCROLL_SUBTIMING_RE = re.compile(
     r"WL=(?P<wl>[0-9.]+)ms\s+corners=(?P<corners>[0-9.]+)ms\s+"
     r"Render=(?P<render>[0-9.]+)ms\s+total=(?P<total>[0-9.]+)ms"
 )
+# F3.5.1 — DM coordinator priority-handoff structured emit. Tags:
+# begin / tick / defer / recover / exhaust / started. Optional branch=primary|recovery.
+_INTENT_PRIORITY_RE = re.compile(
+    r"\[INTENT_PRIORITY\]\s+tag=(?P<tag>\w+)\s+study=(?P<study>\S*)\s+series=(?P<series>\S*)\s+"
+    r"attempt=(?P<attempt>\d+)/(?P<max_attempts>\d+)\s+recovery=(?P<recovery>True|False)\s+"
+    r"pool_busy=(?P<pool_busy>True|False)\s+pool_capacity=(?P<pool_active>\d+)/(?P<pool_max>\d+)\s+"
+    r"state=(?P<state>\S+)\s+auto_paused=(?P<auto_paused>True|False)\s+"
+    r"elapsed_ms=(?P<elapsed_ms>\d+)\s+token=(?P<token>\d+)"
+    r"(?:\s+branch=(?P<branch>\w+))?"
+)
 _STAGE_TIMING_RE = re.compile(
     r"component=(?P<component>\w+)\s+role=(?P<role>[^|]+)\s+\|.*?"
     r"fn=(?P<function>\S+)\s+stage=(?P<stage>\S+)\s+result=(?P<result>\S+)\s+\|.*?"
@@ -1091,6 +1101,109 @@ def parse_overlap_log_file(path: Path) -> Dict[str, Any]:
     }
 
 
+def parse_priority_handoff_log_text(text: str) -> Dict[str, Any]:
+    """Parse `[INTENT_PRIORITY]` records emitted by SeriesIntentCoordinator (F3.5.1).
+
+    Returns a dict with KPI keys covering the DM priority-handoff path:
+      - samples: total `[INTENT_PRIORITY]` lines parsed.
+      - begin_count / tick_count / defer_count / recover_count / exhaust_count / started_count.
+      - primary_exhaust_count / recovery_exhaust_count: counts of `tag=exhaust`
+        partitioned by the `branch=primary|recovery` field. The `recover` tag also
+        bumps `primary_exhaust_count` because it marks the moment the primary 90×200 ms
+        chain expired (entering recovery is the primary-exhaust event from the user's POV).
+      - p50_ms / p95_ms / max_ms: percentile / max of `elapsed_ms` extracted from `tag=started`
+        emissions (handoff latency = drag-drop begin → worker started). Empty samples → 0.0.
+      - pool_busy_ratio_pct: percentage of defer events with `pool_busy=True` — when this
+        is high the bottleneck is peer-worker holding the slot (F3.5.2 wall-clock fix);
+        when low, the bottleneck is reclamation race (F3.5.2 prefer_study_uid fix).
+    """
+    started_elapsed_ms: list = []
+    counts = {
+        "begin": 0,
+        "tick": 0,
+        "defer": 0,
+        "recover": 0,
+        "exhaust": 0,
+        "started": 0,
+    }
+    primary_exhaust = 0
+    recovery_exhaust = 0
+    pool_busy_true = 0
+    pool_busy_total = 0
+    samples = 0
+
+    for m in _INTENT_PRIORITY_RE.finditer(text or ""):
+        samples += 1
+        tag = m.group("tag")
+        if tag in counts:
+            counts[tag] += 1
+        if tag == "started":
+            try:
+                started_elapsed_ms.append(int(m.group("elapsed_ms")))
+            except (TypeError, ValueError):
+                pass
+        if tag == "defer":
+            pool_busy_total += 1
+            if m.group("pool_busy") == "True":
+                pool_busy_true += 1
+        # `recover` marks primary chain expiration (entering recovery round).
+        if tag == "recover":
+            primary_exhaust += 1
+        if tag == "exhaust":
+            branch = m.group("branch")
+            if branch == "primary":
+                primary_exhaust += 1
+            elif branch == "recovery":
+                recovery_exhaust += 1
+            else:
+                # Defensive: branch missing — count as recovery (legacy path).
+                recovery_exhaust += 1
+
+    if started_elapsed_ms:
+        p50 = round(_percentile(started_elapsed_ms, 50), 2)
+        p95 = round(_percentile(started_elapsed_ms, 95), 2)
+        max_ms = float(max(started_elapsed_ms))
+    else:
+        p50 = 0.0
+        p95 = 0.0
+        max_ms = 0.0
+
+    pool_busy_ratio = (
+        round((pool_busy_true / pool_busy_total) * 100.0, 2)
+        if pool_busy_total > 0
+        else 0.0
+    )
+
+    return {
+        "samples": samples,
+        "begin_count": counts["begin"],
+        "tick_count": counts["tick"],
+        "defer_count": counts["defer"],
+        "recover_count": counts["recover"],
+        "exhaust_count": counts["exhaust"],
+        "started_count": counts["started"],
+        "primary_exhaust_count": primary_exhaust,
+        "recovery_exhaust_count": recovery_exhaust,
+        "overlap_priority_handoff_latency_p50_ms": p50,
+        "overlap_priority_handoff_latency_p95_ms": p95,
+        "overlap_priority_handoff_latency_max_ms": round(max_ms, 2),
+        "overlap_priority_retry_primary_exhaust_count": primary_exhaust,
+        "overlap_priority_retry_recovery_exhaust_count": recovery_exhaust,
+        "overlap_priority_handoff_pool_busy_ratio_pct": pool_busy_ratio,
+    }
+
+
+def parse_priority_handoff_log_file(path: Path) -> Dict[str, Any]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    return {
+        "viewer": "AI-PACS",
+        "mode": "priority-handoff-parse",
+        "scenario": "aipacs_dm_priority_handoff",
+        "log_path": str(path),
+        "priority_handoff_metrics": parse_priority_handoff_log_text(text),
+    }
+
+
 def _normalize_headless_kpis(snapshot: Dict[str, Any], process_summary: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "first_image_visible_ms": round(float(snapshot.get("first_image_ms", 0.0)), 2),
@@ -1883,6 +1996,17 @@ def _cmd_parse_overlap_log(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_parse_priority_handoff_log(args: argparse.Namespace) -> int:
+    """F3.5.1: extract DM priority-handoff KPIs from a runtime log file."""
+    payload = parse_priority_handoff_log_file(Path(args.log))
+    if getattr(args, "scenario", None):
+        payload["scenario"] = str(args.scenario)
+    out = Path(args.output) if args.output else _default_output("priority_handoff_kpi", "json")
+    _write_json(out, payload)
+    print(out)
+    return 0
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
     left = json.loads(Path(args.left).read_text(encoding="utf-8"))
     right = json.loads(Path(args.right).read_text(encoding="utf-8"))
@@ -1993,6 +2117,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_overlap.add_argument("--output")
     p_overlap.set_defaults(func=_cmd_parse_overlap_log)
+
+    p_handoff = sub.add_parser(
+        "parse-priority-handoff-log",
+        help="Extract DM priority-handoff KPIs ([INTENT_PRIORITY] tag) from a log file",
+    )
+    p_handoff.add_argument("--log", required=True)
+    p_handoff.add_argument(
+        "--scenario",
+        default="aipacs_dm_priority_handoff",
+        help="Scenario id stored in the output payload",
+    )
+    p_handoff.add_argument("--output")
+    p_handoff.set_defaults(func=_cmd_parse_priority_handoff_log)
 
     p_compare = sub.add_parser("compare", help="Compare two KPI JSON payloads")
     p_compare.add_argument("--left", required=True)
