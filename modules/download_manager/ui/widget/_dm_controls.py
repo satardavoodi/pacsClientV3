@@ -485,7 +485,26 @@ class _DMControlsMixin:
 
     def _on_priority_changed(self, new_priority: str):
         """Handle priority change from combo box"""
-        logger.info(f"���� [CONTROL CHANGE] Priority dropdown changed to: {new_priority}")
+        # G7 — observability for the historical "ghost combo signal"
+        # bug: when called during a `_refresh_table_order` rebuild, this
+        # is a programmatic write (not user-initiated). Post-G8.1 the
+        # only programmatic writers wrap the call in `blockSignals`, so
+        # `during_rebuild=True` here is a regression signal.
+        try:
+            during_rebuild = bool(getattr(self, "_refresh_table_order_in_progress", False))
+            current_uid = getattr(self, "_selected_study_uid", None) or ""
+            logger.info(
+                "[DM_PRIORITY_TRANSITION] event=combo_changed new=%s "
+                "study=%s during_rebuild=%s",
+                new_priority,
+                current_uid[:40],
+                during_rebuild,
+                extra={"component": "download"},
+            )
+        except Exception:
+            pass
+
+        logger.info(f"📊 [CONTROL CHANGE] Priority dropdown changed to: {new_priority}")
         study_uid = self._selected_study_uid  # Cache to avoid race condition
         if study_uid:
             try:

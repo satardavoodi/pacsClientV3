@@ -230,7 +230,16 @@ class _DMDetailsMixin:
         if self.eta_label:
             self.eta_label.setText("ETA: Unknown")
         if self.priority_combo:
-            self.priority_combo.setCurrentText("Normal")
+            # G8.1 — block signals so the programmatic write does NOT
+            # fire `_on_priority_changed`. Without this the unguarded
+            # signal corrupted state (Critical -> Normal) AND triggered
+            # a recursive `_refresh_table_order`. See
+            # docs/plans/performance/DM_TABLE_REBUILD_STORM_2026-04-29.md.
+            self.priority_combo.blockSignals(True)
+            try:
+                self.priority_combo.setCurrentText("Normal")
+            finally:
+                self.priority_combo.blockSignals(False)
         # Clear additional patient information fields
         if hasattr(self, 'age_label') and self.age_label:
             self.age_label.setText("Age: -")
@@ -637,7 +646,47 @@ class _DMDetailsMixin:
             self.series_layout.addStretch()
 
     def _refresh_table_order(self):
-        """Refresh table with priority grouping - shows all 4 priority groups"""
+        """Refresh table with priority grouping - shows all 4 priority groups.
+
+        G7/G8 — re-entrancy guard + ``[DM_REBUILD]`` instrumentation. The
+        guard short-circuits any recursive entry triggered by Qt signals
+        fired mid-rebuild (the historical root cause was an unguarded
+        ``priority_combo.setCurrentText`` in ``_clear_details_panel``;
+        the guard provides defense-in-depth even if a future caller
+        re-introduces a similar signal).
+        """
+        import time as _dm_rebuild_time
+
+        # G8.2 — re-entrancy guard. Without this, an unguarded combo
+        # signal mid-rebuild would call us recursively, doubling the
+        # widget churn and corrupting state.
+        if getattr(self, "_refresh_table_order_in_progress", False):
+            try:
+                logger.info(
+                    "[DM_REBUILD] event=reenter_skip depth=%d caller=%s",
+                    int(getattr(self, "_dm_rebuild_depth", 0)),
+                    self._dm_rebuild_caller_frame(),
+                    extra={"component": "download"},
+                )
+            except Exception:
+                pass
+            return
+
+        self._refresh_table_order_in_progress = True
+        depth = int(getattr(self, "_dm_rebuild_depth", 0)) + 1
+        self._dm_rebuild_depth = depth
+        rebuild_t0 = _dm_rebuild_time.perf_counter()
+
+        try:
+            logger.info(
+                "[DM_REBUILD] event=enter depth=%d caller=%s",
+                depth,
+                self._dm_rebuild_caller_frame(),
+                extra={"component": "download"},
+            )
+        except Exception:
+            pass
+
         # finally: suppression flag is always reset at method exit
         self._suppressing_selection_signals = True
         try:
@@ -653,13 +702,11 @@ class _DMDetailsMixin:
                 logger.debug("⚠️ download_table deleted, skipping refresh")
                 return
 
-            logger.info("🔄 [TABLE-REFRESH] Refreshing table order with priority groups...")
+            logger.debug("🔄 [TABLE-REFRESH] Refreshing table order with priority groups...")
 
             # Get all downloads grouped by priority
             all_downloads = self.state_store.get_all_downloads()
-            logger.info(f"🔄 [TABLE-REFRESH] Total downloads in state: {len(all_downloads)}")
-            for dl in all_downloads:
-                logger.info(f"🔄 [TABLE-REFRESH]   - {dl.patient_name} ({dl.status.value}, {dl.priority.display_name})")
+            logger.debug("🔄 [TABLE-REFRESH] Total downloads in state: %d", len(all_downloads))
 
             # Group by priority
             priority_groups = {
@@ -673,16 +720,14 @@ class _DMDetailsMixin:
                 priority_name = state.priority.display_name
                 priority_groups[priority_name].append(state)
 
-            logger.info(f"🔄 [TABLE-REFRESH] Priority groups: Critical={len(priority_groups['Critical'])}, High={len(priority_groups['High'])}, Normal={len(priority_groups['Normal'])}, Low={len(priority_groups['Low'])}")
-
             # Clear table
-            logger.info("🔄 [TABLE-REFRESH] Clearing table and resetting indices...")
             self.download_table.setRowCount(0)
             self.download_rows.clear()
             self._priority_group_widgets.clear()
             self._priority_group_rows.clear()
             self._speed_label_widgets.clear()  # Clear speed label widget references
 
+            row_count = 0
             # Add priority groups to table
             for priority_name in ["Critical", "High", "Normal", "Low"]:
                 group_items = priority_groups[priority_name]
@@ -692,23 +737,21 @@ class _DMDetailsMixin:
                     continue
 
                 # Add priority group header
-                logger.info(f"🔄 [TABLE-REFRESH] Adding priority group header: {priority_name}")
                 self._add_priority_group_header(priority_name, len(group_items))
 
                 # Add items in this group
                 for state in group_items:
-                    logger.info(f"🔄 [TABLE-REFRESH] Adding download row for: {state.patient_name} ({state.study_uid[:40]}...)")
                     self._add_download_row_to_table(state)
+                    row_count += 1
 
                 # Add spacer after group
                 self._add_priority_group_spacer()
 
             # Restore selection after rebuild (keeps details panel in sync)
             if self._selected_study_uid:
-                logger.info(f"🔄 [TABLE-REFRESH] Restoring selection for: {self._selected_study_uid[:40]}...")
                 self._select_study_row(self._selected_study_uid, ensure_visible=False)
 
-            logger.info("✅ [TABLE-REFRESH] Table order refreshed successfully")
+            logger.debug("✅ [TABLE-REFRESH] Table order refreshed successfully (%d rows)", row_count)
 
         except Exception as e:
             logger.error(f"❌ [TABLE-REFRESH] Error refreshing table order: {e}")
@@ -716,6 +759,36 @@ class _DMDetailsMixin:
             logger.error(traceback.format_exc())
         finally:
             self._suppressing_selection_signals = False
+            duration_ms = (_dm_rebuild_time.perf_counter() - rebuild_t0) * 1000.0
+            try:
+                logger.info(
+                    "[DM_REBUILD] event=exit depth=%d duration_ms=%.3f rows=%d",
+                    depth,
+                    duration_ms,
+                    int(locals().get("row_count", 0)),
+                    extra={"component": "download"},
+                )
+            except Exception:
+                pass
+            self._dm_rebuild_depth = depth - 1
+            self._refresh_table_order_in_progress = False
+
+    @staticmethod
+    def _dm_rebuild_caller_frame() -> str:
+        """Return the immediate caller's `<file>:<func>` for `[DM_REBUILD]`."""
+        try:
+            import inspect
+
+            stack = inspect.stack()
+            # 0 = this helper, 1 = _refresh_table_order, 2 = real caller
+            if len(stack) >= 3:
+                frame = stack[2]
+                fn = frame.function
+                fname = frame.filename.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+                return f"{fname}:{fn}"
+        except Exception:
+            pass
+        return "unknown"
 
     def _add_priority_group_header(self, priority_name: str, count: int):
         """Add priority group header to table"""

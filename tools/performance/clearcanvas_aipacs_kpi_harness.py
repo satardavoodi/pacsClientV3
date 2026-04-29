@@ -112,6 +112,28 @@ _SLOT_TIMING_RE = re.compile(
     r"series=(?P<series>\S+)"
     r"(?:\s+extra=(?P<extra>\S*))?"
 )
+# G7 — DM table-rebuild observability emitted by
+# `modules/download_manager/ui/widget/_dm_details.py::_refresh_table_order`.
+# Format (kept stable):
+#   [DM_REBUILD] event=<enter|exit|reenter_skip> depth=<N>
+#       [duration_ms=<F.3>] [rows=<R>] caller=<file.py:func>
+_DM_REBUILD_RE = re.compile(
+    r"\[DM_REBUILD\]\s+event=(?P<event>\w+)\s+"
+    r"depth=(?P<depth>\d+)"
+    r"(?:\s+duration_ms=(?P<duration_ms>[0-9.]+))?"
+    r"(?:\s+rows=(?P<rows>\d+))?"
+    r"(?:\s+caller=(?P<caller>\S+))?"
+)
+# G7 — DM priority-transition tag emitted by `_dm_controls._on_priority_changed`.
+# Format:
+#   [DM_PRIORITY_TRANSITION] event=combo_changed new=<P> study=<UID>
+#       during_rebuild=<True|False>
+_DM_PRIORITY_TRANSITION_RE = re.compile(
+    r"\[DM_PRIORITY_TRANSITION\]\s+event=(?P<event>\w+)\s+"
+    r"new=(?P<new>\S+)\s+"
+    r"study=(?P<study>\S*)\s+"
+    r"during_rebuild=(?P<during_rebuild>True|False)"
+)
 _STAGE_TIMING_RE = re.compile(
     r"component=(?P<component>\w+)\s+role=(?P<role>[^|]+)\s+\|.*?"
     r"fn=(?P<function>\S+)\s+stage=(?P<stage>\S+)\s+result=(?P<result>\S+)\s+\|.*?"
@@ -1373,6 +1395,130 @@ def parse_slot_timing_log_file(path: Path) -> Dict[str, Any]:
         "scenario": "aipacs_fast_silent_blocker_triage",
         "log_path": str(path),
         "slot_timing_metrics": parse_slot_timing_log_text(text),
+    }
+
+
+def parse_dm_rebuild_log_text(text: str) -> Dict[str, Any]:
+    """Parse ``[DM_REBUILD]`` log lines emitted by the DM table refresh.
+
+    Returns counters and percentile statistics that quantify the
+    historical recursion bug (silent main-thread blocker fixed in G8).
+
+    Output schema:
+
+    - ``dm_rebuild_count``           : total ``event=exit`` lines
+    - ``dm_rebuild_recursive_count`` : exits with ``depth >= 2``
+    - ``dm_rebuild_reenter_skip_count`` : ``event=reenter_skip`` lines
+      (G8.2 guard catching attempted recursion — should be 0 in
+      well-behaved code, > 0 indicates upstream signal regressions)
+    - ``dm_rebuild_max_depth``       : highest ``depth`` observed at exit
+    - ``dm_rebuild_duration_p50_ms`` / ``_p95_ms`` / ``_max_ms``
+    - ``dm_rebuild_per_session_total_ms``
+    - ``top_callers``                : list of dicts ``{caller, count, total_ms}``
+      sorted by ``total_ms`` descending (top 5)
+
+    Plan reference: docs/plans/performance/DM_TABLE_REBUILD_STORM_2026-04-29.md
+    """
+    durations: List[float] = []
+    by_caller: Dict[str, Dict[str, float]] = {}
+    recursive_count = 0
+    max_depth = 0
+    reenter_skip_count = 0
+    enter_count = 0
+
+    for m in _DM_REBUILD_RE.finditer(text or ""):
+        event = m.group("event")
+        depth = int(m.group("depth") or 0)
+        if event == "enter":
+            enter_count += 1
+            continue
+        if event == "reenter_skip":
+            reenter_skip_count += 1
+            continue
+        if event != "exit":
+            continue
+        # exit
+        d_raw = m.group("duration_ms")
+        if d_raw is None:
+            continue
+        d = float(d_raw)
+        durations.append(d)
+        if depth > max_depth:
+            max_depth = depth
+        if depth >= 2:
+            recursive_count += 1
+        caller = m.group("caller") or "unknown"
+        slot = by_caller.setdefault(caller, {"count": 0, "total_ms": 0.0})
+        slot["count"] += 1
+        slot["total_ms"] += d
+
+    durations_sorted = sorted(durations)
+    n = len(durations_sorted)
+
+    def _percentile(p: float) -> float:
+        if n == 0:
+            return 0.0
+        idx = max(0, min(n - 1, int(round(p / 100.0 * (n - 1)))))
+        return float(durations_sorted[idx])
+
+    top_callers = sorted(
+        (
+            {"caller": c, "count": int(v["count"]), "total_ms": round(v["total_ms"], 3)}
+            for c, v in by_caller.items()
+        ),
+        key=lambda r: r["total_ms"],
+        reverse=True,
+    )[:5]
+
+    return {
+        "dm_rebuild_count": len(durations),
+        "dm_rebuild_enter_count": enter_count,
+        "dm_rebuild_recursive_count": recursive_count,
+        "dm_rebuild_reenter_skip_count": reenter_skip_count,
+        "dm_rebuild_max_depth": max_depth,
+        "dm_rebuild_duration_p50_ms": round(_percentile(50), 3),
+        "dm_rebuild_duration_p95_ms": round(_percentile(95), 3),
+        "dm_rebuild_duration_max_ms": round(durations_sorted[-1], 3) if n else 0.0,
+        "dm_rebuild_per_session_total_ms": round(sum(durations), 3),
+        "top_callers": top_callers,
+    }
+
+
+def parse_dm_priority_transition_log_text(text: str) -> Dict[str, Any]:
+    """Parse ``[DM_PRIORITY_TRANSITION]`` lines.
+
+    The defining counter is ``priority_combo_signal_during_rebuild_count``
+    — the number of ``_on_priority_changed`` invocations that fired
+    while ``_refresh_table_order`` was running. Pre-G8.1 this was 1
+    per drag-drop. Post-G8.1 it must be 0; any non-zero value is a
+    regression alarm.
+    """
+    during_rebuild = 0
+    total = 0
+    by_priority: Dict[str, int] = {}
+    for m in _DM_PRIORITY_TRANSITION_RE.finditer(text or ""):
+        total += 1
+        if m.group("during_rebuild") == "True":
+            during_rebuild += 1
+        new = m.group("new")
+        by_priority[new] = by_priority.get(new, 0) + 1
+
+    return {
+        "priority_combo_signal_count": total,
+        "priority_combo_signal_during_rebuild_count": during_rebuild,
+        "priority_combo_signal_by_priority": by_priority,
+    }
+
+
+def parse_dm_rebuild_log_file(path: Path) -> Dict[str, Any]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    return {
+        "viewer": "AI-PACS",
+        "mode": "dm-rebuild-parse",
+        "scenario": "aipacs_dm_table_rebuild_storm_triage",
+        "log_path": str(path),
+        "dm_rebuild_metrics": parse_dm_rebuild_log_text(text),
+        "dm_priority_transition_metrics": parse_dm_priority_transition_log_text(text),
     }
 
 
