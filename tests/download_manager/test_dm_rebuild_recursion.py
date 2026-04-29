@@ -386,3 +386,104 @@ class TestReentrancyGuardContract:
             "table-clearing call (setRowCount) — otherwise the guard "
             "does not protect the expensive rebuild path."
         )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# L5 — Deleted-QComboBox resilience (regression 2026-04-30)
+#
+# The G8.1 fix added `priority_combo.blockSignals(True)` before
+# `setCurrentText("Normal")`. In production we then observed a storm of
+# `RuntimeError: Internal C++ object (PySide6.QtWidgets.QComboBox)
+# already deleted` originating from line 238. Root cause: the Python
+# wrapper outlives the C++ widget (e.g. when the details panel is
+# being rebuilt mid-`_refresh_table_order`); a truthy
+# `if self.priority_combo` check does NOT detect this. Each crash
+# aborted `_select_study_row`, leaving the table in an inconsistent
+# state and amplifying the rebuild storm.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class TestDeletedComboResilience:
+    """`_clear_details_panel` must tolerate a sip-deleted priority_combo."""
+
+    def test_clear_details_panel_source_handles_runtime_error(self):
+        """Static contract: the priority_combo block must be wrapped in
+        a `try/except RuntimeError` so a deleted C++ object cannot
+        propagate up and abort `_select_study_row`."""
+        body = _clear_details_panel_source()
+        if "priority_combo.setCurrentText" not in body:
+            pytest.skip("priority_combo write removed — bug class gone")
+
+        # Find the line with setCurrentText and verify a RuntimeError
+        # handler appears within ~12 lines after the blockSignals(False).
+        lines = body.splitlines()
+        protected = False
+        for i, line in enumerate(lines):
+            if "priority_combo.setCurrentText" not in line:
+                continue
+            window = "\n".join(lines[max(0, i - 6): i + 12])
+            if (
+                "blockSignals(True)" in window
+                and "blockSignals(False)" in window
+                and re.search(r"except\s+RuntimeError", window)
+            ):
+                protected = True
+                break
+        assert protected, (
+            "priority_combo write in _clear_details_panel must be "
+            "wrapped in `try: ... except RuntimeError: ...` to "
+            "tolerate deleted C++ widgets. Live regression observed "
+            "2026-04-30 — see download_diagnostics.log near 00:53:50."
+        )
+
+    def test_live_deleted_combo_does_not_raise(self, qt_app):
+        """L2-style live test: simulate the production failure mode.
+
+        Build a minimal stub mirroring the relevant subset of
+        `_DmDetailsMixin` state, point `priority_combo` at a real
+        QComboBox, delete the underlying C++ object, then invoke the
+        real `_clear_details_panel`. With the fix, this must NOT raise.
+        """
+        from PySide6.QtWidgets import QComboBox
+        import shiboken6
+
+        from modules.download_manager.ui.widget._dm_details import _DMDetailsMixin
+
+        class _Stub:
+            # All optional widgets are None to skip those branches.
+            patient_label = None
+            patient_name_label = None
+            patient_id_label = None
+            url_label = None
+            study_desc_label = None
+            study_date_label = None
+            modality_label = None
+            size_label = None
+            progress_bar = None
+            progress_label = None
+            speed_label = None
+            eta_label = None
+            study_uid_label = None
+            series_count_label = None
+            study_size_label = None
+
+            def _reset_reception_fields(self, status_text: str = "-") -> None:
+                pass
+
+        stub = _Stub()
+        stub.priority_combo = QComboBox()
+        stub.priority_combo.addItems(["Low", "Normal", "High", "Critical"])
+
+        # Force-delete the C++ object — the Python wrapper survives.
+        shiboken6.delete(stub.priority_combo)
+        assert not shiboken6.isValid(stub.priority_combo)
+
+        # Pre-fix this raises RuntimeError; post-fix it must swallow it.
+        try:
+            _DMDetailsMixin._clear_details_panel(stub)
+        except RuntimeError as exc:
+            pytest.fail(
+                f"_clear_details_panel raised RuntimeError on deleted "
+                f"priority_combo: {exc}. Wrap the priority_combo block "
+                f"in try/except RuntimeError."
+            )

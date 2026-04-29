@@ -235,11 +235,22 @@ class _DMDetailsMixin:
             # signal corrupted state (Critical -> Normal) AND triggered
             # a recursive `_refresh_table_order`. See
             # docs/plans/performance/DM_TABLE_REBUILD_STORM_2026-04-29.md.
-            self.priority_combo.blockSignals(True)
+            #
+            # Defensive: the Python wrapper may outlive the C++ widget
+            # (RuntimeError: Internal C++ object already deleted) when
+            # the details panel is being rebuilt or torn down. Truthy
+            # `if self.priority_combo` does NOT detect this. Wrap the
+            # whole block so a stale combo never blocks selection or
+            # crashes the rebuild loop (regression observed 2026-04-30).
             try:
-                self.priority_combo.setCurrentText("Normal")
-            finally:
-                self.priority_combo.blockSignals(False)
+                self.priority_combo.blockSignals(True)
+                try:
+                    self.priority_combo.setCurrentText("Normal")
+                finally:
+                    self.priority_combo.blockSignals(False)
+            except RuntimeError:
+                # C++ object already deleted; nothing to clear.
+                self.priority_combo = None
         # Clear additional patient information fields
         if hasattr(self, 'age_label') and self.age_label:
             self.age_label.setText("Age: -")
