@@ -373,6 +373,7 @@ class Lightweight2DPipeline(QObject):
         self._scroll_history: List[Tuple[float, int]] = []  # (timestamp, slice_index) ring
         self._scroll_history_max: int = 12           # keep last N events
         self._last_prefetch_center: int = -1         # dedup: skip if same center
+        self._last_prefetch_direction: int = 0       # F3.2: last non-zero scroll direction (-1/0/+1)
         self._prefetch_prepared_index: Optional[int] = None
 
         # Metrics
@@ -506,6 +507,7 @@ class Lightweight2DPipeline(QObject):
         self._filter_first_slices.clear()
         self._scroll_history.clear()
         self._last_prefetch_center = -1
+        self._last_prefetch_direction = 0
         self._prefetch_prepared_index = None
 
     def notify_drag_started(self, center: Optional[int] = None) -> None:
@@ -585,6 +587,7 @@ class Lightweight2DPipeline(QObject):
                 self._active_prefetch_targets = set()
             self._active_prefetch_targets.clear()
         self._last_prefetch_center = -1
+        self._last_prefetch_direction = 0
         try:
             self._prefetch_prepared_index = int(target_slice)
         except Exception:
@@ -691,6 +694,7 @@ class Lightweight2DPipeline(QObject):
                 self._prefetch_request_epoch += 1
                 self._active_prefetch_targets.clear()
             self._last_prefetch_center = -1
+            self._last_prefetch_direction = 0
             self._prefetch_around(self._current_index)
 
     def get_window_level(self) -> Tuple[Optional[float], Optional[float]]:
@@ -1960,13 +1964,26 @@ class Lightweight2DPipeline(QObject):
             if idx not in self._pixel_cache
         }
 
+        # F3.2: detect direction reversal — when the user flips scroll
+        # direction mid-drag the previously queued targets in the OLD
+        # direction must be invalidated even if the new neighborhood
+        # set happens to overlap with the old one. Bump the request_epoch
+        # so F3.1's pre-queue gate rejects any in-flight stale tasks.
+        last_dir = int(getattr(self, '_last_prefetch_direction', 0) or 0)
+        direction_flipped = (
+            direction != 0
+            and last_dir != 0
+            and direction != last_dir
+        )
         with self._prefetch_lock:
             active_targets = set(getattr(self, '_active_prefetch_targets', set()))
             request_epoch = int(getattr(self, '_prefetch_request_epoch', 0))
-            if uncached_targets != active_targets:
+            if uncached_targets != active_targets or direction_flipped:
                 request_epoch += 1
                 self._active_prefetch_targets = set(uncached_targets)
                 self._prefetch_request_epoch = request_epoch
+            if direction != 0:
+                self._last_prefetch_direction = direction
 
         # When drag/wheel interaction already has the entire admitted pixel
         # neighborhood hot, do not re-walk the submit path. Updating the

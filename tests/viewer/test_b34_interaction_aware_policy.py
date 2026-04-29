@@ -412,6 +412,113 @@ class TestPrefetchDedup:
         assert len(p._submitted_prefetch) == 6  # only from first call
 
 
+class TestDirectionReversal:
+    """F3.2 — Direction-flip mid-drag must invalidate old-direction queue."""
+
+    def test_direction_reversal_bumps_request_epoch_and_replaces_targets(self):
+        """When user reverses scroll direction, _active_prefetch_targets is
+        replaced and _prefetch_request_epoch is bumped so F3.1's pre-queue gate
+        rejects any in-flight stale tasks."""
+        p = _build_pipeline_stub(slice_count=100, radius=3)
+        p._fast_interaction = True
+        # Force unidirectional scroll path (velocity >= 8.0 + direction != 0)
+        p._estimate_scroll_velocity = lambda: 25.0
+
+        # Forward scroll: prefetches center+1..center+3
+        p._prefetch_around(50, direction=1)
+        epoch_after_first = p._prefetch_request_epoch
+        targets_after_first = set(p._active_prefetch_targets)
+        assert epoch_after_first == 1
+        assert targets_after_first == {51, 52, 53}
+        assert p._last_prefetch_direction == 1
+
+        # Reverse direction at a new center: must bump epoch + replace targets
+        p._prefetch_around(48, direction=-1)
+        assert p._prefetch_request_epoch == epoch_after_first + 1
+        assert set(p._active_prefetch_targets) == {45, 46, 47}
+        assert p._last_prefetch_direction == -1
+
+    def test_same_direction_continues_without_extra_epoch_bump(self):
+        """Continuing in the same direction should NOT force an epoch bump
+        beyond the natural target-set-change bumps."""
+        p = _build_pipeline_stub(slice_count=100, radius=3)
+        p._fast_interaction = True
+        p._estimate_scroll_velocity = lambda: 25.0
+
+        p._prefetch_around(50, direction=1)
+        epoch_a = p._prefetch_request_epoch  # 1
+        # Step forward one slice — same direction. New targets {52,53,54},
+        # different from {51,52,53}, so the natural targets-changed branch
+        # bumps the epoch — but only ONCE, not the direction-flip extra bump.
+        p._prefetch_around(51, direction=1)
+        epoch_b = p._prefetch_request_epoch  # 2
+        assert epoch_b - epoch_a == 1
+        assert p._last_prefetch_direction == 1
+
+    def test_direction_reversal_with_zero_direction_does_not_count(self):
+        """Calls with direction=0 (idle/centering prefetch) must not flip the
+        tracked direction nor force an epoch bump on a subsequent directional
+        call that matches the *previous* non-zero direction."""
+        p = _build_pipeline_stub(slice_count=100, radius=3)
+        p._fast_interaction = True
+        p._estimate_scroll_velocity = lambda: 25.0
+
+        p._prefetch_around(50, direction=1)
+        assert p._last_prefetch_direction == 1
+        p._prefetch_around(60, direction=0)  # non-tracking call
+        assert p._last_prefetch_direction == 1, "direction=0 must NOT overwrite"
+        epoch_before = p._prefetch_request_epoch
+        # New directional call still matching last_dir=1 → no flip-bump beyond
+        # the natural target-set change.
+        p._prefetch_around(70, direction=1)
+        # natural change: targets {71,72,73} vs whatever was last set → 1 bump
+        assert p._prefetch_request_epoch == epoch_before + 1
+
+    def test_close_series_resets_last_direction(self):
+        """close_series must reset _last_prefetch_direction so a new series
+        cannot accidentally trigger a flip against a stale recorded direction."""
+        from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+
+        # Use the real Lightweight2DPipeline.close_series via a SimpleNamespace
+        # bound stub. close_series touches a lot of attributes; mirror them.
+        import threading as _t
+        p = SimpleNamespace(
+            _pixel_cache={},
+            _frame_cache={},
+            _prefetch_lock=_t.Lock(),
+            _prefetch_pending=set(),
+            _frame_prefetch_pending=set(),
+            _prefetch_generation=3,
+            _prefetch_request_epoch=7,
+            _active_prefetch_targets={1, 2, 3},
+            _slices=[1, 2, 3],
+            _current_index=2,
+            _window=400.0,
+            _level=40.0,
+            _series_path="x",
+            _series_uid="u",
+            _is_open=True,
+            _interaction_slice_count_hint=10,
+            _drag_start_boost_until=0.0,
+            _last_drag_prefetch_submit_ts=0.0,
+            _protected_drag_active=False,
+            _drag_target_generation=0,
+            _drag_session_started_at=0.0,
+            _drag_prefetch_submitted=0,
+            _drag_background_decode_count=0,
+            _stack_drag_p01_slices=(),
+            _first_render_logged=True,
+            _filter_first_slices=set(),
+            _scroll_history=[(0.0, 1)],
+            _last_prefetch_center=42,
+            _last_prefetch_direction=1,
+            _prefetch_prepared_index=5,
+        )
+        Lightweight2DPipeline.close_series(p)
+        assert p._last_prefetch_direction == 0
+        assert p._last_prefetch_center == -1
+
+
 class TestDragStartWarmup:
     """Drag startup assist should warm cache without changing steady-state policy."""
 
