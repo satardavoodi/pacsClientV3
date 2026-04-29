@@ -480,6 +480,56 @@ def _get_progressive_finalize_defer_set(obj):
     return guard
 
 
+def _get_layer2b_defer_pending_set(obj):
+    """[F9] Return or lazily create the Layer 2b body defer guard set.
+
+    Tracks series whose ``_on_series_download_fully_complete_impl`` body has
+    been deferred via ``QTimer.singleShot`` and is awaiting retry. Separate
+    from ``_progressive_finalize_defer_pending`` (which is the inner
+    ``_finalize_progressive_series`` retry, much later in the pipeline).
+    """
+    guard = getattr(obj, '_layer2b_defer_pending', None)
+    if guard is None:
+        guard = set()
+        setattr(obj, '_layer2b_defer_pending', guard)
+    return guard
+
+
+def _get_layer2b_defer_retry_map(obj):
+    """[F9] Return or lazily create the per-series Layer 2b retry counter."""
+    counter = getattr(obj, '_layer2b_defer_retry_count', None)
+    if counter is None:
+        counter = {}
+        setattr(obj, '_layer2b_defer_retry_count', counter)
+    return counter
+
+
+def _match_viewers_for_series(obj, sn: str) -> list:
+    """[F9] Quick scan returning [(vtk_w, node)] for viewers showing series ``sn``.
+
+    Used by the Layer 2b defer gate to test ``_is_fast_progressive_interaction_hot``
+    without entering the heavy completion body. Cheap: only attribute reads.
+    """
+    matched = []
+    for node in getattr(obj, 'lst_nodes_viewer', None) or []:
+        vtk_w = getattr(node, "vtk_widget", None)
+        if vtk_w is None:
+            continue
+        is_match = (getattr(vtk_w, "_progressive_series_number", None) == sn)
+        if not is_match:
+            try:
+                viewer_sn = str(
+                    getattr(vtk_w.image_viewer, "metadata", {})
+                    .get("series", {}).get("series_number", "")
+                )
+                is_match = (viewer_sn == sn)
+            except Exception:
+                pass
+        if is_match:
+            matched.append((vtk_w, node))
+    return matched
+
+
 def _finalize_progressive_series(
     obj,
     series_number: str,
@@ -1847,6 +1897,79 @@ class _VCProgressiveMixin:
                 "progressive: Layer 2b skipped finalized series=%s", sn,
             )
             return
+
+        # ── F9: defer Layer 2b body during active FAST drag ──────────────
+        # Live log evidence (4/29/2026) showed the entire body of this
+        # method (`loader.grow()` × N viewers + `_update_vtk_slice_range`
+        # + completion-snapshot computation + `_invalidate_series_caches`
+        # + ZetaBoost lazy-volume promotion) blocks the main thread for
+        # 700–1750 ms when a series finishes downloading WHILE the user
+        # is actively stack-dragging. R4 says "terminal completion always
+        # fires" — but a 1.7 s freeze defeats responsiveness more than a
+        # 350 ms delay does. We defer with bounded retry; after
+        # _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES we force-run to
+        # satisfy R4 even if drag is still hot.
+        try:
+            f9_matched = _match_viewers_for_series(self, sn)
+            if f9_matched and _is_fast_progressive_interaction_hot(f9_matched):
+                pending = _get_layer2b_defer_pending_set(self)
+                retry_map = _get_layer2b_defer_retry_map(self)
+                retry = int(retry_map.get(sn, 0))
+                if sn in pending:
+                    # Already a retry in flight; new caller is duplicate.
+                    self.logger.debug(
+                        "[F9] Layer 2b duplicate during defer skipped series=%s retry=%d",
+                        sn, retry,
+                    )
+                    return
+                if retry < _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES:
+                    delay_ms = int(
+                        _FAST_PROGRESSIVE_FINALIZE_DEFER_BASE_MS
+                        + retry * _FAST_PROGRESSIVE_FINALIZE_DEFER_STEP_MS
+                    )
+                    pending.add(sn)
+                    retry_map[sn] = retry + 1
+                    self.logger.info(
+                        "[F9] Layer 2b deferred series=%s retry=%d/%d delay_ms=%d "
+                        "(FAST drag active; avoids ~1s+ main-thread freeze)",
+                        sn, retry + 1,
+                        _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES,
+                        delay_ms,
+                    )
+
+                    def _f9_retry(_sn=sn):
+                        try:
+                            _get_layer2b_defer_pending_set(self).discard(_sn)
+                        except Exception:
+                            pass
+                        try:
+                            self._on_series_download_fully_complete_impl(_sn)
+                        except Exception as _exc:
+                            self.logger.debug(
+                                "[F9] Layer 2b retry failed series=%s: %s",
+                                _sn, _exc,
+                            )
+
+                    QTimer.singleShot(delay_ms, _f9_retry)
+                    return
+                # Retry budget exhausted — force-run to honor R4.
+                pending.discard(sn)
+                retry_map.pop(sn, None)
+                self.logger.warning(
+                    "[F9] Layer 2b force-running after %d defer retries series=%s "
+                    "(drag still hot — accepting freeze to satisfy R4)",
+                    retry, sn,
+                )
+            else:
+                # Not hot — clear any stale retry counter.
+                _get_layer2b_defer_retry_map(self).pop(sn, None)
+        except Exception as _f9_exc:
+            self.logger.debug(
+                "[F9] defer gate raised series=%s — falling through: %s",
+                sn, _f9_exc,
+            )
+        # ──────────────────────────────────────────────────────────────────
+
         _set_progressive_lifecycle_state(
             self,
             sn,
