@@ -98,7 +98,7 @@ class DownloadProcessWorker(QThread):
         self._cancel_event: Any = ctx.Event()
         self._process: Optional[Any] = None
 
-        logger.info(
+        logger.debug(
             "✅ DownloadProcessWorker created for %s",
             task.patient_name,
             extra={

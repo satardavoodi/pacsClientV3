@@ -158,7 +158,7 @@ class SocketDicomClient:
         self._post_request_yield_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_POST_REQUEST_YIELD_MS", "5") or "5") / 1000.0)
         self._last_resource_probe_ts = 0.0
         
-        logger.info(
+        logger.debug(
             f"🔌 SocketDicomClient initialized ({self.host}:{self.port})",
             extra={"component": "download"},
         )
@@ -688,7 +688,7 @@ class SocketDicomClient:
                     if response_length > 50 * 1024 * 1024:  # 50MB limit
                         raise NetworkError(f"Response too large: {response_length} bytes")
 
-                    logger.info(
+                    logger.debug(
                         f"📥 Receiving response body ({response_length} bytes)",
                         extra={"component": "download"},
                     )
@@ -728,7 +728,7 @@ class SocketDicomClient:
                                 series_uid=str(params.get("series_uid", "-")),
                             )
 
-                    logger.info(
+                    logger.debug(
                         f"📥 Response received completely ({len(response_data)} bytes)",
                         extra={"component": "download", "series_uid": str(params.get("series_uid", "-"))},
                     )
@@ -905,7 +905,7 @@ class SocketDicomClient:
         batch_index = batch_start // batch_size if batch_size > 0 else 0
         
         set_log_context(study_uid=study_uid, series_uid=series_uid)
-        logger.info(
+        logger.debug(
             f"📥 download_batch: series={series_uid[:40]}..., batch_index={batch_index}, size={batch_size}",
             extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
         )
@@ -921,12 +921,12 @@ class SocketDicomClient:
         if response:
             status = response.get('status', 'unknown')
             if status == 'cancelled':
-                logger.info(
+                logger.warning(
                     f"⏸️ download_batch cancelled: {response.get('message', 'preemption')}",
                     extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
                 )
             else:
-                logger.info(
+                logger.debug(
                     f"📥 download_batch: status={status}",
                     extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
                 )
@@ -962,7 +962,7 @@ class SocketDicomClient:
         expected_count = series_info.image_count
         
         set_log_context(study_uid=study_uid, series_uid=series_uid)
-        logger.info(
+        logger.warning(
             f"📥 Downloading series {series_number} ({expected_count} images)",
             extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
         )
@@ -1061,7 +1061,7 @@ class SocketDicomClient:
                     error_message="Download cancelled (preemption)"
                 )
             
-            logger.info(
+            logger.debug(
                 f"📦 Starting batch {batch_idx + 1}/{total_batches} (start: {batch_start}, size: {batch_size})",
                 extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
             )
@@ -1133,11 +1133,16 @@ class SocketDicomClient:
             data = response.get('data', {})
             instances = data.get('instances', [])
             
-            logger.info(
+            logger.debug(
                 f"📦 Batch {batch_idx + 1}: Got {len(instances)} instances",
                 extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
             )
             
+            batch_write_stage_start = now_ms()
+            batch_disk_write_ms = 0.0
+            batch_write_bytes = 0
+            batch_files_written = 0
+
             for _inst_idx, instance_data in enumerate(instances):
                 dicom_data_b64 = instance_data.get('dicom_data', '')
                 is_compressed = instance_data.get('is_compressed', False)
@@ -1165,7 +1170,6 @@ class SocketDicomClient:
                     continue
                 
                 try:
-                    t_write = time.monotonic()
                     # Decode base64
                     t_decode = now_ms()
                     dicom_bytes = base64.b64decode(dicom_data_b64)
@@ -1181,12 +1185,17 @@ class SocketDicomClient:
                     file_path.parent.mkdir(parents=True, exist_ok=True)
                     
                     # Save file
+                    t_write = time.monotonic()
                     with open(file_path, 'wb') as f:
                         f.write(dicom_bytes)
+                    write_elapsed_ms = (time.monotonic() - t_write) * 1000.0
                     
                     downloaded_count += 1
+                    total_disk_write_ms += write_elapsed_ms
+                    batch_disk_write_ms += write_elapsed_ms
+                    batch_write_bytes += len(dicom_bytes)
                     total_write_bytes += len(dicom_bytes)
-                    total_disk_write_ms += (time.monotonic() - t_write) * 1000.0
+                    batch_files_written += 1
                     
                 except Exception as e:
                     logger.error(f"❌ Error saving instance {instance_number}: {e}")
@@ -1211,7 +1220,7 @@ class SocketDicomClient:
                         delta_items = (downloaded_count + skipped_count) - summary_last_count
                         delta_t = max(now - summary_last_t, 1e-6)
                         throughput_items = delta_items / delta_t
-                        logger.info(
+                        logger.warning(
                             "series-summary series=%s downloaded=%d skipped=%d total=%d throughput_items=%.2f/s queue=%d active=%d disk_write_ms=%.2f decode_ms=%.2f decompress_ms=%.2f retries=%d",
                             series_number,
                             downloaded_count,
@@ -1234,6 +1243,22 @@ class SocketDicomClient:
                 # consecutive base64 decode calls without stalling ~50 ms.
                 if _inst_idx > 0 and _inst_idx % 3 == 0:
                     await asyncio.sleep(0.002)
+
+            if batch_files_written:
+                log_stage_timing(
+                    logger,
+                    component="download",
+                    function="SocketDicomClient.download_series",
+                    stage="dicom_file_write_batch",
+                    start_ms=batch_write_stage_start,
+                    files=batch_files_written,
+                    bytes=batch_write_bytes,
+                    disk_write_ms=f"{batch_disk_write_ms:.2f}",
+                    query_type="disk_write",
+                    viewer_mode="Shared",
+                    level=logging.INFO,
+                    min_ms=0.0,
+                )
             
             # Check if more batches are needed (server pagination)
             has_more = data.get('has_more', False)
@@ -1276,7 +1301,7 @@ class SocketDicomClient:
             f"✅ Series {series_number} complete: "
             f"{downloaded_count} downloaded, {skipped_count} skipped ({elapsed:.1f}s)"
         )
-        logger.info(
+        logger.warning(
             "download-pipeline-summary series=%s elapsed_s=%.2f disk_write_ms=%.2f decode_ms=%.2f decompress_ms=%.2f",
             series_number,
             elapsed,
@@ -1405,9 +1430,9 @@ class SocketDicomClient:
                     # R32: Adaptive throttling based on health
                     if not self.health_monitor.is_healthy():
                         delay *= 2  # Double delay if connection unhealthy
-                        logger.info(f"⚠️ Unhealthy connection - doubling retry delay", extra={"component": "download"})
+                        logger.warning(f"⚠️ Unhealthy connection - doubling retry delay", extra={"component": "download"})
                     
-                    logger.info(f"⏳ Retrying in {delay:.1f}s...", extra={"component": "download"})
+                    logger.warning(f"⏳ Retrying in {delay:.1f}s...", extra={"component": "download"})
                     if not await self._async_sleep_with_cancel(delay):
                         logger.info("⏸️ Batch retry cancelled during backoff")
                         return None
@@ -1417,7 +1442,7 @@ class SocketDicomClient:
                         return None
                     
                     # Reconnect with backoff
-                    logger.info(f"🔌 Reconnecting...", extra={"component": "download"})
+                    logger.warning(f"🔌 Reconnecting...", extra={"component": "download"})
                     self.disconnect()
                     if not self.connect_with_retry(max_retries=3):
                         if self.is_cancelled():
@@ -1425,7 +1450,7 @@ class SocketDicomClient:
                             return None
                         logger.error(f"❌ Reconnection failed")
                         continue
-                    logger.info(f"✅ Reconnected", extra={"component": "download"})
+                    logger.warning(f"✅ Reconnected", extra={"component": "download"})
         
         # All retries failed
         logger.error(f"❌ Batch download failed after {MAX_RETRIES} attempts")

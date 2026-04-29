@@ -622,7 +622,7 @@ class DownloadProgressAggregator:
             throughput = (bytes_received - last_bytes) / dt if dt > 0 else 0.0
             pct = (100.0 * bytes_received / response_length) if response_length > 0 else 0.0
 
-            self.logger.info(
+            self.logger.warning(
                 "download-summary key=%s progress=%.1f%% bytes=%d/%d throughput=%.1fKB/s queue=%s active=%s disk_write_ms=%.2f retries=%d",
                 key,
                 pct,

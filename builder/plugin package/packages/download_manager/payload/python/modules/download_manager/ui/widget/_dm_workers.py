@@ -144,7 +144,7 @@ class _DMWorkersMixin:
             True if started, False otherwise
         """
         t_download_start_marker = now_ms()
-        logger.info(
+        logger.warning(
             "download-impact-window marker=download_start_before_worker_start ts_ms=%.3f study=%s",
             t_download_start_marker,
             study_uid[:40],
@@ -230,7 +230,7 @@ class _DMWorkersMixin:
                 logger.info(f"🚀 [WORKER-START] Starting worker thread...")
                 worker.start()
                 logger.info(f"🚀 [WORKER-START] Worker thread started")
-                logger.info(
+                logger.warning(
                     "download-impact-window marker=download_start_after_worker_start delta_ms=%.2f",
                     now_ms() - t_download_start_marker,
                     extra={"component": "download", "study_uid": study_uid, "stage": "download_start_impact"},
@@ -699,7 +699,6 @@ class _DMWorkersMixin:
             self._check_auto_resume()
             QTimer.singleShot(0, self._start_next_pending)
             return
-
         logger.error(f"❌ [ERROR] Worker error: {study_uid[:40] if study_uid else 'None'}... - {error_message}")
 
         # Update state to FAILED before emitting signal
